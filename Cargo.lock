@@ -37,6 +37,7 @@ dependencies = [
  "qdrant-client",
  "regex",
  "rig-core",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
