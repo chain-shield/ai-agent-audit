@@ -1,4 +1,3 @@
-// crates/intake/src/lib.rs
 use anyhow::Result;
 use git2::Repository;
 use ignore::gitignore::GitignoreBuilder;
@@ -26,20 +25,21 @@ pub fn clone_and_filter(url: &str) -> Result<RepoPaths> {
     let mut docs = Vec::new();
 
     for entry in WalkDir::new(&root).into_iter().filter_map(Result::ok) {
-        let p = entry.path();
-        if ign.matched(p, false).is_ignore() {
+        let path = entry.path();
+        if ign.matched(path, false).is_ignore() {
             continue;
         }
-        match p.extension().and_then(|s| s.to_str()) {
-            Some("sol") => sol_files.push(p.to_path_buf()),
+        match path.extension().and_then(|extension| extension.to_str()) {
+            Some("sol") => sol_files.push(path.to_path_buf()),
             // accept any Markdown / reStructuredText / plain‑text file *whose name is README.md*
             Some("md" | "rst" | "txt")
-                if p.file_name()
-                    .and_then(|f| f.to_str()) // Option<&str>
-                    .map(|s| s.eq_ignore_ascii_case("README.md"))
+                if path
+                    .file_name()
+                    .and_then(|file| file.to_str()) // Option<&str>
+                    .map(|filename| filename.eq_ignore_ascii_case("README.md"))
                     .unwrap_or(false) =>
             {
-                docs.push(p.to_path_buf())
+                docs.push(path.to_path_buf())
             }
             _ => {}
         }

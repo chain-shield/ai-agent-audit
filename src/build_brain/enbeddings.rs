@@ -22,12 +22,12 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(String, Vec<
     // ------------------------------------------------------------------
     let mut docs = Vec::<SourceChunk>::new();
 
-    for p in paths {
-        let content = fs::read_to_string(p.as_ref())?;
+    for file in paths {
+        let content = fs::read_to_string(file.as_ref())?;
         for (i, chunk) in tokenize(&content).into_iter().enumerate() {
             docs.push(SourceChunk {
                 text: chunk,
-                metadata: format!("{}:chunk {}", p.as_ref().display(), i),
+                metadata: format!("{}:chunk {}", file.as_ref().display(), i),
             });
         }
     }
