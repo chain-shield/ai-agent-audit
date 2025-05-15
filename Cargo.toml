@@ -21,3 +21,5 @@ qdrant-client = { version = "1.14", default-features = false, features = [
 dotenvy = "0.15"
 anyhow = "1.0"
 git2 = "0.18"
+log = "0.4.26"
+env_logger = "0.11"

@@ -1,12 +1,11 @@
-
-
 // crates/vector_db/src/lib.rs
 use anyhow::Result;
+use qdrant_client::qdrant::{
+    vectors_config::Config, CreateCollection, Distance, PointStruct, UpsertPointsBuilder,
+    VectorParams, VectorsConfig,
+};
 use qdrant_client::Payload;
 use qdrant_client::Qdrant;
-use qdrant_client::qdrant::{
-    vectors_config::Config, CreateCollection, Distance, PointStruct, VectorParams, VectorsConfig, UpsertPointsBuilder,
-};
 use serde_json::json;
 
 /// Ensure that a collection exists (creates it if missing).
@@ -30,18 +29,16 @@ pub async fn ensure_collection(client: &Qdrant, name: &str, dim: u64) -> Result<
 }
 
 /// Upsert a batch of `(meta, embedding)` tuples.
-pub async fn upsert(
-    client: &Qdrant,
-    collection: &str,
-    items: &[(String, Vec<f32>)],
-) -> Result<()> {
+pub async fn upsert(client: &Qdrant, collection: &str, items: &[(String, Vec<f32>)]) -> Result<()> {
     // Build PointStructs
     let points: Vec<PointStruct> = items
         .iter()
         .enumerate()
         .map(|(i, (meta, vec))| {
             // payload — just stick the metadata string under key "meta"
-            let payload: Payload = json!({ "meta": meta }).try_into().expect("could not process payload");
+            let payload: Payload = json!({ "meta": meta })
+                .try_into()
+                .expect("could not process payload");
             PointStruct::new(i as u64, vec.clone(), payload)
         })
         .collect();
