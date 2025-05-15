@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,7 +25,7 @@ pub struct StorageVar {
 fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
     let output = Command::new("slither")
         .current_dir(repo_root)
-        .args([".", "--print", printer, "--quiet"])
+        .args([".", "--print", printer])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()?;
@@ -70,6 +71,7 @@ pub fn parse_slithir(text: &str) -> Vec<SlithIRFn> {
             ir: buf.trim().to_owned(),
         });
     }
+    debug!("functions => {:#?}", out);
     out
 }
 
@@ -94,6 +96,7 @@ pub fn parse_storage(text: &str) -> Vec<StorageVar> {
             }
         }
     }
+    debug!("storage => {:#?}", vars);
     vars
 }
 

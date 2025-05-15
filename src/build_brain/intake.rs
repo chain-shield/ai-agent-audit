@@ -4,6 +4,7 @@ use ignore::gitignore::GitignoreBuilder;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
+#[derive(Debug)]
 pub struct RepoPaths {
     pub root: PathBuf,
     pub sol_files: Vec<PathBuf>,
