@@ -1,9 +1,11 @@
+use super::callgraph;
+use super::graph_db::GraphDb;
 /// This module handles the enrichment of smart contract data using Slither analysis.
 /// It provides functionality to extract intermediate representation (IR) and storage information
 /// from Solidity contracts, and to build Forge projects.
 use super::slither_ffi::{dump_ir_and_storage, SlithIRFn, StorageVar};
 use anyhow::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Contains the enriched data extracted from Solidity contracts.
@@ -51,4 +53,28 @@ pub fn forge_build(repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
-// After building, you can read ./out/*.json artefacts for ABIs, bytecode sizes, etc.
+pub fn build_semantics_db(repo_root: &Path) -> Result<PathBuf> {
+    // 1. extract DOT blobs
+    let json = callgraph::callgraph_envelope(repo_root)?;
+    let blobs = callgraph::extract_dot_blobs(&json)?;
+    let (funcs, edges) = callgraph::parse_dot_blobs(&blobs)?;
+    // info!("dot functions => {:?}", funcs);
+    // info!("dot edges => {:?}", edges);
+
+    // 2. open DB file
+    let db_path = repo_root.join(".cache").join("semantics.db");
+    std::fs::create_dir_all(db_path.parent().unwrap())?;
+    let db = GraphDb::create(&db_path)?;
+
+    // 3. insert functions
+    for f in &funcs {
+        db.insert_function(&f.full_id, &f.contract, &f.name)?;
+    }
+
+    // 4. insert edges
+    for e in &edges {
+        db.insert_edge(&e.caller, &e.callee)?;
+    }
+
+    Ok(db_path)
+}

@@ -4,10 +4,12 @@
 
 /// The build_brain module contains the core functionality for processing and analyzing smart contracts.
 pub mod build_brain {
+    pub mod callgraph;
     /// Handles creating embeddings for source code files
     pub mod enbeddings;
     /// Provides enrichment of smart contract data using Slither analysis
     pub mod enrichment;
+    pub mod graph_db;
     /// Handles repository cloning and file filtering
     pub mod intake;
     /// Interfaces with the Slither static analysis tool

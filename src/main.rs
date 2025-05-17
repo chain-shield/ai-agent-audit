@@ -39,6 +39,10 @@ async fn main() -> Result<()> {
     // Build the Solidity contracts using Forge
     enrichment::forge_build(&repo.root)?;
 
+    // save call graph to database
+    let sem_db = enrichment::build_semantics_db(&repo.root)?;
+    info!("Call-graph DB at {}", sem_db.display());
+
     // 2b. Create a temp dir and ask slither_ffi to fill it with chunk files
     // Create a temporary directory to store the Slither analysis results
     let tmp_dir = tempfile::tempdir()?;
