@@ -14,11 +14,19 @@ pub fn enrich_with_slither(repo_root: &Path) -> Result<Enriched> {
 }
 
 pub fn forge_build(repo_root: &Path) -> Result<()> {
-    let status = Command::new("forge")
+    // Step 1: Run `forge install` to pull in remappings
+    let install_status = Command::new("forge")
         .current_dir(repo_root)
-        .args(["build", "--json"])
+        .arg("install")
         .status()?;
-    anyhow::ensure!(status.success(), "`forge build` failed");
+    anyhow::ensure!(install_status.success(), "`forge install` failed");
+
+    // Step 2: Now build
+    let build_status = Command::new("forge")
+        .current_dir(repo_root)
+        .args(["-q", "build", "--build-info"])
+        .status()?;
+    anyhow::ensure!(build_status.success(), "`forge build` failed");
     Ok(())
 }
 
