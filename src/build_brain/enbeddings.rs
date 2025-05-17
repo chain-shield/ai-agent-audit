@@ -1,3 +1,6 @@
+/// This module handles the creation of embeddings for source code files.
+/// It breaks down files into manageable chunks, tokenizes them, and uses OpenAI's
+/// embedding model to create vector representations that can be stored in a vector database.
 use anyhow::Result;
 use log::info;
 use rig::{
@@ -10,25 +13,33 @@ use tiktoken_rs::CoreBPE;
 
 use crate::utils::bpe::get_bpe; // OpenAI’s GPT-4 / text-embedding 3 vocab
 
+/// Represents a chunk of source code to be embedded.
+/// This struct is used to organize text content with its metadata
+/// before sending it to the embedding model.
 #[derive(Embed, Clone)]
 struct SourceChunk {
     #[embed] // Field Rig will vectorise
-    text: String,
+    text: String,     // The actual text content to be embedded
     metadata: String, // we’ll keep this alongside the vector
 }
 
+/// Number of tokens in each chunk for embedding
 const CHUNK_TOKENS: usize = 256;
+/// Number of tokens to overlap between chunks to maintain context
 const OVERLAP: usize = 32;
+/// Number of documents to process in each batch when sending to the embedding model
 const BATCH: usize = 30;
 
 /**
-*  TODO - USE codellama:embed instead of openai embedding model
-*  will need to either self host (need powerful computer) or self host on
-*  on gcp ($250/month), this embedding is optimal for code
-*
-*
-*
-* */
+ * Processes a list of files and creates embeddings for their content.
+ *
+ * TODO - USE codellama:embed instead of openai embedding model
+ * will need to either self host (need powerful computer) or self host on
+ * on gcp ($250/month), this embedding is optimal for code
+ *
+ * @param paths - Array of file paths to process
+ * @return Result containing a vector of tuples with metadata and embedding vectors
+ */
 pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(String, Vec<f32>)>> {
     // ------------------------------------------------------------------
     // 1. Slice every file into SourceChunk structs
