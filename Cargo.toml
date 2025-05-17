@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+qdrant-client = { version = "1.14", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3.20"
 walkdir = "2.4"
@@ -14,12 +15,9 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio-stream = "0.1.17"
 rig-core = { version = "0.12", features = ["derive"] }
-qdrant-client = { version = "1.14", default-features = false, features = [
-  "reqwest",
-  "serde",
-] }
 dotenvy = "0.15"
 anyhow = "1.0"
 git2 = "0.18"
 log = "0.4.26"
 env_logger = "0.11"
+tiktoken-rs = "0.6.0"

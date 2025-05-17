@@ -5,3 +5,7 @@ pub mod build_brain {
     pub mod slither_ffi;
     pub mod vector_db;
 }
+
+pub mod utils {
+    pub mod bpe;
+}
