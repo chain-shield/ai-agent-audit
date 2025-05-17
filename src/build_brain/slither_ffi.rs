@@ -1,3 +1,6 @@
+/// This module provides an interface to the Slither static analysis tool for Solidity.
+/// It handles running Slither printers, parsing their output, and extracting useful information
+/// such as SlithIR (intermediate representation) and storage variable details.
 use anyhow::{anyhow, Result};
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
@@ -5,45 +8,66 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// One SlithIR function entry (simplified)
+/// Represents a single function's SlithIR (intermediate representation).
+///
+/// SlithIR is Slither's intermediate representation of Solidity code, which
+/// makes it easier to analyze the code's behavior and identify potential issues.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SlithIRFn {
+    /// Name of the contract containing this function
     pub contract: String,
+    /// Name of the function
     pub function: String,
+    /// The SlithIR representation of the function's code
     pub ir: String,
 }
 
-/// Single storage slot description
+/// Represents a storage variable in a Solidity contract.
+///
+/// This struct contains information about a storage variable, including
+/// its name, type, and the contract it belongs to.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StorageVar {
+    /// Name of the contract containing this storage variable
     pub contract: String,
+    /// Name of the storage variable
     pub name: String,
+    /// Data type of the storage variable (e.g., "uint256", "address", etc.)
     pub r#type: String,
 }
 
-/// Run *one* printer, capture stdout, return raw text
+/// Runs a single Slither printer and captures its output.
+///
+/// This function executes the Slither static analysis tool with a specific printer
+/// and returns the captured output as a string.
+///
+/// @param repo_root - Path to the repository root containing Solidity contracts
+/// @param printer - Name of the Slither printer to run (e.g., "slithir-ssa", "variable-order")
+/// @return Result containing the printer's output as a string
 fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
+    // Execute Slither with the specified printer
     let output = Command::new("slither")
         .current_dir(repo_root)
         .args(&[
             ".",
-            "--foundry-ignore-compile",
-            "--foundry-out-directory",
+            "--foundry-ignore-compile",  // Skip compilation as we've already built with Forge
+            "--foundry-out-directory",   // Specify where to find Forge build artifacts
             "out",
-            "--print",
+            "--print",                   // Specify which printer to run
             printer,
-            "--disable-color",
+            "--disable-color",           // Disable ANSI color codes for easier parsing
         ])
-        .stdout(Stdio::piped()) // capture printer text
-        .stderr(Stdio::piped()) // capture banner & errors (nothing hits tty)
+        .stdout(Stdio::piped()) // Capture printer text from stdout
+        .stderr(Stdio::piped()) // Capture banner & errors from stderr
         .output()?;
 
-    // ❶  use whichever stream is non-empty
+    // Use whichever stream is non-empty (some printers output to stdout, others to stderr)
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     if text.trim().is_empty() {
         text = String::from_utf8_lossy(&output.stderr).into_owned();
     }
 
+    // Ensure we got some output
     if text.trim().is_empty() {
         return Err(anyhow!("Slither ran but produced no `{}` output", printer));
     }
@@ -51,7 +75,14 @@ fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
     Ok(text)
 }
 
-/// Parse the `slithir-ssa` printer output -> Vec<SlithIRFn>
+/// Parses the output of the Slither 'slithir-ssa' printer into a vector of SlithIRFn structs.
+///
+/// This function processes the text output from Slither's slithir-ssa printer,
+/// which contains the SlithIR representation of functions in Solidity contracts.
+/// It extracts the contract name, function name, and IR content for each function.
+///
+/// @param text - The raw text output from the slithir-ssa printer
+/// @return Vector of SlithIRFn structs containing the parsed data
 pub fn parse_slithir(text: &str) -> Vec<SlithIRFn> {
     let mut current_contract = String::new();
     let mut current_fn = String::new();
@@ -60,11 +91,13 @@ pub fn parse_slithir(text: &str) -> Vec<SlithIRFn> {
 
     info!("text in parse_slithir {}", text.len());
     for line in text.lines() {
-        // info!("LINE => {}", line);
+        // Parse contract lines (format: "Contract ContractName:")
         if line.starts_with("Contract ") {
             current_contract = line["Contract ".len()..].trim_end_matches(':').to_owned();
-        } else if line.starts_with("\tFunction ") {
-            // flush previous
+        }
+        // Parse function lines (format: "\tFunction functionName:")
+        else if line.starts_with("\tFunction ") {
+            // Flush previous function data if we have any
             if !current_fn.is_empty() {
                 let ir_content = replace_special_character(&buf);
                 out.push(SlithIRFn {
@@ -73,14 +106,18 @@ pub fn parse_slithir(text: &str) -> Vec<SlithIRFn> {
                     ir: ir_content,
                 });
             }
+            // Extract new function name and reset buffer
             current_fn = line.trim()[9..].trim_end_matches(':').to_owned();
             buf.clear();
-        } else if line.starts_with("\t\t") {
+        }
+        // Parse IR lines (format: "\t\t<ir content>")
+        else if line.starts_with("\t\t") {
             buf.push_str(line.trim_start());
             buf.push('\n');
         }
     }
-    // flush last
+
+    // Flush the last function after processing all lines
     if !current_fn.is_empty() && !buf.trim().is_empty() && buf.trim().len() > 10 {
         let ir_content = replace_special_character(&buf);
         out.push(SlithIRFn {
@@ -94,22 +131,35 @@ pub fn parse_slithir(text: &str) -> Vec<SlithIRFn> {
             current_contract, current_fn
         );
     }
+
     info!("functions => {:#?}", out.len());
     out
 }
 
-/// Parse `variable-order` printer output -> Vec<StorageVar>
+/// Parses the output of the Slither 'variable-order' printer into a vector of StorageVar structs.
+///
+/// This function processes the text output from Slither's variable-order printer,
+/// which contains information about storage variables in Solidity contracts.
+/// It extracts the contract name, variable name, and variable type for each storage variable.
+///
+/// @param text - The raw text output from the variable-order printer
+/// @return Vector of StorageVar structs containing the parsed data
 pub fn parse_storage(text: &str) -> Vec<StorageVar> {
     let mut current_contract = String::new();
     let mut vars = Vec::new();
+
     for line in text.lines() {
+        // Parse contract lines (format: "Contract ContractName:")
         if line.starts_with("Contract") && line.ends_with(':') {
             current_contract = line["Contract".len()..]
                 .trim_end_matches(':')
                 .trim()
                 .to_owned();
-        } else if line.starts_with('|') && line.contains('|') {
+        }
+        // Parse variable lines (format: "| <index> | <name> | <type> | <...> |")
+        else if line.starts_with('|') && line.contains('|') {
             let cols: Vec<_> = line.split('|').map(|c| c.trim()).collect();
+            // Check if this is a valid variable line (has enough columns and not a header)
             if cols.len() >= 3 && cols[1] != "Name" && !cols[1].is_empty() && !cols[2].is_empty() {
                 vars.push(StorageVar {
                     contract: current_contract.clone(),
@@ -124,26 +174,56 @@ pub fn parse_storage(text: &str) -> Vec<StorageVar> {
             }
         }
     }
+
     info!("storage => {:#?}", vars.len());
     vars
 }
 
+/// Replaces special characters in the SlithIR text with their ASCII equivalents.
+///
+/// This function replaces the Greek letter phi (ϕ) with the ASCII string "phi"
+/// to ensure the text can be properly processed and displayed.
+///
+/// @param text - The text containing special characters
+/// @return String with special characters replaced
 pub fn replace_special_character(text: &str) -> String {
+    // Replace the Greek letter phi (ϕ) with "phi"
     let cleaned_text = text.trim().replace("ϕ", "phi");
 
     cleaned_text
 }
-/// Public façade: run both printers, return parsed artefacts
+/// Runs both Slither printers and returns the parsed IR and storage information.
+///
+/// This function is the main public interface for extracting SlithIR and storage
+/// information from Solidity contracts. It runs both the slithir-ssa and variable-order
+/// printers and parses their output.
+///
+/// @param repo_root - Path to the repository root containing Solidity contracts
+/// @return Result containing a tuple of SlithIRFn and StorageVar vectors
 pub fn dump_ir_and_storage(repo_root: &Path) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>)> {
+    // Run the slithir-ssa printer to get IR information
     let ir_raw = run_printer(repo_root, "slithir-ssa")?;
+
+    // Run the variable-order printer to get storage information
     let storage_raw = run_printer(repo_root, "variable-order")?;
     info!("storage raw => {}", storage_raw.len());
+
+    // Parse both outputs and return the results
     Ok((parse_slithir(&ir_raw), parse_storage(&storage_raw)))
 }
 
+/// Dumps IR and storage information to individual text files in a directory.
+///
+/// This function extracts SlithIR and storage information from Solidity contracts
+/// and writes each function's IR and each storage variable's information to separate
+/// text files in the specified directory.
+///
+/// @param repo_root - Path to the repository root containing Solidity contracts
+/// @param dir - Path to the directory where the text files will be written
+/// @return Result containing a vector of paths to the created files
 pub fn dump_chunks_to_dir(repo_root: &Path, dir: &Path) -> Result<Vec<PathBuf>> {
     // 1 . gather IR + storage  (re-use existing function)
-    info!("get ir and storage chuncks");
+    info!("get ir and storage chunks");
     let (ir_vec, storage_vec) = dump_ir_and_storage(repo_root)?;
     info!("storage vec => {:?}", storage_vec.len());
 
