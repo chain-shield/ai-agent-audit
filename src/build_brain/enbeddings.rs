@@ -19,7 +19,7 @@ use crate::utils::bpe::get_bpe; // OpenAI’s GPT-4 / text-embedding 3 vocab
 #[derive(Embed, Clone)]
 struct SourceChunk {
     #[embed] // Field Rig will vectorise
-    text: String,     // The actual text content to be embedded
+    text: String, // The actual text content to be embedded
     metadata: String, // we’ll keep this alongside the vector
 }
 
@@ -79,7 +79,7 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(String, Vec<
 
     // info!("using openai to embed in {}-item batches…", BATCH);
     for docs_slice in docs.chunks(BATCH) {
-        info!("Batch size: {}", docs_slice.len());
+        // info!("Batch size: {}", docs_slice.len());
         // for (i, doc) in docs_slice.iter().enumerate() {
         //     info!(
         //         "Chunk {}: text='{}', metadata='{}'",
