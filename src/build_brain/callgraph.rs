@@ -1,4 +1,3 @@
-// crates/slither_ffi/src/callgraph.rs
 use anyhow::Result;
 use regex::Regex;
 use serde::Deserialize;

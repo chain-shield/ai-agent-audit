@@ -1,6 +1,9 @@
+use std::fs::exists;
+
 /// This module provides functionality for interacting with the Qdrant vector database.
 /// It handles creating collections and upserting vectors with their associated metadata.
 use anyhow::Result;
+use log::info;
 use qdrant_client::qdrant::{
     vectors_config::Config, CreateCollection, Distance, PointStruct, UpsertPointsBuilder,
     VectorParams, VectorsConfig,
@@ -19,6 +22,14 @@ use serde_json::json;
 /// @param dim - Dimension of the vectors to be stored in the collection
 /// @return Result indicating success or failure
 pub async fn ensure_collection(client: &Qdrant, name: &str, dim: u64) -> Result<()> {
+    // check if collection already exists
+    let already_exists = client.collection_exists(name).await?;
+
+    if already_exists {
+        info!("Collection {} already exists...no need to create", name);
+        return Ok(());
+    }
+
     // Build the request *by value* (no &CreateCollection -> eliminates the Into/From error)
     let req = CreateCollection {
         collection_name: name.to_owned(),

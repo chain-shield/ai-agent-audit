@@ -7,7 +7,7 @@
 /// 4. Creating embeddings for the source code and analysis results
 /// 5. Storing the embeddings in a Qdrant vector database for semantic search
 use ai_agent_audit::build_brain::{
-    enbeddings::embed_files, enrichment, intake, slither_ffi, vector_db,
+    enbeddings::embed_files, enrichment, graph_db, inheritance, intake, slither_ffi, vector_db,
 };
 use anyhow::Result;
 use dotenvy::dotenv;
