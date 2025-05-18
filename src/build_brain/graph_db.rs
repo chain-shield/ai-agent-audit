@@ -19,6 +19,20 @@ impl GraphDb {
               caller TEXT,
               callee TEXT
             );
+            CREATE TABLE IF NOT EXISTS functions(
+            id TEXT PRIMARY KEY,
+            contract TEXT,
+            name TEXT
+            );
+            CREATE TABLE IF NOT EXISTS edges(
+            caller TEXT,
+            callee TEXT
+            );
+            /* NEW ↓ */
+            CREATE TABLE IF NOT EXISTS inheritance(
+            child TEXT,
+            parent TEXT
+            );
             "#,
         )?;
         Ok(Self(conn))
@@ -36,6 +50,14 @@ impl GraphDb {
         self.0.execute(
             "INSERT INTO edges(caller, callee) VALUES (?1, ?2);",
             params![caller, callee],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_inheritance(&self, child: &str, parent: &str) -> Result<()> {
+        self.0.execute(
+            "INSERT INTO inheritance(child, parent) VALUES (?1, ?2);",
+            params![child, parent],
         )?;
         Ok(())
     }

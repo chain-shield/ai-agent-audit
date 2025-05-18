@@ -10,6 +10,7 @@ pub mod build_brain {
     /// Provides enrichment of smart contract data using Slither analysis
     pub mod enrichment;
     pub mod graph_db;
+    pub mod inheritance;
     /// Handles repository cloning and file filtering
     pub mod intake;
     /// Interfaces with the Slither static analysis tool

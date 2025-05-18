@@ -1,0 +1,218 @@
+{
+  "success": true,
+  "error": null,
+  "results": {
+    "printers": [
+      {
+        "elements": [],
+        "description": "Inheritance\n\u001b[94mChild_Contract -> \u001b[0m\u001b[92mImmediate_Base_Contracts\u001b[0m\u001b[92m [Not_Immediate_Base_Contracts]\u001b[0m\u001b[94m\n+ Base64\n\u001b[0m\u001b[94m\n+ Ownable\n\u001b[0m -> \u001b[92mContext\u001b[0m\n\u001b[94m\n+ ERC165\n\u001b[0m -> \u001b[92mIERC165\u001b[0m\n\u001b[94m\n+ IERC165\n\u001b[0m\u001b[94m\n+ SafeMath\n\u001b[0m\u001b[94m\n+ ERC721\n\u001b[0m -> \u001b[92mContext, ERC165, IERC721, IERC721Metadata, IERC721Enumerable\u001b[0m\n, [\u001b[92mIERC165\u001b[0m]\n\u001b[94m\n+ IERC721\n\u001b[0m -> \u001b[92mIERC165\u001b[0m\n\u001b[94m\n+ IERC721Enumerable\n\u001b[0m -> \u001b[92mIERC721\u001b[0m\n, [\u001b[92mIERC165\u001b[0m]\n\u001b[94m\n+ IERC721Metadata\n\u001b[0m -> \u001b[92mIERC721\u001b[0m\n, [\u001b[92mIERC165\u001b[0m]\n\u001b[94m\n+ IERC721Receiver\n\u001b[0m\u001b[94m\n+ Address\n\u001b[0m\u001b[94m\n+ Context\n\u001b[0m\u001b[94m\n+ EnumerableMap\n\u001b[0m\u001b[94m\n+ EnumerableSet\n\u001b[0m\u001b[94m\n+ Strings\n\u001b[0m\u001b[94m\n+ PuppyRaffle\n\u001b[0m -> \u001b[92mERC721, Ownable\u001b[0m\n, [\u001b[92mIERC721Enumerable, IERC721Metadata, IERC721, ERC165, IERC165, Context\u001b[0m]\n\u001b[92m\n\nBase_Contract -> \u001b[0m\u001b[94mImmediate_Child_Contracts\u001b[0m\n\u001b[94m [Not_Immediate_Child_Contracts]\u001b[0m\n\u001b[92m\n+ Base64\u001b[0m\n\u001b[92m\n+ Ownable\u001b[0m\n -> \u001b[94mPuppyRaffle\u001b[0m\n\u001b[92m\n+ ERC165\u001b[0m\n -> \u001b[94mERC721\u001b[0m\n, [\u001b[94mPuppyRaffle\u001b[0m]\n\u001b[92m\n+ IERC165\u001b[0m\n -> \u001b[94mERC165, IERC721\u001b[0m\n, [\u001b[94mERC721, IERC721Enumerable, IERC721Metadata, PuppyRaffle\u001b[0m]\n\u001b[92m\n+ SafeMath\u001b[0m\n\u001b[92m\n+ ERC721\u001b[0m\n -> \u001b[94mPuppyRaffle\u001b[0m\n\u001b[92m\n+ IERC721\u001b[0m\n -> \u001b[94mERC721, IERC721Enumerable, IERC721Metadata\u001b[0m\n, [\u001b[94mPuppyRaffle\u001b[0m]\n\u001b[92m\n+ IERC721Enumerable\u001b[0m\n -> \u001b[94mERC721\u001b[0m\n, [\u001b[94mPuppyRaffle\u001b[0m]\n\u001b[92m\n+ IERC721Metadata\u001b[0m\n -> \u001b[94mERC721\u001b[0m\n, [\u001b[94mPuppyRaffle\u001b[0m]\n\u001b[92m\n+ IERC721Receiver\u001b[0m\n\u001b[92m\n+ Address\u001b[0m\n\u001b[92m\n+ Context\u001b[0m\n -> \u001b[94mOwnable, ERC721\u001b[0m\n, [\u001b[94mPuppyRaffle\u001b[0m]\n\u001b[92m\n+ EnumerableMap\u001b[0m\n\u001b[92m\n+ EnumerableSet\u001b[0m\n\u001b[92m\n+ Strings\u001b[0m\n\u001b[92m\n+ PuppyRaffle\u001b[0m\n",
+        "markdown": "Inheritance\n\u001b[94mChild_Contract -> \u001b[0m\u001b[92mImmediate_Base_Contracts\u001b[0m\u001b[92m [Not_Immediate_Base_Contracts]\u001b[0m\u001b[94m\n+ Base64\n\u001b[0m\u001b[94m\n+ Ownable\n\u001b[0m -> \u001b[92mContext\u001b[0m\n\u001b[94m\n+ ERC165\n\u001b[0m -> \u001b[92mIERC165\u001b[0m\n\u001b[94m\n+ IERC165\n\u001b[0m\u001b[94m\n+ SafeMath\n\u001b[0m\u001b[94m\n+ ERC721\n\u001b[0m -> \u001b[92mContext, ERC165, IERC721, IERC721Metadata, IERC721Enumerable\u001b[0m\n, [\u001b[92mIERC165\u001b[0m]\n\u001b[94m\n+ IERC721\n\u001b[0m -> \u001b[92mIERC165\u001b[0m\n\u001b[94m\n+ IERC721Enumerable\n\u001b[0m -> \u001b[92mIERC721\u001b[0m\n, [\u001b[92mIERC165\u001b[0m]\n\u001b[94m\n+ IERC721Metadata\n\u001b[0m -> \u001b[92mIERC721\u001b[0m\n, [\u001b[92mIERC165\u001b[0m]\n\u001b[94m\n+ IERC721Receiver\n\u001b[0m\u001b[94m\n+ Address\n\u001b[0m\u001b[94m\n+ Context\n\u001b[0m\u001b[94m\n+ EnumerableMap\n\u001b[0m\u001b[94m\n+ EnumerableSet\n\u001b[0m\u001b[94m\n+ Strings\n\u001b[0m\u001b[94m\n+ PuppyRaffle\n\u001b[0m -> \u001b[92mERC721, Ownable\u001b[0m\n, [\u001b[92mIERC721Enumerable, IERC721Metadata, IERC721, ERC165, IERC165, Context\u001b[0m]\n\u001b[92m\n\nBase_Contract -> \u001b[0m\u001b[94mImmediate_Child_Contracts\u001b[0m\n\u001b[94m [Not_Immediate_Child_Contracts]\u001b[0m\n\u001b[92m\n+ Base64\u001b[0m\n\u001b[92m\n+ Ownable\u001b[0m\n -> \u001b[94mPuppyRaffle\u001b[0m\n\u001b[92m\n+ ERC165\u001b[0m\n -> \u001b[94mERC721\u001b[0m\n, [\u001b[94mPuppyRaffle\u001b[0m]\n\u001b[92m\n+ IERC165\u001b[0m\n -> \u001b[94mERC165, IERC721\u001b[0m\n, [\u001b[94mERC721, IERC721Enumerable, IERC721Metadata, PuppyRaffle\u001b[0m]\n\u001b[92m\n+ SafeMath\u001b[0m\n\u001b[92m\n+ ERC721\u001b[0m\n -> \u001b[94mPuppyRaffle\u001b[0m\n\u001b[92m\n+ IERC721\u001b[0m\n -> \u001b[94mERC721, IERC721Enumerable, IERC721Metadata\u001b[0m\n, [\u001b[94mPuppyRaffle\u001b[0m]\n\u001b[92m\n+ IERC721Enumerable\u001b[0m\n -> \u001b[94mERC721\u001b[0m\n, [\u001b[94mPuppyRaffle\u001b[0m]\n\u001b[92m\n+ IERC721Metadata\u001b[0m\n -> \u001b[94mERC721\u001b[0m\n, [\u001b[94mPuppyRaffle\u001b[0m]\n\u001b[92m\n+ IERC721Receiver\u001b[0m\n\u001b[92m\n+ Address\u001b[0m\n\u001b[92m\n+ Context\u001b[0m\n -> \u001b[94mOwnable, ERC721\u001b[0m\n, [\u001b[94mPuppyRaffle\u001b[0m]\n\u001b[92m\n+ EnumerableMap\u001b[0m\n\u001b[92m\n+ EnumerableSet\u001b[0m\n\u001b[92m\n+ Strings\u001b[0m\n\u001b[92m\n+ PuppyRaffle\u001b[0m\n",
+        "first_markdown_element": "",
+        "id": "4acd83998bf021d43c39b58d1c054e8b49f376440744d10c375dbb45b7e7b9b3",
+        "additional_fields": {
+          "child_to_base": {
+            "Base64": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "Ownable": {
+              "immediate": [
+                "Context"
+              ],
+              "not_immediate": []
+            },
+            "ERC165": {
+              "immediate": [
+                "IERC165"
+              ],
+              "not_immediate": []
+            },
+            "IERC165": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "SafeMath": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "ERC721": {
+              "immediate": [
+                "Context",
+                "ERC165",
+                "IERC721",
+                "IERC721Metadata",
+                "IERC721Enumerable"
+              ],
+              "not_immediate": [
+                "IERC165"
+              ]
+            },
+            "IERC721": {
+              "immediate": [
+                "IERC165"
+              ],
+              "not_immediate": []
+            },
+            "IERC721Enumerable": {
+              "immediate": [
+                "IERC721"
+              ],
+              "not_immediate": [
+                "IERC165"
+              ]
+            },
+            "IERC721Metadata": {
+              "immediate": [
+                "IERC721"
+              ],
+              "not_immediate": [
+                "IERC165"
+              ]
+            },
+            "IERC721Receiver": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "Address": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "Context": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "EnumerableMap": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "EnumerableSet": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "Strings": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "PuppyRaffle": {
+              "immediate": [
+                "ERC721",
+                "Ownable"
+              ],
+              "not_immediate": [
+                "IERC721Enumerable",
+                "IERC721Metadata",
+                "IERC721",
+                "ERC165",
+                "IERC165",
+                "Context"
+              ]
+            }
+          },
+          "base_to_child": {
+            "Base64": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "Ownable": {
+              "immediate": [
+                "PuppyRaffle"
+              ],
+              "not_immediate": []
+            },
+            "ERC165": {
+              "immediate": [
+                "ERC721"
+              ],
+              "not_immediate": [
+                "ERC721"
+              ]
+            },
+            "IERC165": {
+              "immediate": [
+                "ERC165",
+                "IERC721"
+              ],
+              "not_immediate": [
+                "ERC165",
+                "IERC721"
+              ]
+            },
+            "SafeMath": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "ERC721": {
+              "immediate": [
+                "PuppyRaffle"
+              ],
+              "not_immediate": []
+            },
+            "IERC721": {
+              "immediate": [
+                "ERC721",
+                "IERC721Enumerable",
+                "IERC721Metadata"
+              ],
+              "not_immediate": [
+                "ERC721",
+                "IERC721Enumerable",
+                "IERC721Metadata"
+              ]
+            },
+            "IERC721Enumerable": {
+              "immediate": [
+                "ERC721"
+              ],
+              "not_immediate": [
+                "ERC721"
+              ]
+            },
+            "IERC721Metadata": {
+              "immediate": [
+                "ERC721"
+              ],
+              "not_immediate": [
+                "ERC721"
+              ]
+            },
+            "IERC721Receiver": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "Address": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "Context": {
+              "immediate": [
+                "Ownable",
+                "ERC721"
+              ],
+              "not_immediate": [
+                "Ownable",
+                "ERC721"
+              ]
+            },
+            "EnumerableMap": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "EnumerableSet": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "Strings": {
+              "immediate": [],
+              "not_immediate": []
+            },
+            "PuppyRaffle": {
+              "immediate": [],
+              "not_immediate": []
+            }
+          }
+        },
+        "printer": "inheritance"
+      }
+    ]
+  }
+}
