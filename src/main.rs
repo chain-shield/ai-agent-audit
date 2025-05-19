@@ -6,8 +6,9 @@
 /// 3. Extracting IR and storage information using Slither
 /// 4. Creating embeddings for the source code and analysis results
 /// 5. Storing the embeddings in a Qdrant vector database for semantic search
-use ai_agent_audit::build_brain::{
-    enbeddings::embed_files, enrichment, graph_db, inheritance, intake, slither_ffi, vector_db,
+use ai_agent_audit::{
+    build_brain::{enbeddings::embed_files, enrichment, intake, slither_ffi, vector_db},
+    static_scanning,
 };
 use anyhow::Result;
 use dotenvy::dotenv;
@@ -52,7 +53,14 @@ async fn main() -> Result<()> {
     // info!("slither ssa files => {:?}", slither_chunk_paths);
 
     // ────────────────────────────────
-    // 3. Assemble the *full* file list to embed
+    // 3. Static-analysis (Slither detectors)
+    // ────────────────────────────────
+    info!("running Slither detectors → SARIF → seed queue");
+    let seeds_db = static_scanning::slither::scan_and_store(&repo.root)?;
+    info!("Seeds at {}", seeds_db.display());
+
+    // ────────────────────────────────
+    // 4. Assemble the *full* file list to embed
     //    – original Solidity + docs  (repo.sol_files  ∪  repo.docs)
     //    – temp IR / storage files   (tmp_paths)
     // ────────────────────────────────
