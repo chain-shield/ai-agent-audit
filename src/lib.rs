@@ -19,6 +19,11 @@ pub mod build_brain {
     pub mod vector_db;
 }
 
+pub mod static_scanning {
+    pub mod seed_db;
+    pub mod slither;
+}
+
 /// The utils module contains utility functions used throughout the codebase.
 pub mod utils {
     /// Provides access to the OpenAI tokenizer (BPE) used for text chunking
