@@ -93,7 +93,7 @@ fn sarif_to_seeds(sarif_json: &str) -> Result<Vec<Seed>> {
 }
 
 /// Public façade: run Slither, parse SARIF, write seeds.db, return path
-pub fn scan_and_store(repo_root: &Path) -> Result<PathBuf> {
+pub fn slither_scan_and_store_to_db(repo_root: &Path) -> Result<PathBuf> {
     let json = run_slither_sarif(repo_root)?;
     let seeds = sarif_to_seeds(&json)?;
 

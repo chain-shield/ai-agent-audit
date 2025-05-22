@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::{collections::HashMap, path::Path, process::Command};
 
 /// envelope runner (JSON wrapper identical to call-graph helper)
-pub fn inheritance_envelope(repo: &Path) -> Result<String> {
+pub fn generate_slither_inheritance(repo: &Path) -> Result<String> {
     let out = Command::new("slither")
         .current_dir(repo)
         .args([".", "--print", "inheritance", "--json", "-"])

@@ -29,7 +29,7 @@ pub struct RepoPaths {
 ///
 /// @param url - URL of the Git repository to clone
 /// @return Result containing the filtered repository paths
-pub fn clone_and_filter(url: &str) -> Result<RepoPaths> {
+pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
     // Clone the repository to a temporary directory
     let root = tempfile::tempdir()?.keep();
     Repository::clone(url, &root)?;

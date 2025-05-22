@@ -24,6 +24,16 @@ pub mod static_scanning {
     pub mod slither;
 }
 
+pub mod enumerator {
+    pub mod path_enum;
+    pub mod slice_db;
+    pub mod slice_maker;
+}
+
+pub mod ai_bot {
+    pub mod retrieve_slice;
+}
+
 /// The utils module contains utility functions used throughout the codebase.
 pub mod utils {
     /// Provides access to the OpenAI tokenizer (BPE) used for text chunking
