@@ -89,13 +89,13 @@ pub async fn generate_codeblock_from_slither_seed(
     let mut markdown_codeblock_for_llm = String::new();
     // list storage vars
     for contract in &contracts {
-        let storage_var_ir = generate_slice_content_for_storage(contract, repo_root).await?;
+        let storage_var_ir = generate_code_slice_for_storage(contract, repo_root).await?;
         // loop through and add all functions of contract
         markdown_codeblock_for_llm.push_str(&storage_var_ir);
         markdown_codeblock_for_llm.push('\n');
     }
     for func in &all_funcs_connected_to_contract {
-        let function_ir_code = generate_slice_content_for_function(func, repo_root).await?;
+        let function_ir_code = generate_codeblock_for_function(func, repo_root).await?;
         markdown_codeblock_for_llm.push_str(&function_ir_code);
         markdown_codeblock_for_llm.push('\n');
     }
@@ -129,7 +129,7 @@ pub async fn generate_codeblock_from_slither_seed(
     Ok(())
 }
 
-async fn generate_slice_content_for_function(
+async fn generate_codeblock_for_function(
     func: &SmartContractFunction,
     repo: &Path,
 ) -> anyhow::Result<String> {
@@ -145,7 +145,7 @@ async fn generate_slice_content_for_function(
     Ok(function_slice)
 }
 
-async fn generate_slice_content_for_storage(contract: &str, repo: &Path) -> anyhow::Result<String> {
+async fn generate_code_slice_for_storage(contract: &str, repo: &Path) -> anyhow::Result<String> {
     let storage_map = get_storage_map(repo).await?;
     let mut storage_slice = String::new();
     if let Some(vars) = storage_map.get(contract) {
@@ -196,7 +196,7 @@ async fn get_token_count_of_function_ir(
 ) -> anyhow::Result<usize> {
     // estimate token increment: header + IR lines + storage lines
 
-    let fn_text = generate_slice_content_for_function(func, repo).await?;
+    let fn_text = generate_codeblock_for_function(func, repo).await?;
     let bpe = get_bpe();
     let tokens = bpe.encode_with_special_tokens(&fn_text).len();
     Ok(tokens)

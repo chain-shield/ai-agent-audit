@@ -1,5 +1,3 @@
-use std::fs::exists;
-
 /// This module provides functionality for interacting with the Qdrant vector database.
 /// It handles creating collections and upserting vectors with their associated metadata.
 use anyhow::Result;
