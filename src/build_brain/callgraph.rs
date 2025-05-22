@@ -17,7 +17,7 @@ pub struct DotEdge {
 }
 
 /// Step 1: run Slither and grab the JSON envelope
-pub fn callgraph_envelope(repo: &Path) -> Result<String> {
+pub fn generate_slither_call_graph(repo: &Path) -> Result<String> {
     let out = Command::new("slither")
         .current_dir(repo)
         .args([".", "--print", "call-graph", "--json", "-"])

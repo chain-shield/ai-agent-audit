@@ -54,4 +54,38 @@ impl SeedDb {
         )?;
         Ok(())
     }
+
+    pub fn all_seeds(&self) -> Result<Vec<Seed>> {
+        let mut stmt = self.0.prepare(
+            "SELECT id,
+                detector,
+                file,
+                start_line,
+                end_line,
+                severity,
+                message,
+                created_at
+         FROM seeds",
+        )?;
+
+        // query_map → Iterator<Result<Seed>>
+        let rows = stmt.query_map(params![], |row| {
+            Ok(Seed {
+                id: row.get(0)?,
+                detector: row.get(1)?,
+                file: row.get(2)?,
+                start_line: row.get(3)?,
+                end_line: row.get(4)?,
+                severity: row.get(5)?,
+                message: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })?;
+
+        // transpose Iterator<Result<…>>  → Result<Vec<…>>
+        let seeds: Result<Vec<Seed>, _> = rows.collect();
+        let seeds = seeds?;
+
+        Ok(seeds)
+    }
 }

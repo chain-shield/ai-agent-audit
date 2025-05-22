@@ -2,9 +2,10 @@ use super::graph_db::GraphDb;
 /// This module handles the enrichment of smart contract data using Slither analysis.
 /// It provides functionality to extract intermediate representation (IR) and storage information
 /// from Solidity contracts, and to build Forge projects.
-use super::slither_ffi::{dump_ir_and_storage, SlithIRFn, StorageVar};
+use super::slither_ffi::{get_ir_and_storage_vars_for_each_function, SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
 use anyhow::Result;
+use log::info;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -24,8 +25,8 @@ pub struct Enriched {
 ///
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @return Result containing the enriched data
-pub fn enrich_with_slither(repo_root: &Path) -> Result<Enriched> {
-    let (ir, storage) = dump_ir_and_storage(repo_root)?;
+pub async fn enrich_with_slither(repo_root: &Path) -> Result<Enriched> {
+    let (ir, storage) = get_ir_and_storage_vars_for_each_function(repo_root).await?;
     Ok(Enriched { ir, storage })
 }
 
@@ -53,12 +54,12 @@ pub fn forge_build(repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn build_semantics_db(repo_root: &Path) -> Result<PathBuf> {
+pub fn build_semantics_db_from_call_graph(repo_root: &Path) -> Result<PathBuf> {
     // 1. extract DOT blobs
-    let json = callgraph::callgraph_envelope(repo_root)?;
+    let json = callgraph::generate_slither_call_graph(repo_root)?;
     let blobs = callgraph::extract_dot_blobs(&json)?;
     let (funcs, edges) = callgraph::parse_dot_blobs(&blobs)?;
-    let inheritance_json = inheritance::inheritance_envelope(repo_root)?;
+    let inheritance_json = inheritance::generate_slither_inheritance(repo_root)?;
     let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
     // info!("dot functions => {:?}", funcs);
     // info!("dot edges => {:?}", edges);
@@ -69,15 +70,18 @@ pub fn build_semantics_db(repo_root: &Path) -> Result<PathBuf> {
     let db = GraphDb::create(&db_path)?;
 
     // 3. insert functions
+    // info!("funcs => {:?}", funcs);
     for f in &funcs {
         db.insert_function(&f.full_id, &f.contract, &f.name)?;
     }
 
     // 4. insert edges
+    // info!("edges => {:?}", edges);
     for e in &edges {
         db.insert_edge(&e.caller, &e.callee)?;
     }
 
+    // info!("child/parent => {:?}", inheritance_edges);
     for (child, parent) in inheritance_edges {
         db.insert_inheritance(&child, &parent)?;
     }

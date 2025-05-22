@@ -3,10 +3,18 @@
 /// such as SlithIR (intermediate representation) and storage variable details.
 use anyhow::{anyhow, Result};
 use log::{debug, info};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Global cache keyed by (repo_root, printer) tuple stringified
+pub static PRINTER_OUTPUT_CACHE: Lazy<Arc<Mutex<HashMap<String, String>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 /// Represents a single function's SlithIR (intermediate representation).
 ///
@@ -36,6 +44,8 @@ pub struct StorageVar {
     pub r#type: String,
 }
 
+// get_IR_of_codebase()
+
 /// Runs a single Slither printer and captures its output.
 ///
 /// This function executes the Slither static analysis tool with a specific printer
@@ -44,18 +54,28 @@ pub struct StorageVar {
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @param printer - Name of the Slither printer to run (e.g., "slithir-ssa", "variable-order")
 /// @return Result containing the printer's output as a string
-fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
+// TODO - UPDATE TO CACHE based on repo hash/commit hash
+async fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
+    let key = cache_key(repo_root, printer);
+    let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
+    let mut printer_cache = cache.lock().await;
+
+    // Return cached output if exists
+    if let Some(cached) = printer_cache.get(&key) {
+        return Ok(cached.clone());
+    }
+
     // Execute Slither with the specified printer
     let output = Command::new("slither")
         .current_dir(repo_root)
         .args(&[
             ".",
-            "--foundry-ignore-compile",  // Skip compilation as we've already built with Forge
-            "--foundry-out-directory",   // Specify where to find Forge build artifacts
+            "--foundry-ignore-compile", // Skip compilation as we've already built with Forge
+            "--foundry-out-directory",  // Specify where to find Forge build artifacts
             "out",
-            "--print",                   // Specify which printer to run
+            "--print", // Specify which printer to run
             printer,
-            "--disable-color",           // Disable ANSI color codes for easier parsing
+            "--disable-color", // Disable ANSI color codes for easier parsing
         ])
         .stdout(Stdio::piped()) // Capture printer text from stdout
         .stderr(Stdio::piped()) // Capture banner & errors from stderr
@@ -72,6 +92,8 @@ fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
         return Err(anyhow!("Slither ran but produced no `{}` output", printer));
     }
 
+    // Save to cache and return
+    printer_cache.insert(key, text.clone());
     Ok(text)
 }
 
@@ -89,7 +111,7 @@ pub fn parse_slithir(text: &str) -> Vec<SlithIRFn> {
     let mut buf = String::new();
     let mut out = Vec::new();
 
-    info!("text in parse_slithir {}", text.len());
+    // info!("text in parse_slithir {}", text.len());
     for line in text.lines() {
         // Parse contract lines (format: "Contract ContractName:")
         if line.starts_with("Contract ") {
@@ -100,10 +122,12 @@ pub fn parse_slithir(text: &str) -> Vec<SlithIRFn> {
             // Flush previous function data if we have any
             if !current_fn.is_empty() {
                 let ir_content = replace_special_character(&buf);
+                let ir_content_cleaned =
+                    ir_content.replace("IRs:\n", "").replace("Expression:", "");
                 out.push(SlithIRFn {
                     contract: current_contract.clone(),
                     function: current_fn.clone(),
-                    ir: ir_content,
+                    ir: ir_content_cleaned,
                 });
             }
             // Extract new function name and reset buffer
@@ -132,7 +156,7 @@ pub fn parse_slithir(text: &str) -> Vec<SlithIRFn> {
         );
     }
 
-    info!("functions => {:#?}", out.len());
+    // info!("functions => {:#?}", out);
     out
 }
 
@@ -161,9 +185,11 @@ pub fn parse_storage(text: &str) -> Vec<StorageVar> {
             let cols: Vec<_> = line.split('|').map(|c| c.trim()).collect();
             // Check if this is a valid variable line (has enough columns and not a header)
             if cols.len() >= 3 && cols[1] != "Name" && !cols[1].is_empty() && !cols[2].is_empty() {
+                // cols[1] is contract_name.function_name.  need to parse
+                let (contract, function) = split_str_by_period(cols[1]).unwrap();
                 vars.push(StorageVar {
-                    contract: current_contract.clone(),
-                    name: cols[1].to_owned(),
+                    contract,
+                    name: function,
                     r#type: cols[2].to_owned(),
                 });
             } else {
@@ -175,11 +201,19 @@ pub fn parse_storage(text: &str) -> Vec<StorageVar> {
         }
     }
 
-    info!("storage => {:#?}", vars.len());
+    // info!("storage => {:#?}", vars.len());
     vars
 }
-
-/// Replaces special characters in the SlithIR text with their ASCII equivalents.
+// splits "first.last" => ("first","last")
+fn split_str_by_period(input: &str) -> Option<(String, String)> {
+    let parts: Vec<&str> = input.split('.').collect();
+    if parts.len() == 2 {
+        Some((parts[0].to_string(), parts[1].to_string()))
+    } else {
+        None // Invalid format
+    }
+}
+/// Replces special characters in the SlithIR text with their ASCII equivalents.
 ///
 /// This function replaces the Greek letter phi (ϕ) with the ASCII string "phi"
 /// to ensure the text can be properly processed and displayed.
@@ -200,13 +234,15 @@ pub fn replace_special_character(text: &str) -> String {
 ///
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @return Result containing a tuple of SlithIRFn and StorageVar vectors
-pub fn dump_ir_and_storage(repo_root: &Path) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>)> {
+pub async fn get_ir_and_storage_vars_for_each_function(
+    repo_root: &Path,
+) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>)> {
     // Run the slithir-ssa printer to get IR information
-    let ir_raw = run_printer(repo_root, "slithir-ssa")?;
+    let ir_raw = run_printer(repo_root, "slithir-ssa").await?;
 
     // Run the variable-order printer to get storage information
-    let storage_raw = run_printer(repo_root, "variable-order")?;
-    info!("storage raw => {}", storage_raw.len());
+    let storage_raw = run_printer(repo_root, "variable-order").await?;
+    // info!("storage raw => {}", storage_raw);
 
     // Parse both outputs and return the results
     Ok((parse_slithir(&ir_raw), parse_storage(&storage_raw)))
@@ -221,11 +257,14 @@ pub fn dump_ir_and_storage(repo_root: &Path) -> Result<(Vec<SlithIRFn>, Vec<Stor
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @param dir - Path to the directory where the text files will be written
 /// @return Result containing a vector of paths to the created files
-pub fn dump_chunks_to_dir(repo_root: &Path, dir: &Path) -> Result<Vec<PathBuf>> {
+pub async fn save_ir_and_storage_vars_to_txt_files(
+    repo_root: &Path,
+    dir: &Path,
+) -> Result<Vec<PathBuf>> {
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
-    let (ir_vec, storage_vec) = dump_ir_and_storage(repo_root)?;
-    info!("storage vec => {:?}", storage_vec.len());
+    let (ir_vec, storage_vec) = get_ir_and_storage_vars_for_each_function(repo_root).await?;
+    // info!("storage vec => {:?}", storage_vec);
 
     // 2 . serialise each artefact → one text file
     let mut out_paths = Vec::new();
@@ -253,4 +292,8 @@ pub fn dump_chunks_to_dir(repo_root: &Path, dir: &Path) -> Result<Vec<PathBuf>> 
     info!("fn ir and storage var files => {:?}", out_paths.len());
 
     Ok(out_paths)
+}
+
+fn cache_key(repo_root: &Path, printer: &str) -> String {
+    format!("{}::{}", repo_root.display(), printer)
 }

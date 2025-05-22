@@ -2,6 +2,13 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 use std::path::Path;
 
+#[derive(Debug, Clone)]
+pub struct SmartContractFunction {
+    pub id: String,
+    pub contract: String,
+    pub name: String,
+}
+
 pub struct GraphDb(Connection);
 
 impl GraphDb {
@@ -14,15 +21,6 @@ impl GraphDb {
               id TEXT PRIMARY KEY,   -- 3895_changeFeeAddress
               contract TEXT,
               name TEXT
-            );
-            CREATE TABLE IF NOT EXISTS edges(
-              caller TEXT,
-              callee TEXT
-            );
-            CREATE TABLE IF NOT EXISTS functions(
-            id TEXT PRIMARY KEY,
-            contract TEXT,
-            name TEXT
             );
             CREATE TABLE IF NOT EXISTS edges(
             caller TEXT,
