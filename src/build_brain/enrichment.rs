@@ -5,7 +5,6 @@ use super::graph_db::GraphDb;
 use super::slither_ffi::{get_ir_and_storage_vars_for_each_function, SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
 use anyhow::Result;
-use log::info;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
