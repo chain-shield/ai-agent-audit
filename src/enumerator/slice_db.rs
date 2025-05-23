@@ -12,7 +12,7 @@ pub struct SeedSlice {
     pub status: String,       // NEW / DONE / ERROR
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MarkdownCodeblock {
     pub id: String, // sha256(body)
     pub tokens: usize,
