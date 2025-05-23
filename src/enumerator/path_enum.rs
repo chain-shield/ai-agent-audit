@@ -1,10 +1,9 @@
+use crate::build_brain::graph_db::SmartContractFunction;
 /// This module provides functionality for generating code slices from smart contract
 /// analysis seeds. It traverses the contract call graph to create comprehensive
 /// markdown codeblocks containing relevant code, IR, and storage information.
-use crate::build_brain::graph_db::SmartContractFunction;
 use crate::build_brain::slither_ffi::{SlithIRFn, StorageVar};
 use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cache};
-use crate::enumerator::slice_db;
 use crate::static_scanning::seed_db::Seed;
 use crate::utils::bpe::get_bpe;
 
@@ -297,21 +296,38 @@ async fn get_token_count_of_function_ir(
     Ok(tokens)
 }
 
+/// Retrieves a mapping of contract and function names to their SlithIR representations.
+///
+/// Extracts the function name from the full function signature and creates a map
+/// keyed by (contract_name, function_name) tuples.
+///
+/// # Arguments
+/// * `repo` - Path to the repository root
+///
+/// # Returns
+/// * `anyhow::Result<HashMap<(String, String), SlithIRFn>>` - Map of (contract, function) to SlithIR
 async fn get_code_ir_map(repo: &Path) -> anyhow::Result<HashMap<(String, String), SlithIRFn>> {
+    // Regex to extract function name from full signature (e.g., "Contract.function(args)")
     let extract_function_name = Regex::new(r#"[A-Za-z0-9$_]+\.([A-Za-z0-9$_]+)\([^)]*\)"#)?;
+
+    // Get IR and storage variables from Slither
     let (ir_vec, _) =
         build_brain::slither_ffi::get_ir_and_storage_vars_for_each_function(repo).await?;
 
+    // Create map of (contract, function) -> SlithIRFn
     let ir_map: HashMap<(String, String), SlithIRFn> = ir_vec
         .into_iter()
         .map(|f| {
             if let Some(c) = extract_function_name.captures(&f.function) {
+                // Extract function name from signature
                 ((f.contract.clone(), c[1].to_string()), f)
             } else {
+                // Use full function signature if extraction fails
                 ((f.contract.clone(), f.function.clone()), f)
             }
         })
         .collect();
+
     Ok(ir_map)
 }
 
