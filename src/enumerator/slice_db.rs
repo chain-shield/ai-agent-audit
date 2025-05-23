@@ -1,36 +1,65 @@
+/// This module provides functionality for storing and retrieving code slices in a SQLite database.
+/// It manages the persistence of markdown codeblocks generated from smart contract analysis.
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 
-// pub struct SliceDb(Connection);
-
+/// Represents a mapping between a seed (vulnerability finding) and a codeblock.
+///
+/// This struct serves as a join table between seeds and codeblocks, allowing
+/// the system to retrieve the relevant code for a given vulnerability.
 #[derive(Debug)]
 pub struct SeedSlice {
-    pub id: String,           // UUID
-    pub seed_id: String,      // FK → seeds.id
-    pub codeblock_id: String, // codeblocks.id
-    pub status: String,       // NEW / DONE / ERROR
+    /// Unique identifier for the seed slice
+    pub id: String,
+    /// Foreign key referencing the seed.id in the seeds table
+    pub seed_id: String,
+    /// Foreign key referencing the codeblock.id in the codeblocks table
+    pub codeblock_id: String,
+    /// Status of the seed slice (NEW, DONE, ERROR)
+    pub status: String,
 }
 
+/// Represents a markdown codeblock containing code relevant to a vulnerability.
+///
+/// This struct stores the content of a code slice along with metadata such as
+/// token count for LLM processing.
 #[derive(Debug, Clone)]
 pub struct MarkdownCodeblock {
-    pub id: String, // sha256(body)
+    /// Unique identifier for the codeblock
+    pub id: String,
+    /// Number of tokens in the content (for LLM context window management)
     pub tokens: usize,
-    pub content: String, // concatenated Markdown
+    /// The actual markdown content containing code, IR, and storage information
+    pub content: String,
 }
 
+/// Database manager for storing and retrieving code slices.
+///
+/// This struct provides an interface to the SQLite database that stores
+/// seed slices and codeblocks.
 pub struct SliceDb {
+    /// Path to the SQLite database file
     path: PathBuf,
 }
 
 impl SliceDb {
-    /// Create or open an on-disk DB.
+    /// Creates a new SliceDb instance or opens an existing one at the specified path.
+    ///
+    /// This function initializes the database schema if it doesn't already exist,
+    /// creating tables for seed slices and codeblocks with appropriate indexes.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the SQLite database file
+    ///
+    /// # Returns
+    /// * `Result<Self>` - A new SliceDb instance if successful, Error otherwise
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let db = Self {
             path: path.as_ref().to_path_buf(),
         };
 
-        // initialise schema once
+        // Initialize schema once
         let conn = Connection::open(&db.path)?;
         conn.execute_batch(
             r#"
@@ -59,7 +88,16 @@ impl SliceDb {
         Ok(db)
     }
 
-    /// Return the Markdown body for a given Slither `seed_id`.
+    /// Retrieves the markdown content for a given seed ID.
+    ///
+    /// This function performs a join between the seed_slices and codeblocks tables
+    /// to find the markdown content associated with a specific seed.
+    ///
+    /// # Arguments
+    /// * `seed_id` - The ID of the seed to retrieve code for
+    ///
+    /// # Returns
+    /// * `rusqlite::Result<String>` - The markdown content if found, Error otherwise
     pub fn get_code_for_seed(&self, seed_id: &str) -> rusqlite::Result<String> {
         let conn = Connection::open(&self.path)?;
 
@@ -76,7 +114,15 @@ impl SliceDb {
         )
     }
 
-    /// (Used by the enumerator) – insert a new slice.
+    /// Inserts a new seed slice into the database.
+    ///
+    /// This function creates a mapping between a seed and a codeblock in the database.
+    ///
+    /// # Arguments
+    /// * `s` - The SeedSlice to insert
+    ///
+    /// # Returns
+    /// * `Result<()>` - Ok if successful, Error otherwise
     pub fn insert_seed_slice(&self, s: &SeedSlice) -> Result<()> {
         let conn = Connection::open(&self.path)?;
         conn.execute(
@@ -86,10 +132,20 @@ impl SliceDb {
         Ok(())
     }
 
-    /// (Used by the enumerator) – insert a new slice.
+    /// Inserts a new codeblock into the database if it doesn't already exist.
+    ///
+    /// This function checks if a codeblock with the same ID already exists in the database
+    /// and only inserts it if it doesn't, preventing duplicate entries.
+    ///
+    /// # Arguments
+    /// * `c` - The MarkdownCodeblock to insert
+    ///
+    /// # Returns
+    /// * `Result<()>` - Ok if successful, Error otherwise
     pub fn insert_codeblock(&self, c: &MarkdownCodeblock) -> Result<()> {
         let conn = Connection::open(&self.path)?;
 
+        // Check if codeblock already exists
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM codeblocks WHERE id = ?1);",
             params![c.id],
@@ -97,11 +153,12 @@ impl SliceDb {
         )?;
 
         if exists {
-            // Optionally log or silently skip
+            // Skip insertion if codeblock already exists
             log::debug!("Skipping duplicate contract_slice with id {}", c.id);
             return Ok(());
         }
 
+        // Insert new codeblock
         conn.execute(
             "INSERT INTO codeblocks VALUES (?1,?2,?3);",
             params![c.id, c.tokens as i64, c.content],
