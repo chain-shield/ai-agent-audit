@@ -25,6 +25,7 @@ pub mod static_scanning {
 }
 
 pub mod enumerator {
+    pub mod codeblock_cache;
     pub mod path_enum;
     pub mod slice_db;
     pub mod slice_maker;

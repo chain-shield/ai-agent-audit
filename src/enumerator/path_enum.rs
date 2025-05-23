@@ -1,9 +1,13 @@
+/// This module provides functionality for generating code slices from smart contract
+/// analysis seeds. It traverses the contract call graph to create comprehensive
+/// markdown codeblocks containing relevant code, IR, and storage information.
 use crate::build_brain::graph_db::SmartContractFunction;
 use crate::build_brain::slither_ffi::{SlithIRFn, StorageVar};
+use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cache};
+use crate::enumerator::slice_db;
 use crate::static_scanning::seed_db::Seed;
 use crate::utils::bpe::get_bpe;
 
-// crates/path_enum/src/lib.rs
 use super::slice_db::{MarkdownCodeblock, SeedSlice, SliceDb};
 use crate::build_brain;
 use anyhow::{anyhow, Result};
@@ -14,6 +18,27 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use uuid::Uuid;
 
+/// Generates a markdown codeblock from a Slither analysis seed.
+///
+/// This function performs the following steps:
+/// 1. Checks if the codeblock is already cached to avoid redundant processing
+/// 2. Extracts the contract and all its functions from the seed file
+/// 3. Performs a breadth-first search (BFS) through the call graph up to max_depth
+/// 4. Assembles a markdown codeblock containing:
+///    - Storage layout for each contract
+///    - SlithIR representation for each function
+/// 5. Saves the generated codeblock to the database and cache
+///
+/// # Arguments
+/// * `repo_root` - Path to the repository root
+/// * `seed` - The Slither analysis seed containing vulnerability information
+/// * `semantic_db` - Database connection containing semantic information about the contracts
+/// * `slice_db` - Database for storing generated code slices
+/// * `max_depth` - Maximum depth for BFS traversal of the call graph
+/// * `token_budget` - Maximum token count for the generated codeblock
+///
+/// # Returns
+/// * `Result<()>` - Ok if successful, Error otherwise
 pub async fn generate_codeblock_from_slither_seed(
     repo_root: &Path,
     seed: &Seed,
@@ -22,6 +47,13 @@ pub async fn generate_codeblock_from_slither_seed(
     max_depth: usize,
     token_budget: usize,
 ) -> Result<()> {
+    // Check if codeblock already generated for this seed
+    if let Some(codeblock) = get_cached_codeblock(&seed.file).await {
+        // Save seed-to-codeblock mapping in the database
+        save_seed_slice_to_db(&seed.id, &codeblock.id, slice_db)?;
+        return Ok(());
+    };
+
     //extract the contract, and all its functions, the slither seed file references
     // the slither issue may be scoped to 1 function in 1 contract, however we pull the
     // ENTIRE contract so there is more context for llm
@@ -104,17 +136,9 @@ pub async fn generate_codeblock_from_slither_seed(
         markdown_codeblock_for_llm.len()
     );
 
-    let md_codeblock_id = hex::encode(&markdown_codeblock_for_llm);
+    let md_codeblock_id = Uuid::new_v4().to_string();
 
-    let seed_slice = SeedSlice {
-        id: Uuid::new_v4().to_string(),
-        codeblock_id: md_codeblock_id.clone(),
-        seed_id: seed.id.clone(),
-        status: "NEW".into(),
-    };
-    // 4. store
-    slice_db.insert_seed_slice(&seed_slice)?;
-    // info!("seed slice => {:#?}", seed_slice);
+    save_seed_slice_to_db(&seed.id, &md_codeblock_id, slice_db)?;
 
     let codeblock = MarkdownCodeblock {
         id: md_codeblock_id,
@@ -124,11 +148,49 @@ pub async fn generate_codeblock_from_slither_seed(
     // 4. store
     slice_db.insert_codeblock(&codeblock)?;
 
-    // info!("contract slice => {:#?}", contract_slice);
+    // save to cache
+    set_codeblock_cache(&seed.file, &codeblock).await;
+
+    // info!("codeblock => {:#?}", codeblock);
 
     Ok(())
 }
 
+/// Saves a mapping between a seed and a codeblock to the database.
+///
+/// Creates a new SeedSlice entry with a unique ID and inserts it into the database.
+///
+/// # Arguments
+/// * `seed_id` - The ID of the seed
+/// * `codeblock_id` - The ID of the codeblock
+/// * `slice_db` - The database to save the mapping to
+///
+/// # Returns
+/// * `Result<()>` - Ok if successful, Error otherwise
+fn save_seed_slice_to_db(seed_id: &str, codeblock_id: &str, slice_db: &SliceDb) -> Result<()> {
+    let seed_slice = SeedSlice {
+        id: Uuid::new_v4().to_string(),
+        codeblock_id: codeblock_id.to_string(),
+        seed_id: seed_id.to_string(),
+        status: "NEW".into(),
+    };
+
+    slice_db.insert_seed_slice(&seed_slice)?;
+    info!("seed slice => {}", seed_slice.id);
+
+    Ok(())
+}
+
+/// Generates a markdown codeblock for a specific function.
+///
+/// Retrieves the SlithIR representation of the function and formats it as a markdown codeblock.
+///
+/// # Arguments
+/// * `func` - The smart contract function to generate a codeblock for
+/// * `repo` - Path to the repository root
+///
+/// # Returns
+/// * `anyhow::Result<String>` - The generated markdown codeblock
 async fn generate_codeblock_for_function(
     func: &SmartContractFunction,
     repo: &Path,
@@ -145,6 +207,16 @@ async fn generate_codeblock_for_function(
     Ok(function_slice)
 }
 
+/// Generates a markdown codeblock for a contract's storage layout.
+///
+/// Retrieves the storage variables for a contract and formats them as a markdown codeblock.
+///
+/// # Arguments
+/// * `contract` - The name of the contract
+/// * `repo` - Path to the repository root
+///
+/// # Returns
+/// * `anyhow::Result<String>` - The generated markdown codeblock
 async fn generate_code_slice_for_storage(contract: &str, repo: &Path) -> anyhow::Result<String> {
     let storage_map = get_storage_map(repo).await?;
     let mut storage_slice = String::new();
@@ -160,6 +232,17 @@ async fn generate_code_slice_for_storage(contract: &str, repo: &Path) -> anyhow:
     Ok(storage_slice)
 }
 
+/// Extracts all functions from a contract referenced in a seed file.
+///
+/// Queries the semantic database to find all functions belonging to the contract
+/// mentioned in the seed file.
+///
+/// # Arguments
+/// * `seed` - The Slither analysis seed
+/// * `semantic_db` - Database connection containing semantic information about the contracts
+///
+/// # Returns
+/// * `anyhow::Result<Vec<SmartContractFunction>>` - List of functions in the contract
 fn get_contract_and_its_functions_from_seed_file(
     seed: &Seed,
     semantic_db: &Connection,
@@ -168,7 +251,6 @@ fn get_contract_and_its_functions_from_seed_file(
         .file_stem() // "PuppyRaffle.sol" → "PuppyRaffle"
         .and_then(|s| s.to_str())
         .ok_or_else(|| anyhow!("invalid seed.file"))?;
-    // 1. map <seed.file:start> → starting function full_id
 
     let mut statement =
         semantic_db.prepare("SELECT id, contract, name FROM functions WHERE contract LIKE ?1")?;
@@ -190,15 +272,28 @@ fn get_contract_and_its_functions_from_seed_file(
     Ok(functions_of_contract)
 }
 
+/// Calculates the token count of a function's IR representation.
+///
+/// Generates the markdown codeblock for the function and counts the number of tokens
+/// using the BPE tokenizer.
+///
+/// # Arguments
+/// * `func` - The smart contract function
+/// * `repo` - Path to the repository root
+///
+/// # Returns
+/// * `anyhow::Result<usize>` - The token count
 async fn get_token_count_of_function_ir(
     func: &SmartContractFunction,
     repo: &Path,
 ) -> anyhow::Result<usize> {
-    // estimate token increment: header + IR lines + storage lines
-
+    // Generate the function's markdown codeblock
     let fn_text = generate_codeblock_for_function(func, repo).await?;
+
+    // Count tokens using BPE tokenizer
     let bpe = get_bpe();
     let tokens = bpe.encode_with_special_tokens(&fn_text).len();
+
     Ok(tokens)
 }
 
