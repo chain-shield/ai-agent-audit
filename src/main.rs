@@ -7,16 +7,14 @@
 /// 4. Creating embeddings for the source code and analysis results
 /// 5. Storing the embeddings in a Qdrant vector database for semantic search
 use ai_agent_audit::{
-    build_brain::{enbeddings::embed_files, enrichment, intake, slither_ffi, vector_db},
+    build_brain::{enrichment, intake, slither_ffi, vector_db},
     enumerator::slice_maker,
-    static_scanning,
 };
 use anyhow::Result;
 use dotenvy::dotenv;
 use log::info;
-use qdrant_client::Qdrant;
 
-const MAX_DEPTH: usize = 3;
+const MAX_DEPTH: usize = 2;
 const TOKEN_BUDGET: usize = 150_000;
 
 /// The main async function that orchestrates the entire process.
@@ -52,6 +50,7 @@ async fn main() -> Result<()> {
     // Create a temporary directory to store the Slither analysis results
     let tmp_dir = tempfile::tempdir()?;
     info!("generating slither ssa into txt files that contain function or storage var");
+
     // Extract IR and storage information using Slither and write to text files
     let slither_chunk_paths =
         slither_ffi::save_ir_and_storage_vars_to_txt_files(&repo.root, tmp_dir.path()).await?;
@@ -60,12 +59,12 @@ async fn main() -> Result<()> {
     // ────────────────────────────────
     // 3. Static-analysis (Slither detectors)
     // ────────────────────────────────
-    info!("running Slither detectors → SARIF → seed queue");
-    let seeds_db = static_scanning::slither::slither_scan_and_store_to_db(&repo.root)?;
-    info!("Seeds at {}", seeds_db.display());
+    // info!("running Slither detectors → SARIF → seed queue");
+    // let seeds_db = static_scanning::slither::slither_scan_and_store_to_db(&repo.root)?;
+    // info!("Seeds at {}", seeds_db.display());
 
-    info!("enumerating execution slices..");
-    let slice_db = slice_maker::generate_and_save_code_slices_from_slither_seeds(
+    info!("generating codeblock for each contract in repo");
+    let slice_db = slice_maker::generate_and_save_codeblocks_for_each_contract(
         &repo.root,
         &semantic_db,
         MAX_DEPTH,
@@ -92,27 +91,7 @@ async fn main() -> Result<()> {
     all_files.extend(slither_chunk_paths);
     info!("all files => {:?}", all_files.len());
 
-    // Generate vector embeddings for all files
-    info!("generating vector embedding");
-    let embeddings = embed_files(&all_files).await?;
-
-    // ────────────────────────────────
-    // 4. Upsert into Qdrant
-    // ────────────────────────────────
-    info!("connect to qdrant db");
-
-    // Build Qdrant client configuration and connect to the database
-    let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL")?).build()?;
-
-    // Create the collection if it doesn't exist
-    info!("create contract_chunks vector db (if does not exist)");
-    vector_db::ensure_collection(&qdrant, "contract_chunks", 1536).await?;
-
-    // Upsert the embeddings into the Qdrant collection
-    info!("upsert embeddings");
-    vector_db::upsert(&qdrant, "contract_chunks", &embeddings).await?;
-
-    // Print completion message
-    println!("✅ Ingest complete – {} chunks stored", embeddings.len());
+    //embed all files and upsert to qdrant vector db for later dynamic retrival
+    vector_db::generate_enbeddings_and_save_to_qdrant_vector_db(&all_files).await?;
     Ok(())
 }

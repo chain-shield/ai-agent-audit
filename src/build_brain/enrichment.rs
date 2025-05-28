@@ -2,7 +2,7 @@ use super::graph_db::GraphDb;
 /// This module handles the enrichment of smart contract data using Slither analysis.
 /// It provides functionality to extract intermediate representation (IR) and storage information
 /// from Solidity contracts, and to build Forge projects.
-use super::slither_ffi::{get_ir_and_storage_vars_for_each_function, SlithIRFn, StorageVar};
+use super::slither_ffi::{get_ir_storage_vars_and_issues, SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -15,18 +15,6 @@ pub struct Enriched {
     pub ir: Vec<SlithIRFn>,
     /// Vector of storage variable information
     pub storage: Vec<StorageVar>,
-}
-
-/// Extracts IR and storage information from Solidity contracts using Slither.
-///
-/// This function uses the Slither static analysis framework to analyze Solidity contracts
-/// and extract their intermediate representation and storage information.
-///
-/// @param repo_root - Path to the repository root containing Solidity contracts
-/// @return Result containing the enriched data
-pub async fn enrich_with_slither(repo_root: &Path) -> Result<Enriched> {
-    let (ir, storage) = get_ir_and_storage_vars_for_each_function(repo_root).await?;
-    Ok(Enriched { ir, storage })
 }
 
 /// Builds a Forge project by running `forge install` and `forge build`.

@@ -26,17 +26,52 @@ pub mod static_scanning {
 
 pub mod enumerator {
     pub mod codeblock_cache;
+    pub mod codeblocks;
     pub mod path_enum;
     pub mod slice_db;
     pub mod slice_maker;
+    pub mod utils;
+}
+
+pub mod llm_review {
+    pub mod analysis_db;
+    pub mod config;
 }
 
 pub mod ai_bot {
+    pub mod agent;
+    pub mod rag;
     pub mod retrieve_slice;
+}
+
+pub mod prompts {
+    pub mod dos;
+    pub mod access_control;
+    pub mod integer_overflow;
+    pub mod self_destruct;
+    pub mod unexpected_eth;
+    pub mod randomness;
+    pub mod reentrancy;
+    pub mod storage_variables;
+    pub mod default_visibility;
+    pub mod unchecked_return_value;
+    pub mod tx_origin;
+    pub mod short_address_attack;
+    pub mod float_precision;
+    pub mod replay_attack;
+    pub mod inheritance;
+    pub mod array_limits;
+    pub mod zero_code;
+    pub mod oracle;
+    pub mod confidential_data;
+    pub mod pragma;
+
 }
 
 /// The utils module contains utility functions used throughout the codebase.
 pub mod utils {
     /// Provides access to the OpenAI tokenizer (BPE) used for text chunking
     pub mod bpe;
+    pub mod get_doc_file;
+    pub mod vec_db_connect;
 }

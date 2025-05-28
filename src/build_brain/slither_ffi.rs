@@ -44,7 +44,25 @@ pub struct StorageVar {
     pub r#type: String,
 }
 
-// get_IR_of_codebase()
+fn run_slither_detector(repo: &Path) -> Result<String> {
+    let out = Command::new("slither")
+        .current_dir(repo)
+        .args([
+            ".",
+            "--foundry-ignore-compile",
+            "--foundry-out-directory",
+            "out",
+        ])
+        .output()?;
+    // anyhow::ensure!(out.status.success(), "slither --sarif failed");
+    //
+    // Use whichever stream is non-empty (some printers output to stdout, others to stderr)
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    if text.trim().is_empty() {
+        text = String::from_utf8_lossy(&out.stderr).into_owned();
+    }
+    Ok(text)
+}
 
 /// Runs a single Slither printer and captures its output.
 ///
@@ -97,6 +115,31 @@ async fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
     Ok(text)
 }
 
+pub fn parse_slither(text: &str) -> Vec<String> {
+    let mut current_issue = String::new();
+    let mut issues = Vec::<String>::new();
+
+    for line in text.lines() {
+        // parse each detected issue
+        if line.contains("Detectors") && line.ends_with(':') {
+            if !current_issue.is_empty() {
+                issues.push(current_issue.to_string());
+                current_issue = line.to_string();
+            }
+        } else {
+            current_issue.push_str(line);
+        }
+    }
+
+    // add last issues
+    if !current_issue.is_empty() {
+        issues.push(current_issue.to_string());
+    }
+
+    // info!("issues => {:#?}", issues);
+    issues
+}
+
 /// Parses the output of the Slither 'slithir-ssa' printer into a vector of SlithIRFn structs.
 ///
 /// This function processes the text output from Slither's slithir-ssa printer,
@@ -105,7 +148,7 @@ async fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
 ///
 /// @param text - The raw text output from the slithir-ssa printer
 /// @return Vector of SlithIRFn structs containing the parsed data
-pub fn parse_slithir(text: &str) -> Vec<SlithIRFn> {
+pub fn parse_slithir_ssa(text: &str) -> Vec<SlithIRFn> {
     let mut current_contract = String::new();
     let mut current_fn = String::new();
     let mut buf = String::new();
@@ -234,9 +277,9 @@ pub fn replace_special_character(text: &str) -> String {
 ///
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @return Result containing a tuple of SlithIRFn and StorageVar vectors
-pub async fn get_ir_and_storage_vars_for_each_function(
+pub async fn get_ir_storage_vars_and_issues(
     repo_root: &Path,
-) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>)> {
+) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>, Vec<String>)> {
     // Run the slithir-ssa printer to get IR information
     let ir_raw = run_printer(repo_root, "slithir-ssa").await?;
 
@@ -244,8 +287,14 @@ pub async fn get_ir_and_storage_vars_for_each_function(
     let storage_raw = run_printer(repo_root, "variable-order").await?;
     // info!("storage raw => {}", storage_raw);
 
+    let slither_scan_results = run_slither_detector(repo_root)?;
+
     // Parse both outputs and return the results
-    Ok((parse_slithir(&ir_raw), parse_storage(&storage_raw)))
+    Ok((
+        parse_slithir_ssa(&ir_raw),
+        parse_storage(&storage_raw),
+        parse_slither(&slither_scan_results),
+    ))
 }
 
 /// Dumps IR and storage information to individual text files in a directory.
@@ -263,7 +312,7 @@ pub async fn save_ir_and_storage_vars_to_txt_files(
 ) -> Result<Vec<PathBuf>> {
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
-    let (ir_vec, storage_vec) = get_ir_and_storage_vars_for_each_function(repo_root).await?;
+    let (ir_vec, storage_vec, slither_scan_vec) = get_ir_storage_vars_and_issues(repo_root).await?;
     // info!("storage vec => {:?}", storage_vec);
 
     // 2 . serialise each artefact → one text file
@@ -289,7 +338,18 @@ pub async fn save_ir_and_storage_vars_to_txt_files(
         out_paths.push(p);
     }
 
-    info!("fn ir and storage var files => {:?}", out_paths.len());
+    info!("convert slither scan results to txt files");
+    for (i, issue) in slither_scan_vec.iter().enumerate() {
+        let meta = format!("{} slither code issue", i);
+        let p = dir.join(meta.replace(" ", "_") + ".txt");
+        fs::write(&p, issue)?;
+        out_paths.push(p);
+    }
+
+    info!(
+        "slither issues found, fn ir, storage var files => {:?}",
+        out_paths.len()
+    );
 
     Ok(out_paths)
 }
