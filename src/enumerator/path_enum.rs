@@ -2,18 +2,18 @@ use crate::build_brain::graph_db::SmartContractFunction;
 /// This module provides functionality for generating code slices from smart contract
 /// analysis seeds. It traverses the contract call graph to create comprehensive
 /// markdown codeblocks containing relevant code, IR, and storage information.
-use crate::build_brain::slither_ffi::{SlithIRFn, StorageVar};
 use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cache};
+use crate::enumerator::utils::{
+    generate_code_slice_for_storage, generate_codeblock_for_function,
+    get_contract_and_its_functions_from_seed_file, get_token_count_of_function_ir,
+};
 use crate::static_scanning::seed_db::Seed;
-use crate::utils::bpe::get_bpe;
 
 use super::slice_db::{MarkdownCodeblock, SeedSlice, SliceDb};
-use crate::build_brain;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use log::info;
-use regex::Regex;
 use rusqlite::{Connection, OptionalExtension};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -56,7 +56,8 @@ pub async fn generate_codeblock_from_slither_seed(
     //extract the contract, and all its functions, the slither seed file references
     // the slither issue may be scoped to 1 function in 1 contract, however we pull the
     // ENTIRE contract so there is more context for llm
-    let functions_of_contract = get_contract_and_its_functions_from_seed_file(seed, semantic_db)?;
+    let functions_of_contract =
+        get_contract_and_its_functions_from_seed_file(&seed.file, semantic_db)?;
 
     // 2. BFS until depth / token budget
     let mut frontier: VecDeque<(SmartContractFunction, usize)> = VecDeque::new();
@@ -141,6 +142,7 @@ pub async fn generate_codeblock_from_slither_seed(
 
     let codeblock = MarkdownCodeblock {
         id: md_codeblock_id,
+        contract: seed.file.clone(),
         tokens: token_count,
         content: markdown_codeblock_for_llm,
     };
@@ -178,169 +180,4 @@ fn save_seed_slice_to_db(seed_id: &str, codeblock_id: &str, slice_db: &SliceDb) 
     info!("seed slice => {}", seed_slice.id);
 
     Ok(())
-}
-
-/// Generates a markdown codeblock for a specific function.
-///
-/// Retrieves the SlithIR representation of the function and formats it as a markdown codeblock.
-///
-/// # Arguments
-/// * `func` - The smart contract function to generate a codeblock for
-/// * `repo` - Path to the repository root
-///
-/// # Returns
-/// * `anyhow::Result<String>` - The generated markdown codeblock
-async fn generate_codeblock_for_function(
-    func: &SmartContractFunction,
-    repo: &Path,
-) -> anyhow::Result<String> {
-    let ir_map = get_code_ir_map(repo).await?;
-    let mut function_slice = String::new();
-    if let Some(ir) = ir_map.get(&(func.contract.clone(), func.name.clone())) {
-        function_slice.push_str(&format!("#### {}\n", ir.function));
-        function_slice.push_str("```slithir\n");
-        function_slice.push_str(&ir.ir);
-        function_slice.push_str("\n```");
-    }
-
-    Ok(function_slice)
-}
-
-/// Generates a markdown codeblock for a contract's storage layout.
-///
-/// Retrieves the storage variables for a contract and formats them as a markdown codeblock.
-///
-/// # Arguments
-/// * `contract` - The name of the contract
-/// * `repo` - Path to the repository root
-///
-/// # Returns
-/// * `anyhow::Result<String>` - The generated markdown codeblock
-async fn generate_code_slice_for_storage(contract: &str, repo: &Path) -> anyhow::Result<String> {
-    let storage_map = get_storage_map(repo).await?;
-    let mut storage_slice = String::new();
-    if let Some(vars) = storage_map.get(contract) {
-        storage_slice.push_str(&format!("### Storage layout ({}) \n\n", contract));
-        storage_slice.push_str("```text\n");
-        for v in vars {
-            storage_slice.push_str(&format!("{} {}\n", v.name, v.r#type));
-        }
-        storage_slice.push_str("\n```");
-    }
-
-    Ok(storage_slice)
-}
-
-/// Extracts all functions from a contract referenced in a seed file.
-///
-/// Queries the semantic database to find all functions belonging to the contract
-/// mentioned in the seed file.
-///
-/// # Arguments
-/// * `seed` - The Slither analysis seed
-/// * `semantic_db` - Database connection containing semantic information about the contracts
-///
-/// # Returns
-/// * `anyhow::Result<Vec<SmartContractFunction>>` - List of functions in the contract
-fn get_contract_and_its_functions_from_seed_file(
-    seed: &Seed,
-    semantic_db: &Connection,
-) -> anyhow::Result<Vec<SmartContractFunction>> {
-    let filename = Path::new(&seed.file)
-        .file_stem() // "PuppyRaffle.sol" → "PuppyRaffle"
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| anyhow!("invalid seed.file"))?;
-
-    let mut statement =
-        semantic_db.prepare("SELECT id, contract, name FROM functions WHERE contract LIKE ?1")?;
-
-    let rows = statement.query_map([format!("%{}%", filename)], |row| {
-        Ok(SmartContractFunction {
-            id: row.get(0)?,
-            contract: row.get(1)?,
-            name: row.get(2)?,
-        })
-    })?;
-    let functions_of_contract: Vec<SmartContractFunction> =
-        rows.collect::<rusqlite::Result<_>>()?;
-
-    if functions_of_contract.is_empty() {
-        return Err(anyhow!("no entry fn found for seed {}", seed.id));
-    }
-
-    Ok(functions_of_contract)
-}
-
-/// Calculates the token count of a function's IR representation.
-///
-/// Generates the markdown codeblock for the function and counts the number of tokens
-/// using the BPE tokenizer.
-///
-/// # Arguments
-/// * `func` - The smart contract function
-/// * `repo` - Path to the repository root
-///
-/// # Returns
-/// * `anyhow::Result<usize>` - The token count
-async fn get_token_count_of_function_ir(
-    func: &SmartContractFunction,
-    repo: &Path,
-) -> anyhow::Result<usize> {
-    // Generate the function's markdown codeblock
-    let fn_text = generate_codeblock_for_function(func, repo).await?;
-
-    // Count tokens using BPE tokenizer
-    let bpe = get_bpe();
-    let tokens = bpe.encode_with_special_tokens(&fn_text).len();
-
-    Ok(tokens)
-}
-
-/// Retrieves a mapping of contract and function names to their SlithIR representations.
-///
-/// Extracts the function name from the full function signature and creates a map
-/// keyed by (contract_name, function_name) tuples.
-///
-/// # Arguments
-/// * `repo` - Path to the repository root
-///
-/// # Returns
-/// * `anyhow::Result<HashMap<(String, String), SlithIRFn>>` - Map of (contract, function) to SlithIR
-async fn get_code_ir_map(repo: &Path) -> anyhow::Result<HashMap<(String, String), SlithIRFn>> {
-    // Regex to extract function name from full signature (e.g., "Contract.function(args)")
-    let extract_function_name = Regex::new(r#"[A-Za-z0-9$_]+\.([A-Za-z0-9$_]+)\([^)]*\)"#)?;
-
-    // Get IR and storage variables from Slither
-    let (ir_vec, _) =
-        build_brain::slither_ffi::get_ir_and_storage_vars_for_each_function(repo).await?;
-
-    // Create map of (contract, function) -> SlithIRFn
-    let ir_map: HashMap<(String, String), SlithIRFn> = ir_vec
-        .into_iter()
-        .map(|f| {
-            if let Some(c) = extract_function_name.captures(&f.function) {
-                // Extract function name from signature
-                ((f.contract.clone(), c[1].to_string()), f)
-            } else {
-                // Use full function signature if extraction fails
-                ((f.contract.clone(), f.function.clone()), f)
-            }
-        })
-        .collect();
-
-    Ok(ir_map)
-}
-
-async fn get_storage_map(repo: &Path) -> anyhow::Result<HashMap<String, Vec<StorageVar>>> {
-    let (_, storage_vec) =
-        build_brain::slither_ffi::get_ir_and_storage_vars_for_each_function(repo).await?;
-
-    let storage_map: HashMap<String, Vec<StorageVar>> = {
-        let mut m = HashMap::<String, Vec<StorageVar>>::new();
-        for v in storage_vec {
-            m.entry(v.contract.clone()).or_default().push(v);
-        }
-        m
-    };
-    Ok(storage_map)
 }

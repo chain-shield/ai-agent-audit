@@ -28,6 +28,8 @@ pub struct SeedSlice {
 pub struct MarkdownCodeblock {
     /// Unique identifier for the codeblock
     pub id: String,
+    // i.e. PuppyRaffle.sol
+    pub contract: String,
     /// Number of tokens in the content (for LLM context window management)
     pub tokens: usize,
     /// The actual markdown content containing code, IR, and storage information
@@ -80,6 +82,7 @@ impl SliceDb {
                 /* ───────── deduped contract bodies ─────────── */
                 CREATE TABLE IF NOT EXISTS codeblocks(
                 id      TEXT PRIMARY KEY,  -- sha256(body)
+                filename TEXT,
                 tokens  INTEGER,
                 content TEXT
                 );
@@ -160,8 +163,8 @@ impl SliceDb {
 
         // Insert new codeblock
         conn.execute(
-            "INSERT INTO codeblocks VALUES (?1,?2,?3);",
-            params![c.id, c.tokens as i64, c.content],
+            "INSERT INTO codeblocks VALUES (?1,?2,?3,?4);",
+            params![c.id, c.contract, c.tokens as i64, c.content],
         )?;
         Ok(())
     }

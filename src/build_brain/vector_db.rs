@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 /// This module provides functionality for interacting with the Qdrant vector database.
 /// It handles creating collections and upserting vectors with their associated metadata.
 use anyhow::Result;
@@ -9,6 +11,34 @@ use qdrant_client::qdrant::{
 use qdrant_client::Payload;
 use qdrant_client::Qdrant;
 use serde_json::json;
+
+use crate::build_brain::enbeddings::embed_files;
+
+pub async fn generate_enbeddings_and_save_to_qdrant_vector_db(all_files: &[PathBuf]) -> Result<()> {
+    // Generate vector embeddings for all files
+    info!("generating vector embedding");
+    let embeddings = embed_files(&all_files).await?;
+
+    // ────────────────────────────────
+    // 4. Upsert into Qdrant
+    // ────────────────────────────────
+    info!("connect to qdrant db");
+
+    // Build Qdrant client configuration and connect to the database
+    let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL")?).build()?;
+
+    // Create the collection if it doesn't exist
+    info!("create contract_chunks vector db (if does not exist)");
+    ensure_collection(&qdrant, "contract_chunks", 1536).await?;
+
+    // Upsert the embeddings into the Qdrant collection
+    info!("upsert embeddings");
+    upsert(&qdrant, "contract_chunks", &embeddings).await?;
+
+    // Print completion message
+    println!("✅ Ingest complete – {} chunks stored", embeddings.len());
+    Ok(())
+}
 
 /// Ensures that a collection exists in the Qdrant database, creating it if missing.
 ///
