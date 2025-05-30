@@ -7,8 +7,10 @@
 /// 4. Creating embeddings for the source code and analysis results
 /// 5. Storing the embeddings in a Qdrant vector database for semantic search
 use ai_agent_audit::{
+    ai_bot::{self, agent},
     build_brain::{enrichment, intake, slither_ffi, vector_db},
     enumerator::slice_maker,
+    llm_review::code_review,
 };
 use anyhow::Result;
 use dotenvy::dotenv;
@@ -51,27 +53,23 @@ async fn main() -> Result<()> {
     let tmp_dir = tempfile::tempdir()?;
     info!("generating slither ssa into txt files that contain function or storage var");
 
+    // TODO - UNPAUSE AFTER DONE TESTING
     // Extract IR and storage information using Slither and write to text files
-    let slither_chunk_paths =
-        slither_ffi::save_ir_and_storage_vars_to_txt_files(&repo.root, tmp_dir.path()).await?;
+    // let slither_chunk_paths =
+    //     slither_ffi::save_ir_and_storage_vars_to_txt_files(&repo.root, tmp_dir.path()).await?;
     // info!("slither ssa files => {:?}", slither_chunk_paths);
 
     // ────────────────────────────────
     // 3. Static-analysis (Slither detectors)
-    // ────────────────────────────────
-    // info!("running Slither detectors → SARIF → seed queue");
-    // let seeds_db = static_scanning::slither::slither_scan_and_store_to_db(&repo.root)?;
-    // info!("Seeds at {}", seeds_db.display());
-
     info!("generating codeblock for each contract in repo");
-    let slice_db = slice_maker::generate_and_save_codeblocks_for_each_contract(
+    let codeblocks_db = slice_maker::generate_and_save_codeblocks_for_each_contract(
         &repo.root,
         &semantic_db,
         MAX_DEPTH,
         TOKEN_BUDGET,
     )
     .await?;
-    info!("Slices at {}", slice_db.display());
+    info!("Slices at {}", codeblocks_db.display());
 
     // ────────────────────────────────
     // 4. Assemble the *full* file list to embed
@@ -83,15 +81,20 @@ async fn main() -> Result<()> {
     // - Solidity source files
     // - Documentation files
     // - Slither analysis result files
-    let mut all_files: Vec<_> = repo
-        .sol_files
-        .into_iter()
-        .chain(repo.docs.into_iter())
-        .collect();
-    all_files.extend(slither_chunk_paths);
-    info!("all files => {:?}", all_files.len());
+    // TODO - UNPAUSE AFTER DONE TESTING
+    // let mut all_files: Vec<_> = repo
+    //     .sol_files
+    //     .into_iter()
+    //     .chain(repo.docs.into_iter())
+    //     .collect();
+    // all_files.extend(slither_chunk_paths);
+    // info!("all files => {:?}", all_files.len());
 
     //embed all files and upsert to qdrant vector db for later dynamic retrival
-    vector_db::generate_enbeddings_and_save_to_qdrant_vector_db(&all_files).await?;
+    // TODO - UNPAUSE AFTER DONE TESTING
+    // vector_db::generate_enbeddings_and_save_to_qdrant_vector_db(&all_files).await?;
+
+    code_review::review_codebase_for_security_issues(&repo.root, &codeblocks_db).await?;
+
     Ok(())
 }

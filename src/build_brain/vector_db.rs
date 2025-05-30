@@ -14,6 +14,8 @@ use serde_json::json;
 
 use crate::build_brain::enbeddings::embed_files;
 
+use super::enbeddings::SourceChunk;
+
 pub async fn generate_enbeddings_and_save_to_qdrant_vector_db(all_files: &[PathBuf]) -> Result<()> {
     // Generate vector embeddings for all files
     info!("generating vector embedding");
@@ -86,17 +88,26 @@ pub async fn ensure_collection(client: &Qdrant, name: &str, dim: u64) -> Result<
 /// @param collection - Name of the collection to upsert into
 /// @param items - Slice of tuples containing metadata strings and their corresponding embedding vectors
 /// @return Result indicating success or failure
-pub async fn upsert(client: &Qdrant, collection: &str, items: &[(String, Vec<f32>)]) -> Result<()> {
+pub async fn upsert(
+    client: &Qdrant,
+    collection: &str,
+    items: &[(SourceChunk, Vec<f32>)],
+) -> Result<()> {
     // Build PointStructs from the items
     let points: Vec<PointStruct> = items
         .iter()
         .enumerate()
-        .map(|(i, (meta, vec))| {
-            // Create payload by storing the metadata string under key "meta"
-            let payload: Payload = json!({ "meta": meta })
+        .map(|(i, (chunk, vec))| {
+            // 🚩 flatten: payload IS the SourceChunk
+            let payload: Payload = serde_json::to_value(chunk)
+                .expect("serialise SourceChunk")
                 .try_into()
-                .expect("could not process payload");
-            // Create a new point with ID, vector, and payload
+                .expect("to Payload");
+            // // Create payload by storing the metadata string under key "meta"
+            // let payload: Payload = serde_json::to_value(chunck)
+            //     .try_into()
+            //     .expect("could not process payload");
+            // // Create a new point with ID, vector, and payload
             PointStruct::new(i as u64, vec.clone(), payload)
         })
         .collect();

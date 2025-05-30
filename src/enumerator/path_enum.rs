@@ -9,7 +9,7 @@ use crate::enumerator::utils::{
 };
 use crate::static_scanning::seed_db::Seed;
 
-use super::slice_db::{MarkdownCodeblock, SeedSlice, SliceDb};
+use super::slice_db::{CodeBlocksDb, MarkdownCodeblock, SeedSlice};
 use anyhow::Result;
 use log::info;
 use rusqlite::{Connection, OptionalExtension};
@@ -42,7 +42,7 @@ pub async fn generate_codeblock_from_slither_seed(
     repo_root: &Path,
     seed: &Seed,
     semantic_db: &Connection,
-    slice_db: &SliceDb,
+    slice_db: &CodeBlocksDb,
     max_depth: usize,
     token_budget: usize,
 ) -> Result<()> {
@@ -168,7 +168,7 @@ pub async fn generate_codeblock_from_slither_seed(
 ///
 /// # Returns
 /// * `Result<()>` - Ok if successful, Error otherwise
-fn save_seed_slice_to_db(seed_id: &str, codeblock_id: &str, slice_db: &SliceDb) -> Result<()> {
+fn save_seed_slice_to_db(seed_id: &str, codeblock_id: &str, slice_db: &CodeBlocksDb) -> Result<()> {
     let seed_slice = SeedSlice {
         id: Uuid::new_v4().to_string(),
         codeblock_id: codeblock_id.to_string(),

@@ -8,7 +8,7 @@ use crate::enumerator::utils::{
     get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
 };
 
-use super::slice_db::{MarkdownCodeblock, SliceDb};
+use super::slice_db::{CodeBlocksDb, MarkdownCodeblock};
 use anyhow::Result;
 use log::info;
 use rusqlite::{Connection, OptionalExtension};
@@ -40,7 +40,7 @@ use uuid::Uuid;
 pub async fn generate_codeblock_from_codebase(
     repo_root: &Path,
     semantic_db: &Connection,
-    slice_db: &SliceDb,
+    slice_db: &CodeBlocksDb,
     max_depth: usize,
     token_budget: usize,
 ) -> Result<()> {

@@ -2,7 +2,10 @@
 /// It manages the persistence of markdown codeblocks generated from smart contract analysis.
 use anyhow::Result;
 use rusqlite::{params, Connection};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 /// Represents a mapping between a seed (vulnerability finding) and a codeblock.
 ///
@@ -40,12 +43,12 @@ pub struct MarkdownCodeblock {
 ///
 /// This struct provides an interface to the SQLite database that stores
 /// seed slices and codeblocks.
-pub struct SliceDb {
+pub struct CodeBlocksDb {
     /// Path to the SQLite database file
     path: PathBuf,
 }
 
-impl SliceDb {
+impl CodeBlocksDb {
     /// Creates a new SliceDb instance or opens an existing one at the specified path.
     ///
     /// This function initializes the database schema if it doesn't already exist,
@@ -167,5 +170,45 @@ impl SliceDb {
             params![c.id, c.contract, c.tokens as i64, c.content],
         )?;
         Ok(())
+    }
+
+    /// Retrieves all contracts and their content as a HashMap.
+    ///
+    /// # Returns
+    /// * `rusqlite::Result<HashMap<String, String>>` - HashMap mapping contract names to their content
+    pub fn get_all_contracts(&self) -> rusqlite::Result<HashMap<String, String>> {
+        let conn = Connection::open(&self.path)?;
+
+        let mut stmt = conn.prepare("SELECT filename, content FROM codeblocks")?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?, // filename/contract
+                row.get::<_, String>(1)?, // content
+            ))
+        })?;
+
+        let mut contracts = HashMap::new();
+        for row in rows {
+            let (contract, content) = row?;
+            contracts.insert(contract, content);
+        }
+
+        Ok(contracts)
+    }
+
+    pub fn get_code_for_contract(&self, contract: &str) -> rusqlite::Result<String> {
+        let conn = Connection::open(&self.path)?;
+
+        conn.query_row(
+            r#"
+                SELECT content
+                FROM   codeblocks
+                WHERE  contract = ?1
+                LIMIT  1;
+                "#,
+            params![contract],
+            |row| row.get(0),
+        )
     }
 }

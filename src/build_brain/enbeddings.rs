@@ -8,6 +8,8 @@ use rig::{
     providers::openai::{self, Client},
     Embed,
 };
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{fs, path::Path};
 use tiktoken_rs::CoreBPE;
 
@@ -16,10 +18,10 @@ use crate::utils::bpe::get_bpe; // OpenAI’s GPT-4 / text-embedding 3 vocab
 /// Represents a chunk of source code to be embedded.
 /// This struct is used to organize text content with its metadata
 /// before sending it to the embedding model.
-#[derive(Embed, Clone)]
-struct SourceChunk {
+#[derive(Debug, Embed, Clone, Serialize, Deserialize)]
+pub struct SourceChunk {
     #[embed] // Field Rig will vectorise
-    text: String, // The actual text content to be embedded
+    pub text: String, // The actual text content to be embedded
     metadata: String, // we’ll keep this alongside the vector
 }
 
@@ -40,7 +42,7 @@ const BATCH: usize = 30;
  * @param paths - Array of file paths to process
  * @return Result containing a vector of tuples with metadata and embedding vectors
  */
-pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(String, Vec<f32>)>> {
+pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(SourceChunk, Vec<f32>)>> {
     // ------------------------------------------------------------------
     // 1. Slice every file into SourceChunk structs
     // ------------------------------------------------------------------
@@ -75,7 +77,7 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(String, Vec<
     // ------------------------------------------------------------------
     // 4. Flatten → (metadata, vector) so the caller can upsert to Qdrant
     // ------------------------------------------------------------------
-    let mut all_vecs = Vec::<(String, Vec<f32>)>::new();
+    let mut all_vecs = Vec::<(SourceChunk, Vec<f32>)>::new();
 
     // info!("using openai to embed in {}-item batches…", BATCH);
     for docs_slice in docs.chunks(BATCH) {
@@ -96,7 +98,7 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(String, Vec<
             if v.is_empty() {
                 return None;
             } // guard against 0-dim
-            Some((doc.metadata, v.into_iter().map(|x| x as f32).collect()))
+            Some((doc, v.into_iter().map(|x| x as f32).collect()))
         }));
     }
     Ok(all_vecs)
