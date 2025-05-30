@@ -1,6 +1,24 @@
 // TODO - UPDATE CODE PARSING TO MAKE SURE PRAGMA IS PRESENT
 pub const FLOATING_PRAGMA: &str = r#"You are an expert smart contract security auditor specializing in compiler version vulnerabilities. Your task is to perform a comprehensive floating pragma analysis on the provided Solidity smart contract code.
 
+## JSON Output Requirement
+
+YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+
+```json
+{
+  "findings": [
+    {
+      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
+      "description": "Detailed explanation including vulnerable code snippet",
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
+      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "severity": "High"
+    }
+  ]
+}
+```
 ## Analysis Framework
 Systematically examine the contract for the following floating pragma issues:
 1. **Floating Pragma Declarations**: Pragma statements using caret (^) or range operators that allow compilation with multiple compiler versions
@@ -136,4 +154,20 @@ For each floating pragma vulnerability found, provide:
 - Assess risks during contract upgrades or redeployments
 - Evaluate potential for different behavior in development vs production environments
 
+Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
+
+```json
+{
+  "findings": [
+    {
+      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
+      "description": "Detailed explanation including vulnerable code snippet",
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
+      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "severity": "High"
+    }
+  ]
+}
+```
 Focus on pragma declarations that create real deployment and security risks. Provide clear evidence showing how floating pragma usage can lead to inconsistent contract behavior or introduce security vulnerabilities."#;

@@ -1,5 +1,23 @@
 pub const WRONG_INHERITANCE: &str = r#"You are an expert smart contract security auditor specializing in inheritance vulnerabilities. Your task is to perform a comprehensive inheritance analysis on the provided Solidity smart contract code.
 
+## JSON Output Requirement
+
+YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+
+```json
+{
+  "findings": [
+    {
+      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
+      "description": "Detailed explanation including vulnerable code snippet",
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
+      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "severity": "High"
+    }
+  ]
+}
+```
 ## Analysis Framework
 Systematically examine the contract for the following inheritance issues:
 
@@ -216,4 +234,20 @@ contract GoodChild is Parent {
 8. Check for proper use of `super` keyword in function calls
 9. Identify any abstract contracts with missing implementations
 
+Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
+
+```json
+{
+  "findings": [
+    {
+      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
+      "description": "Detailed explanation including vulnerable code snippet",
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
+      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "severity": "High"
+    }
+  ]
+}
+```
 Focus on inheritance issues that can be immediately exploited or cause unexpected contract behavior. Provide concrete test cases showing how inheritance flaws manifest in runtime behavior."#;

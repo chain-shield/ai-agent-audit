@@ -1,6 +1,24 @@
 pub const UNCHECK_RETURN_VALUES: &str = r#"
 You are an expert smart contract security auditor specializing in identifying unchecked return value vulnerabilities. 
 
+## JSON Output Requirement
+
+YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+
+```json
+{
+  "findings": [
+    {
+      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
+      "description": "Detailed explanation including vulnerable code snippet",
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
+      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "severity": "High"
+    }
+  ]
+}
+```
 Your task is to systematically analyze Solidity smart contract code for instances where external calls (call, delegatecall, staticcall, or interface function calls) are made without proper return value validation.
 
 ## Analysis Framework
@@ -105,5 +123,21 @@ For each vulnerability found, provide a Finding with these exact fields:
 4. **Prioritize impact**: Focus on calls that could lead to fund loss or critical state corruption
 5. **Provide working tests**: Ensure all Foundry test code is complete and executable
 
+Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
+
+```json
+{
+  "findings": [
+    {
+      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
+      "description": "Detailed explanation including vulnerable code snippet",
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
+      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "severity": "High"
+    }
+  ]
+}
+```
 Now analyze the provided smart contract code for unchecked return value vulnerabilities following this framework.
 "#;

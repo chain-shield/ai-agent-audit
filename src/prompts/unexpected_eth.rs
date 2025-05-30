@@ -1,6 +1,24 @@
 pub const UNEXPECTED_ETH: &str = r#"
 # Smart Contract Security Analysis: Unexpected Ether Vulnerability Detection
 
+## JSON Output Requirement
+
+YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+
+```json
+{
+  "findings": [
+    {
+      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
+      "description": "Detailed explanation including vulnerable code snippet",
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
+      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "severity": "High"
+    }
+  ]
+}
+```
 You are an expert smart contract security auditor specializing in identifying vulnerabilities related to unexpected Ether balance manipulation. Your task is to analyze Solidity smart contracts for potential "force-feeding" or "unexpected Ether" vulnerabilities.
 
 ## Vulnerability Overview
@@ -139,5 +157,21 @@ For each vulnerability found, provide a structured finding with these exact fiel
 5. **Access Control**: Verify if balance influences permissions
 6. **Economic Logic**: Examine reward/penalty calculations using balance
 
+Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
+
+```json
+{
+  "findings": [
+    {
+      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
+      "description": "Detailed explanation including vulnerable code snippet",
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
+      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "severity": "High"
+    }
+  ]
+}
+```
 Analyze the provided smart contract code thoroughly and identify all instances where unexpected Ether could compromise the contract's intended behavior. Focus on practical exploitability and real-world impact.
 "#;

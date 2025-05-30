@@ -35,6 +35,7 @@ pub mod enumerator {
 
 pub mod llm_review {
     pub mod analysis_db;
+    pub mod code_review;
     pub mod config;
 }
 
@@ -45,27 +46,26 @@ pub mod ai_bot {
 }
 
 pub mod prompts {
-    pub mod dos;
     pub mod access_control;
+    pub mod array_limits;
+    pub mod confidential_data;
+    pub mod default_visibility;
+    pub mod dos;
+    pub mod float_precision;
+    pub mod inheritance;
     pub mod integer_overflow;
-    pub mod self_destruct;
-    pub mod unexpected_eth;
+    pub mod oracle;
+    pub mod pragma;
     pub mod randomness;
     pub mod reentrancy;
-    pub mod storage_variables;
-    pub mod default_visibility;
-    pub mod unchecked_return_value;
-    pub mod tx_origin;
-    pub mod short_address_attack;
-    pub mod float_precision;
     pub mod replay_attack;
-    pub mod inheritance;
-    pub mod array_limits;
+    pub mod self_destruct;
+    pub mod short_address_attack;
+    pub mod storage_variables;
+    pub mod tx_origin;
+    pub mod unchecked_return_value;
+    pub mod unexpected_eth;
     pub mod zero_code;
-    pub mod oracle;
-    pub mod confidential_data;
-    pub mod pragma;
-
 }
 
 /// The utils module contains utility functions used throughout the codebase.
@@ -73,5 +73,6 @@ pub mod utils {
     /// Provides access to the OpenAI tokenizer (BPE) used for text chunking
     pub mod bpe;
     pub mod get_doc_file;
+    pub mod logging;
     pub mod vec_db_connect;
 }

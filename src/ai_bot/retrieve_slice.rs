@@ -1,4 +1,4 @@
-use crate::enumerator::slice_db::SliceDb;
+use crate::enumerator::slice_db::CodeBlocksDb;
 use anyhow::Result;
 use rig::{completion::ToolDefinition, tool::Tool};
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ pub enum RetrieveSliceError {
 }
 
 pub struct RetrieveSliceTool {
-    pub db: SliceDb, // <- now Sync because it’s just a PathBuf
+    pub db: CodeBlocksDb, // <- now Sync because it’s just a PathBuf
 }
 
 impl Tool for RetrieveSliceTool {

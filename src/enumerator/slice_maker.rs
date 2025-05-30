@@ -8,7 +8,7 @@ use crate::static_scanning::seed_db::SeedDb;
 
 use super::{
     codeblocks::generate_codeblock_from_codebase, path_enum::generate_codeblock_from_slither_seed,
-    slice_db::SliceDb,
+    slice_db::CodeBlocksDb,
 };
 
 /// Generates and saves code slices for all seeds in the seeds database.
@@ -37,7 +37,7 @@ pub async fn generate_and_save_code_slices_from_slither_seeds(
     let semantic_conn = Connection::open(semantics_db)?;
     let seed_db = SeedDb::open(&repo_root.join(".cache").join("seeds.db"))?;
     let slice_path = repo_root.join(".cache").join("slice.db");
-    let slice_db = SliceDb::open(&slice_path)?;
+    let slice_db = CodeBlocksDb::open(&slice_path)?;
 
     // Fetch all seeds and process each one
     let seeds = seed_db.all_seeds()?;
@@ -65,7 +65,7 @@ pub async fn generate_and_save_codeblocks_for_each_contract(
     // Open the three databases
     let semantic_conn = Connection::open(semantics_db)?;
     let slice_path = repo_root.join(".cache").join("slice.db");
-    let slice_db = SliceDb::open(&slice_path)?;
+    let slice_db = CodeBlocksDb::open(&slice_path)?;
 
     // Fetch all seeds and process each one
     generate_codeblock_from_codebase(
