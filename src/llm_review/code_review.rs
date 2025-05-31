@@ -11,10 +11,8 @@ use serde_json::to_string_pretty;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    ai_bot::agent,
-    enumerator::slice_db::CodeBlocksDb,
-    llm_review::config::Finding,
-    utils::logging::{print_first_four_lines, print_schema},
+    ai_bot::agent, enumerator::slice_db::CodeBlocksDb, llm_review::config::Finding,
+    utils::logging::print_first_four_lines,
 };
 
 use super::config::{Findings, SECURITY_PROMPTS};
@@ -35,8 +33,6 @@ pub async fn review_codebase_for_security_issues(
 
     info!("setting up AI extractor...");
     let ai_audit_agent = gemini_client.agent(GEMINI_1_5_PRO).build();
-
-    print_schema();
 
     for instructions_to_find_security_issue in SECURITY_PROMPTS {
         for (contract, codeblock) in contracts.iter() {
@@ -63,14 +59,19 @@ pub async fn review_codebase_for_security_issues(
 
             let issues = ai_audit_agent.prompt(&prompt_string).await?;
             // let findings = issues.findings.clone().unwrap();
-            let formatted_json = to_string_pretty(&issues)?;
-            info!("findings for {}:\n{}", contract, formatted_json);
+            info!("findings for {}:\n{}", contract, issues);
             // TODO - parse issues
-            // all_security_issues.push(issues);
+            let findings = Findings::parse_from_json(&issues)?;
+            info!("findings => {:#?}", findings.findings);
+
+            if !findings.findings.is_empty() {
+                all_security_issues.extend(findings.findings);
+            }
         }
 
         // TODO - save issues to Findings db
     }
 
+    info!("all findings => {:#?}", all_security_issues);
     Ok(())
 }

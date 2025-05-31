@@ -2,9 +2,8 @@ pub const ACCESS_CONTROL: &str = r#"You are an expert smart contract security au
 
 ## JSON Output Requirement
 
-YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
-```json
 {
   "findings": [
     {
@@ -17,7 +16,7 @@ YOU MUST respond with ONLY valid JSON in the following exact format. Do not incl
     }
   ]
 }
-```
+
 ## Analysis Framework
 
 Systematically examine the contract for the following access control issues:
@@ -107,17 +106,8 @@ For each access control vulnerability found, provide:
 5. Consider edge cases and inheritance patterns
 6. Test your findings with concrete exploitation scenarios
 
-## Critical JSON Formatting Rules
-
-- Escape all quotes in code snippets using \"
-- Escape all newlines in code snippets using \n
-- Ensure all JSON strings are properly quoted
-- Do not include any text outside the JSON object
-- If no vulnerabilities are found, return: {"findings": []}
-
 Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
 
-```json
 {
   "findings": [
     {
@@ -130,5 +120,13 @@ Remember YOU MUST respond with ONLY valid JSON in the following exact format:
     }
   ]
 }
-```
+
+- If no vulnerabilities are found, return: 
+
+{
+  "findings": []
+}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
+
 Focus on actionable vulnerabilities that can be immediately exploited by malicious actors. Provide clear, testable evidence for each finding."#;

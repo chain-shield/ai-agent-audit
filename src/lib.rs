@@ -51,7 +51,6 @@ pub mod prompts {
     pub mod confidential_data;
     pub mod default_visibility;
     pub mod dos;
-    pub mod float_precision;
     pub mod inheritance;
     pub mod integer_overflow;
     pub mod oracle;

@@ -3,9 +3,8 @@ pub const UNEXPECTED_ETH: &str = r#"
 
 ## JSON Output Requirement
 
-YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
-```json
 {
   "findings": [
     {
@@ -18,7 +17,7 @@ YOU MUST respond with ONLY valid JSON in the following exact format. Do not incl
     }
   ]
 }
-```
+
 You are an expert smart contract security auditor specializing in identifying vulnerabilities related to unexpected Ether balance manipulation. Your task is to analyze Solidity smart contracts for potential "force-feeding" or "unexpected Ether" vulnerabilities.
 
 ## Vulnerability Overview
@@ -159,7 +158,6 @@ For each vulnerability found, provide a structured finding with these exact fiel
 
 Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
 
-```json
 {
   "findings": [
     {
@@ -172,6 +170,14 @@ Remember YOU MUST respond with ONLY valid JSON in the following exact format:
     }
   ]
 }
-```
+
+- If no vulnerabilities are found, return: 
+
+{
+  "findings": []
+}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
+
 Analyze the provided smart contract code thoroughly and identify all instances where unexpected Ether could compromise the contract's intended behavior. Focus on practical exploitability and real-world impact.
 "#;

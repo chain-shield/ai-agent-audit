@@ -2,9 +2,8 @@ pub const REPLAY_SIGNATURES_ATTACK: &str = r#"You are an expert smart contract s
 
 ## JSON Output Requirement
 
-YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
-```json
 {
   "findings": [
     {
@@ -17,7 +16,7 @@ YOU MUST respond with ONLY valid JSON in the following exact format. Do not incl
     }
   ]
 }
-```
+
 ## Analysis Framework
 Systematically examine the contract for the following signature replay vulnerabilities:
 
@@ -183,7 +182,6 @@ bytes32 hash = keccak256(abi.encodePacked(
 
 Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
 
-```json
 {
   "findings": [
     {
@@ -196,5 +194,13 @@ Remember YOU MUST respond with ONLY valid JSON in the following exact format:
     }
   ]
 }
-```
+
+- If no vulnerabilities are found, return: 
+
+{
+  "findings": []
+}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
+
 Focus on immediately exploitable signature replay attacks that can result in financial loss or unauthorized access. Provide concrete test cases showing successful signature capture and reuse."#;

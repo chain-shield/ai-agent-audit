@@ -3,9 +3,8 @@ You are an expert smart contract security auditor specializing in identifying tx
 
 ## JSON Output Requirement
 
-YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
-```json
 {
   "findings": [
     {
@@ -18,7 +17,7 @@ YOU MUST respond with ONLY valid JSON in the following exact format. Do not incl
     }
   ]
 }
-```
+
 Your task is to systematically analyze Solidity smart contract code for improper use of tx.origin in access control mechanisms, which can lead to phishing attacks and unauthorized access.
 
 ## Analysis Framework
@@ -268,7 +267,6 @@ For each vulnerability found, provide a Finding with these exact fields:
 
 Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
 
-```json
 {
   "findings": [
     {
@@ -281,6 +279,14 @@ Remember YOU MUST respond with ONLY valid JSON in the following exact format:
     }
   ]
 }
-```
+
+- If no vulnerabilities are found, return: 
+
+{
+  "findings": []
+}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
+
 Now analyze the provided smart contract code for tx.origin authentication vulnerabilities following this framework.
 "#;

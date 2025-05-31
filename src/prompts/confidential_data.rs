@@ -2,9 +2,8 @@ pub const SAVING_CONFIDENTIAL_DATA: &str = r#"You are an expert smart contract s
 
 ## JSON Output Requirement
 
-YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
-```json
 {
   "findings": [
     {
@@ -17,7 +16,7 @@ YOU MUST respond with ONLY valid JSON in the following exact format. Do not incl
     }
   ]
 }
-```
+
 ## Analysis Framework
 Systematically examine the contract for the following confidential data vulnerabilities:
 
@@ -238,7 +237,6 @@ For each confidential data vulnerability found, provide:
 
 Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
 
-```json
 {
   "findings": [
     {
@@ -251,5 +249,13 @@ Remember YOU MUST respond with ONLY valid JSON in the following exact format:
     }
   ]
 }
-```
+
+- If no vulnerabilities are found, return: 
+
+{
+  "findings": []
+}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
+
 Focus on actionable privacy vulnerabilities where confidential data can be extracted by unauthorized parties. Each finding must include a working Foundry test that demonstrates the specific data exposure vector and its potential for exploitation."#;
