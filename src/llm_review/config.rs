@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::prompts::{
     access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
     confidential_data::SAVING_CONFIDENTIAL_DATA, default_visibility::DEFAULT_VISIBILITIES,
-    dos::DOS, float_precision::INTEGER_OVERFLOW, inheritance::WRONG_INHERITANCE,
+    dos::DOS, inheritance::WRONG_INHERITANCE, integer_overflow::INTEGER_OVERFLOW,
     oracle::ORACLE_MANIPULATION, pragma::FLOATING_PRAGMA, randomness::RANDOMNESS,
     reentrancy::REENTRANCY, replay_attack::REPLAY_SIGNATURES_ATTACK, self_destruct::SELF_DESTRUCT,
     short_address_attack::SHORT_ADDRESS_ATTACK, storage_variables::STORAGE_VARIABLE,
@@ -60,6 +60,173 @@ pub const SECURITY_PROMPTS: [&str; 19] = [
     UNEXPECTED_ETH,
     CONTRACTS_WITH_ZERO_CODE,
 ];
+
+impl Findings {
+    /// Parse JSON string containing findings from LLM response
+    /// Handles both clean JSON and JSON wrapped in markdown code blocks
+    pub fn parse_from_json(json_str: &str) -> Result<Findings, serde_json::Error> {
+        // Clean the input - remove markdown code blocks and extra quotes/escapes
+        let cleaned_json = Self::clean_json_string(json_str);
+
+        // Parse the cleaned JSON
+        serde_json::from_str(&cleaned_json)
+    }
+
+    /// Clean JSON string by removing markdown code blocks, escaped quotes, and extra formatting
+    fn clean_json_string(input: &str) -> String {
+        let mut cleaned = input.trim();
+
+        // Remove outer quotes if present (from string literals)
+        if cleaned.starts_with('"') && cleaned.ends_with('"') {
+            cleaned = &cleaned[1..cleaned.len() - 1];
+        }
+
+        // Remove markdown code blocks
+        if cleaned.starts_with("```json") {
+            cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
+        }
+
+        if cleaned.ends_with("```") {
+            cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
+        }
+
+        // Replace escaped quotes and newlines
+        // cleaned
+        //     .replace("\\\"", "\"")
+        //     .replace("\\n", "\n")
+        //     .replace("\\\n", "\n")
+        //     .trim()
+        //     .to_string()
+        cleaned.to_string()
+    }
+
+    /// Parse findings from raw LLM response that may contain extra text
+    /// Extracts JSON from response that might have surrounding text
+    pub fn parse_from_llm_response(response: &str) -> Result<Findings, Box<dyn std::error::Error>> {
+        // Try to find JSON in the response
+        let json_start = response.find('{');
+        let json_end = response.rfind('}');
+
+        match (json_start, json_end) {
+            (Some(start), Some(end)) if start < end => {
+                let json_part = &response[start..=end];
+                Self::parse_from_json(json_part)
+                    .map_err(|e| format!("Failed to parse JSON: {}", e).into())
+            }
+            _ => Err("No valid JSON found in response".into()),
+        }
+    }
+
+    /// Get count of findings by severity
+    pub fn count_by_severity(&self) -> std::collections::HashMap<String, usize> {
+        let mut counts = std::collections::HashMap::new();
+
+        for finding in &self.findings {
+            if let Some(severity) = &finding.severity {
+                *counts.entry(severity.clone()).or_insert(0) += 1;
+            }
+        }
+
+        counts
+    }
+
+    /// Filter findings by severity level
+    pub fn filter_by_severity(&self, severity: &str) -> Vec<&Finding> {
+        self.findings
+            .iter()
+            .filter(|f| f.severity.as_deref() == Some(severity))
+            .collect()
+    }
+
+    /// Get all high severity findings
+    pub fn high_severity_findings(&self) -> Vec<&Finding> {
+        self.filter_by_severity("High")
+    }
+}
+
+// Example usage and test function
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_findings_from_json() {
+        let json_input = r#"{
+            "findings": [
+                {
+                    "title": "[High-1] - Access Control Issue in PuppyRaffle::selectWinner",
+                    "description": "The selectWinner function can be called by any address",
+                    "impact": "Any user can prematurely end the raffle",
+                    "proof_of_concept": "1. Deploy contract\n2. Call selectWinner",
+                    "proof_of_code": "function test() { ... }",
+                    "severity": "High"
+                }
+            ]
+        }"#;
+
+        let findings = Findings::parse_from_json(json_input).unwrap();
+        assert_eq!(findings.findings.len(), 1);
+        assert_eq!(findings.findings[0].severity.as_ref().unwrap(), "High");
+    }
+
+    #[test]
+    fn test_parse_findings_from_escaped_json() {
+        // Test with the actual format from your paste
+        let escaped_json = r#""{\n  \"findings\": [\n    {\n      \"title\": \"[High-1] - Test Issue\",\n      \"severity\": \"High\"\n    }\n  ]\n}""#;
+
+        let findings = Findings::parse_from_json(escaped_json).unwrap();
+        assert_eq!(findings.findings.len(), 1);
+    }
+
+    #[test]
+    fn test_severity_filtering() {
+        let json_input = r#"{
+            "findings": [
+                {"title": "Issue 1", "severity": "High"},
+                {"title": "Issue 2", "severity": "Medium"},
+                {"title": "Issue 3", "severity": "High"}
+            ]
+        }"#;
+
+        let findings = Findings::parse_from_json(json_input).unwrap();
+        let high_findings = findings.high_severity_findings();
+        assert_eq!(high_findings.len(), 2);
+
+        let counts = findings.count_by_severity();
+        assert_eq!(counts.get("High"), Some(&2));
+        assert_eq!(counts.get("Medium"), Some(&1));
+    }
+}
+
+// Example usage function
+pub fn example_usage() -> Result<(), Box<dyn std::error::Error>> {
+    // Your actual JSON string from the LLM response
+    let llm_response = r#""```json\n{\n  \"findings\": [\n    {\n      \"title\": \"[Severity-1] - Access Control Issue in PuppyRaffle::selectWinner\",\n      \"description\": \"The selectWinner function is called by any address\",\n      \"impact\": \"Any user can prematurely end the raffle\",\n      \"proof_of_concept\": \"1. Deploy contract\\n2. Call selectWinner\",\n      \"proof_of_code\": \"function test() { ... }\",\n      \"severity\": \"High\"\n    }\n  ]\n}\n```""#;
+
+    // Parse the findings
+    let findings = Findings::parse_from_json(llm_response)?;
+
+    println!("Found {} findings", findings.findings.len());
+
+    // Get severity counts
+    let counts = findings.count_by_severity();
+    for (severity, count) in counts {
+        println!("{}: {}", severity, count);
+    }
+
+    // Get high severity findings
+    let high_findings = findings.high_severity_findings();
+    println!("High severity findings: {}", high_findings.len());
+
+    for finding in high_findings {
+        println!(
+            "- {}",
+            finding.title.as_ref().unwrap_or(&"No title".to_string())
+        );
+    }
+
+    Ok(())
+}
 //
 // pub const REENTRANCY: &str = r#"Analyze the Solidity code for reentrancy vulnerabilities.
 // Look for any function where an external call (e.g., call, send, transferring Ether or calling another contract)

@@ -2,9 +2,8 @@ pub const ACCESS_OUTSIDE_ARRAY_LIMITS: &str = r#"You are an expert smart contrac
 
 ## JSON Output Requirement
 
-YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
-```json
 {
   "findings": [
     {
@@ -17,7 +16,7 @@ YOU MUST respond with ONLY valid JSON in the following exact format. Do not incl
     }
   ]
 }
-```
+
 ## Analysis Framework
 Systematically examine the contract for the following array bounds issues:
 
@@ -265,7 +264,6 @@ function safePop() public {
 
 Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
 
-```json
 {
   "findings": [
     {
@@ -278,5 +276,13 @@ Remember YOU MUST respond with ONLY valid JSON in the following exact format:
     }
   ]
 }
-```
+
+- If no vulnerabilities are found, return: 
+
+{
+  "findings": []
+}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
+
 Focus on array bounds violations that can be immediately exploited to cause contract reversion, DoS attacks, or unexpected behavior. Provide concrete test cases showing successful exploitation of bounds checking failures."#;

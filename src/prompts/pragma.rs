@@ -3,9 +3,8 @@ pub const FLOATING_PRAGMA: &str = r#"You are an expert smart contract security a
 
 ## JSON Output Requirement
 
-YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
-```json
 {
   "findings": [
     {
@@ -18,7 +17,7 @@ YOU MUST respond with ONLY valid JSON in the following exact format. Do not incl
     }
   ]
 }
-```
+
 ## Analysis Framework
 Systematically examine the contract for the following floating pragma issues:
 1. **Floating Pragma Declarations**: Pragma statements using caret (^) or range operators that allow compilation with multiple compiler versions
@@ -156,7 +155,6 @@ For each floating pragma vulnerability found, provide:
 
 Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
 
-```json
 {
   "findings": [
     {
@@ -169,5 +167,13 @@ Remember YOU MUST respond with ONLY valid JSON in the following exact format:
     }
   ]
 }
-```
+
+- If no vulnerabilities are found, return: 
+
+{
+  "findings": []
+}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
+
 Focus on pragma declarations that create real deployment and security risks. Provide clear evidence showing how floating pragma usage can lead to inconsistent contract behavior or introduce security vulnerabilities."#;

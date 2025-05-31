@@ -3,9 +3,8 @@ pub const SHORT_ADDRESS_ATTACK: &str = r#"
 
 ## JSON Output Requirement
 
-YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
-```json
 {
   "findings": [
     {
@@ -18,7 +17,7 @@ YOU MUST respond with ONLY valid JSON in the following exact format. Do not incl
     }
   ]
 }
-```
+
 You are an expert smart contract security auditor specializing in identifying short address attack vulnerabilities. Your task is to analyze Solidity smart contracts for functions that improperly handle fixed-size type parameters, particularly addresses, which could be exploited through malformed input data.
 
 ## Vulnerability Overview
@@ -305,7 +304,6 @@ For each vulnerability found, provide a structured finding with these exact fiel
 
 Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
 
-```json
 {
   "findings": [
     {
@@ -318,6 +316,14 @@ Remember YOU MUST respond with ONLY valid JSON in the following exact format:
     }
   ]
 }
-```
+
+- If no vulnerabilities are found, return: 
+
+{
+  "findings": []
+}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
+
 Analyze the provided smart contract code systematically and identify all functions vulnerable to short address attacks. Focus on functions that accept address parameters without proper validation and could be exploited through malformed transaction data.
 "#;

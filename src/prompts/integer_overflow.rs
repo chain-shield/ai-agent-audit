@@ -2,22 +2,20 @@ pub const INTEGER_OVERFLOW: &str = r#"You are an expert smart contract security 
 
 ## JSON Output Requirement
 
-YOU MUST respond with ONLY valid JSON in the following exact format. Do not include any other text, explanations, or markdown formatting:
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
-```json
 {
   "findings": [
     {
-      "title": "[Severity-1] - Integer Overflow in <Contract>::<Function>",
+      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
       "description": "Detailed explanation including vulnerable code snippet",
-      "impact": "Financial and security consequences of the vulnerability",
-      "proof_of_concept": "Step-by-step exploitation scenario with specific values",
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
       "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
       "severity": "High"
     }
   ]
 }
-```
 
 ## Analysis Framework
 
@@ -176,7 +174,6 @@ For each vulnerability found, populate these JSON fields:
 
 Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
 
-```json
 {
   "findings": [
     {
@@ -189,6 +186,14 @@ Remember YOU MUST respond with ONLY valid JSON in the following exact format:
     }
   ]
 }
-```
+
+- If no vulnerabilities are found, return: 
+
+{
+  "findings": []
+}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
+
 Focus on vulnerabilities leading to financial loss, unauthorized token creation, balance manipulation, or contract state corruption through mathematical operation flaws."#;
 
