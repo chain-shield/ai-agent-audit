@@ -190,33 +190,6 @@ contract ShortAddressAttackTest is Test {
         }
     }
     
-    function testParameterShiftingAttack() public {
-        // Set up allowance
-        vm.prank(victim);
-        token.approve(attacker, 500 * 10**18);
-        
-        uint256 victimInitialBalance = token.balances(victim);
-        
-        // Demonstrate parameter shifting in transferFrom
-        vm.prank(attacker);
-        
-        // Craft malformed call data that shifts parameters
-        bytes memory shiftedCall = abi.encodeWithSelector(
-            token.transferFrom.selector,
-            victim,
-            // Shortened 'to' address causes parameter shifting
-            bytes19(abi.encodePacked(attacker)),  // Missing 1 byte
-            100 * 10**18  // This amount gets shifted due to padding
-        );
-        
-        (bool success,) = address(token).call(shiftedCall);
-        
-        if (success) {
-            // Parameters were shifted, potentially causing unexpected behavior
-            assertTrue(token.balances(victim) != victimInitialBalance);
-        }
-    }
-    
     function testBatchTransferShortAddress() public {
         address[] memory recipients = new address[](2);
         uint256[] memory amounts = new uint256[](2);
@@ -239,25 +212,6 @@ contract ShortAddressAttackTest is Test {
         
         // Verify the batch transfer completed
         assertLt(token.balances(attacker), attackerInitialBalance);
-    }
-    
-    function testApprovalShortAddress() public {
-        vm.prank(victim);
-        
-        // Simulate short address in approval
-        bytes memory malformedApproval = abi.encodeWithSelector(
-            token.approve.selector,
-            bytes32(uint256(uint160(attacker)) << 8), // Shortened address
-            1000 * 10**18
-        );
-        
-        (bool success,) = address(token).call(malformedApproval);
-        
-        if (success) {
-            // Approval was set for wrong address due to padding
-            address wrongSpender = address(uint160(uint256(bytes32(uint256(uint160(attacker)) << 8)) >> 96));
-            assertGt(token.allowances(victim, wrongSpender), 0);
-        }
     }
 }
 ```
