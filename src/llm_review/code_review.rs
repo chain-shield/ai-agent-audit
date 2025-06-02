@@ -3,15 +3,26 @@ use log::info;
 use rig::{
     completion::Prompt,
     providers::{
+        anthropic::{self, CLAUDE_3_7_SONNET},
+        deepseek::{self, DEEPSEEK_CHAT},
         gemini::{self, completion::GEMINI_1_5_PRO},
-        openai::{self, GPT_4O},
+        openai::{self, GPT_4O, GPT_4_TURBO},
     },
 };
 use serde_json::to_string_pretty;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+use tokio::time::{sleep, Duration};
 
 use crate::{
-    ai_bot::agent, enumerator::slice_db::CodeBlocksDb, llm_review::config::Finding,
+    ai_bot::agent,
+    enumerator::slice_db::CodeBlocksDb,
+    llm_review::{
+        config::{generated_llm_prompt, Finding},
+        prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
+    },
     utils::logging::print_first_four_lines,
 };
 
@@ -21,27 +32,44 @@ pub async fn review_codebase_for_security_issues(
     repo_root: &Path,
     codeblocks_path: &PathBuf,
 ) -> Result<()> {
-    let mut all_security_issues = Vec::<Finding>::new();
+    let mut all_security_issues = HashMap::<String, Vec<Finding>>::new();
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
 
     // grab all solidity contracts from database
     info!("grabbing contracts from db...");
     let contracts = codeblocks_db.get_all_contracts()?;
 
-    // let openai_client = openai::Client::from_env();
+    let openai_client = openai::Client::from_env();
+    // let deepseek_client = deepseek::Client::from_env();
     let gemini_client = gemini::Client::from_env();
+    let anthropic_client = anthropic::Client::from_env();
 
     info!("setting up AI extractor...");
-    let ai_audit_agent = gemini_client.agent(GEMINI_1_5_PRO).build();
+    // let ai_audit_agent = gemini_client.agent(GEMINI_1_5_PRO).build();
+    // let ai_audit_agent = openai_client.agent(GPT_4O).build();
+    // let ai_audit_agent = deepseek_client.agent(DEEPSEEK_CHAT).build();
+    let ai_verify_agent = openai_client.agent(GPT_4O).build();
+    let ai_audit_agent = anthropic_client
+        .agent(CLAUDE_3_7_SONNET)
+        .max_tokens(64_000)
+        .temperature(0.8)
+        .build();
 
-    for instructions_to_find_security_issue in SECURITY_PROMPTS {
-        for (contract, codeblock) in contracts.iter() {
-            let mut prompt_string = String::new();
+    for (contract, codeblock) in contracts.iter() {
+        let mut contract_findings = Vec::<Finding>::new();
+
+        for instructions_to_find_security_issue in SECURITY_PROMPTS.iter().take(5) {
+            let mut prompt_string = generated_llm_prompt(
+                contract,
+                &instructions_to_find_security_issue,
+                PRE_PROMPT,
+                POST_PROMPT,
+            );
             // append constract code to prompt instruction string
-
-            prompt_string.push_str(instructions_to_find_security_issue);
             info!("instructions...");
-            print_first_four_lines(&instructions_to_find_security_issue);
+            print_first_four_lines(&prompt_string);
+
+            // prompt_string.push_str(instructions_to_find_security_issue);
             prompt_string.push_str("/n");
 
             prompt_string.push_str(codeblock);
@@ -60,14 +88,19 @@ pub async fn review_codebase_for_security_issues(
             let issues = ai_audit_agent.prompt(&prompt_string).await?;
             // let findings = issues.findings.clone().unwrap();
             info!("findings for {}:\n{}", contract, issues);
+
             // TODO - parse issues
             let findings = Findings::parse_from_json(&issues)?;
-            info!("findings => {:#?}", findings.findings);
 
             if !findings.findings.is_empty() {
-                all_security_issues.extend(findings.findings);
+                contract_findings.extend(findings.findings);
             }
+            info!("contract findings => {:#?}", contract_findings);
         }
+
+        all_security_issues.insert(contract.to_string(), contract_findings);
+        // double check with openai extractor to check each issue against contract
+        // you will need to turn a
 
         // TODO - save issues to Findings db
     }

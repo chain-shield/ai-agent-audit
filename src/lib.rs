@@ -37,6 +37,10 @@ pub mod llm_review {
     pub mod analysis_db;
     pub mod code_review;
     pub mod config;
+    pub mod prompt_support {
+        pub mod post_prompt;
+        pub mod pre_prompt;
+    }
 }
 
 pub mod ai_bot {

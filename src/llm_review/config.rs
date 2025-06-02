@@ -39,27 +39,41 @@ pub struct Findings {
     pub findings: Vec<Finding>,
 }
 
-pub const SECURITY_PROMPTS: [&str; 19] = [
-    ACCESS_CONTROL,
-    ACCESS_OUTSIDE_ARRAY_LIMITS,
-    DEFAULT_VISIBILITIES,
-    DOS,
-    INTEGER_OVERFLOW,
-    SAVING_CONFIDENTIAL_DATA,
-    WRONG_INHERITANCE,
-    ORACLE_MANIPULATION,
-    FLOATING_PRAGMA,
-    RANDOMNESS,
-    REENTRANCY,
-    REPLAY_SIGNATURES_ATTACK,
-    SELF_DESTRUCT,
-    SHORT_ADDRESS_ATTACK,
-    STORAGE_VARIABLE,
-    TX_ORIGIN,
-    UNCHECK_RETURN_VALUES,
-    UNEXPECTED_ETH,
-    CONTRACTS_WITH_ZERO_CODE,
+pub const SECURITY_PROMPTS: [&str; 18] = [
+    ACCESS_CONTROL,              //DONE
+    ACCESS_OUTSIDE_ARRAY_LIMITS, //DONE
+    DEFAULT_VISIBILITIES,        //DONE
+    DOS,                         //DONE
+    INTEGER_OVERFLOW,            // DONE
+    SAVING_CONFIDENTIAL_DATA,    //DONE
+    WRONG_INHERITANCE,           // DONE
+    ORACLE_MANIPULATION,         // DONE
+    FLOATING_PRAGMA,             //DONE
+    RANDOMNESS,                  // DONE
+    REENTRANCY,                  //DONE
+    REPLAY_SIGNATURES_ATTACK,    //DONE
+    SELF_DESTRUCT,               //DONE
+    STORAGE_VARIABLE,            //DONE
+    TX_ORIGIN,                   //DONE
+    UNCHECK_RETURN_VALUES,       //DONE
+    UNEXPECTED_ETH,              //DONE
+    CONTRACTS_WITH_ZERO_CODE,    //DONE
+                                 //SHORT_ADDRESS_ATTACK, // DONE - this is only issue for very old contracts
 ];
+
+pub fn generated_llm_prompt(
+    contract_name: &str,
+    main_instructions: &str,
+    pre: &str,
+    post: &str,
+) -> String {
+    let instruction_template = format!("{}{}{}", pre, main_instructions, post);
+
+    // populate template
+    instruction_template
+        .replace("{contract_name}", contract_name)
+        .to_string()
+}
 
 impl Findings {
     /// Parse JSON string containing findings from LLM response

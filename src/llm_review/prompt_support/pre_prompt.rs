@@ -1,0 +1,22 @@
+pub const PRE_PROMPT: &str = r#"
+
+Before instructions are provided on the task please note required output format:
+
+## JSON Output Requirement
+
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
+
+{
+  "findings": [
+    {
+      "title": "[Severity-1] - <Issue Type> Issue in {contract_name}::<Function>",
+      "description": "Detailed explanation including vulnerable code snippet",
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
+      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "severity": "High"
+    }
+  ]
+}
+
+"#;

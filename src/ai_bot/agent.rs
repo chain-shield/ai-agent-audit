@@ -57,6 +57,10 @@ pub async fn get_context_for_security_query(
 ) -> Result<String> {
     let documentation = extract_content_from_docs(&repo_root)?;
 
+    let final_context = format!("\n ## DOCUMENTATION: \n\n {}", documentation);
+
+    return Ok(final_context);
+
     let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL")?)
         .build()
         .map_err(anyhow::Error::from)?;
