@@ -39,7 +39,13 @@ pub struct Findings {
     pub findings: Vec<Finding>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DuplicateFindings {
+    pub titles: Vec<String>,
+}
+
 pub const SECURITY_PROMPTS: [&str; 18] = [
+    REENTRANCY,                  //DONE
     ACCESS_CONTROL,              //DONE
     ACCESS_OUTSIDE_ARRAY_LIMITS, //DONE
     DEFAULT_VISIBILITIES,        //DONE
@@ -50,7 +56,6 @@ pub const SECURITY_PROMPTS: [&str; 18] = [
     ORACLE_MANIPULATION,         // DONE
     FLOATING_PRAGMA,             //DONE
     RANDOMNESS,                  // DONE
-    REENTRANCY,                  //DONE
     REPLAY_SIGNATURES_ATTACK,    //DONE
     SELF_DESTRUCT,               //DONE
     STORAGE_VARIABLE,            //DONE

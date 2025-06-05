@@ -194,7 +194,7 @@ async fn get_code_ir_map(repo: &Path) -> anyhow::Result<HashMap<(String, String)
     let extract_function_name = Regex::new(r#"[A-Za-z0-9$_]+\.([A-Za-z0-9$_]+)\([^)]*\)"#)?;
 
     // Get IR and storage variables from Slither
-    let (ir_vec, _, _) = build_brain::slither_ffi::get_ir_storage_vars_and_issues(repo).await?;
+    let (ir_vec, _, _) = build_brain::slither_ffi::get_slither_metadata_and_issues(repo).await?;
 
     // Create map of (contract, function) -> SlithIRFn
     let ir_map: HashMap<(String, String), SlithIRFn> = ir_vec
@@ -215,7 +215,7 @@ async fn get_code_ir_map(repo: &Path) -> anyhow::Result<HashMap<(String, String)
 
 async fn get_storage_map(repo: &Path) -> anyhow::Result<HashMap<String, Vec<StorageVar>>> {
     let (_, storage_vec, _) =
-        build_brain::slither_ffi::get_ir_storage_vars_and_issues(repo).await?;
+        build_brain::slither_ffi::get_slither_metadata_and_issues(repo).await?;
 
     let storage_map: HashMap<String, Vec<StorageVar>> = {
         let mut m = HashMap::<String, Vec<StorageVar>>::new();

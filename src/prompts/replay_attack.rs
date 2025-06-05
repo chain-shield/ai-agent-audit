@@ -46,4 +46,6 @@ For each signature replay vulnerability found, provide:
 6. Consider batch operations or multicall functions that might bypass individual nonce checks
 7. Examine inheritance patterns that might introduce replay vulnerabilities
 
-Focus on immediately exploitable signature replay attacks that can result in financial loss or unauthorized access. Provide concrete test cases showing successful signature capture and reuse."#;
+Focus on immediately exploitable signature replay attacks that can result in financial loss or unauthorized access. Provide concrete test cases showing successful signature capture and reuse.
+
+"#;

@@ -55,11 +55,8 @@ pub async fn get_context_for_security_query(
     query_content: &str,
     repo_root: &Path,
 ) -> Result<String> {
-    let documentation = extract_content_from_docs(&repo_root)?;
-
-    let final_context = format!("\n ## DOCUMENTATION: \n\n {}", documentation);
-
-    return Ok(final_context);
+    // TODO - restore once token limit increased
+    // let documentation = extract_content_from_docs(&repo_root)?;
 
     let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL")?)
         .build()
@@ -80,7 +77,7 @@ pub async fn get_context_for_security_query(
     info!("retrieving relevant content from vector db");
     let relevant_docs: Vec<(f64, String, SourceChunk)> = store.top_n(&query_content, 3).await?;
 
-    // info!("relevant docs => {:#?}", relevant_docs);
+    info!("relevant docs => {:#?}", relevant_docs);
 
     let dynamic_content = relevant_docs
         .iter()
@@ -91,10 +88,12 @@ pub async fn get_context_for_security_query(
     info!("dynamic content");
     print_first_four_lines(&dynamic_content);
 
-    let final_context = format!(
-        "\n ## DOCUMENTATION: \n\n {} \n\n ## ADDITIONAL CONTEXT: \n\n {}",
-        documentation, dynamic_content
-    );
+    let final_context = format!("\n\n ## ADDITIONAL CONTEXT: \n\n {}", dynamic_content);
+    // TODO - uncomment once token limit increased
+    // let final_context = format!(
+    //     "\n ## DOCUMENTATION: \n\n {} \n\n ## ADDITIONAL CONTEXT: \n\n {}",
+    //     documentation, dynamic_content
+    // );
 
     Ok(final_context)
 }

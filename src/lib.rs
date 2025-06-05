@@ -9,6 +9,9 @@ pub mod build_brain {
     pub mod enbeddings;
     /// Provides enrichment of smart contract data using Slither analysis
     pub mod enrichment;
+    pub mod parsers;
+    pub mod summarize;
+
     pub mod graph_db;
     pub mod inheritance;
     /// Handles repository cloning and file filtering
@@ -37,7 +40,9 @@ pub mod llm_review {
     pub mod analysis_db;
     pub mod code_review;
     pub mod config;
+    pub mod prompt_content;
     pub mod prompt_support {
+        pub mod dedup;
         pub mod post_prompt;
         pub mod pre_prompt;
     }

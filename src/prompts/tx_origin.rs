@@ -11,7 +11,6 @@ Your task is to systematically analyze Solidity smart contract code for improper
 3. **Authorization Bypass**: Scenarios where tx.origin can be manipulated through contract intermediaries
 4. **Phishing Attack Vectors**: Situations where users can be tricked into authorizing malicious transactions
 
-
 ## Required Output Structure
 
 For each vulnerability found, provide a Finding with these exact fields:
