@@ -2,7 +2,7 @@ use super::graph_db::GraphDb;
 /// This module handles the enrichment of smart contract data using Slither analysis.
 /// It provides functionality to extract intermediate representation (IR) and storage information
 /// from Solidity contracts, and to build Forge projects.
-use super::slither_ffi::{get_ir_storage_vars_and_issues, SlithIRFn, StorageVar};
+use super::slither_ffi::{SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -41,12 +41,12 @@ pub fn forge_build(repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn build_semantics_db_from_call_graph(repo_root: &Path) -> Result<PathBuf> {
+pub async fn build_semantics_db_from_call_graph(repo_root: &Path) -> Result<PathBuf> {
     // 1. extract DOT blobs
-    let json = callgraph::generate_slither_call_graph(repo_root)?;
+    let json = callgraph::generate_slither_call_graph(repo_root).await?;
     let blobs = callgraph::extract_dot_blobs(&json)?;
     let (funcs, edges) = callgraph::parse_dot_blobs(&blobs)?;
-    let inheritance_json = inheritance::generate_slither_inheritance(repo_root)?;
+    let inheritance_json = inheritance::generate_slither_inheritance(repo_root).await?;
     let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
     // info!("dot functions => {:?}", funcs);
     // info!("dot edges => {:?}", edges);

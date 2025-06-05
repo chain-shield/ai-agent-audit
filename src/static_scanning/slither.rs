@@ -8,7 +8,7 @@ use std::{
 };
 use uuid::Uuid;
 
-fn run_slither_sarif(repo: &Path) -> Result<String> {
+pub fn run_slither_sarif(repo: &Path) -> Result<String> {
     let out = Command::new("slither")
         .current_dir(repo)
         .args([

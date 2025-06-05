@@ -57,12 +57,14 @@ pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
             Some("sol") => sol_files.push(path.to_path_buf()),
             // Accept any Markdown / reStructuredText / plain‑text file *whose name is README.md*
             Some("md")
-                // if path
-                //     .file_name()
-                //     .and_then(|file| file.to_str()) // Option<&str>
-                //     .map(|filename| filename.eq_ignore_ascii_case("README.md"))
-                //     .unwrap_or(false) =>
-                => docs.push(path.to_path_buf()),
+                if path
+                    .file_name()
+                    .and_then(|file| file.to_str()) // Option<&str>
+                    .map(|filename| filename.eq_ignore_ascii_case("README.md"))
+                    .unwrap_or(false) =>
+            {
+                docs.push(path.to_path_buf())
+            }
             _ => {}
         }
     }

@@ -5,7 +5,7 @@ pub const POST_PROMPT: &str = r#"
 {
   "findings": [
     {
-      "title": "[Severity-1] - <Issue Type> in <Contract>::<Function>",
+      "title": "[Severity-1] - <Issue Type> in {contract_name}::<Function>",
       "description": "Detailed explanation including vulnerable code snippet",
       "impact": "Business and security consequences of the vulnerability",
       "proof_of_concept": "Step-by-step exploitation scenario",

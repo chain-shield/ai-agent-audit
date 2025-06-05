@@ -1,4 +1,6 @@
-pub const ACCESS_CONTROL: &str = r#"You are an expert Solidity smart contract security auditor specializing in access control vulnerabilities. Your task is to perform a comprehensive access control analysis on the provided Solidity smart contract code.
+pub const ACCESS_CONTROL: &str = r#"
+
+You are an expert Solidity smart contract security auditor specializing in access control vulnerabilities. Your task is to perform a comprehensive access control analysis on the provided Solidity smart contract code.
 
 ## Analysis Framework
 

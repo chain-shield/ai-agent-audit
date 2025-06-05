@@ -10,13 +10,18 @@ use ai_agent_audit::{
     ai_bot::{self, agent},
     build_brain::{enrichment, intake, slither_ffi, vector_db},
     enumerator::slice_maker,
-    llm_review::code_review,
+    llm_review::{
+        code_review,
+        prompt_content::{
+            generate_abridged_slither_metadata_prompt_context, generate_context_for_code_review,
+        },
+    },
 };
 use anyhow::Result;
 use dotenvy::dotenv;
 use log::info;
 
-const MAX_DEPTH: usize = 2;
+const MAX_DEPTH: usize = 3; // depth of 3 is security researcher standard
 const TOKEN_BUDGET: usize = 150_000;
 
 /// The main async function that orchestrates the entire process.
@@ -44,8 +49,10 @@ async fn main() -> Result<()> {
     // Build the Solidity contracts using Forge
     enrichment::forge_build(&repo.root)?;
 
+    // let prompt = generate_abridged_slither_metadata_prompt_context(&repo.root).await?;
+
     // save call graph to database
-    let semantic_db = enrichment::build_semantics_db_from_call_graph(&repo.root)?;
+    let semantic_db = enrichment::build_semantics_db_from_call_graph(&repo.root).await?;
     info!("Call-graph DB at {}", semantic_db.display());
 
     // 2b. Create a temp dir and ask slither_ffi to fill it with chunk files
@@ -55,9 +62,10 @@ async fn main() -> Result<()> {
 
     // TODO - UNPAUSE AFTER DONE TESTING
     // Extract IR and storage information using Slither and write to text files
-    // let slither_chunk_paths =
-    //     slither_ffi::save_ir_and_storage_vars_to_txt_files(&repo.root, tmp_dir.path()).await?;
-    // info!("slither ssa files => {:?}", slither_chunk_paths);
+    let slither_chunk_paths =
+        slither_ffi::save_code_metadata_and_analysis_to_txt_files(&repo.root, tmp_dir.path())
+            .await?;
+    info!("slither ssa file count => {}", slither_chunk_paths.len());
 
     // ────────────────────────────────
     // 3. Static-analysis (Slither detectors)
@@ -82,13 +90,9 @@ async fn main() -> Result<()> {
     // - Documentation files
     // - Slither analysis result files
     // TODO - UNPAUSE AFTER DONE TESTING
-    // let mut all_files: Vec<_> = repo
-    //     .sol_files
-    //     .into_iter()
-    //     .chain(repo.docs.into_iter())
-    //     .collect();
+    let mut all_files: Vec<_> = repo.docs.into_iter().collect();
     // all_files.extend(slither_chunk_paths);
-    // info!("all files => {:?}", all_files.len());
+    info!("all files => {:?}", all_files.len());
 
     //embed all files and upsert to qdrant vector db for later dynamic retrival
     // TODO - UNPAUSE AFTER DONE TESTING
