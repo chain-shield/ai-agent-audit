@@ -8,7 +8,7 @@
 /// 5. Storing the embeddings in a Qdrant vector database for semantic search
 use ai_agent_audit::{
     ai_bot::{self, agent},
-    build_brain::{enrichment, intake, slither_ffi, vector_db},
+    build_brain::{enrichment, git_clone, slither_ffi, vector_db},
     enumerator::slice_maker,
     llm_review::{
         code_review,
@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     let repo_url = std::env::args().nth(1).expect("repo url");
     info!("git cloning and extraction source code");
     // Clone the repository and filter out irrelevant files
-    let repo = intake::clone_and_filter_git_repo(&repo_url)?;
+    let repo = git_clone::clone_and_filter_git_repo(&repo_url)?;
     info!("repo paths => {:?}", repo);
 
     // ────────────────────────────────
@@ -62,10 +62,10 @@ async fn main() -> Result<()> {
 
     // TODO - UNPAUSE AFTER DONE TESTING
     // Extract IR and storage information using Slither and write to text files
-    let slither_chunk_paths =
-        slither_ffi::save_code_metadata_and_analysis_to_txt_files(&repo.root, tmp_dir.path())
-            .await?;
-    info!("slither ssa file count => {}", slither_chunk_paths.len());
+    // let slither_chunk_paths =
+    //     slither_ffi::save_code_metadata_and_analysis_to_txt_files(&repo.root, tmp_dir.path())
+    //         .await?;
+    // info!("slither ssa file count => {}", slither_chunk_paths.len());
 
     // ────────────────────────────────
     // 3. Static-analysis (Slither detectors)

@@ -83,34 +83,34 @@ pub async fn generate_code_slice_for_storage(
 ///
 /// # Returns
 /// * `anyhow::Result<Vec<SmartContractFunction>>` - List of functions in the contract
-pub fn get_contract_and_its_functions_from_seed_file(
-    file: &str, // src/PupplyRaffle
-    semantic_db: &Connection,
-) -> anyhow::Result<Vec<SmartContractFunction>> {
-    let filename = Path::new(file)
-        .file_stem() // "PuppyRaffle.sol" → "PuppyRaffle"
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| anyhow!("invalid file"))?;
-
-    let mut statement =
-        semantic_db.prepare("SELECT id, contract, name FROM functions WHERE contract LIKE ?1")?;
-
-    let rows = statement.query_map([format!("%{}%", filename)], |row| {
-        Ok(SmartContractFunction {
-            id: row.get(0)?,
-            contract: row.get(1)?,
-            name: row.get(2)?,
-        })
-    })?;
-    let functions_of_contract: Vec<SmartContractFunction> =
-        rows.collect::<rusqlite::Result<_>>()?;
-
-    if functions_of_contract.is_empty() {
-        return Err(anyhow!("no entry fn found for file {}", file));
-    }
-
-    Ok(functions_of_contract)
-}
+// pub fn get_contract_and_its_functions_from_seed_file(
+//     file: &str, // src/PupplyRaffle
+//     semantic_db: &Connection,
+// ) -> anyhow::Result<Vec<SmartContractFunction>> {
+//     let filename = Path::new(file)
+//         .file_stem() // "PuppyRaffle.sol" → "PuppyRaffle"
+//         .and_then(|s| s.to_str())
+//         .ok_or_else(|| anyhow!("invalid file"))?;
+//
+//     let mut statement =
+//         semantic_db.prepare("SELECT id, contract, name FROM functions WHERE contract LIKE ?1")?;
+//
+//     let rows = statement.query_map([format!("%{}%", filename)], |row| {
+//         Ok(SmartContractFunction {
+//             id: row.get(0)?,
+//             contract: row.get(1)?,
+//             name: row.get(2)?,
+//         })
+//     })?;
+//     let functions_of_contract: Vec<SmartContractFunction> =
+//         rows.collect::<rusqlite::Result<_>>()?;
+//
+//     if functions_of_contract.is_empty() {
+//         return Err(anyhow!("no entry fn found for file {}", file));
+//     }
+//
+//     Ok(functions_of_contract)
+// }
 
 pub fn get_hashmap_of_contract_to_functions(
     repo_root: &Path,
@@ -132,10 +132,19 @@ pub fn get_hashmap_of_contract_to_functions(
     ))?;
 
     let rows = statement.query_map(params_from_iter(contracts_in_src_folder), |row| {
+        let modifier_str: String = row.get(4)?;
+        let modifiers: Vec<String> = modifier_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         Ok(SmartContractFunction {
             id: row.get(0)?,
             contract: row.get(1)?,
             name: row.get(2)?,
+            visibility: row.get(3)?,
+            modifiers,
+            mutability: row.get(5)?,
         })
     })?;
     let functions_of_contract: Vec<SmartContractFunction> =

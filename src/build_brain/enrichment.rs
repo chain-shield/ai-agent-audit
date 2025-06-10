@@ -1,3 +1,4 @@
+use super::fn_summaries::get_function_summaries;
 use super::graph_db::GraphDb;
 /// This module handles the enrichment of smart contract data using Slither analysis.
 /// It provides functionality to extract intermediate representation (IR) and storage information
@@ -45,7 +46,8 @@ pub async fn build_semantics_db_from_call_graph(repo_root: &Path) -> Result<Path
     // 1. extract DOT blobs
     let json = callgraph::generate_slither_call_graph(repo_root).await?;
     let blobs = callgraph::extract_dot_blobs(&json)?;
-    let (funcs, edges) = callgraph::parse_dot_blobs(&blobs)?;
+    let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs)?;
+    let funcs = get_function_summaries(repo_root).await?;
     let inheritance_json = inheritance::generate_slither_inheritance(repo_root).await?;
     let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
     // info!("dot functions => {:?}", funcs);
@@ -59,7 +61,21 @@ pub async fn build_semantics_db_from_call_graph(repo_root: &Path) -> Result<Path
     // 3. insert functions
     // info!("funcs => {:?}", funcs);
     for f in &funcs {
-        db.insert_function(&f.full_id, &f.contract, &f.name)?;
+        let modifiers = f.modifiers.join(",");
+        // GET ID from funcs_id
+
+        let callgraph_func = funcs_id
+            .iter()
+            .find(|a| a.contract == f.contract && a.name == f.name)
+            .expect("fn id not found");
+        db.insert_function(
+            &callgraph_func.full_id,
+            &f.contract,
+            &f.name,
+            &f.visibility,
+            &modifiers,
+            &f.mutability,
+        )?;
     }
 
     // 4. insert edges

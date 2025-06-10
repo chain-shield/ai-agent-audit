@@ -57,7 +57,7 @@ pub async fn review_codebase_for_security_issues(
         info!("codeblock => {}", codeblock);
         let mut contract_findings = Vec::<Finding>::new();
 
-        for instructions_to_find_security_issue in SECURITY_PROMPTS.iter().take(5) {
+        for instructions_to_find_security_issue in SECURITY_PROMPTS.iter().take(10) {
             let mut prompt_string = generated_llm_prompt(
                 contract,
                 &instructions_to_find_security_issue,
@@ -126,6 +126,7 @@ async fn remove_duplicate_issues(findings: Vec<Finding>) -> Result<Vec<Finding>>
         .build();
 
     let duplicate_findings = ai_verify_agent.extract(contract_findings_json).await?;
+    info!("dup findings => {:#?}", duplicate_findings);
 
     let clean_findings = findings
         .into_iter()

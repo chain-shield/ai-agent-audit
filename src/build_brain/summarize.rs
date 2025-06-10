@@ -48,7 +48,10 @@ pub async fn summarize_src_files(repo_root: &Path) -> Result<Vec<SrcFileSummary>
 
     let ai_summary_agent = gemini_client
         .extractor::<FileSummary>(GEMINI_1_5_PRO)
-        .preamble("Please provided content, that will be either code or documentation, in 500 words or less. Format in markdown for easy reading.")
+        .preamble("You are a senior solidity dev. Please summary below content (code or docs). Format in markdown for easy reading. 
+                    If content is code. Please write 200 word or less summary for each contract plus contract definition, 100 words or less summary 
+                    of each function + function interface, and 50 word or less explanation of each storage variable + variable defintion. If docs 
+                    please summarize each section of the docs with 150 words or less, max 500 words total for each doc file.")
         .context(&context)
         .build();
 
@@ -82,6 +85,8 @@ pub async fn summarize_src_files(repo_root: &Path) -> Result<Vec<SrcFileSummary>
             })
         }
     }
+
+    log::info!("summaries => {:#?}", summaries);
 
     summaries_cache.insert(key, summaries.clone());
     Ok(summaries)
