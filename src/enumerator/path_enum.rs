@@ -5,7 +5,7 @@ use crate::build_brain::graph_db::SmartContractFunction;
 use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cache};
 use crate::enumerator::utils::{
     generate_code_slice_for_storage, generate_codeblock_for_function,
-    get_contract_and_its_functions_from_seed_file, get_token_count_of_function_ir,
+    get_token_count_of_function_ir,
 };
 use crate::static_scanning::seed_db::Seed;
 
@@ -38,124 +38,124 @@ use uuid::Uuid;
 ///
 /// # Returns
 /// * `Result<()>` - Ok if successful, Error otherwise
-pub async fn generate_codeblock_from_slither_seed(
-    repo_root: &Path,
-    seed: &Seed,
-    semantic_db: &Connection,
-    slice_db: &CodeBlocksDb,
-    max_depth: usize,
-    token_budget: usize,
-) -> Result<()> {
-    // Check if codeblock already generated for this seed
-    if let Some(codeblock) = get_cached_codeblock(&seed.file).await {
-        // Save seed-to-codeblock mapping in the database
-        save_seed_slice_to_db(&seed.id, &codeblock.id, slice_db)?;
-        return Ok(());
-    };
-
-    //extract the contract, and all its functions, the slither seed file references
-    // the slither issue may be scoped to 1 function in 1 contract, however we pull the
-    // ENTIRE contract so there is more context for llm
-    let functions_of_contract =
-        get_contract_and_its_functions_from_seed_file(&seed.file, semantic_db)?;
-
-    // 2. BFS until depth / token budget
-    let mut frontier: VecDeque<(SmartContractFunction, usize)> = VecDeque::new();
-    for func in functions_of_contract {
-        frontier.push_back((func, 0_usize))
-    }
-    let mut visited = HashSet::new();
-    let mut contracts = HashSet::new();
-    let mut all_funcs_connected_to_contract = Vec::<SmartContractFunction>::new();
-    let mut token_count = 0_usize;
-
-    while let Some((func, depth)) = frontier.pop_front() {
-        if !visited.insert(func.id.clone()) {
-            continue;
-        }
-
-        //keep track of unique contract traversed in BPS
-        contracts.insert(func.contract.clone());
-
-        all_funcs_connected_to_contract.push(func.clone());
-
-        // get token count of new fn + IR + storage
-        let token_count_fn_ir_storage = get_token_count_of_function_ir(&func, repo_root).await?;
-        // info!("token_count_fn_ir_storage => {}", token_count_fn_ir_storage);
-
-        // check budget, make sure not exceeding token context window
-        if token_count + token_count_fn_ir_storage > token_budget {
-            break; // budget exhausted
-        }
-
-        // update token count
-        token_count += token_count_fn_ir_storage;
-
-        // info!("token_count => {}", token_count);
-        if depth < max_depth {
-            let mut statement =
-                semantic_db.prepare("SELECT callee FROM edges WHERE caller = ?1;")?;
-            let rows = statement.query_map([&func.id], |r| r.get::<_, String>(0))?;
-            for callee in rows.flatten() {
-                let callee_fn: Option<SmartContractFunction> = semantic_db
-                    .query_row(
-                        "SELECT id, contract, name FROM functions WHERE id = ?1;",
-                        [&callee],
-                        |row| {
-                            Ok(SmartContractFunction {
-                                id: row.get(0)?,
-                                contract: row.get(1)?,
-                                name: row.get(2)?,
-                            })
-                        },
-                    )
-                    .optional()?;
-                let Some(callee_fn) = callee_fn else {continue};
-
-                frontier.push_back((callee_fn, depth + 1));
-            }
-        }
-    }
-
-    // ── 3.  Assemble final Markdown body ────────────────────────────
-    let mut markdown_codeblock_for_llm = String::new();
-    // list storage vars
-    for contract in &contracts {
-        let storage_var_ir = generate_code_slice_for_storage(contract, repo_root).await?;
-        // loop through and add all functions of contract
-        markdown_codeblock_for_llm.push_str(&storage_var_ir);
-        markdown_codeblock_for_llm.push('\n');
-    }
-    for func in &all_funcs_connected_to_contract {
-        let function_ir_code = generate_codeblock_for_function(func, repo_root).await?;
-        markdown_codeblock_for_llm.push_str(&function_ir_code);
-        markdown_codeblock_for_llm.push('\n');
-    }
-    info!(
-        "markdown codeblock size ==> {:#?}",
-        markdown_codeblock_for_llm.len()
-    );
-
-    let md_codeblock_id = Uuid::new_v4().to_string();
-
-    save_seed_slice_to_db(&seed.id, &md_codeblock_id, slice_db)?;
-
-    let codeblock = MarkdownCodeblock {
-        id: md_codeblock_id,
-        contract: seed.file.clone(),
-        tokens: token_count,
-        content: markdown_codeblock_for_llm,
-    };
-    // 4. store
-    slice_db.insert_codeblock(&codeblock)?;
-
-    // save to cache
-    set_codeblock_cache(&seed.file, &codeblock).await;
-
-    // info!("codeblock => {:#?}", codeblock);
-
-    Ok(())
-}
+// pub async fn generate_codeblock_from_slither_seed(
+//     repo_root: &Path,
+//     seed: &Seed,
+//     semantic_db: &Connection,
+//     slice_db: &CodeBlocksDb,
+//     max_depth: usize,
+//     token_budget: usize,
+// ) -> Result<()> {
+//     // Check if codeblock already generated for this seed
+//     if let Some(codeblock) = get_cached_codeblock(&seed.file).await {
+//         // Save seed-to-codeblock mapping in the database
+//         save_seed_slice_to_db(&seed.id, &codeblock.id, slice_db)?;
+//         return Ok(());
+//     };
+//
+//     //extract the contract, and all its functions, the slither seed file references
+//     // the slither issue may be scoped to 1 function in 1 contract, however we pull the
+//     // ENTIRE contract so there is more context for llm
+//     let functions_of_contract =
+//         get_contract_and_its_functions_from_seed_file(&seed.file, semantic_db)?;
+//
+//     // 2. BFS until depth / token budget
+//     let mut frontier: VecDeque<(SmartContractFunction, usize)> = VecDeque::new();
+//     for func in functions_of_contract {
+//         frontier.push_back((func, 0_usize))
+//     }
+//     let mut visited = HashSet::new();
+//     let mut contracts = HashSet::new();
+//     let mut all_funcs_connected_to_contract = Vec::<SmartContractFunction>::new();
+//     let mut token_count = 0_usize;
+//
+//     while let Some((func, depth)) = frontier.pop_front() {
+//         if !visited.insert(func.id.clone()) {
+//             continue;
+//         }
+//
+//         //keep track of unique contract traversed in BPS
+//         contracts.insert(func.contract.clone());
+//
+//         all_funcs_connected_to_contract.push(func.clone());
+//
+//         // get token count of new fn + IR + storage
+//         let token_count_fn_ir_storage = get_token_count_of_function_ir(&func, repo_root).await?;
+//         // info!("token_count_fn_ir_storage => {}", token_count_fn_ir_storage);
+//
+//         // check budget, make sure not exceeding token context window
+//         if token_count + token_count_fn_ir_storage > token_budget {
+//             break; // budget exhausted
+//         }
+//
+//         // update token count
+//         token_count += token_count_fn_ir_storage;
+//
+//         // info!("token_count => {}", token_count);
+//         if depth < max_depth {
+//             let mut statement =
+//                 semantic_db.prepare("SELECT callee FROM edges WHERE caller = ?1;")?;
+//             let rows = statement.query_map([&func.id], |r| r.get::<_, String>(0))?;
+//             for callee in rows.flatten() {
+//                 let callee_fn: Option<SmartContractFunction> = semantic_db
+//                     .query_row(
+//                         "SELECT id, contract, name FROM functions WHERE id = ?1;",
+//                         [&callee],
+//                         |row| {
+//                             Ok(SmartContractFunction {
+//                                 id: row.get(0)?,
+//                                 contract: row.get(1)?,
+//                                 name: row.get(2)?,
+//                             })
+//                         },
+//                     )
+//                     .optional()?;
+//                 let Some(callee_fn) = callee_fn else {continue};
+//
+//                 frontier.push_back((callee_fn, depth + 1));
+//             }
+//         }
+//     }
+//
+//     // ── 3.  Assemble final Markdown body ────────────────────────────
+//     let mut markdown_codeblock_for_llm = String::new();
+//     // list storage vars
+//     for contract in &contracts {
+//         let storage_var_ir = generate_code_slice_for_storage(contract, repo_root).await?;
+//         // loop through and add all functions of contract
+//         markdown_codeblock_for_llm.push_str(&storage_var_ir);
+//         markdown_codeblock_for_llm.push('\n');
+//     }
+//     for func in &all_funcs_connected_to_contract {
+//         let function_ir_code = generate_codeblock_for_function(func, repo_root).await?;
+//         markdown_codeblock_for_llm.push_str(&function_ir_code);
+//         markdown_codeblock_for_llm.push('\n');
+//     }
+//     info!(
+//         "markdown codeblock size ==> {:#?}",
+//         markdown_codeblock_for_llm.len()
+//     );
+//
+//     let md_codeblock_id = Uuid::new_v4().to_string();
+//
+//     save_seed_slice_to_db(&seed.id, &md_codeblock_id, slice_db)?;
+//
+//     let codeblock = MarkdownCodeblock {
+//         id: md_codeblock_id,
+//         contract: seed.file.clone(),
+//         tokens: token_count,
+//         content: markdown_codeblock_for_llm,
+//     };
+//     // 4. store
+//     slice_db.insert_codeblock(&codeblock)?;
+//
+//     // save to cache
+//     set_codeblock_cache(&seed.file, &codeblock).await;
+//
+//     // info!("codeblock => {:#?}", codeblock);
+//
+//     Ok(())
+// }
 
 /// Saves a mapping between a seed and a codeblock to the database.
 ///

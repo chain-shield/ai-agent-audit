@@ -100,10 +100,20 @@ pub async fn generate_codeblock_from_codebase(
                             "SELECT id, contract, name FROM functions WHERE id = ?1;",
                             [&callee],
                             |row| {
+                                let modifier_str: String = row.get(4)?;
+                                let modifiers: Vec<String> = modifier_str
+                                    .split(',')
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+
                                 Ok(SmartContractFunction {
                                     id: row.get(0)?,
                                     contract: row.get(1)?,
                                     name: row.get(2)?,
+                                    visibility: row.get(3)?,
+                                    modifiers,
+                                    mutability: row.get(5)?,
                                 })
                             },
                         )

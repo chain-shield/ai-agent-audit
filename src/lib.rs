@@ -9,13 +9,14 @@ pub mod build_brain {
     pub mod enbeddings;
     /// Provides enrichment of smart contract data using Slither analysis
     pub mod enrichment;
+    pub mod fn_summaries;
     pub mod parsers;
     pub mod summarize;
 
+    /// Handles repository cloning and file filtering
+    pub mod git_clone;
     pub mod graph_db;
     pub mod inheritance;
-    /// Handles repository cloning and file filtering
-    pub mod intake;
     /// Interfaces with the Slither static analysis tool
     pub mod slither_ffi;
     /// Provides functionality for interacting with the Qdrant vector database
@@ -40,6 +41,7 @@ pub mod llm_review {
     pub mod analysis_db;
     pub mod code_review;
     pub mod config;
+    pub mod invariants;
     pub mod prompt_content;
     pub mod prompt_support {
         pub mod dedup;
@@ -80,6 +82,7 @@ pub mod prompts {
 pub mod utils {
     /// Provides access to the OpenAI tokenizer (BPE) used for text chunking
     pub mod bpe;
+    pub mod fn_labels;
     pub mod get_doc_file;
     pub mod logging;
     pub mod vec_db_connect;

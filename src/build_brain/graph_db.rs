@@ -7,6 +7,9 @@ pub struct SmartContractFunction {
     pub id: String,
     pub contract: String,
     pub name: String,
+    pub visibility: String,
+    pub modifiers: Vec<String>,
+    pub mutability: String,
 }
 
 pub struct GraphDb(Connection);
@@ -20,7 +23,10 @@ impl GraphDb {
             CREATE TABLE IF NOT EXISTS functions(
               id TEXT PRIMARY KEY,   -- 3895_changeFeeAddress
               contract TEXT,
-              name TEXT
+              name TEXT,
+              visibility TEXT,
+              modifiers TEXT,
+              mutability TEXT,
             );
             CREATE TABLE IF NOT EXISTS edges(
             caller TEXT,
@@ -36,10 +42,18 @@ impl GraphDb {
         Ok(Self(conn))
     }
 
-    pub fn insert_function(&self, id: &str, contract: &str, name: &str) -> Result<()> {
+    pub fn insert_function(
+        &self,
+        id: &str,
+        contract: &str,
+        name: &str,
+        visibility: &str,
+        modifiers: &str,
+        mutability: &str,
+    ) -> Result<()> {
         self.0.execute(
-            "INSERT OR IGNORE INTO functions(id, contract, name) VALUES (?1, ?2, ?3);",
-            params![id, contract, name],
+            "INSERT OR IGNORE INTO functions(id, contract, name) VALUES (?1, ?2, ?3, ?4, ?5);",
+            params![id, contract, name, visibility, modifiers, mutability],
         )?;
         Ok(())
     }
