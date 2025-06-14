@@ -26,7 +26,7 @@ impl GraphDb {
               name TEXT,
               visibility TEXT,
               modifiers TEXT,
-              mutability TEXT,
+              mutability TEXT
             );
             CREATE TABLE IF NOT EXISTS edges(
             caller TEXT,
@@ -52,7 +52,7 @@ impl GraphDb {
         mutability: &str,
     ) -> Result<()> {
         self.0.execute(
-            "INSERT OR IGNORE INTO functions(id, contract, name) VALUES (?1, ?2, ?3, ?4, ?5);",
+            "INSERT OR IGNORE INTO functions(id, contract, name, visibility, modifiers, mutability) VALUES (?1, ?2, ?3, ?4, ?5, ?6);",
             params![id, contract, name, visibility, modifiers, mutability],
         )?;
         Ok(())

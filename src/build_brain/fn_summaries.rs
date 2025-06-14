@@ -65,7 +65,7 @@ fn parse_table(block: &str) -> Vec<FnSummary> {
     let mut inside_fn_block = false;
 
     // skip any lines before first table heading
-    while !current_line.contains("Contract") {
+    while !current_line.starts_with("Contract ") {
         current_line = lines.next().unwrap_or("EOF");
 
         // if file is empty!
@@ -80,7 +80,7 @@ fn parse_table(block: &str) -> Vec<FnSummary> {
 
     while current_line != "EOF" {
         // grab functions
-        if current_line.contains("Contract") && !current_line.contains("Contract vars") {
+        if current_line.starts_with("Contract ") && !current_line.starts_with("Contract vars") {
             // new contract
             current_contract = get_contract_name(current_line);
             current_line = lines.next().unwrap_or("EOF");
@@ -116,7 +116,7 @@ fn parse_table(block: &str) -> Vec<FnSummary> {
                     let trimmed: String = raw.chars().skip(1).take(raw.len() - 2).collect();
                     trimmed
                         .split(',')
-                        .map(|s| s.trim().into())
+                        .map(|s| s.trim_matches([' ', '\'']).to_string())
                         .collect::<Vec<_>>()
                 };
                 out.push(FnSummary {
@@ -132,11 +132,14 @@ fn parse_table(block: &str) -> Vec<FnSummary> {
         // go to next line
         current_line = lines.next().unwrap_or("EOF");
     }
+
+    // log::info!("function summaries ==> {:#?}", out);
     out
 }
 
 pub fn get_contract_name(line: &str) -> String {
     // grab first contract
+    log::info!("line with Contract => {}", line);
     line.split_ascii_whitespace()
         .nth(1)
         .unwrap_or("")

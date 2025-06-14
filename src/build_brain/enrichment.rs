@@ -1,3 +1,6 @@
+use crate::build_brain::callgraph::DotFunc;
+use crate::utils::get_fn_name::get_function_name;
+
 use super::fn_summaries::get_function_summaries;
 use super::graph_db::GraphDb;
 /// This module handles the enrichment of smart contract data using Slither analysis.
@@ -6,6 +9,7 @@ use super::graph_db::GraphDb;
 use super::slither_ffi::{SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
 use anyhow::Result;
+use log::{debug, info};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -62,20 +66,30 @@ pub async fn build_semantics_db_from_call_graph(repo_root: &Path) -> Result<Path
     // info!("funcs => {:?}", funcs);
     for f in &funcs {
         let modifiers = f.modifiers.join(",");
+        // info!("freshly spilt modifiers => {:#?}", modifiers);
         // GET ID from funcs_id
+        // info!("fn summary => {:#?}", f);
+        // info!("funcs_id => {:#?}", funcs_id);
 
         let callgraph_func = funcs_id
-            .iter()
-            .find(|a| a.contract == f.contract && a.name == f.name)
-            .expect("fn id not found");
-        db.insert_function(
-            &callgraph_func.full_id,
-            &f.contract,
-            &f.name,
-            &f.visibility,
-            &modifiers,
-            &f.mutability,
-        )?;
+            .clone()
+            .into_iter()
+            .find(|a| {
+                let func_name = get_function_name(&f.name);
+                a.contract == f.contract && a.name == func_name
+            })
+            .unwrap_or_default();
+
+        if !callgraph_func.name.is_empty() {
+            db.insert_function(
+                &callgraph_func.full_id,
+                &f.contract,
+                &f.name,
+                &f.visibility,
+                &modifiers,
+                &f.mutability,
+            )?;
+        }
     }
 
     // 4. insert edges

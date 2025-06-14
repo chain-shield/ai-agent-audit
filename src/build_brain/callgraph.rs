@@ -1,11 +1,11 @@
 use anyhow::Result;
 use regex::Regex;
 use serde::Deserialize;
-use std::{collections::HashMap, path::Path, process::Command, sync::Arc};
+use std::{collections::HashMap, default::Default, path::Path, process::Command, sync::Arc};
 
 use crate::build_brain::slither_ffi::{cache_key, PRINTER_OUTPUT_CACHE};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub struct DotFunc {
     pub full_id: String,  // "3895_changeFeeAddress"
     pub contract: String, // PuppyRaffle
