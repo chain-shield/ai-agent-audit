@@ -47,10 +47,14 @@ pub async fn generate_codeblock_from_codebase(
     //extract the contract, and all its functions, the slither seed file references
     // the slither issue may be scoped to 1 function in 1 contract, however we pull the
     // ENTIRE contract so there is more context for llm
+    log::info!("getting contract to func mapping");
     let contract_to_func_map = get_hashmap_of_contract_to_functions(repo_root, semantic_db)?;
 
     for (contract, functions_of_contract) in contract_to_func_map {
         // Check if codeblock already generated for this seed
+
+        log::info!("contract => {:#?}", contract);
+        log::info!("fn count of contract => {:#?}", functions_of_contract.len());
         if let Some(_) = get_cached_codeblock(&contract).await {
             // Save seed-to-codeblock mapping in the database
             continue;
@@ -72,14 +76,14 @@ pub async fn generate_codeblock_from_codebase(
 
             //keep track of unique contract traversed in BPS
             contracts.insert(func.contract.clone());
-            // info!("contract {} / func {} added...", func.contract, func.name);
+            info!("contract {} / func {} added...", func.contract, func.name);
 
             all_funcs_connected_to_contract.push(func.clone());
 
             // get token count of new fn + IR + storage
             let token_count_fn_ir_storage =
                 get_token_count_of_function_ir(&func, repo_root).await?;
-            // info!("token_count_fn_ir_storage => {}", token_count_fn_ir_storage);
+            info!("token_count_fn_ir_storage => {}", token_count_fn_ir_storage);
 
             // check budget, make sure not exceeding token context window
             if token_count + token_count_fn_ir_storage > token_budget {
@@ -89,7 +93,7 @@ pub async fn generate_codeblock_from_codebase(
             // update token count
             token_count += token_count_fn_ir_storage;
 
-            // info!("token_count => {}", token_count);
+            info!("token_count => {}", token_count);
             if depth < max_depth {
                 let mut statement =
                     semantic_db.prepare("SELECT callee FROM edges WHERE caller = ?1;")?;
@@ -97,7 +101,7 @@ pub async fn generate_codeblock_from_codebase(
                 for callee in rows.flatten() {
                     let callee_fn: Option<SmartContractFunction> = semantic_db
                         .query_row(
-                            "SELECT id, contract, name FROM functions WHERE id = ?1;",
+                            "SELECT id, contract, name, visibility, modifiers, mutability FROM functions WHERE id = ?1;",
                             [&callee],
                             |row| {
                                 let modifier_str: String = row.get(4)?;

@@ -60,6 +60,7 @@ pub async fn generate_and_save_codeblocks_for_each_contract(
     token_budget: usize,
 ) -> Result<PathBuf> {
     // Open the three databases
+    log::info!("connecting to databases..");
     let semantic_conn = Connection::open(semantics_db)?;
     let slice_path = repo_root.join(".cache").join("slice.db");
     let slice_db = CodeBlocksDb::open(&slice_path)?;

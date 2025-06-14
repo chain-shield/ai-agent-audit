@@ -84,6 +84,7 @@ pub mod utils {
     pub mod bpe;
     pub mod fn_labels;
     pub mod get_doc_file;
+    pub mod get_fn_name;
     pub mod logging;
     pub mod vec_db_connect;
 }

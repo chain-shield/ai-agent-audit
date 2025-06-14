@@ -9,6 +9,10 @@ use rusqlite::Connection;
 use std::fs;
 use walkdir::WalkDir;
 
+use crate::utils::fn_labels::get_modifiers_label;
+use crate::utils::fn_labels::get_visibility_label;
+use crate::utils::get_fn_name;
+use crate::utils::get_fn_name::get_function_name;
 use crate::{
     build_brain::{
         self,
@@ -34,13 +38,21 @@ pub async fn generate_codeblock_for_function(
 ) -> anyhow::Result<String> {
     let ir_map = get_code_ir_map(repo).await?;
     let mut function_slice = String::new();
-    if let Some(ir) = ir_map.get(&(func.contract.clone(), func.name.clone())) {
-        function_slice.push_str(&format!("#### {}\n", ir.function));
+    let func_name = get_function_name(&func.name);
+    let visibility = get_visibility_label(&func.visibility);
+    let modifiers = get_modifiers_label(&func.modifiers);
+
+    if let Some(ir) = ir_map.get(&(func.contract.clone(), func_name)) {
+        function_slice.push_str(&format!(
+            "#### {} {}{}\n",
+            ir.function, visibility, modifiers
+        ));
         function_slice.push_str("```slithir\n");
         function_slice.push_str(&ir.ir);
         function_slice.push_str("\n```");
     }
 
+    // info!("function slice => {:#?}", function_slice);
     Ok(function_slice)
 }
 
@@ -117,6 +129,7 @@ pub fn get_hashmap_of_contract_to_functions(
     semantic_db: &Connection,
 ) -> anyhow::Result<HashMap<String, Vec<SmartContractFunction>>> {
     // find all main contracts for app (ones in /src)
+    info!("grabbing all contracts...");
     let contracts_in_src_folder = contracts_in_src(repo_root)?;
 
     let placeholders = contracts_in_src_folder
@@ -126,18 +139,22 @@ pub fn get_hashmap_of_contract_to_functions(
         .collect::<Vec<_>>()
         .join(",");
 
+    // info!("placeholders => {:#?}", placeholders);
+
     let mut statement = semantic_db.prepare(&format!(
-        "SELECT id, contract, name FROM functions WHERE contract IN ({})",
+        "SELECT id, contract, name, visibility, modifiers, mutability FROM functions WHERE contract IN ({})",
         placeholders
     ))?;
 
     let rows = statement.query_map(params_from_iter(contracts_in_src_folder), |row| {
+        // info!("rows => {:#?}", row);
         let modifier_str: String = row.get(4)?;
         let modifiers: Vec<String> = modifier_str
             .split(',')
-            .map(|s| s.trim().to_string())
+            .map(|s| s.trim_matches([' ', '\'']).to_string())
             .filter(|s| !s.is_empty())
             .collect();
+
         Ok(SmartContractFunction {
             id: row.get(0)?,
             contract: row.get(1)?,
@@ -219,6 +236,7 @@ async fn get_code_ir_map(repo: &Path) -> anyhow::Result<HashMap<(String, String)
         })
         .collect();
 
+    // info!("ir_map => {:#?}", ir_map);
     Ok(ir_map)
 }
 
