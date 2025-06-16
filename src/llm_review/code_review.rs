@@ -40,7 +40,8 @@ pub async fn review_codebase_for_security_issues(
     let contracts = codeblocks_db.get_all_contracts()?;
 
     // let deepseek_client = deepseek::Client::from_env();
-    let gemini_client = gemini::Client::from_env();
+    // let gemini_client = gemini::Client::from_env();
+    // let openai_client = openai::Client::from_env();
     let anthropic_client = anthropic::Client::from_env();
 
     info!("setting up AI extractor...");

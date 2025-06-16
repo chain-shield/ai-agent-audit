@@ -85,5 +85,6 @@ pub mod utils {
     pub mod get_doc_file;
     pub mod get_fn_name;
     pub mod logging;
+    pub mod sanitize;
     pub mod vec_db_connect;
 }
