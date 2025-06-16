@@ -1,8 +1,9 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
-use rig::providers::anthropic::CLAUDE_3_SONNET;
+use rig::providers::anthropic::{CLAUDE_3_5_SONNET, CLAUDE_3_SONNET};
 use rig::providers::gemini::completion::GEMINI_1_5_PRO;
-use rig::providers::{anthropic, gemini};
+use rig::providers::openai::GPT_4O;
+use rig::providers::{anthropic, gemini, openai};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -13,6 +14,7 @@ use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
 use crate::llm_review::prompt_content;
+use crate::utils::sanitize::{self, sanitize_for_claude};
 
 use super::slither_ffi::cache_key;
 
@@ -46,7 +48,7 @@ pub async fn summarize_src_files(
     // Initialize vectors to store file paths
     let mut summaries = Vec::<SrcFileSummary>::new();
 
-    let anthropic_client = anthropic::Client::from_env();
+    let openai_client = openai::Client::from_env();
 
     let context =
         prompt_content::generate_slither_metadata_prompt_context(repo_root, &semantics_path)
@@ -54,8 +56,8 @@ pub async fn summarize_src_files(
 
     log::info!("context => {:#?}", context);
 
-    let ai_summary_agent = anthropic_client
-        .extractor::<FileSummary>(CLAUDE_3_SONNET)
+    let ai_summary_agent = openai_client
+        .extractor::<FileSummary>(GPT_4O)
         .preamble("You are a senior solidity dev. Please summary below content (code or docs). Format in markdown for easy reading. 
                     If content is code. Please write 200 word or less summary for each contract plus contract definition, 100 words or less summary 
                     of each function + function interface, and 50 word or less explanation of each storage variable + variable defintion. If docs 
@@ -74,14 +76,17 @@ pub async fn summarize_src_files(
         let is_readme = path
             .file_name()
             .map(|f| f.to_ascii_lowercase() == "readme.md")
-            .unwrap_or(false);
+            .unwrap_or(false)
+            && (path.parent() == Some(&repo_root) || path.parent() == Some(&repo_root.join("src")));
 
         let is_sol_in_src = path.extension().map_or(false, |ext| ext == "sol")
             && path.starts_with(&repo_root.join("src"));
 
         if is_readme || is_sol_in_src {
             let content = fs::read_to_string(path)?;
-            log::info!("file to summary => {}", content);
+            //santize file
+            // let sanitized_content = sanitize_for_claude(&content);
+            // log::info!("file to summary => {}", sanitized_content);
             let summary = ai_summary_agent.extract(content).await?;
 
             // filename is relative to root folder ie src/PuppyRaffle.sol

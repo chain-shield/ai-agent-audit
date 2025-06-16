@@ -29,8 +29,7 @@ pub async fn generate_slither_metadata_prompt_context(
 
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
-    let slither_scan_results = run_slither_sarif(repo_root)?;
-    // let callgraph = callgraph::generate_slither_call_graph(repo_root).await?;
+    // let slither_scan_results = run_slither_sarif(repo_root)?;
     let callgraph = callgraph::get_enriched_funcs_and_edges(repo_root, &semantics_path).await?;
     let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
     let contract_summary = run_printer(repo_root, "contract-summary").await?;
@@ -46,8 +45,8 @@ pub async fn generate_slither_metadata_prompt_context(
     prompt_context.push_str(&callgraph);
     prompt_context.push_str("\n## Slither Inheritance Json\n");
     prompt_context.push_str(&inheritance);
-    prompt_context.push_str("\n## Slither Detector\n");
-    prompt_context.push_str(&slither_scan_results);
+    // prompt_context.push_str("\n## Slither Detector\n");
+    // prompt_context.push_str(&slither_scan_results);
 
     info!(
         "slither metadata prompt context size ==> {}",
