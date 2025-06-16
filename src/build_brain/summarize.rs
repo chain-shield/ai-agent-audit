@@ -84,9 +84,7 @@ pub async fn summarize_src_files(
 
         if is_readme || is_sol_in_src {
             let content = fs::read_to_string(path)?;
-            //santize file
-            // let sanitized_content = sanitize_for_claude(&content);
-            // log::info!("file to summary => {}", sanitized_content);
+
             let summary = ai_summary_agent.extract(content).await?;
 
             // filename is relative to root folder ie src/PuppyRaffle.sol

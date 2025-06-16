@@ -59,7 +59,9 @@ pub async fn review_codebase_for_security_issues(
         info!("codeblock => {}", codeblock);
         let mut contract_findings = Vec::<Finding>::new();
 
-        for instructions_to_find_security_issue in SECURITY_PROMPTS.iter().take(10) {
+        for instructions_to_find_security_issue in SECURITY_PROMPTS
+        // .iter().take(10)
+        {
             let mut prompt_string = generated_llm_prompt(
                 contract,
                 &instructions_to_find_security_issue,
@@ -98,7 +100,6 @@ pub async fn review_codebase_for_security_issues(
             if !findings.findings.is_empty() {
                 contract_findings.extend(findings.findings);
             }
-            info!("contract findings => {:#?}", contract_findings);
         }
 
         //find any dups security issues
@@ -106,6 +107,7 @@ pub async fn review_codebase_for_security_issues(
             // TODO (OPTIONAL) - to additional 'open ended' run to see if llm can find any other
             // issues
 
+            info!("contract findings => {:#?}", contract_findings);
             // dedup
             let contract_findings = remove_duplicate_issues(contract_findings).await?;
 
