@@ -5,13 +5,12 @@ use anyhow::Result;
 use log::info;
 use regex::Regex;
 use rusqlite::params_from_iter;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::fs;
 use walkdir::WalkDir;
 
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
-use crate::utils::get_fn_name;
 use crate::utils::get_fn_name::get_function_name;
 use crate::{
     build_brain::{
@@ -277,4 +276,35 @@ pub fn contracts_in_src(repo_root: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(out)
+}
+
+pub fn get_function_metadata_from_id(
+    id: &str,
+    semantic_db: &Connection,
+) -> Result<Option<SmartContractFunction>> {
+    let fn_metadata: Option<SmartContractFunction> = semantic_db
+                        .query_row(
+                            "SELECT id, contract, name, visibility, modifiers, mutability FROM functions WHERE id = ?1;",
+                            [id],
+                            |row| {
+                                let modifier_str: String = row.get(4)?;
+                                let modifiers: Vec<String> = modifier_str
+                                    .split(',')
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+
+                                Ok(SmartContractFunction {
+                                    id: row.get(0)?,
+                                    contract: row.get(1)?,
+                                    name: row.get(2)?,
+                                    visibility: row.get(3)?,
+                                    modifiers,
+                                    mutability: row.get(5)?,
+                                })
+                            },
+                        )
+                        .optional()?;
+
+    Ok(fn_metadata)
 }

@@ -30,10 +30,9 @@ pub mod static_scanning {
 
 pub mod enumerator {
     pub mod codeblock_cache;
+    pub mod codeblock_db;
+    pub mod codeblock_maker;
     pub mod codeblocks;
-    pub mod path_enum;
-    pub mod slice_db;
-    pub mod slice_maker;
     pub mod utils;
 }
 

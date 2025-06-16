@@ -195,21 +195,20 @@ pub async fn get_slither_metadata_and_issues(
 pub async fn save_code_metadata_and_analysis_to_txt_files(
     repo_root: &Path,
     dir: &Path,
+    semantics_path: &Path,
 ) -> Result<Vec<PathBuf>> {
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
     let (_, _, slither_scan_vec) = get_slither_metadata_and_issues(repo_root).await?;
     // info!("storage vec => {:?}", storage_vec);
 
-    let json = callgraph::generate_slither_call_graph(repo_root).await?;
-    let blobs = callgraph::extract_dot_blobs(&json)?;
-    let (funcs, edges) = callgraph::parse_dot_blobs(&blobs)?;
+    let (funcs, edges) = callgraph::get_dot_funcs_and_dot_edges(repo_root).await?;
     let inheritance_json = inheritance::generate_slither_inheritance(repo_root).await?;
     let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
     let contract_summary = run_printer(repo_root, "contract-summary").await?;
     let contract_summary_vec = parse_slithir_contract_summary(&contract_summary);
     let src_file_list = get_all_files_src(repo_root).await?;
-    let summaries = summarize_src_files(repo_root).await?;
+    let summaries = summarize_src_files(repo_root, &semantics_path).await?;
 
     // 2 . serialise each artefact → one text file
     let mut out_paths = Vec::new();

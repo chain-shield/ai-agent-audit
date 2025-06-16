@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use super::slice_db::MarkdownCodeblock;
+use super::codeblock_db::MarkdownCodeblock;
 
 /// Global in-memory cache for storing MarkdownCodeblock instances.
 ///
