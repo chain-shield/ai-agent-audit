@@ -1,7 +1,8 @@
-use crate::enumerator::slice_db::CodeBlocksDb;
 use anyhow::Result;
 use rig::{completion::ToolDefinition, tool::Tool};
 use serde::{Deserialize, Serialize};
+
+use crate::enumerator::codeblock_db::CodeBlocksDb;
 
 #[derive(Debug, Deserialize)]
 pub struct Args {

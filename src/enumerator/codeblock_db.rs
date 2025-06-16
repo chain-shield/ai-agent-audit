@@ -7,22 +7,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Represents a mapping between a seed (vulnerability finding) and a codeblock.
-///
-/// This struct serves as a join table between seeds and codeblocks, allowing
-/// the system to retrieve the relevant code for a given vulnerability.
-#[derive(Debug)]
-pub struct SeedSlice {
-    /// Unique identifier for the seed slice
-    pub id: String,
-    /// Foreign key referencing the seed.id in the seeds table
-    pub seed_id: String,
-    /// Foreign key referencing the codeblock.id in the codeblocks table
-    pub codeblock_id: String,
-    /// Status of the seed slice (NEW, DONE, ERROR)
-    pub status: String,
-}
-
 /// Represents a markdown codeblock containing code relevant to a vulnerability.
 ///
 /// This struct stores the content of a code slice along with metadata such as
@@ -129,15 +113,15 @@ impl CodeBlocksDb {
     ///
     /// # Returns
     /// * `Result<()>` - Ok if successful, Error otherwise
-    pub fn insert_seed_slice(&self, s: &SeedSlice) -> Result<()> {
-        let conn = Connection::open(&self.path)?;
-        conn.execute(
-            "INSERT INTO seed_slices VALUES (?1,?2,?3,?4);",
-            params![s.id, s.seed_id, s.codeblock_id, s.status],
-        )?;
-        Ok(())
-    }
-
+    // pub fn insert_seed_slice(&self, s: &SeedSlice) -> Result<()> {
+    //     let conn = Connection::open(&self.path)?;
+    //     conn.execute(
+    //         "INSERT INTO seed_slices VALUES (?1,?2,?3,?4);",
+    //         params![s.id, s.seed_id, s.codeblock_id, s.status],
+    //     )?;
+    //     Ok(())
+    // }
+    //
     /// Inserts a new codeblock into the database if it doesn't already exist.
     ///
     /// This function checks if a codeblock with the same ID already exists in the database

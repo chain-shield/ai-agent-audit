@@ -5,7 +5,7 @@ use rig::{
     providers::{
         anthropic::{self, CLAUDE_3_7_SONNET},
         gemini::{self, completion::GEMINI_1_5_PRO},
-        openai::{self, GPT_4O, GPT_4_TURBO},
+        openai::{self, GPT_4O},
     },
 };
 use std::{
@@ -16,7 +16,7 @@ use tokio::time::{sleep, Duration};
 
 use crate::{
     ai_bot::agent,
-    enumerator::slice_db::CodeBlocksDb,
+    enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
         config::{generated_llm_prompt, DuplicateFindings, Finding},
         prompt_content::generate_context_for_code_review,
@@ -30,6 +30,7 @@ use super::config::{Findings, SECURITY_PROMPTS};
 pub async fn review_codebase_for_security_issues(
     repo_root: &Path,
     codeblocks_path: &PathBuf,
+    semantics_path: &Path,
 ) -> Result<()> {
     let mut all_security_issues = HashMap::<String, Vec<Finding>>::new();
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
@@ -79,7 +80,8 @@ pub async fn review_codebase_for_security_issues(
             // let added_context_from_ai_brain =
             //     agent::get_context_for_security_query(&prompt_string, repo_root).await?;
 
-            let added_context_from_ai_brain = generate_context_for_code_review(repo_root).await?;
+            let added_context_from_ai_brain =
+                generate_context_for_code_review(repo_root, &semantics_path).await?;
 
             prompt_string.push_str("/n");
             prompt_string.push_str(&added_context_from_ai_brain);

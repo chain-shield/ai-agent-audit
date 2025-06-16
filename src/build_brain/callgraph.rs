@@ -1,9 +1,16 @@
 use anyhow::Result;
 use regex::Regex;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Deserialize;
 use std::{collections::HashMap, default::Default, path::Path, process::Command, sync::Arc};
 
-use crate::build_brain::slither_ffi::{cache_key, PRINTER_OUTPUT_CACHE};
+use crate::{
+    build_brain::slither_ffi::{cache_key, PRINTER_OUTPUT_CACHE},
+    enumerator::utils::get_function_metadata_from_id,
+    utils::fn_labels::{get_modifiers_label, get_visibility_label},
+};
+
+use super::graph_db::SmartContractFunction;
 
 #[derive(Debug, Clone, Default)]
 pub struct DotFunc {
@@ -16,6 +23,12 @@ pub struct DotFunc {
 pub struct DotEdge {
     pub caller: String, // DotFunc.full_id
     pub callee: String,
+}
+
+pub async fn get_dot_funcs_and_dot_edges(repo: &Path) -> Result<(Vec<DotFunc>, Vec<DotEdge>)> {
+    let json = generate_slither_call_graph(repo).await?;
+    let blobs = extract_dot_blobs(&json)?;
+    parse_dot_blobs(&blobs)
 }
 
 /// Step 1: run Slither and grab the JSON envelope
@@ -109,4 +122,78 @@ pub fn parse_dot_blobs(blobs: &[String]) -> Result<(Vec<DotFunc>, Vec<DotEdge>)>
         }
     }
     Ok((funcs.into_values().collect(), edges))
+}
+
+pub async fn get_enriched_funcs_and_edges(
+    repo_root: &Path,
+    semantic_path: &Path,
+) -> Result<String> {
+    let mut enriched_edges = Vec::<DotEdge>::new();
+    let mut enriched_funcs = Vec::<DotFunc>::new();
+    let semantic_db = Connection::open(semantic_path)?;
+
+    let (funcs, edges) = get_dot_funcs_and_dot_edges(repo_root).await?;
+
+    for edge in edges {
+        let enriched_callee = match get_function_metadata_from_id(&edge.callee, &semantic_db)? {
+            Some(callee_fn) => generated_enriched_fn_label(&edge.callee, callee_fn),
+            None => edge.callee,
+        };
+        let enriched_caller = match get_function_metadata_from_id(&edge.caller, &semantic_db)? {
+            Some(callee_fn) => generated_enriched_fn_label(&edge.caller, callee_fn),
+            None => edge.caller,
+        };
+        enriched_edges.push(DotEdge {
+            callee: enriched_callee,
+            caller: enriched_caller,
+        });
+    }
+
+    for func in funcs {
+        let enriched_func_name = match get_function_metadata_from_id(&func.full_id, &semantic_db)? {
+            Some(full_func) => generated_enriched_fn_label(&func.name, full_func),
+            None => func.name,
+        };
+        enriched_funcs.push(DotFunc {
+            full_id: func.full_id,
+            contract: func.contract,
+            name: enriched_func_name,
+        });
+    }
+
+    // log::info!("enriched edges => {:#?}", enriched_edges);
+
+    let funcs_string: String = enriched_funcs
+        .iter()
+        .map(|f| {
+            format!(
+                "id: {}, contract: {}, name: {}",
+                f.full_id, f.contract, f.name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let edges_string: String = enriched_edges
+        .iter()
+        .map(|e| format!("{} -> {}", e.caller, e.callee))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut final_dot_string = String::new();
+
+    final_dot_string.push_str("\n\n### Functions\n\n");
+    final_dot_string.push_str(&funcs_string);
+    final_dot_string.push_str("\n\n### Dot Edges (Caller -> Callee)\n\n");
+    final_dot_string.push_str(&edges_string);
+
+    // log::info!("final dot string => {}", final_dot_string);
+    Ok(final_dot_string)
+}
+
+fn generated_enriched_fn_label(fn_id: &str, fn_metadata: SmartContractFunction) -> String {
+    let visibility = get_visibility_label(&fn_metadata.visibility);
+    let modifiers = get_modifiers_label(&fn_metadata.modifiers);
+
+    format!("{} {}{}", fn_id, visibility, modifiers)
 }

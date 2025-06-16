@@ -3,18 +3,21 @@ use crate::build_brain::graph_db::SmartContractFunction;
 /// analysis seeds. It traverses the contract call graph to create comprehensive
 /// markdown codeblocks containing relevant code, IR, and storage information.
 use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cache};
+use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::utils::{
     generate_code_slice_for_storage, generate_codeblock_for_function,
-    get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
+    get_function_metadata_from_id, get_hashmap_of_contract_to_functions,
+    get_token_count_of_function_ir,
 };
 
-use super::slice_db::{CodeBlocksDb, MarkdownCodeblock};
 use anyhow::Result;
 use log::info;
 use rusqlite::{Connection, OptionalExtension};
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use uuid::Uuid;
+
+use super::codeblock_db::CodeBlocksDb;
 
 /// Generates a markdown codeblock from a Slither analysis seed.
 ///
@@ -40,7 +43,7 @@ use uuid::Uuid;
 pub async fn generate_codeblock_from_codebase(
     repo_root: &Path,
     semantic_db: &Connection,
-    slice_db: &CodeBlocksDb,
+    codeblock_db: &CodeBlocksDb,
     max_depth: usize,
     token_budget: usize,
 ) -> Result<()> {
@@ -99,29 +102,7 @@ pub async fn generate_codeblock_from_codebase(
                     semantic_db.prepare("SELECT callee FROM edges WHERE caller = ?1;")?;
                 let rows = statement.query_map([&func.id], |r| r.get::<_, String>(0))?;
                 for callee in rows.flatten() {
-                    let callee_fn: Option<SmartContractFunction> = semantic_db
-                        .query_row(
-                            "SELECT id, contract, name, visibility, modifiers, mutability FROM functions WHERE id = ?1;",
-                            [&callee],
-                            |row| {
-                                let modifier_str: String = row.get(4)?;
-                                let modifiers: Vec<String> = modifier_str
-                                    .split(',')
-                                    .map(|s| s.trim().to_string())
-                                    .filter(|s| !s.is_empty())
-                                    .collect();
-
-                                Ok(SmartContractFunction {
-                                    id: row.get(0)?,
-                                    contract: row.get(1)?,
-                                    name: row.get(2)?,
-                                    visibility: row.get(3)?,
-                                    modifiers,
-                                    mutability: row.get(5)?,
-                                })
-                            },
-                        )
-                        .optional()?;
+                    let callee_fn = get_function_metadata_from_id(&callee, semantic_db)?;
                     let Some(callee_fn) = callee_fn else {continue};
 
                     frontier.push_back((callee_fn, depth + 1));
@@ -155,12 +136,12 @@ pub async fn generate_codeblock_from_codebase(
             content: markdown_codeblock_for_llm,
         };
         // 4. store
-        slice_db.insert_codeblock(&codeblock)?;
+        codeblock_db.insert_codeblock(&codeblock)?;
 
         // save to cache
         set_codeblock_cache(&contract, &codeblock).await;
 
-        // info!("codeblock => {:#?}", codeblock);
+        info!("codeblock => {:#?}", codeblock);
     }
 
     Ok(())
