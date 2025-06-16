@@ -1,4 +1,3 @@
-use crate::build_brain::callgraph::DotFunc;
 use crate::utils::get_fn_name::get_function_name;
 
 use super::fn_summaries::get_function_summaries;
@@ -9,7 +8,6 @@ use super::graph_db::GraphDb;
 use super::slither_ffi::{SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
 use anyhow::Result;
-use log::{debug, info};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

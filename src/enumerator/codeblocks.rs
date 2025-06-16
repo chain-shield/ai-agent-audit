@@ -12,7 +12,7 @@ use crate::enumerator::utils::{
 
 use anyhow::Result;
 use log::info;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use uuid::Uuid;

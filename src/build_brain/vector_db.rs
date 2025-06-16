@@ -10,7 +10,6 @@ use qdrant_client::qdrant::{
 };
 use qdrant_client::Payload;
 use qdrant_client::Qdrant;
-use serde_json::json;
 
 use crate::build_brain::enbeddings::embed_files;
 

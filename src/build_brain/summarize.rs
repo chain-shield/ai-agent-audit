@@ -1,9 +1,7 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
-use rig::providers::anthropic::{CLAUDE_3_5_SONNET, CLAUDE_3_SONNET};
-use rig::providers::gemini::completion::GEMINI_1_5_PRO;
+use rig::providers::openai;
 use rig::providers::openai::GPT_4O;
-use rig::providers::{anthropic, gemini, openai};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,7 +12,6 @@ use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
 use crate::llm_review::prompt_content;
-use crate::utils::sanitize::{self, sanitize_for_claude};
 
 use super::slither_ffi::cache_key;
 
@@ -84,7 +81,6 @@ pub async fn summarize_src_files(
 
         if is_readme || is_sol_in_src {
             let content = fs::read_to_string(path)?;
-
             let summary = ai_summary_agent.extract(content).await?;
 
             // filename is relative to root folder ie src/PuppyRaffle.sol

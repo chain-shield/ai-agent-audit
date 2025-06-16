@@ -2,7 +2,7 @@
 /// It handles running Slither printers, parsing their output, and extracting useful information
 /// such as SlithIR (intermediate representation) and storage variable details.
 use anyhow::{anyhow, Result};
-use log::{debug, info};
+use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -76,7 +76,7 @@ pub async fn get_all_files_src(repo: &Path) -> Result<String> {
     // anyhow::ensure!(out.status.success(), "slither --sarif failed");
     //
     // Use whichever stream is non-empty (some printers output to stdout, others to stderr)
-    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
 
     // Save to cache and return
     printer_cache.insert(key, text.clone());

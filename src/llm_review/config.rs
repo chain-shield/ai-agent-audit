@@ -7,9 +7,9 @@ use crate::prompts::{
     dos::DOS, inheritance::WRONG_INHERITANCE, integer_overflow::INTEGER_OVERFLOW,
     oracle::ORACLE_MANIPULATION, pragma::FLOATING_PRAGMA, randomness::RANDOMNESS,
     reentrancy::REENTRANCY, replay_attack::REPLAY_SIGNATURES_ATTACK, self_destruct::SELF_DESTRUCT,
-    short_address_attack::SHORT_ADDRESS_ATTACK, storage_variables::STORAGE_VARIABLE,
-    tx_origin::TX_ORIGIN, unchecked_return_value::UNCHECK_RETURN_VALUES,
-    unexpected_eth::UNEXPECTED_ETH, zero_code::CONTRACTS_WITH_ZERO_CODE,
+    storage_variables::STORAGE_VARIABLE, tx_origin::TX_ORIGIN,
+    unchecked_return_value::UNCHECK_RETURN_VALUES, unexpected_eth::UNEXPECTED_ETH,
+    zero_code::CONTRACTS_WITH_ZERO_CODE,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
