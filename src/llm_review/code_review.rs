@@ -4,7 +4,6 @@ use rig::{
     completion::Prompt,
     providers::{
         anthropic::{self, CLAUDE_3_7_SONNET},
-        gemini::{self, completion::GEMINI_1_5_PRO},
         openai::{self, GPT_4O},
     },
 };
@@ -12,10 +11,8 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
-use tokio::time::{sleep, Duration};
 
 use crate::{
-    ai_bot::agent,
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
         config::{generated_llm_prompt, DuplicateFindings, Finding},

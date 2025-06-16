@@ -9,7 +9,6 @@ use rig::{
     Embed,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::{fs, path::Path};
 use tiktoken_rs::CoreBPE;
 

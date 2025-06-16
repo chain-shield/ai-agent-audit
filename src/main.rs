@@ -7,9 +7,9 @@
 /// 4. Creating embeddings for the source code and analysis results
 /// 5. Storing the embeddings in a Qdrant vector database for semantic search
 use ai_agent_audit::{
-    build_brain::{callgraph, enrichment, git_clone},
+    build_brain::{enrichment, git_clone},
     enumerator::codeblock_maker,
-    llm_review::{code_review, prompt_content},
+    llm_review::code_review,
 };
 use anyhow::Result;
 use dotenvy::dotenv;
@@ -49,11 +49,6 @@ async fn main() -> Result<()> {
     let semantic_db = enrichment::build_semantics_db_from_call_graph(&repo.root).await?;
     info!("Call-graph DB at {}", semantic_db.display());
 
-    // TEST - generated metadata for each prompt review_codebase_for_security_issues
-    let context =
-        prompt_content::generate_context_for_code_review(&repo.root, &semantic_db).await?;
-
-    return Ok(());
     // 2b. Create a temp dir and ask slither_ffi to fill it with chunk files
     // Create a temporary directory to store the Slither analysis results
     let tmp_dir = tempfile::tempdir()?;

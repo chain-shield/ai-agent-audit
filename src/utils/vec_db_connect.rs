@@ -2,11 +2,7 @@
 use once_cell::sync::OnceCell;
 use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
 use rig::{
-    providers::openai::{
-        Client,
-        EmbeddingModel, // concrete handle returned by .embedding_model(...)
-        TEXT_EMBEDDING_3_SMALL,
-    },
+    providers::openai::{Client, TEXT_EMBEDDING_3_SMALL},
     vector_store::VectorStoreIndexDyn,
 };
 use rig_qdrant::QdrantVectorStore;

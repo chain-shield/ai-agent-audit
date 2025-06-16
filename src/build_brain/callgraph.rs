@@ -1,6 +1,6 @@
 use anyhow::Result;
 use regex::Regex;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use serde::Deserialize;
 use std::{collections::HashMap, default::Default, path::Path, process::Command, sync::Arc};
 
