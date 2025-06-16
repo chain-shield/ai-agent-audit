@@ -23,11 +23,6 @@ pub mod build_brain {
     pub mod vector_db;
 }
 
-pub mod static_scanning {
-    pub mod seed_db;
-    pub mod slither;
-}
-
 pub mod enumerator {
     pub mod codeblock_cache;
     pub mod codeblock_db;

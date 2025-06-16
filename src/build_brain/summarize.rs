@@ -51,8 +51,6 @@ pub async fn summarize_src_files(
         prompt_content::generate_slither_metadata_prompt_context(repo_root, &semantics_path)
             .await?;
 
-    log::info!("context => {:#?}", context);
-
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(GPT_4O)
         .preamble("You are a senior solidity dev. Please summary below content (code or docs). Format in markdown for easy reading. 
