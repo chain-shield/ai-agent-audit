@@ -28,7 +28,6 @@ pub async fn generate_slither_metadata_prompt_context(
 
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
-    // let slither_scan_results = run_slither_sarif(repo_root)?;
     let callgraph = callgraph::get_enriched_funcs_and_edges(repo_root, &semantics_path).await?;
     let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
     let contract_summary = run_printer(repo_root, "contract-summary").await?;

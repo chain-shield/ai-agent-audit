@@ -1,6 +1,3 @@
-
-
-// crates/findings_db/src/lib.rs
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -8,11 +5,13 @@ use std::path::Path;
 
 #[derive(Debug, Serialize)]
 pub struct Finding {
-    pub id:           String,   // UUID v4
-    pub seed_id:      String,   // FK → seeds.id
-    pub severity:     String,   // e.g. "High", "Info", …
-    pub title:        String,
-    pub message:      String,
+    pub id: String, // UUID v4
+    pub title: String,
+    pub description: String,
+    pub impact: String,           // FK → seeds.id
+    pub proof_of_concept: String, // e.g. "High", "Info", …
+    pub proof_of_code: String,
+    pub severity: String,
     // pub confidence:   Option<f32>,
     // pub sources_used: Vec<u8>,
 }
@@ -25,11 +24,13 @@ impl FindingsDb {
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS findings(
-              id            TEXT PRIMARY KEY,
-              seed_id       TEXT,
-              severity      TEXT,
-              title         TEXT,
-              message       TEXT,
+              id                  TEXT PRIMARY KEY,
+              title               TEXT,
+              description         TEXT,
+              impact              TEXT,
+              proof_of_concept    TEXT,
+              proof_of_code       TEXT,
+              severity            TEXT,
             );
             "#,
         )?;
@@ -38,13 +39,15 @@ impl FindingsDb {
 
     pub fn insert(&self, f: &Finding) -> Result<()> {
         self.0.execute(
-            "INSERT INTO findings VALUES (?1,?2,?3,?4,?5);",
+            "INSERT INTO findings VALUES (?1,?2,?3,?4,?5,?6,?7);",
             params![
                 f.id,
-                f.seed_id,
-                f.severity,
                 f.title,
-                f.message,
+                f.description,
+                f.impact,
+                f.proof_of_concept,
+                f.proof_of_code,
+                f.severity
             ],
         )?;
         Ok(())
