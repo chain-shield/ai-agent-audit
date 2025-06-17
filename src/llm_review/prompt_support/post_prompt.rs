@@ -5,11 +5,12 @@ pub const POST_PROMPT: &str = r#"
 {
   "findings": [
     {
-      "title": "[Severity-1] - <Issue Type> in {contract_name}::<Function>",
+      "title": "<Issue Type> in {contract_name}::<Function>",
       "description": "Detailed explanation including vulnerable code snippet",
       "impact": "Business and security consequences of the vulnerability",
       "proof_of_concept": "Step-by-step exploitation scenario",
       "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "mitigation": "suggested mitigation with code example for the fix",
       "severity": "High"
     }
   ]

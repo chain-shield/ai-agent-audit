@@ -24,12 +24,13 @@ Look for these vulnerable patterns in smart contract code:
 For each vulnerability found, provide a structured finding with these exact fields:
 
 ### Finding Structure
-- **title**: "[Severity-##] - Unexpected Ether Vulnerability in <Contract>::<Function>"
+- **title**: "Unexpected Ether Vulnerability in <Contract>::<Function>"
 - **description**: Detailed explanation of the vulnerable code pattern with specific code snippets
 - **impact**: Concrete description of how this affects contract functionality and users
 - **proof_of_concept**: Step-by-step explanation of how an attacker would exploit this
 - **proof_of_code**: Complete Foundry test demonstrating the vulnerability
 - **severity**: One of: High, Medium, Low, Info
+- **mitigation**: Suggested Mitigation with code example of fix
 
 ### Severity Guidelines
 - **High**: Direct fund loss, critical functionality bypass, or contract brick

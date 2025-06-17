@@ -29,7 +29,7 @@ You are an expert smart contract security auditor specializing in self-destruct 
 ## Output Requirements:
 For each self-destruct vulnerability found, provide a structured finding with:
 
-- **Title**: [Severity-XXX] - Unrestricted Self-Destruct in <ContractName>::<FunctionName>
+- **Title**: Unrestricted Self-Destruct in <ContractName>::<FunctionName>
 - **Description**: Detailed explanation of the vulnerability with code snippets showing:
   - How selfdestruct can be triggered
   - Access control weaknesses
@@ -45,6 +45,7 @@ For each self-destruct vulnerability found, provide a structured finding with:
   - Resulting fund theft or loss
 - **Proof of Code**: Complete Foundry test demonstrating the vulnerability
 - **Severity**: Based on access restrictions and impact scope
+- **Mitigation**: Suggested Mitigation with code example of fix
 
 ## Recommended Mitigations:
 - Implement robust multi-signature controls for destruction

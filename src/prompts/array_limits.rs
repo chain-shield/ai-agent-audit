@@ -63,12 +63,13 @@ Pay special attention to functions with these array access patterns:
 ## Output Requirements
 For each array bounds vulnerability found, provide:
 
-1. **Title**: Format as "[Severity-X] - Array Bounds Issue <Contract>::<Function>"
+1. **Title**: Format as "Array Bounds Issue <Contract>::<Function>"
 2. **Description**: Detailed explanation of the bounds vulnerability including vulnerable code snippet showing unchecked array access
 3. **Impact**: Contract reversion, DoS attacks, unexpected behavior, or potential for data corruption through out-of-bounds access
 4. **Proof of Concept**: Step-by-step exploitation scenario showing how an attacker can trigger out-of-bounds access
 5. **Proof of Code**: Complete Foundry unit test demonstrating the bounds violation and its consequences
 6. **Severity**: High/Medium/Low/Info based on exploitability and impact on contract functionality
+7. **Mitigation**: Suggested Mitigation with code example of fix
 
 ## Severity Guidelines
 - **High**: User-controlled array access without bounds checking that can cause DoS or data corruption

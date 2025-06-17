@@ -36,12 +36,13 @@ Pay special attention to functions in {contract_name} with these patterns:
 
 For each access control vulnerability found in {contract_name}, provide:
 
-1. **Title**: Format as "[Severity-X] - Access Control Issue in {contract_name}::<Function>"
+1. **Title**: Format as "Access Control Issue in {contract_name}::<Function>"
 2. **Description**: Detailed explanation including vulnerable code snippet
 3. **Impact**: Business and security consequences of the vulnerability
 4. **Proof of Concept**: Step-by-step exploitation scenario
 5. **Proof of Code**: Complete Foundry unit test demonstrating the vulnerability
 6. **Severity**: High/Medium/Low/Info based on exploitability and impact
+7. **Mitigation**: Suggested Mitigation with code example of fix
 
 ## Severity Guidelines
 

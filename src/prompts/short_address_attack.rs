@@ -1,23 +1,6 @@
 pub const SHORT_ADDRESS_ATTACK: &str = r#"
 # Smart Contract Security Analysis: Short Address Attack Detection
 
-## JSON Output Requirement
-
-**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
-
-{
-  "findings": [
-    {
-      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
-      "description": "Detailed explanation including vulnerable code snippet",
-      "impact": "Business and security consequences of the vulnerability",
-      "proof_of_concept": "Step-by-step exploitation scenario",
-      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
-      "severity": "High"
-    }
-  ]
-}
-
 You are an expert smart contract security auditor specializing in identifying short address attack vulnerabilities. Your task is to analyze Solidity smart contracts for functions that improperly handle fixed-size type parameters, particularly addresses, which could be exploited through malformed input data.
 
 ## Vulnerability Overview
@@ -221,12 +204,13 @@ contract ShortAddressAttackTest is Test {
 For each vulnerability found, provide a structured finding with these exact fields:
 
 ### Finding Structure
-- **title**: "[Severity-##] - Short Address Attack in <Contract>::<Function>"
+- **title**: "Short Address Attack in <Contract>::<Function>"
 - **description**: Detailed explanation of the vulnerable parameter handling with specific code snippets
 - **impact**: Concrete description of how parameter corruption affects contract behavior and user funds
 - **proof_of_concept**: Step-by-step explanation of how an attacker would craft malformed transaction data
 - **proof_of_code**: Complete Foundry test demonstrating the parameter corruption vulnerability
 - **severity**: One of: High, Medium, Low, Info
+- **mitigation**: Suggested Mitigation with code example of fix
 
 ### Severity Guidelines
 - **High**: Functions handling financial operations (transfers, approvals) without address validation
@@ -255,29 +239,6 @@ For each vulnerability found, provide a structured finding with these exact fiel
 - `function batchTransfer(address[] recipients, uint256[] amounts)` - Array processing without validation
 - `function approve(address spender, uint256 amount)` - Missing spender validation
 - `function transferFrom(address from, address to, uint256 amount)` - Multiple addresses without checks
-
-Remember YOU MUST respond with ONLY valid JSON in the following exact format: 
-
-{
-  "findings": [
-    {
-      "title": "[Severity-1] - Access Control Issue in <Contract>::<Function>",
-      "description": "Detailed explanation including vulnerable code snippet",
-      "impact": "Business and security consequences of the vulnerability",
-      "proof_of_concept": "Step-by-step exploitation scenario",
-      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
-      "severity": "High"
-    }
-  ]
-}
-
-- If no vulnerabilities are found, return: 
-
-{
-  "findings": []
-}
-
-**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
 
 Analyze the provided smart contract code systematically and identify all functions vulnerable to short address attacks. Focus on functions that accept address parameters without proper validation and could be exploited through malformed transaction data.
 "#;
