@@ -79,14 +79,14 @@ pub async fn generate_codeblock_from_codebase(
 
             //keep track of unique contract traversed in BPS
             contracts.insert(func.contract.clone());
-            info!("contract {} / func {} added...", func.contract, func.name);
+            // info!("contract {} / func {} added...", func.contract, func.name);
 
             all_funcs_connected_to_contract.push(func.clone());
 
             // get token count of new fn + IR + storage
             let token_count_fn_ir_storage =
                 get_token_count_of_function_ir(&func, repo_root).await?;
-            info!("token_count_fn_ir_storage => {}", token_count_fn_ir_storage);
+            // info!("token_count_fn_ir_storage => {}", token_count_fn_ir_storage);
 
             // check budget, make sure not exceeding token context window
             if token_count + token_count_fn_ir_storage > token_budget {
@@ -96,7 +96,7 @@ pub async fn generate_codeblock_from_codebase(
             // update token count
             token_count += token_count_fn_ir_storage;
 
-            info!("token_count => {}", token_count);
+            // info!("token_count => {}", token_count);
             if depth < max_depth {
                 let mut statement =
                     semantic_db.prepare("SELECT callee FROM edges WHERE caller = ?1;")?;
@@ -141,7 +141,7 @@ pub async fn generate_codeblock_from_codebase(
         // save to cache
         set_codeblock_cache(&contract, &codeblock).await;
 
-        info!("codeblock => {:#?}", codeblock);
+        // info!("codeblock => {:#?}", codeblock);
     }
 
     Ok(())

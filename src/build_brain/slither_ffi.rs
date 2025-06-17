@@ -89,6 +89,7 @@ pub fn run_slither_detector(repo: &Path) -> Result<String> {
         .current_dir(repo)
         .args([
             ".",
+            "--exclude-dependencies",
             "--foundry-ignore-compile",
             "--foundry-out-directory",
             "out",

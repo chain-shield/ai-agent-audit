@@ -52,12 +52,13 @@ Look for these vulnerable patterns contract code:
 For each vulnerability found, provide a structured finding with these exact fields:
 
 ### Finding Structure
-- **title**: "[Severity-##] - Default Visibility Vulnerability <Contract>::<Function>"
+- **title**: "Default Visibility Vulnerability <Contract>::<Function>"
 - **description**: Detailed explanation of the missing visibility modifier with specific code snippets
 - **impact**: Concrete description of unauthorized access potential and security implications
 - **proof_of_concept**: Step-by-step explanation of how an attacker would exploit the missing visibility
 - **proof_of_code**: Complete Foundry test demonstrating the unauthorized access
 - **severity**: One of: High, Medium, Low, Info
+- **mitigation**: Suggested Mitigation with code example of fix
 
 ### Severity Guidelines
 - **High**: Administrative functions, fund access, or ownership changes without proper visibility

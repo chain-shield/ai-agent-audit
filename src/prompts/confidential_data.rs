@@ -23,12 +23,13 @@ Pay special attention to storage patterns with these characteristics:
 ## Output Requirements
 For each confidential data vulnerability found, provide:
 
-1. **Title**: Format as "[Severity-X] - Confidential Data Exposure in <Contract>::<Function>"
+1. **Title**: Format as "Confidential Data Exposure in <Contract>::<Function>"
 2. **Description**: Detailed explanation including vulnerable code snippet showing specific sensitive data storage patterns
 3. **Impact**: Privacy and security consequences including identity theft, financial fraud, regulatory violations (GDPR, HIPAA), or competitive disadvantage
 4. **Proof of Concept**: Step-by-step data extraction scenario showing how sensitive information can be accessed by unauthorized parties
 5. **Proof of Code**: Complete Foundry unit test demonstrating the data exposure with setup, extraction, and verification phases
 6. **Severity**: High/Medium/Low/Info based on sensitivity of exposed data and potential harm
+7. **Mitigation**: Suggested Mitigation with code example of fix
 
 ## Severity Guidelines
 - **High**: Exposure of SSNs, private keys, financial account numbers, medical records, or authentication credentials

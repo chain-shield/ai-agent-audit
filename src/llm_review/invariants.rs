@@ -24,11 +24,12 @@ You are a senior security auditor.
 Return JSON:
 
 {
+  "contract": "string (name of contract)"
   "intention": "string",
   "invariants": [
     {
       "id": "INV-n",
-      "type": "Arithmetic|Balance|Permission|Temporal|Referential|State_Machine",
+      "inv_type": "Arithmetic|Balance|Permission|Temporal|Referential|State_Machine",
       "desc": "string",
       "status": "HOLDS" | "VIOLATION",
       "exploit": "string (omit if HOLDS)",
@@ -37,6 +38,7 @@ Return JSON:
       "post_state":    "string (omit if HOLDS)"
       "impact": "string (omit if HOLDS)",
       "poc": "string (omit if HOLDS)",
+      "mitigation": "string (suggested mitigation - omit if HOLDS)",
     }
   ]
 }

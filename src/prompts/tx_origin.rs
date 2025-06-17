@@ -15,12 +15,13 @@ Your task is to systematically analyze Solidity smart contract code for improper
 
 For each vulnerability found, provide a Finding with these exact fields:
 
-- **title**: Format as "[Severity-#] - tx.origin Authentication Bypass in <Contract>::<Function>"
+- **title**: Format as "tx.origin Authentication Bypass in <Contract>::<Function>"
 - **description**: Detailed explanation of tx.origin misuse, including vulnerable code snippet showing the improper authentication
 - **impact**: Specific attack consequences (unauthorized access, fund theft, privilege escalation, ownership hijacking)
 - **proof_of_concept**: Step-by-step phishing attack scenario showing how an attacker can exploit tx.origin through contract intermediaries
 - **proof_of_code**: Complete Foundry test demonstrating the phishing attack and authentication bypass
 - **severity**: HIGH for critical function access or fund control, MEDIUM for administrative functions, LOW for non-critical operations
+- **mitigation**: Suggested Mitigation with code example of fix
 
 ## Analysis Instructions
 

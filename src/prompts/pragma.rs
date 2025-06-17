@@ -20,12 +20,13 @@ Pay special attention to pragma declarations with these patterns:
 
 ## Output Requirements
 For each floating pragma vulnerability found, provide:
-1. **Title**: Format as "[Severity-X] - Floating Pragma Vulnerability in <Contract>"
+1. **Title**: Format as "Floating Pragma Vulnerability in <Contract>"
 2. **Description**: Detailed explanation including the specific pragma statement and potential risks
 3. **Impact**: Security and deployment consequences of using floating pragma versions
 4. **Proof of Concept**: Step-by-step scenario showing how version differences cause issues
 5. **Proof of Code**: Complete Foundry unit test demonstrating the compiler version vulnerability
 6. **Severity**: High/Medium/Low/Info based on contract criticality and version range width
+7. **Mitigation**: Suggested Mitigation with code example of fix
 
 ## Severity Guidelines
 - **High**: Critical contracts (handling significant value/assets) with wide floating pragma ranges or no upper bounds

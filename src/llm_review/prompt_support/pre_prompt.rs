@@ -9,7 +9,7 @@ Before instructions are provided on the task please note required output format:
 {
   "findings": [
     {
-      "title": "[Severity-1] - <Issue Type> Issue in {contract_name}::<Function>",
+      "title": "<Issue Type> Issue in {contract_name}::<Function>",
       "description": "Detailed explanation including vulnerable code snippet",
       "impact": "Business and security consequences of the vulnerability",
       "proof_of_concept": "Step-by-step exploitation scenario",

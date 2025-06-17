@@ -24,20 +24,52 @@ pub enum Severity {
 pub struct Finding {
     // [Severity-issue number] - List Issue (Reentrancy, Denial of Service, etc) and
     // <Contract>::<Function> its localed in
-    pub title: Option<String>,
-    pub description: Option<String>, // description of issue, include code snippet if relevant
-    pub impact: Option<String>,      // Impact of Issue
-    pub proof_of_concept: Option<String>, // Demonstrate how issue can be exploited by hacker
-    pub proof_of_code: Option<String>, // Write Foundry Unit test to prove issue exists
+    pub title: String,
+    pub description: String, // description of issue, include code snippet if relevant
+    pub impact: String,      // Impact of Issue
+    pub proof_of_concept: String, // Demonstrate how issue can be exploited by hacker
+    pub proof_of_code: String, // Write Foundry Unit test to prove issue exists
+    pub mitigation: String,
     #[schemars(rename = "severity")]
     #[schemars(description = "Severity level: High, Medium, Low, Info")]
-    pub severity: Option<String>, //severity of issue
+    pub severity: String, //severity of issue
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Findings {
     pub findings: Vec<Finding>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct InvariantFinding {
+    pub id: String,
+    #[schemars(rename = "inv_type")]
+    #[schemars(
+        description = "Type: Arithmetic, Balance, Permission, Temporal, Referential, State_Machine"
+    )]
+    pub inv_type: String,
+    pub desc: String,
+    #[schemars(rename = "status")]
+    #[schemars(description = "Status: HOLDS, VIOLATION")]
+    pub status: String,
+    pub pre_state: Option<String>,
+    pub post_state: Option<String>,
+    pub impact: Option<String>,
+    pub poc: Option<String>,
+    pub mitigation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ContractInvariants {
+    pub contract: String,
+    pub intention: String,
+    pub invariants: Vec<InvariantFinding>,
+}
+
+// #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+// pub struct InvariantFindings {
+//     pub findings: Vec<InvariantFinding>,
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DuplicateFindings {
@@ -80,6 +112,45 @@ pub fn generated_llm_prompt(
         .to_string()
 }
 
+impl ContractInvariants {
+    /// Parse JSON string containing findings from LLM response
+    /// Handles both clean JSON and JSON wrapped in markdown code blocks
+    pub fn parse_from_json(json_str: &str) -> Result<ContractInvariants, serde_json::Error> {
+        // Clean the input - remove markdown code blocks and extra quotes/escapes
+        let cleaned_json = Self::clean_json_string(json_str);
+
+        // Parse the cleaned JSON
+        serde_json::from_str(&cleaned_json)
+    }
+
+    /// Clean JSON string by removing markdown code blocks, escaped quotes, and extra formatting
+    fn clean_json_string(input: &str) -> String {
+        let mut cleaned = input.trim();
+
+        // Remove outer quotes if present (from string literals)
+        if cleaned.starts_with('"') && cleaned.ends_with('"') {
+            cleaned = &cleaned[1..cleaned.len() - 1];
+        }
+
+        // Remove markdown code blocks
+        if cleaned.starts_with("```json") {
+            cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
+        }
+
+        if cleaned.ends_with("```") {
+            cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
+        }
+
+        // Replace escaped quotes and newlines
+        // cleaned
+        //     .replace("\\\"", "\"")
+        //     .replace("\\n", "\n")
+        //     .replace("\\\n", "\n")
+        //     .trim()
+        //     .to_string()
+        cleaned.to_string()
+    }
+}
 impl Findings {
     /// Parse JSON string containing findings from LLM response
     /// Handles both clean JSON and JSON wrapped in markdown code blocks
@@ -141,9 +212,7 @@ impl Findings {
         let mut counts = std::collections::HashMap::new();
 
         for finding in &self.findings {
-            if let Some(severity) = &finding.severity {
-                *counts.entry(severity.clone()).or_insert(0) += 1;
-            }
+            *counts.entry(finding.severity.clone()).or_insert(0) += 1;
         }
 
         counts
@@ -153,7 +222,7 @@ impl Findings {
     pub fn filter_by_severity(&self, severity: &str) -> Vec<&Finding> {
         self.findings
             .iter()
-            .filter(|f| f.severity.as_deref() == Some(severity))
+            .filter(|f| f.severity == severity)
             .collect()
     }
 
@@ -185,7 +254,7 @@ mod tests {
 
         let findings = Findings::parse_from_json(json_input).unwrap();
         assert_eq!(findings.findings.len(), 1);
-        assert_eq!(findings.findings[0].severity.as_ref().unwrap(), "High");
+        assert_eq!(findings.findings[0].severity, "High");
     }
 
     #[test]
@@ -238,10 +307,7 @@ pub fn example_usage() -> Result<(), Box<dyn std::error::Error>> {
     println!("High severity findings: {}", high_findings.len());
 
     for finding in high_findings {
-        println!(
-            "- {}",
-            finding.title.as_ref().unwrap_or(&"No title".to_string())
-        );
+        println!("- {}", finding.title);
     }
 
     Ok(())

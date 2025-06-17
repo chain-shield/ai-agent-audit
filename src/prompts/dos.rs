@@ -16,12 +16,13 @@ Your task is to systematically analyze {contract_name} contract code for functio
 
 For each vulnerability found in {contract_name}, provide a Finding with these exact fields:
 
-- **title**: Format as "[Severity-#] - DoS via Unexpected Revert in {contract_name}::<Function>"
+- **title**: Format as "DoS via Unexpected Revert in {contract_name}::<Function>"
 - **description**: Detailed explanation of the batch operation vulnerability, including vulnerable code snippet
 - **impact**: Specific DoS consequences (blocked functionality, fund lockup, service unavailability)
 - **proof_of_concept**: Step-by-step attack scenario showing how a malicious actor can cause DoS
 - **proof_of_code**: Complete Foundry test demonstrating the DoS vulnerability
 - **severity**: HIGH for critical function blocking, MEDIUM for partial service disruption, LOW for edge cases
+- **mitigation**: Suggested Mitigation with code example of fix
 
 ## Analysis Instructions
 
