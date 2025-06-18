@@ -11,9 +11,9 @@ use rig_qdrant::QdrantVectorStore;
 use std::path::{Path, PathBuf};
 
 use crate::build_brain::enbeddings::SourceChunk;
-use crate::llm_review::config::Findings;
+use crate::build_brain::git_clone::RepoPaths;
+use crate::utils::get_doc_file::extract_content_from_docs;
 use crate::utils::logging::print_first_four_lines;
-use crate::utils::{get_doc_file::extract_content_from_docs, vec_db_connect::vector_index};
 
 pub fn create_ai_audit_agent(repo_root: PathBuf) -> Result<Agent<CompletionModel>> {
     let documentation = extract_content_from_docs(&repo_root)?;
@@ -53,7 +53,7 @@ pub fn create_ai_audit_agent(repo_root: PathBuf) -> Result<Agent<CompletionModel
 
 pub async fn get_context_for_security_query(
     query_content: &str,
-    repo_root: &Path,
+    repo: &RepoPaths,
 ) -> Result<String> {
     // TODO - restore once token limit increased
     // let documentation = extract_content_from_docs(&repo_root)?;
@@ -66,6 +66,7 @@ pub async fn get_context_for_security_query(
     let model = openai.embedding_model(TEXT_EMBEDDING_3_SMALL);
 
     /* 2 ── Build the query-params object */
+    // TODO FIX !
     let qp = QueryPointsBuilder::new("contract_chunks") // collection name
         .with_payload(true) // pull "meta", etc.
         .build();

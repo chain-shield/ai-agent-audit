@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::Deserialize;
 use std::path::Path;
 
@@ -15,47 +15,6 @@ pub struct FnSummary {
     #[serde(default)]
     pub mutability: String, // view / pure / payable / nonpayable
 }
-
-#[derive(Debug, Deserialize)]
-struct PrinterRaw {
-    printer: String,
-    elements: String, // table text
-}
-/* ------------------------------------------------------------------------- */
-/* 1. Run Slither with the `function-summary` printer                         */
-/* ------------------------------------------------------------------------- */
-
-/// Execute Slither and return raw JSON
-// async fn run_function_summary(repo_root: &Path) -> Result<String> {
-//     let key = cache_key(repo_root, "function-summary");
-//     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
-//     let mut printer_cache = cache.lock().await;
-//
-//     let out = Command::new("slither")
-//         .current_dir(repo_root)
-//         .args([
-//             ".", // analyse current dir
-//             "--foundry-ignore-compile",
-//             "--foundry-out-directory",
-//             "out",
-//             "--print",
-//             "function-summary",
-//             "--json",
-//             "-", // dump JSON to stdout
-//         ])
-//         .output()?;
-//
-//     if !out.status.success() {
-//         return Err(anyhow!(
-//             "slither function-summary failed:\n{}",
-//             String::from_utf8_lossy(&out.stderr)
-//         ));
-//     }
-//     let fn_summary_json = String::from_utf8_lossy(&out.stdout).into_owned();
-//     // Save to cache and return
-//     printer_cache.insert(key, fn_summary_json.clone());
-//     Ok(fn_summary_json)
-// }
 
 fn parse_table(block: &str) -> Vec<FnSummary> {
     let mut out = Vec::new();

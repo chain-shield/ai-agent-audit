@@ -25,6 +25,12 @@ pub struct RepoPaths {
     pub commit_hash: String,
 }
 
+impl RepoPaths {
+    pub fn unique_repo_hash(&self) -> String {
+        format!("{}-{}", self.repo_name, &self.commit_hash[..6])
+    }
+}
+
 /// Clones a repository from a URL and filters its files.
 ///
 /// This function:

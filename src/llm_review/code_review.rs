@@ -51,7 +51,6 @@ pub async fn review_codebase_for_security_issues(
     let openai_agent = openai_client
         .agent(O3)
         .context(&added_context_from_ai_brain)
-        .temperature(0.9)
         .build();
     // let ai_audit_agent = deepseek_client.agent(DEEPSEEK_CHAT).build();
     let ai_audit_agent = anthropic_client
@@ -89,6 +88,7 @@ pub async fn review_codebase_for_security_issues(
                 contract,
                 instructions_to_find_security_issue,
                 codeblock,
+                &added_context_from_ai_brain,
             );
 
             let security_issues_response = ai_audit_agent.prompt(&prompt_string).await?;
@@ -125,13 +125,16 @@ fn generate_llm_prompt_for_security_issue(
     contract: &str,
     instructions: &str,
     codeblock: &str,
+    added_context: &str,
 ) -> String {
     let mut prompt_string = generated_llm_prompt(contract, &instructions, PRE_PROMPT, POST_PROMPT);
     // append constract code to prompt instruction string
     info!("instructions...");
     print_first_four_lines(&prompt_string);
 
-    prompt_string.push_str(&codeblock);
+    let codeblock_plus_context = generate_content_plus_context_block(codeblock, added_context);
+
+    prompt_string.push_str(&codeblock_plus_context);
 
     prompt_string
 }
@@ -152,29 +155,3 @@ fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> 
 
     code_plus_context
 }
-
-// FAILED! was removing non dups
-// async fn remove_duplicate_issues(findings: Findings) -> Result<Findings> {
-//     let contract_findings_json = serde_json::to_string(&findings.findings).unwrap();
-//
-//     let openai_client = openai::Client::from_env();
-//     let ai_verify_agent = openai_client
-//         .extractor::<DuplicateFindings>(GPT_4O)
-//         .preamble(DEDUP_PROMPT)
-//         .build();
-//
-//     let duplicate_findings = ai_verify_agent.extract(contract_findings_json).await?;
-//     info!("dup findings => {:#?}", duplicate_findings);
-//
-//     let clean_findings_vec: Vec<Finding> = findings
-//         .findings
-//         .into_iter()
-//         .filter(|f| !duplicate_findings.titles.contains(&f.title))
-//         .collect();
-//
-//     let clean_findings = Findings {
-//         findings: clean_findings_vec,
-//     };
-//
-//     Ok(clean_findings)
-// }
