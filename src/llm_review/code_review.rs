@@ -56,7 +56,6 @@ pub async fn review_codebase_for_security_issues(
     let ai_audit_agent = anthropic_client
         .agent(CLAUDE_3_7_SONNET)
         .max_tokens(64_000)
-        .context(&added_context_from_ai_brain)
         .temperature(0.8)
         .build();
 
