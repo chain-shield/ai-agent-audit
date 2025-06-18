@@ -29,8 +29,8 @@ pub async fn review_codebase_for_security_issues(
     repo_root: &Path,
     codeblocks_path: &PathBuf,
     semantics_path: &Path,
-) -> Result<()> {
-    let mut all_security_issues = HashMap::<String, Vec<Finding>>::new();
+) -> Result<(HashMap<String, Findings>, Vec<ContractInvariants>)> {
+    let mut all_security_issues = HashMap::<String, Findings>::new();
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
 
     // grab all solidity contracts from database
@@ -60,7 +60,9 @@ pub async fn review_codebase_for_security_issues(
     for (contract, codeblock) in contracts.iter() {
         info!("contract => {}", contract);
         info!("codeblock => {}", codeblock);
-        let mut security_findings = Vec::<Finding>::new();
+        let mut security_findings = Findings {
+            findings: Vec::new(),
+        };
 
         //SCAN FOR INVARIANTS
         let invariant_prompt =
@@ -90,16 +92,16 @@ pub async fn review_codebase_for_security_issues(
             let findings = Findings::parse_from_json(&security_issues_response)?;
 
             if !findings.findings.is_empty() {
-                security_findings.extend(findings.findings);
+                security_findings.findings.extend(findings.findings);
             }
         }
 
         //find any dups security issues
-        if !security_findings.is_empty() {
+        if !security_findings.findings.is_empty() {
             // TODO (OPTIONAL) - to additional 'open ended' run to see if llm can find any other
             // issues
 
-            info!("contract findings => {:#?}", security_findings);
+            info!("contract findings => {:#?}", security_findings.findings);
             // dedup
             let contract_findings = remove_duplicate_issues(security_findings).await?;
 
@@ -111,7 +113,7 @@ pub async fn review_codebase_for_security_issues(
 
     info!("standard security findings => {:#?}", all_security_issues);
     info!("invariant findings => {:#?}", invariant_findings);
-    Ok(())
+    Ok((all_security_issues, invariant_findings))
 }
 
 fn generate_llm_prompt_for_security_issue(
@@ -162,8 +164,8 @@ fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> 
     code_plus_context
 }
 
-async fn remove_duplicate_issues(findings: Vec<Finding>) -> Result<Vec<Finding>> {
-    let contract_findings_json = serde_json::to_string(&findings).unwrap();
+async fn remove_duplicate_issues(findings: Findings) -> Result<Findings> {
+    let contract_findings_json = serde_json::to_string(&findings.findings).unwrap();
 
     let openai_client = openai::Client::from_env();
     let ai_verify_agent = openai_client
@@ -174,10 +176,15 @@ async fn remove_duplicate_issues(findings: Vec<Finding>) -> Result<Vec<Finding>>
     let duplicate_findings = ai_verify_agent.extract(contract_findings_json).await?;
     info!("dup findings => {:#?}", duplicate_findings);
 
-    let clean_findings = findings
+    let clean_findings_vec: Vec<Finding> = findings
+        .findings
         .into_iter()
         .filter(|f| !duplicate_findings.titles.contains(&f.title))
         .collect();
+
+    let clean_findings = Findings {
+        findings: clean_findings_vec,
+    };
 
     Ok(clean_findings)
 }

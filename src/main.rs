@@ -10,6 +10,7 @@ use ai_agent_audit::{
     build_brain::{enrichment, git_clone},
     enumerator::codeblock_maker,
     llm_review::code_review,
+    reporting,
 };
 use anyhow::Result;
 use dotenvy::dotenv;
@@ -84,7 +85,7 @@ async fn main() -> Result<()> {
     // - Documentation files
     // - Slither analysis result files
     // TODO - UNPAUSE AFTER DONE TESTING
-    let mut all_files: Vec<_> = repo.docs.into_iter().collect();
+    let mut all_files: Vec<_> = repo.docs.clone().into_iter().collect();
     // all_files.extend(slither_chunk_paths);
     info!("all files => {:?}", all_files.len());
 
@@ -92,8 +93,13 @@ async fn main() -> Result<()> {
     // TODO - UNPAUSE AFTER DONE TESTING
     // vector_db::generate_enbeddings_and_save_to_qdrant_vector_db(&all_files).await?;
 
-    code_review::review_codebase_for_security_issues(&repo.root, &codeblocks_db, &semantic_db)
-        .await?;
+    let (security_issues, invariants) =
+        code_review::review_codebase_for_security_issues(&repo.root, &codeblocks_db, &semantic_db)
+            .await?;
+
+    let audit_report = reporting::audit::generated_audit_report(security_issues, invariants, &repo);
+
+    info!("AUDIT REPORT => {:#?}", audit_report);
 
     Ok(())
 }

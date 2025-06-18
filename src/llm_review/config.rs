@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -12,13 +14,7 @@ use crate::prompts::{
     zero_code::CONTRACTS_WITH_ZERO_CODE,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub enum Severity {
-    High,
-    Medium,
-    Low,
-    Info,
-}
+use super::enums::{InvariantStatus, InvariantType, Severity};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Finding {
@@ -30,9 +26,8 @@ pub struct Finding {
     pub proof_of_concept: String, // Demonstrate how issue can be exploited by hacker
     pub proof_of_code: String, // Write Foundry Unit test to prove issue exists
     pub mitigation: String,
-    #[schemars(rename = "severity")]
     #[schemars(description = "Severity level: High, Medium, Low, Info")]
-    pub severity: String, //severity of issue
+    pub severity: Severity, //severity of issue
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -43,15 +38,13 @@ pub struct Findings {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct InvariantFinding {
     pub id: String,
-    #[schemars(rename = "inv_type")]
     #[schemars(
-        description = "Type: Arithmetic, Balance, Permission, Temporal, Referential, State_Machine"
+        description = "Type: Arithmetic, Balance, Permission, Temporal, Referential, StateMachine"
     )]
-    pub inv_type: String,
+    pub inv_type: InvariantType,
     pub desc: String,
-    #[schemars(rename = "status")]
     #[schemars(description = "Status: HOLDS, VIOLATION")]
-    pub status: String,
+    pub status: InvariantStatus,
     pub pre_state: Option<String>,
     pub post_state: Option<String>,
     pub impact: Option<String>,
@@ -59,7 +52,7 @@ pub struct InvariantFinding {
     pub mitigation: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContractInvariants {
     pub contract: String,
     pub intention: String,
@@ -150,6 +143,13 @@ impl ContractInvariants {
         //     .to_string()
         cleaned.to_string()
     }
+
+    fn get_all_violations(self) -> Vec<InvariantFinding> {
+        self.invariants
+            .into_iter()
+            .filter(|inv| inv.status == InvariantStatus::VIOLATION)
+            .collect::<Vec<InvariantFinding>>()
+    }
 }
 impl Findings {
     /// Parse JSON string containing findings from LLM response
@@ -208,18 +208,18 @@ impl Findings {
     }
 
     /// Get count of findings by severity
-    pub fn count_by_severity(&self) -> std::collections::HashMap<String, usize> {
-        let mut counts = std::collections::HashMap::new();
+    pub fn count_by_severity(&self) -> std::collections::HashMap<Severity, usize> {
+        let mut counts = HashMap::new();
 
         for finding in &self.findings {
-            *counts.entry(finding.severity.clone()).or_insert(0) += 1;
+            *counts.entry(finding.severity).or_insert(0) += 1;
         }
 
         counts
     }
 
     /// Filter findings by severity level
-    pub fn filter_by_severity(&self, severity: &str) -> Vec<&Finding> {
+    pub fn filter_by_severity(&self, severity: Severity) -> Vec<&Finding> {
         self.findings
             .iter()
             .filter(|f| f.severity == severity)
@@ -228,7 +228,7 @@ impl Findings {
 
     /// Get all high severity findings
     pub fn high_severity_findings(&self) -> Vec<&Finding> {
-        self.filter_by_severity("High")
+        self.filter_by_severity(Severity::High)
     }
 }
 
@@ -254,7 +254,7 @@ mod tests {
 
         let findings = Findings::parse_from_json(json_input).unwrap();
         assert_eq!(findings.findings.len(), 1);
-        assert_eq!(findings.findings[0].severity, "High");
+        assert_eq!(findings.findings[0].severity, Severity::High);
     }
 
     #[test]
@@ -281,8 +281,8 @@ mod tests {
         assert_eq!(high_findings.len(), 2);
 
         let counts = findings.count_by_severity();
-        assert_eq!(counts.get("High"), Some(&2));
-        assert_eq!(counts.get("Medium"), Some(&1));
+        assert_eq!(counts.get(&Severity::High), Some(&2));
+        assert_eq!(counts.get(&Severity::Medium), Some(&1));
     }
 }
 
@@ -299,7 +299,7 @@ pub fn example_usage() -> Result<(), Box<dyn std::error::Error>> {
     // Get severity counts
     let counts = findings.count_by_severity();
     for (severity, count) in counts {
-        println!("{}: {}", severity, count);
+        println!("{:?}: {}", severity, count);
     }
 
     // Get high severity findings

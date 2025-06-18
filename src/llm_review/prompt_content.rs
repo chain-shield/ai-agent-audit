@@ -54,51 +54,12 @@ pub async fn generate_slither_metadata_prompt_context(
     Ok(prompt_context)
 }
 
-pub async fn generate_abridged_slither_metadata_prompt_context(
-    repo_root: &Path,
-    semantics_path: &Path,
-) -> Result<String> {
-    let key = cache_key(repo_root, "abridged_prompt_context");
-    let cache = Arc::clone(&PROMPT_CONTEXT);
-    let mut context_cache = cache.lock().await;
-
-    // Return cached output if exists
-    if let Some(cached) = context_cache.get(&key) {
-        return Ok(cached.clone());
-    }
-
-    // 1 . gather IR + storage  (re-use existing function)
-    info!("get ir and storage chunks");
-    let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
-    let callgraph = callgraph::get_enriched_funcs_and_edges(repo_root, &semantics_path).await?;
-    let contract_summary = run_printer(repo_root, "contract-summary").await?;
-    let src_file_list = get_all_files_src(repo_root).await?;
-
-    let mut prompt_context = String::new();
-
-    prompt_context.push_str("\n## Slither Contract Summary\n");
-    prompt_context.push_str(&contract_summary);
-    prompt_context.push_str("\n## List of Files in Src Folder\n");
-    prompt_context.push_str(&src_file_list);
-    prompt_context.push_str("\n## Slither Call Graph\n");
-    prompt_context.push_str(&callgraph);
-    prompt_context.push_str("\n## Slither Inheritance Json\n");
-    prompt_context.push_str(&inheritance);
-
-    info!(
-        "slither metadata (abridged) prompt context size ==> {}",
-        prompt_context.len()
-    );
-    context_cache.insert(key, prompt_context.clone());
-    Ok(prompt_context)
-}
-
 pub async fn generate_context_for_code_review(
     repo_root: &Path,
     semantics_path: &Path,
 ) -> Result<String> {
     let slither_metadata =
-        generate_abridged_slither_metadata_prompt_context(repo_root, &semantics_path).await?;
+        generate_slither_metadata_prompt_context(repo_root, &semantics_path).await?;
     let summaries = summarize::summarize_src_files(repo_root, &semantics_path).await?;
     let mut file_summaries = String::new();
 
