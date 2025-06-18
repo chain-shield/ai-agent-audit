@@ -30,7 +30,6 @@ pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
     let tmp_dir = tempfile::tempdir()?;
     info!("generating slither ssa into txt files that contain function or storage var");
 
-    // TODO - UNPAUSE AFTER DONE TESTING
     // Extract IR and storage information using Slither and write to text files
     let slither_chunk_paths = slither_ffi::save_code_metadata_and_analysis_to_txt_files(
         &repo.root,
@@ -49,13 +48,11 @@ pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
     // - Solidity source files
     // - Documentation files
     // - Slither analysis result files
-    // TODO - UNPAUSE AFTER DONE TESTING
     let mut all_files: Vec<_> = repo.docs.clone().into_iter().collect();
     all_files.extend(slither_chunk_paths);
     info!("all files => {:?}", all_files.len());
 
     //embed all files and upsert to qdrant vector db for later dynamic retrival
-    // TODO - UNPAUSE AFTER DONE TESTING
     generate_enbeddings_and_save_to_qdrant_vector_db(&all_files, &repo).await?;
     Ok(())
 }

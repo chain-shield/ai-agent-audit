@@ -1,4 +1,3 @@
-// TODO - UPDATE CODE PARSING TO MAKE SURE PRAGMA IS PRESENT
 pub const FLOATING_PRAGMA: &str = r#"You are an expert smart contract security auditor specializing in compiler version vulnerabilities. Your task is to perform a comprehensive floating pragma analysis on the provided Solidity smart contract code.
 
 ## Analysis Framework
