@@ -23,6 +23,10 @@ pub mod build_brain {
     pub mod vector_db;
 }
 
+pub mod reporting {
+    pub mod audit;
+}
+
 pub mod enumerator {
     pub mod codeblock_cache;
     pub mod codeblock_db;
@@ -35,6 +39,7 @@ pub mod llm_review {
     pub mod analysis_db;
     pub mod code_review;
     pub mod config;
+    pub mod enums;
     pub mod invariants;
     pub mod prompt_content;
     pub mod prompt_support {

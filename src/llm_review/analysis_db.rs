@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::path::Path;
 
 #[derive(Debug, Serialize)]
-pub struct Finding {
+pub struct FindingDb {
     pub id: String, // UUID v4
     pub title: String,
     pub description: String,
@@ -37,7 +37,7 @@ impl FindingsDb {
         Ok(Self(conn))
     }
 
-    pub fn insert(&self, f: &Finding) -> Result<()> {
+    pub fn insert(&self, f: &FindingDb) -> Result<()> {
         self.0.execute(
             "INSERT INTO findings VALUES (?1,?2,?3,?4,?5,?6,?7);",
             params![

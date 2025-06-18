@@ -1,7 +1,7 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
-use rig::providers::openai;
 use rig::providers::openai::GPT_4O;
+use rig::providers::openai::{self, O3};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
-use crate::llm_review::prompt_content;
+use crate::llm_review::prompt_content::{self, generate_context_for_code_review};
 
 use super::slither_ffi::cache_key;
 
@@ -53,7 +53,7 @@ pub async fn summarize_src_files(
 
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(GPT_4O)
-        .preamble("You are a senior solidity dev. Please summary below content (code or docs). Format in markdown for easy reading. 
+        .preamble("You are a senior solidity dev. Please summarize below content (code or docs). Format in markdown for easy reading. 
                     If content is code. Please write 200 word or less summary for each contract plus contract definition, 100 words or less summary 
                     of each function + function interface, and 50 word or less explanation of each storage variable + variable defintion. If docs 
                     please summarize each section of the docs with 150 words or less, max 500 words total for each doc file.")
@@ -92,6 +92,46 @@ pub async fn summarize_src_files(
     }
 
     log::info!("summaries => {:#?}", summaries);
+
+    summaries_cache.insert(key, summaries.clone());
+    Ok(summaries)
+}
+
+pub async fn summarize_protocol(
+    repo_root: &Path,
+    semantics_path: &Path,
+) -> Result<Vec<SrcFileSummary>> {
+    let key = cache_key(repo_root, "protocol-summary");
+    let cache = Arc::clone(&FILE_SUMMARY_CACHE);
+    let mut summaries_cache = cache.lock().await;
+
+    // Return cached output if exists
+    if let Some(cached) = summaries_cache.get(&key) {
+        return Ok(cached.clone());
+    }
+
+    // Initialize vectors to store file paths
+    let mut summaries = Vec::<SrcFileSummary>::new();
+
+    let openai_client = openai::Client::from_env();
+
+    let content = generate_context_for_code_review(repo_root, &semantics_path).await?;
+
+    let ai_summary_agent = openai_client
+        .extractor::<FileSummary>(O3)
+        .preamble("You are a senior solidity dev. Given the context provided for solidity smart contract protocol, 
+                   please create a max 200 word summary of this protocol explaining what it is, and how it works.  Format 
+                   in markdown for easy reading.")
+        .build();
+
+    let summary = ai_summary_agent.extract(content).await?;
+
+    log::info!("protocol summary => {:#?}", summary);
+
+    summaries.push(SrcFileSummary {
+        filename: "protocol-summary".to_string(),
+        summary: summary.summary,
+    });
 
     summaries_cache.insert(key, summaries.clone());
     Ok(summaries)

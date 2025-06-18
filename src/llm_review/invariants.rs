@@ -19,7 +19,7 @@ You are a senior security auditor.
 3. Permission    only-owner / only-role / re-entrancy locks  
 4. Temporal      timeouts, epochs, can’t rewind clock  
 5. Referential   mappings/arrays stay in sync (index→value)  
-6. State_Machine only allowed state transitions
+6. StateMachine only allowed state transitions
 
 Return JSON:
 
@@ -29,7 +29,7 @@ Return JSON:
   "invariants": [
     {
       "id": "INV-n",
-      "inv_type": "Arithmetic|Balance|Permission|Temporal|Referential|State_Machine",
+      "inv_type": "Arithmetic|Balance|Permission|Temporal|Referential|StateMachine",
       "desc": "string",
       "status": "HOLDS" | "VIOLATION",
       "exploit": "string (omit if HOLDS)",
