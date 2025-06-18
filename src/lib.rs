@@ -25,6 +25,7 @@ pub mod build_brain {
 
 pub mod reporting {
     pub mod audit;
+    pub mod save_file;
 }
 
 pub mod enumerator {
