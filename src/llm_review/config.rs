@@ -144,7 +144,7 @@ impl ContractInvariants {
         cleaned.to_string()
     }
 
-    fn get_all_violations(self) -> Vec<InvariantFinding> {
+    pub fn get_all_violations(self) -> Vec<InvariantFinding> {
         self.invariants
             .into_iter()
             .filter(|inv| inv.status == InvariantStatus::VIOLATION)

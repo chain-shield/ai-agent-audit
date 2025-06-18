@@ -110,7 +110,7 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
             findings_report.push_str(&format!(
                 "## [{}-{}]. {}\n\n",
                 severity.as_initial(),
-                i,
+                i + 1,
                 finding.title
             ));
 
@@ -149,16 +149,18 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
 fn get_invariant_report(invariants: &[ContractInvariants]) -> String {
     let mut findings_report = String::new();
 
-    let violations = combine_invariants_for_all_contracts(invariants);
+    let contract_invariants = combine_invariants_for_all_contracts(invariants);
 
-    if !violations.invariants.is_empty() {
+    let violations = contract_invariants.get_all_violations();
+
+    if !violations.is_empty() {
         findings_report.push_str("\n# {} Invariant Violations\n\n");
 
-        for (i, violation) in violations.invariants.into_iter().enumerate() {
+        for (i, violation) in violations.into_iter().enumerate() {
             //title
             findings_report.push_str(&format!(
                 "## {}. {} Violation\n\n",
-                i,
+                i + 1,
                 violation.inv_type.as_str(),
             ));
 

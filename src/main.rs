@@ -10,7 +10,7 @@ use ai_agent_audit::{
     build_brain::{enrichment, git_clone},
     enumerator::codeblock_maker,
     llm_review::code_review,
-    reporting,
+    reporting::{self, audit, save_file},
 };
 use anyhow::Result;
 use dotenvy::dotenv;
@@ -97,9 +97,9 @@ async fn main() -> Result<()> {
         code_review::review_codebase_for_security_issues(&repo.root, &codeblocks_db, &semantic_db)
             .await?;
 
-    let audit_report = reporting::audit::generated_audit_report(security_issues, invariants, &repo);
+    let audit_report = audit::generated_audit_report(security_issues, invariants, &repo);
 
-    info!("AUDIT REPORT => {:#?}", audit_report);
+    save_file::save_audit_report(&audit_report, &repo)?;
 
     Ok(())
 }
