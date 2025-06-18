@@ -18,7 +18,7 @@ use super::slither_ffi::cache_key;
 /// Global cache keyed by (repo_root, printer) tuple stringified
 pub static FILE_SUMMARY_CACHE: Lazy<Arc<Mutex<HashMap<String, Vec<SrcFileSummary>>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct SrcFileSummary {
     pub filename: String,
     pub summary: String,
@@ -97,17 +97,19 @@ pub async fn summarize_src_files(
     Ok(summaries)
 }
 
-pub async fn summarize_protocol(
-    repo_root: &Path,
-    semantics_path: &Path,
-) -> Result<Vec<SrcFileSummary>> {
+pub async fn summarize_protocol(repo_root: &Path, semantics_path: &Path) -> Result<String> {
     let key = cache_key(repo_root, "protocol-summary");
     let cache = Arc::clone(&FILE_SUMMARY_CACHE);
     let mut summaries_cache = cache.lock().await;
 
     // Return cached output if exists
     if let Some(cached) = summaries_cache.get(&key) {
-        return Ok(cached.clone());
+        let summary = cached
+            .first()
+            .unwrap_or(&SrcFileSummary::default())
+            .summary
+            .clone();
+        return Ok(summary);
     }
 
     // Initialize vectors to store file paths
@@ -130,9 +132,9 @@ pub async fn summarize_protocol(
 
     summaries.push(SrcFileSummary {
         filename: "protocol-summary".to_string(),
-        summary: summary.summary,
+        summary: summary.summary.clone(),
     });
 
     summaries_cache.insert(key, summaries.clone());
-    Ok(summaries)
+    Ok(summary.summary)
 }

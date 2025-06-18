@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::build_brain::slither_ffi::{cache_key, get_all_files_src, run_printer};
 use crate::build_brain::{callgraph, inheritance, summarize};
+use crate::reporting::save_file;
 
 /// Global cache keyed by (repo_root, printer) tuple stringified
 pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
@@ -74,5 +75,6 @@ pub async fn generate_context_for_code_review(
     full_prompt_context.push_str(&file_summaries);
 
     info!("full prompt content SIZE => {}", full_prompt_context.len());
+
     Ok(full_prompt_context)
 }

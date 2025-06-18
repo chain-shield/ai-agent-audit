@@ -4,7 +4,7 @@ use rig::{
     completion::Prompt,
     providers::{
         anthropic::{self, CLAUDE_3_7_SONNET},
-        openai::{self, GPT_4O, O3},
+        openai::{self, O3},
     },
 };
 use std::{
@@ -15,10 +15,10 @@ use std::{
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
-        config::{generated_llm_prompt, ContractInvariants, DuplicateFindings, Finding},
+        config::{generated_llm_prompt, ContractInvariants},
         invariants::INVARIANTS,
         prompt_content::generate_context_for_code_review,
-        prompt_support::{dedup::DEDUP_PROMPT, post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
+        prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
     },
     utils::logging::print_first_four_lines,
 };
@@ -42,19 +42,25 @@ pub async fn review_codebase_for_security_issues(
     let openai_client = openai::Client::from_env();
     let anthropic_client = anthropic::Client::from_env();
 
+    info!("generating additional context for query...");
+    let added_context_from_ai_brain =
+        generate_context_for_code_review(repo_root, &semantics_path).await?;
+
     info!("setting up AI agent...");
     // let ai_audit_agent = gemini_client.agent(GEMINI_1_5_PRO).build();
-    let openai_agent = openai_client.agent(O3).build();
+    let openai_agent = openai_client
+        .agent(O3)
+        .context(&added_context_from_ai_brain)
+        .temperature(0.9)
+        .build();
     // let ai_audit_agent = deepseek_client.agent(DEEPSEEK_CHAT).build();
     let ai_audit_agent = anthropic_client
         .agent(CLAUDE_3_7_SONNET)
         .max_tokens(64_000)
+        .context(&added_context_from_ai_brain)
         .temperature(0.8)
         .build();
 
-    info!("generating additional context for query...");
-    let added_context_from_ai_brain =
-        generate_context_for_code_review(repo_root, &semantics_path).await?;
     let mut invariant_findings = Vec::<ContractInvariants>::new();
 
     for (contract, codeblock) in contracts.iter() {
@@ -65,10 +71,8 @@ pub async fn review_codebase_for_security_issues(
         };
 
         //SCAN FOR INVARIANTS
-        let invariant_prompt =
-            generate_llm_prompt_for_invariants(codeblock, &added_context_from_ai_brain);
         info!("submitting invariant prompt to openai");
-        let invariants_response = openai_agent.prompt(&invariant_prompt).await?;
+        let invariants_response = openai_agent.prompt(INVARIANTS).await?;
 
         info!("parsing invariant prompt");
         let invariants = ContractInvariants::parse_from_json(&invariants_response)?;
@@ -78,12 +82,13 @@ pub async fn review_codebase_for_security_issues(
         }
 
         // SCAN FOR STANDARD SECURITY ISSUES
-        for instructions_to_find_security_issue in SECURITY_PROMPTS.iter().take(1) {
+        for instructions_to_find_security_issue in SECURITY_PROMPTS
+        // .iter().take(5)
+        {
             let prompt_string = generate_llm_prompt_for_security_issue(
                 contract,
                 instructions_to_find_security_issue,
                 codeblock,
-                &added_context_from_ai_brain,
             );
 
             let security_issues_response = ai_audit_agent.prompt(&prompt_string).await?;
@@ -96,16 +101,16 @@ pub async fn review_codebase_for_security_issues(
             }
         }
 
-        //find any dups security issues
         if !security_findings.findings.is_empty() {
             // TODO (OPTIONAL) - to additional 'open ended' run to see if llm can find any other
             // issues
 
             info!("contract findings => {:#?}", security_findings.findings);
             // dedup
-            let contract_findings = remove_duplicate_issues(security_findings).await?;
+            //FAILED! - was removing non dup issues,
+            // let contract_findings = remove_duplicate_issues(security_findings).await?;
 
-            all_security_issues.insert(contract.to_string(), contract_findings);
+            all_security_issues.insert(contract.to_string(), security_findings);
 
             // TODO - save issues to Findings db
         }
@@ -120,29 +125,13 @@ fn generate_llm_prompt_for_security_issue(
     contract: &str,
     instructions: &str,
     codeblock: &str,
-    added_context: &str,
 ) -> String {
     let mut prompt_string = generated_llm_prompt(contract, &instructions, PRE_PROMPT, POST_PROMPT);
     // append constract code to prompt instruction string
     info!("instructions...");
     print_first_four_lines(&prompt_string);
 
-    let codeblock_plus_context = generate_content_plus_context_block(codeblock, added_context);
-
-    prompt_string.push_str(&codeblock_plus_context);
-
-    prompt_string
-}
-
-fn generate_llm_prompt_for_invariants(codeblock: &str, added_context: &str) -> String {
-    let mut prompt_string = INVARIANTS.to_string();
-    // append constract code to prompt instruction string
-    info!("instructions...");
-    print_first_four_lines(&prompt_string);
-
-    let codeblock_plus_context = generate_content_plus_context_block(codeblock, added_context);
-
-    prompt_string.push_str(&codeblock_plus_context);
+    prompt_string.push_str(&codeblock);
 
     prompt_string
 }
@@ -164,27 +153,28 @@ fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> 
     code_plus_context
 }
 
-async fn remove_duplicate_issues(findings: Findings) -> Result<Findings> {
-    let contract_findings_json = serde_json::to_string(&findings.findings).unwrap();
-
-    let openai_client = openai::Client::from_env();
-    let ai_verify_agent = openai_client
-        .extractor::<DuplicateFindings>(GPT_4O)
-        .preamble(DEDUP_PROMPT)
-        .build();
-
-    let duplicate_findings = ai_verify_agent.extract(contract_findings_json).await?;
-    info!("dup findings => {:#?}", duplicate_findings);
-
-    let clean_findings_vec: Vec<Finding> = findings
-        .findings
-        .into_iter()
-        .filter(|f| !duplicate_findings.titles.contains(&f.title))
-        .collect();
-
-    let clean_findings = Findings {
-        findings: clean_findings_vec,
-    };
-
-    Ok(clean_findings)
-}
+// FAILED! was removing non dups
+// async fn remove_duplicate_issues(findings: Findings) -> Result<Findings> {
+//     let contract_findings_json = serde_json::to_string(&findings.findings).unwrap();
+//
+//     let openai_client = openai::Client::from_env();
+//     let ai_verify_agent = openai_client
+//         .extractor::<DuplicateFindings>(GPT_4O)
+//         .preamble(DEDUP_PROMPT)
+//         .build();
+//
+//     let duplicate_findings = ai_verify_agent.extract(contract_findings_json).await?;
+//     info!("dup findings => {:#?}", duplicate_findings);
+//
+//     let clean_findings_vec: Vec<Finding> = findings
+//         .findings
+//         .into_iter()
+//         .filter(|f| !duplicate_findings.titles.contains(&f.title))
+//         .collect();
+//
+//     let clean_findings = Findings {
+//         findings: clean_findings_vec,
+//     };
+//
+//     Ok(clean_findings)
+// }

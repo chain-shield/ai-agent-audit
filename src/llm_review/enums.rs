@@ -103,7 +103,7 @@ impl<'de> Deserialize<'de> for InvariantType {
             "permission" => Ok(InvariantType::Permission),
             "temporal" => Ok(InvariantType::Temporal),
             "referential" => Ok(InvariantType::Referential),
-            "stateMachine" => Ok(InvariantType::StateMachine),
+            "statemachine" => Ok(InvariantType::StateMachine),
             other => Err(de::Error::unknown_variant(
                 other,
                 &[

@@ -10,8 +10,8 @@ pub const POST_PROMPT: &str = r#"
       "impact": "Business and security consequences of the vulnerability",
       "proof_of_concept": "Step-by-step exploitation scenario",
       "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
-      "mitigation": "suggested mitigation with code example for the fix",
-      "severity": "High"
+      "severity": "High",
+      "mitigation": "suggested mitigation with code example for the fix"
     }
   ]
 }
