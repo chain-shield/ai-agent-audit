@@ -1,5 +1,3 @@
-use std::vec;
-
 /// The main entry point for the AI Agent Audit tool.
 ///
 /// This application analyzes Solidity smart contracts by:
@@ -9,7 +7,7 @@ use std::vec;
 /// 4. Creating embeddings for the source code and analysis results
 /// 5. Storing the embeddings in a Qdrant vector database for semantic search
 use ai_agent_audit::{
-    build_brain::{self, enrichment, git_clone, slither_ffi, vector_db},
+    build_brain::{enrichment, git_clone, vector_db},
     enumerator::codeblock_maker,
     llm_review::code_review,
     reporting::{audit, contract_data, save_file},
@@ -45,8 +43,6 @@ async fn main() -> Result<()> {
     info!("compiling source code");
     // Build the Solidity contracts using Forge
     enrichment::forge_build(&repo.root)?;
-
-    // let prompt = generate_abridged_slither_metadata_prompt_context(&repo.root).await?;
 
     // save call graph to database
     let semantic_db = enrichment::build_semantics_db_from_call_graph(&repo.root).await?;

@@ -51,12 +51,12 @@ pub fn create_ai_audit_agent(repo_root: PathBuf) -> Result<Agent<CompletionModel
     Ok(openai_audit_agent)
 }
 
+// TODO - restore once token limit increased
 pub async fn get_context_for_security_query(
     query_content: &str,
     repo: &RepoPaths,
 ) -> Result<String> {
-    // TODO - restore once token limit increased
-    // let documentation = extract_content_from_docs(&repo_root)?;
+    let documentation = extract_content_from_docs(&repo.root)?;
 
     let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL")?)
         .build()
@@ -66,8 +66,8 @@ pub async fn get_context_for_security_query(
     let model = openai.embedding_model(TEXT_EMBEDDING_3_SMALL);
 
     /* 2 ── Build the query-params object */
-    // TODO FIX !
-    let qp = QueryPointsBuilder::new("contract_chunks") // collection name
+    let vector_db_name = format!("{}-contract_chunks", repo.unique_repo_hash());
+    let qp = QueryPointsBuilder::new(&vector_db_name) // collection name
         .with_payload(true) // pull "meta", etc.
         .build();
     // 3. Vector-store pointing at existing collection “contract_chunks”
@@ -89,12 +89,10 @@ pub async fn get_context_for_security_query(
     info!("dynamic content");
     print_first_four_lines(&dynamic_content);
 
-    let final_context = format!("\n\n ## ADDITIONAL CONTEXT: \n\n {}", dynamic_content);
-    // TODO - uncomment once token limit increased
-    // let final_context = format!(
-    //     "\n ## DOCUMENTATION: \n\n {} \n\n ## ADDITIONAL CONTEXT: \n\n {}",
-    //     documentation, dynamic_content
-    // );
+    let final_context = format!(
+        "\n ## DOCUMENTATION: \n\n {} \n\n ## ADDITIONAL CONTEXT: \n\n {}",
+        documentation, dynamic_content
+    );
 
     Ok(final_context)
 }
