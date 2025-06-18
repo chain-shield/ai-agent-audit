@@ -8,7 +8,6 @@ use tokio::sync::Mutex;
 
 use crate::build_brain::slither_ffi::{cache_key, get_all_files_src, run_printer};
 use crate::build_brain::{callgraph, inheritance, summarize};
-use crate::reporting::save_file;
 
 /// Global cache keyed by (repo_root, printer) tuple stringified
 pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =

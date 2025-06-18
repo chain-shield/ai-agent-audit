@@ -7,10 +7,10 @@
 /// 4. Creating embeddings for the source code and analysis results
 /// 5. Storing the embeddings in a Qdrant vector database for semantic search
 use ai_agent_audit::{
-    build_brain::{enrichment, git_clone},
+    build_brain::{enrichment, git_clone, slither_ffi, vector_db},
     enumerator::codeblock_maker,
     llm_review::code_review,
-    reporting::{self, audit, contract_data, save_file},
+    reporting::{audit, contract_data, save_file},
 };
 use anyhow::Result;
 use dotenvy::dotenv;
@@ -57,10 +57,13 @@ async fn main() -> Result<()> {
 
     // TODO - UNPAUSE AFTER DONE TESTING
     // Extract IR and storage information using Slither and write to text files
-    // let slither_chunk_paths =
-    //     slither_ffi::save_code_metadata_and_analysis_to_txt_files(&repo.root, tmp_dir.path())
-    //         .await?;
-    // info!("slither ssa file count => {}", slither_chunk_paths.len());
+    let slither_chunk_paths = slither_ffi::save_code_metadata_and_analysis_to_txt_files(
+        &repo.root,
+        tmp_dir.path(),
+        &semantic_db,
+    )
+    .await?;
+    info!("slither ssa file count => {}", slither_chunk_paths.len());
 
     // ────────────────────────────────
     // 3. Static-analysis (Slither detectors)
@@ -86,12 +89,12 @@ async fn main() -> Result<()> {
     // - Slither analysis result files
     // TODO - UNPAUSE AFTER DONE TESTING
     let mut all_files: Vec<_> = repo.docs.clone().into_iter().collect();
-    // all_files.extend(slither_chunk_paths);
+    all_files.extend(slither_chunk_paths);
     info!("all files => {:?}", all_files.len());
 
     //embed all files and upsert to qdrant vector db for later dynamic retrival
     // TODO - UNPAUSE AFTER DONE TESTING
-    // vector_db::generate_enbeddings_and_save_to_qdrant_vector_db(&all_files).await?;
+    vector_db::generate_enbeddings_and_save_to_qdrant_vector_db(&all_files, &repo).await?;
 
     let (security_issues, invariants) =
         code_review::review_codebase_for_security_issues(&repo.root, &codeblocks_db, &semantic_db)

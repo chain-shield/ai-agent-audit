@@ -14,27 +14,39 @@ use qdrant_client::Qdrant;
 use crate::build_brain::enbeddings::embed_files;
 
 use super::enbeddings::SourceChunk;
+use super::git_clone::RepoPaths;
 
-pub async fn generate_enbeddings_and_save_to_qdrant_vector_db(all_files: &[PathBuf]) -> Result<()> {
-    // Generate vector embeddings for all files
-    info!("generating vector embedding");
-    let embeddings = embed_files(&all_files).await?;
+pub async fn generate_enbeddings_and_save_to_qdrant_vector_db(
+    all_files: &[PathBuf],
+    repo: &RepoPaths,
+) -> Result<()> {
+    let vector_db_name = format!("{}-contract_chunks", repo.unique_repo_hash());
 
-    // ────────────────────────────────
-    // 4. Upsert into Qdrant
-    // ────────────────────────────────
     info!("connect to qdrant db");
 
     // Build Qdrant client configuration and connect to the database
     let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL")?).build()?;
 
+    let already_exists = qdrant.collection_exists(&vector_db_name).await?;
+
+    // if vector db already exits for this repo no need to re-upsert
+    if already_exists {
+        return Ok(());
+    }
+
     // Create the collection if it doesn't exist
     info!("create contract_chunks vector db (if does not exist)");
-    ensure_collection(&qdrant, "contract_chunks", 1536).await?;
+    ensure_collection(&qdrant, &vector_db_name, 1536).await?;
 
+    // Generate vector embeddings for all files
+    info!("generating vector embedding");
+    let embeddings = embed_files(&all_files).await?;
+    // ────────────────────────────────
+    // 4. Upsert into Qdrant
+    // ────────────────────────────────
     // Upsert the embeddings into the Qdrant collection
     info!("upsert embeddings");
-    upsert(&qdrant, "contract_chunks", &embeddings).await?;
+    upsert(&qdrant, &vector_db_name, &embeddings).await?;
 
     // Print completion message
     println!("✅ Ingest complete – {} chunks stored", embeddings.len());

@@ -7,9 +7,6 @@ use crate::{
 };
 
 pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> anyhow::Result<()> {
-    let protocol_name = repo.repo_name.clone();
-    let commit = repo.commit_hash.clone();
-
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
 
     // grab all solidity contracts from database
@@ -17,19 +14,16 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
     let contracts = codeblocks_db.get_all_contracts()?;
 
     for (contract, codeblock) in contracts {
-        let filename = format!("{}-{}-{}.md", contract, protocol_name, &commit[..6]);
+        let filename = format!("{}-{}.md", contract, repo.unique_repo_hash());
         save_file_locally(&codeblock, &filename)?;
     }
     Ok(())
 }
 
 pub async fn save_metadata(semantics_path: &Path, repo: &RepoPaths) -> anyhow::Result<()> {
-    let protocol_name = repo.repo_name.clone();
-    let commit = repo.commit_hash.clone();
-
     let metadata = generate_context_for_code_review(&repo.root, semantics_path).await?;
 
-    let filename = format!("metadata-{}-{}.md", protocol_name, &commit[..6]);
+    let filename = format!("metadata-{}.md", repo.unique_repo_hash());
     save_file_locally(&metadata, &filename)?;
     Ok(())
 }

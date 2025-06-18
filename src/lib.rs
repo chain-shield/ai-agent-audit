@@ -53,7 +53,6 @@ pub mod llm_review {
 
 pub mod ai_bot {
     pub mod agent;
-    pub mod rag;
     pub mod retrieve_slice;
 }
 

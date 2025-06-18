@@ -3,11 +3,7 @@ use std::{fs::File, io::Write};
 use crate::build_brain::git_clone::RepoPaths;
 
 pub fn save_audit_report(markdown: &str, repo: &RepoPaths) -> anyhow::Result<()> {
-    let filename = format!(
-        "{}-{}-audit-report.md",
-        &repo.repo_name,
-        &repo.commit_hash[..6]
-    );
+    let filename = format!("{}-audit-report.md", repo.unique_repo_hash());
     save_file_locally(markdown, &filename)?;
 
     Ok(())
