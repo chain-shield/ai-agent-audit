@@ -25,9 +25,9 @@ pub struct Finding {
     pub impact: String,      // Impact of Issue
     pub proof_of_concept: String, // Demonstrate how issue can be exploited by hacker
     pub proof_of_code: String, // Write Foundry Unit test to prove issue exists
-    pub mitigation: String,
     #[schemars(description = "Severity level: High, Medium, Low, Info")]
     pub severity: Severity, //severity of issue
+    pub mitigation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

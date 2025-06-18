@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 use crate::{
-    build_brain::git_clone::RepoPaths,
+    build_brain::{git_clone::RepoPaths, summarize},
     llm_review::{
         config::{ContractInvariants, Findings},
         enums::Severity,
@@ -15,11 +15,12 @@ const SEVERITIES: [Severity; 4] = [
     Severity::Info,
 ];
 
-pub fn generated_audit_report(
+pub async fn generated_audit_report(
     issues: HashMap<String, Findings>,
     invariants: Vec<ContractInvariants>,
     repo: &RepoPaths,
-) -> String {
+    semantics_path: &Path,
+) -> anyhow::Result<String> {
     let mut audit_report = String::new();
     let protocol_name = repo.repo_name.replace("-", " ");
     let commit = repo.commit_hash.clone();
@@ -32,6 +33,11 @@ pub fn generated_audit_report(
     // generated report
     audit_report.push_str(&report_title);
     audit_report.push_str(&subtitle);
+    audit_report.push_str("## Protocol Overview \n\n");
+
+    let protocol_overview = summarize::summarize_protocol(&repo.root, semantics_path).await?;
+
+    audit_report.push_str(&protocol_overview);
 
     let summary = get_finding_summary(&findings);
 
@@ -49,7 +55,7 @@ pub fn generated_audit_report(
 
     audit_report.push_str(&invariants_report);
 
-    audit_report
+    Ok(audit_report)
 }
 
 // finding hashmap => vec
@@ -136,7 +142,7 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
 
             //Suggested Fix
             findings_report.push_str("## Suggested Mitigation\n");
-            findings_report.push_str(&finding.mitigation);
+            findings_report.push_str(&finding.mitigation.clone().unwrap_or_default());
             findings_report.push_str("\n\n");
         }
     } else {
