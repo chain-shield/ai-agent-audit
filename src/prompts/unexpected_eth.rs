@@ -19,25 +19,6 @@ Look for these vulnerable patterns in smart contract code:
 3. **Balance Arithmetic**: `uint256 userShare = msg.value * totalShares / address(this).balance`
 4. **Invariant Assumptions**: Internal accounting that assumes balance changes only through contract functions
 
-## Output Requirements
-
-For each vulnerability found, provide a structured finding with these exact fields:
-
-### Finding Structure
-- **title**: "Unexpected Ether Vulnerability in <Contract>::<Function>"
-- **description**: Detailed explanation of the vulnerable code pattern with specific code snippets
-- **impact**: Concrete description of how this affects contract functionality and users
-- **proof_of_concept**: Step-by-step explanation of how an attacker would exploit this
-- **proof_of_code**: Complete Foundry test demonstrating the vulnerability
-- **severity**: One of: High, Medium, Low, Info
-- **mitigation**: Suggested Mitigation with code example of fix
-
-### Severity Guidelines
-- **High**: Direct fund loss, critical functionality bypass, or contract brick
-- **Medium**: Indirect fund loss, significant logic manipulation, or state corruption
-- **Low**: Minor logic issues or edge cases with limited impact
-- **Info**: Code quality issues or potential future vulnerabilities
-
 ## Analysis Focus Areas
 
 1. **Balance Equality Checks**: Look for exact balance comparisons

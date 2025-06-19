@@ -21,23 +21,6 @@ Pay special attention to functions with these patterns:
 - Multicall or batch transaction functions using signatures
 
 
-## Output Requirements
-For each signature replay vulnerability found, provide:
-
-1. **Title**: Format as "Signature Replay Attack in <Contract>::<Function>"
-2. **Description**: Detailed explanation of the replay vulnerability including vulnerable code snippet showing missing nonce/replay protection
-3. **Impact**: Financial losses, unauthorized transactions, privilege escalation, or asset drainage possible through signature reuse
-4. **Proof of Concept**: Step-by-step exploitation scenario showing how an attacker can capture and reuse valid signatures
-5. **Proof of Code**: Complete Foundry unit test demonstrating signature capture, replay, and successful exploitation
-6. **Severity**: High/Medium/Low/Info based on exploitability and financial impact
-7. **Mitigation**: Suggested Mitigation with code example of fix
-
-## Severity Guidelines
-- **High**: Asset transfer functions, minting/burning, or ownership changes without nonce protection
-- **Medium**: Administrative functions or governance actions vulnerable to replay with moderate impact
-- **Low**: Informational functions or limited-impact operations that can be replayed
-- **Info**: Potential replay vectors or missing best practices without immediate exploitability
-
 ## Analysis Instructions
 1. Scan all functions accepting signature parameters or using signature verification
 2. Check if signature hash construction includes nonce, chain ID, and contract address

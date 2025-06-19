@@ -1,4 +1,5 @@
 use anyhow::Result;
+use log::info;
 use once_cell::sync::Lazy;
 use rig::providers::openai::GPT_4O;
 use rig::providers::openai::{self, O3};
@@ -12,6 +13,7 @@ use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
 use crate::llm_review::prompt_content::{self, generate_context_for_code_review};
+use crate::utils::extract_retry::extract_with_retry;
 
 use super::slither_ffi::cache_key;
 
@@ -51,12 +53,15 @@ pub async fn summarize_src_files(
         prompt_content::generate_slither_metadata_prompt_context(repo_root, &semantics_path)
             .await?;
 
+    // info!("slither metadata => {:#?}", context);
+    info!("generate summmary of all major files and docs in repo...");
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(GPT_4O)
         .preamble("You are a senior solidity dev. Please summarize below content (code or docs). Format in markdown for easy reading. 
                     If content is code. Please write 200 word or less summary for each contract plus contract definition, 100 words or less summary 
                     of each function + function interface, and 50 word or less explanation of each storage variable + variable defintion. If docs 
-                    please summarize each section of the docs with 150 words or less, max 500 words total for each doc file.")
+                    please summarize each section of the docs with 150 words or less, max 500 words total for each doc file. 
+                    Respond only with valid JSON matching the schema!")
         .context(&context)
         .build();
 
@@ -79,7 +84,7 @@ pub async fn summarize_src_files(
 
         if is_readme || is_sol_in_src {
             let content = fs::read_to_string(path)?;
-            let summary = ai_summary_agent.extract(content).await?;
+            let summary = extract_with_retry(&ai_summary_agent, &content).await?;
 
             // filename is relative to root folder ie src/PuppyRaffle.sol
             let file = path.strip_prefix(repo_root)?.to_string_lossy().to_string();
@@ -98,35 +103,38 @@ pub async fn summarize_src_files(
 }
 
 pub async fn summarize_protocol(repo_root: &Path, semantics_path: &Path) -> Result<String> {
-    let key = cache_key(repo_root, "protocol-summary");
-    let cache = Arc::clone(&FILE_SUMMARY_CACHE);
-    let mut summaries_cache = cache.lock().await;
-
-    // Return cached output if exists
-    if let Some(cached) = summaries_cache.get(&key) {
-        let summary = cached
-            .first()
-            .unwrap_or(&SrcFileSummary::default())
-            .summary
-            .clone();
-        return Ok(summary);
-    }
+    // let key = cache_key(repo_root, "protocol-summary");
+    // let cache = Arc::clone(&FILE_SUMMARY_CACHE);
+    // let mut summaries_cache = cache.lock().await;
+    //
+    // // Return cached output if exists
+    // if let Some(cached) = summaries_cache.get(&key) {
+    //     let summary = cached
+    //         .first()
+    //         .unwrap_or(&SrcFileSummary::default())
+    //         .summary
+    //         .clone();
+    //     return Ok(summary);
+    // }
 
     // Initialize vectors to store file paths
     let mut summaries = Vec::<SrcFileSummary>::new();
 
     let openai_client = openai::Client::from_env();
 
+    log::info!("generate context for code review");
     let content = generate_context_for_code_review(repo_root, &semantics_path).await?;
 
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(O3)
         .preamble("You are a senior solidity dev. Given the context provided for solidity smart contract protocol, 
                    please create a max 200 word summary of this protocol explaining what it is, and how it works.  Format 
-                   in markdown for easy reading.")
+                   in markdown for easy reading. Respond only with valid JSON matching the schema!")
         .build();
 
-    let summary = ai_summary_agent.extract(content).await?;
+    log::info!("extracting protocol summary");
+    // rerun if NoDataExtracted Error
+    let summary = extract_with_retry(&ai_summary_agent, &content).await?;
 
     log::info!("protocol summary => {:#?}", summary);
 
@@ -135,6 +143,6 @@ pub async fn summarize_protocol(repo_root: &Path, semantics_path: &Path) -> Resu
         summary: summary.summary.clone(),
     });
 
-    summaries_cache.insert(key, summaries.clone());
+    // summaries_cache.insert(key, summaries.clone());
     Ok(summary.summary)
 }

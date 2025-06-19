@@ -64,6 +64,7 @@ pub mod prompts {
     pub mod dos;
     pub mod inheritance;
     pub mod integer_overflow;
+    pub mod master_prompt;
     pub mod oracle;
     pub mod pragma;
     pub mod randomness;
@@ -82,6 +83,7 @@ pub mod prompts {
 pub mod utils {
     /// Provides access to the OpenAI tokenizer (BPE) used for text chunking
     pub mod bpe;
+    pub mod extract_retry;
     pub mod fn_labels;
     pub mod get_doc_file;
     pub mod get_fn_name;

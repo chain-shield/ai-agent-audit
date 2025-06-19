@@ -20,23 +20,6 @@ Pay special attention to functions with these oracle-related patterns:
 - Oracle data used for access control or critical state changes
 - Functions that don't validate oracle response data (zero prices, stale timestamps)
 
-## Output Requirements
-For each oracle manipulation vulnerability found, provide:
-
-1. **Title**: Format as "Oracle Manipulation in <Contract>::<Function>"
-2. **Description**: Detailed explanation including vulnerable code snippet showing specific oracle usage patterns
-3. **Impact**: Financial and security consequences including potential losses, liquidation attacks, or protocol manipulation
-4. **Proof of Concept**: Step-by-step exploitation scenario explaining flash loan attacks, price manipulation, or stale data exploitation
-5. **Proof of Code**: Complete Foundry unit test demonstrating the oracle manipulation with setup, attack, and verification phases
-6. **Severity**: High/Medium/Low/Info based on financial impact and exploitability
-7. **Mitigation**: Suggested Mitigation with code example of fix
-
-## Severity Guidelines
-- **High**: Critical financial functions using manipulable single oracle sources, flash loan vulnerable price feeds
-- **Medium**: Important functions with oracle dependencies but some mitigation (partial aggregation, limited impact)
-- **Low**: Oracle usage with limited financial impact or existing partial protections
-- **Info**: Oracle best practice violations or potential future risks
-
 ## Specific Attack Vectors to Test
 1. **Flash Loan Price Manipulation**: Use flash loans to manipulate DEX prices before oracle queries
 2. **Stale Data Exploitation**: Exploit contracts that don't validate oracle data freshness

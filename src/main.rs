@@ -73,6 +73,7 @@ async fn main() -> Result<()> {
     // save audit report, contract IRs, and metadata to md files
     save_file::save_audit_report(&audit_report, &repo)?;
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
+    contract_data::save_metadata(&semantic_db, &repo).await?;
 
     Ok(())
 }

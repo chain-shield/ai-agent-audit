@@ -77,7 +77,7 @@ impl<'de> Deserialize<'de> for Severity {
     where
         D: Deserializer<'de>,
     {
-        let s: &str = Deserialize::deserialize(deserializer)?;
+        let s: String = Deserialize::deserialize(deserializer)?;
         match s.to_ascii_lowercase().as_str() {
             "high" => Ok(Severity::High),
             "medium" => Ok(Severity::Medium),
@@ -96,7 +96,7 @@ impl<'de> Deserialize<'de> for InvariantType {
     where
         D: Deserializer<'de>,
     {
-        let s: &str = Deserialize::deserialize(deserializer)?;
+        let s: String = Deserialize::deserialize(deserializer)?;
         match s.to_ascii_lowercase().as_str() {
             "arithmetic" => Ok(InvariantType::Arithmetic),
             "balance" => Ok(InvariantType::Balance),
@@ -124,7 +124,7 @@ impl<'de> Deserialize<'de> for InvariantStatus {
     where
         D: Deserializer<'de>,
     {
-        let s: &str = Deserialize::deserialize(deserializer)?;
+        let s: String = Deserialize::deserialize(deserializer)?;
         match s.to_ascii_lowercase().as_str() {
             "holds" => Ok(InvariantStatus::HOLDS),
             "violation" => Ok(InvariantStatus::VIOLATION),

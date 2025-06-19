@@ -1,6 +1,5 @@
 pub const UNCHECK_RETURN_VALUES: &str = r#"
 
-You are a senior Solidity auditor.  
 Your ONLY goal is to detect **external calls whose boolean success
 return value is NOT verified or bubbled up.**
 
@@ -26,6 +25,6 @@ A finding is reportable **ONLY if _all_ of the following hold**:
    flag *is* checked, the call is **out of scope** for this audit.
 
 ──────────────────────────────────
-OUTPUT FORMAT  (JSON array or `[]`)
+OUTPUT FORMAT  
 ──────────────────────────────────
 "#;
