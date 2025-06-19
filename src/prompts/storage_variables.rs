@@ -39,6 +39,6 @@ A finding is reportable **ONLY when _all_ of the following are true**:
      already present.
 
 ────────────────────────────────────────────
-OUTPUT FORMAT  (JSON array or `[]`)
+OUTPUT FORMAT  
 ────────────────────────────────────────────
 "#;

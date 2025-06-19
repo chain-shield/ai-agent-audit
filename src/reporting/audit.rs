@@ -35,6 +35,7 @@ pub async fn generated_audit_report(
     audit_report.push_str(&subtitle);
     audit_report.push_str("## Protocol Overview \n\n");
 
+    log::info!("generate summary of protocol");
     let protocol_overview = summarize::summarize_protocol(&repo.root, semantics_path).await?;
 
     audit_report.push_str(&protocol_overview);
@@ -122,22 +123,22 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
 
             //description
             findings_report.push_str("## Description\n");
-            findings_report.push_str(&finding.description);
+            findings_report.push_str(&finding.description.clone().unwrap_or_default());
             findings_report.push_str("\n\n");
 
             //impact
             findings_report.push_str("## Impact\n");
-            findings_report.push_str(&finding.impact);
+            findings_report.push_str(&finding.impact.clone().unwrap_or_default());
             findings_report.push_str("\n\n");
 
             //POC
             findings_report.push_str("## Proof of Concept\n");
-            findings_report.push_str(&finding.proof_of_concept);
+            findings_report.push_str(&finding.proof_of_concept.clone().unwrap_or_default());
             findings_report.push_str("\n\n");
 
             //Proof of Code
             findings_report.push_str("## Proof of Code\n");
-            findings_report.push_str(&finding.proof_of_code);
+            findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
             findings_report.push_str("\n\n");
 
             //Suggested Fix
@@ -244,7 +245,7 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
             findings_summary.push_str(&format!(
                 "[{}-{}]. {}\n",
                 severity.as_initial(),
-                i,
+                i + 1,
                 finding.title
             ));
         }

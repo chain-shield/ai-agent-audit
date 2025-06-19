@@ -1,5 +1,14 @@
 pub const POST_PROMPT: &str = r#"
 
+ **For Every VIOLATION** return:
+1. **Title**: Format as "<Name of Security vulnerability> in <Contract>::<Function>"
+2. **Description**: Detailed explanation including vulnerable code snippet 
+3. **Impact**: Financial and security consequences 
+4. **Proof of Concept**: Step-by-step exploitation scenario 
+5. **Proof of Code**: Complete Foundry unit test demonstrating vulnerability
+6. **Severity**: High/Medium/Low/Info based on Impact on Protocol AND Likelihood of Exploitation 
+7. **Mitigation**: Suggested Mitigation with code example of fix
+
 *Please respond with ONLY valid JSON in the following exact format:*
 
 {

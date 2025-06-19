@@ -20,7 +20,8 @@ use crate::{
         prompt_content::generate_context_for_code_review,
         prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
     },
-    utils::logging::print_first_four_lines,
+    prompts::master_prompt::MASTER_SECURITY_PROMPT,
+    utils::{extract_retry::extract_with_retry, logging::print_first_four_lines},
 };
 
 use super::config::{Findings, SECURITY_PROMPTS};
@@ -52,6 +53,11 @@ pub async fn review_codebase_for_security_issues(
         .agent(O3)
         .context(&added_context_from_ai_brain)
         .build();
+    let openai_extractor = openai_client
+        .extractor::<Findings>(O3)
+        .preamble("You are an expert smart-contract security auditor.")
+        .context(&added_context_from_ai_brain)
+        .build();
     // let ai_audit_agent = deepseek_client.agent(DEEPSEEK_CHAT).build();
     let ai_audit_agent = anthropic_client
         .agent(CLAUDE_3_7_SONNET)
@@ -80,34 +86,26 @@ pub async fn review_codebase_for_security_issues(
         }
 
         // SCAN FOR STANDARD SECURITY ISSUES
-        for instructions_to_find_security_issue in SECURITY_PROMPTS
-        // .iter().take(5)
-        {
-            let prompt_string = generate_llm_prompt_for_security_issue(
-                contract,
-                instructions_to_find_security_issue,
-                codeblock,
-                &added_context_from_ai_brain,
-            );
+        let prompt_string =
+            generate_llm_prompt_for_security_issue(contract, MASTER_SECURITY_PROMPT, codeblock, "");
 
-            let security_issues_response = ai_audit_agent.prompt(&prompt_string).await?;
-            info!("findings for {}:\n{}", contract, security_issues_response);
+        info!("submitting security vulnerability prompt to openai");
+        // let findings = openai_extractor.extract(&prompt_string).await?;
+        let findings = extract_with_retry(&openai_extractor, &prompt_string).await?;
+        // info!("findings for {}:\n{:?}", contract, findings);
 
-            let findings = Findings::parse_from_json(&security_issues_response)?;
+        // let findings = Findings::parse_from_json(&findings)?;
 
-            if !findings.findings.is_empty() {
-                security_findings.findings.extend(findings.findings);
-            }
+        if !findings.findings.is_empty() {
+            security_findings.findings.extend(findings.findings);
         }
 
         if !security_findings.findings.is_empty() {
             // TODO (OPTIONAL) - to additional 'open ended' run to see if llm can find any other
             // issues
 
-            info!("contract findings => {:#?}", security_findings.findings);
+            // info!("contract findings => {:#?}", security_findings.findings);
             // dedup
-            //FAILED! - was removing non dup issues,
-            // let contract_findings = remove_duplicate_issues(security_findings).await?;
 
             all_security_issues.insert(contract.to_string(), security_findings);
 
@@ -126,12 +124,14 @@ fn generate_llm_prompt_for_security_issue(
     codeblock: &str,
     added_context: &str,
 ) -> String {
-    let mut prompt_string = generated_llm_prompt(contract, &instructions, PRE_PROMPT, POST_PROMPT);
+    // let mut prompt_string = generated_llm_prompt(contract, &instructions, PRE_PROMPT, POST_PROMPT);
+    let mut prompt_string = generated_llm_prompt(contract, &instructions, "", "");
     // append constract code to prompt instruction string
     info!("instructions...");
     print_first_four_lines(&prompt_string);
 
-    let codeblock_plus_context = generate_content_plus_context_block(codeblock, added_context);
+    // let codeblock_plus_context = generate_content_plus_context_block(codeblock, added_context);
+    let codeblock_plus_context = codeblock;
 
     prompt_string.push_str(&codeblock_plus_context);
 

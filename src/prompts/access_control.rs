@@ -32,25 +32,6 @@ Pay special attention to functions in {contract_name} with these patterns:
   "findings": []
 }
 
-## Output Requirements
-
-For each access control vulnerability found in {contract_name}, provide:
-
-1. **Title**: Format as "Access Control Issue in {contract_name}::<Function>"
-2. **Description**: Detailed explanation including vulnerable code snippet
-3. **Impact**: Business and security consequences of the vulnerability
-4. **Proof of Concept**: Step-by-step exploitation scenario
-5. **Proof of Code**: Complete Foundry unit test demonstrating the vulnerability
-6. **Severity**: High/Medium/Low/Info based on exploitability and impact
-7. **Mitigation**: Suggested Mitigation with code example of fix
-
-## Severity Guidelines
-
-- **High**: Critical functions (mint, burn, withdraw, ownership transfer) with no access control
-- **Medium**: Important functions with partial or bypassable access control
-- **Low**: Administrative functions with missing access control but limited impact
-- **Info**: Best practice violations or potential future risks
-
 ## Analysis Instructions
 
 1. Read through the entire {contract_name} contract code carefully

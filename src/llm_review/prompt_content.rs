@@ -58,8 +58,10 @@ pub async fn generate_context_for_code_review(
     repo_root: &Path,
     semantics_path: &Path,
 ) -> Result<String> {
+    log::info!("generate slither metadata");
     let slither_metadata =
         generate_slither_metadata_prompt_context(repo_root, &semantics_path).await?;
+    log::info!("generate summary of all files");
     let summaries = summarize::summarize_src_files(repo_root, &semantics_path).await?;
     let mut file_summaries = String::new();
 

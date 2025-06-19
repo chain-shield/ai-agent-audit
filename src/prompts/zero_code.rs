@@ -18,23 +18,6 @@ Pay special attention to code with these patterns:
 - Contract whitelist validation based on code presence
 - Access control assuming non-zero code size indicates legitimate contracts
 
-## Output Requirements
-For each code size check vulnerability found, provide:
-
-1. **Title**: Format as "Code Size Check Bypass in <Contract>::<Function>"
-2. **Description**: Detailed explanation including vulnerable code snippet showing the specific `extcodesize` or `code.length` check
-3. **Impact**: Security consequences including unauthorized access, privilege escalation, or bypass of intended restrictions
-4. **Proof of Concept**: Step-by-step exploitation scenario explaining constructor timing or self-destruct attack vector
-5. **Proof of Code**: Complete Foundry unit test demonstrating the bypass with setup, attack, and verification phases
-6. **Severity**: High/Medium/Low/Info based on exploitability and impact of the bypassed access control
-7. **mitigation**: Suggested Mitigation with code example of fix
-
-## Severity Guidelines
-- **High**: Critical functions (mint, burn, withdraw, admin functions) protected only by code size checks
-- **Medium**: Important access control bypassed via code size check with moderate impact
-- **Low**: Administrative or configuration functions with code size check bypass
-- **Info**: Code size checks used for non-security purposes or defense-in-depth scenarios
-
 ## Specific Attack Vectors to Test
 1. **Constructor Attack**: Deploy contract that calls target during `constructor()` execution
 2. **Self-Destruct Attack**: Deploy contract, record address, self-destruct, then call from zero-code address

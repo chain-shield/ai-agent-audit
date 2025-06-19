@@ -21,10 +21,10 @@ pub struct Finding {
     // [Severity-issue number] - List Issue (Reentrancy, Denial of Service, etc) and
     // <Contract>::<Function> its localed in
     pub title: String,
-    pub description: String, // description of issue, include code snippet if relevant
-    pub impact: String,      // Impact of Issue
-    pub proof_of_concept: String, // Demonstrate how issue can be exploited by hacker
-    pub proof_of_code: String, // Write Foundry Unit test to prove issue exists
+    pub description: Option<String>, // description of issue, include code snippet if relevant
+    pub impact: Option<String>,      // Impact of Issue
+    pub proof_of_concept: Option<String>, // Demonstrate how issue can be exploited by hacker
+    pub proof_of_code: Option<String>, // Write Foundry Unit test to prove issue exists
     #[schemars(description = "Severity level: High, Medium, Low, Info")]
     pub severity: Severity, //severity of issue
     pub mitigation: Option<String>,

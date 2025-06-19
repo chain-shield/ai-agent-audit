@@ -31,9 +31,6 @@ A finding is reportable **only if _all_ of the following hold**:
 * “Performance”, “duplication”, or “ambiguous return-value” complaints.  
 * Array-length mismatches that still stay within bounds.
 
-────────────────────────────
-OUTPUT FORMAT  (JSON array or `[]`)
-────────────────────────────
 "#;
 
 pub const ACCESS_OUTSIDE_ARRAY_LIMITS_V1: &str = r#"

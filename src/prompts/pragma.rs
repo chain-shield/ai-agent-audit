@@ -17,22 +17,6 @@ Pay special attention to pragma declarations with these patterns:
 - Missing pragma statements entirely
 - Pragma versions below 0.8.0 (lacking built-in overflow protection)
 
-## Output Requirements
-For each floating pragma vulnerability found, provide:
-1. **Title**: Format as "Floating Pragma Vulnerability in <Contract>"
-2. **Description**: Detailed explanation including the specific pragma statement and potential risks
-3. **Impact**: Security and deployment consequences of using floating pragma versions
-4. **Proof of Concept**: Step-by-step scenario showing how version differences cause issues
-5. **Proof of Code**: Complete Foundry unit test demonstrating the compiler version vulnerability
-6. **Severity**: High/Medium/Low/Info based on contract criticality and version range width
-7. **Mitigation**: Suggested Mitigation with code example of fix
-
-## Severity Guidelines
-- **High**: Critical contracts (handling significant value/assets) with wide floating pragma ranges or no upper bounds
-- **Medium**: Important contracts with moderate floating pragma ranges (e.g., ^0.8.0 spanning multiple minor versions)
-- **Low**: Non-critical contracts with narrow floating pragma ranges or contracts with limited functionality
-- **Info**: Best practice violations like using floating pragma in development contracts or test files
-
 ## Analysis Instructions
 1. Read through all pragma declarations in the contract files
 2. Identify any floating pragma patterns (^, >=, ranges, wildcards)
