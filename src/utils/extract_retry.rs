@@ -1,4 +1,3 @@
-use rig::agent::Agent;
 use rig::completion::CompletionModel;
 use rig::extractor::ExtractionError;
 use rig::extractor::Extractor;

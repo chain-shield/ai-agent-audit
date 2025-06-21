@@ -14,13 +14,22 @@ use crate::prompts::{
     zero_code::CONTRACTS_WITH_ZERO_CODE,
 };
 
-use super::enums::{InvariantStatus, InvariantType, Severity};
+use super::enums::{InvariantStatus, InvariantType, Severity, VulnerabilityType};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LanguageModel {
+    OpenAI,
+    Anthropic,
+}
+
+pub const LANGUAGE_MODEL: LanguageModel = LanguageModel::Anthropic;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Finding {
     // [Severity-issue number] - List Issue (Reentrancy, Denial of Service, etc) and
     // <Contract>::<Function> its localed in
     pub title: String,
+    pub issue_type: VulnerabilityType,
     pub description: Option<String>, // description of issue, include code snippet if relevant
     pub impact: Option<String>,      // Impact of Issue
     pub proof_of_concept: Option<String>, // Demonstrate how issue can be exploited by hacker

@@ -1,13 +1,28 @@
 pub const POST_PROMPT: &str = r#"
 
+ **For Every VIOLATION** please return:
+1. **Title**: Format as "<Name of Security vulnerability> in <Contract>::<Function>"
+2. **Issue Type**: AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontRunAttack
+3. **Description**: Detailed explanation including vulnerable code snippet 
+4. **Impact**: Financial and security consequences 
+5. **Proof of Concept**: Step-by-step exploitation scenario 
+6. **Proof of Code**: Complete Foundry unit test demonstrating vulnerability
+7. **Severity**: High/Medium/Low/Info based on Impact on Protocol AND Likelihood of Exploitation 
+8. **Mitigation**: Suggested Mitigation with code example of fix
+
+"#;
+
+pub const POST_PROMPT_V2: &str = r#"
+
  **For Every VIOLATION** return:
 1. **Title**: Format as "<Name of Security vulnerability> in <Contract>::<Function>"
-2. **Description**: Detailed explanation including vulnerable code snippet 
-3. **Impact**: Financial and security consequences 
-4. **Proof of Concept**: Step-by-step exploitation scenario 
-5. **Proof of Code**: Complete Foundry unit test demonstrating vulnerability
-6. **Severity**: High/Medium/Low/Info based on Impact on Protocol AND Likelihood of Exploitation 
-7. **Mitigation**: Suggested Mitigation with code example of fix
+2. **Issue Type**: AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontRunAttack
+3. **Description**: Detailed explanation including vulnerable code snippet 
+4. **Impact**: Financial and security consequences 
+5. **Proof of Concept**: Step-by-step exploitation scenario 
+6. **Proof of Code**: Complete Foundry unit test demonstrating vulnerability
+7. **Severity**: High/Medium/Low/Info based on Impact on Protocol AND Likelihood of Exploitation 
+8. **Mitigation**: Suggested Mitigation with code example of fix
 
 *Please respond with ONLY valid JSON in the following exact format:*
 
