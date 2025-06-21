@@ -20,7 +20,10 @@ use crate::{
         prompt_content::generate_context_for_code_review,
         prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
     },
-    utils::{extract_retry::extract_with_retry, logging::print_first_four_lines},
+    utils::{
+        extract_retry::{agent_extract_with_retry, extract_with_retry},
+        logging::print_first_four_lines,
+    },
 };
 
 use super::config::{Findings, SECURITY_PROMPTS};
@@ -56,10 +59,15 @@ pub async fn review_codebase_for_security_issues(
         .preamble("You are an expert smart-contract security auditor.")
         .context(&added_context_from_ai_brain)
         .build();
-    let anthropic_extractor = anthropic_client
-        .extractor::<Findings>(CLAUDE_3_7_SONNET)
-        .preamble("You are an expert smart-contract security auditor.")
+    let anthropic_agent = anthropic_client
+        .agent(CLAUDE_3_7_SONNET)
+        .max_tokens(64_000)
+        .temperature(0.8)
         .build();
+    // let anthropic_extractor = anthropic_client
+    //     .extractor::<Findings>(CLAUDE_3_7_SONNET)
+    //     .preamble("You are an expert smart-contract security auditor.")
+    //     .build();
 
     let mut invariant_findings = Vec::<ContractInvariants>::new();
 
@@ -93,11 +101,8 @@ pub async fn review_codebase_for_security_issues(
                 );
 
                 info!("submitting security vulnerability prompt to openai");
-                // let findings = openai_extractor.extract(&prompt_string).await?;
                 let findings = extract_with_retry(&openai_extractor, &prompt_string).await?;
-                // info!("findings for {}:\n{:?}", contract, findings);
 
-                // let findings = Findings::parse_from_json(&findings)?;
                 findings
             } else {
                 let prompt_string = generate_llm_prompt_for_security_issue(
@@ -107,12 +112,9 @@ pub async fn review_codebase_for_security_issues(
                     &added_context_from_ai_brain,
                 );
 
-                info!("submitting security vulnerability prompt to openai");
-                // let findings = openai_extractor.extract(&prompt_string).await?;
-                let findings = extract_with_retry(&anthropic_extractor, &prompt_string).await?;
-                // info!("findings for {}:\n{:?}", contract, findings);
+                info!("submitting security vulnerability prompt to anthropic");
+                let findings = agent_extract_with_retry(&anthropic_agent, &prompt_string).await?;
 
-                // let findings = Findings::parse_from_json(&findings)?;
                 findings
             };
 
@@ -146,7 +148,7 @@ fn generate_llm_prompt_for_security_issue(
     added_context: &str,
 ) -> String {
     // let mut prompt_string = generated_llm_prompt(contract, &instructions, PRE_PROMPT, POST_PROMPT);
-    let mut prompt_string = generated_llm_prompt(contract, &instructions, "", POST_PROMPT);
+    let mut prompt_string = generated_llm_prompt(contract, &instructions, PRE_PROMPT, POST_PROMPT);
     // append constract code to prompt instruction string
     info!("instructions...");
     print_first_four_lines(&prompt_string);
