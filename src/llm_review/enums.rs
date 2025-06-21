@@ -28,6 +28,30 @@ pub enum InvariantStatus {
     VIOLATION,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
+pub enum VulnerabilityType {
+    AccessControl,
+    ArrayLimits,
+    ConfidentialData,
+    DefaultVisibility,
+    Dos,
+    Inheritance,
+    IntegerMath,
+    Oracle,
+    Pragma,
+    Randomness,
+    Reentrancy,
+    ReplayAttack,
+    SelfDestruct,
+    ShortAddress,
+    StorageLayout,
+    TxOrigin,
+    UncheckedReturn,
+    UnexpectedEth,
+    ZeroCode,
+    FrontRunAttack,
+}
+
 impl Severity {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -66,6 +90,33 @@ impl InvariantStatus {
         match self {
             InvariantStatus::HOLDS => "Holds",
             InvariantStatus::VIOLATION => "Violation",
+        }
+    }
+}
+
+impl VulnerabilityType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VulnerabilityType::Oracle => "Oracle",
+            VulnerabilityType::AccessControl => "AccessControl",
+            VulnerabilityType::FrontRunAttack => "FrontRunAttack",
+            VulnerabilityType::UnexpectedEth => "UnexpectedEth",
+            VulnerabilityType::Pragma => "Pragma",
+            VulnerabilityType::Randomness => "Randomness",
+            VulnerabilityType::TxOrigin => "TxOrigin",
+            VulnerabilityType::ZeroCode => "ZeroCode",
+            VulnerabilityType::SelfDestruct => "SelfDestruct",
+            VulnerabilityType::StorageLayout => "StorageLayout",
+            VulnerabilityType::ReplayAttack => "ReplayAttack",
+            VulnerabilityType::ShortAddress => "ShortAddress",
+            VulnerabilityType::IntegerMath => "IntegerMath",
+            VulnerabilityType::UncheckedReturn => "UncheckedReturn",
+            VulnerabilityType::Dos => "Dos",
+            VulnerabilityType::DefaultVisibility => "DefaultVisibility",
+            VulnerabilityType::Inheritance => "Inheritance",
+            VulnerabilityType::ConfidentialData => "ConfidentialData",
+            VulnerabilityType::Reentrancy => "Reentrancy",
+            VulnerabilityType::ArrayLimits => "ArrayLimits",
         }
     }
 }
@@ -136,6 +187,62 @@ impl<'de> Deserialize<'de> for InvariantStatus {
     }
 }
 
+impl<'de> Deserialize<'de> for VulnerabilityType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: String = Deserialize::deserialize(deserializer)?;
+        match s.to_ascii_lowercase().as_str() {
+            "oracle" => Ok(VulnerabilityType::Oracle),
+            "accesscontrol" => Ok(VulnerabilityType::AccessControl),
+            "frontrunattack" => Ok(VulnerabilityType::FrontRunAttack),
+            "unexpectedeth" => Ok(VulnerabilityType::UnexpectedEth),
+            "pragma" => Ok(VulnerabilityType::Pragma),
+            "randomness" => Ok(VulnerabilityType::Randomness),
+            "txorigin" => Ok(VulnerabilityType::TxOrigin),
+            "zerocode" => Ok(VulnerabilityType::ZeroCode),
+            "selfdestruct" => Ok(VulnerabilityType::SelfDestruct),
+            "storagelayout" => Ok(VulnerabilityType::StorageLayout),
+            "replayattack" => Ok(VulnerabilityType::ReplayAttack),
+            "shortaddress" => Ok(VulnerabilityType::ShortAddress),
+            "integermath" => Ok(VulnerabilityType::IntegerMath),
+            "uncheckedreturn" => Ok(VulnerabilityType::UncheckedReturn),
+            "dos" => Ok(VulnerabilityType::Dos),
+            "defaultvisibility" => Ok(VulnerabilityType::DefaultVisibility),
+            "inheritance" => Ok(VulnerabilityType::Inheritance),
+            "confidentialdata" => Ok(VulnerabilityType::ConfidentialData),
+            "reentrancy" => Ok(VulnerabilityType::Reentrancy),
+            "arraylimits" => Ok(VulnerabilityType::ArrayLimits),
+            other => Err(de::Error::unknown_variant(
+                other,
+                &[
+                    "oracle",
+                    "accesscontrol",
+                    "frontrunattack",
+                    "unexpectedeth",
+                    "pragma",
+                    "randomness",
+                    "txorigin",
+                    "zerocode",
+                    "selfdestruct",
+                    "storagelayout",
+                    "replayattack",
+                    "shortaddress",
+                    "integermath",
+                    "uncheckedreturn",
+                    "dos",
+                    "defaultvisibility",
+                    "inheritance",
+                    "confidentialdata",
+                    "reentrancy",
+                    "arraylimits",
+                ],
+            )),
+        }
+    }
+}
+
 impl Serialize for Severity {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -155,6 +262,15 @@ impl Serialize for InvariantType {
 }
 
 impl Serialize for InvariantStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl Serialize for VulnerabilityType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
