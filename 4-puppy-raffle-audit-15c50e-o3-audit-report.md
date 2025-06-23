@@ -1,4 +1,4 @@
-# 4 puppy raffle audit - Findings Report
+# 7 puppy raffle audit - Findings Report
 ## Commit hash: 15c50ec22382bb1f3106aba660e7c590df18dcac
 
 ## Protocol Overview 
@@ -1074,50 +1074,4 @@ In build tool-chains, enforce the version globally as:
   "version": "0.7.6"
 }
 ```
-
-
-
-
-# {} Invariant Violations
-
-## 1. Balance Violation
-
-## Description
-Only the address that originally paid the entrance fee can receive that specific refund and it can be done at most once.
-
-## Impact
-Full theft of all entrance fees by repeatedly calling refund() for every index.
-
-## Proof of Concept
-forge test or hardhat: 1) victim enters raffle; 2) attacker calls refund(0) ; expect attacker balance increases.
-
-## Pre-State
-victim has entered the raffle and remains in players[], attacker knows victimIndex in the array.
-
-## Post-State
-attacker’s ETH balance +entranceFee, victim loses the ability to reclaim; contract balance reduced by entranceFee.
-
-## Suggested Mitigation
-Require `require(players[index] == msg.sender, "not your ticket");` and clear state before `Address.sendValue` or add ReentrancyGuard.
-
-## 2. StateMachine Violation
-
-## Description
-A single address cannot be recorded twice in the active players list.
-
-## Impact
-Uneconomical bias in random selection; attacker can dominate raffle.
-
-## Proof of Concept
-loop { enterRaffle([msg.sender]); } observe players[] duplicates.
-
-## Pre-State
-raffle open, attacker has sufficient ETH for N*entranceFee
-
-## Post-State
-players array contains attacker N times, probability of winning increases proportionally.
-
-## Suggested Mitigation
-Call `_isActivePlayer` or maintain a mapping to reject duplicate entries.
-
 
