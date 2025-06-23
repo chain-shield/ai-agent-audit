@@ -65,6 +65,7 @@ pub mod prompts {
     pub mod inheritance;
     pub mod integer_overflow;
     pub mod master_prompt;
+    pub mod mev;
     pub mod oracle;
     pub mod pragma;
     pub mod randomness;
@@ -77,6 +78,12 @@ pub mod prompts {
     pub mod unchecked_return_value;
     pub mod unexpected_eth;
     pub mod zero_code;
+}
+
+pub mod invariant_prompts {
+    pub mod arithmetic;
+    pub mod balance;
+    pub mod permission;
 }
 
 /// The utils module contains utility functions used throughout the codebase.

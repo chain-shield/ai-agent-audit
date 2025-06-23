@@ -58,7 +58,7 @@ where
             }
         };
 
-        log::debug!("anthropic json => {:#?}", raw);
+        log::info!("anthropic json => {:#?}", raw);
 
         /* ────── 2. try to parse JSON ───────────────────────────────────── */
         match Findings::parse_from_json(&raw) {

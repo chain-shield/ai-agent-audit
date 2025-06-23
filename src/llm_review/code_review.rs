@@ -4,7 +4,7 @@ use rig::{
     completion::Prompt,
     providers::{
         anthropic::{self, CLAUDE_3_7_SONNET},
-        openai::{self, O3},
+        openai::{self, GPT_4O, GPT_4_1, O3},
     },
 };
 use std::{
@@ -15,14 +15,14 @@ use std::{
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
-        config::{generated_llm_prompt, ContractInvariants, LanguageModel, LANGUAGE_MODEL},
+        config::{generated_llm_prompt, ContractInvariants, LanguageModel, LANGUAGE_MODEL, RUNS},
         invariants::INVARIANTS,
         prompt_content::generate_context_for_code_review,
         prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
     },
     utils::{
         extract_retry::{agent_extract_with_retry, extract_with_retry},
-        logging::print_first_four_lines,
+        logging::{print_first_four_lines, print_first_n_lines},
     },
 };
 
@@ -50,24 +50,33 @@ pub async fn review_codebase_for_security_issues(
         generate_context_for_code_review(repo_root, &semantics_path).await?;
 
     info!("setting up AI agent...");
-    let openai_agent = openai_client
-        .agent(O3)
+    let openai_agent_1st_pass = openai_client
+        .agent(GPT_4O)
+        .temperature(0.0)
         .context(&added_context_from_ai_brain)
         .build();
-    let openai_extractor = openai_client
-        .extractor::<Findings>(O3)
-        .preamble("You are an expert smart-contract security auditor.")
+    let openai_agent_after_1st_pass = openai_client
+        .agent(GPT_4O)
+        .temperature(0.25)
+        .additional_params(serde_json::json!({"top_p": 0.90}))
         .context(&added_context_from_ai_brain)
         .build();
-    let anthropic_agent = anthropic_client
+    // let openai_extractor = openai_client
+    //     .extractor::<Findings>(GPT_4O)
+    //     .preamble("You are an expert smart-contract security auditor.")
+    //     .context(&added_context_from_ai_brain)
+    //     .build();
+    let anthropic_agent_1st_pass = anthropic_client
         .agent(CLAUDE_3_7_SONNET)
         .max_tokens(64_000)
-        .temperature(0.8)
+        .temperature(0.0)
         .build();
-    // let anthropic_extractor = anthropic_client
-    //     .extractor::<Findings>(CLAUDE_3_7_SONNET)
-    //     .preamble("You are an expert smart-contract security auditor.")
-    //     .build();
+    let anthropic_agent_after_1st_pass = anthropic_client
+        .agent(CLAUDE_3_7_SONNET)
+        .max_tokens(64_000)
+        .temperature(0.25)
+        .additional_params(serde_json::json!({"top_p": 0.90}))
+        .build();
 
     let mut invariant_findings = Vec::<ContractInvariants>::new();
 
@@ -80,7 +89,7 @@ pub async fn review_codebase_for_security_issues(
 
         //SCAN FOR INVARIANTS
         info!("submitting invariant prompt to openai");
-        let invariants_response = openai_agent.prompt(INVARIANTS).await?;
+        let invariants_response = openai_agent_1st_pass.prompt(INVARIANTS).await?;
 
         info!("parsing invariant prompt");
         let invariants = ContractInvariants::parse_from_json(&invariants_response)?;
@@ -92,34 +101,49 @@ pub async fn review_codebase_for_security_issues(
         for security_issue_prompt in SECURITY_PROMPTS {
             // SCAN FOR STANDARD SECURITY ISSUES
 
-            let findings = if LANGUAGE_MODEL == LanguageModel::OpenAI {
-                let prompt_string = generate_llm_prompt_for_security_issue(
-                    contract,
-                    security_issue_prompt,
-                    codeblock,
-                    "",
-                );
+            for run in 0..RUNS {
+                let findings = if LANGUAGE_MODEL == LanguageModel::OpenAI {
+                    let prompt_string = generate_llm_prompt_for_security_issue(
+                        contract,
+                        security_issue_prompt,
+                        codeblock,
+                        "",
+                    );
 
-                info!("submitting security vulnerability prompt to openai");
-                let findings = extract_with_retry(&openai_extractor, &prompt_string).await?;
+                    info!("submitting security vulnerability prompt to openai");
+                    let openai_agent = if run == 1 {
+                        &openai_agent_1st_pass
+                    } else {
+                        &openai_agent_after_1st_pass
+                    };
 
-                findings
-            } else {
-                let prompt_string = generate_llm_prompt_for_security_issue(
-                    contract,
-                    security_issue_prompt,
-                    codeblock,
-                    &added_context_from_ai_brain,
-                );
+                    let findings = agent_extract_with_retry(openai_agent, &prompt_string).await?;
+                    findings
+                } else {
+                    let prompt_string = generate_llm_prompt_for_security_issue(
+                        contract,
+                        security_issue_prompt,
+                        codeblock,
+                        &added_context_from_ai_brain,
+                    );
 
-                info!("submitting security vulnerability prompt to anthropic");
-                let findings = agent_extract_with_retry(&anthropic_agent, &prompt_string).await?;
+                    let anthropic_agent = if run == 1 {
+                        &anthropic_agent_1st_pass
+                    } else {
+                        &anthropic_agent_after_1st_pass
+                    };
+                    info!("submitting security vulnerability prompt to anthropic");
+                    info!("run {}", run);
+                    print_first_n_lines(10, security_issue_prompt);
+                    let findings =
+                        agent_extract_with_retry(anthropic_agent, &prompt_string).await?;
 
-                findings
-            };
+                    findings
+                };
 
-            if !findings.findings.is_empty() {
-                security_findings.findings.extend(findings.findings);
+                if !findings.findings.is_empty() {
+                    security_findings.findings.extend(findings.findings);
+                }
             }
         }
 
@@ -129,8 +153,17 @@ pub async fn review_codebase_for_security_issues(
 
             // info!("contract findings => {:#?}", security_findings.findings);
             // dedup
+            info!(
+                "# of findings BEFORE deduping => {}",
+                security_findings.findings.len()
+            );
+            let deduped_findings = security_findings.dedup().await?;
 
-            all_security_issues.insert(contract.to_string(), security_findings);
+            info!(
+                "# of findings AFTER deduping => {}",
+                deduped_findings.findings.len()
+            );
+            all_security_issues.insert(contract.to_string(), deduped_findings);
 
             // TODO - save issues to Findings db
         }
@@ -151,7 +184,7 @@ fn generate_llm_prompt_for_security_issue(
     let mut prompt_string = generated_llm_prompt(contract, &instructions, PRE_PROMPT, POST_PROMPT);
     // append constract code to prompt instruction string
     info!("instructions...");
-    print_first_four_lines(&prompt_string);
+    // print_first_four_lines(&prompt_string);
 
     let codeblock_plus_context = generate_content_plus_context_block(codeblock, added_context);
     // let codeblock_plus_context = codeblock;
@@ -168,12 +201,12 @@ fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> 
 
     code_plus_context.push_str(codeblock);
     info!("codeblock...");
-    print_first_four_lines(&codeblock);
+    // print_first_four_lines(&codeblock);
 
     code_plus_context.push_str("/n");
     code_plus_context.push_str(&added_context);
     info!("added_context_from_ai_brain..");
-    print_first_four_lines(&added_context);
+    // print_first_four_lines(&added_context);
 
     code_plus_context
 }

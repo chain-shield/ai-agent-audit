@@ -118,7 +118,7 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
                 "## [{}-{}]. {}\n\n",
                 severity.as_initial(),
                 i + 1,
-                finding.title
+                finding.title()
             ));
 
             //description
@@ -161,7 +161,10 @@ fn get_invariant_report(invariants: &[ContractInvariants]) -> String {
     let violations = contract_invariants.get_all_violations();
 
     if !violations.is_empty() {
-        findings_report.push_str("\n# {} Invariant Violations\n\n");
+        findings_report.push_str(&format!(
+            "\n# {} Invariant Violations\n\n",
+            violations.len()
+        ));
 
         for (i, violation) in violations.into_iter().enumerate() {
             //title
@@ -246,7 +249,7 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
                 "[{}-{}]. {}\n",
                 severity.as_initial(),
                 i + 1,
-                finding.title
+                finding.title()
             ));
         }
     } else {

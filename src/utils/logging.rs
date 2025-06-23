@@ -15,6 +15,23 @@ pub fn print_first_four_lines(text: &str) {
     }
 }
 
+pub fn print_first_n_lines(number_of_lines: usize, text: &str) {
+    let lines: Vec<&str> = text.lines().collect();
+    let n = if number_of_lines < lines.len() {
+        number_of_lines
+    } else {
+        lines.len()
+    };
+
+    for (index, line) in lines.iter().enumerate().take(n) {
+        info!("Line {} (at line {}): {}", index + 1, line!(), line);
+    }
+
+    if lines.len() > n {
+        info!("... ({} more lines)", lines.len() - n);
+    }
+}
+
 pub fn print_schema() {
     let schema = schema_for!(Findings);
     println!(
