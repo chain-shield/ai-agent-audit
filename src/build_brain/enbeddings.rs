@@ -4,9 +4,10 @@
 use anyhow::Result;
 use log::info;
 use rig::{
+    Embed,
+    client::EmbeddingsClient,
     embeddings::EmbeddingsBuilder,
     providers::openai::{self, Client},
-    Embed,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};

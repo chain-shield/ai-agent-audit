@@ -84,6 +84,9 @@ pub mod invariant_prompts {
     pub mod arithmetic;
     pub mod balance;
     pub mod permission;
+    pub mod referential;
+    pub mod state_machine;
+    pub mod temporal;
 }
 
 /// The utils module contains utility functions used throughout the codebase.

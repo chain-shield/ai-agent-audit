@@ -14,6 +14,8 @@ pub const POST_PROMPT_V2: &str = r#"
 
 pub const POST_PROMPT: &str = r#"
 
+### OUTPUT REQUIREMENTS 
+
  **For Every VIOLATION** return:
 1. **Description**: Detailed explanation including vulnerable code snippet 
 2. **Issue Type**: AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontRunAttack
@@ -31,7 +33,7 @@ pub const POST_PROMPT: &str = r#"
   "findings": [
     {
       "description": "Detailed explanation if vulnerability including vulnerable code snippet",
-      "issue_type": "AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontRunAttack",
+      "issue_type": "AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|MEV",
       "contract": "{contract_name}", 
       "function": "<Function>", 
       "impact": "Business and security consequences of the vulnerability",
@@ -49,6 +51,8 @@ pub const POST_PROMPT: &str = r#"
   "findings": []
 }
 
-**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
+**Please double checking openning and closing brakets: `}` and `]`, make sure 
+they match up correctly.
 
 "#;

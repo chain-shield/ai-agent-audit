@@ -2,8 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use rig::{
     agent::Agent,
+    client::{CompletionClient, ProviderClient},
     completion::{CompletionModel, Prompt},
-    providers::openai::{self, GPT_35_TURBO},
+    providers::{
+        azure::GPT_4O,
+        openai::{self},
+    },
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,6 +34,8 @@ pub enum LanguageModel {
     Anthropic,
 }
 
+pub const CLAUDE_4_0_SONNET: &str = "claude-sonnet-4-0";
+pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
 pub const LANGUAGE_MODEL: LanguageModel = LanguageModel::Anthropic;
 pub const RUNS: usize = 3;
 
@@ -88,6 +94,29 @@ pub struct DuplicateFindings {
     pub titles: Vec<String>,
 }
 
+pub const SECURITY_PROMPT_ENUMS: [VulnerabilityType; 8] = [
+    VulnerabilityType::Reentrancy,
+    VulnerabilityType::AccessControl,
+    // VulnerabilityType::ArrayLimits,
+    // VulnerabilityType::DefaultVisibility,
+    VulnerabilityType::Dos,
+    VulnerabilityType::IntegerMath,
+    // VulnerabilityType::ConfidentialData,
+    // VulnerabilityType::Inheritance,
+    // VulnerabilityType::Oracle,
+    VulnerabilityType::Pragma,
+    VulnerabilityType::Randomness,
+    // VulnerabilityType::ReplayAttack,
+    // VulnerabilityType::SelfDestruct,
+    // VulnerabilityType::StorageLayout,
+    // VulnerabilityType::TxOrigin,
+    // VulnerabilityType::UncheckedReturn,
+    VulnerabilityType::UnexpectedEth,
+    // VulnerabilityType::ZeroCode,
+    VulnerabilityType::MEV,
+    // VulnerabilityType::ShortAddress,
+];
+
 pub const SECURITY_PROMPTS: [&str; 19] = [
     REENTRANCY,                  //DONE
     ACCESS_CONTROL,              //DONE
@@ -129,7 +158,7 @@ impl Finding {
     pub fn title(&self) -> String {
         format!(
             "{} issue in {}::{}",
-            self.issue_type.as_str(),
+            self.issue_type.as_fancy_str(),
             self.contract,
             self.function
         )
@@ -228,7 +257,7 @@ impl ContractInvariants {
 impl Findings {
     pub async fn dedup(self) -> anyhow::Result<Findings> {
         let openai_client = openai::Client::from_env();
-        let openai_agent = openai_client.agent(GPT_35_TURBO).build();
+        let openai_agent = openai_client.agent(GPT_4O).temperature(1.0).build();
 
         let size = self.findings.len();
         // assigns bool to each finding index, is dup or not? assume not for initializing
@@ -256,7 +285,7 @@ impl Findings {
             .findings
             .into_iter()
             .enumerate()
-            .filter(|(idx, _)| is_dup_vec[*idx])
+            .filter(|(idx, _)| !is_dup_vec[*idx])
             .map(|(_, f)| f)
             .collect();
 

@@ -1,9 +1,10 @@
 use anyhow::Result;
 use log::info;
-use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
+use qdrant_client::{Qdrant, qdrant::QueryPointsBuilder};
 use rig::providers::openai::TEXT_EMBEDDING_3_SMALL;
 use rig::{
     agent::{Agent, AgentBuilder},
+    client::{CompletionClient, EmbeddingsClient},
     providers::openai::{Client, CompletionModel, GPT_4O},
     vector_store::VectorStoreIndex, // trait
 };

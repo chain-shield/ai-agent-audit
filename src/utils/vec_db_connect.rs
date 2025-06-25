@@ -1,7 +1,8 @@
 // utils/connect.rs
 use once_cell::sync::OnceCell;
-use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
+use qdrant_client::{Qdrant, qdrant::QueryPointsBuilder};
 use rig::{
+    client::EmbeddingsClient,
     providers::openai::{Client, TEXT_EMBEDDING_3_SMALL},
     vector_store::VectorStoreIndexDyn,
 };

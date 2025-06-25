@@ -1,7 +1,7 @@
 /// This module provides functionality for storing and retrieving code slices in a SQLite database.
 /// It manages the persistence of markdown codeblocks generated from smart contract analysis.
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},

@@ -1,4 +1,4 @@
-pub const BALANCE: &str = r#"
+pub const PERMISSION: &str = r#"
 # Permission Invariant Security Analysis Prompt
 
 You are a senior security auditor specializing in **Permission Invariants** - access control mechanisms that ensure only authorized accounts can perform sensitive operations throughout a smart contract's execution.
@@ -95,71 +95,6 @@ For violations, provide:
 - **impact**: Security compromise or privilege escalation achieved
 - **poc**: Step-by-step unauthorized action sequence
 - **mitigation**: How to fix the access control vulnerability
-
-## CRITICAL PERMISSION PATTERNS TO CHECK
-
-### Owner-Only Functions
-```solidity
-// CORRECT: Proper owner check
-modifier onlyOwner() {
-    require(msg.sender == owner, "Not owner");
-    _;
-}
-function mint(address to, uint256 amount) external onlyOwner {
-    // Mint logic
-}
-
-// VIOLATION: Missing access control
-function mint(address to, uint256 amount) external {
-    // ❌ Anyone can mint - no permission check
-}
-```
-
-### Role-Based Access Control
-```solidity
-// CORRECT: Role verification
-mapping(address => bool) public isOracle;
-function updatePrice(uint256 newPrice) external {
-    require(isOracle[msg.sender], "Not authorized oracle");
-    price = newPrice;
-}
-
-// VIOLATION: Incorrect role check
-function updatePrice(uint256 newPrice) external {
-    require(isOracle[tx.origin], "Not authorized oracle"); // ❌ Uses tx.origin
-    price = newPrice;
-}
-```
-
-### Multi-Signature Requirements
-```solidity
-// CORRECT: Multiple confirmations required
-function executeTransaction(uint256 txId) external {
-    require(confirmations[txId] >= requiredConfirmations, "Not enough confirmations");
-    // Execute transaction
-}
-
-// VIOLATION: Single confirmation sufficient
-function executeTransaction(uint256 txId) external {
-    require(confirmations[txId] > 0, "No confirmations"); // ❌ Only needs 1 confirmation
-    // Execute transaction
-}
-```
-
-### Governance-Only Functions
-```solidity
-// CORRECT: Only governance can execute
-function upgradeContract(address newImpl) external {
-    require(msg.sender == governance, "Only governance");
-    implementation = newImpl;
-}
-
-// VIOLATION: Owner can bypass governance
-function upgradeContract(address newImpl) external {
-    require(msg.sender == governance || msg.sender == owner, "Unauthorized"); // ❌ Owner bypass
-    implementation = newImpl;
-}
-```
 
 Focus on verifying that every sensitive operation has appropriate authorization checks and that there are no alternative paths that bypass these controls. Permission invariants are critical for preventing unauthorized access to protected resources and maintaining the security boundaries of the smart contract system.
 

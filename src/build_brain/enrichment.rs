@@ -10,6 +10,8 @@ use super::{callgraph, inheritance};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Contains the enriched data extracted from Solidity contracts.
 /// This includes the intermediate representation (IR) of functions and storage variable information.
@@ -45,61 +47,94 @@ pub fn forge_build(repo_root: &Path) -> Result<()> {
 }
 
 pub async fn build_semantics_db_from_call_graph(repo_root: &Path) -> Result<PathBuf> {
-    // 1. extract DOT blobs
-    let json = callgraph::generate_slither_call_graph(repo_root).await?;
-    let blobs = callgraph::extract_dot_blobs(&json)?;
-    let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs)?;
-    let funcs = get_function_summaries(repo_root).await?;
-    let inheritance_json = inheritance::generate_slither_inheritance(repo_root).await?;
-    let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
-    // info!("dot functions => {:?}", funcs);
-    // info!("dot edges => {:?}", edges);
-
-    // 2. open DB file
+    // 1. open DB file
     let db_path = repo_root.join(".cache").join("semantics.db");
     std::fs::create_dir_all(db_path.parent().unwrap())?;
-    let db = GraphDb::create(&db_path)?;
+    let db = Arc::new(Mutex::new(GraphDb::create(&db_path)?));
 
-    // 3. insert functions
-    // info!("funcs => {:?}", funcs);
-    for f in &funcs {
-        let modifiers = f.modifiers.join(",");
-        // info!("freshly spilt modifiers => {:#?}", modifiers);
-        // GET ID from funcs_id
-        // info!("fn summary => {:#?}", f);
-        // info!("funcs_id => {:#?}", funcs_id);
+    let db_func = Arc::clone(&db);
+    let root = repo_root.to_path_buf();
+    let handle = tokio::spawn(async move {
+        let result: Result<()> = async move {
+            // 2. extract DOT blobs
+            let json = callgraph::generate_slither_call_graph(&root).await?;
+            let blobs = callgraph::extract_dot_blobs(&json)?;
+            let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs)?;
+            let funcs = get_function_summaries(&root).await?;
 
-        let callgraph_func = funcs_id
-            .clone()
-            .into_iter()
-            .find(|a| {
-                let func_name = get_function_name(&f.name);
-                a.contract == f.contract && a.name == func_name
-            })
-            .unwrap_or_default();
+            // 3. insert functions
+            // info!("funcs => {:?}", funcs);
+            for f in &funcs {
+                let modifiers = f.modifiers.join(",");
+                // info!("freshly spilt modifiers => {:#?}", modifiers);
+                // GET ID from funcs_id
+                // info!("fn summary => {:#?}", f);
+                // info!("funcs_id => {:#?}", funcs_id);
 
-        if !callgraph_func.name.is_empty() {
-            db.insert_function(
-                &callgraph_func.full_id,
-                &f.contract,
-                &f.name,
-                &f.visibility,
-                &modifiers,
-                &f.mutability,
-            )?;
+                let callgraph_func = funcs_id
+                    .clone()
+                    .into_iter()
+                    .find(|a| {
+                        let func_name = get_function_name(&f.name);
+                        a.contract == f.contract && a.name == func_name
+                    })
+                    .unwrap_or_default();
+
+                if !callgraph_func.name.is_empty() {
+                    let db_guard = db_func.lock().await;
+                    db_guard.insert_function(
+                        &callgraph_func.full_id,
+                        &f.contract,
+                        &f.name,
+                        &f.visibility,
+                        &modifiers,
+                        &f.mutability,
+                    )?;
+                }
+            }
+
+            // 4. insert edges
+            // info!("edges => {:?}", edges);
+            for e in &edges {
+                let db_guard = db_func.lock().await;
+                db_guard.insert_edge(&e.caller, &e.callee)?;
+            }
+            Ok(())
         }
-    }
+        .await;
 
-    // 4. insert edges
-    // info!("edges => {:?}", edges);
-    for e in &edges {
-        db.insert_edge(&e.caller, &e.callee)?;
-    }
+        if let Err(e) = result {
+            log::error!("Error processing user: {:#}", e);
+        }
 
-    // info!("child/parent => {:?}", inheritance_edges);
-    for (child, parent) in inheritance_edges {
-        db.insert_inheritance(&child, &parent)?;
-    }
+        Ok::<_, anyhow::Error>(())
+    });
 
+    let db_inheritance = Arc::clone(&db);
+    let root = repo_root.to_path_buf();
+    let handle_inheritance = tokio::spawn(async move {
+        let result: Result<()> = async move {
+            let inheritance_json = inheritance::generate_slither_inheritance(&root).await?;
+            let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
+            // info!("dot functions => {:?}", funcs);
+            // info!("dot edges => {:?}", edges);
+
+            // info!("child/parent => {:?}", inheritance_edges);
+            for (child, parent) in inheritance_edges {
+                let db_guard = db_inheritance.lock().await;
+                db_guard.insert_inheritance(&child, &parent)?;
+            }
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = result {
+            log::error!("Error processing user: {:#}", e);
+        }
+        Ok::<_, anyhow::Error>(())
+    });
+    // Wait for both tasks to complete
+    let (_func_result, _inheritance_result) = tokio::try_join!(handle, handle_inheritance)?;
     Ok(db_path)
 }
