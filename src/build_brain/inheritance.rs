@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path, process::Command, sync::Arc};
 
-use crate::build_brain::slither_ffi::{cache_key, PRINTER_OUTPUT_CACHE};
+use crate::build_brain::slither_ffi::{PRINTER_OUTPUT_CACHE, cache_key};
 
 /// envelope runner (JSON wrapper identical to call-graph helper)
 pub async fn generate_slither_inheritance(repo: &Path) -> Result<String> {

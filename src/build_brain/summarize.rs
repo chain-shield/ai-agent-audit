@@ -1,8 +1,10 @@
 use anyhow::Result;
 use log::info;
 use once_cell::sync::Lazy;
-use rig::providers::openai::GPT_4O;
-use rig::providers::openai::{self, O3};
+use rig::{
+    client::{CompletionClient, ProviderClient},
+    providers::openai::{self, GPT_4O, O3},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

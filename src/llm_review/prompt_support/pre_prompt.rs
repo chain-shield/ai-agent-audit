@@ -10,7 +10,7 @@ Before instructions are provided on the task please note required output format:
   "findings": [
     {
       "description": "Detailed explanation including vulnerable code snippet",
-      "issue_type": "AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontRunAttack",
+      "issue_type": "AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|MEV",
       "contract": "{contract_name}", // the exact contract name where vulnerability is found
       "function": "<Function>", // exact function name where vulnerability is found, if not applicable set to "NA"
       "impact": "Business and security consequences of the vulnerability",

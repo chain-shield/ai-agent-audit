@@ -1,7 +1,7 @@
 /// This module provides access to the OpenAI tokenizer (BPE) used for text chunking.
 /// It implements a thread-safe, lazily-initialized singleton pattern for the tokenizer.
 use std::sync::OnceLock;
-use tiktoken_rs::{cl100k_base, CoreBPE};
+use tiktoken_rs::{CoreBPE, cl100k_base};
 
 /// Lazily-initialized, thread-safe tokenizer instance
 /// This is initialized only once when first accessed and then reused

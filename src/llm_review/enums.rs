@@ -1,5 +1,23 @@
 use schemars::JsonSchema;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+
+use crate::{
+    invariant_prompts::{
+        arithmetic::ARITHMETIC, balance::BALANCE, permission::PERMISSION, referential::REFERENTIAL,
+        state_machine::STATE_MACHINE, temporal::TEMPORAL,
+    },
+    prompts::{
+        access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
+        confidential_data::SAVING_CONFIDENTIAL_DATA, default_visibility::DEFAULT_VISIBILITIES,
+        dos::DOS, inheritance::WRONG_INHERITANCE, integer_overflow::INTEGER_OVERFLOW, mev::MEV,
+        oracle::ORACLE_MANIPULATION, pragma::FLOATING_PRAGMA, randomness::RANDOMNESS,
+        reentrancy::REENTRANCY, replay_attack::REPLAY_SIGNATURES_ATTACK,
+        self_destruct::SELF_DESTRUCT, short_address_attack::SHORT_ADDRESS_ATTACK,
+        storage_variables::STORAGE_VARIABLE, tx_origin::TX_ORIGIN,
+        unchecked_return_value::UNCHECK_RETURN_VALUES, unexpected_eth::UNEXPECTED_ETH,
+        zero_code::CONTRACTS_WITH_ZERO_CODE,
+    },
+};
 
 /// ------------------------------------------------------------------
 /// 1.  Strict-typed severity enum
@@ -49,7 +67,7 @@ pub enum VulnerabilityType {
     UncheckedReturn,
     UnexpectedEth,
     ZeroCode,
-    FrontRunAttack,
+    MEV,
 }
 
 impl Severity {
@@ -83,6 +101,17 @@ impl InvariantType {
             InvariantType::StateMachine => "StateMachine",
         }
     }
+
+    pub fn get_prompt(self) -> &'static str {
+        match self {
+            InvariantType::Arithmetic => ARITHMETIC,
+            InvariantType::Balance => BALANCE,
+            InvariantType::Permission => PERMISSION,
+            InvariantType::Temporal => TEMPORAL,
+            InvariantType::Referential => REFERENTIAL,
+            InvariantType::StateMachine => STATE_MACHINE,
+        }
+    }
 }
 
 impl InvariantStatus {
@@ -99,7 +128,7 @@ impl VulnerabilityType {
         match self {
             VulnerabilityType::Oracle => "Oracle",
             VulnerabilityType::AccessControl => "AccessControl",
-            VulnerabilityType::FrontRunAttack => "FrontRunAttack",
+            VulnerabilityType::MEV => "MEV",
             VulnerabilityType::UnexpectedEth => "UnexpectedEth",
             VulnerabilityType::Pragma => "Pragma",
             VulnerabilityType::Randomness => "Randomness",
@@ -117,6 +146,56 @@ impl VulnerabilityType {
             VulnerabilityType::ConfidentialData => "ConfidentialData",
             VulnerabilityType::Reentrancy => "Reentrancy",
             VulnerabilityType::ArrayLimits => "ArrayLimits",
+        }
+    }
+
+    pub fn as_fancy_str(self) -> &'static str {
+        match self {
+            VulnerabilityType::Oracle => "Oracle",
+            VulnerabilityType::AccessControl => "Access Control",
+            VulnerabilityType::MEV => "MEV",
+            VulnerabilityType::UnexpectedEth => "Unexpected Eth",
+            VulnerabilityType::Pragma => "Pragma",
+            VulnerabilityType::Randomness => "Randomness",
+            VulnerabilityType::TxOrigin => "tx.origin",
+            VulnerabilityType::ZeroCode => "Zero Code",
+            VulnerabilityType::SelfDestruct => "Self-Destruct",
+            VulnerabilityType::StorageLayout => "Storage Layout",
+            VulnerabilityType::ReplayAttack => "Replay Attack",
+            VulnerabilityType::ShortAddress => "Short Address",
+            VulnerabilityType::IntegerMath => "Integer Overflow/Math",
+            VulnerabilityType::UncheckedReturn => "Unchecked Return",
+            VulnerabilityType::Dos => "DOS",
+            VulnerabilityType::DefaultVisibility => "Default Visibility",
+            VulnerabilityType::Inheritance => "Inheritance",
+            VulnerabilityType::ConfidentialData => "Confidential Data",
+            VulnerabilityType::Reentrancy => "Reentrancy",
+            VulnerabilityType::ArrayLimits => "Array Limits",
+        }
+    }
+
+    pub fn prompt(self) -> &'static str {
+        match self {
+            VulnerabilityType::Oracle => ORACLE_MANIPULATION,
+            VulnerabilityType::AccessControl => ACCESS_CONTROL,
+            VulnerabilityType::MEV => MEV,
+            VulnerabilityType::UnexpectedEth => UNEXPECTED_ETH,
+            VulnerabilityType::Pragma => FLOATING_PRAGMA,
+            VulnerabilityType::Randomness => RANDOMNESS,
+            VulnerabilityType::TxOrigin => TX_ORIGIN,
+            VulnerabilityType::ZeroCode => CONTRACTS_WITH_ZERO_CODE,
+            VulnerabilityType::SelfDestruct => SELF_DESTRUCT,
+            VulnerabilityType::StorageLayout => STORAGE_VARIABLE,
+            VulnerabilityType::ReplayAttack => REPLAY_SIGNATURES_ATTACK,
+            VulnerabilityType::ShortAddress => SHORT_ADDRESS_ATTACK,
+            VulnerabilityType::IntegerMath => INTEGER_OVERFLOW,
+            VulnerabilityType::UncheckedReturn => UNCHECK_RETURN_VALUES,
+            VulnerabilityType::Dos => DOS,
+            VulnerabilityType::DefaultVisibility => DEFAULT_VISIBILITIES,
+            VulnerabilityType::Inheritance => WRONG_INHERITANCE,
+            VulnerabilityType::ConfidentialData => SAVING_CONFIDENTIAL_DATA,
+            VulnerabilityType::Reentrancy => REENTRANCY,
+            VulnerabilityType::ArrayLimits => ACCESS_OUTSIDE_ARRAY_LIMITS,
         }
     }
 }
@@ -196,7 +275,7 @@ impl<'de> Deserialize<'de> for VulnerabilityType {
         match s.to_ascii_lowercase().as_str() {
             "oracle" => Ok(VulnerabilityType::Oracle),
             "accesscontrol" => Ok(VulnerabilityType::AccessControl),
-            "frontrunattack" => Ok(VulnerabilityType::FrontRunAttack),
+            "mev" => Ok(VulnerabilityType::MEV),
             "unexpectedeth" => Ok(VulnerabilityType::UnexpectedEth),
             "pragma" => Ok(VulnerabilityType::Pragma),
             "randomness" => Ok(VulnerabilityType::Randomness),

@@ -5,7 +5,7 @@ use serde::Deserialize;
 use std::{collections::HashMap, default::Default, path::Path, process::Command, sync::Arc};
 
 use crate::{
-    build_brain::slither_ffi::{cache_key, PRINTER_OUTPUT_CACHE},
+    build_brain::slither_ffi::{PRINTER_OUTPUT_CACHE, cache_key},
     enumerator::utils::get_function_metadata_from_id,
     utils::fn_labels::{get_modifiers_label, get_visibility_label},
 };

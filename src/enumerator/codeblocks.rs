@@ -103,7 +103,7 @@ pub async fn generate_codeblock_from_codebase(
                 let rows = statement.query_map([&func.id], |r| r.get::<_, String>(0))?;
                 for callee in rows.flatten() {
                     let callee_fn = get_function_metadata_from_id(&callee, semantic_db)?;
-                    let Some(callee_fn) = callee_fn else {continue};
+                    let Some(callee_fn) = callee_fn else { continue };
 
                     frontier.push_back((callee_fn, depth + 1));
                 }

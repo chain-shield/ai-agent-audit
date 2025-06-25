@@ -1,6 +1,4 @@
 pub const MASTER_SECURITY_PROMPT: &str = r#"
-You are an expert smart-contract security auditor. 
-
 Please Analyse the *entire* Solidity source below for 
 *each category* of the security vulnerabilities listed below:
 
@@ -9,7 +7,7 @@ CATEGORIES
 2. array_limits
 3. confidential_data
 4. default_visibility
-5. dos
+5. dos (denial of service)
 6. inheritance
 7. integer_math
 8. oracle
@@ -24,23 +22,33 @@ CATEGORIES
 17. unchecked_return
 18. unexpected_eth
 19. zero_code
-20. front_run_attack
+20. mev (Maximal Extractable Value)
 
-### TASK
+## 🔍 ANALYSIS REQUIREMENTS
+
+### DEPTH OF ANALYSIS
+- **Read every line** of the contract code
+- **Consider edge cases** and attack vectors for each category
+- **Look for subtle vulnerabilities** that may not be immediately obvious
+- **Consider interactions** between different parts of the contract
+
+### CLASSIFICATION CRITERIA
 For **each category** decide one of:
   • VIOLATION – bug exists in this contract
   • SAFE      – relevant but properly handled
   • N/A       – category not applicable to this code
 
-### OUTPUT REQUIREMENTS 
- **For Every VIOLATION** return:
-1. **Title**: Format as "<Name of Security vulnerability> in <Contract>::<Function>"
-2. **Description**: Detailed explanation including vulnerable code snippet 
-3. **Impact**: Financial and security consequences 
-4. **Proof of Concept**: Step-by-step exploitation scenario 
-5. **Proof of Code**: Complete Foundry unit test demonstrating vulnerability
-6. **Severity**: High/Medium/Low/Info based on Impact on Protocol AND Likelihood of Exploitation 
-7. **Mitigation**: Suggested Mitigation with code example of fix
+### REASONING PROCESS
+Before providing your final JSON output, you must:
+1. **Silently analyze each category** in order (1-20)
+2. **Consider all relevant code sections** for each category
+3. **Make evidence-based classifications** 
+4. **Double-check** that no category was skipped
 
-**Think through each category one by one, reasoning silently. Do NOT skip any category. Then output JSON.**
+## ⚠️ CRITICAL REMINDERS
+- **ANALYZE ALL 20 CATEGORIES** - No exceptions
+- **Be thorough** - Don't rush through categories
+- **Be precise** - Use exact classification criteria
+- **Think like an attacker** - Consider how each vulnerability could be exploited
+- **Provide only the JSON** - No additional commentary in final output
 "#;

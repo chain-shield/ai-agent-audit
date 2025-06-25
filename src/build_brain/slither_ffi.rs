@@ -1,7 +1,7 @@
 /// This module provides an interface to the Slither static analysis tool for Solidity.
 /// It handles running Slither printers, parsing their output, and extracting useful information
 /// such as SlithIR (intermediate representation) and storage variable details.
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -113,7 +113,6 @@ pub fn run_slither_detector(repo: &Path) -> Result<String> {
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @param printer - Name of the Slither printer to run (e.g., "slithir-ssa", "variable-order")
 /// @return Result containing the printer's output as a string
-// TODO - UPDATE TO CACHE based on repo hash/commit hash
 pub async fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
     let key = cache_key(repo_root, printer);
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
