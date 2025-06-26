@@ -113,7 +113,7 @@ pub const SECURITY_PROMPT_ENUMS: [VulnerabilityType; 8] = [
     // VulnerabilityType::UncheckedReturn,
     VulnerabilityType::UnexpectedEth,
     // VulnerabilityType::ZeroCode,
-    VulnerabilityType::MEV,
+    VulnerabilityType::FrontrunMev,
     // VulnerabilityType::ShortAddress,
 ];
 

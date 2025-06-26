@@ -56,6 +56,9 @@ pub mod ai_bot {
     pub mod retrieve_slice;
 }
 
+pub mod master_prompts {
+    pub mod master_prompt;
+}
 pub mod prompts {
     pub mod access_control;
     pub mod array_limits;
@@ -64,7 +67,6 @@ pub mod prompts {
     pub mod dos;
     pub mod inheritance;
     pub mod integer_overflow;
-    pub mod master_prompt;
     pub mod mev;
     pub mod oracle;
     pub mod pragma;

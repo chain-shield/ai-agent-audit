@@ -6,7 +6,7 @@ use crate::{
         prompt_content::generate_context_for_code_review,
         prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
     },
-    prompts::master_prompt::MASTER_SECURITY_PROMPT,
+    master_prompts::master_prompt::MASTER_SECURITY_PROMPT,
     utils::extract_retry::agent_extract_with_retry,
 };
 use anyhow::Result;
@@ -76,9 +76,18 @@ pub async fn review_codebase_for_security_issues(
         CLAUDE_4_0_SONNET,
         64_000,
     ));
+    let anthropic_agent_4_0_t0 = Arc::new(build_anthropic_agent(
+        &anthropic_client,
+        0.0,
+        CLAUDE_4_0_SONNET,
+        64_000,
+    ));
     ai_agents.push(anthropic_agent_3_7_t0);
     ai_agents.push(anthropic_agent_4_0_t1.clone());
     ai_agents.push(anthropic_agent_4_0_t1.clone());
+    ai_agents.push(anthropic_agent_3_7_t1.clone());
+    ai_agents.push(anthropic_agent_4_0_t1.clone());
+    ai_agents.push(anthropic_agent_3_7_t1.clone());
     ai_agents.push(anthropic_agent_3_7_t1.clone());
     ai_agents.push(anthropic_agent_4_0_t1);
     ai_agents.push(anthropic_agent_3_7_t1);
@@ -256,12 +265,10 @@ fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> 
     code_plus_context.push_str("\n");
 
     code_plus_context.push_str(codeblock);
-    info!("codeblock...");
     // print_first_four_lines(&codeblock);
 
     code_plus_context.push_str("\n");
     code_plus_context.push_str(&added_context);
-    info!("added_context_from_ai_brain..");
     // print_first_four_lines(&added_context);
 
     code_plus_context

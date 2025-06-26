@@ -18,12 +18,13 @@ dotenvy = "0.15"
 anyhow = "1.0"
 git2 = "0.18"
 log = "0.4.26"
+reqwest = { version = "0.12.19", features = ["json", "rustls-tls"] }
 env_logger = "0.11"
 tiktoken-rs = "0.6.0"
-rusqlite = { version = "0.31", features = ["bundled"] }             #  🔒 static libsqlite3
-serde-sarif = "0.7"                                                 # straight-forward SARIF model
+rusqlite = { version = "0.31", features = ["bundled"] }              #  🔒 static libsqlite3
+serde-sarif = "0.7"                                                  # straight-forward SARIF model
 uuid = { version = "1", features = ["v4"] }
-chrono = "0.4"                                                      # timestamp in tickets
+chrono = "0.4"                                                       # timestamp in tickets
 async-trait = "0.1.79"
 thiserror = "2.0.12"
 hex = "0.4.3"
