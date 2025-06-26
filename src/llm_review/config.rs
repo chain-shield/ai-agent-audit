@@ -12,15 +12,18 @@ use rig::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::prompts::{
-    access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
-    confidential_data::SAVING_CONFIDENTIAL_DATA, default_visibility::DEFAULT_VISIBILITIES,
-    dos::DOS, inheritance::WRONG_INHERITANCE, integer_overflow::INTEGER_OVERFLOW, mev::MEV,
-    oracle::ORACLE_MANIPULATION, pragma::FLOATING_PRAGMA, randomness::RANDOMNESS,
-    reentrancy::REENTRANCY, replay_attack::REPLAY_SIGNATURES_ATTACK, self_destruct::SELF_DESTRUCT,
-    storage_variables::STORAGE_VARIABLE, tx_origin::TX_ORIGIN,
-    unchecked_return_value::UNCHECK_RETURN_VALUES, unexpected_eth::UNEXPECTED_ETH,
-    zero_code::CONTRACTS_WITH_ZERO_CODE,
+use crate::{
+    master_prompts::{prompt_2x_a::PROMPT_2X_A, prompt_2x_b::PROMPT_2X_B},
+    prompts::{
+        access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
+        confidential_data::SAVING_CONFIDENTIAL_DATA, default_visibility::DEFAULT_VISIBILITIES,
+        dos::DOS, inheritance::WRONG_INHERITANCE, integer_overflow::INTEGER_OVERFLOW, mev::MEV,
+        oracle::ORACLE_MANIPULATION, pragma::FLOATING_PRAGMA, randomness::RANDOMNESS,
+        reentrancy::REENTRANCY, replay_attack::REPLAY_SIGNATURES_ATTACK,
+        self_destruct::SELF_DESTRUCT, storage_variables::STORAGE_VARIABLE, tx_origin::TX_ORIGIN,
+        unchecked_return_value::UNCHECK_RETURN_VALUES, unexpected_eth::UNEXPECTED_ETH,
+        zero_code::CONTRACTS_WITH_ZERO_CODE,
+    },
 };
 
 use super::{
@@ -38,6 +41,7 @@ pub const CLAUDE_4_0_SONNET: &str = "claude-sonnet-4-0";
 pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
 pub const LANGUAGE_MODEL: LanguageModel = LanguageModel::Anthropic;
 pub const RUNS: usize = 3;
+pub const INSTRUCTION_PROMPTS: [&str; 2] = [PROMPT_2X_A, PROMPT_2X_B];
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Finding {
