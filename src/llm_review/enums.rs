@@ -1,11 +1,12 @@
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     invariant_prompts::{
         arithmetic::ARITHMETIC, balance::BALANCE, permission::PERMISSION, referential::REFERENTIAL,
         state_machine::STATE_MACHINE, temporal::TEMPORAL,
     },
+    master_prompts::master_prompt::MASTER_SECURITY_PROMPT,
     prompts::{
         access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
         confidential_data::SAVING_CONFIDENTIAL_DATA, default_visibility::DEFAULT_VISIBILITIES,
@@ -67,7 +68,16 @@ pub enum VulnerabilityType {
     UncheckedReturn,
     UnexpectedEth,
     ZeroCode,
-    MEV,
+    FrontrunMev,
+    UpgradeabilityInitializerSafety,
+    PausableEmergencyStop,
+    TimestampDependentLogic,
+    FlashLoanEconomicManipulation,
+    DelegatecallLowLevelOps,
+    SignatureMalleability,
+    EventConsistency,
+    GasGriefBlockLimit,
+    IntegerOverflow,
 }
 
 impl Severity {
@@ -128,7 +138,7 @@ impl VulnerabilityType {
         match self {
             VulnerabilityType::Oracle => "Oracle",
             VulnerabilityType::AccessControl => "AccessControl",
-            VulnerabilityType::MEV => "MEV",
+            VulnerabilityType::FrontrunMev => "FrontrunMev",
             VulnerabilityType::UnexpectedEth => "UnexpectedEth",
             VulnerabilityType::Pragma => "Pragma",
             VulnerabilityType::Randomness => "Randomness",
@@ -146,6 +156,15 @@ impl VulnerabilityType {
             VulnerabilityType::ConfidentialData => "ConfidentialData",
             VulnerabilityType::Reentrancy => "Reentrancy",
             VulnerabilityType::ArrayLimits => "ArrayLimits",
+            VulnerabilityType::UpgradeabilityInitializerSafety => "UpgradeabilityInitializerSafety",
+            VulnerabilityType::PausableEmergencyStop => "PausableEmergencyStop",
+            VulnerabilityType::TimestampDependentLogic => "TimestampDependentLogic",
+            VulnerabilityType::FlashLoanEconomicManipulation => "FlashLoanEconomicManipulation",
+            VulnerabilityType::DelegatecallLowLevelOps => "DelegatecallLowLevelOps",
+            VulnerabilityType::SignatureMalleability => "SignatureMalleability",
+            VulnerabilityType::EventConsistency => "EventConsistency",
+            VulnerabilityType::GasGriefBlockLimit => "GasGriefBlockLimit",
+            VulnerabilityType::IntegerOverflow => "IntegerOverflow",
         }
     }
 
@@ -153,7 +172,7 @@ impl VulnerabilityType {
         match self {
             VulnerabilityType::Oracle => "Oracle",
             VulnerabilityType::AccessControl => "Access Control",
-            VulnerabilityType::MEV => "MEV",
+            VulnerabilityType::FrontrunMev => "Frontrun/Backrun/Sandwhich MEV",
             VulnerabilityType::UnexpectedEth => "Unexpected Eth",
             VulnerabilityType::Pragma => "Pragma",
             VulnerabilityType::Randomness => "Randomness",
@@ -171,6 +190,17 @@ impl VulnerabilityType {
             VulnerabilityType::ConfidentialData => "Confidential Data",
             VulnerabilityType::Reentrancy => "Reentrancy",
             VulnerabilityType::ArrayLimits => "Array Limits",
+            VulnerabilityType::UpgradeabilityInitializerSafety => {
+                "Upgradeability Initializer Safety"
+            }
+            VulnerabilityType::PausableEmergencyStop => "Pausable Emergency Stop",
+            VulnerabilityType::TimestampDependentLogic => "Timestamp Dependent Logic",
+            VulnerabilityType::FlashLoanEconomicManipulation => "Flash Loan Economic Manipulation",
+            VulnerabilityType::DelegatecallLowLevelOps => "Delegatecall Low Level Ops",
+            VulnerabilityType::SignatureMalleability => "Signature Malleability",
+            VulnerabilityType::EventConsistency => "Event Consistency",
+            VulnerabilityType::GasGriefBlockLimit => "Gas Grief BlockLimit",
+            VulnerabilityType::IntegerOverflow => "Integer Overflow",
         }
     }
 
@@ -178,7 +208,7 @@ impl VulnerabilityType {
         match self {
             VulnerabilityType::Oracle => ORACLE_MANIPULATION,
             VulnerabilityType::AccessControl => ACCESS_CONTROL,
-            VulnerabilityType::MEV => MEV,
+            VulnerabilityType::FrontrunMev => MEV,
             VulnerabilityType::UnexpectedEth => UNEXPECTED_ETH,
             VulnerabilityType::Pragma => FLOATING_PRAGMA,
             VulnerabilityType::Randomness => RANDOMNESS,
@@ -196,6 +226,7 @@ impl VulnerabilityType {
             VulnerabilityType::ConfidentialData => SAVING_CONFIDENTIAL_DATA,
             VulnerabilityType::Reentrancy => REENTRANCY,
             VulnerabilityType::ArrayLimits => ACCESS_OUTSIDE_ARRAY_LIMITS,
+            _ => MASTER_SECURITY_PROMPT,
         }
     }
 }
@@ -275,7 +306,7 @@ impl<'de> Deserialize<'de> for VulnerabilityType {
         match s.to_ascii_lowercase().as_str() {
             "oracle" => Ok(VulnerabilityType::Oracle),
             "accesscontrol" => Ok(VulnerabilityType::AccessControl),
-            "mev" => Ok(VulnerabilityType::MEV),
+            "frontrunmev" => Ok(VulnerabilityType::FrontrunMev),
             "unexpectedeth" => Ok(VulnerabilityType::UnexpectedEth),
             "pragma" => Ok(VulnerabilityType::Pragma),
             "randomness" => Ok(VulnerabilityType::Randomness),
@@ -293,6 +324,17 @@ impl<'de> Deserialize<'de> for VulnerabilityType {
             "confidentialdata" => Ok(VulnerabilityType::ConfidentialData),
             "reentrancy" => Ok(VulnerabilityType::Reentrancy),
             "arraylimits" => Ok(VulnerabilityType::ArrayLimits),
+            "upgradeabilityinitializersafety" => {
+                Ok(VulnerabilityType::UpgradeabilityInitializerSafety)
+            }
+            "pausableemergencystop" => Ok(VulnerabilityType::PausableEmergencyStop),
+            "timestampdependentlogic" => Ok(VulnerabilityType::TimestampDependentLogic),
+            "flashloaneconomicmanipulation" => Ok(VulnerabilityType::FlashLoanEconomicManipulation),
+            "delegatecalllowlevelops" => Ok(VulnerabilityType::DelegatecallLowLevelOps),
+            "signaturemalleability" => Ok(VulnerabilityType::SignatureMalleability),
+            "eventconsistency" => Ok(VulnerabilityType::EventConsistency),
+            "gasgriefblocklimit" => Ok(VulnerabilityType::GasGriefBlockLimit),
+            "integeroverflow" => Ok(VulnerabilityType::IntegerOverflow),
             other => Err(de::Error::unknown_variant(
                 other,
                 &[
@@ -316,6 +358,16 @@ impl<'de> Deserialize<'de> for VulnerabilityType {
                     "confidentialdata",
                     "reentrancy",
                     "arraylimits",
+                    "frontrunmev",
+                    "upgradeabilityinitializersafety",
+                    "pausableemergencystop",
+                    "timestampdependentlogic",
+                    "flashloaneconomicmanipulation",
+                    "delegatecalllowlevelops",
+                    "signaturemalleability",
+                    "eventconsistency",
+                    "gasgriefblocklimit",
+                    "integeroverflow",
                 ],
             )),
         }

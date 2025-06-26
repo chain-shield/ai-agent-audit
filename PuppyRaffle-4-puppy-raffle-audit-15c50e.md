@@ -1,3 +1,5 @@
+
+
 ### Storage layout (PuppyRaffle) 
 
 ```text
@@ -15,8 +17,6 @@ rareImageUri string
 legendaryImageUri string
 
 ```
-
-
 #### PuppyRaffle.constructor(uint256,address,uint256) [INTERNAL]
 ```slithir
 commonImageUri_1(string) := phi(['commonImageUri_0', 'commonImageUri_2'])

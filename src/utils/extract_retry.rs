@@ -1,15 +1,17 @@
 use crate::llm_review::config::Findings;
+use reqwest::StatusCode;
 use rig::agent::Agent;
+use rig::completion::CompletionError;
 use rig::completion::CompletionModel;
 use rig::completion::Prompt;
+use rig::completion::PromptError;
 use rig::extractor::ExtractionError;
 use rig::extractor::Extractor;
 use schemars::JsonSchema;
-use serde::Deserialize;
 use serde::de::Error as _; // <- bring the trait’s methods into scope
-use serde_json::{Error as JsonError, error::Category as JsonCat};
+use serde::Deserialize;
+use serde_json::{error::Category as JsonCat, Error as JsonError};
 use std::{thread, time::Duration};
-use tokio::time::sleep;
 
 const MAX_ATTEMPTS: usize = 3;
 
@@ -49,10 +51,12 @@ where
         /* ────── 1. ask the model ───────────────────────────────────────── */
         let raw = match agent.prompt(input).await {
             Ok(txt) => txt,
-            Err(e) => {
-                // Convert prompt error to JsonError
-                return Err(JsonError::custom(format!("prompt failed: {e}")));
+            // Convert prompt error to JsonError
+            Err(e) if should_retry_prompt_err(&e) && attempt < MAX_ATTEMPTS => {
+                eprintln!("LLM backend busy ({e}) – retry {attempt}/{MAX_ATTEMPTS}");
+                continue;
             }
+            Err(e) => return Err(JsonError::custom(format!("prompt failed: {e}"))),
         };
         // log::info!("json => {:#?}", raw);
 
@@ -78,17 +82,6 @@ where
     // This point is only reached if all attempts exhausted
     Err(JsonError::custom("exhausted retries – still no data"))
 }
-fn should_retry_parse_error(e: &Box<dyn std::error::Error>) -> bool {
-    // Check if it's a JSON parsing error that we should retry
-    if let Some(_json_err) = e.downcast_ref::<JsonError>() {
-        true // Retry JSON errors
-    } else {
-        // You can add more specific logic here based on the actual error types
-        // that `parse_from_llm_response` returns
-        true
-    }
-}
-
 // Helper function to determine if we should retry based on the original error
 fn should_retry_based_on_error(e: &str) -> bool {
     let error_msg = e.to_string().to_lowercase();
@@ -100,30 +93,49 @@ fn should_retry_based_on_error(e: &str) -> bool {
         || error_msg.contains("parse")
         || error_msg.contains("json")
         || error_msg.contains("deserialize")
-        || error_msg.contains("overloaded")
     // Add more conditions based on what errors you typically see
 }
 
-fn should_retry_json(e: &JsonError) -> bool {
-    matches!(e.classify(), JsonCat::Syntax | JsonCat::Data)
-}
+/*──────────────── helper ───────────────────────────────────────────────*/
+/// `true`  → retry is warranted  
+/// `false` → give up / bubble the error
+fn should_retry_prompt_err(e: &PromptError) -> bool {
+    match e {
+        // Unpack the CompletionError variant  ──────────────────────────
+        PromptError::CompletionError(inner) => match inner {
+            /* 1) HTTP transport layer issues -------------------------- */
+            CompletionError::HttpError(http_err) => {
+                // 1a) Too-Many-Requests (OpenAI & friends)
+                if http_err.status() == Some(StatusCode::TOO_MANY_REQUESTS) {
+                    return true;
+                }
+                // 1b) Any 5xx server error
+                if let Some(status) = http_err.status() {
+                    if status.is_server_error() {
+                        return true;
+                    }
+                }
+                // 1c) Network time-outs
+                if http_err.is_timeout() {
+                    return true;
+                }
+                false
+            }
 
-// Option 3: Create a custom error type that can handle both
-#[derive(Debug)]
-pub enum ExtractError {
-    Json(JsonError),
-    Prompt(String),
-    Parse(Box<dyn std::error::Error>),
-    Exhausted,
-}
+            /* 2) Provider said “I’m busy / overloaded / rate-limited”  */
+            CompletionError::ProviderError(msg) | CompletionError::ResponseError(msg) => {
+                let m = msg.to_lowercase();
+                m.contains("overload")
+                    || m.contains("rate limit")
+                    || m.contains("busy")
+                    || m.contains("try again later")
+            }
 
-impl std::fmt::Display for ExtractError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ExtractError::Json(e) => write!(f, "JSON error: {}", e),
-            ExtractError::Prompt(e) => write!(f, "Prompt error: {}", e),
-            ExtractError::Parse(e) => write!(f, "Parse error: {}", e),
-            ExtractError::Exhausted => write!(f, "Exhausted retries"),
-        }
+            /* 3) Anything else – usually not transient */
+            _ => false,
+        },
+
+        /* Tool-call failures, depth-limit, etc. -> *not* transient */
+        _ => false,
     }
 }
