@@ -58,6 +58,8 @@ pub mod ai_bot {
 
 pub mod master_prompts {
     pub mod master_prompt;
+    pub mod prompt_2x_a;
+    pub mod prompt_2x_b;
 }
 pub mod prompts {
     pub mod access_control;

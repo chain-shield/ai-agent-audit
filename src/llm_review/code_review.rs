@@ -1,7 +1,9 @@
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
-        config::{generated_llm_prompt, ContractInvariants, CLAUDE_4_0_SONNET},
+        config::{
+            generated_llm_prompt, ContractInvariants, CLAUDE_4_0_SONNET, INSTRUCTION_PROMPTS,
+        },
         invariants::INVARIANTS,
         prompt_content::generate_context_for_code_review,
         prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
@@ -56,6 +58,8 @@ pub async fn review_codebase_for_security_issues(
     let added_context_from_ai_brain =
         generate_context_for_code_review(repo_root, &semantics_path).await?;
 
+    info!("CONTEXT => {:#?}", added_context_from_ai_brain);
+
     info!("setting up AI agent...");
     let mut ai_agents = Vec::new();
     let anthropic_agent_3_7_t0 = Arc::new(build_anthropic_agent(
@@ -76,20 +80,14 @@ pub async fn review_codebase_for_security_issues(
         CLAUDE_4_0_SONNET,
         64_000,
     ));
-    let anthropic_agent_4_0_t0 = Arc::new(build_anthropic_agent(
-        &anthropic_client,
-        0.0,
-        CLAUDE_4_0_SONNET,
-        64_000,
-    ));
-    ai_agents.push(anthropic_agent_3_7_t0);
-    ai_agents.push(anthropic_agent_4_0_t1.clone());
-    ai_agents.push(anthropic_agent_4_0_t1.clone());
     ai_agents.push(anthropic_agent_3_7_t1.clone());
     ai_agents.push(anthropic_agent_4_0_t1.clone());
+    // ai_agents.push(anthropic_agent_4_0_t1.clone());
     ai_agents.push(anthropic_agent_3_7_t1.clone());
-    ai_agents.push(anthropic_agent_3_7_t1.clone());
-    ai_agents.push(anthropic_agent_4_0_t1);
+    ai_agents.push(anthropic_agent_4_0_t1.clone());
+    // ai_agents.push(anthropic_agent_3_7_t1.clone());
+    // ai_agents.push(anthropic_agent_3_7_t1.clone());
+    // ai_agents.push(anthropic_agent_4_0_t1);
     ai_agents.push(anthropic_agent_3_7_t1);
 
     let mut invariant_findings = Vec::<ContractInvariants>::new();
@@ -106,23 +104,24 @@ pub async fn review_codebase_for_security_issues(
         let added_content_from_brain = Arc::new(added_context_from_ai_brain.clone());
 
         for (run, arc_agent) in ai_agents.iter().enumerate() {
-            let agent = Arc::clone(arc_agent);
-            let combined_findings = Arc::clone(&security_findings);
-            let contract_name = Arc::clone(&contract);
-            let code = Arc::clone(&codeblock);
-            let added_content = Arc::clone(&added_content_from_brain);
+            for (i, instructions) in INSTRUCTION_PROMPTS.into_iter().enumerate() {
+                let agent = Arc::clone(arc_agent);
+                let combined_findings = Arc::clone(&security_findings);
+                let contract_name = Arc::clone(&contract);
+                let code = Arc::clone(&codeblock);
+                let added_content = Arc::clone(&added_content_from_brain);
 
-            handles.push(tokio::spawn(async move {
+                handles.push(tokio::spawn(async move {
                 let result: Result<()> = async move {
 
-                    let  prompt_string = generated_llm_prompt(&contract_name, MASTER_SECURITY_PROMPT, PRE_PROMPT, POST_PROMPT);
+                    let  prompt_string = generated_llm_prompt(&contract_name, instructions, PRE_PROMPT, POST_PROMPT);
 
                     let findings = match agent.as_ref() {
                         AIAgent::Anthropic(anthropic_agent) => {
                             let anthropic_prompt = format!("{}{}",prompt_string,generate_content_plus_context_block(&code , &added_content));
                             info!(
                                 "------------------------------ROUND #{}: Claude------------------------------",
-                                run + 1
+                                (i+1) * (run + 1)
                             );
                             let anthropic_findings =
                                 agent_extract_with_retry(&anthropic_agent, &anthropic_prompt).await?;
@@ -179,6 +178,7 @@ pub async fn review_codebase_for_security_issues(
                     log::error!("Error processing user: {:#}", e);
                 }
             }));
+            }
         }
 
         //SCAN FOR INVARIANTS
