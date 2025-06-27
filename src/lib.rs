@@ -44,6 +44,7 @@ pub mod llm_review {
     pub mod enums;
     pub mod invariants;
     pub mod prompt_content;
+    pub mod review_utils;
     pub mod prompt_support {
         pub mod dedup;
         pub mod post_prompt;
@@ -59,7 +60,12 @@ pub mod ai_bot {
 pub mod master_prompts {
     pub mod master_prompt;
     pub mod prompt_2x_a;
+    pub mod prompt_2x_aa;
     pub mod prompt_2x_b;
+    pub mod prompt_2x_bb;
+    pub mod prompt_3x_a;
+    pub mod prompt_3x_b;
+    pub mod prompt_3x_c;
 }
 pub mod prompts {
     pub mod access_control;
