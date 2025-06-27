@@ -28,21 +28,21 @@ pub async fn generate_slither_metadata_prompt_context(
 
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
-    let callgraph = callgraph::get_enriched_funcs_and_edges(repo_root, &semantics_path).await?;
-    let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
-    let contract_summary = run_printer(repo_root, "contract-summary").await?;
+    // let callgraph = callgraph::get_enriched_funcs_and_edges(repo_root, &semantics_path).await?;
+    // let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
+    // let contract_summary = run_printer(repo_root, "contract-summary").await?;
     let src_file_list = get_all_files_src(repo_root).await?;
 
     let mut prompt_context = String::new();
 
-    prompt_context.push_str("\n## Slither Contract Summary\n");
-    prompt_context.push_str(&contract_summary);
+    // prompt_context.push_str("\n## Slither Contract Summary\n");
+    // prompt_context.push_str(&contract_summary);
     prompt_context.push_str("\n## List of Files in Src Folder\n");
     prompt_context.push_str(&src_file_list);
-    prompt_context.push_str("\n## Slither Call Graph\n");
-    prompt_context.push_str(&callgraph);
-    prompt_context.push_str("\n## Slither Inheritance Json\n");
-    prompt_context.push_str(&inheritance);
+    // prompt_context.push_str("\n## Slither Call Graph\n");
+    // prompt_context.push_str(&callgraph);
+    // prompt_context.push_str("\n## Slither Inheritance Json\n");
+    // prompt_context.push_str(&inheritance);
     // prompt_context.push_str("\n## Slither Detector\n");
     // prompt_context.push_str(&slither_scan_results);
 

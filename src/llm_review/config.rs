@@ -1,19 +1,12 @@
-use std::collections::{HashMap, HashSet};
-
-use rig::{
-    agent::Agent,
-    client::{CompletionClient, ProviderClient},
-    completion::{CompletionModel, Prompt},
-    providers::{
-        azure::GPT_4O,
-        openai::{self},
-    },
+use super::{
+    enums::{InvariantStatus, InvariantType, Severity, VulnerabilityType},
+    prompt_support::dedup::DEDUP_PROMPT,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
 use crate::{
-    master_prompts::{prompt_2x_a::PROMPT_2X_A, prompt_2x_b::PROMPT_2X_B},
+    master_prompts::{
+        prompt_2x_a::PROMPT_2X_A, prompt_2x_b::PROMPT_2X_B, prompt_3x_a::PROMPT_3X_A,
+        prompt_3x_b::PROMPT_3X_B, prompt_3x_c::PROMPT_3X_C,
+    },
     prompts::{
         access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
         confidential_data::SAVING_CONFIDENTIAL_DATA, default_visibility::DEFAULT_VISIBILITIES,
@@ -25,11 +18,18 @@ use crate::{
         zero_code::CONTRACTS_WITH_ZERO_CODE,
     },
 };
-
-use super::{
-    enums::{InvariantStatus, InvariantType, Severity, VulnerabilityType},
-    prompt_support::dedup::DEDUP_PROMPT,
+use rig::{
+    agent::Agent,
+    client::{CompletionClient, ProviderClient},
+    completion::{CompletionModel, Prompt},
+    providers::{
+        azure::GPT_4O,
+        openai::{self},
+    },
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LanguageModel {
