@@ -9,6 +9,11 @@ use tokio::sync::Mutex;
 use crate::build_brain::slither_ffi::{cache_key, get_all_files_src, run_printer};
 use crate::build_brain::{callgraph, inheritance, summarize};
 
+use super::config::Finding;
+use super::prompt_support::post_verify::POST_VERIFY;
+use super::prompt_support::pre_verify::PRE_VERIFY;
+use super::prompt_support::verify_prompt::VERIFY_PROMPT;
+
 /// Global cache keyed by (repo_root, printer) tuple stringified
 pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
@@ -78,4 +83,61 @@ pub async fn generate_context_for_code_review(
     info!("full prompt content SIZE => {}", full_prompt_context.len());
 
     Ok(full_prompt_context)
+}
+
+pub fn generate_prompt_for_verifying_issue(code: &str, finding: &Finding) -> String {
+    let mut prompt = format!("{}{}{}", PRE_VERIFY, VERIFY_PROMPT, POST_VERIFY);
+
+    prompt.push_str("\n\n");
+    prompt.push_str("## REPORT FOR SECURIT ISSUE");
+    prompt.push_str("\n\n");
+
+    let report = get_finding_report(finding);
+    prompt.push_str(&report);
+    prompt.push_str("\n\n");
+
+    prompt.push_str("## CODEBASE WHERE ISSUE WAS FOUND");
+    prompt.push_str("\n\n");
+
+    prompt.push_str(code);
+
+    prompt
+}
+
+fn get_finding_report(finding: &Finding) -> String {
+    let mut findings_report = String::new();
+    //title
+    findings_report.push_str(&format!(
+        "## [Severity-{}]. {}\n\n",
+        finding.severity.as_str(),
+        finding.title()
+    ));
+
+    //description
+    findings_report.push_str("## Description\n");
+    findings_report.push_str(&finding.description.clone().unwrap_or_default());
+    findings_report.push_str("\n\n");
+
+    //impact
+    findings_report.push_str("## Impact\n");
+    findings_report.push_str(&finding.impact.clone().unwrap_or_default());
+    findings_report.push_str("\n\n");
+
+    //POC
+    findings_report.push_str("## Proof of Concept\n");
+    findings_report.push_str(&finding.proof_of_concept.clone().unwrap_or_default());
+    findings_report.push_str("\n\n");
+
+    //Proof of Code
+    findings_report.push_str("## Proof of Code\n");
+    findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
+    findings_report.push_str("\n\n");
+
+    //Suggested Fix
+    findings_report.push_str("## Suggested Mitigation\n");
+    findings_report.push_str(&finding.mitigation.clone().unwrap_or_default());
+    findings_report.push_str("\n\n");
+
+    findings_report.push_str("\n");
+    findings_report
 }

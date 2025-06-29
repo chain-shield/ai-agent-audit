@@ -28,6 +28,7 @@ use rig::{
     },
 };
 use schemars::JsonSchema;
+use serde::{de::DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -86,6 +87,13 @@ pub struct ContractInvariants {
     pub contract: String,
     pub intention: String,
     pub invariants: Vec<InvariantFinding>,
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LegitVulnerability {
+    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
+    pub is_legit_vulnerability: bool,
+    pub why_its_not_legit: Option<String>,
 }
 
 // #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -156,6 +164,22 @@ pub fn generated_llm_prompt(
     instruction_template
         .replace("{contract_name}", contract_name)
         .to_string()
+}
+
+fn deserialize_bool_from_str_or_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let val: serde_json::Value = Deserialize::deserialize(deserializer)?;
+    match val {
+        serde_json::Value::Bool(b) => Ok(b),
+        serde_json::Value::String(s) => match s.as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(serde::de::Error::custom("expected 'true' or 'false'")),
+        },
+        _ => Err(serde::de::Error::custom("expected boolean or string")),
+    }
 }
 
 impl Finding {
@@ -295,60 +319,6 @@ impl Findings {
 
         Ok(Findings { findings })
     }
-    /// Parse JSON string containing findings from LLM response
-    /// Handles both clean JSON and JSON wrapped in markdown code blocks
-    pub fn parse_from_json(json_str: &str) -> Result<Findings, serde_json::Error> {
-        // Clean the input - remove markdown code blocks and extra quotes/escapes
-        let cleaned_json = Self::clean_json_string(json_str);
-
-        // Parse the cleaned JSON
-        serde_json::from_str(&cleaned_json)
-    }
-
-    /// Clean JSON string by removing markdown code blocks, escaped quotes, and extra formatting
-    fn clean_json_string(input: &str) -> String {
-        let mut cleaned = input.trim();
-
-        // Remove outer quotes if present (from string literals)
-        if cleaned.starts_with('"') && cleaned.ends_with('"') {
-            cleaned = &cleaned[1..cleaned.len() - 1];
-        }
-
-        // Remove markdown code blocks
-        if cleaned.starts_with("```json") {
-            cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
-        }
-
-        if cleaned.ends_with("```") {
-            cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
-        }
-
-        // Replace escaped quotes and newlines
-        // cleaned
-        //     .replace("\\\"", "\"")
-        //     .replace("\\n", "\n")
-        //     .replace("\\\n", "\n")
-        //     .trim()
-        //     .to_string()
-        cleaned.to_string()
-    }
-
-    /// Parse findings from raw LLM response that may contain extra text
-    /// Extracts JSON from response that might have surrounding text
-    pub fn parse_from_llm_response(response: &str) -> Result<Findings, Box<dyn std::error::Error>> {
-        // Try to find JSON in the response
-        let json_start = response.find('{');
-        let json_end = response.rfind('}');
-
-        match (json_start, json_end) {
-            (Some(start), Some(end)) if start < end => {
-                let json_part = &response[start..=end];
-                Self::parse_from_json(json_part)
-                    .map_err(|e| format!("Failed to parse JSON: {}", e).into())
-            }
-            _ => Err("No valid JSON found in response".into()),
-        }
-    }
 
     /// Get count of findings by severity
     pub fn count_by_severity(&self) -> std::collections::HashMap<Severity, usize> {
@@ -375,83 +345,55 @@ impl Findings {
     }
 }
 
-// Example usage and test function
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub trait FromLLMJson: Sized {
+    /// Parse clean JSON string into type
+    fn parse_from_json(json_str: &str) -> Result<Self, serde_json::Error>;
 
-    #[test]
-    fn test_parse_findings_from_json() {
-        let json_input = r#"{
-            "findings": [
-                {
-                    "title": "[High-1] - Access Control Issue in PuppyRaffle::selectWinner",
-                    "description": "The selectWinner function can be called by any address",
-                    "impact": "Any user can prematurely end the raffle",
-                    "proof_of_concept": "1. Deploy contract\n2. Call selectWinner",
-                    "proof_of_code": "function test() { ... }",
-                    "severity": "High"
-                }
-            ]
-        }"#;
+    /// Clean up formatting (markdown code blocks, extra quotes, etc.)
+    fn clean_json_string(input: &str) -> String;
 
-        let findings = Findings::parse_from_json(json_input).unwrap();
-        assert_eq!(findings.findings.len(), 1);
-        assert_eq!(findings.findings[0].severity, Severity::High);
-    }
-
-    #[test]
-    fn test_parse_findings_from_escaped_json() {
-        // Test with the actual format from your paste
-        let escaped_json = r#""{\n  \"findings\": [\n    {\n      \"title\": \"[High-1] - Test Issue\",\n      \"severity\": \"High\"\n    }\n  ]\n}""#;
-
-        let findings = Findings::parse_from_json(escaped_json).unwrap();
-        assert_eq!(findings.findings.len(), 1);
-    }
-
-    #[test]
-    fn test_severity_filtering() {
-        let json_input = r#"{
-            "findings": [
-                {"title": "Issue 1", "severity": "High"},
-                {"title": "Issue 2", "severity": "Medium"},
-                {"title": "Issue 3", "severity": "High"}
-            ]
-        }"#;
-
-        let findings = Findings::parse_from_json(json_input).unwrap();
-        let high_findings = findings.high_severity_findings();
-        assert_eq!(high_findings.len(), 2);
-
-        let counts = findings.count_by_severity();
-        assert_eq!(counts.get(&Severity::High), Some(&2));
-        assert_eq!(counts.get(&Severity::Medium), Some(&1));
-    }
+    /// Extract and parse JSON from raw LLM response with extra text
+    fn parse_from_llm_response(response: &str) -> Result<Self, Box<dyn std::error::Error>>;
 }
 
-// Example usage function
-pub fn example_usage() -> Result<(), Box<dyn std::error::Error>> {
-    // Your actual JSON string from the LLM response
-    let llm_response = r#""```json\n{\n  \"findings\": [\n    {\n      \"title\": \"[Severity-1] - Access Control Issue in PuppyRaffle::selectWinner\",\n      \"description\": \"The selectWinner function is called by any address\",\n      \"impact\": \"Any user can prematurely end the raffle\",\n      \"proof_of_concept\": \"1. Deploy contract\\n2. Call selectWinner\",\n      \"proof_of_code\": \"function test() { ... }\",\n      \"severity\": \"High\"\n    }\n  ]\n}\n```""#;
-
-    // Parse the findings
-    let findings = Findings::parse_from_json(llm_response)?;
-
-    println!("Found {} findings", findings.findings.len());
-
-    // Get severity counts
-    let counts = findings.count_by_severity();
-    for (severity, count) in counts {
-        println!("{:?}: {}", severity, count);
+impl<T> FromLLMJson for T
+where
+    T: DeserializeOwned,
+{
+    fn parse_from_json(json_str: &str) -> Result<Self, serde_json::Error> {
+        let cleaned = Self::clean_json_string(json_str);
+        serde_json::from_str(&cleaned)
     }
 
-    // Get high severity findings
-    let high_findings = findings.high_severity_findings();
-    println!("High severity findings: {}", high_findings.len());
+    fn clean_json_string(input: &str) -> String {
+        let mut cleaned = input.trim();
 
-    for finding in high_findings {
-        println!("- {}", finding.title());
+        if cleaned.starts_with('"') && cleaned.ends_with('"') {
+            cleaned = &cleaned[1..cleaned.len() - 1];
+        }
+
+        if cleaned.starts_with("```json") {
+            cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
+        }
+
+        if cleaned.ends_with("```") {
+            cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
+        }
+
+        cleaned.to_string()
     }
 
-    Ok(())
+    fn parse_from_llm_response(response: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let json_start = response.find('{');
+        let json_end = response.rfind('}');
+
+        match (json_start, json_end) {
+            (Some(start), Some(end)) if start < end => {
+                let json_part = &response[start..=end];
+                Self::parse_from_json(json_part)
+                    .map_err(|e| format!("Failed to parse JSON: {}", e).into())
+            }
+            _ => Err("No valid JSON found in response".into()),
+        }
+    }
 }
