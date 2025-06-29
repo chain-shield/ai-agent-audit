@@ -1,4 +1,5 @@
 use crate::llm_review::config::Findings;
+use crate::llm_review::config::FromLLMJson;
 use reqwest::StatusCode;
 use rig::agent::Agent;
 use rig::completion::CompletionError;
@@ -8,44 +9,44 @@ use rig::completion::PromptError;
 use rig::extractor::ExtractionError;
 use rig::extractor::Extractor;
 use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde::de::Error as _; // <- bring the trait’s methods into scope
 use serde::Deserialize;
-use serde_json::{error::Category as JsonCat, Error as JsonError};
+use serde::Serialize;
+use serde_json::Error as JsonError;
 use std::{thread, time::Duration};
 
 const MAX_ATTEMPTS: usize = 3;
 
 /// Retry `extractor.extract(input)` until it succeeds
 /// or we exhaust `max_attempts`.
-pub async fn extract_with_retry<M, T>(
-    extractor: &Extractor<M, T>,
-    input: &str,
-) -> Result<T, ExtractionError>
+// pub async fn extract_with_retry<M, T>(
+//     extractor: &Extractor<M, T>,
+//     input: &str,
+// ) -> Result<T, ExtractionError>
+// where
+//     M: CompletionModel,
+//     T: JsonSchema + for<'a> Deserialize<'a> + Send + Sync,
+// {
+//     let delay = Duration::from_millis(500);
+//
+//     for attempt in 1..=MAX_ATTEMPTS {
+//         match extractor.extract(input).await {
+//             Ok(data) => return Ok(data), // ✅ parsed JSON
+//             Err(ExtractionError::NoData) if attempt < MAX_ATTEMPTS => {
+//                 eprintln!("No data extracted – (attempt {attempt}/{MAX_ATTEMPTS})");
+//                 thread::sleep(delay);
+//             }
+//             Err(e) => return Err(e), // network / OpenAI errors → bubble up
+//         }
+//     }
+//
+//     Err(ExtractionError::NoData)
+// }
+pub async fn agent_extract_with_retry<M, T>(agent: &Agent<M>, input: &str) -> Result<T, JsonError>
 where
     M: CompletionModel,
-    T: JsonSchema + for<'a> Deserialize<'a> + Send + Sync,
-{
-    let delay = Duration::from_millis(500);
-
-    for attempt in 1..=MAX_ATTEMPTS {
-        match extractor.extract(input).await {
-            Ok(data) => return Ok(data), // ✅ parsed JSON
-            Err(ExtractionError::NoData) if attempt < MAX_ATTEMPTS => {
-                eprintln!("No data extracted – (attempt {attempt}/{MAX_ATTEMPTS})");
-                thread::sleep(delay);
-            }
-            Err(e) => return Err(e), // network / OpenAI errors → bubble up
-        }
-    }
-
-    Err(ExtractionError::NoData)
-}
-pub async fn agent_extract_with_retry<M>(
-    agent: &Agent<M>,
-    input: &str,
-) -> Result<Findings, JsonError>
-where
-    M: CompletionModel,
+    T: DeserializeOwned,
 {
     for attempt in 1..=MAX_ATTEMPTS {
         /* ────── 1. ask the model ───────────────────────────────────────── */
@@ -61,7 +62,7 @@ where
         // log::info!("json => {:#?}", raw);
 
         /* ────── 2. try to parse JSON ───────────────────────────────────── */
-        match Findings::parse_from_llm_response(&raw) {
+        match FromLLMJson::parse_from_llm_response(&raw) {
             Ok(f) => return Ok(f), // ✅ success
             Err(e) => {
                 let msg = e.to_string();
