@@ -96,7 +96,6 @@ pub async fn review_codebase_for_security_issues(
 
     // agents
     let mut ai_agents = Vec::new();
-    let mut ai_agents_critical = Vec::new();
     let anthropic_agent_3_7_t1 = Arc::new(build_anthropic_agent(
         &anthropic_client,
         1.0,
@@ -109,216 +108,41 @@ pub async fn review_codebase_for_security_issues(
         CLAUDE_4_0_SONNET,
         64_000,
     ));
-    ai_agents.push(anthropic_agent_3_7_t1.clone());
-    ai_agents.push(anthropic_agent_4_0_t1.clone());
-    ai_agents.push(anthropic_agent_3_7_t1.clone());
-    ai_agents.push(anthropic_agent_4_0_t1.clone());
-    ai_agents.push(anthropic_agent_3_7_t1.clone());
+    // TODO - restore to 5
+    for _ in 0..2 {
+        ai_agents.push(anthropic_agent_3_7_t1.clone());
+    }
+    // TODO - restore to 3
+    for _ in 0..0 {
+        ai_agents.push(anthropic_agent_4_0_t1.clone());
+    }
 
-    ai_agents_critical.push(anthropic_agent_3_7_t1.clone());
-    ai_agents_critical.push(anthropic_agent_3_7_t1.clone());
-    ai_agents_critical.push(anthropic_agent_3_7_t1.clone());
-    ai_agents_critical.push(anthropic_agent_3_7_t1.clone());
-    ai_agents_critical.push(anthropic_agent_3_7_t1.clone());
-    ai_agents_critical.push(anthropic_agent_4_0_t1.clone());
-    ai_agents_critical.push(anthropic_agent_4_0_t1.clone());
-    ai_agents_critical.push(anthropic_agent_4_0_t1.clone());
     let invariant_findings = Vec::<ContractInvariants>::new();
 
     for (contract, codeblock) in contracts.into_iter() {
         info!("contract => {}", contract);
         info!("codeblock => {}", codeblock);
-        let mut handles = vec![];
-        let security_findings = Arc::new(Mutex::new(Findings {
-            findings: Vec::new(),
-        }));
-        let contract = Arc::new(contract);
-        let codeblock = Arc::new(codeblock);
-        let added_content_from_brain = Arc::new(added_context_from_ai_brain.clone());
 
-        // round for critical bugs
-        for (run, arc_agent) in ai_agents_critical.iter().enumerate() {
-            let agent = Arc::clone(arc_agent);
-            let combined_findings = Arc::clone(&security_findings);
-            let contract_name = Arc::clone(&contract);
-            let code = Arc::clone(&codeblock);
-            let added_content = Arc::clone(&added_content_from_brain);
-
-            handles.push(tokio::spawn(async move {
-                if let Err(e) = run_security_prompt(
-                    agent,
-                    contract_name,
-                    code,
-                    added_content,
-                    PROMPT_2X_AA,
-                    run + 1,
-                    combined_findings,
-                )
-                .await
-                {
-                    log::error!("Prompt task failed: {e:#}");
-                }
-            }));
-        }
-
-        // round for standard bugs
-        for (run, arc_agent) in ai_agents.iter().enumerate() {
-            let agent = Arc::clone(arc_agent);
-            let combined_findings = Arc::clone(&security_findings);
-            let contract_name = Arc::clone(&contract);
-            let code = Arc::clone(&codeblock);
-            let added_content = Arc::clone(&added_content_from_brain);
-            let current_run = ai_agents_critical.len() + run + 1;
-
-            handles.push(tokio::spawn(async move {
-                if let Err(e) = run_security_prompt(
-                    agent,
-                    contract_name,
-                    code,
-                    added_content,
-                    PROMPT_2X_BB,
-                    current_run,
-                    combined_findings,
-                )
-                .await
-                {
-                    log::error!("Prompt task failed: {e:#}");
-                }
-            }));
-        }
-
-        //SCAN FOR INVARIANTS
-        // info!("submitting invariant prompt to openai");
-        // let invariants_response = openai_agent_1st_pass.prompt(INVARIANTS).await?;
-        //
-        // info!("parsing invariant prompt");
-        // let invariants = ContractInvariants::parse_from_json(&invariants_response)?;
-        //
-        // if !invariants.invariants.is_empty() {
-        //     invariant_findings.push(invariants);
-        // }
-        // for security_issue in SECURITY_PROMPT_ENUMS {
-        // SCAN FOR STANDARD SECURITY ISSUES
-        // let findings = if LANGUAGE_MODEL == LanguageModel::OpenAI {
-        //     let prompt_string = generate_llm_prompt_for_security_issue(
-        //         contract,
-        //         &security_issue.prompt(),
-        //         codeblock,
-        //         "",
-        //     );
-        //
-        //     info!("submitting security vulnerability prompt to openai");
-        //
-        //     let findings = agent_extract_with_retry(openai_agent, &prompt_string).await?;
-        //     findings
-        // } else {
-        //     let prompt_string = generate_llm_prompt_for_security_issue(
-        //         contract,
-        //         &security_issue.prompt(),
-        //         codeblock,
-        //         &added_context_from_ai_brain,
-        //     );
-        //
-        //     info!("submitting security vulnerability prompt to anthropic");
-        //     info!(
-        //         "-----------------------ROUND #{}-----------------------",
-        //         run
-        //     );
-        //     info!("{} Issue", security_issue.as_fancy_str());
-        //     let findings = agent_extract_with_retry(&anthropic_agents[run], &prompt_string).await?;
-        //
-        //     findings
-        // }
-        //
-
-        // Wait for ALL tasks to complete
-        for handle in handles {
-            handle.await?; // Will error if task panicked
-        }
-
-        let raw_findings = security_findings.lock().await;
+        let raw_findings = Findings::generate_findings_from_contract_codebase(
+            &contract,
+            &codeblock,
+            &added_context_from_ai_brain,
+            &ai_agents,
+        )
+        .await?;
 
         if !raw_findings.findings.is_empty() {
-            // TODO (OPTIONAL) - to additional 'open ended' run to see if llm can find any other
-            // issues
-
-            // info!("contract findings => {:#?}", security_findings.findings);
-            // dedup
             info!(
                 "# of findings BEFORE deduping => {}",
                 raw_findings.findings.len()
             );
-            let deduped_findings = Arc::new(raw_findings.clone().dedup().await?);
-            let mut handles = Vec::new();
-            let dedup_finding_count = deduped_findings.findings.len();
-            let is_legit_finding_vec: Arc<Mutex<Vec<bool>>> =
-                Arc::new(Mutex::new(vec![true; dedup_finding_count]));
 
-            info!("# of findings AFTER deduping => {}", dedup_finding_count);
+            let deduped_and_verified_findings = raw_findings
+                .dedup_and_verify_with_llm(&codeblock, &openai_verify_agent)
+                .await?;
 
-            info!("now verifying each finding...");
-
-            for i in 0..dedup_finding_count {
-                let code = Arc::clone(&codeblock);
-                let arc_agent = Arc::clone(&openai_verify_agent);
-                let arc_findings = Arc::clone(&deduped_findings);
-                let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
-                handles.push(tokio::spawn(async move {
-                    let result: anyhow::Result<()> = async {
-                        let content =
-                            generate_prompt_for_verifying_issue(&code, &arc_findings.findings[i]);
-                        info!("verifying finding #{}", i);
-                        let is_legit_struct: LegitVulnerability =
-                            arc_agent.extract_with_retry(&content).await?;
-
-                        let is_finding_legit = is_legit_struct.is_legit_vulnerability;
-                        if !is_finding_legit {
-                            info!(
-                                "{} is NOT legit => {}",
-                                arc_findings.findings[i].title(),
-                                is_legit_struct.why_its_not_legit.unwrap_or_default()
-                            );
-                        }
-                        let mut legit_findings_vec = arc_legit_findings_vec.lock().await;
-                        legit_findings_vec[i] = is_finding_legit;
-
-                        // add
-                        Ok(())
-                    }
-                    .await;
-
-                    if let Err(e) = result {
-                        log::error!("Error verifying finding {}: {:?}", i, e);
-                    }
-                }));
-            }
-
-            // optionally await them all
-            for h in handles {
-                let _ = h.await;
-            }
-
-            let legit_findings_vec = is_legit_finding_vec.lock().await;
-            let verified_findings: Vec<Finding> = deduped_findings
-                .as_ref()
-                .findings
-                .iter()
-                .enumerate()
-                .filter(|(idx, _)| legit_findings_vec[*idx])
-                .map(|(_, f)| f.clone())
-                .collect();
-
-            info!(
-                "-------------{} Verified Findings!-----------------",
-                verified_findings.len()
-            );
-
-            all_security_issues.insert(
-                contract.to_string(),
-                Findings {
-                    findings: verified_findings,
-                },
-            );
+            // TODO - Quality check all findings
+            all_security_issues.insert(contract.to_string(), deduped_and_verified_findings);
 
             // TODO - save issues to Findings db
         }
@@ -390,4 +214,183 @@ fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> 
     // print_first_four_lines(&added_context);
 
     code_plus_context
+}
+
+//SCAN FOR INVARIANTS
+// info!("submitting invariant prompt to openai");
+// let invariants_response = openai_agent_1st_pass.prompt(INVARIANTS).await?;
+//
+// info!("parsing invariant prompt");
+// let invariants = ContractInvariants::parse_from_json(&invariants_response)?;
+//
+// if !invariants.invariants.is_empty() {
+//     invariant_findings.push(invariants);
+// }
+// for security_issue in SECURITY_PROMPT_ENUMS {
+// SCAN FOR STANDARD SECURITY ISSUES
+// let findings = if LANGUAGE_MODEL == LanguageModel::OpenAI {
+//     let prompt_string = generate_llm_prompt_for_security_issue(
+//         contract,
+//         &security_issue.prompt(),
+//         codeblock,
+//         "",
+//     );
+//
+//     info!("submitting security vulnerability prompt to openai");
+//
+//     let findings = agent_extract_with_retry(openai_agent, &prompt_string).await?;
+//     findings
+// } else {
+//     let prompt_string = generate_llm_prompt_for_security_issue(
+//         contract,
+//         &security_issue.prompt(),
+//         codeblock,
+//         &added_context_from_ai_brain,
+//     );
+//
+//     info!("submitting security vulnerability prompt to anthropic");
+//     info!(
+//         "-----------------------ROUND #{}-----------------------",
+//         run
+//     );
+//     info!("{} Issue", security_issue.as_fancy_str());
+//     let findings = agent_extract_with_retry(&anthropic_agents[run], &prompt_string).await?;
+//
+//     findings
+// }
+//
+//
+impl Findings {
+    pub async fn generate_findings_from_contract_codebase(
+        contract: &str,
+        code: &str,
+        context: &str,
+        agents: &Vec<Arc<AIAgent>>,
+    ) -> anyhow::Result<Self> {
+        let mut handles = vec![];
+        let all_findings = Arc::new(Mutex::new(Findings {
+            findings: Vec::new(),
+        }));
+        let contract = Arc::new(contract.to_string());
+        let codeblock = Arc::new(code.to_string());
+        let added_content_from_brain = Arc::new(context.to_string());
+
+        for (run, arc_agent) in agents.iter().enumerate() {
+            for (i, prompt) in [PROMPT_2X_AA, PROMPT_2X_BB].into_iter().enumerate() {
+                let agent = Arc::clone(arc_agent);
+                let combined_findings = Arc::clone(&all_findings);
+                let contract_name = Arc::clone(&contract);
+                let code = Arc::clone(&codeblock);
+                let added_content = Arc::clone(&added_content_from_brain);
+
+                handles.push(tokio::spawn(async move {
+                    if let Err(e) = run_security_prompt(
+                        agent,
+                        contract_name,
+                        code,
+                        added_content,
+                        prompt,
+                        (run + 1) * (i + 1),
+                        combined_findings,
+                    )
+                    .await
+                    {
+                        log::error!("Prompt task failed: {e:#}");
+                    }
+                }));
+            }
+        }
+
+        // Wait for ALL tasks to complete
+        for handle in handles {
+            handle.await?; // Will error if task panicked
+        }
+
+        let findings = all_findings.lock().await;
+
+        if !findings.findings.is_empty() {
+            info!(
+                "# of findings BEFORE deduping => {}",
+                findings.findings.len()
+            );
+        }
+        Ok(findings.clone())
+    }
+
+    pub async fn dedup_and_verify_with_llm(
+        &self,
+        code: &str,
+        agent: &Arc<AIAgent>,
+    ) -> anyhow::Result<Self> {
+        let mut handles = vec![];
+        let deduped_findings = Arc::new(self.clone().dedup().await?);
+        let codeblock = Arc::new(code.to_string());
+
+        let dedup_finding_count = deduped_findings.findings.len();
+        let is_legit_finding_vec: Arc<Mutex<Vec<bool>>> =
+            Arc::new(Mutex::new(vec![true; dedup_finding_count]));
+
+        info!("# of findings AFTER deduping => {}", dedup_finding_count);
+
+        info!("now verifying each finding...");
+
+        for i in 0..dedup_finding_count {
+            let code = Arc::clone(&codeblock);
+            let arc_agent = Arc::clone(agent);
+            let arc_findings = Arc::clone(&deduped_findings);
+            let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
+            handles.push(tokio::spawn(async move {
+                let result: anyhow::Result<()> = async {
+                    let content =
+                        generate_prompt_for_verifying_issue(&code, &arc_findings.findings[i]);
+                    info!("verifying finding #{}", i);
+                    let is_legit_struct: LegitVulnerability =
+                        arc_agent.extract_with_retry(&content).await?;
+
+                    let is_finding_legit = is_legit_struct.is_legit_vulnerability;
+                    if !is_finding_legit {
+                        info!(
+                            "{} is NOT legit => {}",
+                            arc_findings.findings[i].title(),
+                            is_legit_struct.why_its_not_legit.unwrap_or_default()
+                        );
+                    }
+                    let mut legit_findings_vec = arc_legit_findings_vec.lock().await;
+                    legit_findings_vec[i] = is_finding_legit;
+
+                    // add
+                    Ok(())
+                }
+                .await;
+
+                if let Err(e) = result {
+                    log::error!("Error verifying finding {}: {:?}", i, e);
+                }
+            }));
+        }
+
+        // optionally await them all
+        for h in handles {
+            let _ = h.await;
+        }
+
+        let legit_findings_vec = is_legit_finding_vec.lock().await;
+        let verified_findings: Vec<Finding> = deduped_findings
+            .as_ref()
+            .findings
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| legit_findings_vec[*idx])
+            .map(|(_, f)| f.clone())
+            .collect();
+
+        info!(
+            "-------------{} Verified Findings!-----------------",
+            verified_findings.len()
+        );
+
+        Ok(Findings {
+            findings: verified_findings,
+        })
+    }
 }
