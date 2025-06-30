@@ -12,37 +12,36 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::de::Error as _; // <- bring the trait’s methods into scope
 use serde::Deserialize;
-use serde::Serialize;
 use serde_json::Error as JsonError;
 use std::{thread, time::Duration};
 
 const MAX_ATTEMPTS: usize = 3;
 
-/// Retry `extractor.extract(input)` until it succeeds
-/// or we exhaust `max_attempts`.
-// pub async fn extract_with_retry<M, T>(
-//     extractor: &Extractor<M, T>,
-//     input: &str,
-// ) -> Result<T, ExtractionError>
-// where
-//     M: CompletionModel,
-//     T: JsonSchema + for<'a> Deserialize<'a> + Send + Sync,
-// {
-//     let delay = Duration::from_millis(500);
-//
-//     for attempt in 1..=MAX_ATTEMPTS {
-//         match extractor.extract(input).await {
-//             Ok(data) => return Ok(data), // ✅ parsed JSON
-//             Err(ExtractionError::NoData) if attempt < MAX_ATTEMPTS => {
-//                 eprintln!("No data extracted – (attempt {attempt}/{MAX_ATTEMPTS})");
-//                 thread::sleep(delay);
-//             }
-//             Err(e) => return Err(e), // network / OpenAI errors → bubble up
-//         }
-//     }
-//
-//     Err(ExtractionError::NoData)
-// }
+// Retry `extractor.extract(input)` until it succeeds
+// or we exhaust `max_attempts`.
+pub async fn extractor_with_retry<M, T>(
+    extractor: &Extractor<M, T>,
+    input: &str,
+) -> Result<T, ExtractionError>
+where
+    M: CompletionModel,
+    T: JsonSchema + for<'a> Deserialize<'a> + Send + Sync,
+{
+    let delay = Duration::from_millis(500);
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match extractor.extract(input).await {
+            Ok(data) => return Ok(data), // ✅ parsed JSON
+            Err(ExtractionError::NoData) if attempt < MAX_ATTEMPTS => {
+                eprintln!("No data extracted – (attempt {attempt}/{MAX_ATTEMPTS})");
+                thread::sleep(delay);
+            }
+            Err(e) => return Err(e), // network / OpenAI errors → bubble up
+        }
+    }
+
+    Err(ExtractionError::NoData)
+}
 pub async fn agent_extract_with_retry<M, T>(agent: &Agent<M>, input: &str) -> Result<T, JsonError>
 where
     M: CompletionModel,

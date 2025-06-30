@@ -96,6 +96,19 @@ pub struct LegitVulnerability {
     pub why_its_not_legit: Option<String>,
 }
 
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VulnerabilityQualityCheck {
+    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
+    pub is_quality_check_passed: bool, // quality check passes with no changes/update needed, true|false
+    pub where_quality_lacks: Option<String>, // breif description
+    pub impact: Option<String>,              // updated impact (if necessary)
+    pub proof_of_concept: Option<String>,    // updated POC (if necessary)
+    pub proof_of_code: Option<String>,       // updated Foundry Unit test (if necessary)
+    #[schemars(description = "Severity level: High, Medium, Low, Info")]
+    pub severity: Option<Severity>, // updated severity of issue (if necessary)
+    pub mitigation: Option<String>,          // updated mitigation (if necessary)
+}
+
 // #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 // pub struct InvariantFindings {
 //     pub findings: Vec<InvariantFinding>,
@@ -127,6 +140,33 @@ pub const SECURITY_PROMPT_ENUMS: [VulnerabilityType; 8] = [
     // VulnerabilityType::ZeroCode,
     VulnerabilityType::FrontrunMev,
     // VulnerabilityType::ShortAddress,
+];
+
+pub const QUALITY_CHECK_ENUMS: [VulnerabilityType; 24] = [
+    VulnerabilityType::Reentrancy,
+    VulnerabilityType::AccessControl,
+    VulnerabilityType::ArrayLimits,
+    VulnerabilityType::Dos,
+    VulnerabilityType::IntegerMath,
+    VulnerabilityType::ConfidentialData,
+    VulnerabilityType::Inheritance,
+    VulnerabilityType::Oracle,
+    VulnerabilityType::Randomness,
+    VulnerabilityType::ReplayAttack,
+    VulnerabilityType::SelfDestruct,
+    VulnerabilityType::StorageLayout,
+    VulnerabilityType::TxOrigin,
+    VulnerabilityType::UncheckedReturn,
+    VulnerabilityType::UnexpectedEth,
+    VulnerabilityType::FrontrunMev,
+    VulnerabilityType::UpgradeabilityInitializerSafety,
+    VulnerabilityType::PausableEmergencyStop,
+    VulnerabilityType::TimestampDependentLogic,
+    VulnerabilityType::FlashLoanEconomicManipulation,
+    VulnerabilityType::DelegatecallLowLevelOps,
+    VulnerabilityType::SignatureMalleability,
+    VulnerabilityType::GasGriefBlockLimit,
+    VulnerabilityType::IntegerOverflow,
 ];
 
 pub const SECURITY_PROMPTS: [&str; 19] = [

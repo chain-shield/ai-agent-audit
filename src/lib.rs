@@ -48,9 +48,12 @@ pub mod llm_review {
     pub mod prompt_support {
         pub mod dedup;
         pub mod post_prompt;
+        pub mod post_qualify;
         pub mod post_verify;
         pub mod pre_prompt;
+        pub mod pre_qualify;
         pub mod pre_verify;
+        pub mod qualify_prompt;
         pub mod verify_prompt;
     }
 }

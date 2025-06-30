@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
 use crate::llm_review::prompt_content::{self, generate_context_for_code_review};
-use crate::utils::extract_retry::extract_with_retry;
+use crate::utils::extract_retry::extractor_with_retry;
 
 use super::slither_ffi::cache_key;
 
@@ -86,7 +86,7 @@ pub async fn summarize_src_files(
 
         if is_readme || is_sol_in_src {
             let content = fs::read_to_string(path)?;
-            let summary = extract_with_retry(&ai_summary_agent, &content).await?;
+            let summary = extractor_with_retry(&ai_summary_agent, &content).await?;
 
             // filename is relative to root folder ie src/PuppyRaffle.sol
             let file = path.strip_prefix(repo_root)?.to_string_lossy().to_string();
@@ -136,7 +136,7 @@ pub async fn summarize_protocol(repo_root: &Path, semantics_path: &Path) -> Resu
 
     log::info!("extracting protocol summary");
     // rerun if NoDataExtracted Error
-    let summary = extract_with_retry(&ai_summary_agent, &content).await?;
+    let summary = extractor_with_retry(&ai_summary_agent, &content).await?;
 
     log::info!("protocol summary => {:#?}", summary);
 
