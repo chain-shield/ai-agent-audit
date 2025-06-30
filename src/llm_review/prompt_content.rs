@@ -85,11 +85,17 @@ pub async fn generate_context_for_code_review(
     Ok(full_prompt_context)
 }
 
-pub fn generate_prompt_for_verifying_issue(code: &str, finding: &Finding) -> String {
-    let mut prompt = format!("{}{}{}", PRE_VERIFY, VERIFY_PROMPT, POST_VERIFY);
+pub fn generate_prompt_for_issue_check(
+    code: &str,
+    finding: &Finding,
+    pre_instructions: &str,
+    instructions: &str,
+    post_instructions: &str,
+) -> String {
+    let mut prompt = format!("{}{}{}", pre_instructions, instructions, post_instructions);
 
     prompt.push_str("\n\n");
-    prompt.push_str("## REPORT FOR SECURIT ISSUE");
+    prompt.push_str("## REPORT FOR SECURITY ISSUE");
     prompt.push_str("\n\n");
 
     let report = get_finding_report(finding);

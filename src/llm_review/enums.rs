@@ -80,6 +80,12 @@ pub enum VulnerabilityType {
     IntegerOverflow,
 }
 
+impl Default for Severity {
+    fn default() -> Self {
+        Severity::Info
+    }
+}
+
 impl Severity {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -130,6 +136,12 @@ impl InvariantStatus {
             InvariantStatus::HOLDS => "Holds",
             InvariantStatus::VIOLATION => "Violation",
         }
+    }
+}
+
+impl Default for VulnerabilityType {
+    fn default() -> Self {
+        VulnerabilityType::Dos
     }
 }
 

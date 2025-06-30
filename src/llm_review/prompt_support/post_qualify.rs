@@ -8,8 +8,8 @@ pub const POST_QUALIFY: &str = r#"
    *NOTE* : this is boolean value, NO "" around it
 2. **where_quality_lacks**: Brief summary of issues found with vulnerability write up (omit this field if quality check passed)
 3. **impact**: provide updated impact statement (ONLY IF current one is not adequately addressing impact)
-4. **proof of concept**: provide an updated proof of concept ONLY IF NEEDED
-5. **proof of code**: provide an updated proof of code ONLY IF NEEDED
+4. **proof_of_concept**: provide an updated proof of concept ONLY IF NEEDED
+5. **proof_of_code**: provide an updated proof of code ONLY IF NEEDED
 6. **severity**: provid an updated severity (High|Medium|Low|Info), ONLY IF current severity is not accurate
 7. **mitigation**: provide updated mitigation, ONLY IF current one is inadequate
 

@@ -1,10 +1,22 @@
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
-        config::{generated_llm_prompt, ContractInvariants, Finding, CLAUDE_4_0_SONNET},
+        config::{
+            generated_llm_prompt, ContractInvariants, Finding, VulnerabilityQualityCheck,
+            CLAUDE_4_0_SONNET,
+        },
         invariants::INVARIANTS,
-        prompt_content::{generate_context_for_code_review, generate_prompt_for_verifying_issue},
-        prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
+        prompt_content::{generate_context_for_code_review, generate_prompt_for_issue_check},
+        prompt_support::{
+            post_prompt::POST_PROMPT,
+            post_qualify::POST_QUALIFY,
+            post_verify::POST_VERIFY,
+            pre_prompt::PRE_PROMPT,
+            pre_qualify::{self, PRE_QUALIFY},
+            pre_verify::PRE_VERIFY,
+            qualify_prompt::QUALIFY_PROMPT,
+            verify_prompt::VERIFY_PROMPT,
+        },
         review_utils::{build_anthropic_agent, build_openai_agent},
     },
     master_prompts::{prompt_2x_aa::PROMPT_2X_AA, prompt_2x_bb::PROMPT_2X_BB},
@@ -24,11 +36,11 @@ use rig::{
 };
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::sync::Arc;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+use std::{default, sync::Arc};
 use tokio::sync::Mutex;
 
 use super::config::{Findings, LegitVulnerability};
@@ -141,8 +153,12 @@ pub async fn review_codebase_for_security_issues(
                 .dedup_and_verify_with_llm(&codeblock, &openai_verify_agent)
                 .await?;
 
+            let quality_checked_and_updated_findings = deduped_and_verified_findings
+                .quality_check_with_llm(&codeblock, &openai_verify_agent)
+                .await?;
+
             // TODO - Quality check all findings
-            all_security_issues.insert(contract.to_string(), deduped_and_verified_findings);
+            all_security_issues.insert(contract.to_string(), quality_checked_and_updated_findings);
 
             // TODO - save issues to Findings db
         }
@@ -341,8 +357,13 @@ impl Findings {
             let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
             handles.push(tokio::spawn(async move {
                 let result: anyhow::Result<()> = async {
-                    let content =
-                        generate_prompt_for_verifying_issue(&code, &arc_findings.findings[i]);
+                    let content = generate_prompt_for_issue_check(
+                        &code,
+                        &arc_findings.findings[i],
+                        PRE_VERIFY,
+                        VERIFY_PROMPT,
+                        POST_VERIFY,
+                    );
                     info!("verifying finding #{}", i);
                     let is_legit_struct: LegitVulnerability =
                         arc_agent.extract_with_retry(&content).await?;
@@ -391,6 +412,137 @@ impl Findings {
 
         Ok(Findings {
             findings: verified_findings,
+        })
+    }
+
+    pub async fn quality_check_with_llm(
+        self,
+        code: &str,
+        agent: &Arc<AIAgent>,
+    ) -> anyhow::Result<Self> {
+        let mut handles = vec![];
+        let findings = Arc::new(self.clone().dedup().await?);
+        let codeblock = Arc::new(code.to_string());
+
+        let finding_count = findings.findings.len();
+        // create vec (is_quality_check_passed, updated_finding) for each finding
+        // assume all initially pass
+        let quality_check_passed_vec: Arc<Mutex<Vec<(bool, Finding)>>> =
+            Arc::new(Mutex::new(vec![(true, Finding::default()); finding_count]));
+
+        info!("now quality check on each finding...");
+
+        for i in 0..finding_count {
+            let code = Arc::clone(&codeblock);
+            let arc_agent = Arc::clone(agent);
+            let arc_findings = Arc::clone(&findings);
+            let arc_legit_findings_vec = Arc::clone(&quality_check_passed_vec);
+            handles.push(tokio::spawn(async move {
+                let result: anyhow::Result<()> = async {
+                    let prompt = generate_prompt_for_issue_check(
+                        &code,
+                        &arc_findings.findings[i],
+                        PRE_QUALIFY,
+                        QUALIFY_PROMPT,
+                        POST_QUALIFY,
+                    );
+                    info!("quality checking finding #{}", i);
+                    let qualify_checked_finding: VulnerabilityQualityCheck =
+                        arc_agent.extract_with_retry(&prompt).await?;
+
+                    let quality_check_passed = qualify_checked_finding.is_quality_check_passed;
+                    if !quality_check_passed {
+                        info!(
+                            "{} did not pass quality check => {:?}",
+                            arc_findings.findings[i].title(),
+                            qualify_checked_finding.where_quality_lacks
+                        );
+                        info!("{:#?}", &qualify_checked_finding);
+                        let updated_finding = Finding {
+                            impact: Some(qualify_checked_finding.impact.clone().unwrap_or(
+                                arc_findings.findings[i].impact.clone().unwrap_or_default(),
+                            )),
+                            proof_of_code: Some(
+                                qualify_checked_finding.proof_of_code.clone().unwrap_or(
+                                    arc_findings.findings[i]
+                                        .proof_of_code
+                                        .clone()
+                                        .unwrap_or_default(),
+                                ),
+                            ),
+                            proof_of_concept: Some(
+                                qualify_checked_finding.proof_of_concept.clone().unwrap_or(
+                                    arc_findings.findings[i]
+                                        .proof_of_concept
+                                        .clone()
+                                        .unwrap_or_default(),
+                                ),
+                            ),
+                            mitigation: Some(
+                                qualify_checked_finding.mitigation.clone().unwrap_or(
+                                    arc_findings.findings[i]
+                                        .mitigation
+                                        .clone()
+                                        .unwrap_or_default(),
+                                ),
+                            ),
+                            severity: qualify_checked_finding
+                                .severity
+                                .unwrap_or(arc_findings.findings[i].severity),
+                            ..arc_findings.findings[i].clone()
+                        };
+                        let mut legit_findings_vec = arc_legit_findings_vec.lock().await;
+                        legit_findings_vec[i] = (quality_check_passed, updated_finding);
+                    } else {
+                        let mut quality_checked_findings_vec = arc_legit_findings_vec.lock().await;
+                        quality_checked_findings_vec[i] = (true, arc_findings.findings[i].clone());
+                    }
+
+                    Ok(())
+                }
+                .await;
+
+                if let Err(e) = result {
+                    log::error!("Error verifying finding {}: {:?}", i, e);
+                }
+            }));
+        }
+
+        // optionally await them all
+        for h in handles {
+            let _ = h.await;
+        }
+
+        let qualify_checked_findings_vec = quality_check_passed_vec.lock().await;
+        let qualified_findings: Vec<Finding> = findings
+            .as_ref()
+            .findings
+            .iter()
+            .enumerate()
+            .map(|(idx, f)| {
+                if qualify_checked_findings_vec[idx].0 {
+                    // if quality check passes , no changes needed
+                    f.clone()
+                } else {
+                    // if failed submit updated finding
+                    qualify_checked_findings_vec[idx].1.clone()
+                }
+            })
+            .collect();
+
+        let num_findings_updated = qualify_checked_findings_vec
+            .iter()
+            .filter(|(passed, _)| !*passed)
+            .count();
+
+        info!(
+            "{} Verified Findings! with {} updated findings!",
+            qualified_findings.len(),
+            num_findings_updated
+        );
+
+        Ok(Findings {
+            findings: qualified_findings,
         })
     }
 }
