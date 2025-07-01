@@ -10,7 +10,10 @@ use ai_agent_audit::{
     build_brain::{enrichment, git_clone, vector_db},
     cost::cost_data::get_total_inference_cost,
     enumerator::codeblock_maker,
-    llm_review::code_review,
+    llm_review::{
+        code_review,
+        context_state::{self},
+    },
     reporting::{audit, contract_data, save_file},
 };
 use anyhow::Result;
@@ -46,35 +49,38 @@ async fn main() -> Result<()> {
     enrichment::forge_build(&repo.root)?;
 
     // save call graph to database
-    let semantic_db = enrichment::build_semantics_db_from_call_graph(&repo.root).await?;
-    info!("Call-graph DB at {}", semantic_db.display());
+    let semantics_db = enrichment::build_semantics_db_from_call_graph(&repo.root).await?;
+    info!("Call-graph DB at {}", semantics_db.display());
+
+    // save metadata context for protocol to global state
+    info!("generating metadata context...");
+    context_state::generate_and_save_metadata_context(&repo.root, &semantics_db).await?;
 
     // ────────────────────────────────
     // 3. Static-analysis (Slither detectors)
     info!("generating codeblock for each contract in repo");
     let codeblocks_db = codeblock_maker::generate_and_save_codeblocks_for_each_contract(
         &repo.root,
-        &semantic_db,
+        &semantics_db,
         MAX_DEPTH,
         TOKEN_BUDGET,
     )
     .await?;
     info!("Slices at {}", codeblocks_db.display());
 
-    vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantic_db)
+    vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
         .await?;
 
     let (security_issues, invariants) =
-        code_review::review_codebase_for_security_issues(&repo.root, &codeblocks_db, &semantic_db)
-            .await?;
+        code_review::review_codebase_for_security_issues(&codeblocks_db).await?;
 
     let audit_report =
-        audit::generated_audit_report(security_issues, invariants, &repo, &semantic_db).await?;
+        audit::generated_audit_report(security_issues, invariants, &repo, &semantics_db).await?;
 
     // save audit report, contract IRs, and metadata to md files
     save_file::save_audit_report(&audit_report, &repo)?;
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
-    contract_data::save_metadata(&semantic_db, &repo).await?;
+    contract_data::save_metadata(&semantics_db, &repo).await?;
 
     // total cost
     let total_cost = get_total_inference_cost().await;
