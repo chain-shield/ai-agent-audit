@@ -58,6 +58,10 @@ pub mod llm_review {
     }
 }
 
+pub mod cost {
+    pub mod cost_data;
+}
+
 pub mod ai_bot {
     pub mod agent;
     pub mod retrieve_slice;

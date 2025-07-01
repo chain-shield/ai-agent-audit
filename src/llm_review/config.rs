@@ -3,6 +3,7 @@ use super::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
+    cost::cost_data::{add_to_inference_cost_by_agent, add_to_inference_cost_by_type, LlmCostType},
     master_prompts::{
         prompt_2x_a::PROMPT_2X_A, prompt_2x_b::PROMPT_2X_B, prompt_3x_a::PROMPT_3X_A,
         prompt_3x_b::PROMPT_3X_B, prompt_3x_c::PROMPT_3X_C,
@@ -270,7 +271,12 @@ impl Finding {
                 &issue.description.clone().unwrap_or_default(),
             );
 
+        log::info!("checking if {} is duplication", issue.title());
+        add_to_inference_cost_by_type(&prompt, LlmCostType::Openai4oInput).await;
+
         let response = ai_agent.prompt(prompt).await?;
+
+        add_to_inference_cost_by_type(&response, LlmCostType::Openai4oOutput).await;
 
         Ok(response.trim().eq_ignore_ascii_case("YES"))
     }

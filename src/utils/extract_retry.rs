@@ -1,3 +1,6 @@
+use crate::cost::cost_data::add_to_inference_cost_by_agent;
+use crate::cost::cost_data::add_to_inference_cost_by_type;
+use crate::cost::cost_data::LlmCostType;
 use crate::llm_review::config::Findings;
 use crate::llm_review::config::FromLLMJson;
 use reqwest::StatusCode;
@@ -22,6 +25,7 @@ const MAX_ATTEMPTS: usize = 3;
 pub async fn extractor_with_retry<M, T>(
     extractor: &Extractor<M, T>,
     input: &str,
+    llm_cost_type: LlmCostType,
 ) -> Result<T, ExtractionError>
 where
     M: CompletionModel,
@@ -42,7 +46,12 @@ where
 
     Err(ExtractionError::NoData)
 }
-pub async fn agent_extract_with_retry<M, T>(agent: &Agent<M>, input: &str) -> Result<T, JsonError>
+
+pub async fn agent_extract_with_retry<M, T>(
+    agent: &Agent<M>,
+    input: &str,
+    llm_cost_type: LlmCostType,
+) -> Result<T, JsonError>
 where
     M: CompletionModel,
     T: DeserializeOwned,
@@ -59,6 +68,9 @@ where
             Err(e) => return Err(JsonError::custom(format!("prompt failed: {e}"))),
         };
         // log::info!("json => {:#?}", raw);
+
+        // add to cost
+        add_to_inference_cost_by_type(&raw, llm_cost_type).await;
 
         /* ────── 2. try to parse JSON ───────────────────────────────────── */
         match FromLLMJson::parse_from_llm_response(&raw) {

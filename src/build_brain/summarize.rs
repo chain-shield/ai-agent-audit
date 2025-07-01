@@ -14,8 +14,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
-use crate::llm_review::prompt_content::{self, generate_context_for_code_review};
-use crate::utils::extract_retry::extractor_with_retry;
+use crate::{
+    cost::cost_data::add_to_inference_cost_by_type, utils::extract_retry::extractor_with_retry,
+};
+use crate::{
+    cost::cost_data::LlmCostType,
+    llm_review::prompt_content::{self, generate_context_for_code_review},
+};
 
 use super::slither_ffi::cache_key;
 
@@ -57,13 +62,14 @@ pub async fn summarize_src_files(
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
-    let ai_summary_agent = openai_client
-        .extractor::<FileSummary>(GPT_4O)
-        .preamble("You are a senior solidity dev. Please summarize below content (code or docs). Format in markdown for easy reading. 
+    let preamble ="You are a senior solidity dev. Please summarize below content (code or docs). Format in markdown for easy reading. 
                     If content is code. Please write 200 word or less summary for each contract plus contract definition, 100 words or less summary 
                     of each function + function interface, and 50 word or less explanation of each storage variable + variable defintion. If docs 
                     please summarize each section of the docs with 150 words or less, max 500 words total for each doc file. 
-                    Respond only with valid JSON matching the schema!")
+                    Respond only with valid JSON matching the schema!";
+    let ai_summary_agent = openai_client
+        .extractor::<FileSummary>(O3)
+        .preamble(preamble)
         .context(&context)
         .build();
 
@@ -86,7 +92,16 @@ pub async fn summarize_src_files(
 
         if is_readme || is_sol_in_src {
             let content = fs::read_to_string(path)?;
-            let summary = extractor_with_retry(&ai_summary_agent, &content).await?;
+
+            add_to_inference_cost_by_type(
+                &format!("{}{}", preamble, content),
+                LlmCostType::OpenaiO3Input,
+            )
+            .await;
+
+            let summary =
+                extractor_with_retry(&ai_summary_agent, &content, LlmCostType::OpenaiO3Output)
+                    .await?;
 
             // filename is relative to root folder ie src/PuppyRaffle.sol
             let file = path.strip_prefix(repo_root)?.to_string_lossy().to_string();
@@ -126,17 +141,26 @@ pub async fn summarize_protocol(repo_root: &Path, semantics_path: &Path) -> Resu
 
     log::info!("generate context for code review");
     let content = generate_context_for_code_review(repo_root, &semantics_path).await?;
+    let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, 
+                   please create a max 200 word summary of this protocol explaining what it is, and how it works.  Format 
+                   in markdown for easy reading. Respond only with valid JSON matching the schema!";
 
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(O3)
-        .preamble("You are a senior solidity dev. Given the context provided for solidity smart contract protocol, 
-                   please create a max 200 word summary of this protocol explaining what it is, and how it works.  Format 
-                   in markdown for easy reading. Respond only with valid JSON matching the schema!")
+        .preamble(preamble)
         .build();
 
     log::info!("extracting protocol summary");
     // rerun if NoDataExtracted Error
-    let summary = extractor_with_retry(&ai_summary_agent, &content).await?;
+
+    add_to_inference_cost_by_type(
+        &format!("{}{}", preamble, content),
+        LlmCostType::OpenaiO3Output,
+    )
+    .await;
+
+    let summary =
+        extractor_with_retry(&ai_summary_agent, &content, LlmCostType::OpenaiO3Output).await?;
 
     log::info!("protocol summary => {:#?}", summary);
 
