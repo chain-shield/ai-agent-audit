@@ -8,6 +8,7 @@
 /// 5. Storing the embeddings in a Qdrant vector database for semantic search
 use ai_agent_audit::{
     build_brain::{enrichment, git_clone, vector_db},
+    cost::cost_data::get_total_inference_cost,
     enumerator::codeblock_maker,
     llm_review::code_review,
     reporting::{audit, contract_data, save_file},
@@ -74,6 +75,10 @@ async fn main() -> Result<()> {
     save_file::save_audit_report(&audit_report, &repo)?;
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
     contract_data::save_metadata(&semantic_db, &repo).await?;
+
+    // total cost
+    let total_cost = get_total_inference_cost().await;
+    info!("Total Inference Cost ===> {}", total_cost);
 
     Ok(())
 }

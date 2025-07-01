@@ -1,4 +1,5 @@
 use crate::{
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
         config::{
@@ -57,9 +58,24 @@ impl AIAgent {
         T: DeserializeOwned,
     {
         match self {
-            AIAgent::Anthropic(model) => Ok(agent_extract_with_retry::<_, T>(model, prompt).await?),
-            AIAgent::Openai(model) => Ok(agent_extract_with_retry::<_, T>(model, prompt).await?),
-            AIAgent::Gemini(model) => Ok(agent_extract_with_retry::<_, T>(model, prompt).await?),
+            AIAgent::Anthropic(model) => Ok(agent_extract_with_retry::<_, T>(
+                model,
+                prompt,
+                LlmCostType::AnthropicClaudeOutput,
+            )
+            .await?),
+            AIAgent::Openai(model) => {
+                Ok(
+                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::OpenaiO3Output)
+                        .await?,
+                )
+            }
+            AIAgent::Gemini(model) => {
+                Ok(
+                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::GeminiOutput)
+                        .await?,
+                )
+            }
         }
     }
 }
@@ -157,7 +173,6 @@ pub async fn review_codebase_for_security_issues(
                 .quality_check_with_llm(&codeblock, &openai_verify_agent)
                 .await?;
 
-            // TODO - Quality check all findings
             all_security_issues.insert(contract.to_string(), quality_checked_and_updated_findings);
 
             // TODO - save issues to Findings db
@@ -189,6 +204,10 @@ pub async fn run_security_prompt(
     let prompt_header = generated_llm_prompt(&contract_name, instructions, PRE_PROMPT, POST_PROMPT);
     let prompt_body = generate_content_plus_context_block(&code, &added_context);
     let full_prompt = format!("{prompt_header}{prompt_body}");
+
+    // add to cost
+    add_to_inference_cost_by_type(&full_prompt, LlmCostType::AnthropicClaudeInput).await;
+
     let mut get_enough_findings = false;
     let mut retries = 0;
 
@@ -357,16 +376,21 @@ impl Findings {
             let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
             handles.push(tokio::spawn(async move {
                 let result: anyhow::Result<()> = async {
-                    let content = generate_prompt_for_issue_check(
+                    let instruction_prompt = generate_prompt_for_issue_check(
                         &code,
                         &arc_findings.findings[i],
                         PRE_VERIFY,
                         VERIFY_PROMPT,
                         POST_VERIFY,
                     );
+
+                    // add to cost
+                    // TODO - add cost of added context
+                    add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::OpenaiO3Input)
+                        .await;
                     info!("verifying finding #{}", i);
                     let is_legit_struct: LegitVulnerability =
-                        arc_agent.extract_with_retry(&content).await?;
+                        arc_agent.extract_with_retry(&instruction_prompt).await?;
 
                     let is_finding_legit = is_legit_struct.is_legit_vulnerability;
                     if !is_finding_legit {
@@ -446,6 +470,7 @@ impl Findings {
                         QUALIFY_PROMPT,
                         POST_QUALIFY,
                     );
+                    add_to_inference_cost_by_type(&prompt, LlmCostType::OpenaiO3Input).await;
                     info!("quality checking finding #{}", i);
                     let qualify_checked_finding: VulnerabilityQualityCheck =
                         arc_agent.extract_with_retry(&prompt).await?;
@@ -536,7 +561,7 @@ impl Findings {
             .count();
 
         info!(
-            "{} Verified Findings! with {} updated findings!",
+            "{} Verified Findings with {} updated findings!",
             qualified_findings.len(),
             num_findings_updated
         );
