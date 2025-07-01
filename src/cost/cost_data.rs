@@ -1,5 +1,4 @@
 use once_cell::sync::Lazy;
-use rig::{agent::Agent, completion::CompletionModel};
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -74,7 +73,7 @@ pub async fn get_total_inference_cost() -> String {
     let cost_data = Arc::clone(&INFERENCE_COST_DATA);
     let inference_cost = cost_data.lock().await;
 
-    format!("{:.2}", inference_cost)
+    format!("{:.2}", *inference_cost / 1_000_000_f64)
 }
 
 /// Estimates tokens with additional handling for whitespace and special cases
@@ -90,4 +89,3 @@ pub fn get_token_count(text: &str) -> usize {
     // Use ceiling division: (n + divisor - 1) / divisor
     (char_count + 3) / 4
 }
-

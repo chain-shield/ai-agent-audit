@@ -6,6 +6,7 @@ use crate::{
             generated_llm_prompt, ContractInvariants, Finding, VulnerabilityQualityCheck,
             CLAUDE_4_0_SONNET,
         },
+        context_state::get_metadata_context,
         invariants::INVARIANTS,
         prompt_content::{generate_context_for_code_review, generate_prompt_for_issue_check},
         prompt_support::{
@@ -90,9 +91,7 @@ where
 }
 
 pub async fn review_codebase_for_security_issues(
-    repo_root: &Path,
     codeblocks_path: &PathBuf,
-    semantics_path: &Path,
 ) -> Result<(HashMap<String, Findings>, Vec<ContractInvariants>)> {
     let mut all_security_issues = HashMap::<String, Findings>::new();
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
@@ -106,10 +105,7 @@ pub async fn review_codebase_for_security_issues(
     let anthropic_client = anthropic::Client::from_env();
     let openai_client = openai::Client::from_env();
 
-    info!("generating additional context for query...");
-    let added_context_from_ai_brain =
-        generate_context_for_code_review(repo_root, &semantics_path).await?;
-
+    let added_context_from_ai_brain = get_metadata_context().await?;
     info!("CONTEXT => {:#?}", added_context_from_ai_brain);
 
     info!("setting up AI agents...");
@@ -137,11 +133,11 @@ pub async fn review_codebase_for_security_issues(
         64_000,
     ));
     // TODO - restore to 5
-    for _ in 0..2 {
+    for _ in 0..5 {
         ai_agents.push(anthropic_agent_3_7_t1.clone());
     }
     // TODO - restore to 3
-    for _ in 0..0 {
+    for _ in 0..3 {
         ai_agents.push(anthropic_agent_4_0_t1.clone());
     }
 
@@ -385,9 +381,12 @@ impl Findings {
                     );
 
                     // add to cost
-                    // TODO - add cost of added context
-                    add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::OpenaiO3Input)
-                        .await;
+                    let context = get_metadata_context().await?;
+                    add_to_inference_cost_by_type(
+                        &format!("{}{}", instruction_prompt, context),
+                        LlmCostType::OpenaiO3Input,
+                    )
+                    .await;
                     info!("verifying finding #{}", i);
                     let is_legit_struct: LegitVulnerability =
                         arc_agent.extract_with_retry(&instruction_prompt).await?;
@@ -470,7 +469,12 @@ impl Findings {
                         QUALIFY_PROMPT,
                         POST_QUALIFY,
                     );
-                    add_to_inference_cost_by_type(&prompt, LlmCostType::OpenaiO3Input).await;
+                    let context = get_metadata_context().await?;
+                    add_to_inference_cost_by_type(
+                        &format!("{}{}", prompt, context),
+                        LlmCostType::OpenaiO3Input,
+                    )
+                    .await;
                     info!("quality checking finding #{}", i);
                     let qualify_checked_finding: VulnerabilityQualityCheck =
                         arc_agent.extract_with_retry(&prompt).await?;
