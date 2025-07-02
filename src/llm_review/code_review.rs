@@ -1,5 +1,7 @@
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{
+        add_to_inference_cost_by_agent, add_to_inference_cost_by_type, LlmCostType, TokenType,
+    },
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
         config::{
@@ -8,7 +10,7 @@ use crate::{
         },
         context_state::get_metadata_context,
         invariants::INVARIANTS,
-        prompt_content::{generate_context_for_code_review, generate_prompt_for_issue_check},
+        prompt_content::generate_prompt_for_issue_check,
         prompt_support::{
             post_prompt::POST_PROMPT,
             post_qualify::POST_QUALIFY,
@@ -19,76 +21,33 @@ use crate::{
             qualify_prompt::QUALIFY_PROMPT,
             verify_prompt::VERIFY_PROMPT,
         },
-        review_utils::{build_anthropic_agent, build_openai_agent},
+        review_utils::{
+            build_anthropic_agent, build_deepseek_agent, build_gemini_agent, build_openai_agent,
+        },
     },
     master_prompts::{prompt_2x_aa::PROMPT_2X_AA, prompt_2x_bb::PROMPT_2X_BB},
-    utils::extract_retry::agent_extract_with_retry,
 };
 use anyhow::Result;
 use log::info;
 use rig::{
-    agent::Agent,
     client::ProviderClient,
-    extractor::Extractor,
     providers::{
         anthropic::{self, CLAUDE_3_7_SONNET},
+        deepseek::{self, DEEPSEEK_CHAT},
         gemini::{self},
-        openai::{self, O3},
+        openai::{self, GPT_4O, O3},
     },
 };
-use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
-use std::{default, sync::Arc};
+use std::sync::Arc;
+use std::{collections::HashMap, path::PathBuf};
 use tokio::sync::Mutex;
 
-use super::config::{Findings, LegitVulnerability};
+use super::{
+    config::{Findings, LegitVulnerability},
+    enums::AIAgent,
+};
 
-pub enum AIAgent {
-    Anthropic(Agent<anthropic::completion::CompletionModel>),
-    Openai(Agent<openai::CompletionModel>),
-    Gemini(Agent<gemini::completion::CompletionModel>),
-}
-
-impl AIAgent {
-    pub async fn extract_with_retry<T>(&self, prompt: &str) -> anyhow::Result<T>
-    where
-        T: DeserializeOwned,
-    {
-        match self {
-            AIAgent::Anthropic(model) => Ok(agent_extract_with_retry::<_, T>(
-                model,
-                prompt,
-                LlmCostType::AnthropicClaudeOutput,
-            )
-            .await?),
-            AIAgent::Openai(model) => {
-                Ok(
-                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::OpenaiO3Output)
-                        .await?,
-                )
-            }
-            AIAgent::Gemini(model) => {
-                Ok(
-                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::GeminiOutput)
-                        .await?,
-                )
-            }
-        }
-    }
-}
-
-pub enum AIExtractor<T>
-where
-    T: 'static + JsonSchema + Serialize + for<'a> Deserialize<'a> + Send + Sync,
-{
-    Anthropic(Extractor<anthropic::completion::CompletionModel, T>),
-    Openai(Extractor<openai::CompletionModel, T>),
-    Gemini(Extractor<gemini::completion::CompletionModel, T>),
-}
+const DISCOVER_RUNS: usize = 10;
 
 pub async fn review_codebase_for_security_issues(
     codeblocks_path: &PathBuf,
@@ -100,17 +59,60 @@ pub async fn review_codebase_for_security_issues(
     info!("grabbing contracts from db...");
     let contracts = codeblocks_db.get_all_contracts()?;
 
-    // let deepseek_client = deepseek::Client::from_env();
-    // let gemini_client = gemini::Client::from_env();
+    let (ai_verify_agent, ai_discovery_agents) = generate_ai_agents().await?;
+
+    let invariant_findings = Vec::<ContractInvariants>::new();
+
+    let added_context_from_ai_brain = get_metadata_context().await?;
+
+    for (contract, codeblock) in contracts.into_iter() {
+        info!("contract => {}", contract);
+        info!("codeblock => {}", codeblock);
+
+        let raw_findings = Findings::generate_findings_from_contract_codebase(
+            &contract,
+            &codeblock,
+            &added_context_from_ai_brain,
+            &ai_discovery_agents,
+        )
+        .await?;
+
+        if !raw_findings.findings.is_empty() {
+            info!(
+                "# of findings BEFORE deduping => {}",
+                raw_findings.findings.len()
+            );
+
+            let deduped_and_verified_findings = raw_findings
+                .dedup_and_verify_with_llm(&codeblock, &ai_verify_agent)
+                .await?;
+
+            let quality_checked_and_updated_findings = deduped_and_verified_findings
+                .quality_check_with_llm(&codeblock, &ai_verify_agent)
+                .await?;
+
+            all_security_issues.insert(contract.to_string(), quality_checked_and_updated_findings);
+
+            // TODO - save issues to Findings db
+        }
+    }
+
+    // info!("standard security findings => {:#?}", all_security_issues);
+    // info!("invariant findings => {:#?}", invariant_findings);
+    Ok((all_security_issues, invariant_findings))
+}
+
+pub async fn generate_ai_agents() -> anyhow::Result<(Arc<AIAgent>, Vec<Arc<AIAgent>>)> {
+    let deepseek_client = deepseek::Client::from_env();
+    let gemini_client = gemini::Client::from_env();
     let anthropic_client = anthropic::Client::from_env();
     let openai_client = openai::Client::from_env();
 
     let added_context_from_ai_brain = get_metadata_context().await?;
-    info!("CONTEXT => {:#?}", added_context_from_ai_brain);
 
     info!("setting up AI agents...");
     // extractors
-    let openai_verify_agent = Arc::new(build_openai_agent(
+    let ai_verify_agent = Arc::new(build_openai_agent(
         &openai_client,
         1.0,
         O3,
@@ -118,8 +120,32 @@ pub async fn review_codebase_for_security_issues(
         Some(&added_context_from_ai_brain),
     ));
 
+    let openai_agent = Arc::new(build_openai_agent(
+        &openai_client,
+        1.0,
+        GPT_4O,
+        "You are a world renowned expert in smart-contract security auditing, 
+            known for your uncanny ability to find all security bugs in a protocol, 
+            even the obscure ones.",
+        None,
+    ));
+
+    let deepseek_agent = Arc::new(build_deepseek_agent(
+        &deepseek_client,
+        1.0,
+        DEEPSEEK_CHAT,
+        None,
+    ));
+
+    let gemini_agent = Arc::new(build_gemini_agent(
+        &gemini_client,
+        1.0,
+        "gemini-2.5-pro",
+        None,
+    ));
+
     // agents
-    let mut ai_agents = Vec::new();
+    let mut ai_discovery_agents = Vec::new();
     let anthropic_agent_3_7_t1 = Arc::new(build_anthropic_agent(
         &anthropic_client,
         1.0,
@@ -132,52 +158,18 @@ pub async fn review_codebase_for_security_issues(
         CLAUDE_4_0_SONNET,
         64_000,
     ));
-    // TODO - restore to 5
-    for _ in 0..5 {
-        ai_agents.push(anthropic_agent_3_7_t1.clone());
+    for _ in 0..DISCOVER_RUNS {
+        ai_discovery_agents.push(gemini_agent.clone());
     }
-    // TODO - restore to 3
-    for _ in 0..3 {
-        ai_agents.push(anthropic_agent_4_0_t1.clone());
-    }
-
-    let invariant_findings = Vec::<ContractInvariants>::new();
-
-    for (contract, codeblock) in contracts.into_iter() {
-        info!("contract => {}", contract);
-        info!("codeblock => {}", codeblock);
-
-        let raw_findings = Findings::generate_findings_from_contract_codebase(
-            &contract,
-            &codeblock,
-            &added_context_from_ai_brain,
-            &ai_agents,
-        )
-        .await?;
-
-        if !raw_findings.findings.is_empty() {
-            info!(
-                "# of findings BEFORE deduping => {}",
-                raw_findings.findings.len()
-            );
-
-            let deduped_and_verified_findings = raw_findings
-                .dedup_and_verify_with_llm(&codeblock, &openai_verify_agent)
-                .await?;
-
-            let quality_checked_and_updated_findings = deduped_and_verified_findings
-                .quality_check_with_llm(&codeblock, &openai_verify_agent)
-                .await?;
-
-            all_security_issues.insert(contract.to_string(), quality_checked_and_updated_findings);
-
-            // TODO - save issues to Findings db
-        }
-    }
-
-    // info!("standard security findings => {:#?}", all_security_issues);
-    // info!("invariant findings => {:#?}", invariant_findings);
-    Ok((all_security_issues, invariant_findings))
+    // // TODO - restore to 5
+    // for _ in 0..5 {
+    //     ai_agents.push(anthropic_agent_3_7_t1.clone());
+    // }
+    // // TODO - restore to 3
+    // for _ in 0..3 {
+    //     ai_agents.push(anthropic_agent_4_0_t1.clone());
+    // }
+    Ok((ai_verify_agent, ai_discovery_agents))
 }
 
 /// Executes one LLM-prompt round and merges the returned findings into the shared `Arc<Mutex<Findings>>`.
@@ -193,42 +185,28 @@ pub async fn run_security_prompt(
     idx_of_review_round: usize,
     shared_findings: Arc<Mutex<Findings>>,
 ) -> Result<()> {
-    const FINDINGS_THRESHOLD: usize = 4; // must find 4 issues
-    const MAX_RETRY: usize = 3; // if findings less than threshold
-
     // 1. Build full prompt
     let prompt_header = generated_llm_prompt(&contract_name, instructions, PRE_PROMPT, POST_PROMPT);
     let prompt_body = generate_content_plus_context_block(&code, &added_context);
     let full_prompt = format!("{prompt_header}{prompt_body}");
 
     // add to cost
-    add_to_inference_cost_by_type(&full_prompt, LlmCostType::AnthropicClaudeInput).await;
+    // add_to_inference_cost_by_type(&full_prompt, LlmCostType::GeminiInput).await;
+    add_to_inference_cost_by_agent(&full_prompt, &agent, TokenType::Input).await;
 
-    let mut get_enough_findings = false;
-    let mut retries = 0;
+    // 2. Send to the right provider
+    info!("----LLM analysis Round #{}----", idx_of_review_round);
+    let findings: Findings = agent.extract_with_retry(&full_prompt).await?;
 
-    while !get_enough_findings {
-        // 2. Send to the right provider
-        info!("----LLM analysis Round #{}----", idx_of_review_round);
-        let findings: Findings = agent.extract_with_retry(&full_prompt).await?;
+    let issues_found = findings.findings.len();
+    info!("{} issues found!", issues_found);
 
-        let issues_found = findings.findings.len();
-        info!("{} issues found!", issues_found);
-
-        // 3. Merge results (if any) into the shared accumulator
-        if issues_found > 0 {
-            let mut guard = shared_findings.lock().await;
-            guard.findings.extend(findings.findings);
-        }
-
-        // run again if less than 4 findings
-        if issues_found >= FINDINGS_THRESHOLD || retries == MAX_RETRY {
-            get_enough_findings = true;
-        } else {
-            retries += 1;
-            info!("not enough issues found - retry {}/{}", retries, MAX_RETRY);
-        }
+    // 3. Merge results (if any) into the shared accumulator
+    if issues_found > 0 {
+        let mut guard = shared_findings.lock().await;
+        guard.findings.extend(findings.findings);
     }
+
     Ok(())
 }
 

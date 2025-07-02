@@ -3,11 +3,8 @@ use super::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_agent, add_to_inference_cost_by_type, LlmCostType},
-    master_prompts::{
-        prompt_2x_a::PROMPT_2X_A, prompt_2x_b::PROMPT_2X_B, prompt_3x_a::PROMPT_3X_A,
-        prompt_3x_b::PROMPT_3X_B, prompt_3x_c::PROMPT_3X_C,
-    },
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    master_prompts::{prompt_2x_a::PROMPT_2X_A, prompt_2x_b::PROMPT_2X_B},
     prompts::{
         access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
         confidential_data::SAVING_CONFIDENTIAL_DATA, default_visibility::DEFAULT_VISIBILITIES,
@@ -31,7 +28,7 @@ use rig::{
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LanguageModel {
@@ -231,6 +228,23 @@ impl Finding {
             self.contract,
             self.function
         )
+    }
+
+    pub fn free_report_title(&self) -> String {
+        if self.severity == Severity::High || self.severity == Severity::Medium {
+            format!(
+                "{} issue found with {} severity",
+                self.issue_type.as_fancy_str(),
+                self.severity.as_str()
+            )
+        } else {
+            format!(
+                "{} issue in {}::{}",
+                self.issue_type.as_fancy_str(),
+                self.contract,
+                self.function
+            )
+        }
     }
 
     pub fn hash(&self) -> String {

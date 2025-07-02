@@ -3,71 +3,131 @@
 src/PuppyRaffle.sol
 
 ## README.md summary
-Puppy Raffle is a Solidity-based raffle system where users buy entries to win a random dog NFT. Core workflow: anyone calls enterRaffle(address[] participants) supplying ETH and a list of unique addresses; duplicates are rejected. Entrants may later reclaim their stake via refund(). At configurable time intervals the contract chooses a random winner, mints the puppy NFT to them, sends them the prize pool minus protocol fees, and forwards those fees to a feeAddress settable by the owner. 
+### Puppy Raffle Documentation
 
-Project setup uses Foundry (solc 0.7.6). Clone repo, run `make`, then `forge test` or `forge coverage` for unit tests and coverage reports. An optional Gitpod button enables browser development.
+The "Puppy Raffle" project enables users to enter a raffle to win a dog NFT. Users enter the raffle using the `enterRaffle` function, passing an array of addresses representing participants (no duplicates allowed). A refund mechanism is available via the `refund` function. Every X seconds, the system selects a winner to receive a mintable puppy NFT. A fee is collected by the protocol owner, who can designate a fee address, while the remainder of the value is sent to the winner.
 
-Audit scope includes only src/PuppyRaffle.sol at commit 2a47715b30cf11ca82db148704e67652ad679cd8. Roles: Owner (deployer) can update feeAddress via changeFeeAddress; Player participates via enterRaffle and refund. No known issues reported.
+### Getting Started
 
-Compatibility: Ethereum deployments, solc 0.7.6.
+#### Requirements
+- **Git** is needed for cloning and managing your local repo. Verify installation with `git --version`.
+- **Foundry** is required for building the project. Verify installation with `forge --version`.
 
-Folder list: src/PuppyRaffle.sol
+#### Quickstart
+1. Clone the repository using `git clone https://github.com/Cyfrin/4-puppy-raffle-audit`
+2. Navigate into the project directory with `cd 4-puppy-raffle-audit`
+3. Run `make` to set things up.
+
+You can also use **Gitpod** to work remotely without local installations.
+
+### Usage
+
+#### Testing
+- Conduct tests using `forge test`.
+- Coverage can be checked with `forge coverage`, and debug information with `forge coverage --report debug`.
+
+### Audit Scope Details
+- This audit includes the source file `src/PuppyRaffle.sol`, with a Solc version of 0.7.6. It is designed for deployment on the Ethereum network.
+
+### Roles
+- **Owner:** Deploys the protocol and can change the fee address.
+- **Player:** Enters the raffle and can request a refund.
+
+### Known Issues
+There are no known issues at this time.
 
 
 ## src/PuppyRaffle.sol summary
-### Contract: PuppyRaffle
-ERC-721 raffle that lets users buy entries, refunds tickets, selects a random winner after a fixed period, mints a puppy NFT of random rarity, pays 80 % of pot to winner and accumulates 20 % fees for protocol. Owner can change fee recipient and withdraw accumulated fees. Rarity-specific metadata is returned fully on-chain via Base64 JSON.
+### PuppyRaffle Contract Summary
 
----
-#### Contract Interface
-```solidity
-constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration)
-function enterRaffle(address[] calldata newPlayers) external payable
-function refund(uint256 playerIndex) external
-function getActivePlayerIndex(address player) external view returns (uint256)
-function selectWinner() external
-function withdrawFees() external
-function changeFeeAddress(address newFeeAddress) external
-function tokenURI(uint256 tokenId) external view returns (string)
-// internal
-function _isActivePlayer() internal view returns (bool)
-function _baseURI() internal pure returns (string)
-```
-Events: `RaffleEnter(address[] newPlayers)`, `RaffleRefunded(address player)`, `FeeAddressChanged(address newFeeAddress)`
+**Contract Definition:**
+The `PuppyRaffle` is a smart contract for entering a raffle to win a puppy-themed NFT. It leverages OpenZeppelin's ERC721 and Ownable contracts to manage NFTs and ownership capabilities respectively. Players enter the raffle by paying an entrance fee, and a winner is selected periodically.
 
----
-#### Function Summaries
-* **constructor** – Sets immutable entrance fee, fee recipient, raffle duration, starts first round, stores URIs & rarity names. 
-* **enterRaffle** – Pay `entranceFee * newPlayers.length`, appends players, reverts on duplicates, emits `RaffleEnter`.
-* **refund** – Player at `playerIndex` can reclaim entrance fee; slot set to zero to keep indices, emits `RaffleRefunded`.
-* **getActivePlayerIndex** – Linear search for `player` in array, returns its index or 0.
-* **selectWinner** – Requires duration elapsed & ≥4 players; picks pseudo-random winner & rarity, splits pot 80/20, records fees, mints NFT, resets round.
-* **withdrawFees** – Sends accumulated `totalFees` to `feeAddress` only when no active players, resets counter.
-* **changeFeeAddress** – Owner-only setter emitting `FeeAddressChanged`.
-* **_isActivePlayer** – Internal linear membership check.
-* **_baseURI** – Returns constant data URI prefix.
-* **tokenURI** – Builds on-chain JSON metadata with rarity, name and IPFS image.
+**Contract Functions:**
 
----
-#### Storage Variables
-* `entranceFee (uint256 immutable)` – Price per entry in wei.
-* `players (address[])` – Current round participants; refunded slots set to address(0).
-* `raffleDuration (uint256)` – Seconds each round lasts.
-* `raffleStartTime (uint256)` – Timestamp when current round began.
-* `previousWinner (address)` – Last round’s champion NFT owner.
-* `feeAddress (address)` – Where protocol fees are sent; owner changeable.
-* `totalFees (uint64)` – Accumulated fees awaiting withdrawal.
-* `tokenIdToRarity (mapping(uint256=>uint256))` – Token-id → rarity value.
-* `rarityToUri (mapping(uint256=>string))` – Rarity → IPFS image URI.
-* `rarityToName (mapping(uint256=>string))` – Rarity → name label used in metadata.
-* `commonImageUri (string)` – IPFS link for common pug.
-* `COMMON_RARITY (uint256 constant = 70)` – Draw range percentage for common.
-* `COMMON (string constant)` – The word "common".
-* `rareImageUri (string)` – IPFS for rare St. Bernard.
-* `RARE_RARITY (uint256 constant = 25)` – Percentage for rare.
-* `RARE (string constant)` – The word "rare".
-* `legendaryImageUri (string)` – IPFS for legendary Shiba Inu.
-* `LEGENDARY_RARITY (uint256 constant = 5)` – Percentage for legendary.
-* `LEGENDARY (string constant)` – The word "legendary".
+- **enterRaffle**
+  ```solidity
+  function enterRaffle(address[] memory newPlayers) public payable
+  ```
+  Allows players to enter the raffle by sending the required entrance fee. Duplicate entries are checked and prevented. An event is emitted upon successful entry.
 
+- **refund**
+  ```solidity
+  function refund(uint256 playerIndex) public
+  ```
+  Allows players to get a refund of their entrance fee. The player's address is reset in the players array, and an event is emitted.
+
+- **getActivePlayerIndex**
+  ```solidity
+  function getActivePlayerIndex(address player) external view returns (uint256)
+  ```
+  Returns the index of a player's address within the players' array or 0 if not active.
+
+- **selectWinner**
+  ```solidity
+  function selectWinner() external
+  ```
+  Selects a winner using on-chain randomness and mints a puppy NFT. Distributes the prize pool and fees, resets the players' array, and emits events.
+
+- **withdrawFees**
+  ```solidity
+  function withdrawFees() external
+  ```
+  Withdraws collected fees to the fee address if no players are currently active. Resets total fees to zero.
+
+- **changeFeeAddress**
+  ```solidity
+  function changeFeeAddress(address newFeeAddress) external onlyOwner
+  ```
+  Allows the contract owner to change the fee address and emits an event.
+
+- **_isActivePlayer**
+  ```solidity
+  function _isActivePlayer() internal view returns (bool)
+  ```
+  Checks if the message sender is an active player in the raffle.
+
+- **_baseURI**
+  ```solidity
+  function _baseURI() internal pure returns (string memory)
+  ```
+  Returns a base URI used for constructing token metadata.
+
+- **tokenURI**
+  ```solidity
+  function tokenURI(uint256 tokenId) public view virtual override returns (string memory)
+  ```
+  Returns the metadata URI for a specific NFT token, including rarity attributes.
+
+**Storage Variables:**
+
+- **entranceFee**: `uint256`
+  This is the cost required to enter the raffle. It is set during contract initialization.
+
+- **players**: `address[]`
+  An array storing the addresses of current raffle participants.
+
+- **raffleDuration**: `uint256`
+  Defines the duration, in seconds, after which a winner can be drawn.
+
+- **raffleStartTime**: `uint256`
+  Records the start time of the current raffle period.
+
+- **previousWinner**: `address`
+  The address of the most recent raffle winner.
+
+- **feeAddress**: `address`
+  Designates where a portion of raffle fees are sent.
+
+- **totalFees**: `uint64`
+  A running total of fees collected by the contract.
+
+- **tokenIdToRarity**: `mapping(uint256 => uint256)`
+  Maps NFT token IDs to their rarity values.
+
+- **rarityToUri**: `mapping(uint256 => string)`
+  Maps rarity values to corresponding image URIs.
+
+- **rarityToName**: `mapping(uint256 => string)`
+  Maps rarity values to their names for metadata purposes.
 

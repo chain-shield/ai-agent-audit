@@ -1,21 +1,16 @@
-use crate::llm_review::config::generated_llm_prompt;
 use rig::{
     client::CompletionClient,
     providers::{
         anthropic::{self},
+        deepseek,
         gemini::{self},
         openai::{self},
     },
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
-use super::{
-    code_review::{AIAgent, AIExtractor},
-    config::Findings,
-};
+use super::enums::{AIAgent, AIExtractor};
 
 pub fn build_anthropic_agent(
     client: &anthropic::Client,
@@ -90,5 +85,26 @@ pub fn build_gemini_agent(
     match context {
         Some(added_context) => AIAgent::Gemini(builder.context(added_context).build()),
         None => AIAgent::Gemini(builder.build()),
+    }
+}
+
+pub fn build_deepseek_agent(
+    client: &deepseek::Client,
+    temperature: f64,
+    model: &str,
+    context: Option<&str>,
+) -> AIAgent {
+    let builder = client
+        .agent(model)
+        .preamble(
+            "You are a world renowned expert in smart-contract security auditing, 
+            known for your uncanny ability to find all security bugs in a protocol, 
+            even the obscure ones.",
+        )
+        .temperature(temperature);
+
+    match context {
+        Some(added_context) => AIAgent::Deepseek(builder.context(added_context).build()),
+        None => AIAgent::Deepseek(builder.build()),
     }
 }

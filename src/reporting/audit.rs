@@ -15,11 +15,18 @@ const SEVERITIES: [Severity; 4] = [
     Severity::Info,
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportType {
+    Free,
+    Paid,
+}
+
 pub async fn generated_audit_report(
     issues: HashMap<String, Findings>,
     invariants: Vec<ContractInvariants>,
     repo: &RepoPaths,
     semantics_path: &Path,
+    report_type: ReportType,
 ) -> anyhow::Result<String> {
     let mut audit_report = String::new();
     let protocol_name = repo.repo_name.replace("-", " ");
@@ -40,7 +47,7 @@ pub async fn generated_audit_report(
 
     audit_report.push_str(&protocol_overview);
 
-    let summary = get_finding_summary(&findings);
+    let summary = get_finding_summary(&findings, report_type);
 
     audit_report.push_str(&summary);
 
@@ -48,13 +55,13 @@ pub async fn generated_audit_report(
 
     audit_report.push_str(&finding_count);
 
-    let findings_report = get_finding_report(&findings);
+    let findings_report = get_finding_report(&findings, report_type);
 
     audit_report.push_str(&findings_report);
 
-    let invariants_report = get_invariant_report(&invariants);
-
-    audit_report.push_str(&invariants_report);
+    // let invariants_report = get_invariant_report(&invariants);
+    //
+    // audit_report.push_str(&invariants_report);
 
     Ok(audit_report)
 }
@@ -92,13 +99,18 @@ fn combine_invariants_for_all_contracts(
     all_invariants
 }
 
-fn get_finding_report(findings: &Findings) -> String {
+// TODO - for free report exclude H and M
+fn get_finding_report(findings: &Findings, report_type: ReportType) -> String {
     let mut findings_report = String::new();
 
     findings_report.push_str("\n");
     for severity in SEVERITIES {
         let report_by_severity = get_finding_report_by_severity(findings, severity);
-        findings_report.push_str(&report_by_severity);
+        if report_type == ReportType::Paid
+            || (severity != Severity::High && severity != Severity::Medium)
+        {
+            findings_report.push_str(&report_by_severity);
+        }
     }
     findings_report.push_str("\n");
 
@@ -211,12 +223,12 @@ fn get_invariant_report(invariants: &[ContractInvariants]) -> String {
     findings_report
 }
 
-fn get_finding_summary(findings: &Findings) -> String {
+fn get_finding_summary(findings: &Findings, report_type: ReportType) -> String {
     let mut findings_summary = String::new();
 
     findings_summary.push_str("\n");
     for severity in SEVERITIES {
-        let summary_for_severity = get_finding_summary_by_severity(findings, severity);
+        let summary_for_severity = get_finding_summary_by_severity(findings, severity, report_type);
         findings_summary.push_str(&summary_for_severity);
     }
     findings_summary.push_str("\n");
@@ -237,7 +249,11 @@ fn get_list_of_issues_by_severity(findings: &Findings) -> String {
     list_severity_count
 }
 
-fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> String {
+fn get_finding_summary_by_severity(
+    findings: &Findings,
+    severity: Severity,
+    report_type: ReportType,
+) -> String {
     let findings_by_severity = findings.filter_by_severity(severity);
     let mut findings_summary = String::new();
 
@@ -245,11 +261,16 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
         findings_summary.push_str(&format!("## {} Risk Findings\n", severity.as_str()));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
+            let title = if report_type == ReportType::Paid {
+                finding.title()
+            } else {
+                finding.free_report_title()
+            };
             findings_summary.push_str(&format!(
                 "[{}-{}]. {}\n",
                 severity.as_initial(),
                 i + 1,
-                finding.title()
+                title
             ));
         }
     } else {

@@ -68,7 +68,7 @@ pub async fn summarize_src_files(
                     please summarize each section of the docs with 150 words or less, max 500 words total for each doc file. 
                     Respond only with valid JSON matching the schema!";
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>(O3)
+        .extractor::<FileSummary>(GPT_4O)
         .preamble(preamble)
         .context(&context)
         .build();
@@ -95,12 +95,12 @@ pub async fn summarize_src_files(
 
             add_to_inference_cost_by_type(
                 &format!("{}{}", preamble, content),
-                LlmCostType::OpenaiO3Input,
+                LlmCostType::Openai4oInput,
             )
             .await;
 
             let summary =
-                extractor_with_retry(&ai_summary_agent, &content, LlmCostType::OpenaiO3Output)
+                extractor_with_retry(&ai_summary_agent, &content, LlmCostType::Openai4oOutput)
                     .await?;
 
             // filename is relative to root folder ie src/PuppyRaffle.sol
