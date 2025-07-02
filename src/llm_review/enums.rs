@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
+    cost::cost_data::LlmCostType,
     invariant_prompts::{
         arithmetic::ARITHMETIC, balance::BALANCE, permission::PERMISSION, referential::REFERENTIAL,
         state_machine::STATE_MACHINE, temporal::TEMPORAL,
@@ -18,7 +19,37 @@ use crate::{
         unchecked_return_value::UNCHECK_RETURN_VALUES, unexpected_eth::UNEXPECTED_ETH,
         zero_code::CONTRACTS_WITH_ZERO_CODE,
     },
+    utils::extract_retry::agent_extract_with_retry,
 };
+use rig::{
+    agent::Agent,
+    extractor::Extractor,
+    providers::{
+        anthropic::{self},
+        deepseek::{self, DeepSeekCompletionModel},
+        gemini::{self},
+        openai::{self},
+    },
+};
+
+use serde::de::DeserializeOwned;
+
+pub enum AIAgent {
+    Anthropic(Agent<anthropic::completion::CompletionModel>),
+    Openai(Agent<openai::CompletionModel>),
+    Gemini(Agent<gemini::completion::CompletionModel>),
+    Deepseek(Agent<DeepSeekCompletionModel>),
+}
+
+pub enum AIExtractor<T>
+where
+    T: 'static + JsonSchema + Serialize + for<'a> Deserialize<'a> + Send + Sync,
+{
+    Anthropic(Extractor<anthropic::completion::CompletionModel, T>),
+    Openai(Extractor<openai::CompletionModel, T>),
+    Gemini(Extractor<gemini::completion::CompletionModel, T>),
+    Deepseek(Extractor<DeepSeekCompletionModel, T>),
+}
 
 /// ------------------------------------------------------------------
 /// 1.  Strict-typed severity enum
@@ -135,6 +166,40 @@ impl InvariantStatus {
         match self {
             InvariantStatus::HOLDS => "Holds",
             InvariantStatus::VIOLATION => "Violation",
+        }
+    }
+}
+
+impl AIAgent {
+    pub async fn extract_with_retry<T>(&self, prompt: &str) -> anyhow::Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        match self {
+            AIAgent::Anthropic(model) => Ok(agent_extract_with_retry::<_, T>(
+                model,
+                prompt,
+                LlmCostType::AnthropicClaudeOutput,
+            )
+            .await?),
+            AIAgent::Openai(model) => {
+                Ok(
+                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::OpenaiO3Output)
+                        .await?,
+                )
+            }
+            AIAgent::Gemini(model) => {
+                Ok(
+                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::GeminiOutput)
+                        .await?,
+                )
+            }
+            AIAgent::Deepseek(model) => {
+                Ok(
+                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::DeepseekOutput)
+                        .await?,
+                )
+            }
         }
     }
 }

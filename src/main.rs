@@ -14,7 +14,10 @@ use ai_agent_audit::{
         code_review,
         context_state::{self},
     },
-    reporting::{audit, contract_data, save_file},
+    reporting::{
+        audit::{self, ReportType},
+        contract_data, save_file,
+    },
 };
 use anyhow::Result;
 use dotenvy::dotenv;
@@ -74,8 +77,14 @@ async fn main() -> Result<()> {
     let (security_issues, invariants) =
         code_review::review_codebase_for_security_issues(&codeblocks_db).await?;
 
-    let audit_report =
-        audit::generated_audit_report(security_issues, invariants, &repo, &semantics_db).await?;
+    let audit_report = audit::generated_audit_report(
+        security_issues,
+        invariants,
+        &repo,
+        &semantics_db,
+        ReportType::Paid,
+    )
+    .await?;
 
     // save audit report, contract IRs, and metadata to md files
     save_file::save_audit_report(&audit_report, &repo)?;

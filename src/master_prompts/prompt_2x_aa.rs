@@ -10,6 +10,12 @@ CATEGORIES
 5.  unexpected_eth                // Ether stuck / overly strict balance checks  
 6.  storage_layout                // slot collisions, struct packing, uninitialized_storage  
 7.  frontrun_mev                  // front-run / sandwich / back-run / latency arbitrage vectors  
+    ### 7-A  Quick front-running / TOD checklist
+    - Public functions: can caller profit by seeing a tx in mempool and racing it?  
+    - Sequencing deps: does fn A write state that fn B reads in the *same* block?  
+    - Value-transfer timing: funds sent immediately after a calc the attacker can influence?  
+    - Deterministic selection: winner/outcome based on current on-chain state?  
+    - Mitigations present? (pull payments, commit-reveal, VRF, time-locks, ACL)  
 8.  oracle                        // price-feed spoofing, stale data, missing sanity checks  
 9.  randomness                    // predictable entropy, miner influence  
 10. reentrancy                    // state update after external call, cross-function  
