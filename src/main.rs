@@ -78,16 +78,25 @@ async fn main() -> Result<()> {
         code_review::review_codebase_for_security_issues(&codeblocks_db).await?;
 
     let audit_report = audit::generated_audit_report(
-        security_issues,
-        invariants,
+        &security_issues,
+        &invariants,
         &repo,
         &semantics_db,
         ReportType::Paid,
     )
     .await?;
 
+    let free_audit_report = audit::generated_audit_report(
+        &security_issues,
+        &invariants,
+        &repo,
+        &semantics_db,
+        ReportType::Free,
+    )
+    .await?;
     // save audit report, contract IRs, and metadata to md files
-    save_file::save_audit_report(&audit_report, &repo)?;
+    save_file::save_audit_report(&audit_report, &repo, ReportType::Paid)?;
+    save_file::save_audit_report(&free_audit_report, &repo, ReportType::Free)?;
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
     contract_data::save_metadata(&semantics_db, &repo).await?;
 

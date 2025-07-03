@@ -22,8 +22,8 @@ pub enum ReportType {
 }
 
 pub async fn generated_audit_report(
-    issues: HashMap<String, Findings>,
-    invariants: Vec<ContractInvariants>,
+    issues: &HashMap<String, Findings>,
+    invariants: &[ContractInvariants],
     repo: &RepoPaths,
     semantics_path: &Path,
     report_type: ReportType,
@@ -35,7 +35,7 @@ pub async fn generated_audit_report(
     let report_title = format!("# {} - Findings Report\n", protocol_name);
     let subtitle = format!("## Commit hash: {}\n\n", commit);
 
-    let findings = combine_findings_for_all_contracts(issues);
+    let findings = combine_findings_for_all_contracts(issues.clone());
 
     // generated report
     audit_report.push_str(&report_title);
@@ -59,7 +59,7 @@ pub async fn generated_audit_report(
 
     audit_report.push_str(&findings_report);
 
-    // let invariants_report = get_invariant_report(&invariants);
+    // let invariants_report = get_invariant_report(invariants);
     //
     // audit_report.push_str(&invariants_report);
 
