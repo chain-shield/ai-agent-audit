@@ -1,17 +1,3 @@
-pub const POST_PROMPT_V2: &str = r#"
-
- **For Every VIOLATION** please return:
-1. **Title**: Format as "<Name of Security vulnerability> in <Contract>::<Function>"
-2. **Issue Type**: AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontRunAttack
-3. **Description**: Detailed explanation including vulnerable code snippet 
-4. **Impact**: Financial and security consequences 
-5. **Proof of Concept**: Step-by-step exploitation scenario 
-6. **Proof of Code**: Complete Foundry unit test demonstrating vulnerability
-7. **Severity**: High/Medium/Low/Info based on Impact on Protocol AND Likelihood of Exploitation 
-8. **Mitigation**: Suggested Mitigation with code example of fix
-
-"#;
-
 pub const POST_PROMPT: &str = r#"
 
 ### OUTPUT REQUIREMENTS 
@@ -24,7 +10,13 @@ pub const POST_PROMPT: &str = r#"
 5. **Impact**: Financial and security consequences 
 6. **Proof of Concept**: Step-by-step exploitation scenario 
 7. **Proof of Code**: Complete Foundry unit test demonstrating vulnerability
-8. **Severity**: High/Medium/Low/Info based on Impact on Protocol AND Likelihood of Exploitation 
+8. **Severity**: High/Medium/Low/Info based on table below
+    | Severity | Definition |
+    |----------|------------|
+    | HIGH     | Steals, locks, or permanently harms a significant portion of funds/governance. |
+    | MEDIUM   | Exploitable but needs favourable conditions or yields limited loss. |
+    | LOW      | Minor financial or operational impact; edge-case or hard to exploit. |
+    | INFO     | Non-safety best-practice / observability issue. | 
 9. **Mitigation**: Suggested Mitigation with code example of fix
 
 *Please respond with ONLY valid JSON in the following exact format:*
@@ -52,7 +44,7 @@ pub const POST_PROMPT: &str = r#"
 }
 
 **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
-**Please double checking openning and closing brakets: `}` and `]`, make sure 
+**Please double-check opening and closing brakets: `}` and `]`, make sure 
 they match up correctly.
 
 "#;

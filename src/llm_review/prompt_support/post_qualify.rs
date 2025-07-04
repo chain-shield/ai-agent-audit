@@ -11,6 +11,13 @@ pub const POST_QUALIFY: &str = r#"
 4. **proof_of_concept**: provide an updated proof of concept ONLY IF NEEDED
 5. **proof_of_code**: provide an updated proof of code ONLY IF NEEDED
 6. **severity**: provid an updated severity (High|Medium|Low|Info), ONLY IF current severity is not accurate
+    Judge severity based on below table
+    | Severity | Definition |
+    |----------|------------|
+    | HIGH     | Steals, locks, or permanently harms a significant portion of funds/governance. |
+    | MEDIUM   | Exploitable but needs favourable conditions or yields limited loss. |
+    | LOW      | Minor financial or operational impact; edge-case or hard to exploit. |
+    | INFO     | Non-safety best-practice / observability issue. | 
 7. **mitigation**: provide updated mitigation, ONLY IF current one is inadequate
 
 *Please respond with ONLY valid JSON in the following exact format:*
