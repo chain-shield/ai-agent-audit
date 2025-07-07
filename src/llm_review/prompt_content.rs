@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::build_brain::slither_ffi::{cache_key, get_all_files_src, run_printer};
 use crate::build_brain::{callgraph, inheritance, summarize};
+use crate::prepare_code::git_clone::RepoPaths;
 
 use super::config::Finding;
 use super::prompt_support::post_verify::POST_VERIFY;
@@ -60,14 +61,14 @@ pub async fn generate_slither_metadata_prompt_context(
 }
 
 pub async fn generate_context_for_code_review(
-    repo_root: &Path,
+    repo: &RepoPaths,
     semantics_path: &Path,
 ) -> Result<String> {
     log::info!("generate slither metadata");
     let slither_metadata =
-        generate_slither_metadata_prompt_context(repo_root, &semantics_path).await?;
+        generate_slither_metadata_prompt_context(&repo.root, &semantics_path).await?;
     log::info!("generate summary of all files");
-    let summaries = summarize::summarize_src_files(repo_root, &semantics_path).await?;
+    let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
     let mut file_summaries = String::new();
 
     for summary in summaries {

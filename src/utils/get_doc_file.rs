@@ -3,15 +3,24 @@ use std::{fs, path::Path};
 use anyhow::Result;
 use walkdir::WalkDir;
 
-pub fn extract_content_from_docs(repo_root: &Path) -> Result<String> {
+use crate::prepare_code::git_clone::RepoPaths;
+
+pub fn extract_content_from_docs(repo: &RepoPaths) -> Result<String> {
     let mut out = String::new();
 
-    for entry in WalkDir::new(&repo_root)
+    let repo_code_root = repo.root.join(repo.repo_name.clone());
+    for entry in WalkDir::new(&repo_code_root)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
     {
         let path = entry.path();
+
+        // Skip directories and symlinks
+        if fs::symlink_metadata(path)?.file_type().is_symlink() {
+            continue;
+        }
+
         let filename = path
             .file_name()
             .map(|name| name.to_string_lossy())

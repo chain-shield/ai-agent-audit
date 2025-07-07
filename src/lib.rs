@@ -14,13 +14,16 @@ pub mod build_brain {
     pub mod summarize;
 
     /// Handles repository cloning and file filtering
-    pub mod git_clone;
     pub mod graph_db;
     pub mod inheritance;
     /// Interfaces with the Slither static analysis tool
     pub mod slither_ffi;
     /// Provides functionality for interacting with the Qdrant vector database
     pub mod vector_db;
+}
+
+pub mod prepare_code {
+    pub mod git_clone;
 }
 
 pub mod reporting {
@@ -114,6 +117,7 @@ pub mod invariant_prompts {
 pub mod utils {
     /// Provides access to the OpenAI tokenizer (BPE) used for text chunking
     pub mod bpe;
+    pub mod delete_docker_volumes;
     pub mod extract_retry;
     pub mod fn_labels;
     pub mod get_doc_file;

@@ -1,6 +1,6 @@
 use std::{fs::File, io::Write};
 
-use crate::build_brain::git_clone::RepoPaths;
+use crate::prepare_code::git_clone::RepoPaths;
 
 use super::audit::ReportType;
 

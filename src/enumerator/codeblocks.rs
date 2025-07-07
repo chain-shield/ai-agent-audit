@@ -9,12 +9,12 @@ use crate::enumerator::utils::{
     get_function_metadata_from_id, get_hashmap_of_contract_to_functions,
     get_token_count_of_function_ir,
 };
+use crate::prepare_code::git_clone::RepoPaths;
 
 use anyhow::Result;
 use log::info;
 use rusqlite::Connection;
 use std::collections::{HashSet, VecDeque};
-use std::path::Path;
 use uuid::Uuid;
 
 use super::codeblock_db::CodeBlocksDb;
@@ -41,7 +41,7 @@ use super::codeblock_db::CodeBlocksDb;
 /// # Returns
 /// * `Result<()>` - Ok if successful, Error otherwise
 pub async fn generate_codeblock_from_codebase(
-    repo_root: &Path,
+    repo: &RepoPaths,
     semantic_db: &Connection,
     codeblock_db: &CodeBlocksDb,
     max_depth: usize,
@@ -51,7 +51,7 @@ pub async fn generate_codeblock_from_codebase(
     // the slither issue may be scoped to 1 function in 1 contract, however we pull the
     // ENTIRE contract so there is more context for llm
     log::info!("getting contract to func mapping");
-    let contract_to_func_map = get_hashmap_of_contract_to_functions(repo_root, semantic_db)?;
+    let contract_to_func_map = get_hashmap_of_contract_to_functions(repo, semantic_db)?;
 
     for (contract, functions_of_contract) in contract_to_func_map {
         // Check if codeblock already generated for this seed
@@ -84,8 +84,7 @@ pub async fn generate_codeblock_from_codebase(
             all_funcs_connected_to_contract.push(func.clone());
 
             // get token count of new fn + IR + storage
-            let token_count_fn_ir_storage =
-                get_token_count_of_function_ir(&func, repo_root).await?;
+            let token_count_fn_ir_storage = get_token_count_of_function_ir(&func, repo).await?;
             // info!("token_count_fn_ir_storage => {}", token_count_fn_ir_storage);
 
             // check budget, make sure not exceeding token context window
@@ -114,13 +113,13 @@ pub async fn generate_codeblock_from_codebase(
         let mut markdown_codeblock_for_llm = String::new();
         // list storage vars
         for contract in &contracts {
-            let storage_var_ir = generate_code_slice_for_storage(contract, repo_root).await?;
+            let storage_var_ir = generate_code_slice_for_storage(contract, repo).await?;
             // loop through and add all functions of contract
             markdown_codeblock_for_llm.push_str(&storage_var_ir);
             markdown_codeblock_for_llm.push('\n');
         }
         for func in &all_funcs_connected_to_contract {
-            let function_ir_code = generate_codeblock_for_function(func, repo_root).await?;
+            let function_ir_code = generate_codeblock_for_function(func, repo).await?;
             markdown_codeblock_for_llm.push_str(&function_ir_code);
             markdown_codeblock_for_llm.push('\n');
         }

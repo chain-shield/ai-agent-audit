@@ -1,3 +1,4 @@
+use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::get_fn_name::get_function_name;
 
 use super::fn_summaries::get_function_summaries;
@@ -5,9 +6,10 @@ use super::graph_db::GraphDb;
 /// This module handles the enrichment of smart contract data using Slither analysis.
 /// It provides functionality to extract intermediate representation (IR) and storage information
 /// from Solidity contracts, and to build Forge projects.
-use super::slither_ffi::{SlithIRFn, StorageVar};
+use super::slither_ffi::{self, SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
 use anyhow::Result;
+use log::info;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -46,21 +48,24 @@ pub fn forge_build(repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn build_semantics_db_from_call_graph(repo_root: &Path) -> Result<PathBuf> {
+pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathBuf> {
     // 1. open DB file
-    let db_path = repo_root.join(".cache").join("semantics.db");
+    let db_path = repo.root.join(".cache").join("semantics.db");
     std::fs::create_dir_all(db_path.parent().unwrap())?;
     let db = Arc::new(Mutex::new(GraphDb::create(&db_path)?));
+    let repo = Arc::new(repo);
 
+    let repo_func = Arc::clone(&repo);
     let db_func = Arc::clone(&db);
-    let root = repo_root.to_path_buf();
     let handle = tokio::spawn(async move {
         let result: Result<()> = async move {
             // 2. extract DOT blobs
-            let json = callgraph::generate_slither_call_graph(&root).await?;
+            info!("extracting DOT blobs");
+            let json = slither_ffi::run_printer_json(&repo_func, "call-graph").await?;
             let blobs = callgraph::extract_dot_blobs(&json)?;
             let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs)?;
-            let funcs = get_function_summaries(&root).await?;
+            info!("getting function summaries...");
+            let funcs = get_function_summaries(&repo_func).await?;
 
             // 3. insert functions
             // info!("funcs => {:?}", funcs);
@@ -111,10 +116,12 @@ pub async fn build_semantics_db_from_call_graph(repo_root: &Path) -> Result<Path
     });
 
     let db_inheritance = Arc::clone(&db);
-    let root = repo_root.to_path_buf();
+    let repo_inheritance = Arc::clone(&repo);
     let handle_inheritance = tokio::spawn(async move {
         let result: Result<()> = async move {
-            let inheritance_json = inheritance::generate_slither_inheritance(&root).await?;
+            info!("generating inheritance json");
+            let inheritance_json =
+                slither_ffi::run_printer_json(&repo_inheritance, "inheritance").await?;
             let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
             // info!("dot functions => {:?}", funcs);
             // info!("dot edges => {:?}", edges);

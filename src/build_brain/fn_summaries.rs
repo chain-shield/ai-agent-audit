@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::path::Path;
 
-use crate::build_brain::slither_ffi::run_printer;
+use crate::{build_brain::slither_ffi::run_printer, prepare_code::git_clone::RepoPaths};
 
 /// What we keep for every function
 #[derive(Debug, Deserialize, Clone)]
@@ -105,9 +105,9 @@ pub fn get_contract_name(line: &str) -> String {
         .to_string()
 }
 
-pub async fn get_function_summaries(repo_root: &Path) -> Result<Vec<FnSummary>> {
+pub async fn get_function_summaries(repo: &RepoPaths) -> Result<Vec<FnSummary>> {
     // 1. run slither
-    let raw = run_printer(repo_root, "function-summary").await?;
+    let raw = run_printer(repo, "function-summary").await?;
 
     Ok(parse_table(&raw))
 }

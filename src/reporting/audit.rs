@@ -1,11 +1,12 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::{
-    build_brain::{git_clone::RepoPaths, summarize},
+    build_brain::summarize,
     llm_review::{
         config::{ContractInvariants, Findings},
         enums::Severity,
     },
+    prepare_code::git_clone::RepoPaths,
 };
 
 const SEVERITIES: [Severity; 4] = [
@@ -43,7 +44,7 @@ pub async fn generated_audit_report(
     audit_report.push_str("## Protocol Overview \n\n");
 
     log::info!("generate summary of protocol");
-    let protocol_overview = summarize::summarize_protocol(&repo.root, semantics_path).await?;
+    let protocol_overview = summarize::summarize_protocol(repo, semantics_path).await?;
 
     audit_report.push_str(&protocol_overview);
 
