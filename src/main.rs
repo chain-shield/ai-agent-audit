@@ -70,9 +70,6 @@ async fn main() -> Result<()> {
     vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
         .await?;
 
-    // clean up
-    cleanup_repo_volume(&repo.root)?;
-    return Ok(());
     let (security_issues, invariants) =
         code_review::review_codebase_for_security_issues(&codeblocks_db).await?;
 

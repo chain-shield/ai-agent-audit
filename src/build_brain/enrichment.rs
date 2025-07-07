@@ -24,30 +24,6 @@ pub struct Enriched {
     pub storage: Vec<StorageVar>,
 }
 
-/// Builds a Forge project by running `forge install` and `forge build`.
-///
-/// This function executes the necessary Forge commands to install dependencies
-/// and build the Solidity contracts in the repository.
-///
-/// @param repo_root - Path to the repository root containing the Forge project
-/// @return Result indicating success or failure
-pub fn forge_build(repo_root: &Path) -> Result<()> {
-    // Step 1: Run `forge install` to pull in remappings
-    let install_status = Command::new("forge")
-        .current_dir(repo_root)
-        .arg("install")
-        .status()?;
-    anyhow::ensure!(install_status.success(), "`forge install` failed");
-
-    // Step 2: Now build
-    let build_status = Command::new("forge")
-        .current_dir(repo_root)
-        .args(["-q", "build", "--build-info"])
-        .status()?;
-    anyhow::ensure!(build_status.success(), "`forge build` failed");
-    Ok(())
-}
-
 pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathBuf> {
     // 1. open DB file
     let db_path = repo.root.join(".cache").join("semantics.db");

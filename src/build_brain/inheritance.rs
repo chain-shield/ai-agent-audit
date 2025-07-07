@@ -7,47 +7,6 @@ use crate::{
     prepare_code::git_clone::RepoPaths,
 };
 
-/// envelope runner (JSON wrapper identical to call-graph helper)
-pub async fn generate_slither_inheritance(repo: &RepoPaths) -> Result<String> {
-    let key = cache_key(&repo.root, "inheritance");
-    let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
-    let mut printer_cache = cache.lock().await;
-
-    // Return cached output if exists
-    if let Some(cached) = printer_cache.get(&key) {
-        return Ok(cached.clone());
-    }
-    // let out = Command::new("slither")
-    //     .current_dir(repo)
-    //     .args([".", "--print", "inheritance", "--json", "-"])
-    //     .output()?;
-
-    let out = Command::new("docker")
-        .args([
-            "run",
-            "--rm",
-            "-v",
-            &format!("{}:/workspace", &repo.root.display()),
-            "ghcr.io/trailofbits/eth-security-toolbox:nightly",
-            "slither",
-            &repo.repo_name, // Use the already-built repo folder
-            "--print",
-            "inheritance",
-            "--json",
-            "-",
-        ])
-        .output()?;
-
-    anyhow::ensure!(out.status.success(), "slither inheritance failed");
-
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-
-    log::info!("slither inheritance => {}", text);
-    // Save to cache and return
-    printer_cache.insert(key, text.clone());
-    Ok(text)
-}
-
 /// Step 2: pull every DOT file’s `content` string
 pub fn parse_inheritance_json(json: &str) -> Result<Vec<(String, String)>> {
     /// Represents a list of immediate and non-immediate inheritance relationships.
