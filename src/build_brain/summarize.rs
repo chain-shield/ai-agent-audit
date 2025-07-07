@@ -58,8 +58,7 @@ pub async fn summarize_src_files(
     let openai_client = openai::Client::from_env();
 
     let context =
-        prompt_content::generate_slither_metadata_prompt_context(&repo.root, &semantics_path)
-            .await?;
+        prompt_content::generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");

@@ -32,47 +32,6 @@ pub async fn get_dot_funcs_and_dot_edges(repo: &RepoPaths) -> Result<(Vec<DotFun
     parse_dot_blobs(&blobs)
 }
 
-/// Step 1: run Slither and grab the JSON envelope
-// pub async fn generate_slither_call_graph(repo: &RepoPaths) -> Result<String> {
-//     let key = cache_key(&repo.root, "call-graph");
-//     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
-//     let mut printer_cache = cache.lock().await;
-//
-//     // Return cached output if exists
-//     if let Some(cached) = printer_cache.get(&key) {
-//         return Ok(cached.clone());
-//     }
-//
-//     let out = Command::new("docker")
-//         .args([
-//             "run",
-//             "--rm",
-//             "-v",
-//             &format!("{}:/workspace", &repo.root.display()),
-//             "ghcr.io/trailofbits/eth-security-toolbox:nightly",
-//             "slither",
-//             &repo.repo_name, // Use the already-built repo folder
-//             "--print",
-//             "call-graph",
-//             "--json",
-//             "-",
-//         ])
-//         .output()?;
-//
-//     // let out = Command::new("slither")
-//     //     .current_dir(repo)
-//     //     .args([".", "--print", "call-graph", "--json", "-"])
-//     //     .output()?;
-//     anyhow::ensure!(out.status.success(), "slither call-graph failed");
-//
-//     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-//     log::info!("callgraph output => {}", text);
-//
-//     // Save to cache and return
-//     printer_cache.insert(key, text.clone());
-//     Ok(text)
-// }
-
 /// Step 2: pull every DOT file’s `content` string
 pub fn extract_dot_blobs(json: &str) -> Result<Vec<String>> {
     #[derive(Deserialize)]

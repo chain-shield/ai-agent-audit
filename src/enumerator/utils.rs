@@ -262,6 +262,8 @@ pub fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
         anyhow::bail!("no src/ folder found at {}", src_root.display());
     }
 
+    info!("src root => {:?}", src_root);
+
     // Regex matches `contract Foo`, ignores `interface` / `library`
     let re = Regex::new(r"(?m)^\s*contract\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     let mut out = Vec::<String>::new();

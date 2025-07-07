@@ -60,29 +60,27 @@ pub struct StorageVar {
     pub r#type: String,
 }
 
-pub async fn get_all_files_src(repo: &Path) -> Result<String> {
-    let key = cache_key(repo, "src-files");
-    let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
-    let mut printer_cache = cache.lock().await;
-
-    // Return cached output if exists
-    if let Some(cached) = printer_cache.get(&key) {
-        return Ok(cached.clone());
-    }
-
-    let out = Command::new("fd")
-        .current_dir(repo)
-        .args([".", "src/"])
-        .output()?;
-    // anyhow::ensure!(out.status.success(), "slither --sarif failed");
-    //
-    // Use whichever stream is non-empty (some printers output to stdout, others to stderr)
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-
-    // Save to cache and return
-    printer_cache.insert(key, text.clone());
-
-    Ok(text)
+pub fn get_all_files_src(repo: &RepoPaths) -> String {
+    repo.sol_files
+        .iter()
+        .filter(|p| {
+            // Check if the file itself is a symlink
+            match fs::symlink_metadata(p) {
+                Ok(metadata) => !metadata.file_type().is_symlink(),
+                Err(_) => {
+                    log::warn!("Skipping unreadable path: {:?}", p);
+                    false
+                }
+            }
+        })
+        .filter_map(|path| {
+            let path_str = path.to_string_lossy();
+            path_str
+                .find(&format!("{}/src", &repo.repo_name))
+                .map(|idx| path_str[idx..].to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
@@ -100,6 +98,7 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
     let out = Command::new("docker")
         .args([
             "run",
+            "--read-only",
             "--rm",
             "-v",
             &volume,
@@ -151,6 +150,7 @@ pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
     let output = Command::new("docker")
         .args([
             "run",
+            "--read-only",
             "--rm",
             "-v",
             &volume,
@@ -274,11 +274,11 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
     // info!("storage vec => {:?}", storage_vec);
 
     let (funcs, edges) = callgraph::get_dot_funcs_and_dot_edges(repo).await?;
-    let inheritance_json = inheritance::generate_slither_inheritance(repo).await?;
+    let inheritance_json = run_printer_json(repo, "inheritance").await?;
     let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
     let contract_summary = run_printer(repo, "contract-summary").await?;
     let contract_summary_vec = parse_slithir_contract_summary(&contract_summary);
-    let src_file_list = get_all_files_src(&repo.root).await?;
+    let src_file_list = get_all_files_src(repo);
     let summaries = summarize_src_files(repo, &semantics_path).await?;
 
     // 2 . serialise each artefact → one text file
