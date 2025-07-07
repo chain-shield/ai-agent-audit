@@ -15,7 +15,8 @@ use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
 use crate::{
-    cost::cost_data::add_to_inference_cost_by_type, utils::extract_retry::extractor_with_retry,
+    cost::cost_data::add_to_inference_cost_by_type, prepare_code::git_clone::RepoPaths,
+    utils::extract_retry::extractor_with_retry,
 };
 use crate::{
     cost::cost_data::LlmCostType,
@@ -39,10 +40,10 @@ pub struct FileSummary {
 }
 
 pub async fn summarize_src_files(
-    repo_root: &Path,
+    repo: &RepoPaths,
     semantics_path: &Path,
 ) -> Result<Vec<SrcFileSummary>> {
-    let key = cache_key(repo_root, "file_summaries");
+    let key = cache_key(&repo.root, "file_summaries");
     let cache = Arc::clone(&FILE_SUMMARY_CACHE);
     let mut summaries_cache = cache.lock().await;
 
@@ -57,7 +58,7 @@ pub async fn summarize_src_files(
     let openai_client = openai::Client::from_env();
 
     let context =
-        prompt_content::generate_slither_metadata_prompt_context(repo_root, &semantics_path)
+        prompt_content::generate_slither_metadata_prompt_context(&repo.root, &semantics_path)
             .await?;
 
     // info!("slither metadata => {:#?}", context);
@@ -74,21 +75,27 @@ pub async fn summarize_src_files(
         .build();
 
     // Walk through the repository and collect relevant files
-    for entry in WalkDir::new(&repo_root).into_iter().filter_map(Result::ok) {
+    let repo_code_root = repo.root.join(repo.repo_name.clone());
+    for entry in WalkDir::new(&repo_code_root)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
         let path = entry.path();
 
-        // Skip directories
-        if !path.is_file() {
+        // Skip directories and symlinks
+        if !path.is_file() || fs::symlink_metadata(path)?.file_type().is_symlink() {
             continue;
         }
+
         let is_readme = path
             .file_name()
             .map(|f| f.to_ascii_lowercase() == "readme.md")
             .unwrap_or(false)
-            && (path.parent() == Some(&repo_root) || path.parent() == Some(&repo_root.join("src")));
+            && (path.parent() == Some(&repo_code_root)
+                || path.parent() == Some(&repo_code_root.join("src")));
 
         let is_sol_in_src = path.extension().map_or(false, |ext| ext == "sol")
-            && path.starts_with(&repo_root.join("src"));
+            && path.starts_with(&repo_code_root.join("src"));
 
         if is_readme || is_sol_in_src {
             let content = fs::read_to_string(path)?;
@@ -104,7 +111,7 @@ pub async fn summarize_src_files(
                     .await?;
 
             // filename is relative to root folder ie src/PuppyRaffle.sol
-            let file = path.strip_prefix(repo_root)?.to_string_lossy().to_string();
+            let file = path.strip_prefix(&repo.root)?.to_string_lossy().to_string();
 
             summaries.push(SrcFileSummary {
                 filename: file,
@@ -119,7 +126,7 @@ pub async fn summarize_src_files(
     Ok(summaries)
 }
 
-pub async fn summarize_protocol(repo_root: &Path, semantics_path: &Path) -> Result<String> {
+pub async fn summarize_protocol(repo: &RepoPaths, semantics_path: &Path) -> Result<String> {
     // let key = cache_key(repo_root, "protocol-summary");
     // let cache = Arc::clone(&FILE_SUMMARY_CACHE);
     // let mut summaries_cache = cache.lock().await;
@@ -140,7 +147,7 @@ pub async fn summarize_protocol(repo_root: &Path, semantics_path: &Path) -> Resu
     let openai_client = openai::Client::from_env();
 
     log::info!("generate context for code review");
-    let content = generate_context_for_code_review(repo_root, &semantics_path).await?;
+    let content = generate_context_for_code_review(repo, &semantics_path).await?;
     let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, 
                    please create a max 200 word summary of this protocol explaining what it is, and how it works.  Format 
                    in markdown for easy reading. Respond only with valid JSON matching the schema!";

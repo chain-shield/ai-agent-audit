@@ -1,17 +1,17 @@
 /// This module handles the intake of repositories for analysis.
 /// It provides functionality to clone repositories, filter files based on extensions,
 /// and organize them for further processing.
-use anyhow::Result;
-use git2::Repository;
+use anyhow::{Context, Result};
 use ignore::gitignore::GitignoreBuilder;
+use std::fs;
 use std::path::PathBuf;
-use tempfile::TempDir;
+use std::process::Command;
 use walkdir::WalkDir;
 
 /// Contains paths to the repository root and relevant files.
 /// This struct organizes the paths to Solidity files and documentation
 /// that will be processed for analysis.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RepoPaths {
     /// Path to the repository root directory
     pub root: PathBuf,
@@ -31,6 +31,8 @@ impl RepoPaths {
     }
 }
 
+pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
+
 /// Clones a repository from a URL and filters its files.
 ///
 /// This function:
@@ -41,9 +43,9 @@ impl RepoPaths {
 /// @param url - URL of the Git repository to clone
 /// @return Result containing the filtered repository paths
 pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
-    // 1. Create a temporary parent directory (will not auto-delete once we .into_path())
-    let tmp = TempDir::new()?;
-    let tmp_path = tmp.keep();
+    // // 1. Create a temporary parent directory (will not auto-delete once we .into_path())
+    // let tmp = TempDir::new()?;
+    // let tmp_path = tmp.keep();
 
     // 2. Extract & sanitize the repo name
     let repo_name = url
@@ -53,19 +55,16 @@ pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
         .unwrap_or("repo")
         .to_string();
 
-    // 3. First clone into a stub directory
-    let stub = tmp_path.join("repo-stub");
-    let repo = Repository::clone(url, &stub)?;
+    // // 3. First clone into a stub directory
+    // let stub = tmp_path.join("repo-stub");
 
     // 4. Read HEAD and get the first 6 chars of the commit SHA
-    let head = repo.head()?;
-    let commit = head.peel_to_commit()?;
-    let commit_hash = commit.id().to_string();
+    let commit_hash = get_commit_hash(url)?;
     let short_hash = &commit_hash[..6];
 
-    // 5. Build the final directory name and rename
-    let root = tmp_path.join(format!("{}-{}", &repo_name, short_hash));
-    std::fs::rename(&stub, &root)?;
+    // 5. git clone, install, and build in secure docker container
+    // returns dierctory where files are located
+    let root = clone_and_build_repo(url, &repo_name, short_hash)?;
 
     // 6. Build .gitignore matcher
     let mut ign = GitignoreBuilder::new(&root);
@@ -79,7 +78,11 @@ pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
     let mut docs = Vec::new();
     for entry in WalkDir::new(&root).into_iter().filter_map(Result::ok) {
         let path = entry.path();
-        if ign.matched(path, false).is_ignore() {
+
+        // skip if gitignore or simlink
+        if ign.matched(path, false).is_ignore()
+            || fs::symlink_metadata(path)?.file_type().is_symlink()
+        {
             continue;
         }
         match path.extension().and_then(|e| e.to_str()) {
@@ -105,4 +108,62 @@ pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
         repo_name,
         commit_hash,
     })
+}
+
+pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) -> Result<PathBuf> {
+    let docker_volume = format!("{}/{}-{}", DOCKER_VOLUME, repo_name, &commit_hash[..6]);
+
+    // Shallow clone for speed and security
+    log::info!("git cloning repo...");
+    let status = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "-v",
+            &format!("{}:/workspace", docker_volume),
+            "-w",
+            "/workspace",
+            "ghcr.io/trailofbits/eth-security-toolbox:nightly",
+            "bash",
+            "-c",
+            &format!(
+                "git clone --depth=1 {repo_url} {repo_name} && \
+             cd {repo_name} && \
+             if [ -f foundry.toml ]; then forge install && forge build; \
+             elif [ -f hardhat.config.js ] || [ -f hardhat.config.ts ]; then \
+             npm install -g hardhat && npm install && npx hardhat compile; \
+             else echo 'No build system detected'; fi"
+            ),
+        ])
+        .status()
+        .context("Failed to clone and build repository in Docker")?;
+
+    if !status.success() {
+        anyhow::bail!("Clone and Build failed in Docker");
+    }
+
+    Ok(PathBuf::from(docker_volume))
+}
+
+fn get_commit_hash(repo_url: &str) -> Result<String> {
+    let output = Command::new("git")
+        .args(["ls-remote", repo_url, "HEAD"])
+        .output()
+        .context("Failed to run git ls-remote")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "git ls-remote failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let commit_hash = stdout
+        .split_whitespace()
+        .next()
+        .context("Unexpected ls-remote output format")?
+        .to_string();
+
+    Ok(commit_hash)
 }

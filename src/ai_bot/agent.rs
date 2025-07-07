@@ -1,6 +1,6 @@
 use anyhow::Result;
 use log::info;
-use qdrant_client::{Qdrant, qdrant::QueryPointsBuilder};
+use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
 use rig::providers::openai::TEXT_EMBEDDING_3_SMALL;
 use rig::{
     agent::{Agent, AgentBuilder},
@@ -9,15 +9,14 @@ use rig::{
     vector_store::VectorStoreIndex, // trait
 };
 use rig_qdrant::QdrantVectorStore;
-use std::path::{Path, PathBuf};
 
 use crate::build_brain::enbeddings::SourceChunk;
-use crate::build_brain::git_clone::RepoPaths;
+use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::get_doc_file::extract_content_from_docs;
 use crate::utils::logging::print_first_four_lines;
 
-pub fn create_ai_audit_agent(repo_root: PathBuf) -> Result<Agent<CompletionModel>> {
-    let documentation = extract_content_from_docs(&repo_root)?;
+pub fn create_ai_audit_agent(repo: &RepoPaths) -> Result<Agent<CompletionModel>> {
+    let documentation = extract_content_from_docs(repo)?;
 
     let openai = Client::new(&std::env::var("OPENAI_API_KEY")?);
 
@@ -57,7 +56,7 @@ pub async fn get_context_for_security_query(
     query_content: &str,
     repo: &RepoPaths,
 ) -> Result<String> {
-    let documentation = extract_content_from_docs(&repo.root)?;
+    let documentation = extract_content_from_docs(repo)?;
 
     let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL")?)
         .build()

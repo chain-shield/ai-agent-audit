@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use log::info;
 use regex::Regex;
 use rusqlite::params_from_iter;
@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension};
 use std::fs;
 use walkdir::WalkDir;
 
+use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
 use crate::utils::get_fn_name::get_function_name;
@@ -33,7 +34,7 @@ use crate::{
 /// * `anyhow::Result<String>` - The generated markdown codeblock
 pub async fn generate_codeblock_for_function(
     func: &SmartContractFunction,
-    repo: &Path,
+    repo: &RepoPaths,
 ) -> anyhow::Result<String> {
     let ir_map = get_code_ir_map(repo).await?;
     let mut function_slice = String::new();
@@ -67,7 +68,7 @@ pub async fn generate_codeblock_for_function(
 /// * `anyhow::Result<String>` - The generated markdown codeblock
 pub async fn generate_code_slice_for_storage(
     contract: &str,
-    repo: &Path,
+    repo: &RepoPaths,
 ) -> anyhow::Result<String> {
     let storage_map = get_storage_map(repo).await?;
     let mut storage_slice = String::new();
@@ -124,12 +125,12 @@ pub async fn generate_code_slice_for_storage(
 // }
 
 pub fn get_hashmap_of_contract_to_functions(
-    repo_root: &Path,
+    repo: &RepoPaths,
     semantic_db: &Connection,
 ) -> anyhow::Result<HashMap<String, Vec<SmartContractFunction>>> {
     // find all main contracts for app (ones in /src)
     info!("grabbing all contracts...");
-    let contracts_in_src_folder = contracts_in_src(repo_root)?;
+    let contracts_in_src_folder = contracts_in_src(repo)?;
 
     let placeholders = contracts_in_src_folder
         .iter()
@@ -192,7 +193,7 @@ pub fn get_hashmap_of_contract_to_functions(
 /// * `anyhow::Result<usize>` - The token count
 pub async fn get_token_count_of_function_ir(
     func: &SmartContractFunction,
-    repo: &Path,
+    repo: &RepoPaths,
 ) -> anyhow::Result<usize> {
     // Generate the function's markdown codeblock
     let fn_text = generate_codeblock_for_function(func, repo).await?;
@@ -214,7 +215,7 @@ pub async fn get_token_count_of_function_ir(
 ///
 /// # Returns
 /// * `anyhow::Result<HashMap<(String, String), SlithIRFn>>` - Map of (contract, function) to SlithIR
-async fn get_code_ir_map(repo: &Path) -> anyhow::Result<HashMap<(String, String), SlithIRFn>> {
+async fn get_code_ir_map(repo: &RepoPaths) -> anyhow::Result<HashMap<(String, String), SlithIRFn>> {
     // Regex to extract function name from full signature (e.g., "Contract.function(args)")
     let extract_function_name = Regex::new(r#"[A-Za-z0-9$_]+\.([A-Za-z0-9$_]+)\([^)]*\)"#)?;
 
@@ -239,7 +240,7 @@ async fn get_code_ir_map(repo: &Path) -> anyhow::Result<HashMap<(String, String)
     Ok(ir_map)
 }
 
-async fn get_storage_map(repo: &Path) -> anyhow::Result<HashMap<String, Vec<StorageVar>>> {
+async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec<StorageVar>>> {
     let (_, storage_vec, _) =
         build_brain::slither_ffi::get_slither_metadata_and_issues(repo).await?;
 
@@ -255,8 +256,8 @@ async fn get_storage_map(repo: &Path) -> anyhow::Result<HashMap<String, Vec<Stor
 
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
-pub fn contracts_in_src(repo_root: &Path) -> Result<Vec<String>> {
-    let src_root = repo_root.join("src");
+pub fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
+    let src_root = repo.root.join(repo.repo_name.clone()).join("src");
     if !src_root.exists() {
         anyhow::bail!("no src/ folder found at {}", src_root.display());
     }
@@ -270,6 +271,11 @@ pub fn contracts_in_src(repo_root: &Path) -> Result<Vec<String>> {
         .filter_map(Result::ok)
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "sol"))
     {
+        // Skip directories and symlinks
+        if fs::symlink_metadata(entry.path())?.file_type().is_symlink() {
+            continue;
+        }
+
         let content = fs::read_to_string(entry.path())?;
         for cap in re.captures_iter(&content) {
             out.push(cap[1].to_string());

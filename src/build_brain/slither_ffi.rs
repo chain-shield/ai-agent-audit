@@ -1,7 +1,7 @@
 /// This module provides an interface to the Slither static analysis tool for Solidity.
 /// It handles running Slither printers, parsing their output, and extracting useful information
 /// such as SlithIR (intermediate representation) and storage variable details.
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 use crate::build_brain::inheritance;
 use crate::build_brain::parsers::parse_slithir_contract_summary;
 use crate::build_brain::summarize::summarize_src_files;
+use crate::prepare_code::git_clone::RepoPaths;
 
 use super::callgraph;
 use super::parsers::{parse_slither, parse_slithir_ssa, parse_storage};
@@ -84,17 +85,36 @@ pub async fn get_all_files_src(repo: &Path) -> Result<String> {
     Ok(text)
 }
 
-pub fn run_slither_detector(repo: &Path) -> Result<String> {
-    let out = Command::new("slither")
-        .current_dir(repo)
+pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
+    let key = cache_key(&repo.root, "detector");
+    let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
+    let mut printer_cache = cache.lock().await;
+
+    // Return cached output if exists
+    if let Some(cached) = printer_cache.get(&key) {
+        return Ok(cached.clone());
+    }
+
+    log::info!("Running Slither detector");
+    let volume = format!("{}:/workspace", &repo.root.display());
+    let out = Command::new("docker")
         .args([
-            ".",
+            "run",
+            "--rm",
+            "-v",
+            &volume,
+            "-w",
+            "/workspace",
+            "ghcr.io/trailofbits/eth-security-toolbox:nightly",
+            "slither",
+            &repo.repo_name,            // Use the already-built repo folder
+            "--foundry-ignore-compile", // Skip compilation as we've already built with Forge
             "--exclude-dependencies",
-            "--foundry-ignore-compile",
-            "--foundry-out-directory",
+            "--foundry-out-directory", // Specify where to find Forge build artifacts
             "out",
         ])
         .output()?;
+
     // anyhow::ensure!(out.status.success(), "slither --sarif failed");
     //
     // Use whichever stream is non-empty (some printers output to stdout, others to stderr)
@@ -102,6 +122,9 @@ pub fn run_slither_detector(repo: &Path) -> Result<String> {
     if text.trim().is_empty() {
         text = String::from_utf8_lossy(&out.stderr).into_owned();
     }
+
+    // Save to cache and return
+    printer_cache.insert(key, text.clone());
     Ok(text)
 }
 
@@ -113,8 +136,8 @@ pub fn run_slither_detector(repo: &Path) -> Result<String> {
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @param printer - Name of the Slither printer to run (e.g., "slithir-ssa", "variable-order")
 /// @return Result containing the printer's output as a string
-pub async fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
-    let key = cache_key(repo_root, printer);
+pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
+    let key = cache_key(&repo.root, printer);
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
     let mut printer_cache = cache.lock().await;
 
@@ -123,15 +146,23 @@ pub async fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
         return Ok(cached.clone());
     }
 
-    // Execute Slither with the specified printer
-    let output = Command::new("slither")
-        .current_dir(repo_root)
-        .args(&[
-            ".",
+    log::info!("Running Slither printer: {}", printer);
+    let volume = format!("{}:/workspace", &repo.root.display());
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "-v",
+            &volume,
+            "-w",
+            "/workspace",
+            "ghcr.io/trailofbits/eth-security-toolbox:nightly",
+            "slither",
+            &repo.repo_name,            // Use the already-built repo folder
             "--foundry-ignore-compile", // Skip compilation as we've already built with Forge
             "--foundry-out-directory",  // Specify where to find Forge build artifacts
             "out",
-            "--print", // Specify which printer to run
+            "--print",
             printer,
             "--disable-color", // Disable ANSI color codes for easier parsing
         ])
@@ -155,6 +186,46 @@ pub async fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
     Ok(text)
 }
 
+// use for inheritance and call-graph
+pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String> {
+    let key = cache_key(&repo.root, printer);
+    let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
+    let mut printer_cache = cache.lock().await;
+
+    // Return cached output if exists
+    if let Some(cached) = printer_cache.get(&key) {
+        return Ok(cached.clone());
+    }
+
+    log::info!("Running Slither printer: {}", printer);
+    let volume = format!("{}:/workspace", &repo.root.display());
+    let out = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "-v",
+            &volume,
+            "-w",
+            "/workspace",
+            "ghcr.io/trailofbits/eth-security-toolbox:nightly",
+            "slither",
+            &repo.repo_name,
+            "--print",
+            printer,
+            "--json",
+            "-",
+        ])
+        .output()?;
+
+    anyhow::ensure!(out.status.success(), format!("slither {} failed", printer));
+
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+
+    // Save to cache and return
+    printer_cache.insert(key, text.clone());
+
+    Ok(text)
+}
 /// Runs both Slither printers and returns the parsed IR and storage information.
 ///
 /// This function is the main public interface for extracting SlithIR and storage
@@ -164,16 +235,16 @@ pub async fn run_printer(repo_root: &Path, printer: &str) -> Result<String> {
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @return Result containing a tuple of SlithIRFn and StorageVar vectors
 pub async fn get_slither_metadata_and_issues(
-    repo_root: &Path,
+    repo: &RepoPaths,
 ) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>, Vec<String>)> {
     // Run the slithir-ssa printer to get IR information
-    let ir_raw = run_printer(repo_root, "slithir-ssa").await?;
+    let ir_raw = run_printer(repo, "slithir-ssa").await?;
 
     // Run the variable-order printer to get storage information
-    let storage_raw = run_printer(repo_root, "variable-order").await?;
+    let storage_raw = run_printer(repo, "variable-order").await?;
     // info!("storage raw => {}", storage_raw);
 
-    let slither_scan_results = run_slither_detector(repo_root)?;
+    let slither_scan_results = run_slither_detector(repo).await?;
 
     // Parse both outputs and return the results
     Ok((
@@ -193,22 +264,22 @@ pub async fn get_slither_metadata_and_issues(
 /// @param dir - Path to the directory where the text files will be written
 /// @return Result containing a vector of paths to the created files
 pub async fn save_code_metadata_and_analysis_to_txt_files(
-    repo_root: &Path,
+    repo: &RepoPaths,
     dir: &Path,
     semantics_path: &Path,
 ) -> Result<Vec<PathBuf>> {
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
-    let (_, _, slither_scan_vec) = get_slither_metadata_and_issues(repo_root).await?;
+    let (_, _, slither_scan_vec) = get_slither_metadata_and_issues(repo).await?;
     // info!("storage vec => {:?}", storage_vec);
 
-    let (funcs, edges) = callgraph::get_dot_funcs_and_dot_edges(repo_root).await?;
-    let inheritance_json = inheritance::generate_slither_inheritance(repo_root).await?;
+    let (funcs, edges) = callgraph::get_dot_funcs_and_dot_edges(repo).await?;
+    let inheritance_json = inheritance::generate_slither_inheritance(repo).await?;
     let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
-    let contract_summary = run_printer(repo_root, "contract-summary").await?;
+    let contract_summary = run_printer(repo, "contract-summary").await?;
     let contract_summary_vec = parse_slithir_contract_summary(&contract_summary);
-    let src_file_list = get_all_files_src(repo_root).await?;
-    let summaries = summarize_src_files(repo_root, &semantics_path).await?;
+    let src_file_list = get_all_files_src(&repo.root).await?;
+    let summaries = summarize_src_files(repo, &semantics_path).await?;
 
     // 2 . serialise each artefact → one text file
     let mut out_paths = Vec::new();
