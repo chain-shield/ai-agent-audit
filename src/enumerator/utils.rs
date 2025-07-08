@@ -84,46 +84,6 @@ pub async fn generate_code_slice_for_storage(
     Ok(storage_slice)
 }
 
-/// Extracts all functions from a contract referenced in a seed file.
-///
-/// Queries the semantic database to find all functions belonging to the contract
-/// mentioned in the seed file.
-///
-/// # Arguments
-/// * `seed` - The Slither analysis seed
-/// * `semantic_db` - Database connection containing semantic information about the contracts
-///
-/// # Returns
-/// * `anyhow::Result<Vec<SmartContractFunction>>` - List of functions in the contract
-// pub fn get_contract_and_its_functions_from_seed_file(
-//     file: &str, // src/PupplyRaffle
-//     semantic_db: &Connection,
-// ) -> anyhow::Result<Vec<SmartContractFunction>> {
-//     let filename = Path::new(file)
-//         .file_stem() // "PuppyRaffle.sol" → "PuppyRaffle"
-//         .and_then(|s| s.to_str())
-//         .ok_or_else(|| anyhow!("invalid file"))?;
-//
-//     let mut statement =
-//         semantic_db.prepare("SELECT id, contract, name FROM functions WHERE contract LIKE ?1")?;
-//
-//     let rows = statement.query_map([format!("%{}%", filename)], |row| {
-//         Ok(SmartContractFunction {
-//             id: row.get(0)?,
-//             contract: row.get(1)?,
-//             name: row.get(2)?,
-//         })
-//     })?;
-//     let functions_of_contract: Vec<SmartContractFunction> =
-//         rows.collect::<rusqlite::Result<_>>()?;
-//
-//     if functions_of_contract.is_empty() {
-//         return Err(anyhow!("no entry fn found for file {}", file));
-//     }
-//
-//     Ok(functions_of_contract)
-// }
-
 pub fn get_hashmap_of_contract_to_functions(
     repo: &RepoPaths,
     semantic_db: &Connection,
@@ -138,8 +98,6 @@ pub fn get_hashmap_of_contract_to_functions(
         .map(|(i, _)| format!("?{}", i + 1))
         .collect::<Vec<_>>()
         .join(",");
-
-    // info!("placeholders => {:#?}", placeholders);
 
     let mut statement = semantic_db.prepare(&format!(
         "SELECT id, contract, name, visibility, modifiers, mutability FROM functions WHERE contract IN ({})",
@@ -176,7 +134,6 @@ pub fn get_hashmap_of_contract_to_functions(
         map.entry(func.contract.clone()).or_default().push(func)
     }
 
-    // info!("map ==> {:#?}", map);
     Ok(map)
 }
 
@@ -220,7 +177,8 @@ async fn get_code_ir_map(repo: &RepoPaths) -> anyhow::Result<HashMap<(String, St
     let extract_function_name = Regex::new(r#"[A-Za-z0-9$_]+\.([A-Za-z0-9$_]+)\([^)]*\)"#)?;
 
     // Get IR and storage variables from Slither
-    let (ir_vec, _, _) = build_brain::slither_ffi::get_slither_metadata_and_issues(repo).await?;
+    let (ir_vec, _, _) =
+        build_brain::slither_ffi::get_slither_ir_and_storage_for_codeblockcodeblock(repo).await?;
 
     // Create map of (contract, function) -> SlithIRFn
     let ir_map: HashMap<(String, String), SlithIRFn> = ir_vec
@@ -242,7 +200,7 @@ async fn get_code_ir_map(repo: &RepoPaths) -> anyhow::Result<HashMap<(String, St
 
 async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec<StorageVar>>> {
     let (_, storage_vec, _) =
-        build_brain::slither_ffi::get_slither_metadata_and_issues(repo).await?;
+        build_brain::slither_ffi::get_slither_ir_and_storage_for_codeblockcodeblock(repo).await?;
 
     let storage_map: HashMap<String, Vec<StorageVar>> = {
         let mut m = HashMap::<String, Vec<StorageVar>>::new();
@@ -280,7 +238,9 @@ pub fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
 
         let content = fs::read_to_string(entry.path())?;
         for cap in re.captures_iter(&content) {
-            out.push(cap[1].to_string());
+            if let Some(contract_name) = cap.get(1) {
+                out.push(contract_name.as_str().to_string());
+            }
         }
     }
     Ok(out)

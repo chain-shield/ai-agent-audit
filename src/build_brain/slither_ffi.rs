@@ -18,7 +18,7 @@ use crate::build_brain::summarize::summarize_src_files;
 use crate::prepare_code::git_clone::RepoPaths;
 
 use super::callgraph;
-use super::parsers::{parse_slither, parse_slithir_ssa, parse_storage};
+use super::parsers::{parse_slither, parse_slithir_ir_code, parse_storage};
 
 /// Global cache keyed by (repo_root, printer) tuple stringified
 pub static PRINTER_OUTPUT_CACHE: Lazy<Arc<Mutex<HashMap<String, String>>>> =
@@ -234,7 +234,7 @@ pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String>
 ///
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @return Result containing a tuple of SlithIRFn and StorageVar vectors
-pub async fn get_slither_metadata_and_issues(
+pub async fn get_slither_ir_and_storage_for_codeblockcodeblock(
     repo: &RepoPaths,
 ) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>, Vec<String>)> {
     // Run the slithir-ssa printer to get IR information
@@ -248,7 +248,7 @@ pub async fn get_slither_metadata_and_issues(
 
     // Parse both outputs and return the results
     Ok((
-        parse_slithir_ssa(&ir_raw),
+        parse_slithir_ir_code(&ir_raw),
         parse_storage(&storage_raw),
         parse_slither(&slither_scan_results),
     ))
@@ -270,7 +270,7 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
 ) -> Result<Vec<PathBuf>> {
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
-    let (_, _, slither_scan_vec) = get_slither_metadata_and_issues(repo).await?;
+    let (_, _, slither_scan_vec) = get_slither_ir_and_storage_for_codeblockcodeblock(repo).await?;
     // info!("storage vec => {:?}", storage_vec);
 
     let (funcs, edges) = callgraph::get_dot_funcs_and_dot_edges(repo).await?;

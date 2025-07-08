@@ -29,15 +29,6 @@ use super::codeblock_db::CodeBlocksDb;
 ///    - Storage layout for each contract
 ///    - SlithIR representation for each function
 /// 5. Saves the generated codeblock to the database and cache
-///
-/// # Arguments
-/// * `repo_root` - Path to the repository root
-/// * `seed` - The Slither analysis seed containing vulnerability information
-/// * `semantic_db` - Database connection containing semantic information about the contracts
-/// * `slice_db` - Database for storing generated code slices
-/// * `max_depth` - Maximum depth for BFS traversal of the call graph
-/// * `token_budget` - Maximum token count for the generated codeblock
-///
 /// # Returns
 /// * `Result<()>` - Ok if successful, Error otherwise
 pub async fn generate_codeblock_from_codebase(
@@ -47,9 +38,6 @@ pub async fn generate_codeblock_from_codebase(
     max_depth: usize,
     token_budget: usize,
 ) -> Result<()> {
-    //extract the contract, and all its functions, the slither seed file references
-    // the slither issue may be scoped to 1 function in 1 contract, however we pull the
-    // ENTIRE contract so there is more context for llm
     log::info!("getting contract to func mapping");
     let contract_to_func_map = get_hashmap_of_contract_to_functions(repo, semantic_db)?;
 
