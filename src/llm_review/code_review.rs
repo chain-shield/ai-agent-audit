@@ -9,17 +9,11 @@ use crate::{
             CLAUDE_4_0_SONNET,
         },
         context_state::get_metadata_context,
-        invariants::INVARIANTS,
         prompt_content::generate_prompt_for_issue_check,
         prompt_support::{
-            post_prompt::POST_PROMPT,
-            post_qualify::POST_QUALIFY,
-            post_verify::POST_VERIFY,
-            pre_prompt::PRE_PROMPT,
-            pre_qualify::{self, PRE_QUALIFY},
-            pre_verify::PRE_VERIFY,
-            qualify_prompt::QUALIFY_PROMPT,
-            verify_prompt::VERIFY_PROMPT,
+            post_prompt::POST_PROMPT, post_qualify::POST_QUALIFY, post_verify::POST_VERIFY,
+            pre_prompt::PRE_PROMPT, pre_qualify::PRE_QUALIFY, pre_verify::PRE_VERIFY,
+            qualify_prompt::QUALIFY_PROMPT, verify_prompt::VERIFY_PROMPT,
         },
         review_utils::{
             build_anthropic_agent, build_deepseek_agent, build_gemini_agent, build_openai_agent,
@@ -47,7 +41,7 @@ use super::{
     enums::AIAgent,
 };
 
-const DISCOVER_RUNS: usize = 10;
+const DISCOVER_RUNS: usize = 3;
 
 pub async fn review_codebase_for_security_issues(
     codeblocks_path: &PathBuf,
@@ -120,29 +114,32 @@ pub async fn generate_ai_agents() -> anyhow::Result<(Arc<AIAgent>, Vec<Arc<AIAge
         Some(&added_context_from_ai_brain),
     ));
 
-    let openai_agent = Arc::new(build_openai_agent(
-        &openai_client,
-        1.0,
-        GPT_4O,
-        "You are a world renowned expert in smart-contract security auditing, 
-            known for your uncanny ability to find all security bugs in a protocol, 
-            even the obscure ones.",
-        None,
-    ));
+    /*
+        let openai_agent = Arc::new(build_openai_agent(
+            &openai_client,
+            1.0,
+            GPT_4O,
+            "You are a world renowned expert in smart-contract security auditing,
+                known for your uncanny ability to find all security bugs in a protocol,
+                even the obscure ones.",
+            None,
+        ));
 
-    let deepseek_agent = Arc::new(build_deepseek_agent(
-        &deepseek_client,
-        1.0,
-        DEEPSEEK_CHAT,
-        None,
-    ));
+        let deepseek_agent = Arc::new(build_deepseek_agent(
+            &deepseek_client,
+            1.0,
+            DEEPSEEK_CHAT,
+            None,
+        ));
 
-    let gemini_agent = Arc::new(build_gemini_agent(
-        &gemini_client,
-        1.0,
-        "gemini-2.5-pro",
-        None,
-    ));
+        let gemini_agent = Arc::new(build_gemini_agent(
+            &gemini_client,
+            1.0,
+            "gemini-2.5-pro",
+            None,
+        ));
+
+    */
 
     // agents
     let mut ai_discovery_agents = Vec::new();
@@ -158,17 +155,19 @@ pub async fn generate_ai_agents() -> anyhow::Result<(Arc<AIAgent>, Vec<Arc<AIAge
         CLAUDE_4_0_SONNET,
         64_000,
     ));
-    for _ in 0..DISCOVER_RUNS {
-        ai_discovery_agents.push(gemini_agent.clone());
+
+    // TODO - unpause once antrhopic credits run out
+    // for _ in 0..DISCOVER_RUNS {
+    //     ai_discovery_agents.push(gemini_agent.clone());
+    // }
+
+    // TODO - use anthropic for testing until credits run out
+    for _ in 0..5 {
+        ai_discovery_agents.push(anthropic_agent_3_7_t1.clone());
     }
-    // // TODO - restore to 5
-    // for _ in 0..5 {
-    //     ai_agents.push(anthropic_agent_3_7_t1.clone());
-    // }
-    // // TODO - restore to 3
-    // for _ in 0..3 {
-    //     ai_agents.push(anthropic_agent_4_0_t1.clone());
-    // }
+    for _ in 0..5 {
+        ai_discovery_agents.push(anthropic_agent_4_0_t1.clone());
+    }
     Ok((ai_verify_agent, ai_discovery_agents))
 }
 
