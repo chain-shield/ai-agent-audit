@@ -2,30 +2,10 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path, process::Command, sync::Arc};
 
-use crate::build_brain::slither_ffi::{PRINTER_OUTPUT_CACHE, cache_key};
-
-/// envelope runner (JSON wrapper identical to call-graph helper)
-pub async fn generate_slither_inheritance(repo: &Path) -> Result<String> {
-    let key = cache_key(repo, "inheritance");
-    let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
-    let mut printer_cache = cache.lock().await;
-
-    // Return cached output if exists
-    if let Some(cached) = printer_cache.get(&key) {
-        return Ok(cached.clone());
-    }
-    let out = Command::new("slither")
-        .current_dir(repo)
-        .args([".", "--print", "inheritance", "--json", "-"])
-        .output()?;
-    anyhow::ensure!(out.status.success(), "slither inheritance failed");
-
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-
-    // Save to cache and return
-    printer_cache.insert(key, text.clone());
-    Ok(text)
-}
+use crate::{
+    build_brain::slither_ffi::{cache_key, PRINTER_OUTPUT_CACHE},
+    prepare_code::git_clone::RepoPaths,
+};
 
 /// Step 2: pull every DOT file’s `content` string
 pub fn parse_inheritance_json(json: &str) -> Result<Vec<(String, String)>> {

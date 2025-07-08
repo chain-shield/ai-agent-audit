@@ -4,18 +4,18 @@ use std::path::{Path, PathBuf};
 /// It handles creating collections and upserting vectors with their associated metadata.
 use anyhow::Result;
 use log::info;
+use qdrant_client::qdrant::{
+    vectors_config::Config, CreateCollection, Distance, PointStruct, UpsertPointsBuilder,
+    VectorParams, VectorsConfig,
+};
 use qdrant_client::Payload;
 use qdrant_client::Qdrant;
-use qdrant_client::qdrant::{
-    CreateCollection, Distance, PointStruct, UpsertPointsBuilder, VectorParams, VectorsConfig,
-    vectors_config::Config,
-};
 
 use crate::build_brain::enbeddings::embed_files;
 use crate::build_brain::slither_ffi;
+use crate::prepare_code::git_clone::RepoPaths;
 
 use super::enbeddings::SourceChunk;
-use super::git_clone::RepoPaths;
 
 pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
     repo: &RepoPaths,
@@ -32,7 +32,7 @@ pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
 
     // Extract IR and storage information using Slither and write to text files
     let slither_chunk_paths = slither_ffi::save_code_metadata_and_analysis_to_txt_files(
-        &repo.root,
+        repo,
         tmp_dir.path(),
         &semantic_db,
     )

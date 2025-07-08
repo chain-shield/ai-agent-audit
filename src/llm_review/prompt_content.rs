@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::build_brain::slither_ffi::{cache_key, get_all_files_src, run_printer};
 use crate::build_brain::{callgraph, inheritance, summarize};
+use crate::prepare_code::git_clone::RepoPaths;
 
 use super::config::Finding;
 use super::prompt_support::post_verify::POST_VERIFY;
@@ -19,10 +20,10 @@ pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 pub async fn generate_slither_metadata_prompt_context(
-    repo_root: &Path,
+    repo: &RepoPaths,
     semantics_path: &Path,
 ) -> Result<String> {
-    let key = cache_key(repo_root, "prompt_context");
+    let key = cache_key(&repo.root, "prompt_context");
     let cache = Arc::clone(&PROMPT_CONTEXT);
     let mut context_cache = cache.lock().await;
 
@@ -36,7 +37,8 @@ pub async fn generate_slither_metadata_prompt_context(
     // let callgraph = callgraph::get_enriched_funcs_and_edges(repo_root, &semantics_path).await?;
     // let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
     // let contract_summary = run_printer(repo_root, "contract-summary").await?;
-    let src_file_list = get_all_files_src(repo_root).await?;
+    let src_file_list = get_all_files_src(repo);
+    info!("src_file_list ==> {:#?}", src_file_list);
 
     let mut prompt_context = String::new();
 
@@ -60,14 +62,13 @@ pub async fn generate_slither_metadata_prompt_context(
 }
 
 pub async fn generate_context_for_code_review(
-    repo_root: &Path,
+    repo: &RepoPaths,
     semantics_path: &Path,
 ) -> Result<String> {
     log::info!("generate slither metadata");
-    let slither_metadata =
-        generate_slither_metadata_prompt_context(repo_root, &semantics_path).await?;
+    let slither_metadata = generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
     log::info!("generate summary of all files");
-    let summaries = summarize::summarize_src_files(repo_root, &semantics_path).await?;
+    let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
     let mut file_summaries = String::new();
 
     for summary in summaries {
@@ -80,7 +81,7 @@ pub async fn generate_context_for_code_review(
     full_prompt_context.push_str(&slither_metadata);
     full_prompt_context.push_str(&file_summaries);
 
-    info!("full prompt content SIZE => {}", full_prompt_context.len());
+    info!("full prompt context SIZE => {}", full_prompt_context.len());
 
     Ok(full_prompt_context)
 }
