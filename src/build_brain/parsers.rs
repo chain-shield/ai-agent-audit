@@ -33,7 +33,7 @@ pub fn parse_slither(text: &str) -> Vec<String> {
 ///
 /// @param text - The raw text output from the slithir-ssa printer
 /// @return Vector of SlithIRFn structs containing the parsed data
-pub fn parse_slithir_ssa(text: &str) -> Vec<SlithIRFn> {
+pub fn parse_slithir_ir_code(text: &str) -> Vec<SlithIRFn> {
     let mut current_contract = String::new();
     let mut current_fn = String::new();
     let mut buf = String::new();

@@ -33,17 +33,17 @@ pub async fn generate_slither_metadata_prompt_context(
     }
 
     // 1 . gather IR + storage  (re-use existing function)
-    info!("get ir and storage chunks");
+    info!("get contract summary and source files");
     // let callgraph = callgraph::get_enriched_funcs_and_edges(repo_root, &semantics_path).await?;
     // let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
-    // let contract_summary = run_printer(repo_root, "contract-summary").await?;
+    let contract_summary = run_printer(repo, "contract-summary").await?;
     let src_file_list = get_all_files_src(repo);
     info!("src_file_list ==> {:#?}", src_file_list);
 
     let mut prompt_context = String::new();
 
-    // prompt_context.push_str("\n## Slither Contract Summary\n");
-    // prompt_context.push_str(&contract_summary);
+    prompt_context.push_str("\n## Slither Contract Summary\n");
+    prompt_context.push_str(&contract_summary);
     prompt_context.push_str("\n## List of Files in Src Folder\n");
     prompt_context.push_str(&src_file_list);
     // prompt_context.push_str("\n## Slither Call Graph\n");
