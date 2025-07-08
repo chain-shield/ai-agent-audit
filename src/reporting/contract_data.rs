@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    build_brain::git_clone::RepoPaths, enumerator::codeblock_db::CodeBlocksDb,
+    enumerator::codeblock_db::CodeBlocksDb,
     llm_review::prompt_content::generate_context_for_code_review,
-    reporting::save_file::save_file_locally,
+    prepare_code::git_clone::RepoPaths, reporting::save_file::save_file_locally,
 };
 
 pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> anyhow::Result<()> {
@@ -21,7 +21,7 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
 }
 
 pub async fn save_metadata(semantics_path: &Path, repo: &RepoPaths) -> anyhow::Result<()> {
-    let metadata = generate_context_for_code_review(&repo.root, semantics_path).await?;
+    let metadata = generate_context_for_code_review(repo, semantics_path).await?;
 
     let filename = format!("metadata-{}.md", repo.unique_repo_hash());
     save_file_locally(&metadata, &filename)?;
