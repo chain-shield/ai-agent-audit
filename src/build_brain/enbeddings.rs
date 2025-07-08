@@ -4,10 +4,10 @@
 use anyhow::Result;
 use log::info;
 use rig::{
-    Embed,
     client::EmbeddingsClient,
     embeddings::EmbeddingsBuilder,
     providers::openai::{self, Client},
+    Embed,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
@@ -31,6 +31,7 @@ const CHUNK_TOKENS: usize = 256;
 const OVERLAP: usize = 32;
 /// Number of documents to process in each batch when sending to the embedding model
 const BATCH: usize = 30;
+const MAX_CHUNK_LEN: usize = 4000; // OpenAI API supports ~8192 tokens, but leave headroom
 
 /**
  * Processes a list of files and creates embeddings for their content.
@@ -53,6 +54,23 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(SourceChunk,
     for file in paths {
         let content = fs::read_to_string(file.as_ref())?;
         for (i, chunk) in tokenize(bpe, &content).into_iter().enumerate() {
+            let clean = chunk
+                .replace('\0', "") // Remove null bytes
+                .replace('\u{FFFD}', ""); // Remove replacement chars
+            let clean = clean.trim();
+
+            if clean.is_empty() {
+                log::warn!("Skipping empty chunk from {}", file.as_ref().display());
+                continue;
+            }
+            if clean.len() > MAX_CHUNK_LEN {
+                log::warn!(
+                    "Skipping oversized chunk ({} chars) from {}",
+                    clean.len(),
+                    file.as_ref().display()
+                );
+                continue;
+            }
             docs.push(SourceChunk {
                 text: chunk,
                 metadata: format!("{}:chunk {}", file.as_ref().display(), i),
@@ -88,18 +106,26 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(SourceChunk,
         //         i, doc.text, doc.metadata
         //     );
         // }
-        let batch = EmbeddingsBuilder::new(model.clone())
+        let batch_result = EmbeddingsBuilder::new(model.clone())
             .documents(docs_slice.to_vec())? // slice → Vec
             .build()
-            .await?;
+            .await;
 
-        all_vecs.extend(batch.into_iter().filter_map(|(doc, emb)| {
-            let v = emb.first().vec;
-            if v.is_empty() {
-                return None;
-            } // guard against 0-dim
-            Some((doc, v.into_iter().map(|x| x as f32).collect()))
-        }));
+        match batch_result {
+            Ok(batch) => {
+                all_vecs.extend(batch.into_iter().filter_map(|(doc, emb)| {
+                    let v = emb.first().vec;
+                    if v.is_empty() {
+                        return None;
+                    }
+                    Some((doc, v.into_iter().map(|x| x as f32).collect()))
+                }));
+            }
+            Err(e) => {
+                log::error!("Embedding batch failed: {:#}", e);
+                // Optionally retry, skip or abort here
+            }
+        };
     }
     Ok(all_vecs)
 }

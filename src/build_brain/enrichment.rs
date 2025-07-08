@@ -10,8 +10,7 @@ use super::slither_ffi::{self, SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
 use anyhow::Result;
 use log::info;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

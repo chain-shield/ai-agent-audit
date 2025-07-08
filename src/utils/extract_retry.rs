@@ -1,7 +1,5 @@
-use crate::cost::cost_data::add_to_inference_cost_by_agent;
 use crate::cost::cost_data::add_to_inference_cost_by_type;
 use crate::cost::cost_data::LlmCostType;
-use crate::llm_review::config::Findings;
 use crate::llm_review::config::FromLLMJson;
 use reqwest::StatusCode;
 use rig::agent::Agent;
@@ -34,6 +32,9 @@ where
     let delay = Duration::from_millis(500);
 
     for attempt in 1..=MAX_ATTEMPTS {
+        // add to cost
+        add_to_inference_cost_by_type(input, llm_cost_type).await;
+
         match extractor.extract(input).await {
             Ok(data) => return Ok(data), // ✅ parsed JSON
             Err(ExtractionError::NoData) if attempt < MAX_ATTEMPTS => {

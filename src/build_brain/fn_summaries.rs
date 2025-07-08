@@ -1,6 +1,5 @@
 use anyhow::Result;
 use serde::Deserialize;
-use std::path::Path;
 
 use crate::{build_brain::slither_ffi::run_printer, prepare_code::git_clone::RepoPaths};
 

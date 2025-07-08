@@ -7,13 +7,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::build_brain::slither_ffi::{cache_key, get_all_files_src, run_printer};
-use crate::build_brain::{callgraph, inheritance, summarize};
+use crate::build_brain::summarize;
 use crate::prepare_code::git_clone::RepoPaths;
 
 use super::config::Finding;
-use super::prompt_support::post_verify::POST_VERIFY;
-use super::prompt_support::pre_verify::PRE_VERIFY;
-use super::prompt_support::verify_prompt::VERIFY_PROMPT;
 
 /// Global cache keyed by (repo_root, printer) tuple stringified
 pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
@@ -21,7 +18,7 @@ pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
 
 pub async fn generate_slither_metadata_prompt_context(
     repo: &RepoPaths,
-    semantics_path: &Path,
+    _semantics_path: &Path,
 ) -> Result<String> {
     let key = cache_key(&repo.root, "prompt_context");
     let cache = Arc::clone(&PROMPT_CONTEXT);
@@ -38,7 +35,6 @@ pub async fn generate_slither_metadata_prompt_context(
     // let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
     let contract_summary = run_printer(repo, "contract-summary").await?;
     let src_file_list = get_all_files_src(repo);
-    info!("src_file_list ==> {:#?}", src_file_list);
 
     let mut prompt_context = String::new();
 

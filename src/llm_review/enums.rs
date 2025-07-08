@@ -26,7 +26,7 @@ use rig::{
     extractor::Extractor,
     providers::{
         anthropic::{self},
-        deepseek::{self, DeepSeekCompletionModel},
+        deepseek::DeepSeekCompletionModel,
         gemini::{self},
         openai::{self},
     },

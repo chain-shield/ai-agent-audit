@@ -1,11 +1,6 @@
 use anyhow::Result;
 use serde::Deserialize;
-use std::{collections::HashMap, path::Path, process::Command, sync::Arc};
-
-use crate::{
-    build_brain::slither_ffi::{cache_key, PRINTER_OUTPUT_CACHE},
-    prepare_code::git_clone::RepoPaths,
-};
+use std::collections::HashMap;
 
 /// Step 2: pull every DOT file’s `content` string
 pub fn parse_inheritance_json(json: &str) -> Result<Vec<(String, String)>> {

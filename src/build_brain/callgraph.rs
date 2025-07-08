@@ -2,10 +2,9 @@ use anyhow::Result;
 use regex::Regex;
 use rusqlite::Connection;
 use serde::Deserialize;
-use std::{collections::HashMap, default::Default, path::Path, process::Command, sync::Arc};
+use std::{collections::HashMap, default::Default, path::Path};
 
 use crate::{
-    build_brain::slither_ffi::{cache_key, PRINTER_OUTPUT_CACHE},
     enumerator::utils::get_function_metadata_from_id,
     prepare_code::git_clone::RepoPaths,
     utils::fn_labels::{get_modifiers_label, get_visibility_label},
