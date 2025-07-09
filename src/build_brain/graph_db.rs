@@ -1,20 +1,38 @@
+/// Graph database operations for semantic data storage.
+///
+/// This module provides a SQLite-based graph database for storing and querying
+/// smart contract semantic data including functions, call relationships, and
+/// inheritance hierarchies extracted from Slither analysis.
+
 use anyhow::Result;
 use rusqlite::{Connection, params};
 use std::path::Path;
 
+/// Represents a smart contract function with complete metadata
 #[derive(Debug, Clone)]
 pub struct SmartContractFunction {
+    /// Unique function identifier from Slither
     pub id: String,
+    /// Contract name containing the function
     pub contract: String,
+    /// Function name
     pub name: String,
+    /// Function visibility level
     pub visibility: String,
+    /// Applied function modifiers
     pub modifiers: Vec<String>,
+    /// State mutability specification
     pub mutability: String,
 }
 
+/// SQLite-based graph database for semantic contract data
 pub struct GraphDb(Connection);
 
 impl GraphDb {
+    /// Creates a new graph database with required schema.
+    ///
+    /// Initializes SQLite database with tables for functions, call edges,
+    /// and inheritance relationships. Uses WAL mode for better concurrency.
     pub fn create(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch(

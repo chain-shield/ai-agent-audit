@@ -1,3 +1,9 @@
+/// AI agent and vulnerability type enumerations.
+///
+/// This module defines the core enums for multi-LLM support and vulnerability
+/// categorization, providing unified interfaces for different AI providers
+/// and systematic vulnerability detection across 19+ security categories.
+
 use schemars::JsonSchema;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -34,13 +40,25 @@ use rig::{
 
 use serde::de::DeserializeOwned;
 
+/// Unified AI agent enum supporting multiple LLM providers.
+///
+/// Provides a common interface for different AI providers while maintaining
+/// provider-specific optimizations and cost tracking capabilities.
 pub enum AIAgent {
+    /// Anthropic Claude models (3.7 Sonnet, 4.0 Sonnet)
     Anthropic(Agent<anthropic::completion::CompletionModel>),
+    /// OpenAI models (GPT-4o, O3)
     Openai(Agent<openai::CompletionModel>),
+    /// Google Gemini models
     Gemini(Agent<gemini::completion::CompletionModel>),
+    /// DeepSeek models (cost-effective option)
     Deepseek(Agent<DeepSeekCompletionModel>),
 }
 
+/// Unified AI extractor enum for structured data extraction.
+///
+/// Provides type-safe extraction capabilities across different LLM providers
+/// with automatic retry logic and error handling.
 pub enum AIExtractor<T>
 where
     T: 'static + JsonSchema + Serialize + for<'a> Deserialize<'a> + Send + Sync,

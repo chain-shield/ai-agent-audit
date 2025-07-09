@@ -1,20 +1,35 @@
+/// Function summarization using Slither analysis.
+///
+/// This module extracts function metadata from Slither's function summary printer,
+/// parsing visibility, modifiers, and mutability information for all functions
+/// across contracts in a repository.
+
 use anyhow::Result;
 use serde::Deserialize;
 
 use crate::{build_brain::slither_ffi::run_printer, prepare_code::git_clone::RepoPaths};
 
-/// What we keep for every function
+/// Comprehensive metadata for a smart contract function
 #[derive(Debug, Deserialize, Clone)]
 pub struct FnSummary {
+    /// Contract name containing the function
     pub contract: String,
+    /// Function name
     pub name: String,
-    pub visibility: String, // external / public / internal / private
+    /// Function visibility (external/public/internal/private)
+    pub visibility: String,
+    /// Applied modifiers (e.g., ["onlyOwner", "nonReentrant"])
     #[serde(default)]
-    pub modifiers: Vec<String>, // e.g. ["onlyOwner","nonReentrant"]
+    pub modifiers: Vec<String>,
+    /// State mutability (view/pure/payable/nonpayable)
     #[serde(default)]
-    pub mutability: String, // view / pure / payable / nonpayable
+    pub mutability: String,
 }
 
+/// Parses Slither's function summary table format into structured data.
+///
+/// Processes the text output from Slither's function-summary printer,
+/// extracting function metadata for each contract in the repository.
 fn parse_table(block: &str) -> Vec<FnSummary> {
     let mut out = Vec::new();
 

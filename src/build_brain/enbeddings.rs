@@ -1,6 +1,8 @@
-/// This module handles the creation of embeddings for source code files.
-/// It breaks down files into manageable chunks, tokenizes them, and uses OpenAI's
-/// embedding model to create vector representations that can be stored in a vector database.
+/// Vector embeddings generation for semantic search.
+///
+/// This module creates high-quality vector embeddings from source code and analysis
+/// results using OpenAI's text-embedding-3-small model. Handles intelligent text
+/// chunking with overlap to maintain context for optimal semantic search performance.
 use anyhow::Result;
 use log::info;
 use rig::{
@@ -15,9 +17,10 @@ use tiktoken_rs::CoreBPE;
 
 use crate::utils::bpe::get_bpe; // OpenAI’s GPT-4 / text-embedding 3 vocab
 
-/// Represents a chunk of source code to be embedded.
-/// This struct is used to organize text content with its metadata
-/// before sending it to the embedding model.
+/// Represents a chunk of source code with metadata for vector embedding.
+///
+/// This struct organizes text content and associated metadata for embedding
+/// generation, enabling semantic search with rich context information.
 #[derive(Debug, Embed, Clone, Serialize, Deserialize)]
 pub struct SourceChunk {
     #[embed] // Field Rig will vectorise
@@ -25,13 +28,14 @@ pub struct SourceChunk {
     metadata: String, // we’ll keep this alongside the vector
 }
 
-/// Number of tokens in each chunk for embedding
+/// Number of tokens in each chunk for optimal embedding quality
 const CHUNK_TOKENS: usize = 256;
-/// Number of tokens to overlap between chunks to maintain context
+/// Number of tokens to overlap between chunks to maintain context continuity
 const OVERLAP: usize = 32;
-/// Number of documents to process in each batch when sending to the embedding model
+/// Batch size for embedding API requests to optimize throughput
 const BATCH: usize = 30;
-const MAX_CHUNK_LEN: usize = 4000; // OpenAI API supports ~8192 tokens, but leave headroom
+/// Maximum chunk length in characters (OpenAI supports ~8192 tokens, leaving headroom)
+const MAX_CHUNK_LEN: usize = 4000;
 
 /**
  * Processes a list of files and creates embeddings for their content.

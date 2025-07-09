@@ -1,6 +1,8 @@
-/// This module provides an in-memory caching mechanism for markdown codeblocks
-/// to avoid redundant database operations and improve performance when
-/// processing the same seed files multiple times.
+/// In-memory caching for generated code blocks to optimize performance.
+///
+/// This module provides thread-safe caching of markdown code blocks to avoid
+/// redundant generation when processing the same contracts multiple times,
+/// significantly improving analysis performance for large repositories.
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Arc;

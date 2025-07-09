@@ -1,3 +1,8 @@
+/// AI agent implementations with vector-based context retrieval.
+///
+/// This module provides intelligent AI agents that combine static documentation
+/// with dynamic vector search for contextual smart contract analysis.
+
 use anyhow::Result;
 use log::info;
 use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
@@ -6,7 +11,7 @@ use rig::{
     agent::{Agent, AgentBuilder},
     client::{CompletionClient, EmbeddingsClient},
     providers::openai::{Client, CompletionModel, GPT_4O},
-    vector_store::VectorStoreIndex, // trait
+    vector_store::VectorStoreIndex,
 };
 use rig_qdrant::QdrantVectorStore;
 
@@ -15,11 +20,22 @@ use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::get_doc_file::extract_content_from_docs;
 use crate::utils::logging::print_first_four_lines;
 
+/// Creates an AI audit agent with vector-based dynamic context retrieval.
+///
+/// This agent combines static documentation context with dynamic vector search
+/// to provide relevant code context for smart contract analysis queries.
+///
+/// # Arguments
+/// * `repo` - Repository paths and metadata
+///
+/// # Returns
+/// * `Agent<CompletionModel>` - Configured AI agent with vector search capabilities
 pub fn create_ai_audit_agent(repo: &RepoPaths) -> Result<Agent<CompletionModel>> {
+    // Extract static documentation for base context
     let documentation = extract_content_from_docs(repo)?;
 
+    // Initialize OpenAI client and model
     let openai = Client::new(&std::env::var("OPENAI_API_KEY")?);
-
     let gpt4o = openai.completion_model(GPT_4O);
 
     // let solidity_auditor_preable = "Your are a world class expert at smart contract auditing, reknown for your ability to find the most complex and trickiest security vulnerabilities in solidity codebases.";

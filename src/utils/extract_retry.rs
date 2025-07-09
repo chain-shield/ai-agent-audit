@@ -1,3 +1,9 @@
+/// LLM extraction with retry logic and cost tracking.
+///
+/// This module provides robust LLM interaction utilities with automatic retry
+/// mechanisms for handling rate limits, network issues, and parsing errors,
+/// while tracking inference costs across different providers.
+
 use crate::cost::cost_data::add_to_inference_cost_by_type;
 use crate::cost::cost_data::LlmCostType;
 use crate::llm_review::config::FromLLMJson;
@@ -16,10 +22,13 @@ use serde::Deserialize;
 use serde_json::Error as JsonError;
 use std::{thread, time::Duration};
 
+/// Maximum retry attempts for failed LLM requests
 const MAX_ATTEMPTS: usize = 3;
 
-// Retry `extractor.extract(input)` until it succeeds
-// or we exhaust `max_attempts`.
+/// Retries LLM extraction with exponential backoff and cost tracking.
+///
+/// Handles common LLM API issues including rate limits, network errors,
+/// and JSON parsing failures with automatic retry logic.
 pub async fn extractor_with_retry<M, T>(
     extractor: &Extractor<M, T>,
     input: &str,

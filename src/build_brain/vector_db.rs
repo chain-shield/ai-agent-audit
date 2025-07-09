@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
-/// This module provides functionality for interacting with the Qdrant vector database.
-/// It handles creating collections and upserting vectors with their associated metadata.
+/// Qdrant vector database operations for semantic search.
+///
+/// This module handles vector database operations including collection creation,
+/// embedding generation, and metadata storage for intelligent code search and
+/// AI agent context retrieval.
 use anyhow::Result;
 use log::info;
 use qdrant_client::qdrant::{
@@ -17,6 +20,18 @@ use crate::prepare_code::git_clone::RepoPaths;
 
 use super::enbeddings::SourceChunk;
 
+/// Generates embeddings from Slither analysis and stores them in Qdrant.
+///
+/// This function creates a complete vector database for the repository by:
+/// 1. Checking if collection already exists to avoid duplication
+/// 2. Extracting all source files and Slither analysis results
+/// 3. Generating embeddings using OpenAI's text-embedding-3-small
+/// 4. Creating a unique Qdrant collection for the repository
+/// 5. Storing vectors with rich metadata for semantic search
+///
+/// # Arguments
+/// * `repo` - Repository paths and metadata
+/// * `semantic_db` - Path to semantic analysis database
 pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
     repo: &RepoPaths,
     semantic_db: &Path,

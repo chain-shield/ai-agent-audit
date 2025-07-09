@@ -1,13 +1,26 @@
+/// Docker volume cleanup utilities for secure analysis environment.
+///
+/// This module provides cleanup functions to remove Docker volumes and
+/// temporary directories created during repository analysis, ensuring
+/// no residual data remains on the host system.
+
 use std::fs;
 use std::path::Path;
-
 use anyhow::Result;
 
-/// Deletes the Docker volume directory for a given repository.
-/// This removes the repo and all its build artifacts from the host.
+/// Cleans up Docker volume directory and build artifacts after analysis.
 ///
-/// Example:
-/// cleanup_repo_volume("my-repo-1a2b3c");
+/// Removes the repository directory and all associated build artifacts
+/// from the Docker volume to prevent disk space accumulation and ensure
+/// clean analysis environments for subsequent runs.
+///
+/// # Arguments
+/// * `root` - Path to the repository root directory to clean up
+///
+/// # Example
+/// ```
+/// cleanup_repo_volume(&Path::new("/tmp/audit-analysis/my-repo"));
+/// ```
 pub fn cleanup_repo_volume(root: &Path) -> Result<()> {
     if root.exists() {
         fs::remove_dir_all(root).expect(&format!("Failed to remove Docker volume at {:?}", root));

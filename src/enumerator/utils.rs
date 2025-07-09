@@ -1,5 +1,10 @@
-use std::collections::HashMap;
+/// Enumeration utilities for code block generation and analysis.
+///
+/// This module provides utility functions for generating markdown code blocks,
+/// extracting function metadata, managing IR mappings, and performing token
+/// counting for optimal code slice generation within LLM context limits.
 
+use std::collections::HashMap;
 use anyhow::anyhow;
 use anyhow::Result;
 use log::info;
@@ -22,16 +27,17 @@ use crate::{
     utils::bpe::get_bpe,
 };
 
-/// Generates a markdown codeblock for a specific function.
+/// Generates a markdown code block for a specific function with IR representation.
 ///
-/// Retrieves the SlithIR representation of the function and formats it as a markdown codeblock.
+/// Creates a formatted markdown section containing the function's SlithIR
+/// intermediate representation, including contract context and function metadata.
 ///
 /// # Arguments
-/// * `func` - The smart contract function to generate a codeblock for
-/// * `repo` - Path to the repository root
+/// * `func` - Smart contract function metadata
+/// * `repo` - Repository paths and metadata
 ///
 /// # Returns
-/// * `anyhow::Result<String>` - The generated markdown codeblock
+/// * `String` - Formatted markdown code block with IR content
 pub async fn generate_codeblock_for_function(
     func: &SmartContractFunction,
     repo: &RepoPaths,

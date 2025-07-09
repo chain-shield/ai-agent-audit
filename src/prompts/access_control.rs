@@ -1,3 +1,9 @@
+/// Access control vulnerability detection prompt.
+///
+/// This prompt guides AI agents to identify access control issues including
+/// unprotected functions, missing modifiers, privilege escalation, and
+/// improper role management in smart contracts.
+
 pub const ACCESS_CONTROL: &str = r#"
 
 You are an expert Solidity smart contract security auditor specializing in access control vulnerabilities. Your task is to perform a comprehensive access control analysis on the provided Solidity smart contract code.

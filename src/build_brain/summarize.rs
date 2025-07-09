@@ -1,3 +1,9 @@
+/// Protocol and file summarization using LLMs.
+///
+/// This module generates intelligent summaries of smart contract protocols and
+/// individual source files using OpenAI models. Provides cached summarization
+/// for protocol overviews and contextual information for AI analysis.
+
 use anyhow::Result;
 use log::info;
 use once_cell::sync::Lazy;
@@ -25,17 +31,23 @@ use crate::{
 
 use super::slither_ffi::cache_key;
 
-/// Global cache keyed by (repo_root, printer) tuple stringified
+/// Global cache for file summaries to avoid redundant LLM calls
 pub static FILE_SUMMARY_CACHE: Lazy<Arc<Mutex<HashMap<String, Vec<SrcFileSummary>>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+/// Represents a summary of a source file with metadata
 #[derive(Default, Debug, Clone)]
 pub struct SrcFileSummary {
+    /// Source file name
     pub filename: String,
+    /// AI-generated summary of the file's purpose and functionality
     pub summary: String,
 }
 
+/// Structured response format for LLM file summarization
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileSummary {
+    /// The generated summary text
     pub summary: String,
 }
 

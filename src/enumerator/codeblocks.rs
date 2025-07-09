@@ -1,7 +1,9 @@
 use crate::build_brain::graph_db::SmartContractFunction;
-/// This module provides functionality for generating code slices from smart contract
-/// analysis seeds. It traverses the contract call graph to create comprehensive
-/// markdown codeblocks containing relevant code, IR, and storage information.
+/// Intelligent code slicing for focused AI analysis.
+///
+/// This module generates contextual code blocks by traversing call graphs and
+/// assembling relevant code, IR, and storage information within token budgets
+/// for optimal LLM analysis.
 use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cache};
 use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::utils::{
@@ -19,18 +21,24 @@ use uuid::Uuid;
 
 use super::codeblock_db::CodeBlocksDb;
 
-/// Generates a markdown codeblock from a Slither analysis seed.
+/// Generates contextual code blocks for each contract using call graph traversal.
 ///
-/// This function performs the following steps:
-/// 1. Checks if the codeblock is already cached to avoid redundant processing
-/// 2. Extracts the contract and all its functions from the seed file
-/// 3. Performs a breadth-first search (BFS) through the call graph up to max_depth
-/// 4. Assembles a markdown codeblock containing:
-///    - Storage layout for each contract
-///    - SlithIR representation for each function
-/// 5. Saves the generated codeblock to the database and cache
+/// This function creates focused code slices by:
+/// 1. Checking cache to avoid redundant processing
+/// 2. Performing breadth-first search through call graphs up to max_depth
+/// 3. Respecting token budgets for LLM context limits
+/// 4. Assembling markdown with storage layouts and SlithIR representations
+/// 5. Caching results for efficient reprocessing
+///
+/// # Arguments
+/// * `repo` - Repository paths and metadata
+/// * `semantic_db` - Database containing call graph and function data
+/// * `codeblock_db` - Database for storing generated code blocks
+/// * `max_depth` - Maximum call graph traversal depth
+/// * `token_budget` - Maximum tokens per code block
+///
 /// # Returns
-/// * `Result<()>` - Ok if successful, Error otherwise
+/// * `Result<()>` - Success or error
 pub async fn generate_codeblock_from_codebase(
     repo: &RepoPaths,
     semantic_db: &Connection,

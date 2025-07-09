@@ -1,3 +1,9 @@
+/// Reentrancy vulnerability detection prompt.
+///
+/// This prompt guides AI agents to identify genuine reentrancy vulnerabilities
+/// with strict criteria to minimize false positives. Focuses on external calls
+/// before state updates that can lead to exploitable attack paths.
+
 pub const REENTRANCY: &str = r#"
 
 You are an expert smart-contract security auditor.  

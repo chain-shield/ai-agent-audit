@@ -1,5 +1,10 @@
-use std::{collections::HashMap, path::Path};
+/// Professional audit report generation with findings categorization.
+///
+/// This module generates comprehensive security audit reports in Markdown format,
+/// supporting both paid (full details) and free (limited) report versions with
+/// severity-based finding organization and protocol overviews.
 
+use std::{collections::HashMap, path::Path};
 use crate::{
     build_brain::summarize,
     llm_review::{
@@ -9,6 +14,7 @@ use crate::{
     prepare_code::git_clone::RepoPaths,
 };
 
+/// Severity levels for organizing findings in reports
 const SEVERITIES: [Severity; 4] = [
     Severity::High,
     Severity::Medium,
@@ -16,12 +22,29 @@ const SEVERITIES: [Severity; 4] = [
     Severity::Info,
 ];
 
+/// Report type determines the level of detail included in the audit report
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportType {
+    /// Limited report with basic findings (excludes high/medium severity details)
     Free,
+    /// Comprehensive report with full vulnerability details and recommendations
     Paid,
 }
 
+/// Generates a comprehensive audit report with findings and protocol analysis.
+///
+/// Creates a professional Markdown audit report including protocol overview,
+/// finding summaries, and detailed vulnerability descriptions organized by severity.
+///
+/// # Arguments
+/// * `issues` - Security findings organized by contract
+/// * `invariants` - Protocol invariant analysis results
+/// * `repo` - Repository paths and metadata
+/// * `semantics_path` - Path to semantic analysis database
+/// * `report_type` - Report detail level (Free/Paid)
+///
+/// # Returns
+/// * `String` - Complete audit report in Markdown format
 pub async fn generated_audit_report(
     issues: &HashMap<String, Findings>,
     invariants: &[ContractInvariants],
