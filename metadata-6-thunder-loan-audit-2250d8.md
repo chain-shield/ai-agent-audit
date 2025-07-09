@@ -353,192 +353,183 @@ INFO:Slither:6-thunder-loan-audit analyzed (26 contracts)
 6-thunder-loan-audit/src/interfaces/ITSwapPool.sol
 6-thunder-loan-audit/src/interfaces/IPoolFactory.sol
 ## 6-thunder-loan-audit/README.md summary
-## Thunder Loan Documentation Summary
+# Thunder Loan
+Thunder Loan is a flash loan protocol similar to Aave and Compound, designed to facilitate flash loans and provide liquidity providers with a way to earn interest on their assets. Liquidity providers deposit assets into the ThunderLoan contract and receive AssetTokens, which accrue interest through the usage of flash loans, where users borrow and repay funds within a single transaction, paying a small fee calculated via the TSwap price oracle.
 
-### About
-The ThunderLoan protocol facilitates flash loans, allowing users to access instant loans repaid within the same transaction. Liquidity providers can earn returns by depositing assets into the platform and receive AssetTokens, accruing interest based on loan activity. A fee structure is in place determined by the TSwap on-chain price oracle.
+## Getting Started
+Requires Git and Foundry. Installation and setup involve cloning the repo and using `make` to prepare the environment. Testing utilities are supported via Forge, e.g., `forge test` for tests and `forge coverage` for coverage reports.
 
-### Getting Started
-**Requirements:** Install git and foundry software to clone and manage the repository effectively. 
-- **Git:** Verify installation with `git --version`.
-- **Foundry:** Verify installation with `forge --version`.
+## Audit Scope Details
+The audit includes various interfaces and protocol files like AssetToken, OracleUpgradeable, ThunderLoan, and ThunderLoanUpgraded. The upcoming upgrade to ThunderLoanUpgraded should be considered in the security review. The code targets the Ethereum blockchain with Solidity 0.8.20, and handles ERC20s like USDC, DAI, LINK, and WETH.
 
-**Quickstart:**
-1. Clone the repository.
-2. Navigate to the project directory.
-3. Run `make` to set up the environment.
+## Roles
+Three main roles are defined: Owner, who can upgrade the system; Liquidity Providers, who earn interest by depositing assets; and Users, who take out flash loans.
 
-### Usage
-To conduct tests and view test coverage, use:
-- `forge test` for running tests.
-- `forge coverage` for coverage data.
-- `forge coverage --report debug` for in-depth coverage analysis.
-
-### Audit Scope Details
-This section details the contracts in scope for security review, including interfaces and the `ThunderLoan` and `ThunderLoanUpgraded` contracts, with emphasis on the upgrade from `ThunderLoan` to `ThunderLoanUpgraded`. Deployment is intended for Ethereum, supporting ERC20 tokens like USDC, DAI, LINK, and WETH.
-
-### Roles
-The protocol identifies three roles:
-- **Owner:** Has the authority to upgrade contract implementations.
-- **Liquidity Provider:** Deposits assets to gain interest.
-- **User:** Engages in flash loans.
-
-### Known Issues
-Highlighted issues include zero fees for negligible loans, initial depositor advantages, and incompatibility with certain complex ERC20 tokens. These are acknowledged, with planned mitigation for some.
+## Known Issues
+Known issues include zero fees for small loans due to rounding, the first depositor's advantage in token distribution, and incompatibility with certain "weird" ERC20 tokens. These issues have been acknowledged and mitigation strategies, like initial deposits and token vetting, are in place.
 
 
 ## 6-thunder-loan-audit/src/upgradedProtocol/ThunderLoanUpgraded.sol summary
-The ThunderLoanUpgraded contract, written in Solidity, is an upgradeable smart contract that implements the ThunderLoan decentralized finance protocol features, namely flash loans. It inherits from Initializable, OwnableUpgradeable, UUPSUpgradeable, and OracleUpgradeable, leveraging these for upgradeability, ownership management, and pricing oracle integration.
+**ThunderLoanUpgraded Contract** is an upgradable smart contract that extends the functionality of thunder loans with flash loans using the UUPS upgradeability pattern. It allows for depositing, redeeming, and executing secured flash loans with verification mechanisms to ensure loan repaid along with accurately calculated fees.
 
-Key functions include initialize(), which sets up the contract with essential variables and ownership, deposit() for depositing tokens and receiving corresponding asset tokens, redeem() for withdrawing tokens by burning asset tokens, and flashloan() for executing a flash loan operation. The contract also includes auxiliary functions for managing allowed tokens, calculating fees, and checking states of tokens. Events are emitted for deposits, token allowance changes, redemptions, and flash loans. Significant errors are defined to handle invalid states and operations.
+- **Storage Variables:**
+  - `s_tokenToAssetToken`: A mapping associating ERC20 tokens to their corresponding AssetToken contracts, serving as wrappers for liquidity management.
+  - `s_flashLoanFee`: A uint variable determining fee percentage for flash loans. Default is 0.3% ETH.
+  - `s_currentlyFlashLoaning`: A mapping keeping track of tokens currently being flash loaned.
+
+**Functions**
+
+- `initialize(address tswapAddress)`: This function initializes the contract, setting the owner, upgrade, and Oracle functionalities.
+
+- `deposit`: Allows depositing of ERC20 tokens, verifying non-zero amount and allowance.
+
+- `redeem`: Withdraws tokens by redeeming the equivalent amount in AssetTokens.
+
+- `flashloan`: Initiates a flash loan, ensuring repayability and fee deductions.
+
+- `repay`: Used to repay a flash loan, checking current flash loan status.
+
+- `setAllowedToken`: This function sets or removes a token's allowed status for thunder loan services.
+
+- `getCalculatedFee`: Calculates the loan fee based on token value and loan fee percentage.
+
+- `updateFlashLoanFee`: Updates the flash loan fee percentage, ensuring it does not exceed 100%.
+
+- `isAllowedToken`: Checks if a token is allowed for servicing by the contract.
+
+- `getAssetFromToken`: Fetches the AssetToken associated with a given ERC20 token.
+
+- `isCurrentlyFlashLoaning`: Verifies if a specific token is currently involved in a flash loan.
+
+- `getFee`: Retrieves the current flash loan fee.
+
+- `_authorizeUpgrade`: Ensures that the contract upgrade authorization is restricted to the owner.
 
 
 ## 6-thunder-loan-audit/src/protocol/AssetToken.sol summary
 ### Contract: AssetToken
-The `AssetToken` contract is an ERC20 token that represents an asset tied to an underlying cryptocurrency or token. It's specifically designed to interact with a separate `ThunderLoan` contract. By leveraging SafeERC20 for secure transactions, it focuses on maintaining a dynamic exchange rate that adjusts based on operational fees. This token is immutable, implying certain variables cannot be modified once initialized.
 
-### Storage Variables
-- `i_underlying (IERC20)`: The underlying token that the `AssetToken` represents, immutable and established upon construction.
-- `i_thunderLoan (address)`: Address of the `ThunderLoan` contract, used for security checks, and is immutable.
-- `s_exchangeRate (uint256)`: Dynamic storage of the current exchange rate between the asset token and its underlying token, initially set to `1e18` for precision.
-- `EXCHANGE_RATE_PRECISION (uint256)`: Constant precision factor `1e18` ensures consistent calculations.
-- `STARTING_EXCHANGE_RATE (uint256)`: Constant (`1e18`) that initializes the starting exchange rate.
+The `AssetToken` contract extends the `ERC20` token to represent a customized asset token within a decentralized finance application. This contract is designed for integration with a larger system, specifically interfacing with a component called `ThunderLoan`. It includes key features like minting, burning, and an adjustable exchange rate tied to the underlying asset value relative to the tokens.
 
-### Functions
-#### constructor
-```
-constructor(address thunderLoan, IERC20 underlying, string memory assetName, string memory assetSymbol)
-```
+### Storage Variables:
 
-Initializes the `AssetToken` with references to the `ThunderLoan` and underlying token. It also sets the token's name and symbol, ensuring neither address is zero.
+- **i_underlying: IERC20**
+  The ERC20 token that represents the underlying asset backing the asset token.
+  
+- **i_thunderLoan: address**
+  The address of the `ThunderLoan` contract. Only this address can perform certain operations on the asset token.
 
-#### mint
-```
-function mint(address to, uint256 amount) external onlyThunderLoan
-```
-Mints the specified number of tokens to a given address, callable only by the `ThunderLoan` contract.
+- **s_exchangeRate: uint256**
+  Controls the value exchange rate between asset token and its underlying asset, initialized to `1e18`.
 
-#### burn
-```
-function burn(address account, uint256 amount) external onlyThunderLoan
-```
-Burns a number of tokens from an account, reducing the total supply, and is restricted to `ThunderLoan` calls.
+### Functions:
 
-#### transferUnderlyingTo
-```
-function transferUnderlyingTo(address to, uint256 amount) external onlyThunderLoan
-```
-Transfers the underlying tokens to a specified address safely, enforced by the `ThunderLoan` contract.
+- **constructor(address thunderLoan, IERC20 underlying, string memory assetName, string memory assetSymbol)**
+  Initializes the contract, setting up the ThunderLoan integration, underlying asset, and token metadata.
 
-#### updateExchangeRate
-```
-function updateExchangeRate(uint256 fee) external onlyThunderLoan
-```
-Calculates a new exchange rate factoring in the fee over total supply, ensuring that the rate only increases, maintaining economic stability.
+- **mint(address to, uint256 amount)**
+  Mints a specific amount of new asset tokens to a given address, restricted to ThunderLoan.
 
-#### getExchangeRate
-```
-function getExchangeRate() external view returns (uint256)
-```
-Returns the current exchange rate for the token.
+- **burn(address account, uint256 amount)**
+  Destroys a given amount of asset tokens from a specified address, also restricted to ThunderLoan.
 
-#### getUnderlying
-```
-function getUnderlying() external view returns (IERC20)
-```
-Returns the IERC20 interface of the underlying token represented by the `AssetToken`. 
+- **transferUnderlyingTo(address to, uint256 amount)**
+  Transfers a specified amount of the underlying asset to a certain address, exclusively callable by ThunderLoan.
+
+- **updateExchangeRate(uint256 fee)**
+  Adjusts the token's exchange rate with its underlying asset, ensuring it can only increase. The exchange rate is affected by the fee and total supply.
+
+- **getExchangeRate()**
+  Returns the current exchange rate between the asset token and its underlying asset.
+
+- **getUnderlying()**
+  Provides access to the underlying asset token instance.
 
 
 ## 6-thunder-loan-audit/src/protocol/ThunderLoan.sol summary
-The `ThunderLoan` contract is an upgradeable smart contract facilitating flash loans on the Ethereum network. It integrates multiple OpenZeppelin contracts and uses a modular architecture to manage assets and handle flash loan operations, including fee management and allowance of ERC20 tokens.
+The Slither contract summary outlines the analysis of several Ethereum contracts related to the ThunderLoan system. The report summarizes the structure of multiple contracts, including ERC20 interfaces, upgradeable and non-upgradeable contracts, and various extension utilities derived from OpenZeppelin libraries. Notably, contracts like `ThunderLoan`, `ThunderLoanUpgraded`, `AssetToken`, and `OracleUpgradeable` provide functionalities associated with lending protocols, asset management, and token exchanges.
 
-**ThunderLoan Contract**:
-This contract extends several upgradable contracts and requires initialization through `initialize()`. It manages tokens and facilitates flash loans with specific fee structures.
-
-**State Variables**:
-- `s_tokenToAssetToken`: A mapping linking `IERC20` tokens to their corresponding `AssetToken`.
-- `s_feePrecision`: Precision for calculating fees, set to 18 decimals for WEI.
-- `s_flashLoanFee`: The fee rate for flash loans, defaulting to 0.3%.
-- `s_currentlyFlashLoaning`: A mapping tracking whether a token is currently involved in a flash loan.
-
-**Functions**:
-- `initialize(address)`: Initializes the contract with owner and flash loan parameters.
-- `deposit(IERC20, uint256)`: Deposits tokens, mints asset tokens, and updates the exchange rate.
-- `redeem(IERC20, uint256)`: Redeems the underlying token by burning asset tokens.
-- `flashloan(address, IERC20, uint256, bytes)`: Facilitates a flash loan, encompasses fee calculation and checks for repayment.
-- `repay(IERC20, uint256)`: Handles repayment of flash loans.
-- `setAllowedToken(IERC20, bool)`: Allows or disallows a token for flash loan operations.
-- `getCalculatedFee(IERC20, uint256)`: Computes the fee for a flash loan based on token amount.
-- `updateFlashLoanFee(uint256)`: Updates the flash loan fee.
-- `isAllowedToken(IERC20)`, `getAssetFromToken(IERC20)`, `isCurrentlyFlashLoaning(IERC20)`, `getFee()`, `getFeePrecision()`: Getter functions for various states.
-- `_authorizeUpgrade(address)`: Ensures only the owner can upgrade the contract.
+The document highlights key contracts like `ThunderLoan`, which facilitates flash loans and integrates with other components such as `AssetToken` for handling tokenized assets and `OracleUpgradeable` for price data. Several interfaces defined provide a structure to these interactions, ensuring modularity and interface compliance, critical in audited systems. The summary succinctly describes key methods, modifiers, and event emissions within these contracts, indicating a robust framework designed to support safe and efficient operations in decentralized finance (DeFi) systems.
 
 
 ## 6-thunder-loan-audit/src/protocol/OracleUpgradeable.sol summary
 ### OracleUpgradeable Contract Summary
+The `OracleUpgradeable` is a smart contract that provides functionality to get the price of a token in Ether (WETH). It uses interfaces `ITSwapPool` and `IPoolFactory` to interact with different pools and obtain token pricing. This contract is upgradeable via OpenZeppelin's `Initializable`.
 
-**Contract Overview**
+#### Contract Definition
+```solidity
+contract OracleUpgradeable is Initializable
+```
 
-`OracleUpgradeable` is a contract that helps retrieve pricing information of tokens in terms of WETH. It makes use of a `poolFactory` which is set during initialization and used to locate relevant swap pools for tokens.
+#### Storage Variables
+- `address private s_poolFactory` :
+  A private storage variable for the address of the pool factory. This variable holds the address of the factory responsible for creating token swap pools.
 
-**Functions**
+#### Function: __Oracle_init
+```solidity
+function __Oracle_init(address poolFactoryAddress) internal onlyInitializing
+```
+- Initializes the Oracle contract with a specific pool factory address. Utilizes OpenZeppelin's `onlyInitializing` modifier to ensure initialization can only occur once.
 
-- `__Oracle_init(address poolFactoryAddress) internal onlyInitializing`
-  - Initializes the Oracle with a provided pool factory address. Calls another function for unchained initialization.
+#### Function: __Oracle_init_unchained
+```solidity
+function __Oracle_init_unchained(address poolFactoryAddress) internal onlyInitializing
+```
+- A continuation of `__Oracle_init`, responsible for setting the pool factory address.
 
-- `__Oracle_init_unchained(address poolFactoryAddress) internal onlyInitializing`
-  - Directly sets the pool factory address used by the Oracle. Similar to a constructor for upgradeable contracts.
+#### Function: getPriceInWeth
+```solidity
+function getPriceInWeth(address token) public view returns (uint256)
+```
+- Retrieves the price of one pool token in WETH for a given token by interacting with the swap pool.
 
-- `getPriceInWeth(address token) public view returns (uint256)`
-  - Retrieves the price of a token in WETH by interacting with the appropriate swap pool. Utilizes the IPoolFactory to locate the swap pool and then calls the pool to get the price.
+#### Function: getPrice
+```solidity
+function getPrice(address token) external view returns (uint256)
+```
+- An external interface to get token prices in WETH by calling the `getPriceInWeth` function.
 
-- `getPrice(address token) external view returns (uint256)`
-  - A wrapper around `getPriceInWeth` that serves as an external interface.
-
-- `getPoolFactoryAddress() external view returns (address)`
-  - Returns the stored pool factory address.
-
-**Storage Variables**
-
-- `address private s_poolFactory`
-  - Holds the address of the pool factory, a central point for locating swap pools for tokens.
+#### Function: getPoolFactoryAddress
+```solidity
+function getPoolFactoryAddress() external view returns (address)
+```
+- Returns the address of the pool factory, providing external visibility to this private variable.
 
 
 ## 6-thunder-loan-audit/src/interfaces/IFlashLoanReceiver.sol summary
-### IFlashLoanReceiver Interface
-
-This Solidity code defines an interface for the `IFlashLoanReceiver`, inspired by the Aave protocol, specifically designed for flash loan operations. The interface includes the function:
-
-- **`executeOperation(address token, uint256 amount, uint256 fee, address initiator, bytes calldata params) external returns (bool);`**: This function is intended to be called after a flash loan is received. It takes parameters such as the address of the token borrowed, the amount borrowed, the fee, the initiator of the loan, and any additional parameters needed for the transaction. The function returns a boolean indicating the success of the operation. This design allows the implementation contract to define what actions should be taken with the borrowed funds, such as arbitrage or refinancing, as long as the borrowed amount plus fees can be repaid to the lending protocol by the end of the transaction block. The interface is part of a project dealing with flash loans, likely requiring contracts that use it to interact with flash loan protocols.
+The `IFlashLoanReceiver` interface defines a single function for implementing flash loans, inspired by Aave's protocol. It works in conjunction with the `IThunderLoan` interface, requiring a function called `executeOperation`. The interface reflects Aave's flash loan strategy, allowing a contract to receive, use, and repay a loan within a single transaction.
 
 
 ## 6-thunder-loan-audit/src/interfaces/IThunderLoan.sol summary
-The code above defines an interface called `IThunderLoan`, which is a part of a smart contract in Solidity. This interface contains a single function `repay`, intended to be called externally. It takes two parameters: `token` of type `address`, representing the token address to repay, and `amount` of type `uint256`, signifying the amount to be repaid. Since it's an interface, the actual function implementation is not provided in this contract. This interface can be implemented by any contract engaging in operations requiring a repay functionality, particularly for loans or similar financial products in a blockchain context.
+The provided code defines an interface `IThunderLoan` for a smart contract in Solidity. This interface contains a single function:
+
+### Interface: IThunderLoan
+
+- **Function:** `repay`
+  - **Interface:** `function repay(address token, uint256 amount) external;`
+  - **Summary:** This function allows external calls to repay a specified `amount` of a particular `token`. Implementations of this interface must define the logic for handling the repayment process, likely involving transferring tokens from the caller to a designated address within the smart contract.
+
+The `pragma solidity 0.8.20;` line specifies that the contract is intended to be compiled with version 0.8.20 of Solidity, ensuring compatibility with its language features and fixes.
 
 
 ## 6-thunder-loan-audit/src/interfaces/ITSwapPool.sol summary
-The ITSwapPool interface provides a single function: `getPriceOfOnePoolTokenInWeth`. This function allows contracts to retrieve the price of a single pool token measured in Wrapped Ether (WETH). The function is marked as external, indicating it can be called from outside the contract and is a view function, meaning it does not modify the state of the blockchain.
+## Contract: ITSwapPool
+The `ITSwapPool` is an interface that outlines a single function used in the context of a token pool pricing mechanism within the Ethereum blockchain environment.
 
-### getPriceOfOnePoolTokenInWeth
-```solidity
-function getPriceOfOnePoolTokenInWeth() external view returns (uint256);
-```
-- **Summary**: Returns the price of one pool token in WETH.
-- **Visibility**: external
-- **Modifiers**: view
-- **Returns**: A `uint256` representing the price of one pool token in terms of WETH.
+### Function Summary
+- **getPriceOfOnePoolTokenInWeth()**
+  - **Interface**: `function getPriceOfOnePoolTokenInWeth() external view returns (uint256);`
+  - **Summary**: This function retrieves the price of one pool token in terms of WETH. It is an external view function, meaning it can be called from outside the contract and doesn't modify the state.
+
+This interface serves as a contract blueprint to ensure any implementing contracts have this specific pricing function, crucial for applications involving token exchange rates in decentralized finance (DeFi) platforms, where price calculations in terms of WETH (Wrapped Ether) are common.
 
 
 ## 6-thunder-loan-audit/src/interfaces/IPoolFactory.sol summary
-### IPoolFactory Interface Contract
+### Interface: IPoolFactory
+The `IPoolFactory` is a straightforward interface contract written in Solidity for version 0.8.20. 
 
-#### Overview:
-The `IPoolFactory` is a simple interface in Solidity, specifying a single function designed for retrieving the pool address associated with a given token address.
+#### Function: getPool
 
-#### Functions:
-- **getPool**
-  - **Interface**: `function getPool(address tokenAddress) external view returns (address);`
-  - **Summary**: This function takes a token address as an input and returns the corresponding pool address. It is an externally accessible view function which ensures that the state is not modified when called, and it provides essential functionality for considering token pools within the system.
-
-This interface is a crucial part of a decentralized finance or similar token management system, facilitating interactions with pool contracts by enabling retrieval of pool addresses based on token addresses.
+- **Definition:** `function getPool(address tokenAddress) external view returns (address);`
+- **Summary:** This interface declares a single function, `getPool`, which is designed to retrieve the address of a pool associated with a given token address. The function takes one parameter: the `tokenAddress`, which is the address of the token linked to the pool, and it returns the pool's address. The function is marked as `external` and `view`, indicating it is accessible outside the contract and does not modify the blockchain state.
 

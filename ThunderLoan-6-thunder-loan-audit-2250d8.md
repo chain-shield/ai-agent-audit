@@ -1,12 +1,5 @@
 
 
-### Storage layout (AssetToken) 
-
-```text
-s_exchangeRate uint256
-
-```
-
 ### Storage layout (ThunderLoan) 
 
 ```text
@@ -17,6 +10,13 @@ s_currentlyFlashLoaning mapping(IERC20 => bool)
 
 ```
 
+
+### Storage layout (AssetToken) 
+
+```text
+s_exchangeRate uint256
+
+```
 #### ThunderLoan._authorizeUpgrade(address) [INTERNAL]
 ```slithir
 newImplementation_1(address) := phi(['newImplementation_1'])
@@ -146,7 +146,7 @@ HIGH_LEVEL_CALL, dest:assetToken_1(AssetToken), function:transferUnderlyingTo, a
  receiverAddress.functionCall(abi.encodeCall(IFlashLoanReceiver.executeOperation,(address(token),amount,fee,msg.sender,params)))
 REF_187(executeOperation) -> IFlashLoanReceiver.executeOperation
 TMP_587 = CONVERT token_1 to address
-TMP_588(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_187,[<slither.slithir.variables.temporary_ssa.TemporaryVariableSSA object at 0xffffb1b17be0>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffb1b163b0>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffb1b178b0>, <slither.core.declarations.solidity_variables.SolidityVariableComposed object at 0xffffb21e28c0>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffb1b16530>])
+TMP_588(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_187,[<slither.slithir.variables.temporary_ssa.TemporaryVariableSSA object at 0xffffa4777be0>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa47763b0>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa47778b0>, <slither.core.declarations.solidity_variables.SolidityVariableComposed object at 0xffffa4e428c0>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa4776530>])
 TMP_589(bytes) = LIBRARY_CALL, dest:Address, function:Address.functionCall(address,bytes), arguments:['receiverAddress_1', 'TMP_588'] 
  endingBalance = token.balanceOf(address(assetToken))
 TMP_590 = CONVERT assetToken_1 to address
@@ -305,11 +305,12 @@ s_feePrecision_6(uint256) := phi(['s_feePrecision_3', 's_feePrecision_0', 's_fee
 RETURN s_feePrecision_6
 ```
 
-#### AssetToken.getExchangeRate() [EXTERNAL]
+#### SafeERC20.safeTransferFrom(IERC20,address,address,uint256) [INTERNAL]
 ```slithir
-s_exchangeRate_7(uint256) := phi(['s_exchangeRate_6', 's_exchangeRate_1', 's_exchangeRate_0'])
- s_exchangeRate
-RETURN s_exchangeRate_7
+ _callOptionalReturn(token,abi.encodeCall(token.transferFrom,(from,to,value)))
+REF_32(transferFrom) -> token_1.transferFrom
+TMP_94(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_32,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa4a3d420>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa4a3e950>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa4a3f490>])
+INTERNAL_CALL, SafeERC20._callOptionalReturn(IERC20,bytes)(token_1,TMP_94)
 ```
 #### AssetToken.mint(address,uint256) [EXTERNAL]
 ```slithir
@@ -317,6 +318,12 @@ RETURN s_exchangeRate_7
 INTERNAL_CALL, ERC20._mint(address,uint256)(to_1,amount_1)
  onlyThunderLoan()
 MODIFIER_CALL, AssetToken.onlyThunderLoan()()
+```
+#### AssetToken.getExchangeRate() [EXTERNAL]
+```slithir
+s_exchangeRate_7(uint256) := phi(['s_exchangeRate_6', 's_exchangeRate_1', 's_exchangeRate_0'])
+ s_exchangeRate
+RETURN s_exchangeRate_7
 ```
 #### AssetToken.updateExchangeRate(uint256) [EXTERNAL]
 ```slithir
@@ -340,25 +347,18 @@ Emit ExchangeRateUpdated(s_exchangeRate_6)
  onlyThunderLoan()
 MODIFIER_CALL, AssetToken.onlyThunderLoan()()
 ```
-#### SafeERC20.safeTransferFrom(IERC20,address,address,uint256) [INTERNAL]
-```slithir
- _callOptionalReturn(token,abi.encodeCall(token.transferFrom,(from,to,value)))
-REF_32(transferFrom) -> token_1.transferFrom
-TMP_94(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_32,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffb1ddd420>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffb1dde950>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffb1ddf490>])
-INTERNAL_CALL, SafeERC20._callOptionalReturn(IERC20,bytes)(token_1,TMP_94)
-```
-#### AssetToken.burn(address,uint256) [EXTERNAL]
-```slithir
- _burn(account,amount)
-INTERNAL_CALL, ERC20._burn(address,uint256)(account_1,amount_1)
- onlyThunderLoan()
-MODIFIER_CALL, AssetToken.onlyThunderLoan()()
-```
 #### AssetToken.transferUnderlyingTo(address,uint256) [EXTERNAL]
 ```slithir
 i_underlying_2(IERC20) := phi(['i_underlying_3', 'i_underlying_1', 'i_underlying_0'])
  i_underlying.safeTransfer(to,amount)
 LIBRARY_CALL, dest:SafeERC20, function:SafeERC20.safeTransfer(IERC20,address,uint256), arguments:['i_underlying_3', 'to_1', 'amount_1'] 
+ onlyThunderLoan()
+MODIFIER_CALL, AssetToken.onlyThunderLoan()()
+```
+#### AssetToken.burn(address,uint256) [EXTERNAL]
+```slithir
+ _burn(account,amount)
+INTERNAL_CALL, ERC20._burn(address,uint256)(account_1,amount_1)
  onlyThunderLoan()
 MODIFIER_CALL, AssetToken.onlyThunderLoan()()
 ```
@@ -372,11 +372,11 @@ MODIFIER_CALL, AssetToken.onlyThunderLoan()()
 TMP_136(bytes) = INTERNAL_CALL, Address.functionCallWithValue(address,bytes,uint256)(target_1,data_1,0)
 RETURN TMP_136
 ```
-#### IERC20Metadata.name() [EXTERNAL]
+#### IERC20Metadata.symbol() [EXTERNAL]
 ```slithir
 
 ```
-#### IERC20Metadata.symbol() [EXTERNAL]
+#### IERC20Metadata.name() [EXTERNAL]
 ```slithir
 
 ```
@@ -403,7 +403,7 @@ TMP_119(None) = SOLIDITY_CALL revert SafeERC20FailedOperation(address)(TMP_118)
 ```slithir
  _callOptionalReturn(token,abi.encodeCall(token.transfer,(to,value)))
 REF_30(transfer) -> token_1.transfer
-TMP_92(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_30,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffb1dddd50>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffb1ddea10>])
+TMP_92(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_30,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa4a3dd50>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa4a3ea10>])
 INTERNAL_CALL, SafeERC20._callOptionalReturn(IERC20,bytes)(token_1,TMP_92)
 ```
 #### Address.functionCallWithValue(address,bytes,uint256) [INTERNAL]
