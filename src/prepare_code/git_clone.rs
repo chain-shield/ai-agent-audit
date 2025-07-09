@@ -1,6 +1,8 @@
-/// This module handles the intake of repositories for analysis.
-/// It provides functionality to clone repositories, filter files based on extensions,
-/// and organize them for further processing.
+/// Repository preparation and Docker-based building.
+///
+/// This module handles secure repository cloning in Docker containers,
+/// auto-detection of build systems (Foundry/Hardhat), and file filtering
+/// for smart contract analysis.
 use anyhow::{Context, Result};
 use ignore::gitignore::GitignoreBuilder;
 use std::fs;
@@ -26,22 +28,34 @@ pub struct RepoPaths {
 }
 
 impl RepoPaths {
+    /// Generates a unique identifier for the repository using name and short commit hash.
+    /// Used for creating unique vector database collections and cache keys.
     pub fn unique_repo_hash(&self) -> String {
         format!("{}-{}", self.repo_name, &self.commit_hash[..6])
     }
 }
 
+/// Docker volume path for secure repository analysis
 pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
 
-/// Clones a repository from a URL and filters its files.
+/// Clones a repository and builds it in a secure Docker environment.
 ///
-/// This function:
-/// 1. Clones the repository to a temporary directory
-/// 2. Filters out build artifacts and node_modules
-/// 3. Collects all Solidity files and README documentation
+/// This function performs the complete repository preparation workflow:
+/// 1. Creates a Docker volume for isolated analysis
+/// 2. Clones the repository using Trail of Bits security toolbox
+/// 3. Auto-detects and builds with Foundry or Hardhat
+/// 4. Filters and organizes Solidity files and documentation
+/// 5. Extracts commit hash for unique identification
 ///
-/// @param url - URL of the Git repository to clone
-/// @return Result containing the filtered repository paths
+/// # Arguments
+/// * `url` - Git repository URL to clone and analyze
+///
+/// # Returns
+/// * `RepoPaths` - Organized repository paths and metadata
+///
+/// # Security
+/// All operations are performed in isolated Docker containers to prevent
+/// malicious code execution on the host system.
 pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
     // // 1. Create a temporary parent directory (will not auto-delete once we .into_path())
     // let tmp = TempDir::new()?;

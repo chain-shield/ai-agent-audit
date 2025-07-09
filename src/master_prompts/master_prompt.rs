@@ -1,3 +1,9 @@
+/// Master security analysis prompt covering all vulnerability categories.
+///
+/// This comprehensive prompt instructs AI agents to analyze smart contracts
+/// across 19 different security vulnerability categories, providing systematic
+/// coverage of common and advanced attack vectors.
+
 pub const MASTER_SECURITY_PROMPT: &str = r#"
 Please Analyse the *entire* Solidity source below for 
 *each category* of the security vulnerabilities listed below:

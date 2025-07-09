@@ -1,6 +1,8 @@
-/// This module provides an interface to the Slither static analysis tool for Solidity.
-/// It handles running Slither printers, parsing their output, and extracting useful information
-/// such as SlithIR (intermediate representation) and storage variable details.
+/// Slither static analyzer interface with Docker integration.
+///
+/// This module provides a secure interface to Slither static analysis tool,
+/// running all operations in Docker containers for security. Handles extraction
+/// of IR, call graphs, inheritance data, and storage layouts with caching.
 use anyhow::{anyhow, Result};
 use log::info;
 use once_cell::sync::Lazy;
@@ -20,7 +22,8 @@ use crate::prepare_code::git_clone::RepoPaths;
 use super::callgraph;
 use super::parsers::{parse_slither, parse_slithir_ir_code, parse_storage};
 
-/// Global cache keyed by (repo_root, printer) tuple stringified
+/// Global cache for Slither printer outputs to avoid redundant analysis.
+/// Key format: "{repo_root}:{printer_name}"
 pub static PRINTER_OUTPUT_CACHE: Lazy<Arc<Mutex<HashMap<String, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 

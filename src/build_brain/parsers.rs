@@ -1,5 +1,15 @@
+/// Code parsing utilities for Slither analysis output.
+///
+/// This module provides parsers for various Slither output formats including
+/// detector results, SlithIR representations, storage layouts, and contract
+/// summaries. Handles text parsing and data structure extraction.
 use super::slither_ffi::{ContractSummary, SlithIRFn, StorageVar};
 use log::{debug, info};
+
+/// Parses Slither detector output into individual issue descriptions.
+///
+/// Processes the text output from Slither detectors, separating different
+/// vulnerability findings into discrete issue descriptions.
 pub fn parse_slither(text: &str) -> Vec<String> {
     let mut current_issue = String::new();
     let mut issues = Vec::<String>::new();
@@ -25,14 +35,17 @@ pub fn parse_slither(text: &str) -> Vec<String> {
     issues
 }
 
-/// Parses the output of the Slither 'slithir-ssa' printer into a vector of SlithIRFn structs.
+/// Parses Slither's SlithIR output into structured function representations.
 ///
-/// This function processes the text output from Slither's slithir-ssa printer,
-/// which contains the SlithIR representation of functions in Solidity contracts.
-/// It extracts the contract name, function name, and IR content for each function.
+/// Processes the text output from Slither's slithir-ssa printer, extracting
+/// intermediate representation (IR) code for each function along with contract
+/// and function metadata for code analysis and slice generation.
 ///
-/// @param text - The raw text output from the slithir-ssa printer
-/// @return Vector of SlithIRFn structs containing the parsed data
+/// # Arguments
+/// * `text` - Raw text output from the slithir-ssa printer
+///
+/// # Returns
+/// * `Vec<SlithIRFn>` - Structured IR data for all functions
 pub fn parse_slithir_ir_code(text: &str) -> Vec<SlithIRFn> {
     let mut current_contract = String::new();
     let mut current_fn = String::new();

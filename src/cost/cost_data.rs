@@ -1,31 +1,51 @@
-use once_cell::sync::Lazy;
+/// Cost tracking and calculation for LLM inference across multiple providers.
+///
+/// This module provides real-time cost tracking for AI agent operations,
+/// supporting OpenAI, Anthropic, Gemini, and DeepSeek providers with
+/// accurate token-based pricing calculations.
 
+use once_cell::sync::Lazy;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
 use crate::llm_review::enums::AIAgent;
 
+/// LLM provider cost types with specific model variants
 #[derive(Clone, Copy, Debug)]
 pub enum LlmCostType {
+    /// OpenAI GPT-4o input tokens
     Openai4oInput,
+    /// OpenAI GPT-4o output tokens
     Openai4oOutput,
+    /// OpenAI O3 input tokens
     OpenaiO3Input,
+    /// OpenAI O3 output tokens
     OpenaiO3Output,
+    /// Anthropic Claude input tokens
     AnthropicClaudeInput,
+    /// Anthropic Claude output tokens
     AnthropicClaudeOutput,
+    /// Google Gemini input tokens
     GeminiInput,
+    /// Google Gemini output tokens
     GeminiOutput,
+    /// DeepSeek input tokens
     DeepseekInput,
+    /// DeepSeek output tokens
     DeepseekOutput,
 }
 
+/// Token direction for cost calculation
 #[derive(PartialEq, Eq)]
 pub enum TokenType {
+    /// Input tokens (prompt)
     Input,
+    /// Output tokens (response)
     Output,
 }
 
 impl LlmCostType {
+    /// Returns the cost per million tokens for each LLM provider and model.
+    /// Prices are based on current provider pricing as of 2024.
     pub fn get_cost_per_million_tokens(self) -> f64 {
         match self {
             LlmCostType::Openai4oInput => 2.50,

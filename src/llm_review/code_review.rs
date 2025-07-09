@@ -41,10 +41,29 @@ use super::{
     enums::AIAgent,
 };
 
+/// Multi-LLM security analysis orchestration.
+///
+/// This module coordinates parallel security analysis across multiple LLM providers,
+/// implements verification and deduplication workflows, and manages cost tracking.
+
+/// Number of discovery rounds per contract for comprehensive analysis
 const DISCOVER_RUNS: usize = 3;
+/// Maximum runs for Claude 3.7 Sonnet (cost optimization)
 const MAX_CLAUDE_RUNS_3_7: usize = 2;
+/// Maximum runs for Claude 4.0 Sonnet (highest cost tier)
 const MAX_CLAUDE_RUNS_4_0: usize = 1;
 
+/// Orchestrates comprehensive security analysis of smart contracts using multiple LLM providers.
+///
+/// This function performs parallel vulnerability detection across multiple AI agents,
+/// implements verification and deduplication workflows, and returns categorized findings.
+///
+/// # Arguments
+/// * `codeblocks_path` - Path to the database containing generated code blocks
+///
+/// # Returns
+/// * `HashMap<String, Findings>` - Security findings organized by contract
+/// * `Vec<ContractInvariants>` - Protocol invariant analysis results
 pub async fn review_codebase_for_security_issues(
     codeblocks_path: &PathBuf,
 ) -> Result<(HashMap<String, Findings>, Vec<ContractInvariants>)> {

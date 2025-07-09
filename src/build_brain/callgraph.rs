@@ -1,3 +1,9 @@
+/// Call graph analysis and DOT format parsing.
+///
+/// This module processes Slither's call graph output in DOT format, extracting
+/// function relationships and building traversable graph structures for code
+/// slice generation and dependency analysis.
+
 use anyhow::Result;
 use regex::Regex;
 use rusqlite::Connection;
@@ -12,19 +18,36 @@ use crate::{
 
 use super::{graph_db::SmartContractFunction, slither_ffi::run_printer_json};
 
+/// Represents a function node in the call graph
 #[derive(Debug, Clone, Default)]
 pub struct DotFunc {
-    pub full_id: String,  // "3895_changeFeeAddress"
-    pub contract: String, // PuppyRaffle
-    pub name: String,     // changeFeeAddress
+    /// Unique identifier from Slither (e.g., "3895_changeFeeAddress")
+    pub full_id: String,
+    /// Contract name containing the function
+    pub contract: String,
+    /// Function name
+    pub name: String,
 }
 
+/// Represents a call relationship between two functions
 #[derive(Debug)]
 pub struct DotEdge {
-    pub caller: String, // DotFunc.full_id
+    /// Calling function's full_id
+    pub caller: String,
+    /// Called function's full_id
     pub callee: String,
 }
 
+/// Extracts call graph functions and edges from Slither analysis.
+///
+/// This function orchestrates the complete call graph extraction process by
+/// running Slither's call-graph printer and parsing the resulting DOT format.
+///
+/// # Arguments
+/// * `repo` - Repository paths and metadata
+///
+/// # Returns
+/// * `(Vec<DotFunc>, Vec<DotEdge>)` - Functions and their call relationships
 pub async fn get_dot_funcs_and_dot_edges(repo: &RepoPaths) -> Result<(Vec<DotFunc>, Vec<DotEdge>)> {
     let json = run_printer_json(repo, "call-graph").await?;
     let blobs = extract_dot_blobs(&json)?;

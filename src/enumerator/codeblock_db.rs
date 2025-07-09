@@ -1,5 +1,8 @@
-/// This module provides functionality for storing and retrieving code slices in a SQLite database.
-/// It manages the persistence of markdown codeblocks generated from smart contract analysis.
+/// SQLite database for code block storage and retrieval.
+///
+/// This module manages persistent storage of generated markdown code blocks,
+/// providing efficient storage and retrieval of contextual code slices for
+/// AI analysis with metadata and token counting.
 use anyhow::Result;
 use rusqlite::{Connection, params};
 use std::{
@@ -7,26 +10,26 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Represents a markdown codeblock containing code relevant to a vulnerability.
+/// Represents a contextual markdown code block for AI analysis.
 ///
-/// This struct stores the content of a code slice along with metadata such as
-/// token count for LLM processing.
+/// Contains generated code slices with associated metadata including token
+/// counts for LLM context management and contract identification.
 #[derive(Debug, Clone)]
 pub struct MarkdownCodeblock {
-    /// Unique identifier for the codeblock
+    /// Unique identifier for the code block
     pub id: String,
-    // i.e. PuppyRaffle.sol
+    /// Contract name (e.g., "PuppyRaffle")
     pub contract: String,
-    /// Number of tokens in the content (for LLM context window management)
+    /// Token count for LLM context window management
     pub tokens: usize,
-    /// The actual markdown content containing code, IR, and storage information
+    /// Markdown content with code, IR, and storage information
     pub content: String,
 }
 
-/// Database manager for storing and retrieving code slices.
+/// SQLite database manager for code block persistence.
 ///
-/// This struct provides an interface to the SQLite database that stores
-/// seed slices and codeblocks.
+/// Provides high-level interface for storing and retrieving generated
+/// code blocks with efficient querying and metadata management.
 pub struct CodeBlocksDb {
     /// Path to the SQLite database file
     path: PathBuf,

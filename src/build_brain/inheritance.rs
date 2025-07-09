@@ -1,3 +1,9 @@
+/// Contract inheritance analysis and parsing.
+///
+/// This module processes Slither's inheritance printer output to extract
+/// parent-child relationships between smart contracts, supporting both
+/// immediate and transitive inheritance hierarchies.
+
 use anyhow::Result;
 use serde::Deserialize;
 use std::collections::HashMap;
