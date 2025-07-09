@@ -16,6 +16,7 @@ use crate::{
         zero_code::CONTRACTS_WITH_ZERO_CODE,
     },
 };
+use regex::Regex;
 use rig::{
     agent::Agent,
     client::{CompletionClient, ProviderClient},
@@ -222,11 +223,12 @@ where
 
 impl Finding {
     pub fn title(&self) -> String {
+        let fn_name = self.get_fn_name();
         format!(
             "{} issue in {}::{}",
             self.issue_type.as_fancy_str(),
             self.contract,
-            self.function
+            fn_name
         )
     }
 
@@ -248,12 +250,23 @@ impl Finding {
     }
 
     pub fn hash(&self) -> String {
-        format!(
-            "{}-{}-{}",
-            self.issue_type.as_str(),
-            self.contract,
-            self.function
-        )
+        // extract name 'func_name' from func_name(...)
+        let fn_name = self.get_fn_name();
+
+        format!("{}-{}-{}", self.issue_type.as_str(), self.contract, fn_name)
+    }
+
+    // extract name 'func_name' from func_name(...)
+    pub fn get_fn_name(&self) -> String {
+        let re = Regex::new(r"(^[a-zA-Z_][a-zA-Z0-9_]*)\s*\(").unwrap();
+        if let Some(captures) = re.captures(&self.function) {
+            match captures.get(1) {
+                Some(name) => name.as_str().to_string(),
+                None => self.function.clone(),
+            }
+        } else {
+            self.function.clone()
+        }
     }
 
     // resonse "YES" or "NO"

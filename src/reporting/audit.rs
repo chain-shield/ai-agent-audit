@@ -100,7 +100,6 @@ fn combine_invariants_for_all_contracts(
     all_invariants
 }
 
-// TODO - for free report exclude H and M
 fn get_finding_report(findings: &Findings, report_type: ReportType) -> String {
     let mut findings_report = String::new();
 
