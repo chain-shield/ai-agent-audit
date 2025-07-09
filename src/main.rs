@@ -43,7 +43,20 @@ async fn main() -> Result<()> {
     // ────────────────────────────────
     // 1. Repository Preparation
     // ────────────────────────────────
-    let repo_url = std::env::args().nth(1).expect("repo url");
+    let repo_url = std::env::args()
+        .nth(1)
+        .ok_or_else(|| anyhow::anyhow!("Repository URL is required as first argument"))?;
+
+    // Validate URL format and length before processing
+    if repo_url.len() > 2048 {
+        anyhow::bail!("Repository URL is too long (max 2048 characters)");
+    }
+
+    if !repo_url.starts_with("https://") && !repo_url.starts_with("http://") {
+        anyhow::bail!("Only HTTP/HTTPS repository URLs are supported");
+    }
+
+    info!("Processing repository: {}", repo_url);
     info!("git cloning and extraction source code");
 
     // Clone repository in Docker container and build with Foundry/Hardhat

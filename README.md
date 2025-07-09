@@ -21,7 +21,7 @@ This tool provides professional-grade smart contract auditing capabilities with 
 - **Multi-Platform Repository Support**: Automatically clone and build repositories with Foundry or Hardhat
 - **Advanced Static Analysis**: Deep integration with Slither for IR extraction, call graph analysis, and storage layout
 - **Multi-LLM Security Analysis**: Parallel vulnerability detection using OpenAI (GPT-4o, O3), Anthropic (Claude), Google Gemini, and DeepSeek
-- **Comprehensive Vulnerability Detection**: Covers 19+ vulnerability types including reentrancy, access control, MEV, oracle manipulation, and more
+- **Comprehensive Vulnerability Detection**: Covers 29 distinct vulnerability categories including reentrancy, access control, MEV, oracle manipulation, and advanced attack vectors
 - **Vector-Based Semantic Search**: High-quality embeddings with Qdrant for intelligent code search and context retrieval
 - **Professional Audit Reports**: Generate detailed markdown reports with findings categorized by severity
 - **Cost Optimization**: Real-time tracking of inference costs across different LLM providers
@@ -187,22 +187,40 @@ src/
 
 ## Vulnerability Detection
 
-The tool analyzes smart contracts for the following vulnerability categories:
+The tool analyzes smart contracts for **29 distinct vulnerability categories** covering the full spectrum of smart contract security issues:
 
-### Active Detection (8 categories)
-- **Reentrancy**: Cross-function and cross-contract reentrancy vulnerabilities
-- **Access Control**: Missing or improper access controls and privilege escalation
-- **Denial of Service (DoS)**: Gas limit attacks and resource exhaustion
-- **Integer Math**: Overflow, underflow, and precision issues
-- **Pragma Issues**: Floating pragma versions and compiler-specific issues
-- **Randomness**: Weak randomness sources and predictable values
-- **Unexpected ETH**: Forced ETH transfers and balance assumptions
-- **MEV/Front-running**: Transaction ordering and sandwich attack vulnerabilities
+### Core Security Categories (16 types)
+1. **Access Control** - Missing/mis-scoped auth, ownership loss
+2. **Denial of Service (DoS)** - Gas exhaustion, revert griefing, block gas limit
+3. **Integer Overflow** - Overflow/underflow, div-by-zero
+4. **Signature Malleability** - EIP-2 `s` checks, EIP-712 domain separation
+5. **Unexpected ETH** - Ether stuck/overly strict balance checks
+6. **Storage Layout** - Slot collisions, struct packing, uninitialized storage
+7. **Front-run/MEV** - Front-run/sandwich/back-run/latency arbitrage vectors
+8. **Oracle Manipulation** - Price-feed spoofing, stale data, missing sanity checks
+9. **Randomness** - Predictable entropy, miner influence
+10. **Reentrancy** - State update after external call, cross-function
+11. **Delegatecall/Low-level Ops** - Unsafe `delegatecall`, inline assembly
+12. **Replay Attack** - Sig replay, chain-ID mix-ups
+13. **Upgradeability/Initializer Safety** - Proxy init gaps, `initializer()` abuse
+14. **Self-Destruct** - Griefing/forced-ETH via `selfdestruct`
+15. **Zero-Code** - Constructor-phase contract bypasses
+16. **Flash Loan Economic Manipulation** - State checked & used within same tx
 
-### Additional Categories (11 available)
-- Array Limits, Default Visibilities, Confidential Data, Inheritance Issues
-- Oracle Manipulation, Replay Attacks, Self-Destruct, Storage Layout
-- tx.origin Usage, Unchecked Return Values, Zero-Code Contracts
+### Additional Security Issues (13 types)
+17. **tx.origin** - Auth that trusts `tx.origin`
+18. **Array Limits** - OOB reads/writes, dynamic-array gas bombs
+19. **Pragma** - Floating pragma, outdated compiler bugs
+20. **Inheritance** - Bad overrides, diamond ambiguity
+21. **Integer Math** - Rounding, precision div-by-zero
+22. **Confidential Data** - Private info leak via events/public vars
+23. **Default Visibility** - Funcs/vars defaulting to `public`
+24. **Pausable Emergency Stop** - Missing pause guards or bypasses
+25. **Timestamp Dependent Logic** - Miner-controlled `block.timestamp`/`number`
+26. **Unchecked Return** - Ignoring `call`, ERC-20 `transfer` boolean
+27. **Event Consistency** - Critical state changes not emitted/mis-ordered
+28. **Short Address** - Calldata truncation on L1/L2 bridges
+29. **Gas Grief Block Limit** - User-scaling loops, heavy SSTORE in hot paths
 
 ## How It Works
 
@@ -223,8 +241,8 @@ The tool analyzes smart contracts for the following vulnerability categories:
 - Cache results for efficient reprocessing
 
 ### 4. Multi-LLM Security Analysis
-- Deploy multiple AI agents in parallel for comprehensive coverage
-- Use specialized prompts for each vulnerability category
+- Deploy multiple AI agents in parallel for comprehensive coverage across 29 vulnerability categories
+- Use specialized prompts for each vulnerability type with advanced detection patterns
 - Implement verification and quality checking to reduce false positives
 - Support for OpenAI (GPT-4o, O3), Anthropic (Claude), Gemini, and DeepSeek
 
@@ -347,13 +365,19 @@ Key configuration constants (in source code):
    - Use multiple API keys with rotation
    - Choose providers with higher rate limits
 
+5. **Missing Vulnerability Categories**
+   - Ensure all 29 vulnerability prompts are properly loaded
+   - Check that LLM agents have access to specialized detection patterns
+   - Verify prompt engineering modules are functioning correctly
+
 ## Contributing
 
 Contributions are welcome! Areas for improvement:
-- Additional vulnerability detection patterns
-- New LLM provider integrations
-- Performance optimizations
-- Enhanced reporting formats
+- Additional vulnerability detection patterns beyond the current 29 categories
+- New LLM provider integrations (Claude 4.0, GPT-5, etc.)
+- Performance optimizations for large codebases
+- Enhanced reporting formats and visualization
+- Advanced prompt engineering for better detection accuracy
 
 Please feel free to submit a Pull Request.
 

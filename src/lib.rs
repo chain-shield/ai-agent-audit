@@ -14,16 +14,16 @@ pub mod build_brain {
     pub mod enrichment;
     /// Function summarization using LLMs
     pub mod fn_summaries;
-    /// Code parsing utilities
-    pub mod parsers;
-    /// Protocol and file summarization
-    pub mod summarize;
     /// Graph database operations for semantic data
     pub mod graph_db;
     /// Contract inheritance analysis
     pub mod inheritance;
+    /// Code parsing utilities
+    pub mod parsers;
     /// Slither static analyzer interface
     pub mod slither_ffi;
+    /// Protocol and file summarization
+    pub mod summarize;
     /// Qdrant vector database operations
     pub mod vector_db;
 }
@@ -193,8 +193,10 @@ pub mod utils {
     pub mod bpe;
     /// Docker volume cleanup utilities
     pub mod delete_docker_volumes;
+    pub mod env_security;
     /// LLM extraction with retry logic
     pub mod extract_retry;
+    pub mod file_security;
     /// Function labeling utilities
     pub mod fn_labels;
     /// Documentation extraction

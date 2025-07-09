@@ -5,10 +5,12 @@
 /// for smart contract analysis.
 use anyhow::{Context, Result};
 use ignore::gitignore::GitignoreBuilder;
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::{fs, path::Path};
 use walkdir::WalkDir;
+
+use crate::utils::file_security::{validate_repo_url, validate_safe_path};
 
 /// Contains paths to the repository root and relevant files.
 /// This struct organizes the paths to Solidity files and documentation
@@ -57,9 +59,8 @@ pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
 /// All operations are performed in isolated Docker containers to prevent
 /// malicious code execution on the host system.
 pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
-    // // 1. Create a temporary parent directory (will not auto-delete once we .into_path())
-    // let tmp = TempDir::new()?;
-    // let tmp_path = tmp.keep();
+    // 🔐 Validate the repository URL for safety
+    validate_repo_url(url)?;
 
     // 2. Extract & sanitize the repo name
     let repo_name = url
@@ -126,6 +127,7 @@ pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
 
 pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) -> Result<PathBuf> {
     let docker_volume = format!("{}/{}-{}", DOCKER_VOLUME, repo_name, &commit_hash[..6]);
+    let docker_path = PathBuf::from(&docker_volume);
 
     // Shallow clone for speed and security
     log::info!("git cloning repo...");
@@ -153,9 +155,18 @@ pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) 
         .context("Failed to clone and build repository in Docker")?;
 
     if !status.success() {
+        // 🔐 Validate the constructed docker volume path
         anyhow::bail!("Clone and Build failed in Docker");
     }
 
+    if docker_path.exists() {
+        validate_safe_path(&docker_path, Path::new(DOCKER_VOLUME))?;
+    } else {
+        log::warn!(
+            "Skipping path validation because {} does not exist yet",
+            docker_path.display()
+        );
+    }
     Ok(PathBuf::from(docker_volume))
 }
 
