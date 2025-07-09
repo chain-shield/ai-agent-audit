@@ -1,52 +1,82 @@
 # AI Agent Audit
 
-A tool for analyzing smart contracts and creating semantic search capabilities through vector embeddings.
+An advanced AI-powered smart contract auditing tool that combines static analysis, multiple LLM providers, and vector embeddings to perform comprehensive security audits of Solidity codebases.
 
 ## Overview
 
-AI Agent Audit is a Rust-based tool that analyzes Solidity smart contracts by:
+AI Agent Audit is a sophisticated Rust-based tool that performs comprehensive smart contract security audits by:
 
-1. Cloning a repository containing smart contracts
-2. Building the contracts with Forge
-3. Extracting intermediate representation (IR) and storage information using Slither
-4. Creating embeddings for the source code and analysis results
-5. Storing the embeddings in a Qdrant vector database for semantic search
+1. **Repository Analysis**: Cloning and building smart contract repositories with support for Foundry and Hardhat
+2. **Static Analysis**: Extracting detailed IR, call graphs, and storage information using Slither
+3. **AI-Powered Security Review**: Leveraging multiple LLM providers (OpenAI, Anthropic, Gemini, DeepSeek) for vulnerability detection
+4. **Vector Embeddings**: Creating semantic search capabilities through Qdrant vector database
+5. **Comprehensive Reporting**: Generating detailed audit reports with vulnerability findings and protocol overviews
+6. **Cost Tracking**: Monitoring inference costs across different LLM providers
 
-This enables powerful semantic search capabilities for smart contract auditing and analysis.
+This tool provides professional-grade smart contract auditing capabilities with AI assistance, making it suitable for security researchers, auditors, and development teams.
 
 ## Features
 
-- **Repository Intake**: Automatically clone and filter repositories containing Solidity contracts
-- **Slither Integration**: Extract detailed IR and storage information from smart contracts
-- **Text Chunking**: Break down source code and analysis results into optimal chunks for embedding
-- **Vector Embeddings**: Create high-quality embeddings using OpenAI's embedding models
-- **Vector Database**: Store and query embeddings using Qdrant for semantic search
+### Core Functionality
+- **Multi-Platform Repository Support**: Automatically clone and build repositories with Foundry or Hardhat
+- **Advanced Static Analysis**: Deep integration with Slither for IR extraction, call graph analysis, and storage layout
+- **Multi-LLM Security Analysis**: Parallel vulnerability detection using OpenAI (GPT-4o, O3), Anthropic (Claude), Google Gemini, and DeepSeek
+- **Comprehensive Vulnerability Detection**: Covers 19+ vulnerability types including reentrancy, access control, MEV, oracle manipulation, and more
+- **Vector-Based Semantic Search**: High-quality embeddings with Qdrant for intelligent code search and context retrieval
+- **Professional Audit Reports**: Generate detailed markdown reports with findings categorized by severity
+- **Cost Optimization**: Real-time tracking of inference costs across different LLM providers
+
+### Advanced Capabilities
+- **Intelligent Code Slicing**: Generate contextual code blocks with call graph traversal for focused analysis
+- **Duplicate Detection**: AI-powered deduplication of security findings
+- **Quality Verification**: Multi-stage verification process to reduce false positives
+- **Docker Integration**: Secure, isolated analysis environment using Trail of Bits security toolbox
+- **Caching System**: Efficient caching of analysis results and LLM responses
+- **Concurrent Processing**: Parallel analysis across multiple AI agents for faster results
 
 ## Prerequisites
 
-Before running the application, ensure you have the following installed:
-
+### Required Software
 - [Rust](https://www.rust-lang.org/tools/install) (latest stable version)
-- [Foundry](https://book.getfoundry.sh/getting-started/installation) for Forge
-- [Slither](https://github.com/crytic/slither#how-to-install) static analyzer
+- [Docker](https://docs.docker.com/get-docker/) for containerized analysis environment
 - [Qdrant](https://qdrant.tech/documentation/quick-start/) vector database
-- An OpenAI API key for generating embeddings
+
+### Optional (for local development)
+- [Foundry](https://book.getfoundry.sh/getting-started/installation) for Forge (handled by Docker)
+- [Slither](https://github.com/crytic/slither#how-to-install) static analyzer (handled by Docker)
+
+### API Keys
+You'll need API keys for the LLM providers you want to use:
+- **OpenAI**: Required for embeddings and GPT models
+- **Anthropic**: Optional, for Claude models
+- **Google AI**: Optional, for Gemini models
+- **DeepSeek**: Optional, for cost-effective analysis
 
 ## Environment Setup
 
-1. Create a `.env` file in the project root with the following variables:
+1. Create a `.env` file in the project root with your API keys:
 
-```
+```bash
+# Required
 OPENAI_API_KEY=your_openai_api_key
 QDRANT_URL=http://localhost:6334
+
+# Optional LLM Providers
+ANTHROPIC_API_KEY=your_anthropic_api_key
+GOOGLE_AI_API_KEY=your_gemini_api_key
+DEEPSEEK_API_KEY=your_deepseek_api_key
+
+# Logging
 RUST_LOG=info
 ```
 
-2. Ensure Qdrant is running. You can start it with Docker:
+2. Start the Qdrant vector database:
 
 ```bash
-docker-compose up
+docker-compose up -d
 ```
+
+This will start Qdrant on ports 6333 (REST API) and 6334 (gRPC API).
 
 ## Installation
 
@@ -65,89 +95,267 @@ cargo build --release
 
 ## Usage
 
+### Basic Usage
+
 Run the application with a Git repository URL containing Solidity contracts:
 
 ```bash
 cargo run --release -- https://github.com/example/solidity-project.git
 ```
 
-The application will:
+### Complete Workflow
 
-1. Clone the repository
-2. Build the contracts using Forge
-3. Run Slither analysis to extract IR and storage information
-4. Create embeddings for all the files
-5. Store the embeddings in Qdrant
+The application performs a comprehensive audit workflow:
+
+1. **Repository Preparation**
+   - Clone the repository using Docker for security
+   - Auto-detect and build with Foundry or Hardhat
+   - Filter and organize Solidity source files
+
+2. **Static Analysis**
+   - Extract call graphs and inheritance hierarchies using Slither
+   - Generate intermediate representation (IR) for all functions
+   - Analyze storage layouts and variable mappings
+
+3. **AI-Powered Security Analysis**
+   - Generate contextual code slices for focused analysis
+   - Run parallel security analysis using multiple LLM providers
+   - Detect vulnerabilities across 19+ security categories
+   - Verify and deduplicate findings using AI verification
+
+4. **Vector Database Population**
+   - Create semantic embeddings for all code and analysis results
+   - Store in Qdrant for intelligent search and retrieval
+
+5. **Report Generation**
+   - Generate comprehensive audit reports in Markdown format
+   - Create both paid (full details) and free (limited) report versions
+   - Include protocol overview, findings summary, and detailed vulnerability descriptions
+
+6. **Cost Tracking**
+   - Monitor and report total inference costs across all LLM providers
 
 ## Project Structure
 
 ```
 src/
-├── build_brain/
-│   ├── enbeddings.rs    # Handles creating embeddings for source code
-│   ├── enrichment.rs    # Enriches data using Slither analysis
-│   ├── intake.rs        # Handles repository cloning and filtering
-│   ├── slither_ffi.rs   # Interfaces with the Slither static analyzer
-│   └── vector_db.rs     # Interacts with the Qdrant vector database
-├── utils/
-│   └── bpe.rs           # Provides access to the OpenAI tokenizer
-├── lib.rs               # Library exports
-└── main.rs              # Application entry point
+├── ai_bot/                    # AI agent implementations
+│   ├── agent.rs              # Core AI audit agent with vector search
+│   └── retrieve_slice.rs     # Context retrieval for AI analysis
+├── build_brain/              # Core analysis and data processing
+│   ├── callgraph.rs          # Call graph analysis and traversal
+│   ├── enbeddings.rs         # Vector embeddings generation
+│   ├── enrichment.rs         # Slither analysis integration
+│   ├── fn_summaries.rs       # Function summarization
+│   ├── graph_db.rs           # Graph database operations
+│   ├── inheritance.rs        # Contract inheritance analysis
+│   ├── parsers.rs            # Code parsing utilities
+│   ├── slither_ffi.rs        # Slither static analyzer interface
+│   ├── summarize.rs          # Protocol and file summarization
+│   └── vector_db.rs          # Qdrant vector database operations
+├── cost/                     # Cost tracking and management
+│   └── cost_data.rs          # LLM inference cost calculation
+├── enumerator/               # Code slicing and enumeration
+│   ├── codeblock_cache.rs    # Caching for generated code blocks
+│   ├── codeblock_db.rs       # Database for code block storage
+│   ├── codeblock_maker.rs    # Code block generation logic
+│   ├── codeblocks.rs         # Core code slicing functionality
+│   └── utils.rs              # Enumeration utilities
+├── llm_review/               # AI-powered security analysis
+│   ├── analysis_db.rs        # Analysis results database
+│   ├── code_review.rs        # Main security review orchestration
+│   ├── config.rs             # LLM configuration and models
+│   ├── context_state.rs      # Global context management
+│   ├── enums.rs              # AI agent and vulnerability type enums
+│   ├── invariants.rs         # Protocol invariant analysis
+│   ├── prompt_content.rs     # Dynamic prompt generation
+│   ├── review_utils.rs       # AI agent builders and utilities
+│   └── prompt_support/       # Prompt engineering modules
+├── prepare_code/             # Repository preparation
+│   └── git_clone.rs          # Git cloning and building
+├── reporting/                # Report generation
+│   ├── audit.rs              # Audit report generation
+│   ├── contract_data.rs      # Contract data export
+│   └── save_file.rs          # File saving utilities
+├── prompts/                  # Vulnerability-specific prompts (19 types)
+├── master_prompts/           # Master security analysis prompts
+├── invariant_prompts/        # Protocol invariant prompts
+├── utils/                    # Shared utilities
+├── lib.rs                    # Library exports
+└── main.rs                   # Application entry point
 ```
+
+## Vulnerability Detection
+
+The tool analyzes smart contracts for the following vulnerability categories:
+
+### Active Detection (8 categories)
+- **Reentrancy**: Cross-function and cross-contract reentrancy vulnerabilities
+- **Access Control**: Missing or improper access controls and privilege escalation
+- **Denial of Service (DoS)**: Gas limit attacks and resource exhaustion
+- **Integer Math**: Overflow, underflow, and precision issues
+- **Pragma Issues**: Floating pragma versions and compiler-specific issues
+- **Randomness**: Weak randomness sources and predictable values
+- **Unexpected ETH**: Forced ETH transfers and balance assumptions
+- **MEV/Front-running**: Transaction ordering and sandwich attack vulnerabilities
+
+### Additional Categories (11 available)
+- Array Limits, Default Visibilities, Confidential Data, Inheritance Issues
+- Oracle Manipulation, Replay Attacks, Self-Destruct, Storage Layout
+- tx.origin Usage, Unchecked Return Values, Zero-Code Contracts
 
 ## How It Works
 
-### 1. Repository Intake
+### 1. Secure Repository Processing
+- Clone repositories in isolated Docker containers using Trail of Bits security toolbox
+- Auto-detect and build with Foundry (`forge build`) or Hardhat (`npx hardhat compile`)
+- Extract and filter Solidity source files and documentation
 
-The application clones the specified Git repository and filters out irrelevant files, keeping only Solidity contracts and documentation.
+### 2. Advanced Static Analysis
+- Generate comprehensive call graphs and inheritance hierarchies
+- Extract SlithIR (intermediate representation) for every function
+- Analyze storage layouts and variable mappings
+- Create semantic databases for efficient querying
 
-### 2. Forge Build
+### 3. Intelligent Code Slicing
+- Perform breadth-first search through call graphs
+- Generate contextual code blocks with configurable depth and token budgets
+- Cache results for efficient reprocessing
 
-It builds the Solidity contracts using Forge to ensure they compile correctly and to generate the necessary artifacts for Slither analysis.
+### 4. Multi-LLM Security Analysis
+- Deploy multiple AI agents in parallel for comprehensive coverage
+- Use specialized prompts for each vulnerability category
+- Implement verification and quality checking to reduce false positives
+- Support for OpenAI (GPT-4o, O3), Anthropic (Claude), Gemini, and DeepSeek
 
-### 3. Slither Analysis
+### 5. Vector-Based Context Retrieval
+- Create high-quality embeddings using OpenAI's text-embedding-3-small
+- Store in Qdrant with rich metadata for semantic search
+- Enable AI agents to retrieve relevant context dynamically
 
-Slither is used to extract:
-- SlithIR (intermediate representation) for each function
-- Storage variable information for each contract
+### 6. Professional Report Generation
+- Generate detailed Markdown audit reports with severity classifications
+- Include protocol overviews, finding summaries, and detailed vulnerability descriptions
+- Support both comprehensive (paid) and limited (free) report formats
+- Export contract data and metadata for further analysis
 
-This information is saved as individual text files.
+## Output Files
 
-### 4. Text Chunking and Embedding
+After analysis, the tool generates several output files:
 
-All files (Solidity source, documentation, and Slither analysis results) are broken into chunks of appropriate size and embedded using OpenAI's embedding model.
+### Audit Reports
+- `{repo-name}-audit-{hash}-audit-report.md` - Comprehensive audit report (paid version)
+- `{repo-name}-audit-{hash}-free-audit-report.md` - Limited audit report (free version)
 
-### 5. Vector Database Storage
+### Contract Analysis Data
+- `{ContractName}-{repo-name}-audit-{hash}.md` - Individual contract analysis
+- `metadata-{repo-name}-audit-{hash}.md` - Protocol metadata and context
 
-The embeddings are stored in a Qdrant collection, along with metadata that allows tracing back to the original source.
+### Analysis Artifacts
+- `callgraph.json` - Complete call graph data
+- `inheritance.json` - Contract inheritance relationships
+- `graph.json` - Semantic graph database
+- `sarif.json` - SARIF format analysis results
 
 ## Querying the Vector Database
 
-After running the application, you can query the vector database using the Qdrant API or client libraries. For example:
+The tool creates unique vector collections for each repository. You can query them using the Qdrant API:
 
 ```python
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 
 # Connect to Qdrant
 client = QdrantClient(url="http://localhost:6334")
 
+# List all collections
+collections = client.get_collections()
+print("Available collections:", [c.name for c in collections.collections])
+
 # Search for semantically similar content
+# Collection name format: {repo_hash}-contract_chunks
 search_result = client.search(
-    collection_name="contract_chunks",
+    collection_name="your_repo_hash-contract_chunks",
     query_vector=your_query_vector,  # Vector from embedding your query text
-    limit=5
+    limit=5,
+    with_payload=True
 )
 
-# Print results
+# Print results with metadata
 for result in search_result:
     print(f"Score: {result.score}")
-    print(f"Metadata: {result.payload['meta']}")
+    print(f"Content: {result.payload.get('content', '')[:200]}...")
+    print(f"Source: {result.payload.get('meta', {})}")
 ```
+
+## Configuration
+
+### LLM Provider Configuration
+
+The tool supports multiple LLM providers with different cost profiles:
+
+| Provider | Input Cost (per 1M tokens) | Output Cost (per 1M tokens) | Models |
+|----------|----------------------------|------------------------------|---------|
+| OpenAI | $2.00 | $8.00 | GPT-4o, O3 |
+| Anthropic | $3.00 | $15.00 | Claude 3.7 Sonnet, Claude 4.0 Sonnet |
+| Gemini | $1.25 | $10.00 | Gemini Pro |
+| DeepSeek | $0.07 | $1.10 | DeepSeek Chat |
+
+### Analysis Parameters
+
+Key configuration constants (in source code):
+- `MAX_DEPTH`: Call graph traversal depth (default: configurable)
+- `TOKEN_BUDGET`: Maximum tokens per code block (default: configurable)
+- `DISCOVER_RUNS`: Number of discovery rounds per contract (default: 3)
+
+## Performance and Costs
+
+### Typical Analysis Times
+- Small projects (< 10 contracts): 5-15 minutes
+- Medium projects (10-50 contracts): 15-45 minutes
+- Large projects (50+ contracts): 45+ minutes
+
+### Cost Estimation
+- Small project: $1-5 USD
+- Medium project: $5-20 USD
+- Large project: $20+ USD
+
+*Costs vary significantly based on LLM provider choice and project complexity*
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Docker Permission Errors**
+   ```bash
+   sudo usermod -aG docker $USER
+   # Log out and back in
+   ```
+
+2. **Qdrant Connection Issues**
+   ```bash
+   docker-compose down
+   docker-compose up -d
+   ```
+
+3. **Out of Memory Errors**
+   - Reduce `TOKEN_BUDGET` in source code
+   - Use fewer concurrent LLM agents
+   - Increase Docker memory limits
+
+4. **API Rate Limits**
+   - Add delays between requests
+   - Use multiple API keys with rotation
+   - Choose providers with higher rate limits
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Areas for improvement:
+- Additional vulnerability detection patterns
+- New LLM provider integrations
+- Performance optimizations
+- Enhanced reporting formats
+
+Please feel free to submit a Pull Request.
 
 ## License
 

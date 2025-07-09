@@ -1,10 +1,10 @@
+
 ### Storage layout (AssetToken) 
 
 ```text
 s_exchangeRate uint256
 
 ```
-
 
 #### AssetToken.constructor(address,IERC20,string,string) [INTERNAL]
 ```slithir
@@ -84,7 +84,7 @@ RETURN i_underlying_4
 ```slithir
  _callOptionalReturn(token,abi.encodeCall(token.transfer,(to,value)))
 REF_30(transfer) -> token_1.transfer
-TMP_92(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_30,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffb1dddd50>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffb1ddea10>])
+TMP_92(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_30,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa4a3dd50>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa4a3ea10>])
 INTERNAL_CALL, SafeERC20._callOptionalReturn(IERC20,bytes)(token_1,TMP_92)
 ```
 #### SafeERC20._callOptionalReturn(IERC20,bytes) [PRIVATE]

@@ -1,4 +1,3 @@
-
 ### Storage layout (OracleUpgradeable) 
 
 ```text
@@ -6,6 +5,7 @@ s_poolFactory address
 s_poolFactory address
 
 ```
+
 
 #### OracleUpgradeable.__Oracle_init(address) [INTERNAL]
 ```slithir
