@@ -42,6 +42,8 @@ use super::{
 };
 
 const DISCOVER_RUNS: usize = 3;
+const MAX_CLAUDE_RUNS_3_7: usize = 2;
+const MAX_CLAUDE_RUNS_4_0: usize = 1;
 
 pub async fn review_codebase_for_security_issues(
     codeblocks_path: &PathBuf,
@@ -162,10 +164,10 @@ pub async fn generate_ai_agents() -> anyhow::Result<(Arc<AIAgent>, Vec<Arc<AIAge
     // }
 
     // TODO - use anthropic for testing until credits run out
-    for _ in 0..5 {
+    for _ in 0..MAX_CLAUDE_RUNS_3_7 {
         ai_discovery_agents.push(anthropic_agent_3_7_t1.clone());
     }
-    for _ in 0..5 {
+    for _ in 0..MAX_CLAUDE_RUNS_4_0 {
         ai_discovery_agents.push(anthropic_agent_4_0_t1.clone());
     }
     Ok((ai_verify_agent, ai_discovery_agents))
