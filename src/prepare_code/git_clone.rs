@@ -129,6 +129,19 @@ pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) 
     let docker_volume = format!("{}/{}-{}", DOCKER_VOLUME, repo_name, &commit_hash[..6]);
     let docker_path = PathBuf::from(&docker_volume);
 
+    if docker_path.exists() {
+        log::warn!(
+            "Docker volume {} already exists. Removing for clean build.",
+            docker_path.display()
+        );
+        fs::remove_dir_all(&docker_path).with_context(|| {
+            format!(
+                "Failed to remove existing docker volume {}",
+                docker_path.display()
+            )
+        })?;
+    }
+
     // Shallow clone for speed and security
     log::info!("git cloning repo...");
     let status = Command::new("docker")
