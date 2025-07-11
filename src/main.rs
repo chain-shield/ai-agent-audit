@@ -9,9 +9,12 @@
 /// 6. Generating professional audit reports with findings and cost tracking
 use ai_agent_audit::{
     build_brain::{enrichment, vector_db},
+    config::{init_config, audit_config},
     cost::cost_data::get_total_inference_cost,
     enumerator::codeblock_maker,
+    error::{AuditError, Result},
     llm_review::{
+        agent_factory::init_llm_clients,
         code_review,
         context_state::{self},
     },
@@ -22,21 +25,21 @@ use ai_agent_audit::{
     },
     utils::delete_docker_volumes::cleanup_repo_volume,
 };
-use anyhow::Result;
 use dotenvy::dotenv;
 use log::info;
-
-/// Maximum call graph traversal depth for code slice generation
-const MAX_DEPTH: usize = 3; // depth of 3 is security researcher standard
-
-/// Maximum token budget per code block to stay within LLM context limits
-const TOKEN_BUDGET: usize = 150_000;
 
 /// The main async function that orchestrates the entire process.
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load environment variables from .env file
     dotenv().ok();
+    
+    // Initialize configuration from environment
+    init_config()?;
+    
+    // Initialize LLM clients
+    init_llm_clients()?;
+    
     // Initialize the logger
     env_logger::init();
 
@@ -45,15 +48,21 @@ async fn main() -> Result<()> {
     // ────────────────────────────────
     let repo_url = std::env::args()
         .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("Repository URL is required as first argument"))?;
+        .ok_or_else(|| AuditError::validation("repo_url", "Repository URL is required as first argument"))?;
 
     // Validate URL format and length before processing
-    if repo_url.len() > 2048 {
-        anyhow::bail!("Repository URL is too long (max 2048 characters)");
+    if repo_url.len() > audit_config().max_repo_url_length {
+        return Err(AuditError::validation(
+            "repo_url",
+            &format!("Repository URL is too long (max {} characters)", audit_config().max_repo_url_length)
+        ));
     }
 
     if !repo_url.starts_with("https://") && !repo_url.starts_with("http://") {
-        anyhow::bail!("Only HTTP/HTTPS repository URLs are supported");
+        return Err(AuditError::validation(
+            "repo_url",
+            "Only HTTP/HTTPS repository URLs are supported"
+        ));
     }
 
     info!("Processing repository: {}", repo_url);
@@ -83,8 +92,8 @@ async fn main() -> Result<()> {
     let codeblocks_db = codeblock_maker::generate_and_save_codeblocks_for_each_contract(
         &repo,
         &semantics_db,
-        MAX_DEPTH,
-        TOKEN_BUDGET,
+        audit_config().max_depth,
+        audit_config().token_budget,
     )
     .await?;
     info!("Slices at {}", codeblocks_db.display());

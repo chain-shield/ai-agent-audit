@@ -1,13 +1,13 @@
+use crate::config::audit_config;
+use crate::error::Result;
 use crate::{
     cost::cost_data::{
         add_to_inference_cost_by_agent, add_to_inference_cost_by_type, LlmCostType, TokenType,
     },
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
-        config::{
-            generated_llm_prompt, ContractInvariants, Finding, VulnerabilityQualityCheck,
-            CLAUDE_4_0_SONNET,
-        },
+        agent_factory::{AgentConfig, AgentFactory},
+        config::{generated_llm_prompt, ContractInvariants, Finding, VulnerabilityQualityCheck},
         context_state::get_metadata_context,
         prompt_content::generate_prompt_for_issue_check,
         prompt_support::{
@@ -15,23 +15,11 @@ use crate::{
             pre_prompt::PRE_PROMPT, pre_qualify::PRE_QUALIFY, pre_verify::PRE_VERIFY,
             qualify_prompt::QUALIFY_PROMPT, verify_prompt::VERIFY_PROMPT,
         },
-        review_utils::{
-            build_anthropic_agent, build_deepseek_agent, build_gemini_agent, build_openai_agent,
-        },
     },
     master_prompts::{prompt_2x_aa::PROMPT_2X_AA, prompt_2x_bb::PROMPT_2X_BB},
 };
-use anyhow::Result;
 use log::info;
-use rig::{
-    client::ProviderClient,
-    providers::{
-        anthropic::{self, CLAUDE_3_7_SONNET},
-        deepseek::{self, DEEPSEEK_CHAT},
-        gemini::{self},
-        openai::{self, GPT_4O, O3},
-    },
-};
+use rig::providers::openai::O3;
 use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf};
 use tokio::sync::Mutex;
@@ -45,13 +33,6 @@ use super::{
 ///
 /// This module coordinates parallel security analysis across multiple LLM providers,
 /// implements verification and deduplication workflows, and manages cost tracking.
-
-/// Number of discovery rounds per contract for comprehensive analysis
-const DISCOVER_RUNS: usize = 3;
-/// Maximum runs for Claude 3.7 Sonnet (cost optimization)
-const MAX_CLAUDE_RUNS_3_7: usize = 2;
-/// Maximum runs for Claude 4.0 Sonnet (highest cost tier)
-const MAX_CLAUDE_RUNS_4_0: usize = 1;
 
 /// Orchestrates comprehensive security analysis of smart contracts using multiple LLM providers.
 ///
@@ -117,78 +98,34 @@ pub async fn review_codebase_for_security_issues(
     Ok((all_security_issues, invariant_findings))
 }
 
-pub async fn generate_ai_agents() -> anyhow::Result<(Arc<AIAgent>, Vec<Arc<AIAgent>>)> {
-    let deepseek_client = deepseek::Client::from_env();
-    let gemini_client = gemini::Client::from_env();
-    let anthropic_client = anthropic::Client::from_env();
-    let openai_client = openai::Client::from_env();
-
+pub async fn generate_ai_agents() -> Result<(Arc<AIAgent>, Vec<Arc<AIAgent>>)> {
     let added_context_from_ai_brain = get_metadata_context().await?;
 
     info!("setting up AI agents...");
-    // extractors
-    let ai_verify_agent = Arc::new(build_openai_agent(
-        &openai_client,
-        1.0,
-        O3,
-        "You are SoliditySec-Verifier, a senior smart-contract auditor.",
-        Some(&added_context_from_ai_brain),
-    ));
 
-    /*
-        let openai_agent = Arc::new(build_openai_agent(
-            &openai_client,
-            1.0,
-            GPT_4O,
-            "You are a world renowned expert in smart-contract security auditing,
-                known for your uncanny ability to find all security bugs in a protocol,
-                even the obscure ones.",
-            None,
-        ));
+    // Create verification agent using OpenAI O3
+    let verify_config = AgentConfig::new()
+        .with_temperature(1.0)
+        .with_model(O3)
+        .with_preamble("You are SoliditySec-Verifier, a senior smart-contract auditor.")
+        .with_context(&added_context_from_ai_brain);
 
-        let deepseek_agent = Arc::new(build_deepseek_agent(
-            &deepseek_client,
-            1.0,
-            DEEPSEEK_CHAT,
-            None,
-        ));
+    let ai_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
 
-        let gemini_agent = Arc::new(build_gemini_agent(
-            &gemini_client,
-            1.0,
-            "gemini-2.5-pro",
-            None,
-        ));
-
-    */
-
-    // agents
+    // Create discovery agents using Anthropic models
     let mut ai_discovery_agents = Vec::new();
-    let anthropic_agent_3_7_t1 = Arc::new(build_anthropic_agent(
-        &anthropic_client,
-        1.0,
-        CLAUDE_3_7_SONNET,
-        64_000,
-    ));
-    let anthropic_agent_4_0_t1 = Arc::new(build_anthropic_agent(
-        &anthropic_client,
-        1.0,
-        CLAUDE_4_0_SONNET,
-        64_000,
-    ));
 
-    // TODO - unpause once antrhopic credits run out
-    // for _ in 0..DISCOVER_RUNS {
-    //     ai_discovery_agents.push(gemini_agent.clone());
-    // }
+    let gemini_config = AgentConfig::for_security_audit()
+        .with_temperature(1.0)
+        .with_model("gemini-2.5-pro");
 
-    // TODO - use anthropic for testing until credits run out
-    for _ in 0..MAX_CLAUDE_RUNS_3_7 {
-        ai_discovery_agents.push(anthropic_agent_3_7_t1.clone());
+    for _ in 0..audit_config().runs {
+        let agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
+        ai_discovery_agents.push(agent);
     }
-    for _ in 0..MAX_CLAUDE_RUNS_4_0 {
-        ai_discovery_agents.push(anthropic_agent_4_0_t1.clone());
-    }
+
+    info!("Created {} discovery agents", ai_discovery_agents.len());
+
     Ok((ai_verify_agent, ai_discovery_agents))
 }
 
@@ -295,7 +232,7 @@ impl Findings {
         code: &str,
         context: &str,
         agents: &Vec<Arc<AIAgent>>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let mut handles = vec![];
         let all_findings = Arc::new(Mutex::new(Findings {
             findings: Vec::new(),
@@ -351,7 +288,7 @@ impl Findings {
         &self,
         code: &str,
         agent: &Arc<AIAgent>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let mut handles = vec![];
         let deduped_findings = Arc::new(self.clone().dedup().await?);
         let codeblock = Arc::new(code.to_string());
@@ -370,7 +307,7 @@ impl Findings {
             let arc_findings = Arc::clone(&deduped_findings);
             let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
             handles.push(tokio::spawn(async move {
-                let result: anyhow::Result<()> = async {
+                let result: Result<()> = async {
                     let instruction_prompt = generate_prompt_for_issue_check(
                         &code,
                         &arc_findings.findings[i],
@@ -437,11 +374,7 @@ impl Findings {
         })
     }
 
-    pub async fn quality_check_with_llm(
-        self,
-        code: &str,
-        agent: &Arc<AIAgent>,
-    ) -> anyhow::Result<Self> {
+    pub async fn quality_check_with_llm(self, code: &str, agent: &Arc<AIAgent>) -> Result<Self> {
         let mut handles = vec![];
         let findings = Arc::new(self.clone().dedup().await?);
         let codeblock = Arc::new(code.to_string());
@@ -460,7 +393,7 @@ impl Findings {
             let arc_findings = Arc::clone(&findings);
             let arc_legit_findings_vec = Arc::clone(&quality_check_passed_vec);
             handles.push(tokio::spawn(async move {
-                let result: anyhow::Result<()> = async {
+                let result: Result<()> = async {
                     let prompt = generate_prompt_for_issue_check(
                         &code,
                         &arc_findings.findings[i],
