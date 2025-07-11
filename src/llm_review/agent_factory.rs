@@ -52,7 +52,7 @@ impl LlmProvider {
         match self {
             LlmProvider::OpenAI => "OPENAI_API_KEY",
             LlmProvider::Anthropic => "ANTHROPIC_API_KEY",
-            LlmProvider::Gemini => "GOOGLE_AI_API_KEY",
+            LlmProvider::Gemini => "GEMINI_API_KEY",
             LlmProvider::DeepSeek => "DEEPSEEK_API_KEY",
         }
     }

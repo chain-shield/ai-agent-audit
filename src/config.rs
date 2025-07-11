@@ -66,7 +66,7 @@ pub struct AuditConfig {
     pub anthropic_api_key: Option<String>,
 
     /// Google AI API key for Gemini models
-    pub google_ai_api_key: Option<String>,
+    pub gemini_ai_api_key: Option<String>,
 
     /// DeepSeek API key for DeepSeek models
     pub deepseek_api_key: Option<String>,
@@ -108,7 +108,7 @@ impl Default for AuditConfig {
             qdrant_url: "http://localhost:6334".to_string(),
             openai_api_key: None,
             anthropic_api_key: None,
-            google_ai_api_key: None,
+            gemini_ai_api_key: None,
             deepseek_api_key: None,
             log_level: "info".to_string(),
             docker_volume: DOCKER_VOLUME.to_string(),
@@ -136,7 +136,7 @@ impl AuditConfig {
     /// * `QDRANT_URL` - Vector database URL (default: http://localhost:6334)
     /// * `OPENAI_API_KEY` - OpenAI API key (optional)
     /// * `ANTHROPIC_API_KEY` - Anthropic API key (optional)
-    /// * `GOOGLE_AI_API_KEY` - Google AI API key (optional)
+    /// * `GEMINI_API_KEY` - Gemini AI API key (optional)
     /// * `DEEPSEEK_API_KEY` - DeepSeek API key (optional)
     /// * `RUST_LOG` - Logging level (default: info)
     pub fn from_env() -> Result<Self> {
@@ -156,13 +156,13 @@ impl AuditConfig {
         // Load API keys (optional)
         config.openai_api_key = env::var("OPENAI_API_KEY").ok();
         config.anthropic_api_key = env::var("ANTHROPIC_API_KEY").ok();
-        config.google_ai_api_key = env::var("GOOGLE_AI_API_KEY").ok();
+        config.gemini_ai_api_key = env::var("GEMINI_API_KEY").ok();
         config.deepseek_api_key = env::var("DEEPSEEK_API_KEY").ok();
 
         // Validate at least one API key is provided
         if config.openai_api_key.is_none()
             && config.anthropic_api_key.is_none()
-            && config.google_ai_api_key.is_none()
+            && config.gemini_ai_api_key.is_none()
             && config.deepseek_api_key.is_none()
         {
             return Err(AuditError::configuration(
@@ -190,7 +190,7 @@ impl AuditConfig {
         // Validate at least one API key is provided
         if self.openai_api_key.is_none()
             && self.anthropic_api_key.is_none()
-            && self.google_ai_api_key.is_none()
+            && self.gemini_ai_api_key.is_none()
             && self.deepseek_api_key.is_none()
         {
             return Err(AuditError::configuration(
@@ -214,7 +214,7 @@ impl AuditConfig {
 
     /// Returns true if Google AI API key is configured.
     pub fn has_google_ai_key(&self) -> bool {
-        self.google_ai_api_key.is_some()
+        self.gemini_ai_api_key.is_some()
     }
 
     /// Returns true if DeepSeek API key is configured.
@@ -250,7 +250,7 @@ impl AuditConfig {
             qdrant_url: "http://localhost:6334".to_string(),
             openai_api_key: Some("test-key".to_string()),
             anthropic_api_key: None,
-            google_ai_api_key: None,
+            gemini_ai_api_key: None,
             deepseek_api_key: None,
             log_level: "debug".to_string(),
             docker_volume: DOCKER_VOLUME.to_string(),
