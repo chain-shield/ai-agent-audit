@@ -32,6 +32,8 @@ pub mod build_brain {
     pub mod summarize;
     /// Qdrant vector database operations
     pub mod vector_db;
+    /// High-level vector database service
+    pub mod vector_service;
 }
 
 /// Repository preparation and building
@@ -82,6 +84,8 @@ pub mod llm_review {
     pub mod prompt_content;
     /// AI agent builders and utilities
     pub mod review_utils;
+    /// AI agent factory for centralized agent creation
+    pub mod agent_factory;
     /// Prompt engineering modules for different analysis stages
     pub mod prompt_support {
         /// Deduplication prompts
