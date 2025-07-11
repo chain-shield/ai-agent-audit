@@ -4,6 +4,12 @@
 /// combining static analysis, multiple LLM providers, and vector embeddings for
 /// professional-grade security assessments.
 
+/// Centralized error handling and types
+pub mod error;
+
+/// Configuration management and environment handling
+pub mod config;
+
 /// Core analysis and data processing functionality
 pub mod build_brain {
     /// Call graph analysis and traversal
@@ -26,6 +32,8 @@ pub mod build_brain {
     pub mod summarize;
     /// Qdrant vector database operations
     pub mod vector_db;
+    /// High-level vector database service
+    pub mod vector_service;
 }
 
 /// Repository preparation and building
@@ -76,6 +84,8 @@ pub mod llm_review {
     pub mod prompt_content;
     /// AI agent builders and utilities
     pub mod review_utils;
+    /// AI agent factory for centralized agent creation
+    pub mod agent_factory;
     /// Prompt engineering modules for different analysis stages
     pub mod prompt_support {
         /// Deduplication prompts
