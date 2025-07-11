@@ -1,5 +1,6 @@
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::get_fn_name::get_function_name;
+use crate::error::{AuditError, Result};
 
 use super::fn_summaries::get_function_summaries;
 use super::graph_db::GraphDb;
@@ -9,7 +10,6 @@ use super::graph_db::GraphDb;
 /// and function metadata extracted from Solidity contracts using Slither analysis.
 use super::slither_ffi::{self, SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
-use anyhow::Result;
 use log::info;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,7 +37,18 @@ pub struct Enriched {
 pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathBuf> {
     // Create database file in cache directory
     let db_path = repo.root.join(".cache").join("semantics.db");
-    std::fs::create_dir_all(db_path.parent().unwrap())?;
+    let cache_dir = db_path.parent()
+        .ok_or_else(|| AuditError::file_system(
+            db_path.to_string_lossy().to_string(),
+            "Invalid database path - no parent directory",
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path")
+        ))?;
+    std::fs::create_dir_all(cache_dir)
+        .map_err(|e| AuditError::file_system(
+            cache_dir.to_string_lossy().to_string(),
+            "Failed to create cache directory",
+            e
+        ))?;
     let db = Arc::new(Mutex::new(GraphDb::create(&db_path)?));
     let repo = Arc::new(repo);
 
@@ -94,10 +105,10 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
         .await;
 
         if let Err(e) = result {
-            log::error!("Error processing user: {:#}", e);
+            log::error!("Error processing call graph data: {:#}", e);
         }
 
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, AuditError>(())
     });
 
     // Process inheritance data in parallel task
@@ -124,7 +135,7 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
         if let Err(e) = result {
             log::error!("Error processing inheritance data: {:#}", e);
         }
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, AuditError>(())
     });
 
     // Wait for both parallel tasks to complete

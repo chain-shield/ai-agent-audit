@@ -4,6 +4,12 @@
 /// combining static analysis, multiple LLM providers, and vector embeddings for
 /// professional-grade security assessments.
 
+/// Centralized error handling and types
+pub mod error;
+
+/// Configuration management and environment handling
+pub mod config;
+
 /// Core analysis and data processing functionality
 pub mod build_brain {
     /// Call graph analysis and traversal
