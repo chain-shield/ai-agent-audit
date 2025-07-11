@@ -7,10 +7,7 @@ use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
         agent_factory::{AgentConfig, AgentFactory},
-        config::{
-            generated_llm_prompt, ContractInvariants, Finding, VulnerabilityQualityCheck,
-            CLAUDE_4_0_SONNET,
-        },
+        config::{generated_llm_prompt, ContractInvariants, Finding, VulnerabilityQualityCheck},
         context_state::get_metadata_context,
         prompt_content::generate_prompt_for_issue_check,
         prompt_support::{
