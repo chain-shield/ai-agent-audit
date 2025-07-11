@@ -9,11 +9,12 @@
 /// 6. Generating professional audit reports with findings and cost tracking
 use ai_agent_audit::{
     build_brain::{enrichment, vector_db},
-    config::{init_config, config},
+    config::{init_config, audit_config},
     cost::cost_data::get_total_inference_cost,
     enumerator::codeblock_maker,
     error::{AuditError, Result},
     llm_review::{
+        agent_factory::init_llm_clients,
         code_review,
         context_state::{self},
     },
@@ -35,7 +36,9 @@ async fn main() -> Result<()> {
     
     // Initialize configuration from environment
     init_config()?;
-    let audit_config = config();
+    
+    // Initialize LLM clients
+    init_llm_clients()?;
     
     // Initialize the logger
     env_logger::init();
@@ -48,10 +51,10 @@ async fn main() -> Result<()> {
         .ok_or_else(|| AuditError::validation("repo_url", "Repository URL is required as first argument"))?;
 
     // Validate URL format and length before processing
-    if repo_url.len() > audit_config.max_repo_url_length {
+    if repo_url.len() > audit_config().max_repo_url_length {
         return Err(AuditError::validation(
             "repo_url",
-            &format!("Repository URL is too long (max {} characters)", audit_config.max_repo_url_length)
+            &format!("Repository URL is too long (max {} characters)", audit_config().max_repo_url_length)
         ));
     }
 
@@ -89,8 +92,8 @@ async fn main() -> Result<()> {
     let codeblocks_db = codeblock_maker::generate_and_save_codeblocks_for_each_contract(
         &repo,
         &semantics_db,
-        audit_config.max_depth,
-        audit_config.token_budget,
+        audit_config().max_depth,
+        audit_config().token_budget,
     )
     .await?;
     info!("Slices at {}", codeblocks_db.display());

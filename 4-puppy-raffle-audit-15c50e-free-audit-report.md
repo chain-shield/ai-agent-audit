@@ -1,4 +1,4 @@
-# 4 puppy raffle audit - Findings Report
+# 6 puppy raffle audit - Findings Report
 ## Commit hash: 15c50ec22382bb1f3106aba660e7c590df18dcac
 
 ## Protocol Overview 

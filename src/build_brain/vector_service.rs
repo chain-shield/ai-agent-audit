@@ -3,6 +3,7 @@
 /// This module provides a high-level service interface for vector database operations,
 /// eliminating duplication and providing consistent error handling across the codebase.
 
+use crate::config::audit_config;
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use super::enbeddings::SourceChunk;
@@ -36,7 +37,7 @@ impl VectorDbService {
 
         Ok(Self {
             client,
-            vector_dimension: 1536, // OpenAI text-embedding-3-small dimension
+            vector_dimension: audit_config().vector_dimension,
         })
     }
 
@@ -212,7 +213,7 @@ mod tests {
     fn test_collection_name_generation() {
         let service = VectorDbService {
             client: Qdrant::from_url("http://localhost:6334").build().unwrap(),
-            vector_dimension: 1536,
+            vector_dimension: audit_config().vector_dimension,
         };
         
         let repo = create_test_repo();
@@ -227,9 +228,9 @@ mod tests {
     fn test_vector_dimension() {
         let service = VectorDbService {
             client: Qdrant::from_url("http://localhost:6334").build().unwrap(),
-            vector_dimension: 1536,
+            vector_dimension: audit_config().vector_dimension,
         };
         
-        assert_eq!(service.vector_dimension(), 1536);
+        assert_eq!(service.vector_dimension(), audit_config().vector_dimension);
     }
 }

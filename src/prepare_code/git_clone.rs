@@ -10,6 +10,7 @@ use std::process::Command;
 use std::{fs, path::Path};
 use walkdir::WalkDir;
 
+use crate::config::audit_config;
 use crate::utils::file_security::{validate_repo_url, validate_safe_path};
 
 /// Contains paths to the repository root and relevant files.
@@ -37,8 +38,6 @@ impl RepoPaths {
     }
 }
 
-/// Docker volume path for secure repository analysis
-pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
 
 /// Clones a repository and builds it in a secure Docker environment.
 ///
@@ -126,7 +125,7 @@ pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
 }
 
 pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) -> Result<PathBuf> {
-    let docker_volume = format!("{}/{}-{}", DOCKER_VOLUME, repo_name, &commit_hash[..6]);
+    let docker_volume = format!("{}/{}-{}", audit_config().docker_volume, repo_name, &commit_hash[..6]);
     let docker_path = PathBuf::from(&docker_volume);
 
     if docker_path.exists() {
@@ -173,7 +172,7 @@ pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) 
     }
 
     if docker_path.exists() {
-        validate_safe_path(&docker_path, Path::new(DOCKER_VOLUME))?;
+        validate_safe_path(&docker_path, Path::new(&audit_config().docker_volume))?;
     } else {
         log::warn!(
             "Skipping path validation because {} does not exist yet",

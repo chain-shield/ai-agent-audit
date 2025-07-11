@@ -1,11 +1,11 @@
+use super::enums::AIAgent;
 /// AI Agent Factory for centralized agent creation across LLM providers.
 ///
 /// This module provides a unified interface for creating AI agents from different
 /// LLM providers (OpenAI, Anthropic, Gemini, DeepSeek) with consistent configuration
 /// and error handling.
-
+use crate::config::audit_config;
 use crate::error::{AuditError, Result};
-use super::enums::AIAgent;
 use rig::{
     client::{CompletionClient, ProviderClient},
     providers::{
@@ -15,6 +15,7 @@ use rig::{
         openai::{self, O3},
     },
 };
+use std::sync::OnceLock;
 
 /// Supported LLM providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +92,7 @@ pub struct AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            temperature: 0.7,
+            temperature: audit_config().default_temperature,
             model: "default".to_string(),
             context: None,
             max_tokens: None,
@@ -139,13 +140,99 @@ impl AgentConfig {
     /// Creates an agent configuration for security auditing.
     pub fn for_security_audit() -> Self {
         Self {
-            temperature: 1.0,
+            temperature: audit_config().default_temperature,
             model: "default".to_string(),
             context: None,
-            max_tokens: Some(4096),
+            max_tokens: None,
             preamble: "You are a world renowned expert in smart-contract security auditing, known for your uncanny ability to find all security bugs in a protocol, even the obscure ones.".to_string(),
         }
     }
+}
+
+/// Singleton clients for LLM providers
+static OPENAI_CLIENT: OnceLock<openai::Client> = OnceLock::new();
+static ANTHROPIC_CLIENT: OnceLock<anthropic::Client> = OnceLock::new();
+static GEMINI_CLIENT: OnceLock<gemini::Client> = OnceLock::new();
+static DEEPSEEK_CLIENT: OnceLock<deepseek::Client> = OnceLock::new();
+
+/// Initializes all LLM clients from environment variables.
+///
+/// This function should be called once during application startup to initialize
+/// all available LLM clients. Clients are only created if their API keys are available.
+pub fn init_llm_clients() -> Result<()> {
+    // Initialize OpenAI client if API key is available
+    if audit_config().has_openai_key() {
+        let client = openai::Client::from_env();
+        OPENAI_CLIENT.set(client).map_err(|_| {
+            AuditError::configuration("openai_client", "OpenAI client already initialized")
+        })?;
+    }
+
+    // Initialize Anthropic client if API key is available
+    if audit_config().has_anthropic_key() {
+        let client = anthropic::Client::from_env();
+        ANTHROPIC_CLIENT.set(client).map_err(|_| {
+            AuditError::configuration("anthropic_client", "Anthropic client already initialized")
+        })?;
+    }
+
+    // Initialize Gemini client if API key is available
+    if audit_config().has_google_ai_key() {
+        let client = gemini::Client::from_env();
+        GEMINI_CLIENT.set(client).map_err(|_| {
+            AuditError::configuration("gemini_client", "Gemini client already initialized")
+        })?;
+    }
+
+    // Initialize DeepSeek client if API key is available
+    if audit_config().has_deepseek_key() {
+        let client = deepseek::Client::from_env();
+        DEEPSEEK_CLIENT.set(client).map_err(|_| {
+            AuditError::configuration("deepseek_client", "DeepSeek client already initialized")
+        })?;
+    }
+
+    Ok(())
+}
+
+/// Returns the OpenAI client instance.
+fn openai_client() -> Result<&'static openai::Client> {
+    OPENAI_CLIENT.get().ok_or_else(|| {
+        AuditError::configuration(
+            "openai_client",
+            "OpenAI client not initialized or API key not configured",
+        )
+    })
+}
+
+/// Returns the Anthropic client instance.
+fn anthropic_client() -> Result<&'static anthropic::Client> {
+    ANTHROPIC_CLIENT.get().ok_or_else(|| {
+        AuditError::configuration(
+            "anthropic_client",
+            "Anthropic client not initialized or API key not configured",
+        )
+    })
+}
+
+/// Returns the Gemini client instance.
+fn gemini_client() -> Result<&'static gemini::Client> {
+    GEMINI_CLIENT.get().ok_or_else(|| {
+        AuditError::configuration(
+            "gemini_client",
+            "Gemini client not initialized or API key not configured",
+        )
+    })
+}
+
+/// Returns the DeepSeek client instance.
+fn deepseek_client() -> Result<&'static deepseek::Client> {
+    DEEPSEEK_CLIENT.get().ok_or_else(|| {
+        AuditError::configuration(
+            "deepseek_client",
+            "DeepSeek client not initialized or API key not configured",
+        )
+    })
 }
 
 /// Factory for creating AI agents across different providers.
@@ -154,7 +241,7 @@ pub struct AgentFactory;
 impl AgentFactory {
     /// Creates an OpenAI agent with the specified configuration.
     pub fn create_openai_agent(config: &AgentConfig) -> Result<AIAgent> {
-        let client = openai::Client::from_env();
+        let client = openai_client()?;
         let model = if config.model == "default" {
             O3
         } else {
@@ -175,7 +262,7 @@ impl AgentFactory {
 
     /// Creates an Anthropic agent with the specified configuration.
     pub fn create_anthropic_agent(config: &AgentConfig) -> Result<AIAgent> {
-        let client = anthropic::Client::from_env();
+        let client = anthropic_client()?;
         let model = if config.model == "default" {
             CLAUDE_3_7_SONNET
         } else {
@@ -196,7 +283,7 @@ impl AgentFactory {
 
     /// Creates a Gemini agent with the specified configuration.
     pub fn create_gemini_agent(config: &AgentConfig) -> Result<AIAgent> {
-        let client = gemini::Client::from_env();
+        let client = gemini_client()?;
         let model = if config.model == "default" {
             "gemini-2.5-pro"
         } else {
@@ -217,7 +304,7 @@ impl AgentFactory {
 
     /// Creates a DeepSeek agent with the specified configuration.
     pub fn create_deepseek_agent(config: &AgentConfig) -> Result<AIAgent> {
-        let client = deepseek::Client::from_env();
+        let client = deepseek_client()?;
         let model = if config.model == "default" {
             DEEPSEEK_CHAT
         } else {
@@ -248,16 +335,17 @@ impl AgentFactory {
 
     /// Creates an agent from a string provider name.
     pub fn create_agent_from_str(provider: &str, config: &AgentConfig) -> Result<AIAgent> {
-        let provider_enum = LlmProvider::from_str(provider)
-            .ok_or_else(|| AuditError::configuration(
+        let provider_enum = LlmProvider::from_str(provider).ok_or_else(|| {
+            AuditError::configuration(
                 "llm_provider",
                 &format!("Unsupported LLM provider: {}", provider),
-            ))?;
+            )
+        })?;
         Self::create_agent(provider_enum, config)
     }
 
     /// Creates an agent from environment configuration.
-    /// 
+    ///
     /// This method checks which API keys are available and creates an agent
     /// from the first available provider in priority order.
     pub fn create_from_env(config: &AgentConfig) -> Result<AIAgent> {
@@ -291,8 +379,12 @@ impl AgentFactory {
 /// These maintain backward compatibility with existing code.
 
 /// Creates an OpenAI agent with the original API.
+///
+/// # Deprecated
+/// This function is deprecated. Use `AgentFactory::create_openai_agent` instead.
+/// The client parameter is ignored as singleton clients are used internally.
 pub fn build_openai_agent(
-    client: &openai::Client,
+    _client: &openai::Client,
     temperature: f64,
     model: &str,
     preamble: &str,
@@ -304,24 +396,20 @@ pub fn build_openai_agent(
         .with_preamble(preamble)
         .with_context(context.unwrap_or_default());
 
-    // Use the factory but fall back to direct creation if it fails
+    // Use the factory with singleton clients
     AgentFactory::create_openai_agent(&config).unwrap_or_else(|_| {
-        let mut builder = client
-            .agent(model)
-            .preamble(preamble)
-            .temperature(temperature);
-
-        if let Some(added_context) = context {
-            builder = builder.context(added_context);
-        }
-
-        AIAgent::Openai(builder.build())
+        // Fallback should not happen in normal operation
+        panic!("Failed to create OpenAI agent. Ensure init_llm_clients() was called and API key is configured.");
     })
 }
 
 /// Creates an Anthropic agent with the original API.
+///
+/// # Deprecated
+/// This function is deprecated. Use `AgentFactory::create_anthropic_agent` instead.
+/// The client parameter is ignored as singleton clients are used internally.
 pub fn build_anthropic_agent(
-    client: &anthropic::Client,
+    _client: &anthropic::Client,
     temperature: f64,
     model: &str,
     max_tokens: u64,
@@ -331,22 +419,20 @@ pub fn build_anthropic_agent(
         .with_model(model)
         .with_max_tokens(max_tokens);
 
-    // Use the factory but fall back to direct creation if it fails
+    // Use the factory with singleton clients
     AgentFactory::create_anthropic_agent(&config).unwrap_or_else(|_| {
-        let agent = client
-            .agent(model)
-            .preamble(&config.preamble)
-            .max_tokens(max_tokens)
-            .temperature(temperature)
-            .build();
-
-        AIAgent::Anthropic(agent)
+        // Fallback should not happen in normal operation
+        panic!("Failed to create Anthropic agent. Ensure init_llm_clients() was called and API key is configured.");
     })
 }
 
 /// Creates a Gemini agent with the original API.
+///
+/// # Deprecated
+/// This function is deprecated. Use `AgentFactory::create_gemini_agent` instead.
+/// The client parameter is ignored as singleton clients are used internally.
 pub fn build_gemini_agent(
-    client: &gemini::Client,
+    _client: &gemini::Client,
     temperature: f64,
     model: &str,
     context: Option<&str>,
@@ -356,24 +442,20 @@ pub fn build_gemini_agent(
         .with_model(model)
         .with_context(context.unwrap_or_default());
 
-    // Use the factory but fall back to direct creation if it fails
+    // Use the factory with singleton clients
     AgentFactory::create_gemini_agent(&config).unwrap_or_else(|_| {
-        let mut builder = client
-            .agent(model)
-            .preamble(&config.preamble)
-            .temperature(temperature);
-
-        if let Some(added_context) = context {
-            builder = builder.context(added_context);
-        }
-
-        AIAgent::Gemini(builder.build())
+        // Fallback should not happen in normal operation
+        panic!("Failed to create Gemini agent. Ensure init_llm_clients() was called and API key is configured.");
     })
 }
 
 /// Creates a DeepSeek agent with the original API.
+///
+/// # Deprecated
+/// This function is deprecated. Use `AgentFactory::create_deepseek_agent` instead.
+/// The client parameter is ignored as singleton clients are used internally.
 pub fn build_deepseek_agent(
-    client: &deepseek::Client,
+    _client: &deepseek::Client,
     temperature: f64,
     model: &str,
     context: Option<&str>,
@@ -383,18 +465,10 @@ pub fn build_deepseek_agent(
         .with_model(model)
         .with_context(context.unwrap_or_default());
 
-    // Use the factory but fall back to direct creation if it fails
+    // Use the factory with singleton clients
     AgentFactory::create_deepseek_agent(&config).unwrap_or_else(|_| {
-        let mut builder = client
-            .agent(model)
-            .preamble(&config.preamble)
-            .temperature(config.temperature);
-
-        if let Some(added_context) = context {
-            builder = builder.context(added_context);
-        }
-
-        AIAgent::Deepseek(builder.build())
+        // Fallback should not happen in normal operation
+        panic!("Failed to create DeepSeek agent. Ensure init_llm_clients() was called and API key is configured.");
     })
 }
 
@@ -414,7 +488,10 @@ mod tests {
     fn test_provider_from_str() {
         assert_eq!(LlmProvider::from_str("openai"), Some(LlmProvider::OpenAI));
         assert_eq!(LlmProvider::from_str("gpt"), Some(LlmProvider::OpenAI));
-        assert_eq!(LlmProvider::from_str("claude"), Some(LlmProvider::Anthropic));
+        assert_eq!(
+            LlmProvider::from_str("claude"),
+            Some(LlmProvider::Anthropic)
+        );
         assert_eq!(LlmProvider::from_str("invalid"), None);
     }
 
@@ -445,3 +522,4 @@ mod tests {
         assert!(providers.is_empty() || !providers.is_empty());
     }
 }
+

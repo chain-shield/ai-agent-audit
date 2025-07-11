@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 /// This module handles vector database operations including collection creation,
 /// embedding generation, and metadata storage for intelligent code search and
 /// AI agent context retrieval.
+use crate::config::audit_config;
 use crate::error::{AuditError, Result};
 use log::info;
 use qdrant_client::qdrant::{
@@ -97,7 +98,7 @@ pub async fn generate_enbeddings_and_save_to_qdrant_vector_db(
 
     // Create the collection if it doesn't exist
     info!("create contract_chunks vector db (if does not exist)");
-    ensure_collection(&qdrant, &vector_db_name, 1536).await?;
+    ensure_collection(&qdrant, &vector_db_name, audit_config().vector_dimension).await?;
 
     // Generate vector embeddings for all files
     info!("generating vector embedding");
