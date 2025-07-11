@@ -345,7 +345,8 @@ impl Findings {
         }
         Ok(findings.clone())
     }
-
+    // TODO - refactor dedup to first use hashMap => HashMap<String(hash),Vec<Finding> (same hash)>
+    // then evaluate each entry for dups with different thread!
     pub async fn dedup_and_verify_with_llm(
         &self,
         code: &str,
