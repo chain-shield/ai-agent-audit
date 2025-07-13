@@ -38,7 +38,6 @@ impl RepoPaths {
     }
 }
 
-
 /// Clones a repository and builds it in a secure Docker environment.
 ///
 /// This function performs the complete repository preparation workflow:
@@ -125,7 +124,12 @@ pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
 }
 
 pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) -> Result<PathBuf> {
-    let docker_volume = format!("{}/{}-{}", audit_config().docker_volume, repo_name, &commit_hash[..6]);
+    let docker_volume = format!(
+        "{}/{}-{}",
+        audit_config().docker_volume,
+        repo_name,
+        &commit_hash[..6]
+    );
     let docker_path = PathBuf::from(&docker_volume);
 
     if docker_path.exists() {
@@ -157,7 +161,7 @@ pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) 
             &format!(
                 "git clone --depth=1 {repo_url} {repo_name} && \
              cd {repo_name} && \
-             if [ -f foundry.toml ]; then forge install && forge build; \
+             if [ -f foundry.toml ]; then forge install && forge build --via-ir --build-info; \
              elif [ -f hardhat.config.js ] || [ -f hardhat.config.ts ]; then \
              npm install -g hardhat && npm install && npx hardhat compile; \
              else echo 'No build system detected'; fi"

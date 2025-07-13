@@ -9,7 +9,7 @@ use crate::{
         agent_factory::{AgentConfig, AgentFactory},
         config::{generated_llm_prompt, ContractInvariants, Finding, VulnerabilityQualityCheck},
         context_state::get_metadata_context,
-        prompt_content::generate_prompt_for_issue_check,
+        prompt_context::generate_prompt_for_issue_check,
         prompt_support::{
             post_prompt::POST_PROMPT, post_qualify::POST_QUALIFY, post_verify::POST_VERIFY,
             pre_prompt::PRE_PROMPT, pre_qualify::PRE_QUALIFY, pre_verify::PRE_VERIFY,

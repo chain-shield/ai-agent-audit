@@ -3,7 +3,6 @@
 /// This module generates intelligent summaries of smart contract protocols and
 /// individual source files using OpenAI models. Provides cached summarization
 /// for protocol overviews and contextual information for AI analysis.
-
 use anyhow::Result;
 use log::info;
 use once_cell::sync::Lazy;
@@ -18,15 +17,15 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use walkdir::WalkDir;
 
 use crate::{
-    cost::cost_data::add_to_inference_cost_by_type, prepare_code::git_clone::RepoPaths,
-    utils::extract_retry::extractor_with_retry,
+    cost::cost_data::add_to_inference_cost_by_type,
+    prepare_code::git_clone::RepoPaths,
+    utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
 use crate::{
     cost::cost_data::LlmCostType,
-    llm_review::prompt_content::{self, generate_context_for_code_review},
+    llm_review::prompt_context::{self, generate_context_for_code_review},
 };
 
 use super::slither_ffi::cache_key;
@@ -70,7 +69,7 @@ pub async fn summarize_src_files(
     let openai_client = openai::Client::from_env();
 
     let context =
-        prompt_content::generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
+        prompt_context::generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
@@ -87,29 +86,35 @@ pub async fn summarize_src_files(
 
     // Walk through the repository and collect relevant files
     let repo_code_root = repo.root.join(repo.repo_name.clone());
-    for entry in WalkDir::new(&repo_code_root)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
-        let path = entry.path();
-
+    for file in &repo.sol_files {
         // Skip directories and symlinks
-        if !path.is_file() || fs::symlink_metadata(path)?.file_type().is_symlink() {
+        if !file.is_file() || fs::symlink_metadata(file)?.file_type().is_symlink() {
             continue;
         }
 
-        let is_readme = path
+        let is_readme_or_mock = file
             .file_name()
-            .map(|f| f.to_ascii_lowercase() == "readme.md")
+            .map(|f| {
+                f.to_ascii_lowercase() == "readme.md"
+                    || f.to_string_lossy().to_ascii_lowercase().contains("mock")
+            })
             .unwrap_or(false)
-            && (path.parent() == Some(&repo_code_root)
-                || path.parent() == Some(&repo_code_root.join("src")));
+            && (file.parent() == Some(&repo_code_root)
+                || file.parent() == Some(&repo_code_root.join("src")));
 
-        let is_sol_in_src = path.extension().map_or(false, |ext| ext == "sol")
-            && path.starts_with(&repo_code_root.join("src"));
+        let is_sol_in_src = file.extension().map_or(false, |ext| ext == "sol")
+            && file.starts_with(&repo_code_root.join("src"));
 
-        if is_readme || is_sol_in_src {
-            let content = fs::read_to_string(path)?;
+        if is_readme_or_mock || is_sol_in_src {
+            let content = fs::read_to_string(file.clone())?;
+
+            // skip if content does not have have at least one line that start with contract and contract
+            // name does NOT contain 'mock' (case insensative)
+            let has_non_mock_contract = has_non_mock_contract(&content);
+
+            if !has_non_mock_contract {
+                continue;
+            }
 
             add_to_inference_cost_by_type(
                 &format!("{}{}", preamble, content),
@@ -122,10 +127,10 @@ pub async fn summarize_src_files(
                     .await?;
 
             // filename is relative to root folder ie src/PuppyRaffle.sol
-            let file = path.strip_prefix(&repo.root)?.to_string_lossy().to_string();
+            let filename = file.strip_prefix(&repo.root)?.to_string_lossy().to_string();
 
             summaries.push(SrcFileSummary {
-                filename: file,
+                filename,
                 summary: summary.summary,
             })
         }

@@ -1,16 +1,15 @@
-/// Enumeration utilities for code block generation and analysis.
-///
-/// This module provides utility functions for generating markdown code blocks,
-/// extracting function metadata, managing IR mappings, and performing token
-/// counting for optimal code slice generation within LLM context limits.
-
-use std::collections::HashMap;
 use anyhow::anyhow;
 use anyhow::Result;
 use log::info;
 use regex::Regex;
 use rusqlite::params_from_iter;
 use rusqlite::{Connection, OptionalExtension};
+/// Enumeration utilities for code block generation and analysis.
+///
+/// This module provides utility functions for generating markdown code blocks,
+/// extracting function metadata, managing IR mappings, and performing token
+/// counting for optimal code slice generation within LLM context limits.
+use std::collections::HashMap;
 use std::fs;
 use walkdir::WalkDir;
 
@@ -223,33 +222,48 @@ async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec
 pub fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
     let src_root = repo.root.join(repo.repo_name.clone()).join("src");
     if !src_root.exists() {
-        anyhow::bail!("no src/ folder found at {}", src_root.display());
+        anyhow::bail!("no src/ folder found at {},", src_root.display());
     }
-
-    info!("src root => {:?}", src_root);
-
     // Regex matches `contract Foo`, ignores `interface` / `library`
     let re = Regex::new(r"(?m)^\s*contract\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
-    let mut out = Vec::<String>::new();
+    let mut contracts = Vec::<String>::new();
 
-    for entry in WalkDir::new(&src_root)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "sol"))
-    {
-        // Skip directories and symlinks
-        if fs::symlink_metadata(entry.path())?.file_type().is_symlink() {
+    for file in &repo.sol_files {
+        // ✅ is in src ?
+        if !file.starts_with(&src_root) {
             continue;
         }
 
-        let content = fs::read_to_string(entry.path())?;
+        // 🚫 Skip if path contains /lib/ or /mock/
+        if file.components().any(|comp| {
+            let part = comp.as_os_str().to_ascii_lowercase();
+            part == "lib" || part == "mock"
+        }) {
+            continue;
+        }
+        // Skip directories and symlinks
+        if fs::symlink_metadata(file)?.file_type().is_symlink() {
+            continue;
+        }
+
+        let content = match fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("Could not read file {}: {}", file.display(), e);
+                continue;
+            }
+        };
+
         for cap in re.captures_iter(&content) {
             if let Some(contract_name) = cap.get(1) {
-                out.push(contract_name.as_str().to_string());
+                let contract = contract_name.as_str();
+                if !contract.to_ascii_lowercase().contains("mock") {
+                    contracts.push(contract.to_string());
+                }
             }
         }
     }
-    Ok(out)
+    Ok(contracts)
 }
 
 pub fn get_function_metadata_from_id(
