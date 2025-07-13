@@ -2,7 +2,6 @@
 ///
 /// This module provides intelligent AI agents that combine static documentation
 /// with dynamic vector search for contextual smart contract analysis.
-
 use anyhow::Result;
 use log::info;
 use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
@@ -68,12 +67,7 @@ pub fn create_ai_audit_agent(repo: &RepoPaths) -> Result<Agent<CompletionModel>>
 }
 
 // TODO - restore once token limit increased
-pub async fn get_context_for_security_query(
-    query_content: &str,
-    repo: &RepoPaths,
-) -> Result<String> {
-    let documentation = extract_content_from_docs(repo)?;
-
+pub async fn get_rag_for_security_query(query_content: &str, repo: &RepoPaths) -> Result<String> {
     let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL")?)
         .build()
         .map_err(anyhow::Error::from)?;
@@ -105,10 +99,7 @@ pub async fn get_context_for_security_query(
     info!("dynamic content");
     print_first_four_lines(&dynamic_content);
 
-    let final_context = format!(
-        "\n ## DOCUMENTATION: \n\n {} \n\n ## ADDITIONAL CONTEXT: \n\n {}",
-        documentation, dynamic_content
-    );
+    let final_context = format!("## ADDITIONAL CONTEXT: \n\n {}", dynamic_content);
 
     Ok(final_context)
 }

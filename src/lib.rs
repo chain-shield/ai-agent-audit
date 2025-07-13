@@ -68,6 +68,8 @@ pub mod enumerator {
 
 /// AI-powered security analysis and LLM integration
 pub mod llm_review {
+    /// AI agent factory for centralized agent creation
+    pub mod agent_factory;
     /// Analysis results database
     pub mod analysis_db;
     /// Main security review orchestration
@@ -81,11 +83,9 @@ pub mod llm_review {
     /// Protocol invariant analysis
     pub mod invariants;
     /// Dynamic prompt generation
-    pub mod prompt_content;
+    pub mod prompt_context;
     /// AI agent builders and utilities
     pub mod review_utils;
-    /// AI agent factory for centralized agent creation
-    pub mod agent_factory;
     /// Prompt engineering modules for different analysis stages
     pub mod prompt_support {
         /// Deduplication prompts
@@ -201,6 +201,7 @@ pub mod invariant_prompts {
 pub mod utils {
     /// OpenAI tokenizer (BPE) for text chunking
     pub mod bpe;
+    pub mod contract_name_check;
     /// Docker volume cleanup utilities
     pub mod delete_docker_volumes;
     pub mod env_security;
