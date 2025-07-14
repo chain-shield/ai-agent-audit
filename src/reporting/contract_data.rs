@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// with standardized naming conventions for easy reference and documentation.
 ///
 /// # Arguments
-/// * `codeblocks_path` - Path to the code blocks database
+// * `codeblocks_path` - Path to the code blocks database
 /// * `repo` - Repository paths and metadata for naming
 pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> anyhow::Result<()> {
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;

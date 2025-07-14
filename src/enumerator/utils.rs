@@ -237,7 +237,13 @@ pub fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
         // 🚫 Skip if path contains /lib/ or /mock/
         if file.components().any(|comp| {
             let part = comp.as_os_str().to_ascii_lowercase();
-            part == "lib" || part == "mock"
+            part == "lib"
+                || part == "library"
+                || part.to_string_lossy().to_ascii_lowercase().contains("mock")
+                || part
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .contains("helper")
         }) {
             continue;
         }

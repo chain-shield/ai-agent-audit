@@ -125,6 +125,7 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
         text = String::from_utf8_lossy(&out.stderr).into_owned();
     }
 
+    info!("slither analysis complete with size {}", text.len());
     // Save to cache and return
     printer_cache.insert(key, text.clone());
     Ok(text)
@@ -167,6 +168,10 @@ pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
             "out",
             "--print",
             printer,
+            "--exclude-low",
+            "--exclude-medium",
+            "--exclude-high",
+            "--exclude-informational",
             "--disable-color", // Disable ANSI color codes for easier parsing
         ])
         .stdout(Stdio::piped()) // Capture printer text from stdout
@@ -184,6 +189,7 @@ pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
         return Err(anyhow!("Slither ran but produced no `{}` output", printer));
     }
 
+    info!("{} printer complete with size {}", printer, text.len());
     // Save to cache and return
     printer_cache.insert(key, text.clone());
     Ok(text)
@@ -213,8 +219,16 @@ pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String>
             "ghcr.io/trailofbits/eth-security-toolbox:nightly",
             "slither",
             &repo.repo_name,
+            "--foundry-ignore-compile", // Skip compilation as we've already built with Forge
+            "--foundry-out-directory",  // Specify where to find Forge build artifacts
+            "out",
             "--print",
             printer,
+            "--exclude-low",
+            "--exclude-medium",
+            "--exclude-high",
+            "--exclude-informational",
+            "--disable-color",
             "--json",
             "-",
         ])
@@ -225,6 +239,7 @@ pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String>
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
 
     // Save to cache and return
+    info!("{} print complete with size {}", printer, text.len());
     printer_cache.insert(key, text.clone());
 
     Ok(text)

@@ -1,6 +1,7 @@
+use crate::build_brain::callgraph::DotFunc;
+use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::get_fn_name::get_function_name;
-use crate::error::{AuditError, Result};
 
 use super::fn_summaries::get_function_summaries;
 use super::graph_db::GraphDb;
@@ -11,6 +12,7 @@ use super::graph_db::GraphDb;
 use super::slither_ffi::{self, SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
 use log::info;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -37,18 +39,20 @@ pub struct Enriched {
 pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathBuf> {
     // Create database file in cache directory
     let db_path = repo.root.join(".cache").join("semantics.db");
-    let cache_dir = db_path.parent()
-        .ok_or_else(|| AuditError::file_system(
+    let cache_dir = db_path.parent().ok_or_else(|| {
+        AuditError::file_system(
             db_path.to_string_lossy().to_string(),
             "Invalid database path - no parent directory",
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path")
-        ))?;
-    std::fs::create_dir_all(cache_dir)
-        .map_err(|e| AuditError::file_system(
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid path"),
+        )
+    })?;
+    std::fs::create_dir_all(cache_dir).map_err(|e| {
+        AuditError::file_system(
             cache_dir.to_string_lossy().to_string(),
             "Failed to create cache directory",
-            e
-        ))?;
+            e,
+        )
+    })?;
     let db = Arc::new(Mutex::new(GraphDb::create(&db_path)?));
     let repo = Arc::new(repo);
 
@@ -61,45 +65,53 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             info!("extracting DOT blobs");
             let json = slither_ffi::run_printer_json(&repo_func, "call-graph").await?;
             let blobs = callgraph::extract_dot_blobs(&json)?;
+            let mut rows = Vec::new();
             let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs)?;
+            let func_index: HashMap<(String, String), DotFunc> = funcs_id
+                .into_iter()
+                .map(|node| ((node.contract.clone(), node.name.clone()), node))
+                .collect();
 
             // Get function summaries for metadata
             info!("getting function summaries...");
             let funcs = get_function_summaries(&repo_func).await?;
 
+            info!("insert function metadata into database..");
+            info!("{} function summaries", funcs.len());
             // Insert function metadata into database
-            for f in &funcs {
-                let modifiers = f.modifiers.join(",");
+            for (i, f) in funcs.iter().enumerate() {
+                if i % 100 == 0 {
+                    info!("{} function summaries scanned", i);
+                }
 
-                // Match function with call graph data
-                let callgraph_func = funcs_id
-                    .clone()
-                    .into_iter()
-                    .find(|a| {
-                        let func_name = get_function_name(&f.name);
-                        a.contract == f.contract && a.name == func_name
-                    })
-                    .unwrap_or_default();
-
-                // Insert function if found in call graph
-                if !callgraph_func.name.is_empty() {
-                    let db_guard = db_func.lock().await;
-                    db_guard.insert_function(
-                        &callgraph_func.full_id,
-                        &f.contract,
-                        &f.name,
-                        &f.visibility,
-                        &modifiers,
-                        &f.mutability,
-                    )?;
+                let func_name = get_function_name(&f.name);
+                if let Some(node) = func_index.get(&(f.contract.clone(), func_name)) {
+                    rows.push((
+                        node.full_id.clone(),
+                        f.contract.clone(),
+                        f.name.clone(),
+                        f.visibility.clone(),
+                        f.modifiers.join(","),
+                        f.mutability.clone(),
+                    ))
                 }
             }
+            // single lock, batch insert
+            {
+                let db = db_func.lock().await;
+                for row in rows {
+                    db.insert_function(&row.0, &row.1, &row.2, &row.3, &row.4, &row.5)?;
+                }
+            }
+            info!("done inserting function metadata into database");
 
+            info!("insert {} call graph edges in db", edges.len());
             // Insert call graph edges
             for e in &edges {
                 let db_guard = db_func.lock().await;
                 db_guard.insert_edge(&e.caller, &e.callee)?;
             }
+            info!("dot edges in db complete");
             Ok(())
         }
         .await;
@@ -121,12 +133,14 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             let inheritance_json =
                 slither_ffi::run_printer_json(&repo_inheritance, "inheritance").await?;
             let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
+            info!("{} inheritance edges", inheritance_edges.len());
 
             // Insert inheritance relationships into database
             for (child, parent) in inheritance_edges {
                 let db_guard = db_inheritance.lock().await;
                 db_guard.insert_inheritance(&child, &parent)?;
             }
+            info!("done generating inheritance edges");
 
             Ok(())
         }
@@ -139,6 +153,7 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
     });
 
     // Wait for both parallel tasks to complete
+    info!("waiting for meta data analysis to complete...");
     let (_func_result, _inheritance_result) = tokio::try_join!(handle, handle_inheritance)?;
     Ok(db_path)
 }
