@@ -6,10 +6,9 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::build_brain::slither_ffi::{cache_key, get_all_files_src, run_printer};
+use crate::build_brain::slither_ffi::{cache_key, get_all_files_src};
 use crate::build_brain::summarize;
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::utils::get_doc_file::extract_content_from_docs;
 
 use super::config::Finding;
 
@@ -67,21 +66,31 @@ pub async fn generate_context_for_code_review(
     log::info!("generate summary of all files");
 
     let mut file_summaries = String::new();
-    let documentation = extract_content_from_docs(repo)?;
+    // let documentation = extract_content_from_docs(repo)?;
 
     let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
     for summary in summaries {
-        file_summaries.push_str(&format!("\n## {} summary\n", summary.filename));
+        file_summaries.push_str(&format!(
+            "\n## {} SUMMARY OF MAIN FILES\n",
+            summary.filename
+        ));
         file_summaries.push_str(&summary.summary);
         file_summaries.push_str("\n\n");
     }
 
     let mut full_prompt_context = String::new();
-    full_prompt_context.push_str(&format!("\n ## DOCUMENTATION: \n\n {}\n\n", documentation));
+    full_prompt_context.push_str("\n## SLITHER GENERATED METADATA \n\n");
     full_prompt_context.push_str(&slither_metadata);
     full_prompt_context.push_str(&file_summaries);
 
-    info!("README.md SIZE => {}", documentation.len());
+    let doc_summaries = summarize::summarize_docs(repo, &full_prompt_context).await?;
+    full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n");
+    for doc_summary in doc_summaries {
+        file_summaries.push_str("\n\n");
+        file_summaries.push_str(&doc_summary.summary);
+        file_summaries.push_str("\n\n");
+    }
+
     info!("full prompt context SIZE => {}", full_prompt_context.len());
 
     Ok(full_prompt_context)

@@ -121,15 +121,15 @@ async fn main() -> Result<()> {
     // 4. Vector Database Population
     // ────────────────────────────────
     // Create embeddings and store in Qdrant for semantic search
-    // vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
-    //     .await?;
+    vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
+        .await?;
 
     // ────────────────────────────────
     // 5. AI Security Analysis
     // ────────────────────────────────
     // Run multi-LLM security analysis across vulnerability categories
     let (security_issues, invariants) =
-        code_review::review_codebase_for_security_issues(&codeblocks_db).await?;
+        code_review::review_codebase_for_security_issues(&codeblocks_db, &repo).await?;
 
     // ────────────────────────────────
     // 6. Report Generation

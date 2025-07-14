@@ -522,4 +522,3 @@ mod tests {
         assert!(providers.is_empty() || !providers.is_empty());
     }
 }
-

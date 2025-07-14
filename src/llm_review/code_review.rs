@@ -1,5 +1,7 @@
+use crate::ai_bot::agent::get_rag_for_security_query;
 use crate::config::audit_config;
 use crate::error::Result;
+use crate::prepare_code::git_clone::RepoPaths;
 use crate::{
     cost::cost_data::{
         add_to_inference_cost_by_agent, add_to_inference_cost_by_type, LlmCostType, TokenType,
@@ -47,6 +49,7 @@ use super::{
 /// * `Vec<ContractInvariants>` - Protocol invariant analysis results
 pub async fn review_codebase_for_security_issues(
     codeblocks_path: &PathBuf,
+    repo: &RepoPaths,
 ) -> Result<(HashMap<String, Findings>, Vec<ContractInvariants>)> {
     let mut all_security_issues = HashMap::<String, Findings>::new();
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
@@ -59,16 +62,22 @@ pub async fn review_codebase_for_security_issues(
 
     let invariant_findings = Vec::<ContractInvariants>::new();
 
-    let added_context_from_ai_brain = get_metadata_context().await?;
+    let metadata_context = get_metadata_context().await?;
 
     for (contract, codeblock) in contracts.into_iter() {
         info!("contract => {}", contract);
         info!("codeblock => {}", codeblock);
+        // grab additional context from RAG
+        let rag_context = get_rag_for_security_query(&codeblock, repo).await?;
+        let audit_context = format!(
+            "\n## CONTEXT \n\n {} \n\n {}",
+            metadata_context, rag_context
+        );
 
         let raw_findings = Findings::generate_findings_from_contract_codebase(
             &contract,
             &codeblock,
-            &added_context_from_ai_brain,
+            &audit_context,
             &ai_discovery_agents,
         )
         .await?;

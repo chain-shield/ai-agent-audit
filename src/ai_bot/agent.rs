@@ -86,7 +86,7 @@ pub async fn get_rag_for_security_query(query_content: &str, repo: &RepoPaths) -
     let store = QdrantVectorStore::new(qdrant, model, qp);
 
     info!("retrieving relevant content from vector db");
-    let relevant_docs: Vec<(f64, String, SourceChunk)> = store.top_n(&query_content, 3).await?;
+    let relevant_docs: Vec<(f64, String, SourceChunk)> = store.top_n(&query_content, 5).await?;
 
     info!("relevant docs => {:#?}", relevant_docs);
 
