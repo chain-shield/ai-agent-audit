@@ -15,7 +15,7 @@ pub const MAX_DEPTH: usize = 3;
 pub const TOKEN_BUDGET: usize = 150_000;
 
 /// Number of discovery rounds per contract during analysis
-pub const RUNS: usize = 3;
+pub const RUNS: usize = 1;
 
 /// Docker volume path for repository analysis
 pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";

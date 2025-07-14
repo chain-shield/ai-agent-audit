@@ -12,11 +12,14 @@ use rig::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{self, HashMap};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::{
+    sync::{Mutex, Semaphore},
+    task,
+};
 
 use crate::{
     cost::cost_data::add_to_inference_cost_by_type,
@@ -63,9 +66,6 @@ pub async fn summarize_src_files(
         return Ok(cached.clone());
     }
 
-    // Initialize vectors to store file paths
-    let mut summaries = Vec::<SrcFileSummary>::new();
-
     let openai_client = openai::Client::from_env();
 
     let context =
@@ -84,11 +84,18 @@ pub async fn summarize_src_files(
         .context(&context)
         .build();
 
+    // ---------------------------------------------
+    // 1.  PREP – collect the  files we want to summarize first
+    // ---------------------------------------------
+    let mut work_items = Vec::new();
+
     // Walk through the repository and collect relevant files
     let repo_code_root = repo.root.join(repo.repo_name.clone());
     for file in &repo.sol_files {
-        // Skip directories and symlinks
-        if !file.is_file() || fs::symlink_metadata(file)?.file_type().is_symlink() {
+        let is_sol_in_src = file.extension().map_or(false, |ext| ext == "sol")
+            && file.starts_with(&repo_code_root.join("src"));
+
+        if !is_sol_in_src {
             continue;
         }
 
@@ -105,6 +112,11 @@ pub async fn summarize_src_files(
         let is_sol_in_src = file.extension().map_or(false, |ext| ext == "sol")
             && file.starts_with(&repo_code_root.join("src"));
 
+        // Skip directories and symlinks
+        if !file.is_file() || fs::symlink_metadata(file)?.file_type().is_symlink() {
+            continue;
+        }
+
         if is_readme_or_mock || is_sol_in_src {
             let content = fs::read_to_string(file.clone())?;
 
@@ -116,23 +128,59 @@ pub async fn summarize_src_files(
                 continue;
             }
 
+            // push full path & content into the work queue
+            work_items.push((file.to_owned(), content));
+        }
+    }
+
+    let max_parallel = 20;
+    let sem = Arc::new(Semaphore::new(max_parallel));
+    let agent = Arc::new(ai_summary_agent); // the OpenAI client
+    let mut handles = Vec::new();
+
+    for (file, content) in work_items {
+        let sem = sem.clone();
+        let agent = agent.clone();
+        let repo_root = repo.root.clone();
+
+        let handle = task::spawn(async move {
+            // acquire permit – blocks if `max_parallel` already in-flight
+            let _permit = sem.acquire_owned().await.unwrap();
+
             add_to_inference_cost_by_type(
                 &format!("{}{}", preamble, content),
                 LlmCostType::Openai4oInput,
             )
             .await;
 
-            let summary =
-                extractor_with_retry(&ai_summary_agent, &content, LlmCostType::Openai4oOutput)
-                    .await?;
+            info!("summarizing {}", file.display());
 
-            // filename is relative to root folder ie src/PuppyRaffle.sol
-            let filename = file.strip_prefix(&repo.root)?.to_string_lossy().to_string();
+            match extractor_with_retry(&agent, &content, LlmCostType::Openai4oOutput).await {
+                Ok(res) => {
+                    let filename = file
+                        .strip_prefix(&repo_root)
+                        .unwrap_or(&file)
+                        .to_string_lossy()
+                        .to_string();
+                    Some(SrcFileSummary {
+                        filename,
+                        summary: res.summary,
+                    })
+                }
+                Err(e) => {
+                    log::error!("❌ summarizing {} failed: {e}", file.display());
+                    None
+                }
+            }
+        });
+        handles.push(handle);
+    }
 
-            summaries.push(SrcFileSummary {
-                filename,
-                summary: summary.summary,
-            })
+    // wait for all tasks
+    let mut summaries = Vec::new();
+    for h in handles {
+        if let Some(s) = h.await? {
+            summaries.push(s);
         }
     }
 
@@ -143,19 +191,22 @@ pub async fn summarize_src_files(
 }
 
 pub async fn summarize_protocol(repo: &RepoPaths, semantics_path: &Path) -> Result<String> {
-    // let key = cache_key(repo_root, "protocol-summary");
-    // let cache = Arc::clone(&FILE_SUMMARY_CACHE);
-    // let mut summaries_cache = cache.lock().await;
-    //
-    // // Return cached output if exists
-    // if let Some(cached) = summaries_cache.get(&key) {
-    //     let summary = cached
-    //         .first()
-    //         .unwrap_or(&SrcFileSummary::default())
-    //         .summary
-    //         .clone();
-    //     return Ok(summary);
-    // }
+    // content retrival MUST come first to prevent race condition
+    let context = generate_context_for_code_review(repo, &semantics_path).await?;
+
+    let key = cache_key(&repo.root, "protocol-summary");
+    let cache = Arc::clone(&FILE_SUMMARY_CACHE);
+    let mut summaries_cache = cache.lock().await;
+
+    // Return cached output if exists
+    if let Some(cached) = summaries_cache.get(&key) {
+        let summary = cached
+            .first()
+            .unwrap_or(&SrcFileSummary::default())
+            .summary
+            .clone();
+        return Ok(summary);
+    }
 
     // Initialize vectors to store file paths
     let mut summaries = Vec::<SrcFileSummary>::new();
@@ -163,7 +214,6 @@ pub async fn summarize_protocol(repo: &RepoPaths, semantics_path: &Path) -> Resu
     let openai_client = openai::Client::from_env();
 
     log::info!("generate context for code review");
-    let content = generate_context_for_code_review(repo, &semantics_path).await?;
     let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, 
                    please create a max 200 word summary of this protocol explaining what it is, and how it works.  Format 
                    in markdown for easy reading. Respond only with valid JSON matching the schema!";
@@ -177,13 +227,13 @@ pub async fn summarize_protocol(repo: &RepoPaths, semantics_path: &Path) -> Resu
     // rerun if NoDataExtracted Error
 
     add_to_inference_cost_by_type(
-        &format!("{}{}", preamble, content),
+        &format!("{}{}", preamble, context),
         LlmCostType::OpenaiO3Output,
     )
     .await;
 
     let summary =
-        extractor_with_retry(&ai_summary_agent, &content, LlmCostType::OpenaiO3Output).await?;
+        extractor_with_retry(&ai_summary_agent, &context, LlmCostType::OpenaiO3Output).await?;
 
     log::info!("protocol summary => {:#?}", summary);
 
@@ -192,6 +242,6 @@ pub async fn summarize_protocol(repo: &RepoPaths, semantics_path: &Path) -> Resu
         summary: summary.summary.clone(),
     });
 
-    // summaries_cache.insert(key, summaries.clone());
+    summaries_cache.insert(key, summaries.clone());
     Ok(summary.summary)
 }

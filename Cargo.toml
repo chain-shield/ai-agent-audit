@@ -11,7 +11,7 @@ serde = "1.0.219"
 ignore = "0.4"
 regex = "1.10"
 serde_json = { version = "1.0", features = ["preserve_order"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.46.1", features = ["macros", "rt-multi-thread"] }
 tokio-stream = "0.1.17"
 rig-core = { version = "0.13.0", features = ["derive"] }
 dotenvy = "0.15"
@@ -21,10 +21,10 @@ log = "0.4.26"
 reqwest = { version = "0.12.19", features = ["json", "rustls-tls"] }
 env_logger = "0.11"
 tiktoken-rs = "0.6.0"
-rusqlite = { version = "0.31", features = ["bundled"] }              #  🔒 static libsqlite3
-serde-sarif = "0.7"                                                  # straight-forward SARIF model
+rusqlite = { version = "0.31", features = ["bundled"] }                  #  🔒 static libsqlite3
+serde-sarif = "0.7"                                                      # straight-forward SARIF model
 uuid = { version = "1", features = ["v4"] }
-chrono = "0.4"                                                       # timestamp in tickets
+chrono = "0.4"                                                           # timestamp in tickets
 async-trait = "0.1.79"
 thiserror = "2.0.12"
 hex = "0.4.3"

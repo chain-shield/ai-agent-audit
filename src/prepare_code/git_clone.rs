@@ -5,6 +5,7 @@
 /// for smart contract analysis.
 use anyhow::{Context, Result};
 use ignore::gitignore::GitignoreBuilder;
+use log::info;
 use std::path::PathBuf;
 use std::process::Command;
 use std::{fs, path::Path};
@@ -12,6 +13,15 @@ use walkdir::WalkDir;
 
 use crate::config::audit_config;
 use crate::utils::file_security::{validate_repo_url, validate_safe_path};
+
+/// Build flags for forge compilation
+#[derive(Debug, Clone, Copy)]
+pub enum BuildFlags {
+    /// Standard forge build
+    Standard,
+    /// Forge build with --via-ir --build-info flags
+    ViaIr,
+}
 
 /// Contains paths to the repository root and relevant files.
 /// This struct organizes the paths to Solidity files and documentation
@@ -34,7 +44,11 @@ impl RepoPaths {
     /// Generates a unique identifier for the repository using name and short commit hash.
     /// Used for creating unique vector database collections and cache keys.
     pub fn unique_repo_hash(&self) -> String {
-        format!("{}-{}", self.repo_name, &self.commit_hash[..6])
+        format!(
+            "{}-{}",
+            self.repo_name.replace("/", "-"),
+            &self.commit_hash[..6]
+        )
     }
 }
 
@@ -49,6 +63,8 @@ impl RepoPaths {
 ///
 /// # Arguments
 /// * `url` - Git repository URL to clone and analyze
+/// * `subfolder` - Optional subfolder name to analyze within the repository
+/// * `build_flags` - Build flags for forge compilation
 ///
 /// # Returns
 /// * `RepoPaths` - Organized repository paths and metadata
@@ -56,20 +72,27 @@ impl RepoPaths {
 /// # Security
 /// All operations are performed in isolated Docker containers to prevent
 /// malicious code execution on the host system.
-pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
+pub fn clone_and_filter_git_repo(
+    url: &str,
+    subfolder: Option<&str>,
+    build_flags: BuildFlags,
+) -> Result<RepoPaths> {
     // 🔐 Validate the repository URL for safety
     validate_repo_url(url)?;
 
     // 2. Extract & sanitize the repo name
-    let repo_name = url
+    let mut repo_name = url
         .trim_end_matches(".git")
         .rsplit('/')
         .next()
         .unwrap_or("repo")
         .to_string();
 
-    // // 3. First clone into a stub directory
-    // let stub = tmp_path.join("repo-stub");
+    // Append subfolder to repo_name if specified
+    if let Some(sf) = subfolder {
+        repo_name = format!("{}/{}", repo_name, sf);
+    }
+    info!("repo_name ==> {}", repo_name);
 
     // 4. Read HEAD and get the first 6 chars of the commit SHA
     let commit_hash = get_commit_hash(url)?;
@@ -77,7 +100,7 @@ pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
 
     // 5. git clone, install, and build in secure docker container
     // returns dierctory where files are located
-    let root = clone_and_build_repo(url, &repo_name, short_hash)?;
+    let root = clone_and_build_repo(url, &repo_name, short_hash, build_flags)?;
 
     // 6. Build .gitignore matcher
     let mut ign = GitignoreBuilder::new(&root);
@@ -86,10 +109,25 @@ pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
     ign.add_line(None, "node_modules")?;
     let ign = ign.build()?;
 
+    // Determine the search root - if subfolder is specified, search within that subdirectory
+    let search_root = root.join(&repo_name);
+    info!("search_root => {}", search_root.display());
+
+    // Validate that the search root exists
+    if !search_root.exists() {
+        anyhow::bail!(
+            "Specified path '{}' does not exist in the repository",
+            repo_name
+        );
+    }
+
     // Initialize vectors to store file paths
     let mut sol_files = Vec::new();
     let mut docs = Vec::new();
-    for entry in WalkDir::new(&root).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(&search_root)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
         let path = entry.path();
 
         // skip if gitignore or simlink
@@ -123,14 +161,24 @@ pub fn clone_and_filter_git_repo(url: &str) -> Result<RepoPaths> {
     })
 }
 
-pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) -> Result<PathBuf> {
+pub fn clone_and_build_repo(
+    repo_url: &str,
+    repo_name: &str,
+    commit_hash: &str,
+    build_flags: BuildFlags,
+) -> Result<PathBuf> {
     let docker_volume = format!(
         "{}/{}-{}",
         audit_config().docker_volume,
-        repo_name,
+        repo_name.replace("/", "-"),
         &commit_hash[..6]
     );
     let docker_path = PathBuf::from(&docker_volume);
+
+    // if github repo clones to multiple sub folders with different apps
+    // then repo_name will be something like contracts/plume
+    // git clone will clone to contracts (repo_root) and then we cd into plume
+    let repo_root = repo_name.split('/').next().unwrap_or(repo_name);
 
     if docker_path.exists() {
         log::warn!(
@@ -147,6 +195,17 @@ pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) 
 
     // Shallow clone for speed and security
     log::info!("git cloning repo...");
+
+    // Build forge command based on build flags
+    let forge_build_cmd = match build_flags {
+        BuildFlags::ViaIr => {
+            "forge install && forge build --via-ir --build-info --skip test --skip script"
+        }
+        BuildFlags::Standard => {
+            "forge install && forge build --build-info --skip test --skip script"
+        }
+    };
+
     let status = Command::new("docker")
         .args([
             "run",
@@ -159,9 +218,9 @@ pub fn clone_and_build_repo(repo_url: &str, repo_name: &str, commit_hash: &str) 
             "bash",
             "-c",
             &format!(
-                "git clone --depth=1 {repo_url} {repo_name} && \
+                "git clone --depth=1 {repo_url} {repo_root} && \
              cd {repo_name} && \
-             if [ -f foundry.toml ]; then forge install && forge build --via-ir --build-info; \
+             if [ -f foundry.toml ]; then {forge_build_cmd}; \
              elif [ -f hardhat.config.js ] || [ -f hardhat.config.ts ]; then \
              npm install -g hardhat && npm install && npx hardhat compile; \
              else echo 'No build system detected'; fi"

@@ -4,12 +4,12 @@
 /// 1. Cloning and building repositories (Foundry/Hardhat) in Docker containers
 /// 2. Extracting call graphs, IR, and storage layouts using Slither
 /// 3. Generating contextual code slices for focused AI analysis
-/// 4. Running multi-LLM security analysis across 19+ vulnerability categories
+/// 5. Running multi-LLM security analysis across 19+ vulnerability categories
 /// 5. Creating vector embeddings and storing in Qdrant for semantic search
 /// 6. Generating professional audit reports with findings and cost tracking
 use ai_agent_audit::{
     build_brain::{enrichment, vector_db},
-    config::{init_config, audit_config},
+    config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
     enumerator::codeblock_maker,
     error::{AuditError, Result},
@@ -18,7 +18,7 @@ use ai_agent_audit::{
         code_review,
         context_state::{self},
     },
-    prepare_code,
+    prepare_code::{self, git_clone::BuildFlags},
     reporting::{
         audit::{self, ReportType},
         contract_data, save_file,
@@ -33,43 +33,62 @@ use log::info;
 async fn main() -> Result<()> {
     // Load environment variables from .env file
     dotenv().ok();
-    
+
     // Initialize configuration from environment
     init_config()?;
-    
+
     // Initialize LLM clients
     init_llm_clients()?;
-    
+
     // Initialize the logger
     env_logger::init();
 
     // ────────────────────────────────
     // 1. Repository Preparation
     // ────────────────────────────────
-    let repo_url = std::env::args()
-        .nth(1)
-        .ok_or_else(|| AuditError::validation("repo_url", "Repository URL is required as first argument"))?;
+    let repo_url = std::env::args().nth(1).ok_or_else(|| {
+        AuditError::validation("repo_url", "Repository URL is required as first argument")
+    })?;
+
+    // Optional subfolder argument for analyzing specific directories in multi-app repositories
+    let subfolder = std::env::args().nth(2);
+
+    // Optional --via-ir flag for forge build
+    let build_flags = match std::env::args().nth(3).as_deref() {
+        Some("--via-ir") => BuildFlags::ViaIr,
+        _ => BuildFlags::Standard,
+    };
 
     // Validate URL format and length before processing
     if repo_url.len() > audit_config().max_repo_url_length {
         return Err(AuditError::validation(
             "repo_url",
-            &format!("Repository URL is too long (max {} characters)", audit_config().max_repo_url_length)
+            &format!(
+                "Repository URL is too long (max {} characters)",
+                audit_config().max_repo_url_length
+            ),
         ));
     }
 
     if !repo_url.starts_with("https://") && !repo_url.starts_with("http://") {
         return Err(AuditError::validation(
             "repo_url",
-            "Only HTTP/HTTPS repository URLs are supported"
+            "Only HTTP/HTTPS repository URLs are supported",
         ));
     }
 
     info!("Processing repository: {}", repo_url);
+    if let Some(ref sf) = subfolder {
+        info!("Analyzing subfolder: {}", sf);
+    }
     info!("git cloning and extraction source code");
 
     // Clone repository in Docker container and build with Foundry/Hardhat
-    let repo = prepare_code::git_clone::clone_and_filter_git_repo(&repo_url)?;
+    let repo = prepare_code::git_clone::clone_and_filter_git_repo(
+        &repo_url,
+        subfolder.as_deref(),
+        build_flags,
+    )?;
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
 
@@ -102,8 +121,8 @@ async fn main() -> Result<()> {
     // 4. Vector Database Population
     // ────────────────────────────────
     // Create embeddings and store in Qdrant for semantic search
-    vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
-        .await?;
+    // vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
+    //     .await?;
 
     // ────────────────────────────────
     // 5. AI Security Analysis
