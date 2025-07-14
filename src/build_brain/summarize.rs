@@ -12,7 +12,7 @@ use rig::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{self, HashMap};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -24,7 +24,10 @@ use tokio::{
 use crate::{
     cost::cost_data::add_to_inference_cost_by_type,
     prepare_code::git_clone::RepoPaths,
-    utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
+    utils::{
+        contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry,
+        get_doc_file::extract_content_from_docs,
+    },
 };
 use crate::{
     cost::cost_data::LlmCostType,
@@ -51,6 +54,76 @@ pub struct SrcFileSummary {
 pub struct FileSummary {
     /// The generated summary text
     pub summary: String,
+}
+
+pub async fn summarize_docs(
+    repo: &RepoPaths,
+    current_context: &str,
+) -> Result<Vec<SrcFileSummary>> {
+    let key = cache_key(&repo.root, "docs-summary");
+    let cache = Arc::clone(&FILE_SUMMARY_CACHE);
+    let mut summaries_cache = cache.lock().await;
+
+    // Return cached output if exists
+    if let Some(cached) = summaries_cache.get(&key) {
+        return Ok(cached.clone());
+    }
+
+    let documentation = extract_content_from_docs(repo)?;
+    let mut doc_summaries = Vec::new();
+
+    let mut docs_plus_context = format!("\n ## DOCUMENTATION: \n\n {}\n\n", documentation);
+    docs_plus_context.push_str("\n ## CURRENT SECURITY AUDIT CONTEXT \n\n");
+    docs_plus_context.push_str(&format!("\n #### The Documentation Summary should NOT contain content that is already included below.\n\n {} \n\n", current_context));
+
+    let openai_client = openai::Client::from_env();
+
+    info!("generate summmary of all major files and docs in repo...");
+    let preamble =
+        "You are a senior solidity dev and expert solidity security researcher. Please provide detailed and comprehensive summary 
+        of below DOCUMENTATION. Should be up to 4000 words, but no longer.  Should cover **all relevant details** that a security researcher 
+        should know about this protocol to do a proper smart contract audit. ALSO, exclude any information from the summary that is already
+        included in below CURRENT SECURITY AUDIT CONTEXT, because both DOCUMENTATION and CURRENT SECURITY AUDIT CONTEXT will be provide as
+        context for an llm to do a security scan of protocol code.  So its important there is NO duplicate information between DOCUMENTATION 
+        and CURRENT SECURITY AUDIT CONTEXT ";
+    let ai_summary_agent = openai_client
+        .extractor::<FileSummary>(O3)
+        .preamble(preamble)
+        .build();
+
+    add_to_inference_cost_by_type(
+        &format!("{}{}", preamble, documentation),
+        LlmCostType::Openai4oInput,
+    )
+    .await;
+
+    info!("summarizing documentation");
+
+    let doc_summary = match extractor_with_retry(
+        &ai_summary_agent,
+        &docs_plus_context,
+        LlmCostType::Openai4oOutput,
+    )
+    .await
+    {
+        Ok(res) => SrcFileSummary {
+            filename: "readme.md".to_string(),
+            summary: res.summary,
+        },
+        Err(e) => {
+            log::error!("❌ summarizing readme.md failed: {e}");
+            SrcFileSummary {
+                filename: "readme.md".to_string(),
+                summary: String::new(),
+            }
+        }
+    };
+
+    log::info!("readme.md summary => {:#?}", doc_summary);
+    doc_summaries.push(doc_summary);
+
+    summaries_cache.insert(key, doc_summaries.clone());
+    Ok(doc_summaries)
 }
 
 pub async fn summarize_src_files(

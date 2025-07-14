@@ -43,8 +43,9 @@ pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
     }
     // 2b. Create a temp dir and ask slither_ffi to fill it with chunk files
     // Create a temporary directory to store the Slither analysis results
-    let tmp_dir = tempfile::tempdir()
-        .map_err(|e| AuditError::file_system("tempdir", "Failed to create temporary directory", e))?;
+    let tmp_dir = tempfile::tempdir().map_err(|e| {
+        AuditError::file_system("tempdir", "Failed to create temporary directory", e)
+    })?;
     info!("generating slither ssa into txt files that contain function or storage var");
 
     // Extract IR and storage information using Slither and write to text files
@@ -85,9 +86,9 @@ pub async fn generate_enbeddings_and_save_to_qdrant_vector_db(
     // Build Qdrant client configuration and connect to the database
     let qdrant_url = std::env::var("QDRANT_URL")
         .map_err(|_| AuditError::configuration("QDRANT_URL", "Environment variable not set"))?;
-    let qdrant = Qdrant::from_url(&qdrant_url)
-        .build()
-        .map_err(|e| AuditError::vector_db("connection", "Failed to connect to Qdrant database", e))?;
+    let qdrant = Qdrant::from_url(&qdrant_url).build().map_err(|e| {
+        AuditError::vector_db("connection", "Failed to connect to Qdrant database", e)
+    })?;
 
     let already_exists = qdrant.collection_exists(&vector_db_name).await?;
 
@@ -115,18 +116,16 @@ pub async fn generate_enbeddings_and_save_to_qdrant_vector_db(
     Ok(())
 }
 
-pub async fn does_qdrant_vector_db_for_this_repo_already_exist(
-    repo: &RepoPaths,
-) -> Result<bool> {
+pub async fn does_qdrant_vector_db_for_this_repo_already_exist(repo: &RepoPaths) -> Result<bool> {
     let vector_db_name = format!("{}-contract_chunks", repo.unique_repo_hash());
 
     info!("connect to qdrant db");
     // Build Qdrant client configuration and connect to the database
     let qdrant_url = std::env::var("QDRANT_URL")
         .map_err(|_| AuditError::configuration("QDRANT_URL", "Environment variable not set"))?;
-    let qdrant = Qdrant::from_url(&qdrant_url)
-        .build()
-        .map_err(|e| AuditError::vector_db("connection", "Failed to connect to Qdrant database", e))?;
+    let qdrant = Qdrant::from_url(&qdrant_url).build().map_err(|e| {
+        AuditError::vector_db("connection", "Failed to connect to Qdrant database", e)
+    })?;
 
     Ok(qdrant.collection_exists(&vector_db_name).await?)
 }
@@ -189,9 +188,13 @@ pub async fn upsert(
         .map(|(i, (chunk, vec))| -> Result<PointStruct> {
             // 🚩 flatten: payload IS the SourceChunk
             let payload: Payload = serde_json::to_value(chunk)
-                .map_err(|e| AuditError::json("chunk_serialization", "Failed to serialize SourceChunk", e))?
+                .map_err(|e| {
+                    AuditError::json("chunk_serialization", "Failed to serialize SourceChunk", e)
+                })?
                 .try_into()
-                .map_err(|e| AuditError::json("payload_conversion", "Failed to convert JSON to Payload", e))?;
+                .map_err(|e| {
+                    AuditError::json("payload_conversion", "Failed to convert JSON to Payload", e)
+                })?;
             // Create a new point with ID, vector, and payload
             Ok(PointStruct::new(i as u64, vec.clone(), payload))
         })
@@ -201,7 +204,8 @@ pub async fn upsert(
     let req = UpsertPointsBuilder::new(collection, points).wait(true); // wait=true mimics the old “blocking”
 
     // Execute the upsert operation
-    client.upsert_points(req)
+    client
+        .upsert_points(req)
         .await
         .map_err(|e| AuditError::vector_db("upsert", "Failed to upsert points to Qdrant", e))?;
     Ok(())

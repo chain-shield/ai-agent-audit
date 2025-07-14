@@ -20,12 +20,12 @@ legendaryImageUri string
 #### PuppyRaffle.constructor(uint256,address,uint256) [INTERNAL]
 ```slithir
 commonImageUri_1(string) := phi(['commonImageUri_2', 'commonImageUri_0'])
-COMMON_RARITY_1(uint256) := phi(['COMMON_RARITY_4', 'COMMON_RARITY_0', 'COMMON_RARITY_2'])
+COMMON_RARITY_1(uint256) := phi(['COMMON_RARITY_0', 'COMMON_RARITY_2', 'COMMON_RARITY_4'])
 COMMON_1(string) := phi(['COMMON_0', 'COMMON_2'])
 rareImageUri_1(string) := phi(['rareImageUri_2', 'rareImageUri_0'])
-RARE_RARITY_1(uint256) := phi(['RARE_RARITY_2', 'RARE_RARITY_4', 'RARE_RARITY_0'])
-RARE_1(string) := phi(['RARE_0', 'RARE_2'])
-legendaryImageUri_1(string) := phi(['legendaryImageUri_0', 'legendaryImageUri_2'])
+RARE_RARITY_1(uint256) := phi(['RARE_RARITY_4', 'RARE_RARITY_0', 'RARE_RARITY_2'])
+RARE_1(string) := phi(['RARE_2', 'RARE_0'])
+legendaryImageUri_1(string) := phi(['legendaryImageUri_2', 'legendaryImageUri_0'])
 LEGENDARY_RARITY_1(uint256) := phi(['LEGENDARY_RARITY_0', 'LEGENDARY_RARITY_2', 'LEGENDARY_RARITY_4'])
 LEGENDARY_1(string) := phi(['LEGENDARY_2', 'LEGENDARY_0'])
  entranceFee = _entranceFee
@@ -65,8 +65,8 @@ INTERNAL_CALL, ERC721.constructor(string,string)(Puppy Raffle,PR)
 ```
 #### PuppyRaffle.tokenURI(uint256) [PUBLIC]
 ```slithir
-tokenIdToRarity_5(mapping(uint256 => uint256)) := phi(['tokenIdToRarity_1', 'tokenIdToRarity_0', 'tokenIdToRarity_6', 'tokenIdToRarity_4'])
-rarityToUri_4(mapping(uint256 => string)) := phi(['rarityToUri_3', 'rarityToUri_0', 'rarityToUri_5'])
+tokenIdToRarity_5(mapping(uint256 => uint256)) := phi(['tokenIdToRarity_6', 'tokenIdToRarity_1', 'tokenIdToRarity_0', 'tokenIdToRarity_4'])
+rarityToUri_4(mapping(uint256 => string)) := phi(['rarityToUri_5', 'rarityToUri_3', 'rarityToUri_0'])
 rarityToName_4(mapping(uint256 => string)) := phi(['rarityToName_0', 'rarityToName_3', 'rarityToName_5'])
  require(bool,string)(_exists(tokenId),PuppyRaffle: URI query for nonexistent token)
 TMP_11170(bool) = INTERNAL_CALL, ERC721._exists(uint256)(tokenId_1)
@@ -92,8 +92,8 @@ RETURN TMP_11178
 ```
 #### PuppyRaffle.enterRaffle(address[]) [PUBLIC]
 ```slithir
-entranceFee_2(uint256) := phi(['entranceFee_1', 'entranceFee_0'])
-players_1(address[]) := phi(['players_9', 'players_1', 'players_5', 'players_10', 'players_0', 'players_6'])
+entranceFee_2(uint256) := phi(['entranceFee_0', 'entranceFee_1'])
+players_1(address[]) := phi(['players_1', 'players_5', 'players_10', 'players_0', 'players_6', 'players_9'])
  require(bool,string)(msg.value == entranceFee * newPlayers.length,PuppyRaffle: Must send enough to enter raffle)
 REF_2311 -> LENGTH newPlayers_1
 TMP_11104(uint256) = entranceFee_2 * REF_2311
@@ -151,8 +151,8 @@ Emit RaffleEnter(newPlayers_1)
 ```
 #### PuppyRaffle.refund(uint256) [PUBLIC]
 ```slithir
-entranceFee_3(uint256) := phi(['entranceFee_1', 'entranceFee_0'])
-players_4(address[]) := phi(['players_9', 'players_1', 'players_5', 'players_10', 'players_0', 'players_6'])
+entranceFee_3(uint256) := phi(['entranceFee_0', 'entranceFee_1'])
+players_4(address[]) := phi(['players_1', 'players_5', 'players_10', 'players_0', 'players_6', 'players_9'])
  playerAddress = players[playerIndex]
 REF_2321(address) -> players_4[playerIndex_1]
 playerAddress_1(address) := REF_2321(address)
@@ -176,7 +176,7 @@ Emit RaffleRefunded(playerAddress_1)
 ```
 #### PuppyRaffle.getActivePlayerIndex(address) [EXTERNAL]
 ```slithir
-players_6(address[]) := phi(['players_9', 'players_1', 'players_5', 'players_10', 'players_0', 'players_6'])
+players_6(address[]) := phi(['players_1', 'players_5', 'players_10', 'players_0', 'players_6', 'players_9'])
  i = 0
 i_1(uint256) := 0(uint256)
  i < players.length
@@ -198,13 +198,13 @@ RETURN 0
 ```
 #### PuppyRaffle.selectWinner() [EXTERNAL]
 ```slithir
-entranceFee_4(uint256) := phi(['entranceFee_1', 'entranceFee_0'])
-players_7(address[]) := phi(['players_9', 'players_1', 'players_5', 'players_10', 'players_0', 'players_6'])
-raffleDuration_2(uint256) := phi(['raffleDuration_0', 'raffleDuration_1'])
-raffleStartTime_2(uint256) := phi(['raffleStartTime_1', 'raffleStartTime_3', 'raffleStartTime_0'])
-totalFees_1(uint64) := phi(['totalFees_4', 'totalFees_2', 'totalFees_0'])
-COMMON_RARITY_3(uint256) := phi(['COMMON_RARITY_4', 'COMMON_RARITY_0', 'COMMON_RARITY_2'])
-RARE_RARITY_3(uint256) := phi(['RARE_RARITY_2', 'RARE_RARITY_4', 'RARE_RARITY_0'])
+entranceFee_4(uint256) := phi(['entranceFee_0', 'entranceFee_1'])
+players_7(address[]) := phi(['players_1', 'players_5', 'players_10', 'players_0', 'players_6', 'players_9'])
+raffleDuration_2(uint256) := phi(['raffleDuration_1', 'raffleDuration_0'])
+raffleStartTime_2(uint256) := phi(['raffleStartTime_0', 'raffleStartTime_1', 'raffleStartTime_3'])
+totalFees_1(uint64) := phi(['totalFees_2', 'totalFees_0', 'totalFees_4'])
+COMMON_RARITY_3(uint256) := phi(['COMMON_RARITY_0', 'COMMON_RARITY_2', 'COMMON_RARITY_4'])
+RARE_RARITY_3(uint256) := phi(['RARE_RARITY_4', 'RARE_RARITY_0', 'RARE_RARITY_2'])
 LEGENDARY_RARITY_3(uint256) := phi(['LEGENDARY_RARITY_0', 'LEGENDARY_RARITY_2', 'LEGENDARY_RARITY_4'])
  require(bool,string)(block.timestamp >= raffleStartTime + raffleDuration,PuppyRaffle: Raffle not over)
 TMP_11133(uint256) = raffleStartTime_2 + raffleDuration_2
@@ -285,8 +285,8 @@ INTERNAL_CALL, ERC721._safeMint(address,uint256)(winner_1,tokenId_1)
 ```
 #### PuppyRaffle.withdrawFees() [EXTERNAL]
 ```slithir
-feeAddress_2(address) := phi(['feeAddress_3', 'feeAddress_4', 'feeAddress_0', 'feeAddress_1'])
-totalFees_3(uint64) := phi(['totalFees_4', 'totalFees_2', 'totalFees_0'])
+feeAddress_2(address) := phi(['feeAddress_1', 'feeAddress_4', 'feeAddress_3', 'feeAddress_0'])
+totalFees_3(uint64) := phi(['totalFees_2', 'totalFees_0', 'totalFees_4'])
  require(bool,string)(address(this).balance == uint256(totalFees),PuppyRaffle: There are currently players active!)
 TMP_11159 = CONVERT this to address
 TMP_11160(uint256) = SOLIDITY_CALL balance(address)(TMP_11159)
@@ -299,7 +299,7 @@ feesToWithdraw_1(uint256) := totalFees_3(uint64)
 totalFees_4(uint64) := 0(uint256)
  (success,None) = feeAddress.call{value: feesToWithdraw}()
 TUPLE_55(bool,bytes) = LOW_LEVEL_CALL, dest:feeAddress_2, function:call, arguments:[''] value:feesToWithdraw_1 
-feeAddress_3(address) := phi(['feeAddress_4', 'feeAddress_3', 'feeAddress_1', 'feeAddress_2'])
+feeAddress_3(address) := phi(['feeAddress_1', 'feeAddress_4', 'feeAddress_3', 'feeAddress_2'])
 success_1(bool)= UNPACK TUPLE_55 index: 0 
  require(bool,string)(success,PuppyRaffle: Failed to withdraw fees)
 TMP_11164(None) = SOLIDITY_CALL require(bool,string)(success_1,PuppyRaffle: Failed to withdraw fees)
@@ -315,7 +315,7 @@ MODIFIER_CALL, Ownable.onlyOwner()()
 ```
 #### PuppyRaffle._isActivePlayer() [INTERNAL]
 ```slithir
-players_10(address[]) := phi(['players_9', 'players_1', 'players_5', 'players_10', 'players_0', 'players_6'])
+players_10(address[]) := phi(['players_1', 'players_5', 'players_10', 'players_0', 'players_6', 'players_9'])
  i = 0
 i_1(uint256) := 0(uint256)
  i < players.length

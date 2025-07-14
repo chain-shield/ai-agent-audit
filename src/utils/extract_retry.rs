@@ -1,9 +1,9 @@
+use crate::ai_bot::agent::get_rag_for_security_query;
 /// LLM extraction with retry logic and cost tracking.
 ///
 /// This module provides robust LLM interaction utilities with automatic retry
 /// mechanisms for handling rate limits, network issues, and parsing errors,
 /// while tracking inference costs across different providers.
-
 use crate::cost::cost_data::add_to_inference_cost_by_type;
 use crate::cost::cost_data::LlmCostType;
 use crate::llm_review::config::FromLLMJson;
