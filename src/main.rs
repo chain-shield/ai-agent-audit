@@ -8,7 +8,7 @@
 /// 5. Creating vector embeddings and storing in Qdrant for semantic search
 /// 6. Generating professional audit reports with findings and cost tracking
 use ai_agent_audit::{
-    build_brain::{enrichment, vector_db},
+    build_brain::{enrichment, slither_ffi::get_all_files_src, vector_db},
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
     enumerator::codeblock_maker,
