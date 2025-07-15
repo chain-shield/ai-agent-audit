@@ -35,6 +35,7 @@ pub async fn generate_slither_metadata_prompt_context(
     // let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
     // let contract_summary = run_printer(repo, "contract-summary").await?;
     let src_file_list = get_all_files_src(repo);
+    info!("src file list => {}", src_file_list);
 
     let mut prompt_context = String::new();
 

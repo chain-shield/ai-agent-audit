@@ -1,3 +1,4 @@
+
 ### Storage layout (Raffle) 
 
 ```text
@@ -18,7 +19,6 @@ __gap uint256[50]
 nextPrizeId uint256
 
 ```
-
 #### Raffle._authorizeUpgrade(address) [INTERNAL]
 ```slithir
 newImplementation_1(address) := phi(['newImplementation_1'])
