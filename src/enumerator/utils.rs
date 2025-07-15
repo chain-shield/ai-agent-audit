@@ -220,7 +220,7 @@ async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
 pub fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
-    let src_root = repo.root.join(repo.repo_name.clone()).join("src");
+    let src_root = repo.root.join(&repo.repo_name).join("src");
     if !src_root.exists() {
         anyhow::bail!("no src/ folder found at {},", src_root.display());
     }

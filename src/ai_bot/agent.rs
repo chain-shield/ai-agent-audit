@@ -1,7 +1,5 @@
-/// AI agent implementations with vector-based context retrieval.
-///
-/// This module provides intelligent AI agents that combine static documentation
-/// with dynamic vector search for contextual smart contract analysis.
+use std::collections::HashSet;
+
 use anyhow::Result;
 use log::info;
 use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
@@ -13,8 +11,14 @@ use rig::{
     vector_store::VectorStoreIndex,
 };
 use rig_qdrant::QdrantVectorStore;
+/// AI agent implementations with vector-based context retrieval.
+///
+/// This module provides intelligent AI agents that combine static documentation
+/// with dynamic vector search for contextual smart contract analysis.
+use tiktoken_rs::cl100k_base;
 
 use crate::build_brain::enbeddings::SourceChunk;
+use crate::config::MAX_RAG_QUERY_CONTENT_LENGTH;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::get_doc_file::extract_content_from_docs;
 use crate::utils::logging::print_first_four_lines;
@@ -66,12 +70,22 @@ pub fn create_ai_audit_agent(repo: &RepoPaths) -> Result<Agent<CompletionModel>>
     Ok(openai_audit_agent)
 }
 
-// TODO - restore once token limit increased
 pub async fn get_rag_for_security_query(query_content: &str, repo: &RepoPaths) -> Result<String> {
     let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL")?)
         .build()
         .map_err(anyhow::Error::from)?;
 
+    // Tokenize the input
+    let encoding = cl100k_base()?; // for OpenAI models
+    let mut tokens = encoding.encode(query_content, HashSet::new());
+
+    // Truncate tokens if needed
+    if tokens.len() > MAX_RAG_QUERY_CONTENT_LENGTH {
+        tokens.truncate(MAX_RAG_QUERY_CONTENT_LENGTH);
+    }
+
+    // Decode truncated tokens back into a string
+    let query_content = encoding.decode(tokens)?;
     let openai = Client::new(&std::env::var("OPENAI_API_KEY")?);
     let model = openai.embedding_model(TEXT_EMBEDDING_3_SMALL);
 
@@ -86,9 +100,7 @@ pub async fn get_rag_for_security_query(query_content: &str, repo: &RepoPaths) -
     let store = QdrantVectorStore::new(qdrant, model, qp);
 
     info!("retrieving relevant content from vector db");
-    let relevant_docs: Vec<(f64, String, SourceChunk)> = store.top_n(&query_content, 5).await?;
-
-    info!("relevant docs => {:#?}", relevant_docs);
+    let relevant_docs: Vec<(f64, String, SourceChunk)> = store.top_n(&query_content, 3).await?;
 
     let dynamic_content = relevant_docs
         .iter()
@@ -96,8 +108,8 @@ pub async fn get_rag_for_security_query(query_content: &str, repo: &RepoPaths) -
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    info!("dynamic content");
-    print_first_four_lines(&dynamic_content);
+    // info!("dynamic content");
+    // print_first_four_lines(&dynamic_content);
 
     let final_context = format!("## ADDITIONAL CONTEXT: \n\n {}", dynamic_content);
 

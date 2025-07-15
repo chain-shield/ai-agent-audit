@@ -1774,7 +1774,7 @@ RETURN fallbackComm_1
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_1 (-> [])'])
 token_1(address) := phi(['token_1', 'token_1'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1'])
-timestamp_1(uint256) := phi(['block.timestamp', 'segmentStartTime_1', 'effectiveTimestampForUpdate_3'])
+timestamp_1(uint256) := phi(['segmentStartTime_1', 'effectiveTimestampForUpdate_3', 'block.timestamp'])
  checkpoints = $.validatorRewardRateCheckpoints[validatorId][token]
 REF_4231(mapping(uint16 => mapping(address => PlumeStakingStorage.RateCheckpoint[]))) -> $_1 (-> []).validatorRewardRateCheckpoints
 REF_4232(mapping(address => PlumeStakingStorage.RateCheckpoint[])) -> REF_4231[validatorId_1]
@@ -1825,22 +1825,6 @@ REF_4244(uint256) (->effectiveCheckpoint_3) := 0(uint256)
  effectiveCheckpoint
 RETURN effectiveCheckpoint_3
  effectiveCheckpoint
-```
-#### PlumeRewardLogic._ceilDiv(uint256,uint256) [INTERNAL]
-```slithir
-a_1(uint256) := phi(['TMP_13916'])
-b_1(uint256) := phi(['REF_4211'])
- b == 0
-TMP_13920(bool) = b_1 == 0
-CONDITION TMP_13920
- 0
-RETURN 0
- (a + b - 1) / b
-TMP_13921(uint256) = a_1 (c)+ b_1
-TMP_13922(uint256) = TMP_13921 (c)- 1
-TMP_13923(uint256) = TMP_13922 (c)/ b_1
-RETURN TMP_13923
- result
 ```
 #### PlumeRewardLogic.getDistinctTimestamps(PlumeStakingStorage.Layout,uint16,address,uint256,uint256) [INTERNAL]
 ```slithir
@@ -2026,6 +2010,22 @@ t2_1(uint256) := REF_4230(uint256)
 TMP_13964(uint256) := 115792089237316195423570985008687907853269984665640564039457584007913129639935(uint256)
 t2_2(uint256) := TMP_13964(uint256)
 t2_3(uint256) := phi(['t2_1', 't2_2'])
+```
+#### PlumeRewardLogic._ceilDiv(uint256,uint256) [INTERNAL]
+```slithir
+a_1(uint256) := phi(['TMP_13916'])
+b_1(uint256) := phi(['REF_4211'])
+ b == 0
+TMP_13920(bool) = b_1 == 0
+CONDITION TMP_13920
+ 0
+RETURN 0
+ (a + b - 1) / b
+TMP_13921(uint256) = a_1 (c)+ b_1
+TMP_13922(uint256) = TMP_13921 (c)- 1
+TMP_13923(uint256) = TMP_13922 (c)/ b_1
+RETURN TMP_13923
+ result
 ```
 #### PlumeRewardLogic.findCommissionCheckpointIndexAtOrBefore(PlumeStakingStorage.Layout,uint16,uint256) [INTERNAL]
 ```slithir

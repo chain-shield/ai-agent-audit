@@ -79,11 +79,7 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             info!("insert function metadata into database..");
             info!("{} function summaries", funcs.len());
             // Insert function metadata into database
-            for (i, f) in funcs.iter().enumerate() {
-                if i % 100 == 0 {
-                    info!("{} function summaries scanned", i);
-                }
-
+            for f in &funcs {
                 let func_name = get_function_name(&f.name);
                 if let Some(node) = func_index.get(&(f.contract.clone(), func_name)) {
                     rows.push((

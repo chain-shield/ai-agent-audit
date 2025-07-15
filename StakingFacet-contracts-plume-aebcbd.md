@@ -66,7 +66,7 @@ TMP_13265(None) = SOLIDITY_CALL revert StakeAmountTooSmall(uint256,uint256)(amou
 #### StakingFacet._validateStaking(uint16,uint256) [INTERNAL]
 ```slithir
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1'])
-amount_1(uint256) := phi(['stakeAmount_1', 'amount_1'])
+amount_1(uint256) := phi(['amount_1', 'stakeAmount_1'])
  _validateValidatorForStaking(validatorId)
 INTERNAL_CALL, StakingFacet._validateValidatorForStaking(uint16)(validatorId_1)
  _validateStakeAmount(amount)
@@ -154,7 +154,7 @@ INTERNAL_CALL, StakingFacet._checkValidatorSlashedAndRevert(uint16)(validatorId_
 ```
 #### StakingFacet._performStakeSetup(address,uint16,uint256) [INTERNAL]
 ```slithir
-user_1(address) := phi(['user_1', 'staker_1', 'msg.sender'])
+user_1(address) := phi(['msg.sender', 'staker_1', 'user_1'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1', 'validatorId_1'])
 stakeAmount_1(uint256) := phi(['amount_1', 'stakeAmount_1', 'stakeAmount_1'])
  $ = PlumeStakingStorage.layout()
@@ -821,7 +821,7 @@ TMP_13410(PlumeStakingStorage.Layout) := phi(["$_4 (-> ['TMP_13410'])"])
 ```slithir
 user_1(address) := phi(['user_1', 'user_1', 'user_1'])
 validatorId_1(uint16) := phi(['otherValidatorId_1', 'validatorId_1', 'validatorId_1', 'validatorId_1'])
-amount_1(uint256) := phi(['fromTarget_3', 'amountInThisCooldown_1', 'currentCooledAmountInSlot_1', 'fromOther_3'])
+amount_1(uint256) := phi(['amountInThisCooldown_1', 'fromTarget_3', 'currentCooledAmountInSlot_1', 'fromOther_3'])
  $ = PlumeStakingStorage.layout()
 TMP_13411(PlumeStakingStorage.Layout) = LIBRARY_CALL, dest:PlumeStakingStorage, function:PlumeStakingStorage.layout(), arguments:[] 
 $_1 (-> ['TMP_13411'])(PlumeStakingStorage.Layout) := TMP_13411(PlumeStakingStorage.Layout)
@@ -2295,7 +2295,7 @@ RETURN fallbackComm_1
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_1 (-> [])'])
 token_1(address) := phi(['token_1', 'token_1'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1'])
-timestamp_1(uint256) := phi(['block.timestamp', 'segmentStartTime_1', 'effectiveTimestampForUpdate_3'])
+timestamp_1(uint256) := phi(['segmentStartTime_1', 'effectiveTimestampForUpdate_3', 'block.timestamp'])
  checkpoints = $.validatorRewardRateCheckpoints[validatorId][token]
 REF_4231(mapping(uint16 => mapping(address => PlumeStakingStorage.RateCheckpoint[]))) -> $_1 (-> []).validatorRewardRateCheckpoints
 REF_4232(mapping(address => PlumeStakingStorage.RateCheckpoint[])) -> REF_4231[validatorId_1]
@@ -2346,22 +2346,6 @@ REF_4244(uint256) (->effectiveCheckpoint_3) := 0(uint256)
  effectiveCheckpoint
 RETURN effectiveCheckpoint_3
  effectiveCheckpoint
-```
-#### PlumeRewardLogic._ceilDiv(uint256,uint256) [INTERNAL]
-```slithir
-a_1(uint256) := phi(['TMP_13916'])
-b_1(uint256) := phi(['REF_4211'])
- b == 0
-TMP_13920(bool) = b_1 == 0
-CONDITION TMP_13920
- 0
-RETURN 0
- (a + b - 1) / b
-TMP_13921(uint256) = a_1 (c)+ b_1
-TMP_13922(uint256) = TMP_13921 (c)- 1
-TMP_13923(uint256) = TMP_13922 (c)/ b_1
-RETURN TMP_13923
- result
 ```
 #### PlumeRewardLogic.getDistinctTimestamps(PlumeStakingStorage.Layout,uint16,address,uint256,uint256) [INTERNAL]
 ```slithir
@@ -2547,6 +2531,22 @@ t2_1(uint256) := REF_4230(uint256)
 TMP_13964(uint256) := 115792089237316195423570985008687907853269984665640564039457584007913129639935(uint256)
 t2_2(uint256) := TMP_13964(uint256)
 t2_3(uint256) := phi(['t2_1', 't2_2'])
+```
+#### PlumeRewardLogic._ceilDiv(uint256,uint256) [INTERNAL]
+```slithir
+a_1(uint256) := phi(['TMP_13916'])
+b_1(uint256) := phi(['REF_4211'])
+ b == 0
+TMP_13920(bool) = b_1 == 0
+CONDITION TMP_13920
+ 0
+RETURN 0
+ (a + b - 1) / b
+TMP_13921(uint256) = a_1 (c)+ b_1
+TMP_13922(uint256) = TMP_13921 (c)- 1
+TMP_13923(uint256) = TMP_13922 (c)/ b_1
+RETURN TMP_13923
+ result
 ```
 #### PlumeRewardLogic.findCommissionCheckpointIndexAtOrBefore(PlumeStakingStorage.Layout,uint16,uint256) [INTERNAL]
 ```slithir

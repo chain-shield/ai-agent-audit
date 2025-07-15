@@ -3,221 +3,143 @@
 
 ## Protocol Overview 
 
-### 🐾 PuppyRaffle Protocol
-PuppyRaffle is an on-chain raffle that mints a dog-themed ERC-721 NFT to each round’s winner while routing a configurable fee to the project treasury.
+### PuppyRaffle Protocol
 
-1. Initialization
-   * Deployed with an immutable entry fee, a fee-collector address, and the duration for each raffle round.
-   * Inherits ERC721 for NFT logic and Ownable for admin control.
+PuppyRaffle is an on-chain raffle system that lets anyone compete for collectible puppy NFTs while the contract autonomously handles entries, randomness, payouts and fee distribution.
 
-2. Entering the Raffle
-   * Anyone can call `enterRaffle` and pay `entranceFee` per address submitted. All paid addresses are appended to `players`.
-   * The contract tracks each participant’s index for later look-ups and optional refunds.
+1. Entering the Raffle  
+Participants call `enterRaffle()` supplying a list of new player addresses and paying `entranceFee` per address. The contract verifies payment, forbids duplicates, records players and accrues a small fee for the protocol.
 
-3. Optional Refunds
-   * Before a winner is selected, a participant may call `refund` to exit, receiving their stake back and freeing their slot.
+2. Refunds  
+Before a winner is chosen, any player may reclaim their stake through `refund()`, which deletes them from the players array, returns their entrance fee and adjusts the pot.
 
-4. Selecting a Winner
-   * After `raffleDuration` has elapsed, anyone can invoke `selectWinner`.
-   * A pseudo-random index (blockhash & timestamp) chooses the winner.
-   * 90 % of the pot is transferred to the winner; 10 % accrues to `feeAddress` and can be withdrawn by the owner.
-   * A new NFT with rarity-based metadata is minted to the winning address.
+3. Raffle Cycle & Winner Selection  
+The raffle runs for `raffleDuration` seconds after the first entry. Anyone can trigger `selectWinner()` once the timer elapses. A pseudo-random number derived from block data picks an index in `players`; the winner receives the accumulated pot (minus fees) and a freshly minted ERC-721 puppy NFT. `tokenIdToRarity` assigns common, rare or legendary status based on randomness, and `tokenURI()` supplies metadata.
 
-5. Admin Functions
-   * Owner can change the fee address and withdraw accumulated fees.
+4. Fees & Administration  
+Collected fees accumulate in `totalFees` and are withdrawable by anyone to `feeAddress` via `withdrawFees()` when no players are active. The owner can update `feeAddress` with `changeFeeAddress()`.
 
-The design keeps state simple, uses minimal external calls, and delivers provably fair, permissionless raffles coupled with collectible NFTs.
+Overall, PuppyRaffle delivers a simple, self-contained raffle/NFT minting experience secured by Solidity and the Ethereum network.
 ## High Risk Findings
-[H-1]. Timestamp Dependent Logic issue found with High severity
+[H-1]. Randomness issue found with High severity
 [H-2]. Reentrancy issue found with High severity
-[H-3]. Randomness issue found with High severity
-[H-4]. DOS issue found with High severity
-[H-5]. Unexpected Eth issue found with High severity
 ## Medium Risk Findings
-[M-1]. Gas Grief BlockLimit issue found with Medium severity
-[M-2]. Integer Overflow issue found with Medium severity
+[M-1]. Integer Overflow issue found with Medium severity
+[M-2]. Unexpected Eth issue found with Medium severity
+[M-3]. DOS issue found with Medium severity
+[M-4]. Gas Grief BlockLimit issue found with Medium severity
+[M-5]. Timestamp Dependent Logic issue found with Medium severity
 ## Info Risk Findings
-[I-1]. Pausable Emergency Stop issue in PuppyRaffle::NA
+[I-1]. Event Consistency issue in PuppyRaffle::selectWinner
 [I-2]. Pragma issue in PuppyRaffle::NA
-[I-3]. Event Consistency issue in PuppyRaffle::selectWinner, withdrawFees
 
 
 ### Number of Findings
-- H: 5
-- M: 2
+- H: 2
+- M: 5
 - L: 0
-- I: 3
+- I: 2
 
 
 
 # Info Risk Findings
 
-## [I-1]. Pausable Emergency Stop issue in PuppyRaffle::NA
+## [I-1]. Event Consistency issue in PuppyRaffle::selectWinner
 
 ## Description
-The contract handles user funds and has a defined lifecycle, but it lacks an emergency stop or pause mechanism. If a critical vulnerability is discovered post-deployment, the owner has no way to halt the contract's operation. Malicious actors could continue to exploit the vulnerability, or legitimate users could continue to deposit funds into a contract known to be unsafe.
+Several critical state changes in the contract do not emit events. Specifically, the `selectWinner` function changes `previousWinner`, resets `raffleStartTime`, calculates `totalFees`, and clears the `players` array without emitting a dedicated `WinnerSelected` event. Similarly, `withdrawFees` resets `totalFees` to zero without an event. This lack of event logging makes it difficult for off-chain services, monitoring tools, and users to track the contract's lifecycle and verify its operations.
 
 ## Impact
-Because the contract cannot be paused, the owner has no on-chain tool to mitigate unforeseen vulnerabilities discovered after deployment. Although this does not in itself lead to loss of funds, it removes an important safety circuit that could reduce the blast-radius of future bugs.
+Reduced observability of the contract's operations. Front-ends and other dependent services cannot easily react to important events like a winner being chosen or fees being withdrawn. It also complicates auditing and incident analysis.
 
 ## Proof of Concept
-1. A critical flaw (e.g., the weak randomness vulnerability) is discovered and publicly disclosed.
-2. The contract owner is notified but has no function to call to pause the contract.
-3. An attacker proceeds to exploit the flaw to steal the prize pool.
-4. Meanwhile, users who are unaware of the vulnerability may continue to call `enterRaffle`, adding more funds for the attacker to steal.
+1. A raffle round concludes and `selectWinner()` is called.
+2. A winner is selected, the prize is sent, and an NFT is minted. The `Transfer` event for the NFT is emitted by the ERC721 contract, but no single event captures all the details of the raffle outcome (winner, prize amount, new raffle start time).
+3. A user interface that wants to display "Congratulations to address X, who won Y ETH!" has no event to listen to for this information and must instead rely on polling contract state, which is inefficient.
 
 ## Proof of Code
 ```solidity
-// This is a conceptual proof, as it demonstrates a missing feature.
-// No test can be written to exploit the *absence* of a function.
-// The scenario is as described in the proof_of_concept.
+// This is a conceptual test. Foundry's `vm.expectEmit` would be used to show an event is *not* emitted,
+// but the assertion is on the absence of an event definition and emit statement in the source code.
+// The vulnerability is the missing code itself.
+
+// contract source code lacks this:
+// event WinnerSelected(address indexed winner, uint256 prizeAmount, uint256 tokenId);
+
+// And this:
+// function selectWinner() { ... emit WinnerSelected(winner, prizePool, tokenId); ... }
 ```
 
 ## Suggested Mitigation
-Inherit from OpenZeppelin's `Pausable` contract and apply the `whenNotPaused` modifier to all functions that perform state changes or handle fund transfers. This gives the owner the ability to halt the contract in an emergency.
+Define and emit events for all significant state transitions. Add a `WinnerSelected` event in `selectWinner` and a `FeesWithdrawn` event in `withdrawFees`.
 
-```diff
-+ import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
+```solidity
+// In PuppyRaffle.sol
 
-- contract PuppyRaffle is ERC721, Ownable {
-+ contract PuppyRaffle is ERC721, Ownable, Pausable {
+// ... Event definitions
+event WinnerSelected(address indexed winner, uint256 prizeAmount, uint256 indexed tokenId);
+event FeesWithdrawn(address indexed feeAddress, uint256 amount);
 
--   function enterRaffle(address[] memory newPlayers) public payable {
-+   function enterRaffle(address[] memory newPlayers) public payable whenNotPaused {
-        // ...
-    }
+// ...
 
--   function refund(uint256 playerIndex) public {
-+   function refund(uint256 playerIndex) public whenNotPaused {
-        // ...
-    }
+function selectWinner() external {
+    // ... logic to determine winner, prizePool, tokenId
 
--   function selectWinner() external {
-+   function selectWinner() external whenNotPaused {
-        // ...
-    }
+    (bool success, ) = winner.call{value: prizePool}("");
+    require(success, "PuppyRaffle: Failed to send prize pool to winner");
 
-    // Add pause/unpause functions callable only by owner
-    function pause() external onlyOwner {
-        _pause();
-    }
+    _safeMint(winner, tokenId);
 
-    function unpause() external onlyOwner {
-        _unpause();
-    }
+    emit WinnerSelected(winner, prizePool, tokenId);
+}
+
+function withdrawFees() external {
+    // ...
+    uint256 feesToWithdraw = totalFees;
+    totalFees = 0;
+
+    (bool success, ) = feeAddress.call{value: feesToWithdraw}("");
+    require(success, "PuppyRaffle: Failed to withdraw fees");
+
+    emit FeesWithdrawn(feeAddress, feesToWithdraw);
 }
 ```
 
 ## [I-2]. Pragma issue in PuppyRaffle::NA
 
 ## Description
-The contract uses a floating pragma version (`pragma solidity ^0.8.7;`). This allows the contract to be compiled with any compiler version from 0.8.7 up to (but not including) 0.9.0. Using a floating pragma is risky because it can lead to deployment with a compiler version that has not been tested, potentially introducing bugs or unexpected behavior from newer compiler versions.
+The contract uses a floating pragma `pragma solidity ^0.8.18;`. This allows the contract to be compiled with any compiler version from 0.8.18 up to (but not including) 0.9.0. While this provides some flexibility, it is a best practice to lock the pragma to a specific, audited version (e.g., `pragma solidity 0.8.18;`). Using a floating pragma can lead to unexpected behavior or bugs if the contract is deployed using a newer compiler version that has introduced subtle changes or bugs.
 
 ## Impact
-This practice can lead to deploying a contract with unintended behavior due to compiler changes or bugs introduced in newer patch versions. It reduces the determinism and reproducibility of the build, which is a security risk.
+The contract might be deployed with a compiler version that has known or unknown bugs, potentially introducing security vulnerabilities that were not present during the audit. It also leads to non-deterministic builds, where the same source code could produce different bytecode.
 
 ## Proof of Concept
-1. The contract is developed and thoroughly tested using compiler version `0.8.7`.
-2. Some time later, a new compiler version, `0.8.15`, is released which contains a subtle, unknown code generation bug.
-3. A user deploys the `PuppyRaffle` contract using a development environment that defaults to the latest `0.8.x` compiler.
-4. The contract is compiled and deployed with `0.8.15`, and the unknown compiler bug is now part of the on-chain bytecode, potentially creating a vulnerability.
+1. A developer audits the contract with compiler version 0.8.18.
+2. Later, the deployment script uses compiler version 0.8.22, which is allowed by `^0.8.18`.
+3. Unknown to the developer, version 0.8.22 has a new optimization bug that affects the logic of the contract.
+4. The contract is deployed with the vulnerability, even though the source code itself was deemed safe with the original compiler.
 
 ## Proof of Code
 ```solidity
-// The vulnerability is in the pragma statement itself.
-// No test case can exploit this directly, it's a best practice violation.
+// The vulnerability is in the pragma line itself.
+// No test case can 'exploit' this, it's a matter of development and deployment best practice.
 
-// In PuppyRaffle.sol:
-// pragma solidity ^0.8.7;
+// Vulnerable Code:
+// pragma solidity ^0.8.18;
+
+// Mitigated Code:
+// pragma solidity 0.8.18;
 ```
 
 ## Suggested Mitigation
-Use a fixed pragma version to ensure the contract is always compiled with the exact compiler version it was developed and audited for. This improves security and ensures deterministic builds.
+Lock the pragma to the specific compiler version that was used for testing and auditing the contract. This ensures that the deployed bytecode corresponds exactly to the audited version and prevents accidental introduction of bugs from future compiler updates.
 
-```diff
-- pragma solidity ^0.8.7;
-+ pragma solidity 0.8.20; // Or other specific, audited version.
-```
+```solidity
+// Change this:
+pragma solidity ^0.8.18;
 
-## [I-3]. Event Consistency issue in PuppyRaffle::selectWinner, withdrawFees
-
-## Description
-The contract's most critical functions, `selectWinner` and `withdrawFees`, execute significant state changes and value transfers but do not emit corresponding events. `selectWinner` transfers the prize pool and mints the winning NFT, while `withdrawFees` transfers all collected fees to the owner. The absence of events makes it difficult for off-chain services, monitoring tools, and users to track these important activities efficiently.
-
-## Impact
-The lack of events reduces transparency and observability. It complicates the development of user interfaces, analytics dashboards, and security monitoring tools that rely on event logs to track a contract's state and history. Users and integrators must resort to more complex and less reliable methods like transaction tracing.
-
-## Proof of Concept
-1. A raffle concludes and `selectWinner` is called. A winner receives the prize pool.
-2. A dApp frontend wants to display a list of all past winners and their prizes.
-3. Without a `WinnerSelected` event, the frontend cannot simply query event logs. It must instead parse the transaction history of the contract, inspecting the inputs and internal state changes of every `selectWinner` call, which is inefficient and unreliable.
-
-## Proof of Code
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.20;
-
-import "forge-std/Test.sol";
-import "../src/PuppyRaffle.sol";
-
-contract PuppyRaffle_NoEvent_Test is Test {
-    PuppyRaffle raffle;
-
-    function setUp() public {
-        vm.deal(address(this), 1 ether);
-        raffle = new PuppyRaffle(0.1 ether, address(0xdead), 1);
-    }
-
-    function testMissingWinnerSelectedEvent() public {
-        // prepare 4 distinct players
-        address[] memory players = new address[](4);
-        for (uint256 i; i < 4; ++i) {
-            players[i] = address(uint160(i + 1));
-        }
-
-        // enter raffle with the 4 players in a single call
-        raffle.enterRaffle{value: 0.4 ether}(players);
-
-        // fast-forward so raffle is over
-        vm.warp(block.timestamp + 2);
-
-        // record emitted logs during winner selection
-        vm.recordLogs();
-        raffle.selectWinner();
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-
-        // signature of the expected (but missing) event
-        bytes32 WINNER_EVENT_SIG = keccak256("WinnerSelected(address,uint256,uint256)");
-
-        // ensure that no WinnerSelected event was emitted
-        for (uint256 i; i < logs.length; ++i) {
-            assertTrue(logs[i].topics[0] != WINNER_EVENT_SIG, "WinnerSelected event should exist but is missing");
-        }
-    }
-}
-
-
-## Suggested Mitigation
-Emit events for all critical state changes and actions. Add a `WinnerSelected` event in `selectWinner` and a `FeesWithdrawn` event in `withdrawFees`.
-
-```diff
-contract PuppyRaffle is ERC721, Ownable {
-    // ...
-+   event WinnerSelected(address indexed winner, uint256 prize, uint256 indexed tokenId);
-+   event FeesWithdrawn(address indexed feeAddress, uint256 amount);
-
-    function selectWinner() external {
-        // ...
-        _safeMint(winner, tokenId);
-+       emit WinnerSelected(winner, prizePool, tokenId);
-    }
-
-    function withdrawFees() external {
-        uint256 feesToWithdraw = totalFees;
-        // ...
-        require(success, "PuppyRaffle: Failed to withdraw fees");
-+       emit FeesWithdrawn(feeAddress, feesToWithdraw);
-    }
-}
+// To this:
+pragma solidity 0.8.18;
 ```
 
 

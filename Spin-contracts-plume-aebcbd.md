@@ -894,7 +894,7 @@ TMP_23581(None) = SOLIDITY_CALL require(bool,string)(REF_9708,Prize not availabl
 ```slithir
 
 ```
-#### IDateTime.toTimestamp(uint16,uint8,uint8,uint8,uint8,uint8) [EXTERNAL]
+#### IDateTime.getDay(uint256) [EXTERNAL]
 ```slithir
 
 ```
@@ -906,7 +906,7 @@ TMP_23581(None) = SOLIDITY_CALL require(bool,string)(REF_9708,Prize not availabl
 ```slithir
 
 ```
-#### IDateTime.getDay(uint256) [EXTERNAL]
+#### IDateTime.toTimestamp(uint16,uint8,uint8,uint8,uint8,uint8) [EXTERNAL]
 ```slithir
 
 ```

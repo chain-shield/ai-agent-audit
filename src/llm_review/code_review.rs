@@ -89,11 +89,11 @@ pub async fn review_codebase_for_security_issues(
             );
 
             let deduped_and_verified_findings = raw_findings
-                .dedup_and_verify_with_llm(&codeblock, &ai_verify_agent)
+                .dedup_and_verify_with_llm(&codeblock, &ai_verify_agent, &audit_context)
                 .await?;
 
             let quality_checked_and_updated_findings = deduped_and_verified_findings
-                .quality_check_with_llm(&codeblock, &ai_verify_agent)
+                .quality_check_with_llm(&codeblock, &ai_verify_agent, &audit_context)
                 .await?;
 
             all_security_issues.insert(contract.to_string(), quality_checked_and_updated_findings);
@@ -108,16 +108,13 @@ pub async fn review_codebase_for_security_issues(
 }
 
 pub async fn generate_ai_agents() -> Result<(Arc<AIAgent>, Vec<Arc<AIAgent>>)> {
-    let added_context_from_ai_brain = get_metadata_context().await?;
-
     info!("setting up AI agents...");
 
     // Create verification agent using OpenAI O3
     let verify_config = AgentConfig::new()
         .with_temperature(1.0)
         .with_model(O3)
-        .with_preamble("You are SoliditySec-Verifier, a senior smart-contract auditor.")
-        .with_context(&added_context_from_ai_brain);
+        .with_preamble("You are SoliditySec-Verifier, a senior smart-contract auditor.");
 
     let ai_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
 
@@ -179,13 +176,14 @@ pub async fn run_security_prompt(
 fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
     let mut code_plus_context = String::new();
 
-    code_plus_context.push_str("\n");
+    code_plus_context.push_str("\n\n");
 
     code_plus_context.push_str(codeblock);
     // print_first_four_lines(&codeblock);
 
-    code_plus_context.push_str("\n");
+    code_plus_context.push_str("\n\n ADDITIONAL CONTEXT \n\n");
     code_plus_context.push_str(&added_context);
+    code_plus_context.push_str("\n\n");
     // print_first_four_lines(&added_context);
 
     code_plus_context
@@ -297,10 +295,12 @@ impl Findings {
         &self,
         code: &str,
         agent: &Arc<AIAgent>,
+        context: &str,
     ) -> Result<Self> {
         let mut handles = vec![];
         let deduped_findings = Arc::new(self.clone().dedup().await?);
-        let codeblock = Arc::new(code.to_string());
+        let code_and_context = generate_content_plus_context_block(code, context);
+        let arc_code_context = Arc::new(code_and_context);
 
         let dedup_finding_count = deduped_findings.findings.len();
         let is_legit_finding_vec: Arc<Mutex<Vec<bool>>> =
@@ -311,14 +311,14 @@ impl Findings {
         info!("now verifying each finding...");
 
         for i in 0..dedup_finding_count {
-            let code = Arc::clone(&codeblock);
+            let codeblock_plus_context = Arc::clone(&arc_code_context);
             let arc_agent = Arc::clone(agent);
             let arc_findings = Arc::clone(&deduped_findings);
             let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
             handles.push(tokio::spawn(async move {
                 let result: Result<()> = async {
                     let instruction_prompt = generate_prompt_for_issue_check(
-                        &code,
+                        &codeblock_plus_context,
                         &arc_findings.findings[i],
                         PRE_VERIFY,
                         VERIFY_PROMPT,
@@ -326,12 +326,8 @@ impl Findings {
                     );
 
                     // add to cost
-                    let context = get_metadata_context().await?;
-                    add_to_inference_cost_by_type(
-                        &format!("{}{}", instruction_prompt, context),
-                        LlmCostType::OpenaiO3Input,
-                    )
-                    .await;
+                    add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::OpenaiO3Input)
+                        .await;
                     info!("verifying finding #{}", i);
                     let is_legit_struct: LegitVulnerability =
                         arc_agent.extract_with_retry(&instruction_prompt).await?;
@@ -383,10 +379,16 @@ impl Findings {
         })
     }
 
-    pub async fn quality_check_with_llm(self, code: &str, agent: &Arc<AIAgent>) -> Result<Self> {
+    pub async fn quality_check_with_llm(
+        self,
+        code: &str,
+        agent: &Arc<AIAgent>,
+        context: &str,
+    ) -> Result<Self> {
         let mut handles = vec![];
         let findings = Arc::new(self.clone().dedup().await?);
-        let codeblock = Arc::new(code.to_string());
+        let code_and_context = generate_content_plus_context_block(code, context);
+        let arc_code_context = Arc::new(code_and_context);
 
         let finding_count = findings.findings.len();
         // create vec (is_quality_check_passed, updated_finding) for each finding
@@ -397,25 +399,20 @@ impl Findings {
         info!("now quality check on each finding...");
 
         for i in 0..finding_count {
-            let code = Arc::clone(&codeblock);
+            let codeblock_plus_context = Arc::clone(&arc_code_context);
             let arc_agent = Arc::clone(agent);
             let arc_findings = Arc::clone(&findings);
             let arc_legit_findings_vec = Arc::clone(&quality_check_passed_vec);
             handles.push(tokio::spawn(async move {
                 let result: Result<()> = async {
                     let prompt = generate_prompt_for_issue_check(
-                        &code,
+                        &codeblock_plus_context,
                         &arc_findings.findings[i],
                         PRE_QUALIFY,
                         QUALIFY_PROMPT,
                         POST_QUALIFY,
                     );
-                    let context = get_metadata_context().await?;
-                    add_to_inference_cost_by_type(
-                        &format!("{}{}", prompt, context),
-                        LlmCostType::OpenaiO3Input,
-                    )
-                    .await;
+                    add_to_inference_cost_by_type(&prompt, LlmCostType::OpenaiO3Input).await;
                     info!("quality checking finding #{}", i);
                     let qualify_checked_finding: VulnerabilityQualityCheck =
                         arc_agent.extract_with_retry(&prompt).await?;

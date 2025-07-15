@@ -63,28 +63,58 @@ pub struct StorageVar {
     /// Data type of the storage variable (e.g., "uint256", "address", etc.)
     pub r#type: String,
 }
-
+/// Return “context file list” as LF-separated string.
 pub fn get_all_files_src(repo: &RepoPaths) -> String {
-    repo.sol_files
-        .iter()
-        .filter(|p| {
-            // Check if the file itself is a symlink
-            match fs::symlink_metadata(p) {
-                Ok(metadata) => !metadata.file_type().is_symlink(),
-                Err(_) => {
-                    log::warn!("Skipping unreadable path: {:?}", p);
-                    false
-                }
-            }
-        })
-        .filter_map(|path| {
-            let path_str = path.to_string_lossy();
-            path_str
-                .find(&format!("{}/src", &repo.repo_name))
-                .map(|idx| path_str[idx..].to_string())
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    //   e.g.,   contracts/plume/src
+    let code_root = repo.root.join(&repo.repo_name).join("src");
+
+    let mut files = Vec::<String>::new();
+
+    for path in &repo.sol_files {
+        // fast skip: must be under src/ and not a symlink
+        if !path.starts_with(&code_root) {
+            continue;
+        }
+
+        if fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(true)
+        {
+            continue;
+        }
+
+        // build a relative "short path"
+        let rel = path.strip_prefix(&code_root).unwrap_or(path);
+        let rel_str = rel.to_string_lossy();
+
+        if should_skip(&rel_str) {
+            continue;
+        }
+
+        files.push(rel_str.to_string());
+    }
+
+    // stable ordering helps diffing prompts
+    files.sort();
+    files.join("\n")
+}
+
+fn should_skip(rel: &str) -> bool {
+    let lowercase = rel.to_ascii_lowercase();
+
+    // 1. third-party deps: vendor/*/contracts/**   OR   node_modules/**/contracts/**
+    if lowercase.contains("/vendor/") && lowercase.contains("/contracts/")
+        || lowercase.contains("/node_modules/") && lowercase.contains("/contracts/")
+    {
+        return true;
+    }
+
+    // 2. other large externals you may add later
+    if lowercase.starts_with("lib/") && lowercase.contains("/contracts/") {
+        return true;
+    }
+
+    false
 }
 
 pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
