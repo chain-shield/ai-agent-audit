@@ -30,6 +30,8 @@ use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LanguageModel {
@@ -357,40 +359,64 @@ impl ContractInvariants {
 }
 impl Findings {
     pub async fn dedup(self) -> anyhow::Result<Findings> {
-        let openai_client = openai::Client::from_env();
-        let openai_agent = openai_client.agent(GPT_4O).temperature(1.0).build();
-
-        let size = self.findings.len();
-        // assigns bool to each finding index, is dup or not? assume not for initializing
-        let mut is_dup_vec: Vec<bool> = vec![false; size];
-
-        for i in 0..size {
-            if is_dup_vec[i] {
-                continue;
-            }
-            for j in i + 1..size {
-                if is_dup_vec[j] {
-                    continue;
-                }
-                let is_dup = self.findings[i]
-                    .is_duplicate_issue(&self.findings[j], &openai_agent)
-                    .await?;
-                if is_dup {
-                    is_dup_vec[j] = true;
-                    continue;
-                }
-            }
+        if self.findings.is_empty() {
+            return Ok(Findings {
+                findings: Vec::new(),
+            });
         }
 
-        let findings: Vec<Finding> = self
-            .findings
-            .into_iter()
-            .enumerate()
-            .filter(|(idx, _)| !is_dup_vec[*idx])
-            .map(|(_, f)| f)
-            .collect();
+        let openai_client = openai::Client::from_env();
+        let openai_agent = Arc::new(openai_client.agent(GPT_4O).temperature(1.0).build());
 
-        Ok(Findings { findings })
+        let mut findings_hash = HashMap::<String, Vec<Finding>>::new();
+
+        for finding in &self.findings {
+            let hash = finding.hash();
+            findings_hash
+                .entry(hash)
+                .or_insert(Vec::new())
+                .push(finding.clone());
+        }
+
+        let arc_dedup_findings = Arc::new(Mutex::new(Vec::with_capacity(self.findings.len())));
+        let mut handles = Vec::new();
+
+        for findings in findings_hash.into_values() {
+            let arc_findings = Arc::new(findings);
+            let current_findings = Arc::clone(&arc_findings);
+            let deduped_findings = Arc::clone(&arc_dedup_findings);
+            let agent = Arc::clone(&openai_agent);
+            let handle = tokio::spawn(async move {
+                if current_findings.len() > 1 {
+                    match get_deduped_finding_vec(&current_findings, &agent).await {
+                        Ok(deduped) => {
+                            let mut deduped_findings_lock = deduped_findings.lock().await;
+                            deduped_findings_lock.extend(deduped);
+                        }
+                        Err(e) => {
+                            log::error!("❌ deduping findngs failed: {e}");
+                        }
+                    }
+                } else {
+                    let mut deduped_findings_lock = deduped_findings.lock().await;
+                    deduped_findings_lock.extend(current_findings.iter().cloned())
+                }
+            });
+            handles.push(handle);
+        }
+
+        // CRITICAL: Wait for all tasks to complete
+        for handle in handles {
+            handle.await?;
+        }
+        // Fix: Extract the Vec from Arc<Mutex<Vec<Finding>>>
+        let deduped_findings = Arc::try_unwrap(arc_dedup_findings)
+            .map_err(|_| anyhow::anyhow!("Failed to unwrap Arc"))?
+            .into_inner();
+
+        Ok(Findings {
+            findings: deduped_findings,
+        })
     }
 
     /// Get count of findings by severity
@@ -416,6 +442,44 @@ impl Findings {
     pub fn high_severity_findings(&self) -> Vec<&Finding> {
         self.filter_by_severity(Severity::High)
     }
+}
+
+async fn get_deduped_finding_vec<T>(
+    findings: &Arc<Vec<Finding>>,
+    agent: &Arc<Agent<T>>,
+) -> anyhow::Result<Vec<Finding>>
+where
+    T: CompletionModel,
+{
+    // assigns bool to each finding index, is dup or not? assume not for initializing
+    let size = findings.len();
+    let mut is_dup_vec: Vec<bool> = vec![false; size];
+
+    for i in 0..size {
+        if is_dup_vec[i] {
+            continue;
+        }
+        for j in i + 1..size {
+            if is_dup_vec[j] {
+                continue;
+            }
+            let is_dup = findings[i].is_duplicate_issue(&findings[j], &agent).await?;
+            if is_dup {
+                is_dup_vec[j] = true;
+                continue;
+            }
+        }
+    }
+
+    let findings: Vec<Finding> = findings
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| !is_dup_vec[*idx])
+        .map(|(_, f)| f)
+        .cloned()
+        .collect();
+
+    Ok(findings)
 }
 
 pub trait FromLLMJson: Sized {

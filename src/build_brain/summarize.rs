@@ -216,7 +216,7 @@ pub async fn summarize_src_files(
         let agent = agent.clone();
         let repo_root = repo.root.clone();
 
-        let handle = task::spawn(async move {
+        let handle = tokio::spawn(async move {
             // acquire permit – blocks if `max_parallel` already in-flight
             let _permit = sem.acquire_owned().await.unwrap();
 
