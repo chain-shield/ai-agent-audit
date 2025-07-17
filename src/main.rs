@@ -17,6 +17,7 @@ use ai_agent_audit::{
         agent_factory::init_llm_clients,
         code_review,
         context_state::{self},
+        prompt_context,
     },
     prepare_code::{self, git_clone::BuildFlags},
     reporting::{
@@ -102,6 +103,12 @@ async fn main() -> Result<()> {
     // Generate and cache protocol metadata context for AI analysis
     info!("generating metadata context...");
     context_state::generate_and_save_metadata_context(&repo, &semantics_db).await?;
+
+    // let metadata = prompt_context::generate_context_for_code_review(&repo, &semantics_db).await?;
+    //
+    // info!("metadata => {:#?}", metadata);
+    //
+    // return Ok(());
 
     // ────────────────────────────────
     // 3. Code Slice Generation
