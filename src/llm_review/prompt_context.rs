@@ -66,32 +66,34 @@ pub async fn generate_context_for_code_review(
     let slither_metadata = generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
     log::info!("generate summary of all files");
 
-    let mut file_summaries = String::new();
-    // let documentation = extract_content_from_docs(repo)?;
+    let mut full_prompt_context = String::new();
 
+    let mut file_summaries = String::new();
     let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
     for summary in summaries {
-        file_summaries.push_str(&format!(
-            "\n## {} SUMMARY OF MAIN FILES\n",
-            summary.filename
-        ));
+        file_summaries.push_str(&format!("\n## SUMMARY OF FILE: {}\n", summary.filename));
         file_summaries.push_str(&summary.summary);
         file_summaries.push_str("\n\n");
     }
-
-    let mut full_prompt_context = String::new();
+    full_prompt_context.push_str(&file_summaries);
     full_prompt_context.push_str("\n## SLITHER GENERATED METADATA \n\n");
     full_prompt_context.push_str(&slither_metadata);
-    full_prompt_context.push_str(&file_summaries);
 
-    let doc_summaries = summarize::summarize_docs(repo, &full_prompt_context).await?;
-    full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n");
-    for doc_summary in doc_summaries {
-        file_summaries.push_str("\n\n");
-        file_summaries.push_str(&doc_summary.summary);
-        file_summaries.push_str("\n\n");
+    let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
+    // let documentation = extract_content_from_docs(repo)?;
+    let mut doc_summaries = String::new();
+    for doc_summary in &docs {
+        doc_summaries.push_str("\n\n");
+        doc_summaries.push_str(&doc_summary.summary);
+        doc_summaries.push_str("\n\n");
     }
+    full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
+    full_prompt_context.push_str(&doc_summaries);
 
+    // TODO - add FULL DOCS IF AUDIT TYPE BUGBOUNTY OTHERWISE ADD SUMMARY OF AUDIT
+    // test that documentation is being added
+    // ALSO add $200 more to chain shield to cover these costs!
+    info!("documentation full size => {}", docs[0].summary.len());
     info!("full prompt context SIZE => {}", full_prompt_context.len());
 
     Ok(full_prompt_context)
