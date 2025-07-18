@@ -26,7 +26,7 @@ use crate::{
     prepare_code::git_clone::RepoPaths,
     utils::{
         contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry,
-        get_doc_file::extract_content_from_docs,
+        get_file_content::extract_content_from_docs,
     },
 };
 use crate::{

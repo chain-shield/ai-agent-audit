@@ -8,6 +8,7 @@
 /// 5. Creating vector embeddings and storing in Qdrant for semantic search
 /// 6. Generating professional audit reports with findings and cost tracking
 use ai_agent_audit::{
+    ai_bot,
     build_brain::{enrichment, slither_ffi::get_all_files_src, vector_db},
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
@@ -104,12 +105,6 @@ async fn main() -> Result<()> {
     info!("generating metadata context...");
     context_state::generate_and_save_metadata_context(&repo, &semantics_db).await?;
 
-    // let metadata = prompt_context::generate_context_for_code_review(&repo, &semantics_db).await?;
-    //
-    // info!("metadata => {:#?}", metadata);
-    //
-    // return Ok(());
-
     // ────────────────────────────────
     // 3. Code Slice Generation
     // ────────────────────────────────
@@ -130,6 +125,17 @@ async fn main() -> Result<()> {
     // Create embeddings and store in Qdrant for semantic search
     vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
         .await?;
+
+    // ────────────────────────────────
+    // 4.5. AI Agent Tool Testing (Optional)
+    // ────────────────────────────────
+    // Test AI agent tools to verify functionality
+    if std::env::var("TEST_AI_TOOLS").unwrap_or_default() == "true" {
+        info!("🧪 Testing AI agent tools...");
+        if let Err(e) = ai_bot::agent::test_ai_agent_tools(&repo).await {
+            log::warn!("⚠️  AI agent tool testing failed: {}", e);
+        }
+    }
 
     // ────────────────────────────────
     // 5. AI Security Analysis

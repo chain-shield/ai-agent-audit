@@ -119,6 +119,7 @@ pub mod cost {
 pub mod ai_bot {
     /// Core AI audit agent with dynamic context
     pub mod agent;
+    pub mod file_retrival;
     /// Context retrieval for AI analysis
     pub mod retrieve_slice;
 }
@@ -211,7 +212,7 @@ pub mod utils {
     /// Function labeling utilities
     pub mod fn_labels;
     /// Documentation extraction
-    pub mod get_doc_file;
+    pub mod get_file_content;
     /// Function name extraction
     pub mod get_fn_name;
     /// Logging utilities

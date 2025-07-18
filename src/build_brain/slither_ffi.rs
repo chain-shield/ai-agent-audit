@@ -18,7 +18,7 @@ use crate::build_brain::inheritance;
 use crate::build_brain::parsers::parse_slithir_contract_summary;
 use crate::build_brain::summarize::summarize_src_files;
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::utils::get_doc_file::extract_content_from_docs;
+use crate::utils::get_file_content::extract_content_from_docs;
 
 use super::callgraph;
 use super::parsers::{parse_slither, parse_slithir_ir_code, parse_storage};
