@@ -66,7 +66,8 @@ pub async fn generate_slither_chucks_and_save_all_metadata_to_vector_db(
     // - Solidity source files
     // - Documentation files
     // - Slither analysis result files
-    let mut all_files: Vec<_> = repo.docs.clone().into_iter().collect();
+    let mut all_files: Vec<_> = repo.sol_files.clone().into_iter().collect();
+    all_files.extend(repo.docs.clone());
     all_files.extend(slither_chunk_paths);
     info!("all files => {:?}", all_files.len());
 

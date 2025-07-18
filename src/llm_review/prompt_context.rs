@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use crate::build_brain::slither_ffi::{cache_key, get_all_files_src};
 use crate::build_brain::summarize;
 use crate::prepare_code::git_clone::RepoPaths;
+use crate::utils::get_file_content::extract_content_from_docs;
 
 use super::config::Finding;
 
@@ -80,7 +81,7 @@ pub async fn generate_context_for_code_review(
     full_prompt_context.push_str(&slither_metadata);
 
     let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
-    // let documentation = extract_content_from_docs(repo)?;
+    let documentation = extract_content_from_docs(repo)?;
     let mut doc_summaries = String::new();
     for doc_summary in &docs {
         doc_summaries.push_str("\n\n");
@@ -88,12 +89,14 @@ pub async fn generate_context_for_code_review(
         doc_summaries.push_str("\n\n");
     }
     full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
-    full_prompt_context.push_str(&doc_summaries);
+    // adding FULL DOCS not doc_summaries
+    full_prompt_context.push_str(&documentation);
 
     // TODO - add FULL DOCS IF AUDIT TYPE BUGBOUNTY OTHERWISE ADD SUMMARY OF AUDIT
     // test that documentation is being added
-    // ALSO add $200 more to chain shield to cover these costs!
-    info!("documentation full size => {}", docs[0].summary.len());
+    // ALSO add $100 more to chain shield to cover these costs!
+    // info!("documentation full size => {}", docs[0].summary.len());
+    info!("documentation full size => {}", documentation.len());
     info!("full prompt context SIZE => {}", full_prompt_context.len());
 
     Ok(full_prompt_context)

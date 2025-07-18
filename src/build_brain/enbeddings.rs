@@ -25,7 +25,8 @@ use crate::utils::bpe::get_bpe; // OpenAI’s GPT-4 / text-embedding 3 vocab
 pub struct SourceChunk {
     #[embed] // Field Rig will vectorise
     pub text: String, // The actual text content to be embedded
-    metadata: String, // we’ll keep this alongside the vector
+    pub metadata: String,  // we’ll keep this alongside the vector
+    pub file_type: String, // Added to store "source", "test", or "script"
 }
 
 /// Number of tokens in each chunk for optimal embedding quality
@@ -36,6 +37,93 @@ const OVERLAP: usize = 32;
 const BATCH: usize = 30;
 /// Maximum chunk length in characters (OpenAI supports ~8192 tokens, leaving headroom)
 const MAX_CHUNK_LEN: usize = 4000;
+
+/// Infers file_type based on file path or naming conventions.
+/// Returns "source", "test", "script", or "library" based on path patterns.
+fn infer_file_type(path: &Path) -> String {
+    // Convert to lowercase for case-insensitive matching
+    let path_str = path.to_string_lossy().to_lowercase();
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    // Check for library patterns first (most specific)
+    if path_str.contains("/lib/")
+        || path_str.contains("\\lib\\")
+        || path_str.contains("/libs/")
+        || path_str.contains("\\libs\\")
+        || path_str.contains("/library/")
+        || path_str.contains("\\library\\")
+        || path_str.contains("/libraries/")
+        || path_str.contains("\\libraries\\")
+        || path_str.starts_with("lib/")
+        || path_str.starts_with("libs/")
+        || path_str.starts_with("library/")
+        || path_str.starts_with("libraries/")
+    {
+        return "library".to_string();
+    }
+
+    // Check for test patterns
+    if path_str.contains("/test") ||
+       path_str.contains("\\test") ||
+       path_str.contains("/tests/") ||
+       path_str.contains("\\tests\\") ||
+       path_str.starts_with("test/") ||
+       path_str.starts_with("tests/") ||
+       file_name.contains("test") ||
+       file_name.ends_with(".t.sol") ||  // Solidity test files
+       file_name.ends_with("_test.rs") ||
+       file_name.ends_with("_test.py")
+    {
+        return "test".to_string();
+    }
+
+    // Check for script patterns
+    if let Some(extension) = path.extension() {
+        let ext = extension.to_string_lossy().to_lowercase();
+        if ext == "sh"
+            || ext == "bash"
+            || ext == "zsh"
+            || ext == "bat"
+            || ext == "cmd"
+            || ext == "ps1"
+            || (ext == "py"
+                && (file_name.contains("script")
+                    || file_name.contains("deploy")
+                    || file_name.contains("build")
+                    || file_name.contains("setup")))
+        {
+            return "script".to_string();
+        }
+    }
+
+    // Check for Solidity script files
+    if file_name.ends_with(".s.sol") {
+        return "script".to_string();
+    }
+
+    // Check for script directories
+    if path_str.contains("/script")
+        || path_str.contains("\\script")
+        || path_str.contains("/scripts/")
+        || path_str.contains("\\scripts\\")
+        || path_str.contains("/bin/")
+        || path_str.contains("\\bin\\")
+        || path_str.contains("/tools/")
+        || path_str.contains("\\tools\\")
+        || path_str.starts_with("script/")
+        || path_str.starts_with("scripts/")
+        || path_str.starts_with("bin/")
+        || path_str.starts_with("tools/")
+    {
+        return "script".to_string();
+    }
+
+    // Default to source for everything else
+    "source".to_string()
+}
 
 /**
  * Processes a list of files and creates embeddings for their content.
@@ -56,7 +144,9 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(SourceChunk,
     info!("looping through all files and breaking into chunks");
     let bpe = get_bpe();
     for file in paths {
+        // info!("embedding file {}", file.as_ref().display());
         let content = fs::read_to_string(file.as_ref())?;
+        let file_type = infer_file_type(file.as_ref()); // Infer file_type
         for (i, chunk) in tokenize(bpe, &content).into_iter().enumerate() {
             let clean = chunk
                 .replace('\0', "") // Remove null bytes
@@ -76,8 +166,9 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(SourceChunk,
                 continue;
             }
             docs.push(SourceChunk {
-                text: chunk,
+                text: clean.to_string(),
                 metadata: format!("{}:chunk {}", file.as_ref().display(), i),
+                file_type: file_type.clone(),
             });
         }
     }
@@ -153,4 +244,49 @@ fn tokenize(bpe: &CoreBPE, s: &str) -> Vec<String> {
         start += CHUNK_TOKENS - OVERLAP; // always moves forward
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_infer_file_type() {
+        // Test library files
+        assert_eq!(infer_file_type(Path::new("src/lib/utils.sol")), "library");
+
+        assert_eq!(
+            infer_file_type(Path::new("contracts/libs/SafeMath.sol")),
+            "library"
+        );
+        assert_eq!(infer_file_type(Path::new("src\\lib\\Token.sol")), "library");
+        assert_eq!(
+            infer_file_type(Path::new("libraries/OpenZeppelin.sol")),
+            "library"
+        );
+
+        // Test test files
+        assert_eq!(infer_file_type(Path::new("test/Token.t.sol")), "test");
+        assert_eq!(infer_file_type(Path::new("tests/integration.sol")), "test");
+        assert_eq!(infer_file_type(Path::new("src/test/unit_test.sol")), "test");
+        assert_eq!(infer_file_type(Path::new("TokenTest.sol")), "test");
+
+        // Test script files
+        assert_eq!(infer_file_type(Path::new("script/Deploy.s.sol")), "script");
+        assert_eq!(
+            infer_file_type(Path::new("scripts/migration.sol")),
+            "script"
+        );
+        assert_eq!(infer_file_type(Path::new("deploy.sh")), "script");
+        assert_eq!(infer_file_type(Path::new("setup.py")), "script");
+
+        // Test source files (default)
+        assert_eq!(infer_file_type(Path::new("src/Token.sol")), "source");
+        assert_eq!(
+            infer_file_type(Path::new("contracts/MyContract.sol")),
+            "source"
+        );
+        assert_eq!(infer_file_type(Path::new("README.md")), "source");
+    }
 }
