@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use std::{path::Path, sync::Arc};
 use tokio::sync::Mutex;
 
-use super::prompt_context::generate_context_for_code_review;
+use super::utils::prompt_context::generate_context_for_code_review;
 use crate::prepare_code::git_clone::RepoPaths;
 
 /// Global metadata context shared across all AI agents

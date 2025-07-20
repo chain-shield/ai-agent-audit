@@ -89,31 +89,6 @@ pub struct ContractInvariants {
     pub invariants: Vec<InvariantFinding>,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct LegitVulnerability {
-    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
-    pub is_legit_vulnerability: bool,
-    pub why_its_not_legit: Option<String>,
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct VulnerabilityQualityCheck {
-    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
-    pub is_quality_check_passed: bool, // quality check passes with no changes/update needed, true|false
-    pub where_quality_lacks: Option<String>, // breif description
-    pub impact: Option<String>,              // updated impact (if necessary)
-    pub proof_of_concept: Option<String>,    // updated POC (if necessary)
-    pub proof_of_code: Option<String>,       // updated Foundry Unit test (if necessary)
-    #[schemars(description = "Severity level: High, Medium, Low, Info")]
-    pub severity: Option<Severity>, // updated severity of issue (if necessary)
-    pub mitigation: Option<String>,          // updated mitigation (if necessary)
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SelectedFiles {
-    pub files: Vec<String>,
-}
-
 // #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 // pub struct InvariantFindings {
 //     pub findings: Vec<InvariantFinding>,

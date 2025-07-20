@@ -1,28 +1,57 @@
 /// Phase 4: Quality assurance and final finding refinement
-/// 
+///
 /// This phase performs final quality checks on verified findings and enhances
 /// them with improved details, impact analysis, and mitigation strategies.
-
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     error::Result,
     llm_review::{
-        config::{Findings, Finding, VulnerabilityQualityCheck},
-        enums::AIAgent,
-        prompt_context::generate_prompt_for_issue_check,
+        config::{Finding, Findings},
+        enums::{AIAgent, Severity},
         prompt_support::{
-            pre_qualify::PRE_QUALIFY,
-            qualify_prompt::QUALIFY_PROMPT,
-            post_qualify::POST_QUALIFY,
+            post_qualify::POST_QUALIFY, pre_qualify::PRE_QUALIFY, qualify_prompt::QUALIFY_PROMPT,
         },
+        utils::prompt_context::generate_prompt_for_issue_check,
     },
 };
 use log::info;
+use schemars::JsonSchema;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Quality check result for a vulnerability finding
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VulnerabilityQualityCheck {
+    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
+    pub is_quality_check_passed: bool, // quality check passes with no changes/update needed, true|false
+    pub where_quality_lacks: Option<String>, // brief description
+    pub impact: Option<String>,              // updated impact (if necessary)
+    pub proof_of_concept: Option<String>,    // updated POC (if necessary)
+    pub proof_of_code: Option<String>,       // updated proof of code (if necessary)
+    pub severity: Option<Severity>,          // updated severity of issue (if necessary)
+    pub mitigation: Option<String>,          // updated mitigation (if necessary)
+}
+
+/// Helper function to deserialize boolean from string or boolean
+fn deserialize_bool_from_str_or_bool<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let val: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+    match val {
+        serde_json::Value::Bool(b) => Ok(b),
+        serde_json::Value::String(s) => match s.to_lowercase().as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(serde::de::Error::custom("expected boolean or string")),
+        },
+        _ => Err(serde::de::Error::custom("expected boolean or string")),
+    }
+}
+
 /// Executes the quality check phase
-/// 
+///
 /// Performs final quality assurance on verified findings, enhancing them
 /// with improved details and ensuring they meet quality standards.
 pub async fn execute(
@@ -32,7 +61,7 @@ pub async fn execute(
     context: &str,
 ) -> Result<Findings> {
     info!("🔍 Phase 4: Quality checking findings...");
-    
+
     let mut handles = vec![];
     let findings = Arc::new(findings.dedup().await?);
     let code_and_context = generate_content_plus_context_block(code, context);
@@ -51,7 +80,7 @@ pub async fn execute(
         let arc_agent = Arc::clone(agent);
         let arc_findings = Arc::clone(&findings);
         let arc_legit_findings_vec = Arc::clone(&quality_check_passed_vec);
-        
+
         handles.push(tokio::spawn(async move {
             let result: Result<()> = async {
                 let prompt = generate_prompt_for_issue_check(
@@ -163,7 +192,7 @@ pub async fn execute(
 }
 
 /// Generates the combined content and context block for quality check analysis
-/// 
+///
 /// Combines the contract code with additional context information
 /// in a structured format for optimal quality check processing.
 fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {

@@ -80,7 +80,6 @@ pub mod llm_review {
     pub mod context_state;
     /// AI agent and vulnerability type enums
     pub mod enums;
-    /// Protocol invariant analysis
     /// Security audit phases
     pub mod phases {
         /// Phase 2: Parallel vulnerability detection across multiple AI agents
@@ -92,10 +91,13 @@ pub mod llm_review {
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_findings;
     }
-    /// Dynamic prompt generation
-    pub mod prompt_context;
-    /// AI agent builders and utilities
-    pub mod review_utils;
+    /// Utility functions for LLM review
+    pub mod utils {
+        /// Dynamic prompt generation and context management
+        pub mod prompt_context;
+        /// AI agent builders and utilities
+        pub mod review_utils;
+    }
     /// Prompt engineering modules for different analysis stages
     pub mod prompt_support {
         /// Deduplication prompts

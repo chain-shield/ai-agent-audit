@@ -11,7 +11,7 @@ use crate::build_brain::summarize;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::get_file_content::extract_content_from_docs;
 
-use super::config::Finding;
+use crate::llm_review::config::Finding;
 
 /// Global cache keyed by (repo_root, printer) tuple stringified
 pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =

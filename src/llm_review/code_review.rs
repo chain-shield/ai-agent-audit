@@ -53,12 +53,13 @@ pub async fn review_codebase_for_security_issues(
     for (contract, codeblock) in contracts.into_iter() {
         info!("contract => {}", contract);
         info!("codeblock => {}", codeblock);
+
         // grab additional context from RAG
-        let rag_context = get_rag_for_security_query(&codeblock, repo).await?;
-        let audit_context = format!(
-            "\n## CONTEXT \n\n {} \n\n {}",
-            metadata_context, rag_context
-        );
+        // let rag_context = get_rag_for_security_query(&codeblock, repo).await?;
+        // let audit_context = format!(
+        //     "\n## CONTEXT \n\n {} \n\n {}",
+        //     metadata_context, rag_context
+        // );
 
         // Phase 1: Pre-fetch strategic files once to avoid rate limits during parallel analysis
         let prefetched_files =
@@ -68,7 +69,7 @@ pub async fn review_codebase_for_security_issues(
         let raw_findings = phases::generate_findings::execute(
             &contract,
             &codeblock,
-            &audit_context,
+            &metadata_context,
             &ai_discovery_agents,
             &prefetched_files,
         )
@@ -80,7 +81,7 @@ pub async fn review_codebase_for_security_issues(
                 raw_findings,
                 &codeblock,
                 &ai_verify_agent,
-                &audit_context,
+                &metadata_context,
             )
             .await?;
 
@@ -89,7 +90,7 @@ pub async fn review_codebase_for_security_issues(
                 verified_findings,
                 &codeblock,
                 &ai_verify_agent,
-                &audit_context,
+                &metadata_context,
             )
             .await?;
 

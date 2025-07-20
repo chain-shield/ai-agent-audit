@@ -3,20 +3,48 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     error::Result,
     llm_review::{
-        config::{Finding, Findings, LegitVulnerability},
+        config::{Finding, Findings},
         enums::AIAgent,
-        prompt_context::generate_prompt_for_issue_check,
         prompt_support::{
             post_verify::POST_VERIFY, pre_verify::PRE_VERIFY, verify_prompt::VERIFY_PROMPT,
         },
+        utils::prompt_context::generate_prompt_for_issue_check,
     },
 };
 use log::info;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// Verification result for a potential vulnerability
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LegitVulnerability {
+    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
+    pub is_legit_vulnerability: bool,
+    pub why_its_not_legit: Option<String>,
+}
+
+/// Helper function to deserialize boolean from string or boolean
+fn deserialize_bool_from_str_or_bool<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let val: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+    match val {
+        serde_json::Value::Bool(b) => Ok(b),
+        serde_json::Value::String(s) => match s.to_lowercase().as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(serde::de::Error::custom("expected boolean or string")),
+        },
+        _ => Err(serde::de::Error::custom("expected boolean or string")),
+    }
+}
 
 /// Executes the verification phase
 ///

@@ -1,3 +1,5 @@
+
+
 ### Storage layout (PuppyRaffle) 
 
 ```text
@@ -15,8 +17,6 @@ rareImageUri string
 legendaryImageUri string
 
 ```
-
-
 #### PuppyRaffle.constructor(uint256,address,uint256) [INTERNAL]
 ```slithir
 commonImageUri_1(string) := phi(['commonImageUri_2', 'commonImageUri_0'])
@@ -65,7 +65,7 @@ INTERNAL_CALL, ERC721.constructor(string,string)(Puppy Raffle,PR)
 ```
 #### PuppyRaffle.tokenURI(uint256) [PUBLIC]
 ```slithir
-tokenIdToRarity_5(mapping(uint256 => uint256)) := phi(['tokenIdToRarity_6', 'tokenIdToRarity_1', 'tokenIdToRarity_0', 'tokenIdToRarity_4'])
+tokenIdToRarity_5(mapping(uint256 => uint256)) := phi(['tokenIdToRarity_1', 'tokenIdToRarity_6', 'tokenIdToRarity_0', 'tokenIdToRarity_4'])
 rarityToUri_4(mapping(uint256 => string)) := phi(['rarityToUri_5', 'rarityToUri_3', 'rarityToUri_0'])
 rarityToName_4(mapping(uint256 => string)) := phi(['rarityToName_0', 'rarityToName_3', 'rarityToName_5'])
  require(bool,string)(_exists(tokenId),PuppyRaffle: URI query for nonexistent token)
@@ -285,7 +285,7 @@ INTERNAL_CALL, ERC721._safeMint(address,uint256)(winner_1,tokenId_1)
 ```
 #### PuppyRaffle.withdrawFees() [EXTERNAL]
 ```slithir
-feeAddress_2(address) := phi(['feeAddress_1', 'feeAddress_4', 'feeAddress_3', 'feeAddress_0'])
+feeAddress_2(address) := phi(['feeAddress_1', 'feeAddress_3', 'feeAddress_0', 'feeAddress_4'])
 totalFees_3(uint64) := phi(['totalFees_2', 'totalFees_0', 'totalFees_4'])
  require(bool,string)(address(this).balance == uint256(totalFees),PuppyRaffle: There are currently players active!)
 TMP_11159 = CONVERT this to address
@@ -299,7 +299,7 @@ feesToWithdraw_1(uint256) := totalFees_3(uint64)
 totalFees_4(uint64) := 0(uint256)
  (success,None) = feeAddress.call{value: feesToWithdraw}()
 TUPLE_55(bool,bytes) = LOW_LEVEL_CALL, dest:feeAddress_2, function:call, arguments:[''] value:feesToWithdraw_1 
-feeAddress_3(address) := phi(['feeAddress_1', 'feeAddress_4', 'feeAddress_3', 'feeAddress_2'])
+feeAddress_3(address) := phi(['feeAddress_1', 'feeAddress_2', 'feeAddress_4', 'feeAddress_3'])
 success_1(bool)= UNPACK TUPLE_55 index: 0 
  require(bool,string)(success,PuppyRaffle: Failed to withdraw fees)
 TMP_11164(None) = SOLIDITY_CALL require(bool,string)(success_1,PuppyRaffle: Failed to withdraw fees)
