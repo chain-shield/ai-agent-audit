@@ -1,12 +1,11 @@
+use anyhow::Result;
 /// Docker volume cleanup utilities for secure analysis environment.
 ///
 /// This module provides cleanup functions to remove Docker volumes and
 /// temporary directories created during repository analysis, ensuring
 /// no residual data remains on the host system.
-
 use std::fs;
 use std::path::Path;
-use anyhow::Result;
 
 /// Cleans up Docker volume directory and build artifacts after analysis.
 ///

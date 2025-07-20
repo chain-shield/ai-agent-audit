@@ -6,10 +6,10 @@
 use anyhow::Result;
 use log::info;
 use rig::{
+    Embed,
     client::EmbeddingsClient,
     embeddings::EmbeddingsBuilder,
     providers::openai::{self, Client},
-    Embed,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
@@ -30,13 +30,13 @@ pub struct SourceChunk {
 }
 
 /// Number of tokens in each chunk for optimal embedding quality
-const CHUNK_TOKENS: usize = 256;
+const CHUNK_TOKENS: usize = 1024;
 /// Number of tokens to overlap between chunks to maintain context continuity
-const OVERLAP: usize = 32;
+const OVERLAP: usize = 128;
 /// Batch size for embedding API requests to optimize throughput
 const BATCH: usize = 30;
 /// Maximum chunk length in characters (OpenAI supports ~8192 tokens, leaving headroom)
-const MAX_CHUNK_LEN: usize = 4000;
+const MAX_CHUNK_LEN: usize = 12000;
 
 /// Infers file_type based on file path or naming conventions.
 /// Returns "source", "test", "script", or "library" based on path patterns.
@@ -144,7 +144,6 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(SourceChunk,
     info!("looping through all files and breaking into chunks");
     let bpe = get_bpe();
     for file in paths {
-        // info!("embedding file {}", file.as_ref().display());
         let content = fs::read_to_string(file.as_ref())?;
         let file_type = infer_file_type(file.as_ref()); // Infer file_type
         for (i, chunk) in tokenize(bpe, &content).into_iter().enumerate() {

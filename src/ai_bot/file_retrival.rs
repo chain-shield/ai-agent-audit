@@ -1,7 +1,7 @@
 use crate::build_brain::enbeddings::SourceChunk;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::logging::print_first_four_lines;
-use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
+use qdrant_client::{Qdrant, qdrant::QueryPointsBuilder};
 use rig::client::EmbeddingsClient;
 use rig::providers::openai::{Client, TEXT_EMBEDDING_3_SMALL};
 use rig::vector_store::VectorStoreIndex;
@@ -34,6 +34,63 @@ fn truncate_query_for_embedding(query: &str) -> Result<String, Box<dyn std::erro
     Ok(truncated)
 }
 
+/// Sanitizes and validates tool input arguments to prevent JSON parsing issues
+fn sanitize_tool_input(query: &str) -> Result<String, String> {
+    // Check length
+    if query.len() > 200 {
+        return Err(format!("Query too long: {} chars (max 200)", query.len()));
+    }
+
+    // Remove problematic characters that can break JSON parsing
+    let sanitized = query
+        .replace('"', "'") // Replace double quotes with single quotes
+        .replace('\\', "/") // Replace backslashes with forward slashes
+        .replace('\n', " ") // Replace newlines with spaces
+        .replace('\r', " ") // Replace carriage returns with spaces
+        .replace('\t', " ") // Replace tabs with spaces
+        .replace('\0', "") // Remove null characters
+        .chars()
+        .filter(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
+        .collect::<String>();
+
+    // Trim and collapse multiple spaces
+    let sanitized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    if sanitized.is_empty() {
+        return Err("Query is empty after sanitization".to_string());
+    }
+
+    Ok(sanitized)
+}
+
+/// Sanitizes content to ensure it can be safely serialized as JSON
+fn sanitize_content_for_json(content: &str) -> String {
+    // Limit content size to prevent huge JSON payloads
+    const MAX_CONTENT_CHARS: usize = 80000; // ~50KB limit
+
+    let mut sanitized = if content.len() > MAX_CONTENT_CHARS {
+        log::warn!(
+            "Content too large ({} chars), truncating to {} chars",
+            content.len(),
+            MAX_CONTENT_CHARS
+        );
+        let truncated = content.chars().take(MAX_CONTENT_CHARS).collect::<String>();
+        format!("{}\n\n[... content truncated due to size ...]", truncated)
+    } else {
+        content.to_string()
+    };
+
+    // Replace problematic characters that can break JSON
+    sanitized = sanitized
+        .replace('\r', "\\r") // Replace carriage returns
+        .replace('\t', "    ") // Replace tabs with spaces
+        .replace('\0', ""); // Remove null characters
+
+    // Ensure the content doesn't contain unescaped quotes or backslashes
+    // (serde_json should handle this, but let's be extra safe)
+    sanitized
+}
+
 #[derive(Deserialize)]
 pub struct RetrieveArgs {
     file_type: String, // e.g., "source", "test", "script"
@@ -46,10 +103,14 @@ pub struct RetrieveOut {
 }
 
 #[derive(Debug, Error)]
-#[error("Retrieval error: {0}")]
 pub enum RetrievalError {
+    #[error("Qdrant error: {0}")]
     Qdrant(#[from] qdrant_client::QdrantError),
+    #[error("Vector store error: {0}")]
     VectorStore(#[from] rig::vector_store::VectorStoreError),
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("Other error: {0}")]
     Other(#[from] anyhow::Error),
 }
 
@@ -78,21 +139,24 @@ impl Tool for FileRetrievalTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Retrieve content from source code, test, script, or library files based on type and query using semantic vector search. Use this tool to find specific code snippets, functions, or implementations.".into(),
+            description: "Retrieve content from source code, test, script, or library files using semantic search. IMPORTANT: Keep queries short and simple (under 50 words) to avoid JSON parsing issues.".into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "file_type": {
                         "type": "string",
                         "enum": ["source", "test", "script", "library"],
-                        "description": "Type of files to search: 'source' for main application code, 'test' for test files, 'script' for build/deployment scripts, 'library' for library/utility code in lib folders"
+                        "description": "Type of files to search"
                     },
                     "query": {
                         "type": "string",
-                        "description": "Search query - can be function names, class names, keywords, or natural language describing what you're looking for"
+                        "maxLength": 200,
+                        "pattern": "^[a-zA-Z0-9\\s\\-_\\.]+$",
+                        "description": "Short search query using simple keywords only (e.g. 'transfer function', 'access control', 'mint token'). Avoid quotes, special characters, and long descriptions."
                     }
                 },
-                "required": ["file_type", "query"]
+                "required": ["file_type", "query"],
+                "additionalProperties": false
             }),
         }
     }
@@ -114,11 +178,26 @@ impl Tool for FileRetrievalTool {
             return Err(RetrievalError::Other(anyhow::anyhow!(error_msg)));
         }
 
+        // Sanitize query to prevent JSON parsing issues
+        let sanitized_query = match sanitize_tool_input(&args.query) {
+            Ok(query) => {
+                if query != args.query {
+                    log::info!("🧹 Query sanitized: '{}' -> '{}'", args.query, query);
+                }
+                query
+            }
+            Err(e) => {
+                let error_msg = format!("Invalid query: {}", e);
+                log::error!("❌ Query validation failed: {}", error_msg);
+                return Err(RetrievalError::Other(anyhow::anyhow!(error_msg)));
+            }
+        };
+
         // Use tokio::task::spawn_blocking to move the non-Sync operation to a blocking context
         let qdrant_url = self.qdrant_url.clone();
         let openai_api_key = self.openai_api_key.clone();
         let repo = self.repo.clone();
-        let query = args.query.clone();
+        let query = sanitized_query; // Use sanitized query instead of raw input
         let file_type = args.file_type.clone();
 
         let result = tokio::task::spawn_blocking(move || {
@@ -148,12 +227,12 @@ impl Tool for FileRetrievalTool {
                     log::info!("📏 Query truncated from {} to {} characters", query.len(), truncated_query.len());
                 }
 
-                // Perform search
-                let search_results = vector_store.top_n::<SourceChunk>(&truncated_query, 5).await?;
+                // Perform search - get more results to combine related chunks
+                let search_results = vector_store.top_n::<SourceChunk>(&truncated_query, 10).await?;
                 log::info!("🔍 Vector search returned {} results", search_results.len());
 
-                // Filter results by file type and score, then extract content
-                let mut filtered_results = Vec::new();
+                // Filter results by file type and score, then combine related chunks
+                let mut file_chunks: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
                 let mut total_results = 0;
                 let mut score_filtered = 0;
                 let mut type_filtered = 0;
@@ -172,8 +251,18 @@ impl Tool for FileRetrievalTool {
 
                     // Filter by file type using the direct field access
                     if source_chunk.file_type == file_type {
-                        filtered_results.push(source_chunk.text.clone());
-                        log::debug!("✅ Included result: {} chars", source_chunk.text.len());
+                        // Extract file name from metadata (format: "path/file.sol:chunk N")
+                        let file_name = source_chunk.metadata
+                            .split(':')
+                            .next()
+                            .unwrap_or(&source_chunk.metadata)
+                            .to_string();
+
+                        log::debug!("✅ Included result: {} chars from {}", source_chunk.text.len(), file_name);
+
+                        file_chunks.entry(file_name)
+                            .or_insert_with(Vec::new)
+                            .push(source_chunk.text.clone());
                     } else {
                         type_filtered += 1;
                         log::debug!("⚠️  Filtered out due to file type mismatch: expected '{}', got '{}'",
@@ -181,10 +270,17 @@ impl Tool for FileRetrievalTool {
                     }
                 }
 
-                log::info!("📊 Filter results: {} total, {} score-filtered, {} type-filtered, {} included",
-                          total_results, score_filtered, type_filtered, filtered_results.len());
+                // Combine chunks from the same files to provide more complete context
+                let mut combined_content = Vec::new();
+                for (file_name, chunks) in file_chunks {
+                    let file_content = chunks.join("\n\n");
+                    combined_content.push(format!("=== {} ===\n{}", file_name, file_content));
+                }
 
-                let content = filtered_results.join("\n\n");
+                log::info!("📊 Filter results: {} total, {} score-filtered, {} type-filtered, {} files with chunks",
+                          total_results, score_filtered, type_filtered, combined_content.len());
+
+                let content = combined_content.join("\n\n");
 
                 if content.is_empty() {
                     let error_msg = format!("No relevant content found for file type '{}' with query '{}' (searched {} results)",
@@ -196,7 +292,29 @@ impl Tool for FileRetrievalTool {
                 log::info!("✅ FileRetrievalTool returning {} characters of content", content.len());
                 print_first_four_lines(&content);
 
-                Ok(RetrieveOut { content })
+                // Sanitize content to prevent JSON parsing issues
+                let sanitized_content = sanitize_content_for_json(&content);
+                if sanitized_content.len() != content.len() {
+                    log::info!("📝 Content sanitized: {} -> {} characters", content.len(), sanitized_content.len());
+                }
+
+                // Test JSON serialization to catch issues early
+                let test_output = RetrieveOut { content: sanitized_content.clone() };
+                match serde_json::to_string(&test_output) {
+                    Ok(_) => {
+                        log::debug!("✅ Content serialization test passed");
+                    }
+                    Err(e) => {
+                        log::error!("❌ Content serialization test failed: {}", e);
+                        log::error!("Problematic content preview: {}",
+                                   sanitized_content.chars().take(500).collect::<String>());
+                        return Err(RetrievalError::Other(anyhow::anyhow!(
+                            "Content serialization failed: {}", e
+                        )));
+                    }
+                }
+
+                Ok(RetrieveOut { content: sanitized_content })
             })
         })
         .await
