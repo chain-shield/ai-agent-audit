@@ -1,10 +1,3 @@
-/// Professional audit report generation with findings categorization.
-///
-/// This module generates comprehensive security audit reports in Markdown format,
-/// supporting both paid (full details) and free (limited) report versions with
-/// severity-based finding organization and protocol overviews.
-
-use std::{collections::HashMap, path::Path};
 use crate::{
     build_brain::summarize,
     llm_review::{
@@ -13,6 +6,12 @@ use crate::{
     },
     prepare_code::git_clone::RepoPaths,
 };
+/// Professional audit report generation with findings categorization.
+///
+/// This module generates comprehensive security audit reports in Markdown format,
+/// supporting both paid (full details) and free (limited) report versions with
+/// severity-based finding organization and protocol overviews.
+use std::{collections::HashMap, path::Path};
 
 /// Severity levels for organizing findings in reports
 const SEVERITIES: [Severity; 4] = [

@@ -3,13 +3,12 @@
 /// This module coordinates the generation of contextual code blocks for each
 /// contract in a repository, managing database connections and processing
 /// parameters for optimal AI analysis.
-
 use anyhow::Result;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
-use crate::{enumerator::codeblock_db::CodeBlocksDb, prepare_code::git_clone::RepoPaths};
 use super::codeblocks::generate_codeblock_from_codebase;
+use crate::{enumerator::codeblock_db::CodeBlocksDb, prepare_code::git_clone::RepoPaths};
 
 /// Generates and saves contextual code blocks for all contracts in a repository.
 ///

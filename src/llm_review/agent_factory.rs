@@ -1,4 +1,5 @@
 use super::enums::AIAgent;
+use crate::ai_bot::file_picker::FilePickerTool;
 /// AI Agent Factory for centralized agent creation across LLM providers.
 ///
 /// This module provides a unified interface for creating AI agents from different
@@ -8,7 +9,7 @@ use crate::ai_bot::file_retrival::FileRetrievalTool;
 use crate::config::audit_config;
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
-use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
+use qdrant_client::{Qdrant, qdrant::QueryPointsBuilder};
 use rig::{
     client::{CompletionClient, EmbeddingsClient, ProviderClient},
     providers::{
@@ -99,6 +100,8 @@ pub struct AgentConfig {
     pub dynamic_context_chunks: usize,
     /// Enable file retrieval tool
     pub enable_file_retrieval: bool,
+    /// Enable file picker tool
+    pub enable_file_picker: bool,
 }
 
 impl AgentConfig {
@@ -111,9 +114,10 @@ impl AgentConfig {
             max_tokens: None,
             preamble: "You are a world renowned expert in smart-contract security auditing, known for your uncanny ability to find all security bugs in a protocol, even the obscure ones. You have access to advanced tools including file retrieval for searching specific file types (source, test, script, library) and dynamic context from vector search.".to_string(),
             repo_paths,
-            enable_dynamic_context: false,  // disabled by default
+            enable_dynamic_context: false,
             dynamic_context_chunks: 5,
-            enable_file_retrieval: false,   // Enabled by default
+            enable_file_retrieval: false,
+            enable_file_picker: false,
         }
     }
 
@@ -165,9 +169,18 @@ impl AgentConfig {
         self
     }
 
+    /// Enables or disables file picker tool.
+    pub fn with_file_picker(mut self, enabled: bool) -> Self {
+        self.enable_file_picker = enabled;
+        self
+    }
+
     /// Creates an agent configuration for security auditing with advanced tools enabled.
     pub fn for_security_audit(repo_paths: RepoPaths) -> Self {
         Self::new(repo_paths)
+            .with_file_picker(true)
+            .with_file_retrieval(true)
+            .with_dynamic_context(true)
     }
 }
 
@@ -305,6 +318,11 @@ fn create_file_retrieval_tool(repo: &RepoPaths) -> Result<FileRetrievalTool> {
     ))
 }
 
+/// Helper function to create file picker tool
+fn create_file_picker_tool(repo: &RepoPaths) -> FilePickerTool {
+    FilePickerTool::new(repo.clone())
+}
+
 /// Factory for creating AI agents across different providers.
 pub struct AgentFactory;
 
@@ -337,6 +355,12 @@ impl AgentFactory {
         if config.enable_file_retrieval {
             let file_tool = create_file_retrieval_tool(&config.repo_paths)?;
             builder = builder.tool(file_tool);
+        }
+
+        // Add file picker tool if enabled
+        if config.enable_file_picker {
+            let file_picker = create_file_picker_tool(&config.repo_paths);
+            builder = builder.tool(file_picker);
         }
 
         Ok(AIAgent::Openai(builder.build()))
@@ -372,6 +396,12 @@ impl AgentFactory {
             builder = builder.tool(file_tool);
         }
 
+        // Add file picker tool if enabled
+        if config.enable_file_picker {
+            let file_picker = create_file_picker_tool(&config.repo_paths);
+            builder = builder.tool(file_picker);
+        }
+
         Ok(AIAgent::Anthropic(builder.build()))
     }
 
@@ -405,6 +435,12 @@ impl AgentFactory {
             builder = builder.tool(file_tool);
         }
 
+        // Add file picker tool if enabled
+        if config.enable_file_picker {
+            let file_picker = create_file_picker_tool(&config.repo_paths);
+            builder = builder.tool(file_picker);
+        }
+
         Ok(AIAgent::Gemini(builder.build()))
     }
 
@@ -436,6 +472,12 @@ impl AgentFactory {
         if config.enable_file_retrieval {
             let file_tool = create_file_retrieval_tool(&config.repo_paths)?;
             builder = builder.tool(file_tool);
+        }
+
+        // Add file picker tool if enabled
+        if config.enable_file_picker {
+            let file_picker = create_file_picker_tool(&config.repo_paths);
+            builder = builder.tool(file_picker);
         }
 
         Ok(AIAgent::Deepseek(builder.build()))

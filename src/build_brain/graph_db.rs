@@ -3,7 +3,6 @@
 /// This module provides a SQLite-based graph database for storing and querying
 /// smart contract semantic data including functions, call relationships, and
 /// inheritance hierarchies extracted from Slither analysis.
-
 use anyhow::Result;
 use rusqlite::{Connection, params};
 use std::path::Path;

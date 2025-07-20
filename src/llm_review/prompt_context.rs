@@ -42,8 +42,9 @@ pub async fn generate_slither_metadata_prompt_context(
 
     // prompt_context.push_str("\n## Slither Contract Summary\n");
     // prompt_context.push_str(&contract_summary);
-    prompt_context.push_str("\n## List of Files in Src Folder\n");
+    prompt_context.push_str("\n## Main List of Files in Project\n\n");
     prompt_context.push_str(&src_file_list);
+    prompt_context.push_str("\n\n");
     // prompt_context.push_str("\n## Slither Call Graph\n");
     // prompt_context.push_str(&callgraph);
     // prompt_context.push_str("\n## Slither Inheritance Json\n");
@@ -77,18 +78,17 @@ pub async fn generate_context_for_code_review(
         file_summaries.push_str("\n\n");
     }
     full_prompt_context.push_str(&file_summaries);
-    full_prompt_context.push_str("\n## SLITHER GENERATED METADATA \n\n");
     full_prompt_context.push_str(&slither_metadata);
 
-    let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
+    // let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
     let documentation = extract_content_from_docs(repo)?;
     let mut doc_summaries = String::new();
-    for doc_summary in &docs {
-        doc_summaries.push_str("\n\n");
-        doc_summaries.push_str(&doc_summary.summary);
-        doc_summaries.push_str("\n\n");
-    }
-    full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
+    // for doc_summary in &docs {
+    //     doc_summaries.push_str("\n\n");
+    //     doc_summaries.push_str(&doc_summary.summary);
+    //     doc_summaries.push_str("\n\n");
+    // }
+    // full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
     // adding FULL DOCS not doc_summaries
     full_prompt_context.push_str(&documentation);
 

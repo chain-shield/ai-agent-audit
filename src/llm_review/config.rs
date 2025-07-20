@@ -3,7 +3,7 @@ use super::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     master_prompts::{prompt_2x_a::PROMPT_2X_A, prompt_2x_b::PROMPT_2X_B},
     prompts::{
         access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
@@ -27,8 +27,8 @@ use rig::{
     },
 };
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize};
+use serde::{Deserializer, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -42,7 +42,6 @@ pub enum LanguageModel {
 pub const CLAUDE_4_0_SONNET: &str = "claude-sonnet-4-0";
 pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
 pub const LANGUAGE_MODEL: LanguageModel = LanguageModel::Anthropic;
-pub const RUNS: usize = 3;
 pub const INSTRUCTION_PROMPTS: [&str; 2] = [PROMPT_2X_A, PROMPT_2X_B];
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -108,6 +107,11 @@ pub struct VulnerabilityQualityCheck {
     #[schemars(description = "Severity level: High, Medium, Low, Info")]
     pub severity: Option<Severity>, // updated severity of issue (if necessary)
     pub mitigation: Option<String>,          // updated mitigation (if necessary)
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SelectedFiles {
+    pub files: Vec<String>,
 }
 
 // #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,6 @@ use crate::build_brain::inheritance;
 use crate::build_brain::parsers::parse_slithir_contract_summary;
 use crate::build_brain::summarize::summarize_src_files;
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::utils::get_file_content::extract_content_from_docs;
 
 use super::callgraph;
 use super::parsers::{parse_slither, parse_slithir_ir_code, parse_storage};
@@ -65,8 +64,8 @@ pub struct StorageVar {
 }
 /// Return “context file list” as LF-separated string.
 pub fn get_all_files_src(repo: &RepoPaths) -> String {
-    //   e.g.,   contracts/plume/src
-    let code_root = repo.root.join(&repo.repo_name).join("src");
+    //   e.g.,   contracts/plume/
+    let code_root = repo.root.join(&repo.repo_name);
 
     let mut files = Vec::<String>::new();
 
@@ -103,8 +102,9 @@ fn should_skip(rel: &str) -> bool {
     let lowercase = rel.to_ascii_lowercase();
 
     // 1. third-party deps: vendor/*/contracts/**   OR   node_modules/**/contracts/**
-    if lowercase.contains("/vendor/") && lowercase.contains("/contracts/")
-        || lowercase.contains("/node_modules/") && lowercase.contains("/contracts/")
+    if (lowercase.contains("/vendor/") && lowercase.contains("/contracts/"))
+        || (lowercase.contains("/node_modules/") && lowercase.contains("/contracts/"))
+        || lowercase.contains("/forge-std/")
     {
         return true;
     }

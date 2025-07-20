@@ -22,16 +22,16 @@ use tokio::{
 };
 
 use crate::{
+    cost::cost_data::LlmCostType,
+    llm_review::prompt_context::{self, generate_context_for_code_review},
+};
+use crate::{
     cost::cost_data::add_to_inference_cost_by_type,
     prepare_code::git_clone::RepoPaths,
     utils::{
         contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry,
         get_file_content::extract_content_from_docs,
     },
-};
-use crate::{
-    cost::cost_data::LlmCostType,
-    llm_review::prompt_context::{self, generate_context_for_code_review},
 };
 
 use super::slither_ffi::cache_key;
