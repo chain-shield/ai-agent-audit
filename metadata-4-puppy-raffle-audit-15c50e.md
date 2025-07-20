@@ -1,57 +1,32 @@
 
 ## SUMMARY OF FILE: 4-puppy-raffle-audit/src/PuppyRaffle.sol
-### `PuppyRaffle` Contract Summary
+### Contract: PuppyRaffle
+The `PuppyRaffle` contract is an Ethereum smart contract for managing a raffle to win a dog-themed NFT. Participants can enter by paying a fee, and winners are selected at random after a specific duration. The contract utilizes OpenZeppelin's libraries for ERC721 functionality and ownership management.
 
-#### **Contract Definition**
-The `PuppyRaffle` contract is a decentralized application that allows users to enter a raffle to win a dog-themed NFT. Participants pay an entrance fee and may receive a refund if they opt out before a draw. At the end of set intervals, a winner is selected randomly from the participants.
+#### Storage Variables
+- **entranceFee**: Immutable, storing the entry cost in wei.
+- **players**: Dynamic array of participant addresses.
+- **raffleDuration**: Duration setting for each raffle round.
+- **raffleStartTime**: Timestamp indicating when the raffle started.
+- **previousWinner**: Address of the last raffle's winner.
+- **feeAddress**: Address to receive cuts from the raffle.
+- **totalFees**: Accumulated fees from raffles.
+- **tokenIdToRarity**: Maps token IDs to rarity levels.
+- **rarityToUri**: Maps rarity levels to image URIs.
+- **rarityToName**: Maps rarity levels to string names.
+- **commonImageUri, rareImageUri, legendaryImageUri**: IPFS URIs of the images for each rarity level.
 
-#### **Function Overview**
-
-- **`constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration)`**
-  Initializes the contract with an entrance fee, fee address, and raffle duration. It sets up rarity mappings and initializes the raffle start time.
-
-- **`enterRaffle(address[] memory newPlayers)`**
-  Participants can enter the raffle by sending a specified fee. Multiple entries are allowed but duplicates within the same request are not accepted, ensuring unique addresses.
-
-- **`refund(uint256 playerIndex)`**
-  Allows a participant to request a refund for their entrance fee by providing their index, removing them from the active participants.
-
-- **`getActivePlayerIndex(address player)`**
-  Returns the index of a given player in the participant list if they are active, otherwise returns zero.
-
-- **`selectWinner()`**
-  Selects a winner randomly from the participants after the raffle duration has ended. The winner receives 80% of collected fees, and the NFT is minted for them.
-
-- **`withdrawFees()`**
-  Lets the contract owner withdraw accumulated fees collected over the course of the raffle.
-
-- **`changeFeeAddress(address newFeeAddress)`**
-  Contract owner can call this to update the address that receives collected fees.
-
-- **`_isActivePlayer()`**
-  Checks if the `msg.sender` is an active participant by searching through the players' array.
-
-- **`_baseURI()`**
-  Returns a constant URI prefix used to encode token metadata.
-
-- **`tokenURI(uint256 tokenId)`**
-  Provides token metadata URI, including JSON with rarity attributes and image URI, encoded in Base64.
-
-#### **Storage Variables**
-
-- **`entranceFee`**: Fixed entrance fee in wei required for raffle entry.
-- **`players`**: Dynamic array storing addresses of current raffle participants.
-- **`raffleDuration`**: Duration of the raffle in seconds.
-- **`raffleStartTime`**: Timestamp of when the current raffle round started.
-- **`previousWinner`**: Address of the last raffle round winner.
-- **`feeAddress`**: Address where 20% of raffle proceeds are sent for fees.
-- **`totalFees`**: Total wei value of fees collected.
-- **`tokenIdToRarity`**: Mapping of token IDs to their rarity score.
-- **`rarityToUri`**: Mapping of rarity types to corresponding image URIs.
-- **`rarityToName`**: Mapping of rarity types to human-readable names.
-
-
-## SLITHER GENERATED METADATA 
+### Functions:
+- **`constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration)`**: Initializes the contract with entrance fee, fee address, and raffle duration.
+- **`enterRaffle(address[] memory newPlayers) payable`**: Allows participants to enter the raffle by paying, ensuring no duplicates.
+- **`refund(uint256 playerIndex)`**: Allows a participant to get their entrance fee back.
+- **`getActivePlayerIndex(address player) view returns (uint256)`**: Retrieves the active index of a participant.
+- **`selectWinner()`**: Chooses a raffle winner, mints a puppy NFT, and reassesses player array. Distributes prizes and fees.
+- **`withdrawFees()`**: Withdraws accumulated fees to the designated fee address.
+- **`changeFeeAddress(address newFeeAddress)`**: Enables the owner to update the fee receiving address.
+- **`_isActivePlayer() view returns (bool)`**: Checks if the message sender is an active participant.
+- **`_baseURI() pure returns (string memory)`**: Provides the base URI for token metadata.
+- **`tokenURI(uint256 tokenId) view returns (string memory)`**: Generates a JSON-based metadata string for NFTs, encoded in Base64.
 
 
 ## Main List of Files in Project

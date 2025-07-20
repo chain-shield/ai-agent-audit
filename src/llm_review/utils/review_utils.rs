@@ -10,7 +10,7 @@ use rig::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::enums::{AIAgent, AIExtractor};
+use crate::llm_review::enums::{AIAgent, AIExtractor};
 
 pub fn build_anthropic_agent(
     client: &anthropic::Client,

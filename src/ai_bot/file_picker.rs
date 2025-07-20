@@ -82,7 +82,11 @@ impl FilePickerTool {
         // Add Solidity files
         for sol_file in &repo.sol_files {
             if let Ok(relative_path) = sol_file.strip_prefix(&repo.root) {
+                let lib_folder = format!("{}/lib",repo.repo_name);
+                if !relative_path.starts_with(lib_folder) {
+
                 files.push(relative_path.to_string_lossy().to_string());
+                }
             }
         }
 

@@ -23,7 +23,7 @@ use tokio::{
 
 use crate::{
     cost::cost_data::LlmCostType,
-    llm_review::prompt_context::{self, generate_context_for_code_review},
+    llm_review::utils::prompt_context::{self as prompt_context, generate_context_for_code_review},
 };
 use crate::{
     cost::cost_data::add_to_inference_cost_by_type,

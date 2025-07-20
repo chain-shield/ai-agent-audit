@@ -1,37 +1,38 @@
 /// Phase 1: AI-driven file selection and context prefetching
-/// 
+///
 /// This phase uses AI agents to intelligently select the most strategically important
 /// files for security analysis, reducing rate limits while maximizing context quality.
-
 use crate::{
     ai_bot::file_picker::{FilePickerArgs, FilePickerTool, MAX_FILES_PER_CALL},
     config::MAX_FILE_RUNS,
     cost::cost_data::{add_to_inference_cost_by_agent, TokenType},
     error::Result,
     llm_review::{
-        config::SelectedFiles,
         enums::AIAgent,
         prompt_support::{
-            pre_file_select_prompt::PRE_FILE_SELECT,
-            post_file_select_prompt::POST_FILE_SELECT,
+            post_file_select_prompt::POST_FILE_SELECT, pre_file_select_prompt::PRE_FILE_SELECT,
         },
     },
     prepare_code::git_clone::RepoPaths,
 };
 use log::info;
 use rig::tool::Tool;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
+/// Files selected by AI for strategic context gathering
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SelectedFiles {
+    pub files: Vec<String>,
+}
+
 /// Executes the prefetch context phase
-/// 
+///
 /// Uses AI agents to intelligently select and fetch the most relevant files
 /// for security analysis based on the contract code being audited.
-pub async fn execute(
-    code: &str,
-    repo: &RepoPaths,
-    agent: &Arc<AIAgent>,
-) -> Result<String> {
+pub async fn execute(code: &str, repo: &RepoPaths, agent: &Arc<AIAgent>) -> Result<String> {
     info!("🔍 Phase 1: Pre-fetching strategic files for analysis...");
     let mut handles = vec![];
 
@@ -76,8 +77,6 @@ pub async fn execute(
 
     let picked_files_hash: Arc<Mutex<HashMap<String, usize>>> =
         Arc::new(Mutex::new(HashMap::<String, usize>::new()));
-
-    info!("file picker prompt => {}", prompt);
 
     // Run multiple rounds to build consensus on file selection
     for i in 0..MAX_FILE_RUNS {
@@ -156,7 +155,7 @@ pub async fn execute(
 }
 
 /// Selects the top N files based on consensus voting
-/// 
+///
 /// Files with higher vote counts are prioritized, ensuring the most
 /// consistently selected files across multiple AI evaluation rounds.
 fn top_n_files(files_hash: HashMap<String, usize>, max_files: usize) -> Vec<String> {

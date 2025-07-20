@@ -1,18 +1,14 @@
 /// Phase 2: Parallel vulnerability detection across multiple AI agents
-/// 
+///
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
-
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_agent, TokenType},
     error::Result,
     llm_review::{
         config::{generated_llm_prompt, Findings},
         enums::AIAgent,
-        prompt_support::{
-            pre_prompt::PRE_PROMPT,
-            post_prompt::POST_PROMPT,
-        },
+        prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
     },
     master_prompts::prompt_2x_aa::PROMPT_2X_AA,
 };
@@ -21,7 +17,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Executes the findings generation phase
-/// 
+///
 /// Runs parallel security analysis across multiple AI agents to discover
 /// potential vulnerabilities in the provided smart contract code.
 pub async fn execute(
@@ -32,14 +28,14 @@ pub async fn execute(
     prefetched_files: &str,
 ) -> Result<Findings> {
     info!("🔍 Phase 2: Generating findings from contract codebase...");
-    
+
     let mut handles = vec![];
     let all_findings = Arc::new(Mutex::new(Findings {
         findings: Vec::new(),
     }));
     let contract = Arc::new(contract.to_string());
     let codeblock = Arc::new(code.to_string());
-    
+
     // Combine original context with prefetched files
     let enhanced_context = if prefetched_files.is_empty() {
         context.to_string()
@@ -50,7 +46,6 @@ pub async fn execute(
         )
     };
     let added_content_from_brain = Arc::new(enhanced_context);
-    info!("UPDATED CONTEXT => {}", added_content_from_brain);
 
     for (run, arc_agent) in agents.iter().enumerate() {
         // PAUSED FOR COMPETITIVE AUDIT, only focused on critical issues in code
@@ -97,7 +92,7 @@ pub async fn execute(
 }
 
 /// Executes one LLM-prompt round and merges the returned findings into the shared findings collection
-/// 
+///
 /// This function handles individual security analysis rounds, managing prompt generation,
 /// LLM interaction, and result aggregation.
 pub async fn run_security_prompt(
@@ -113,7 +108,6 @@ pub async fn run_security_prompt(
     let prompt_header = generated_llm_prompt(&contract_name, instructions, PRE_PROMPT, POST_PROMPT);
     let prompt_body = generate_content_plus_context_block(&code, &added_context);
     let full_prompt = format!("{prompt_header}{prompt_body}");
-    info!("FULL PROMPT => {}", full_prompt);
 
     // add to cost
     add_to_inference_cost_by_agent(&full_prompt, &agent, TokenType::Input).await;
@@ -135,7 +129,7 @@ pub async fn run_security_prompt(
 }
 
 /// Generates the combined content and context block for LLM analysis
-/// 
+///
 /// Combines the contract code with additional context information
 /// in a structured format for optimal LLM processing.
 fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
