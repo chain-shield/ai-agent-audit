@@ -25,7 +25,6 @@ pub async fn execute(
     code: &str,
     context: &str,
     agents: &Vec<Arc<AIAgent>>,
-    prefetched_files: &str,
 ) -> Result<Findings> {
     info!("🔍 Phase 2: Generating findings from contract codebase...");
 
@@ -36,16 +35,7 @@ pub async fn execute(
     let contract = Arc::new(contract.to_string());
     let codeblock = Arc::new(code.to_string());
 
-    // Combine original context with prefetched files
-    let enhanced_context = if prefetched_files.is_empty() {
-        context.to_string()
-    } else {
-        format!(
-            "{}\n\n## Additional Protocol Files for More Context ------------------\n\n{}",
-            context, prefetched_files
-        )
-    };
-    let added_content_from_brain = Arc::new(enhanced_context);
+    let added_content_from_brain = Arc::new(context.to_string());
 
     for (run, arc_agent) in agents.iter().enumerate() {
         // PAUSED FOR COMPETITIVE AUDIT, only focused on critical issues in code

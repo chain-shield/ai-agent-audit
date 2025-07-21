@@ -93,12 +93,6 @@ pub async fn execute(code: &str, repo: &RepoPaths, agent: &Arc<AIAgent>) -> Resu
                 let selected_files: SelectedFiles =
                     ai_agent.extract_with_retry(&file_picker_prompt).await?;
 
-                info!(
-                    "selected files for round {} => {:#?}",
-                    i + 1,
-                    selected_files
-                );
-
                 let mut files_hash = selected_files_hash.lock().await;
 
                 for file in selected_files.files {

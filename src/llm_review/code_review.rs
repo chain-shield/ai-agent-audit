@@ -1,4 +1,3 @@
-use crate::ai_bot::agent::get_rag_for_security_query;
 use crate::config::audit_config;
 use crate::error::Result;
 use crate::prepare_code::git_clone::RepoPaths;
@@ -65,13 +64,21 @@ pub async fn review_codebase_for_security_issues(
         let prefetched_files =
             phases::prefetch_context::execute(&codeblock, repo, &ai_planning_agent).await?;
 
+        // Combine original context with prefetched files
+        let metadata_context = if prefetched_files.is_empty() {
+            metadata_context.to_string()
+        } else {
+            format!(
+                "{}\n\n## Additional Protocol Files for More Context ------------------\n\n{}",
+                metadata_context, prefetched_files
+            )
+        };
         // Phase 2: Generate findings using parallel AI agents
         let raw_findings = phases::generate_findings::execute(
             &contract,
             &codeblock,
             &metadata_context,
             &ai_discovery_agents,
-            &prefetched_files,
         )
         .await?;
 

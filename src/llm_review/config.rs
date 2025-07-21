@@ -3,7 +3,7 @@ use super::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     master_prompts::{prompt_2x_a::PROMPT_2X_A, prompt_2x_b::PROMPT_2X_B},
     prompts::{
         access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
@@ -27,8 +27,8 @@ use rig::{
     },
 };
 use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde::{Deserializer, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -186,21 +186,21 @@ pub fn generated_llm_prompt(
         .to_string()
 }
 
-fn deserialize_bool_from_str_or_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let val: serde_json::Value = Deserialize::deserialize(deserializer)?;
-    match val {
-        serde_json::Value::Bool(b) => Ok(b),
-        serde_json::Value::String(s) => match s.as_str() {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            _ => Err(serde::de::Error::custom("expected 'true' or 'false'")),
-        },
-        _ => Err(serde::de::Error::custom("expected boolean or string")),
-    }
-}
+// fn deserialize_bool_from_str_or_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+// where
+//     D: Deserializer<'de>,
+// {
+//     let val: serde_json::Value = Deserialize::deserialize(deserializer)?;
+//     match val {
+//         serde_json::Value::Bool(b) => Ok(b),
+//         serde_json::Value::String(s) => match s.as_str() {
+//             "true" => Ok(true),
+//             "false" => Ok(false),
+//             _ => Err(serde::de::Error::custom("expected 'true' or 'false'")),
+//         },
+//         _ => Err(serde::de::Error::custom("expected boolean or string")),
+//     }
+// }
 
 impl Finding {
     pub fn title(&self) -> String {
