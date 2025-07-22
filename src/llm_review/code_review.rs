@@ -50,8 +50,8 @@ pub async fn review_codebase_for_security_issues(
     let metadata_context = get_metadata_context().await?;
 
     for (contract, codeblock) in contracts.into_iter() {
-        info!("contract => {}", contract);
-        info!("codeblock => {}", codeblock);
+        info!("\n\n-------- contract {} ---------------\n\n", contract);
+        // info!("codeblock => {}", codeblock);
 
         // grab additional context from RAG
         // let rag_context = get_rag_for_security_query(&codeblock, repo).await?;
@@ -91,6 +91,11 @@ pub async fn review_codebase_for_security_issues(
                 &metadata_context,
             )
             .await?;
+
+            // add sleep for 10 seconds with info!
+            // info!("Waiting 20 seconds before starting next phase of analysis...");
+            // tokio::time::sleep(tokio::time::Duration::from_secs(20)).await;
+            // info!("Starting contract analysis now!");
 
             // Phase 4: Quality check and enhance findings
             let final_findings = phases::quality_check::execute(

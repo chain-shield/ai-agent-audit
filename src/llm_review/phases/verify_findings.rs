@@ -3,7 +3,7 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         config::{Finding, Findings},
@@ -11,6 +11,7 @@ use crate::{
         prompt_support::{
             post_verify::POST_VERIFY, pre_verify::PRE_VERIFY, verify_prompt::VERIFY_PROMPT,
         },
+        semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
     },
 };
@@ -75,8 +76,11 @@ pub async fn execute(
         let arc_agent = Arc::clone(agent);
         let arc_findings = Arc::clone(&deduped_findings);
         let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
+        let sem = Arc::clone(&VERIFY_SEM);
 
         handles.push(tokio::spawn(async move {
+            // ── acquire permit ────────────────────────
+            let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async {
                 let instruction_prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,

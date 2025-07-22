@@ -3,7 +3,7 @@
 /// This phase performs final quality checks on verified findings and enhances
 /// them with improved details, impact analysis, and mitigation strategies.
 use crate::{
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         config::{Finding, Findings},
@@ -11,6 +11,7 @@ use crate::{
         prompt_support::{
             post_qualify::POST_QUALIFY, pre_qualify::PRE_QUALIFY, qualify_prompt::QUALIFY_PROMPT,
         },
+        semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
     },
 };
@@ -80,8 +81,10 @@ pub async fn execute(
         let arc_agent = Arc::clone(agent);
         let arc_findings = Arc::clone(&findings);
         let arc_legit_findings_vec = Arc::clone(&quality_check_passed_vec);
+        let sem = Arc::clone(&VERIFY_SEM);
 
         handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async {
                 let prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
@@ -98,9 +101,8 @@ pub async fn execute(
                 let quality_check_passed = qualify_checked_finding.is_quality_check_passed;
                 if !quality_check_passed {
                     info!(
-                        "{} did not pass quality check => {:?}",
+                        "{} did not pass quality check ",
                         arc_findings.findings[i].title(),
-                        qualify_checked_finding.where_quality_lacks
                     );
                     info!("{:#?}", &qualify_checked_finding);
                     let updated_finding = Finding {
