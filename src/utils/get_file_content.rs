@@ -1,6 +1,7 @@
 use std::fs;
 
 use anyhow::Result;
+use log::info;
 
 use crate::prepare_code::git_clone::RepoPaths;
 
@@ -28,6 +29,7 @@ pub fn extract_content_from_docs(repo: &RepoPaths) -> Result<String> {
         if content.trim().is_empty() {
             continue; // skip empty files
         }
+        info!("extracting content from {} doc file", filename);
         docs.push_str(&format!("### {}\n\n{}\n\n", filename, content));
     }
     Ok(docs)

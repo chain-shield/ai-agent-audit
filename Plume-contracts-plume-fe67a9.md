@@ -2,21 +2,21 @@
 #### Plume._authorizeUpgrade(address) [INTERNAL]
 ```slithir
 newImplementation_1(address) := phi(['newImplementation_1'])
-UPGRADER_ROLE_17(bytes32) := phi(['UPGRADER_ROLE_0', 'UPGRADER_ROLE_13', 'UPGRADER_ROLE_16', 'UPGRADER_ROLE_18'])
+UPGRADER_ROLE_17(bytes32) := phi(['UPGRADER_ROLE_13', 'UPGRADER_ROLE_16', 'UPGRADER_ROLE_0', 'UPGRADER_ROLE_18'])
  onlyRole(UPGRADER_ROLE)
 MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(UPGRADER_ROLE_17)
 ```
 #### Plume._update(address,address,uint256) [INTERNAL]
 ```slithir
-from_1(address) := phi(['TMP_12129', 'from_1', 'account_1'])
-to_1(address) := phi(['account_1', 'to_1', 'TMP_12135'])
+from_1(address) := phi(['account_1', 'TMP_12129', 'from_1'])
+to_1(address) := phi(['TMP_12135', 'account_1', 'to_1'])
 value_1(uint256) := phi(['value_1', 'value_1', 'value_1'])
  super._update(from,to,value)
 INTERNAL_CALL, ERC20PausableUpgradeable._update(address,address,uint256)(from_1,to_1,value_1)
 ```
 #### Plume.burn(address,uint256) [PUBLIC]
 ```slithir
-BURNER_ROLE_12(bytes32) := phi(['BURNER_ROLE_0', 'BURNER_ROLE_11', 'BURNER_ROLE_13'])
+BURNER_ROLE_12(bytes32) := phi(['BURNER_ROLE_13', 'BURNER_ROLE_0', 'BURNER_ROLE_11'])
  _burn(from,amount)
 INTERNAL_CALL, ERC20Upgradeable._burn(address,uint256)(from_1,amount_1)
  onlyRole(BURNER_ROLE)
@@ -29,11 +29,11 @@ INTERNAL_CALL, Initializable._disableInitializers()()
 ```
 #### Plume.initialize(address) [PUBLIC]
 ```slithir
-DEFAULT_ADMIN_ROLE_1(bytes32) := phi(['DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_9'])
-UPGRADER_ROLE_1(bytes32) := phi(['UPGRADER_ROLE_0', 'UPGRADER_ROLE_13', 'UPGRADER_ROLE_16', 'UPGRADER_ROLE_18'])
-MINTER_ROLE_1(bytes32) := phi(['MINTER_ROLE_12', 'MINTER_ROLE_10', 'MINTER_ROLE_0'])
-BURNER_ROLE_1(bytes32) := phi(['BURNER_ROLE_0', 'BURNER_ROLE_11', 'BURNER_ROLE_13'])
-PAUSER_ROLE_1(bytes32) := phi(['PAUSER_ROLE_14', 'PAUSER_ROLE_0', 'PAUSER_ROLE_16', 'PAUSER_ROLE_12'])
+DEFAULT_ADMIN_ROLE_1(bytes32) := phi(['DEFAULT_ADMIN_ROLE_9', 'DEFAULT_ADMIN_ROLE_0'])
+UPGRADER_ROLE_1(bytes32) := phi(['UPGRADER_ROLE_13', 'UPGRADER_ROLE_16', 'UPGRADER_ROLE_0', 'UPGRADER_ROLE_18'])
+MINTER_ROLE_1(bytes32) := phi(['MINTER_ROLE_10', 'MINTER_ROLE_12', 'MINTER_ROLE_0'])
+BURNER_ROLE_1(bytes32) := phi(['BURNER_ROLE_13', 'BURNER_ROLE_0', 'BURNER_ROLE_11'])
+PAUSER_ROLE_1(bytes32) := phi(['PAUSER_ROLE_16', 'PAUSER_ROLE_14', 'PAUSER_ROLE_0', 'PAUSER_ROLE_12'])
  __ERC20_init(Plume,PLUME)
 INTERNAL_CALL, ERC20Upgradeable.__ERC20_init(string,string)(Plume,PLUME)
  __ERC20Burnable_init()
@@ -61,7 +61,7 @@ MODIFIER_CALL, Initializable.initializer()()
 ```
 #### Plume.reinitialize() [PUBLIC]
 ```slithir
-UPGRADER_ROLE_14(bytes32) := phi(['UPGRADER_ROLE_0', 'UPGRADER_ROLE_13', 'UPGRADER_ROLE_16', 'UPGRADER_ROLE_18'])
+UPGRADER_ROLE_14(bytes32) := phi(['UPGRADER_ROLE_13', 'UPGRADER_ROLE_16', 'UPGRADER_ROLE_0', 'UPGRADER_ROLE_18'])
  __ERC20_init(Plume,PLUME)
 INTERNAL_CALL, ERC20Upgradeable.__ERC20_init(string,string)(Plume,PLUME)
  reinitializer(1)
@@ -71,7 +71,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(UPGRADER_ROLE_15)
 ```
 #### Plume.mint(address,uint256) [EXTERNAL]
 ```slithir
-MINTER_ROLE_11(bytes32) := phi(['MINTER_ROLE_12', 'MINTER_ROLE_10', 'MINTER_ROLE_0'])
+MINTER_ROLE_11(bytes32) := phi(['MINTER_ROLE_10', 'MINTER_ROLE_12', 'MINTER_ROLE_0'])
  _mint(to,amount)
 INTERNAL_CALL, ERC20Upgradeable._mint(address,uint256)(to_1,amount_1)
  onlyRole(MINTER_ROLE)
@@ -79,7 +79,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(MINTER_ROLE_11)
 ```
 #### Plume.pause() [EXTERNAL]
 ```slithir
-PAUSER_ROLE_13(bytes32) := phi(['PAUSER_ROLE_14', 'PAUSER_ROLE_0', 'PAUSER_ROLE_16', 'PAUSER_ROLE_12'])
+PAUSER_ROLE_13(bytes32) := phi(['PAUSER_ROLE_16', 'PAUSER_ROLE_14', 'PAUSER_ROLE_0', 'PAUSER_ROLE_12'])
  _pause()
 INTERNAL_CALL, PausableUpgradeable._pause()()
  onlyRole(PAUSER_ROLE)
@@ -87,7 +87,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(PAUSER_ROLE_13)
 ```
 #### Plume.unpause() [EXTERNAL]
 ```slithir
-PAUSER_ROLE_15(bytes32) := phi(['PAUSER_ROLE_14', 'PAUSER_ROLE_0', 'PAUSER_ROLE_16', 'PAUSER_ROLE_12'])
+PAUSER_ROLE_15(bytes32) := phi(['PAUSER_ROLE_16', 'PAUSER_ROLE_14', 'PAUSER_ROLE_0', 'PAUSER_ROLE_12'])
  _unpause()
 INTERNAL_CALL, PausableUpgradeable._unpause()()
  onlyRole(PAUSER_ROLE)

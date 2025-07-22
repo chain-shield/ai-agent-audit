@@ -80,6 +80,7 @@ pub mod llm_review {
     pub mod context_state;
     /// AI agent and vulnerability type enums
     pub mod enums;
+    pub mod semaphore;
     /// Security audit phases
     pub mod phases {
         /// Phase 2: Parallel vulnerability detection across multiple AI agents

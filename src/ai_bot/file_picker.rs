@@ -7,7 +7,7 @@ use thiserror::Error;
 use tiktoken_rs::cl100k_base;
 
 /// Maximum tokens for file content (to prevent huge payloads)
-const MAX_FILE_TOKENS: usize = 5000;
+const MAX_FILE_TOKENS: usize = 15_000;
 
 /// Maximum number of file picker calls per tool instance
 const MAX_FILE_PICKER_CALLS: usize = 1;
@@ -82,10 +82,9 @@ impl FilePickerTool {
         // Add Solidity files
         for sol_file in &repo.sol_files {
             if let Ok(relative_path) = sol_file.strip_prefix(&repo.root) {
-                let lib_folder = format!("{}/lib",repo.repo_name);
+                let lib_folder = format!("{}/lib", repo.repo_name);
                 if !relative_path.starts_with(lib_folder) {
-
-                files.push(relative_path.to_string_lossy().to_string());
+                    files.push(relative_path.to_string_lossy().to_string());
                 }
             }
         }
@@ -229,17 +228,13 @@ mod tests {
 
         let file_picker = FilePickerTool::new(repo);
         assert_eq!(file_picker.available_files.len(), 1); // Only test.sol, README.md is excluded
-        assert!(
-            file_picker
-                .available_files
-                .contains(&"test.sol".to_string())
-        );
+        assert!(file_picker
+            .available_files
+            .contains(&"test.sol".to_string()));
         // README.md should be excluded since it's already in context
-        assert!(
-            !file_picker
-                .available_files
-                .contains(&"README.md".to_string())
-        );
+        assert!(!file_picker
+            .available_files
+            .contains(&"README.md".to_string()));
     }
 
     #[test]

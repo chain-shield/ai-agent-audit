@@ -149,15 +149,11 @@ pub fn clone_and_filter_git_repo(
         {
             continue;
         }
+
+        //only get md docs from /src folder /src/*.md
         match path.extension().and_then(|e| e.to_str()) {
             Some("sol") => sol_files.push(path.to_path_buf()),
-            Some("md")
-                if path
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .map(|f| f.eq_ignore_ascii_case("README.md"))
-                    .unwrap_or(false) =>
-            {
+            Some("md") if path.parent().map_or(false, |p| p == search_root.as_path()) => {
                 docs.push(path.to_path_buf())
             }
             _ => {}

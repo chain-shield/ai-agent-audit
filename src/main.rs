@@ -91,6 +91,7 @@ async fn main() -> Result<()> {
     )?;
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
+    info!("repo docs => {:?}", &repo.docs);
 
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation

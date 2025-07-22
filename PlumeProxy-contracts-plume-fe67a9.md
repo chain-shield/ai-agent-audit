@@ -7,7 +7,7 @@ INTERNAL_CALL, ERC1967Proxy.constructor(address,bytes)(logic_1,data_1)
 #### PlumeProxy.receive() [EXTERNAL]
 ```slithir
  revert ETHTransferUnsupported()()
-TMP_23180(None) = SOLIDITY_CALL revert ETHTransferUnsupported()()
+TMP_23402(None) = SOLIDITY_CALL revert ETHTransferUnsupported()()
 ```
 #### MockPUSDProxy.slitherConstructorConstantVariables() [INTERNAL]
 ```slithir
