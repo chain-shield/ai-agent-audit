@@ -1,10 +1,3 @@
-/// Professional audit report generation with findings categorization.
-///
-/// This module generates comprehensive security audit reports in Markdown format,
-/// supporting both paid (full details) and free (limited) report versions with
-/// severity-based finding organization and protocol overviews.
-
-use std::{collections::HashMap, path::Path};
 use crate::{
     build_brain::summarize,
     llm_review::{
@@ -13,6 +6,12 @@ use crate::{
     },
     prepare_code::git_clone::RepoPaths,
 };
+/// Professional audit report generation with findings categorization.
+///
+/// This module generates comprehensive security audit reports in Markdown format,
+/// supporting both paid (full details) and free (limited) report versions with
+/// severity-based finding organization and protocol overviews.
+use std::{collections::HashMap, path::Path};
 
 /// Severity levels for organizing findings in reports
 const SEVERITIES: [Severity; 4] = [
@@ -47,7 +46,7 @@ pub enum ReportType {
 /// * `String` - Complete audit report in Markdown format
 pub async fn generated_audit_report(
     issues: &HashMap<String, Findings>,
-    invariants: &[ContractInvariants],
+    _invariants: &[ContractInvariants],
     repo: &RepoPaths,
     semantics_path: &Path,
     report_type: ReportType,
@@ -104,25 +103,25 @@ fn combine_findings_for_all_contracts(findings_hash: HashMap<String, Findings>) 
 
     findings
 }
-
-// finding hashmap => vec
-fn combine_invariants_for_all_contracts(
-    invariants_vec: &[ContractInvariants],
-) -> ContractInvariants {
-    // all security issue findings
-    let mut all_invariants = ContractInvariants {
-        invariants: Vec::new(),
-        ..Default::default()
-    };
-
-    // conbine finding for each contract
-    for inv in invariants_vec {
-        all_invariants.invariants.extend(inv.invariants.clone());
-    }
-
-    all_invariants
-}
-
+//
+// // finding hashmap => vec
+// fn combine_invariants_for_all_contracts(
+//     invariants_vec: &[ContractInvariants],
+// ) -> ContractInvariants {
+//     // all security issue findings
+//     let mut all_invariants = ContractInvariants {
+//         invariants: Vec::new(),
+//         ..Default::default()
+//     };
+//
+//     // conbine finding for each contract
+//     for inv in invariants_vec {
+//         all_invariants.invariants.extend(inv.invariants.clone());
+//     }
+//
+//     all_invariants
+// }
+//
 fn get_finding_report(findings: &Findings, report_type: ReportType) -> String {
     let mut findings_report = String::new();
 
@@ -188,64 +187,64 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
     findings_report
 }
 
-fn get_invariant_report(invariants: &[ContractInvariants]) -> String {
-    let mut findings_report = String::new();
-
-    let contract_invariants = combine_invariants_for_all_contracts(invariants);
-
-    let violations = contract_invariants.get_all_violations();
-
-    if !violations.is_empty() {
-        findings_report.push_str(&format!(
-            "\n# {} Invariant Violations\n\n",
-            violations.len()
-        ));
-
-        for (i, violation) in violations.into_iter().enumerate() {
-            //title
-            findings_report.push_str(&format!(
-                "## {}. {} Violation\n\n",
-                i + 1,
-                violation.inv_type.as_str(),
-            ));
-
-            //description
-            findings_report.push_str("## Description\n");
-            findings_report.push_str(&violation.desc);
-            findings_report.push_str("\n\n");
-
-            //impact
-            findings_report.push_str("## Impact\n");
-            findings_report.push_str(&violation.impact.unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //POC
-            findings_report.push_str("## Proof of Concept\n");
-            findings_report.push_str(&violation.poc.unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //Proof of Code
-            findings_report.push_str("## Pre-State\n");
-            findings_report.push_str(&violation.pre_state.unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //Proof of Code
-            findings_report.push_str("## Post-State\n");
-            findings_report.push_str(&violation.post_state.unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //Suggested Fix
-            findings_report.push_str("## Suggested Mitigation\n");
-            findings_report.push_str(&violation.mitigation.unwrap_or_default());
-            findings_report.push_str("\n\n");
-        }
-    } else {
-        return String::new();
-    }
-    findings_report.push_str("\n");
-    findings_report
-}
-
+// fn get_invariant_report(invariants: &[ContractInvariants]) -> String {
+//     let mut findings_report = String::new();
+//
+//     let contract_invariants = combine_invariants_for_all_contracts(invariants);
+//
+//     let violations = contract_invariants.get_all_violations();
+//
+//     if !violations.is_empty() {
+//         findings_report.push_str(&format!(
+//             "\n# {} Invariant Violations\n\n",
+//             violations.len()
+//         ));
+//
+//         for (i, violation) in violations.into_iter().enumerate() {
+//             //title
+//             findings_report.push_str(&format!(
+//                 "## {}. {} Violation\n\n",
+//                 i + 1,
+//                 violation.inv_type.as_str(),
+//             ));
+//
+//             //description
+//             findings_report.push_str("## Description\n");
+//             findings_report.push_str(&violation.desc);
+//             findings_report.push_str("\n\n");
+//
+//             //impact
+//             findings_report.push_str("## Impact\n");
+//             findings_report.push_str(&violation.impact.unwrap_or_default());
+//             findings_report.push_str("\n\n");
+//
+//             //POC
+//             findings_report.push_str("## Proof of Concept\n");
+//             findings_report.push_str(&violation.poc.unwrap_or_default());
+//             findings_report.push_str("\n\n");
+//
+//             //Proof of Code
+//             findings_report.push_str("## Pre-State\n");
+//             findings_report.push_str(&violation.pre_state.unwrap_or_default());
+//             findings_report.push_str("\n\n");
+//
+//             //Proof of Code
+//             findings_report.push_str("## Post-State\n");
+//             findings_report.push_str(&violation.post_state.unwrap_or_default());
+//             findings_report.push_str("\n\n");
+//
+//             //Suggested Fix
+//             findings_report.push_str("## Suggested Mitigation\n");
+//             findings_report.push_str(&violation.mitigation.unwrap_or_default());
+//             findings_report.push_str("\n\n");
+//         }
+//     } else {
+//         return String::new();
+//     }
+//     findings_report.push_str("\n");
+//     findings_report
+// }
+//
 fn get_finding_summary(findings: &Findings, report_type: ReportType) -> String {
     let mut findings_summary = String::new();
 

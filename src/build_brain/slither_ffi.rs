@@ -18,7 +18,6 @@ use crate::build_brain::inheritance;
 use crate::build_brain::parsers::parse_slithir_contract_summary;
 use crate::build_brain::summarize::summarize_src_files;
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::utils::get_doc_file::extract_content_from_docs;
 
 use super::callgraph;
 use super::parsers::{parse_slither, parse_slithir_ir_code, parse_storage};
@@ -65,14 +64,20 @@ pub struct StorageVar {
 }
 /// Return “context file list” as LF-separated string.
 pub fn get_all_files_src(repo: &RepoPaths) -> String {
-    //   e.g.,   contracts/plume/src
-    let code_root = repo.root.join(&repo.repo_name).join("src");
+    //   e.g.,   contracts/plume/
+    let code_root = repo.root.join(&repo.repo_name);
 
     let mut files = Vec::<String>::new();
 
     for path in &repo.sol_files {
         // fast skip: must be under src/ and not a symlink
         if !path.starts_with(&code_root) {
+            continue;
+        }
+
+        // ADD LIB exclusion
+        let lib_folder = code_root.join("lib");
+        if path.starts_with(lib_folder) {
             continue;
         }
 
@@ -103,8 +108,9 @@ fn should_skip(rel: &str) -> bool {
     let lowercase = rel.to_ascii_lowercase();
 
     // 1. third-party deps: vendor/*/contracts/**   OR   node_modules/**/contracts/**
-    if lowercase.contains("/vendor/") && lowercase.contains("/contracts/")
-        || lowercase.contains("/node_modules/") && lowercase.contains("/contracts/")
+    if (lowercase.contains("/vendor/") && lowercase.contains("/contracts/"))
+        || (lowercase.contains("/node_modules/") && lowercase.contains("/contracts/"))
+        || lowercase.contains("/forge-std/")
     {
         return true;
     }

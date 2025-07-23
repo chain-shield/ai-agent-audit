@@ -78,24 +78,43 @@ pub mod llm_review {
     pub mod config;
     /// Global context management
     pub mod context_state;
+    pub mod contract_file_map;
     /// AI agent and vulnerability type enums
     pub mod enums;
-    /// Protocol invariant analysis
-    pub mod invariants;
-    /// Dynamic prompt generation
-    pub mod prompt_context;
-    /// AI agent builders and utilities
-    pub mod review_utils;
+    pub mod semaphore;
+    /// Security audit phases
+    pub mod phases {
+        /// Phase 2: Parallel vulnerability detection across multiple AI agents
+        pub mod generate_findings;
+        /// Phase 1: AI-driven file selection and context prefetching
+        pub mod prefetch_context;
+        /// Phase 4: Quality assurance and final finding refinement
+        pub mod quality_check;
+        /// Phase 3: Deduplication and verification of discovered security findings
+        pub mod verify_findings;
+    }
+    /// Utility functions for LLM review
+    pub mod utils {
+        /// Dynamic prompt generation and context management
+        pub mod prompt_context;
+        /// AI agent builders and utilities
+        pub mod review_utils;
+    }
     /// Prompt engineering modules for different analysis stages
     pub mod prompt_support {
         /// Deduplication prompts
         pub mod dedup;
+        pub mod extractor_prompt;
+        pub mod invariants;
+        pub mod planner_prompt;
+        pub mod post_file_select_prompt;
         /// Post-analysis prompts
         pub mod post_prompt;
         /// Quality check prompts
         pub mod post_qualify;
         /// Verification prompts
         pub mod post_verify;
+        pub mod pre_file_select_prompt;
         /// Pre-analysis prompts
         pub mod pre_prompt;
         /// Pre-qualification prompts
@@ -119,6 +138,8 @@ pub mod cost {
 pub mod ai_bot {
     /// Core AI audit agent with dynamic context
     pub mod agent;
+    pub mod file_picker;
+    pub mod file_retrival;
     /// Context retrieval for AI analysis
     pub mod retrieve_slice;
 }
@@ -211,7 +232,7 @@ pub mod utils {
     /// Function labeling utilities
     pub mod fn_labels;
     /// Documentation extraction
-    pub mod get_doc_file;
+    pub mod get_file_content;
     /// Function name extraction
     pub mod get_fn_name;
     /// Logging utilities

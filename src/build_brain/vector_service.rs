@@ -1,19 +1,18 @@
+use super::enbeddings::SourceChunk;
 /// Vector database service for centralized Qdrant operations.
 ///
 /// This module provides a high-level service interface for vector database operations,
 /// eliminating duplication and providing consistent error handling across the codebase.
-
 use crate::config::audit_config;
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
-use super::enbeddings::SourceChunk;
 use log::info;
 use qdrant_client::{
-    qdrant::{
-        vectors_config::Config, CreateCollection, Distance, PointStruct, UpsertPointsBuilder,
-        VectorParams, VectorsConfig,
-    },
     Payload, Qdrant,
+    qdrant::{
+        CreateCollection, Distance, PointStruct, UpsertPointsBuilder, VectorParams, VectorsConfig,
+        vectors_config::Config,
+    },
 };
 use std::sync::Arc;
 
@@ -30,10 +29,10 @@ impl VectorDbService {
     pub async fn new() -> Result<Self> {
         let qdrant_url = std::env::var("QDRANT_URL")
             .map_err(|_| AuditError::configuration("QDRANT_URL", "Environment variable not set"))?;
-        
-        let client = Qdrant::from_url(&qdrant_url)
-            .build()
-            .map_err(|e| AuditError::vector_db("connection", "Failed to connect to Qdrant database", e))?;
+
+        let client = Qdrant::from_url(&qdrant_url).build().map_err(|e| {
+            AuditError::vector_db("connection", "Failed to connect to Qdrant database", e)
+        })?;
 
         Ok(Self {
             client,
@@ -43,9 +42,9 @@ impl VectorDbService {
 
     /// Creates a new service with custom configuration.
     pub async fn with_config(qdrant_url: &str, vector_dimension: u64) -> Result<Self> {
-        let client = Qdrant::from_url(qdrant_url)
-            .build()
-            .map_err(|e| AuditError::vector_db("connection", "Failed to connect to Qdrant database", e))?;
+        let client = Qdrant::from_url(qdrant_url).build().map_err(|e| {
+            AuditError::vector_db("connection", "Failed to connect to Qdrant database", e)
+        })?;
 
         Ok(Self {
             client,
@@ -64,20 +63,29 @@ impl VectorDbService {
         self.client
             .collection_exists(&collection_name)
             .await
-            .map_err(|e| AuditError::vector_db("collection_check", &format!("Failed to check if collection '{}' exists", collection_name), e))
+            .map_err(|e| {
+                AuditError::vector_db(
+                    "collection_check",
+                    &format!("Failed to check if collection '{}' exists", collection_name),
+                    e,
+                )
+            })
     }
 
     /// Creates a collection if it doesn't exist.
     pub async fn ensure_collection(&self, repo: &RepoPaths) -> Result<()> {
         let collection_name = self.collection_name(repo);
-        
+
         if self.collection_exists(repo).await? {
-            info!("Collection {} already exists...no need to create", collection_name);
+            info!(
+                "Collection {} already exists...no need to create",
+                collection_name
+            );
             return Ok(());
         }
 
         info!("Creating collection: {}", collection_name);
-        
+
         let req = CreateCollection {
             collection_name: collection_name.clone(),
             vectors_config: Some(VectorsConfig {
@@ -90,10 +98,13 @@ impl VectorDbService {
             ..Default::default()
         };
 
-        self.client
-            .create_collection(req)
-            .await
-            .map_err(|e| AuditError::vector_db("collection_creation", &format!("Failed to create collection '{}'", collection_name), e))?;
+        self.client.create_collection(req).await.map_err(|e| {
+            AuditError::vector_db(
+                "collection_creation",
+                &format!("Failed to create collection '{}'", collection_name),
+                e,
+            )
+        })?;
 
         Ok(())
     }
@@ -105,8 +116,12 @@ impl VectorDbService {
         items: &[(SourceChunk, Vec<f32>)],
     ) -> Result<()> {
         let collection_name = self.collection_name(repo);
-        
-        info!("Upserting {} embeddings to collection: {}", items.len(), collection_name);
+
+        info!(
+            "Upserting {} embeddings to collection: {}",
+            items.len(),
+            collection_name
+        );
 
         // Build PointStructs from the items
         let points: Vec<PointStruct> = items
@@ -114,21 +129,39 @@ impl VectorDbService {
             .enumerate()
             .map(|(i, (chunk, vec))| -> Result<PointStruct> {
                 let payload: Payload = serde_json::to_value(chunk)
-                    .map_err(|e| AuditError::json("chunk_serialization", "Failed to serialize SourceChunk", e))?
+                    .map_err(|e| {
+                        AuditError::json(
+                            "chunk_serialization",
+                            "Failed to serialize SourceChunk",
+                            e,
+                        )
+                    })?
                     .try_into()
-                    .map_err(|e| AuditError::json("payload_conversion", "Failed to convert JSON to Payload", e))?;
-                
+                    .map_err(|e| {
+                        AuditError::json(
+                            "payload_conversion",
+                            "Failed to convert JSON to Payload",
+                            e,
+                        )
+                    })?;
+
                 Ok(PointStruct::new(i as u64, vec.clone(), payload))
             })
             .collect::<Result<Vec<_>>>()?;
 
         // Create and execute the upsert request
         let req = UpsertPointsBuilder::new(&collection_name, points).wait(true);
-        
-        self.client
-            .upsert_points(req)
-            .await
-            .map_err(|e| AuditError::vector_db("upsert", &format!("Failed to upsert embeddings to collection '{}'", collection_name), e))?;
+
+        self.client.upsert_points(req).await.map_err(|e| {
+            AuditError::vector_db(
+                "upsert",
+                &format!(
+                    "Failed to upsert embeddings to collection '{}'",
+                    collection_name
+                ),
+                e,
+            )
+        })?;
 
         info!("Successfully upserted {} embeddings", items.len());
         Ok(())
@@ -137,18 +170,27 @@ impl VectorDbService {
     /// Deletes a collection for a repository.
     pub async fn delete_collection(&self, repo: &RepoPaths) -> Result<()> {
         let collection_name = self.collection_name(repo);
-        
+
         if !self.collection_exists(repo).await? {
-            info!("Collection {} does not exist, nothing to delete", collection_name);
+            info!(
+                "Collection {} does not exist, nothing to delete",
+                collection_name
+            );
             return Ok(());
         }
 
         info!("Deleting collection: {}", collection_name);
-        
+
         self.client
             .delete_collection(&collection_name)
             .await
-            .map_err(|e| AuditError::vector_db("collection_deletion", &format!("Failed to delete collection '{}'", collection_name), e))?;
+            .map_err(|e| {
+                AuditError::vector_db(
+                    "collection_deletion",
+                    &format!("Failed to delete collection '{}'", collection_name),
+                    e,
+                )
+            })?;
 
         Ok(())
     }
@@ -172,11 +214,11 @@ static VECTOR_SERVICE: OnceLock<Arc<VectorDbService>> = OnceLock::new();
 pub async fn init_vector_service() -> Result<()> {
     let service = VectorDbService::new().await?;
     let arc_service = Arc::new(service);
-    
+
     VECTOR_SERVICE.set(arc_service).map_err(|_| {
         AuditError::configuration("vector_service", "Vector service already initialized")
     })?;
-    
+
     Ok(())
 }
 
@@ -185,7 +227,9 @@ pub async fn init_vector_service() -> Result<()> {
 /// # Panics
 /// Panics if the service has not been initialized with `init_vector_service()`.
 pub fn vector_service() -> &'static Arc<VectorDbService> {
-    VECTOR_SERVICE.get().expect("Vector service not initialized. Call init_vector_service() first.")
+    VECTOR_SERVICE
+        .get()
+        .expect("Vector service not initialized. Call init_vector_service() first.")
 }
 
 /// Returns a reference to the global vector database service, or None if not initialized.
@@ -215,10 +259,10 @@ mod tests {
             client: Qdrant::from_url("http://localhost:6334").build().unwrap(),
             vector_dimension: audit_config().vector_dimension,
         };
-        
+
         let repo = create_test_repo();
         let collection_name = service.collection_name(&repo);
-        
+
         assert!(collection_name.contains("test-repo"));
         assert!(collection_name.contains("abc123"));
         assert!(collection_name.ends_with("-contract_chunks"));
@@ -230,7 +274,7 @@ mod tests {
             client: Qdrant::from_url("http://localhost:6334").build().unwrap(),
             vector_dimension: audit_config().vector_dimension,
         };
-        
+
         assert_eq!(service.vector_dimension(), audit_config().vector_dimension);
     }
 }

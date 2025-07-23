@@ -3,7 +3,6 @@
 /// This module extracts function metadata from Slither's function summary printer,
 /// parsing visibility, modifiers, and mutability information for all functions
 /// across contracts in a repository.
-
 use anyhow::Result;
 use serde::Deserialize;
 

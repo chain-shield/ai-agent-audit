@@ -1,35 +1,21 @@
-use crate::ai_bot::agent::get_rag_for_security_query;
 use crate::config::audit_config;
 use crate::error::Result;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::{
-    cost::cost_data::{
-        add_to_inference_cost_by_agent, add_to_inference_cost_by_type, LlmCostType, TokenType,
-    },
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
         agent_factory::{AgentConfig, AgentFactory},
-        config::{generated_llm_prompt, ContractInvariants, Finding, VulnerabilityQualityCheck},
+        config::{ContractInvariants, Findings},
         context_state::get_metadata_context,
-        prompt_context::generate_prompt_for_issue_check,
-        prompt_support::{
-            post_prompt::POST_PROMPT, post_qualify::POST_QUALIFY, post_verify::POST_VERIFY,
-            pre_prompt::PRE_PROMPT, pre_qualify::PRE_QUALIFY, pre_verify::PRE_VERIFY,
-            qualify_prompt::QUALIFY_PROMPT, verify_prompt::VERIFY_PROMPT,
-        },
     },
-    master_prompts::{prompt_2x_aa::PROMPT_2X_AA, prompt_2x_bb::PROMPT_2X_BB},
 };
 use log::info;
 use rig::providers::openai::O3;
-use std::sync::Arc;
-use std::{collections::HashMap, path::PathBuf};
-use tokio::sync::Mutex;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use tokio::fs;
 
-use super::{
-    config::{Findings, LegitVulnerability},
-    enums::AIAgent,
-};
+use super::contract_file_map::get_file_from_contract;
+use super::{enums::AIAgent, phases};
 
 /// Multi-LLM security analysis orchestration.
 ///
@@ -58,45 +44,75 @@ pub async fn review_codebase_for_security_issues(
     info!("grabbing contracts from db...");
     let contracts = codeblocks_db.get_all_contracts()?;
 
-    let (ai_verify_agent, ai_discovery_agents) = generate_ai_agents().await?;
+    let (ai_verify_agent, ai_planning_agent, ai_discovery_agents) =
+        generate_ai_agents(repo).await?;
 
     let invariant_findings = Vec::<ContractInvariants>::new();
 
     let metadata_context = get_metadata_context().await?;
 
     for (contract, codeblock) in contracts.into_iter() {
-        info!("contract => {}", contract);
-        info!("codeblock => {}", codeblock);
-        // grab additional context from RAG
-        let rag_context = get_rag_for_security_query(&codeblock, repo).await?;
-        let audit_context = format!(
-            "\n## CONTEXT \n\n {} \n\n {}",
-            metadata_context, rag_context
-        );
+        info!("\n\n-------- contract {} ---------------\n\n", contract);
 
-        let raw_findings = Findings::generate_findings_from_contract_codebase(
+        // grab additional context from RAG
+        // let rag_context = get_rag_for_security_query(&codeblock, repo).await?;
+        // let audit_context = format!(
+        //     "\n## CONTEXT \n\n {} \n\n {}",
+        //     metadata_context, rag_context
+        // );
+
+        // // Phase 1: Pre-fetch strategic files once to avoid rate limits during parallel analysis
+        // let prefetched_files =
+        //     phases::prefetch_context::execute(&codeblock, repo, &ai_planning_agent).await?;
+
+        // Combine original context with prefetched files
+        // let metadata_context = if prefetched_files.is_empty() {
+        //     metadata_context.to_string()
+        // } else {
+        //     format!(
+        //         "{}\n\n## Additional Protocol Files for More Context ------------------\n\n{}",
+        //         metadata_context, prefetched_files
+        //     )
+        // };
+
+        // Phase 1 generated enhanced codeblock
+        let codeblock = enhance_codeblock(&contract, &codeblock, repo).await?;
+        // info!("codeblock => {}", codeblock);
+
+        // // Phase 2: Generate findings using parallel AI agents
+        let raw_findings = phases::generate_findings::execute(
             &contract,
             &codeblock,
-            &audit_context,
+            &metadata_context,
             &ai_discovery_agents,
         )
         .await?;
 
         if !raw_findings.findings.is_empty() {
-            info!(
-                "# of findings BEFORE deduping => {}",
-                raw_findings.findings.len()
-            );
+            // Phase 3: Verify findings and remove false positives
+            let verified_findings = phases::verify_findings::execute(
+                raw_findings,
+                &codeblock,
+                &ai_verify_agent,
+                &metadata_context,
+            )
+            .await?;
 
-            let deduped_and_verified_findings = raw_findings
-                .dedup_and_verify_with_llm(&codeblock, &ai_verify_agent, &audit_context)
-                .await?;
+            // add sleep for 10 seconds with info!
+            // info!("Waiting 20 seconds before starting next phase of analysis...");
+            // tokio::time::sleep(tokio::time::Duration::from_secs(20)).await;
+            // info!("Starting contract analysis now!");
 
-            let quality_checked_and_updated_findings = deduped_and_verified_findings
-                .quality_check_with_llm(&codeblock, &ai_verify_agent, &audit_context)
-                .await?;
+            // Phase 4: Quality check and enhance findings
+            let final_findings = phases::quality_check::execute(
+                verified_findings,
+                &codeblock,
+                &ai_verify_agent,
+                &metadata_context,
+            )
+            .await?;
 
-            all_security_issues.insert(contract.to_string(), quality_checked_and_updated_findings);
+            all_security_issues.insert(contract.to_string(), final_findings);
 
             // TODO - save issues to Findings db
         }
@@ -107,409 +123,94 @@ pub async fn review_codebase_for_security_issues(
     Ok((all_security_issues, invariant_findings))
 }
 
-pub async fn generate_ai_agents() -> Result<(Arc<AIAgent>, Vec<Arc<AIAgent>>)> {
+// combine codeblock with original file context (that codeblock came from)
+// this contains natspec and additional context
+pub async fn enhance_codeblock(
+    contract: &str,
+    codeblock: &str,
+    repo: &RepoPaths,
+) -> anyhow::Result<String> {
+    let file = get_file_from_contract(contract, repo).await?;
+
+    let file_content = fs::read_to_string(&file).await?;
+
+    let filename = file.strip_prefix(&repo.root)?;
+    info!("{} contains contract {}", filename.display(), contract);
+
+    let enhanced_block = format!(
+        "{} \n\n {}: \n\n {}",
+        codeblock,
+        filename.display(),
+        file_content
+    );
+
+    Ok(enhanced_block)
+}
+pub async fn generate_ai_agents(
+    repo: &RepoPaths,
+) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Vec<Arc<AIAgent>>)> {
     info!("setting up AI agents...");
 
+    // Enhanced preamble for verification agent
+    let verify_preamble = "
+
+You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
+*confirming* reported issues.";
+
+    // You have access to retrieve_file_content tool that can search through different types of code files:
+    // - 'source': Main application code and smart contracts
+    // - 'test': Test files and test cases
+    // - 'script': Deployment and build scripts
+    // - 'library': Library and utility code
+    //
+    // Use them to:
+    // 1. Check that a reported vulnerability exists in the *current* source code.
+    // 2. Check if vulnerability is accurately reported
+    // 3. Cross-reference with tests to understand intended behaviour.
+    // 4. Inspect deployment scripts for mis-configurations.
+    // 5. Verify library or inherited-contract logic.
+    //
+    // When formulating queries for the retrieve_file_content, keep them concise and focused (**under 1000 words**) to avoid exceeding embedding model context limits.
+    // ";
+
     // Create verification agent using OpenAI O3
-    let verify_config = AgentConfig::new()
+    let verify_config = AgentConfig::new(repo.clone())
         .with_temperature(1.0)
         .with_model(O3)
-        .with_preamble("You are SoliditySec-Verifier, a senior smart-contract auditor.");
+        .with_preamble(verify_preamble)
+        .with_file_picker(false); // Disabled to avoid rate limits
 
     let ai_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
 
-    // Create discovery agents using Anthropic models
+    // Enhanced preamble for discovery agents
+    let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases.";
+
+    // Create discovery agents using Gemini models
     let mut ai_discovery_agents = Vec::new();
 
-    let gemini_config = AgentConfig::for_security_audit()
+    let gemini_config = AgentConfig::new(repo.clone())
         .with_temperature(1.0)
-        .with_model("gemini-2.5-pro");
+        .with_model("gemini-2.5-pro")
+        .with_preamble(solidity_auditor_preamble)
+        .with_file_retrieval(false)
+        .with_file_picker(false);
 
+    // let claude_config = AgentConfig::new(repo.clone())
+    //     .with_temperature(1.0)
+    //     .with_model(CLAUDE_3_7_SONNET)
+    //     .with_preamble(solidity_auditor_preamble)
+    //     .with_max_tokens(64_000)
+    //     .with_file_retrieval(true)
+    //     .with_file_picker(false) // Disabled to avoid rate limits
+    //     .with_dynamic_context(false);
+    //
     for _ in 0..audit_config().runs {
         let agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
         ai_discovery_agents.push(agent);
     }
 
+    let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
     info!("Created {} discovery agents", ai_discovery_agents.len());
 
-    Ok((ai_verify_agent, ai_discovery_agents))
-}
-
-/// Executes one LLM-prompt round and merges the returned findings into the shared `Arc<Mutex<Findings>>`.
-///
-/// Splitting the logic out of the for-loop keeps the main auditor-loop readable
-/// and makes it far easier to unit-test this piece in isolation.
-pub async fn run_security_prompt(
-    agent: Arc<AIAgent>,
-    contract_name: Arc<String>,
-    code: Arc<String>,
-    added_context: Arc<String>,
-    instructions: &'static str,
-    idx_of_review_round: usize,
-    shared_findings: Arc<Mutex<Findings>>,
-) -> Result<()> {
-    // 1. Build full prompt
-    let prompt_header = generated_llm_prompt(&contract_name, instructions, PRE_PROMPT, POST_PROMPT);
-    let prompt_body = generate_content_plus_context_block(&code, &added_context);
-    let full_prompt = format!("{prompt_header}{prompt_body}");
-
-    // add to cost
-    // add_to_inference_cost_by_type(&full_prompt, LlmCostType::GeminiInput).await;
-    add_to_inference_cost_by_agent(&full_prompt, &agent, TokenType::Input).await;
-
-    // 2. Send to the right provider
-    info!("----LLM analysis Round #{}----", idx_of_review_round);
-    let findings: Findings = agent.extract_with_retry(&full_prompt).await?;
-
-    let issues_found = findings.findings.len();
-    info!("{} issues found!", issues_found);
-
-    // 3. Merge results (if any) into the shared accumulator
-    if issues_found > 0 {
-        let mut guard = shared_findings.lock().await;
-        guard.findings.extend(findings.findings);
-    }
-
-    Ok(())
-}
-
-fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
-    let mut code_plus_context = String::new();
-
-    code_plus_context.push_str("\n\n");
-
-    code_plus_context.push_str(codeblock);
-    // print_first_four_lines(&codeblock);
-
-    code_plus_context.push_str("\n\n ADDITIONAL CONTEXT \n\n");
-    code_plus_context.push_str(&added_context);
-    code_plus_context.push_str("\n\n");
-    // print_first_four_lines(&added_context);
-
-    code_plus_context
-}
-
-//SCAN FOR INVARIANTS
-// info!("submitting invariant prompt to openai");
-// let invariants_response = openai_agent_1st_pass.prompt(INVARIANTS).await?;
-//
-// info!("parsing invariant prompt");
-// let invariants = ContractInvariants::parse_from_json(&invariants_response)?;
-//
-// if !invariants.invariants.is_empty() {
-//     invariant_findings.push(invariants);
-// }
-// for security_issue in SECURITY_PROMPT_ENUMS {
-// SCAN FOR STANDARD SECURITY ISSUES
-// let findings = if LANGUAGE_MODEL == LanguageModel::OpenAI {
-//     let prompt_string = generate_llm_prompt_for_security_issue(
-//         contract,
-//         &security_issue.prompt(),
-//         codeblock,
-//         "",
-//     );
-//
-//     info!("submitting security vulnerability prompt to openai");
-//
-//     let findings = agent_extract_with_retry(openai_agent, &prompt_string).await?;
-//     findings
-// } else {
-//     let prompt_string = generate_llm_prompt_for_security_issue(
-//         contract,
-//         &security_issue.prompt(),
-//         codeblock,
-//         &added_context_from_ai_brain,
-//     );
-//
-//     info!("submitting security vulnerability prompt to anthropic");
-//     info!(
-//         "-----------------------ROUND #{}-----------------------",
-//         run
-//     );
-//     info!("{} Issue", security_issue.as_fancy_str());
-//     let findings = agent_extract_with_retry(&anthropic_agents[run], &prompt_string).await?;
-//
-//     findings
-// }
-//
-//
-impl Findings {
-    pub async fn generate_findings_from_contract_codebase(
-        contract: &str,
-        code: &str,
-        context: &str,
-        agents: &Vec<Arc<AIAgent>>,
-    ) -> Result<Self> {
-        let mut handles = vec![];
-        let all_findings = Arc::new(Mutex::new(Findings {
-            findings: Vec::new(),
-        }));
-        let contract = Arc::new(contract.to_string());
-        let codeblock = Arc::new(code.to_string());
-        let added_content_from_brain = Arc::new(context.to_string());
-
-        for (run, arc_agent) in agents.iter().enumerate() {
-            for (i, prompt) in [PROMPT_2X_AA, PROMPT_2X_BB].into_iter().enumerate() {
-                let agent = Arc::clone(arc_agent);
-                let combined_findings = Arc::clone(&all_findings);
-                let contract_name = Arc::clone(&contract);
-                let code = Arc::clone(&codeblock);
-                let added_content = Arc::clone(&added_content_from_brain);
-
-                handles.push(tokio::spawn(async move {
-                    if let Err(e) = run_security_prompt(
-                        agent,
-                        contract_name,
-                        code,
-                        added_content,
-                        prompt,
-                        (run + 1) * (i + 1),
-                        combined_findings,
-                    )
-                    .await
-                    {
-                        log::error!("Prompt task failed: {e:#}");
-                    }
-                }));
-            }
-        }
-
-        // Wait for ALL tasks to complete
-        for handle in handles {
-            handle.await?; // Will error if task panicked
-        }
-
-        let findings = all_findings.lock().await;
-
-        if !findings.findings.is_empty() {
-            info!(
-                "# of findings BEFORE deduping => {}",
-                findings.findings.len()
-            );
-        }
-        Ok(findings.clone())
-    }
-    // TODO - refactor dedup to first use hashMap => HashMap<String(hash),Vec<Finding> (same hash)>
-    // then evaluate each entry for dups with different thread!
-    pub async fn dedup_and_verify_with_llm(
-        &self,
-        code: &str,
-        agent: &Arc<AIAgent>,
-        context: &str,
-    ) -> Result<Self> {
-        let mut handles = vec![];
-        let deduped_findings = Arc::new(self.clone().dedup().await?);
-        let code_and_context = generate_content_plus_context_block(code, context);
-        let arc_code_context = Arc::new(code_and_context);
-
-        let dedup_finding_count = deduped_findings.findings.len();
-        let is_legit_finding_vec: Arc<Mutex<Vec<bool>>> =
-            Arc::new(Mutex::new(vec![true; dedup_finding_count]));
-
-        info!("# of findings AFTER deduping => {}", dedup_finding_count);
-
-        info!("now verifying each finding...");
-
-        for i in 0..dedup_finding_count {
-            let codeblock_plus_context = Arc::clone(&arc_code_context);
-            let arc_agent = Arc::clone(agent);
-            let arc_findings = Arc::clone(&deduped_findings);
-            let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
-            handles.push(tokio::spawn(async move {
-                let result: Result<()> = async {
-                    let instruction_prompt = generate_prompt_for_issue_check(
-                        &codeblock_plus_context,
-                        &arc_findings.findings[i],
-                        PRE_VERIFY,
-                        VERIFY_PROMPT,
-                        POST_VERIFY,
-                    );
-
-                    // add to cost
-                    add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::OpenaiO3Input)
-                        .await;
-                    info!("verifying finding #{}", i);
-                    let is_legit_struct: LegitVulnerability =
-                        arc_agent.extract_with_retry(&instruction_prompt).await?;
-
-                    let is_finding_legit = is_legit_struct.is_legit_vulnerability;
-                    if !is_finding_legit {
-                        info!(
-                            "{} is NOT legit => {}",
-                            arc_findings.findings[i].title(),
-                            is_legit_struct.why_its_not_legit.unwrap_or_default()
-                        );
-                    }
-                    let mut legit_findings_vec = arc_legit_findings_vec.lock().await;
-                    legit_findings_vec[i] = is_finding_legit;
-
-                    // add
-                    Ok(())
-                }
-                .await;
-
-                if let Err(e) = result {
-                    log::error!("Error verifying finding {}: {:?}", i, e);
-                }
-            }));
-        }
-
-        // optionally await them all
-        for h in handles {
-            let _ = h.await;
-        }
-
-        let legit_findings_vec = is_legit_finding_vec.lock().await;
-        let verified_findings: Vec<Finding> = deduped_findings
-            .as_ref()
-            .findings
-            .iter()
-            .enumerate()
-            .filter(|(idx, _)| legit_findings_vec[*idx])
-            .map(|(_, f)| f.clone())
-            .collect();
-
-        info!(
-            "-------------{} Verified Findings!-----------------",
-            verified_findings.len()
-        );
-
-        Ok(Findings {
-            findings: verified_findings,
-        })
-    }
-
-    pub async fn quality_check_with_llm(
-        self,
-        code: &str,
-        agent: &Arc<AIAgent>,
-        context: &str,
-    ) -> Result<Self> {
-        let mut handles = vec![];
-        let findings = Arc::new(self.clone().dedup().await?);
-        let code_and_context = generate_content_plus_context_block(code, context);
-        let arc_code_context = Arc::new(code_and_context);
-
-        let finding_count = findings.findings.len();
-        // create vec (is_quality_check_passed, updated_finding) for each finding
-        // assume all initially pass
-        let quality_check_passed_vec: Arc<Mutex<Vec<(bool, Finding)>>> =
-            Arc::new(Mutex::new(vec![(true, Finding::default()); finding_count]));
-
-        info!("now quality check on each finding...");
-
-        for i in 0..finding_count {
-            let codeblock_plus_context = Arc::clone(&arc_code_context);
-            let arc_agent = Arc::clone(agent);
-            let arc_findings = Arc::clone(&findings);
-            let arc_legit_findings_vec = Arc::clone(&quality_check_passed_vec);
-            handles.push(tokio::spawn(async move {
-                let result: Result<()> = async {
-                    let prompt = generate_prompt_for_issue_check(
-                        &codeblock_plus_context,
-                        &arc_findings.findings[i],
-                        PRE_QUALIFY,
-                        QUALIFY_PROMPT,
-                        POST_QUALIFY,
-                    );
-                    add_to_inference_cost_by_type(&prompt, LlmCostType::OpenaiO3Input).await;
-                    info!("quality checking finding #{}", i);
-                    let qualify_checked_finding: VulnerabilityQualityCheck =
-                        arc_agent.extract_with_retry(&prompt).await?;
-
-                    let quality_check_passed = qualify_checked_finding.is_quality_check_passed;
-                    if !quality_check_passed {
-                        info!(
-                            "{} did not pass quality check => {:?}",
-                            arc_findings.findings[i].title(),
-                            qualify_checked_finding.where_quality_lacks
-                        );
-                        info!("{:#?}", &qualify_checked_finding);
-                        let updated_finding = Finding {
-                            impact: Some(qualify_checked_finding.impact.clone().unwrap_or(
-                                arc_findings.findings[i].impact.clone().unwrap_or_default(),
-                            )),
-                            proof_of_code: Some(
-                                qualify_checked_finding.proof_of_code.clone().unwrap_or(
-                                    arc_findings.findings[i]
-                                        .proof_of_code
-                                        .clone()
-                                        .unwrap_or_default(),
-                                ),
-                            ),
-                            proof_of_concept: Some(
-                                qualify_checked_finding.proof_of_concept.clone().unwrap_or(
-                                    arc_findings.findings[i]
-                                        .proof_of_concept
-                                        .clone()
-                                        .unwrap_or_default(),
-                                ),
-                            ),
-                            mitigation: Some(
-                                qualify_checked_finding.mitigation.clone().unwrap_or(
-                                    arc_findings.findings[i]
-                                        .mitigation
-                                        .clone()
-                                        .unwrap_or_default(),
-                                ),
-                            ),
-                            severity: qualify_checked_finding
-                                .severity
-                                .unwrap_or(arc_findings.findings[i].severity),
-                            ..arc_findings.findings[i].clone()
-                        };
-                        let mut legit_findings_vec = arc_legit_findings_vec.lock().await;
-                        legit_findings_vec[i] = (quality_check_passed, updated_finding);
-                    } else {
-                        let mut quality_checked_findings_vec = arc_legit_findings_vec.lock().await;
-                        quality_checked_findings_vec[i] = (true, arc_findings.findings[i].clone());
-                    }
-
-                    Ok(())
-                }
-                .await;
-
-                if let Err(e) = result {
-                    log::error!("Error verifying finding {}: {:?}", i, e);
-                }
-            }));
-        }
-
-        // optionally await them all
-        for h in handles {
-            let _ = h.await;
-        }
-
-        let qualify_checked_findings_vec = quality_check_passed_vec.lock().await;
-        let qualified_findings: Vec<Finding> = findings
-            .as_ref()
-            .findings
-            .iter()
-            .enumerate()
-            .map(|(idx, f)| {
-                if qualify_checked_findings_vec[idx].0 {
-                    // if quality check passes , no changes needed
-                    f.clone()
-                } else {
-                    // if failed submit updated finding
-                    qualify_checked_findings_vec[idx].1.clone()
-                }
-            })
-            .collect();
-
-        let num_findings_updated = qualify_checked_findings_vec
-            .iter()
-            .filter(|(passed, _)| !*passed)
-            .count();
-
-        info!(
-            "{} Verified Findings with {} updated findings!",
-            qualified_findings.len(),
-            num_findings_updated
-        );
-
-        Ok(Findings {
-            findings: qualified_findings,
-        })
-    }
+    Ok((ai_verify_agent, ai_planning_agent, ai_discovery_agents))
 }
