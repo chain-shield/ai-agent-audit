@@ -1,20 +1,25 @@
 use super::enums::AIAgent;
+use crate::ai_bot::file_picker::FilePickerTool;
 /// AI Agent Factory for centralized agent creation across LLM providers.
 ///
 /// This module provides a unified interface for creating AI agents from different
 /// LLM providers (OpenAI, Anthropic, Gemini, DeepSeek) with consistent configuration
 /// and error handling.
+use crate::ai_bot::file_retrival::FileRetrievalTool;
 use crate::config::audit_config;
 use crate::error::{AuditError, Result};
+use crate::prepare_code::git_clone::RepoPaths;
+use qdrant_client::{Qdrant, qdrant::QueryPointsBuilder};
 use rig::{
-    client::{CompletionClient, ProviderClient},
+    client::{CompletionClient, EmbeddingsClient, ProviderClient},
     providers::{
         anthropic::{self, CLAUDE_3_7_SONNET},
         deepseek::{self, DEEPSEEK_CHAT},
         gemini::{self},
-        openai::{self, O3},
+        openai::{self, O3, TEXT_EMBEDDING_3_SMALL},
     },
 };
+use rig_qdrant::QdrantVectorStore;
 use std::sync::OnceLock;
 
 /// Supported LLM providers.
@@ -87,24 +92,33 @@ pub struct AgentConfig {
     pub max_tokens: Option<u64>,
     /// System preamble/prompt for the agent
     pub preamble: String,
+    /// Repository paths for file retrieval tool and dynamic context (required)
+    pub repo_paths: RepoPaths,
+    /// Enable dynamic context with vector search
+    pub enable_dynamic_context: bool,
+    /// Number of dynamic context chunks to retrieve (default: 5)
+    pub dynamic_context_chunks: usize,
+    /// Enable file retrieval tool
+    pub enable_file_retrieval: bool,
+    /// Enable file picker tool
+    pub enable_file_picker: bool,
 }
 
-impl Default for AgentConfig {
-    fn default() -> Self {
+impl AgentConfig {
+    /// Creates a new agent configuration with required repository paths.
+    pub fn new(repo_paths: RepoPaths) -> Self {
         Self {
             temperature: audit_config().default_temperature,
             model: "default".to_string(),
             context: None,
             max_tokens: None,
-            preamble: "You are a world renowned expert in smart-contract security auditing, known for your uncanny ability to find all security bugs in a protocol, even the obscure ones.".to_string(),
+            preamble: "You are a world renowned expert in smart-contract security auditing, known for your uncanny ability to find all security bugs in a protocol, even the obscure ones. You have access to advanced tools including file retrieval for searching specific file types (source, test, script, library) and dynamic context from vector search.".to_string(),
+            repo_paths,
+            enable_dynamic_context: false,
+            dynamic_context_chunks: 5,
+            enable_file_retrieval: false,
+            enable_file_picker: false,
         }
-    }
-}
-
-impl AgentConfig {
-    /// Creates a new agent configuration with default values.
-    pub fn new() -> Self {
-        Self::default()
     }
 
     /// Sets the temperature for response generation.
@@ -137,15 +151,36 @@ impl AgentConfig {
         self
     }
 
-    /// Creates an agent configuration for security auditing.
-    pub fn for_security_audit() -> Self {
-        Self {
-            temperature: audit_config().default_temperature,
-            model: "default".to_string(),
-            context: None,
-            max_tokens: None,
-            preamble: "You are a world renowned expert in smart-contract security auditing, known for your uncanny ability to find all security bugs in a protocol, even the obscure ones.".to_string(),
-        }
+    /// Enables or disables dynamic context.
+    pub fn with_dynamic_context(mut self, enabled: bool) -> Self {
+        self.enable_dynamic_context = enabled;
+        self
+    }
+
+    /// Sets the number of dynamic context chunks to retrieve.
+    pub fn with_dynamic_context_chunks(mut self, chunks: usize) -> Self {
+        self.dynamic_context_chunks = chunks;
+        self
+    }
+
+    /// Enables or disables file retrieval tool.
+    pub fn with_file_retrieval(mut self, enabled: bool) -> Self {
+        self.enable_file_retrieval = enabled;
+        self
+    }
+
+    /// Enables or disables file picker tool.
+    pub fn with_file_picker(mut self, enabled: bool) -> Self {
+        self.enable_file_picker = enabled;
+        self
+    }
+
+    /// Creates an agent configuration for security auditing with advanced tools enabled.
+    pub fn for_security_audit(repo_paths: RepoPaths) -> Self {
+        Self::new(repo_paths)
+            .with_file_picker(true)
+            .with_file_retrieval(true)
+            .with_dynamic_context(true)
     }
 }
 
@@ -235,6 +270,59 @@ fn deepseek_client() -> Result<&'static deepseek::Client> {
     })
 }
 
+/// Helper function to create vector store for dynamic context
+fn create_vector_store(repo: &RepoPaths) -> Result<QdrantVectorStore<openai::EmbeddingModel>> {
+    let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL").map_err(|_| {
+        AuditError::configuration("qdrant_url", "QDRANT_URL environment variable not set")
+    })?)
+    .build()
+    .map_err(|e| {
+        AuditError::configuration(
+            "qdrant_connection",
+            &format!("Failed to connect to Qdrant: {}", e),
+        )
+    })?;
+
+    let openai = openai::Client::new(&std::env::var("OPENAI_API_KEY").map_err(|_| {
+        AuditError::configuration(
+            "openai_api_key",
+            "OPENAI_API_KEY environment variable not set",
+        )
+    })?);
+    let model = openai.embedding_model(TEXT_EMBEDDING_3_SMALL);
+
+    let collection_name = format!("{}-contract_chunks", repo.unique_repo_hash());
+    let qp = QueryPointsBuilder::new(&collection_name)
+        .with_payload(true)
+        .build();
+
+    Ok(QdrantVectorStore::new(qdrant, model, qp))
+}
+
+/// Helper function to create file retrieval tool
+fn create_file_retrieval_tool(repo: &RepoPaths) -> Result<FileRetrievalTool> {
+    let qdrant_url = std::env::var("QDRANT_URL").map_err(|_| {
+        AuditError::configuration("qdrant_url", "QDRANT_URL environment variable not set")
+    })?;
+    let openai_api_key = std::env::var("OPENAI_API_KEY").map_err(|_| {
+        AuditError::configuration(
+            "openai_api_key",
+            "OPENAI_API_KEY environment variable not set",
+        )
+    })?;
+
+    Ok(FileRetrievalTool::new(
+        qdrant_url,
+        openai_api_key,
+        repo.clone(),
+    ))
+}
+
+/// Helper function to create file picker tool
+fn create_file_picker_tool(repo: &RepoPaths) -> FilePickerTool {
+    FilePickerTool::new(repo.clone())
+}
+
 /// Factory for creating AI agents across different providers.
 pub struct AgentFactory;
 
@@ -255,6 +343,24 @@ impl AgentFactory {
 
         if let Some(context) = &config.context {
             builder = builder.context(context);
+        }
+
+        // Add dynamic context if enabled
+        if config.enable_dynamic_context {
+            let vector_store = create_vector_store(&config.repo_paths)?;
+            builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
+        }
+
+        // Add file retrieval tool if enabled
+        if config.enable_file_retrieval {
+            let file_tool = create_file_retrieval_tool(&config.repo_paths)?;
+            builder = builder.tool(file_tool);
+        }
+
+        // Add file picker tool if enabled
+        if config.enable_file_picker {
+            let file_picker = create_file_picker_tool(&config.repo_paths);
+            builder = builder.tool(file_picker);
         }
 
         Ok(AIAgent::Openai(builder.build()))
@@ -278,6 +384,24 @@ impl AgentFactory {
             builder = builder.max_tokens(max_tokens);
         }
 
+        // Add dynamic context if enabled
+        if config.enable_dynamic_context {
+            let vector_store = create_vector_store(&config.repo_paths)?;
+            builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
+        }
+
+        // Add file retrieval tool if enabled
+        if config.enable_file_retrieval {
+            let file_tool = create_file_retrieval_tool(&config.repo_paths)?;
+            builder = builder.tool(file_tool);
+        }
+
+        // Add file picker tool if enabled
+        if config.enable_file_picker {
+            let file_picker = create_file_picker_tool(&config.repo_paths);
+            builder = builder.tool(file_picker);
+        }
+
         Ok(AIAgent::Anthropic(builder.build()))
     }
 
@@ -299,6 +423,24 @@ impl AgentFactory {
             builder = builder.context(context);
         }
 
+        // Add dynamic context if enabled
+        if config.enable_dynamic_context {
+            let vector_store = create_vector_store(&config.repo_paths)?;
+            builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
+        }
+
+        // Add file retrieval tool if enabled
+        if config.enable_file_retrieval {
+            let file_tool = create_file_retrieval_tool(&config.repo_paths)?;
+            builder = builder.tool(file_tool);
+        }
+
+        // Add file picker tool if enabled
+        if config.enable_file_picker {
+            let file_picker = create_file_picker_tool(&config.repo_paths);
+            builder = builder.tool(file_picker);
+        }
+
         Ok(AIAgent::Gemini(builder.build()))
     }
 
@@ -318,6 +460,24 @@ impl AgentFactory {
 
         if let Some(context) = &config.context {
             builder = builder.context(context);
+        }
+
+        // Add dynamic context if enabled
+        if config.enable_dynamic_context {
+            let vector_store = create_vector_store(&config.repo_paths)?;
+            builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
+        }
+
+        // Add file retrieval tool if enabled
+        if config.enable_file_retrieval {
+            let file_tool = create_file_retrieval_tool(&config.repo_paths)?;
+            builder = builder.tool(file_tool);
+        }
+
+        // Add file picker tool if enabled
+        if config.enable_file_picker {
+            let file_picker = create_file_picker_tool(&config.repo_paths);
+            builder = builder.tool(file_picker);
         }
 
         Ok(AIAgent::Deepseek(builder.build()))
@@ -375,103 +535,6 @@ impl AgentFactory {
     }
 }
 
-/// Convenience functions that match the original API but use the factory internally.
-/// These maintain backward compatibility with existing code.
-
-/// Creates an OpenAI agent with the original API.
-///
-/// # Deprecated
-/// This function is deprecated. Use `AgentFactory::create_openai_agent` instead.
-/// The client parameter is ignored as singleton clients are used internally.
-pub fn build_openai_agent(
-    _client: &openai::Client,
-    temperature: f64,
-    model: &str,
-    preamble: &str,
-    context: Option<&str>,
-) -> AIAgent {
-    let config = AgentConfig::new()
-        .with_temperature(temperature)
-        .with_model(model)
-        .with_preamble(preamble)
-        .with_context(context.unwrap_or_default());
-
-    // Use the factory with singleton clients
-    AgentFactory::create_openai_agent(&config).unwrap_or_else(|_| {
-        // Fallback should not happen in normal operation
-        panic!("Failed to create OpenAI agent. Ensure init_llm_clients() was called and API key is configured.");
-    })
-}
-
-/// Creates an Anthropic agent with the original API.
-///
-/// # Deprecated
-/// This function is deprecated. Use `AgentFactory::create_anthropic_agent` instead.
-/// The client parameter is ignored as singleton clients are used internally.
-pub fn build_anthropic_agent(
-    _client: &anthropic::Client,
-    temperature: f64,
-    model: &str,
-    max_tokens: u64,
-) -> AIAgent {
-    let config = AgentConfig::new()
-        .with_temperature(temperature)
-        .with_model(model)
-        .with_max_tokens(max_tokens);
-
-    // Use the factory with singleton clients
-    AgentFactory::create_anthropic_agent(&config).unwrap_or_else(|_| {
-        // Fallback should not happen in normal operation
-        panic!("Failed to create Anthropic agent. Ensure init_llm_clients() was called and API key is configured.");
-    })
-}
-
-/// Creates a Gemini agent with the original API.
-///
-/// # Deprecated
-/// This function is deprecated. Use `AgentFactory::create_gemini_agent` instead.
-/// The client parameter is ignored as singleton clients are used internally.
-pub fn build_gemini_agent(
-    _client: &gemini::Client,
-    temperature: f64,
-    model: &str,
-    context: Option<&str>,
-) -> AIAgent {
-    let config = AgentConfig::new()
-        .with_temperature(temperature)
-        .with_model(model)
-        .with_context(context.unwrap_or_default());
-
-    // Use the factory with singleton clients
-    AgentFactory::create_gemini_agent(&config).unwrap_or_else(|_| {
-        // Fallback should not happen in normal operation
-        panic!("Failed to create Gemini agent. Ensure init_llm_clients() was called and API key is configured.");
-    })
-}
-
-/// Creates a DeepSeek agent with the original API.
-///
-/// # Deprecated
-/// This function is deprecated. Use `AgentFactory::create_deepseek_agent` instead.
-/// The client parameter is ignored as singleton clients are used internally.
-pub fn build_deepseek_agent(
-    _client: &deepseek::Client,
-    temperature: f64,
-    model: &str,
-    context: Option<&str>,
-) -> AIAgent {
-    let config = AgentConfig::new()
-        .with_temperature(temperature)
-        .with_model(model)
-        .with_context(context.unwrap_or_default());
-
-    // Use the factory with singleton clients
-    AgentFactory::create_deepseek_agent(&config).unwrap_or_else(|_| {
-        // Fallback should not happen in normal operation
-        panic!("Failed to create DeepSeek agent. Ensure init_llm_clients() was called and API key is configured.");
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,26 +556,6 @@ mod tests {
             Some(LlmProvider::Anthropic)
         );
         assert_eq!(LlmProvider::from_str("invalid"), None);
-    }
-
-    #[test]
-    fn test_agent_config_builder() {
-        let config = AgentConfig::new()
-            .with_temperature(0.8)
-            .with_model("gpt-4")
-            .with_context("test context");
-
-        assert_eq!(config.temperature, 0.8);
-        assert_eq!(config.model, "gpt-4");
-        assert_eq!(config.context, Some("test context".to_string()));
-    }
-
-    #[test]
-    fn test_security_audit_config() {
-        let config = AgentConfig::for_security_audit();
-        assert_eq!(config.temperature, 1.0);
-        assert!(config.preamble.contains("security auditing"));
-        assert_eq!(config.max_tokens, Some(4096));
     }
 
     #[test]

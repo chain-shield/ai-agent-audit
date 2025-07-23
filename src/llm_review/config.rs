@@ -27,7 +27,7 @@ use rig::{
     },
 };
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserializer};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,7 +42,6 @@ pub enum LanguageModel {
 pub const CLAUDE_4_0_SONNET: &str = "claude-sonnet-4-0";
 pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
 pub const LANGUAGE_MODEL: LanguageModel = LanguageModel::Anthropic;
-pub const RUNS: usize = 3;
 pub const INSTRUCTION_PROMPTS: [&str; 2] = [PROMPT_2X_A, PROMPT_2X_B];
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -88,26 +87,6 @@ pub struct ContractInvariants {
     pub contract: String,
     pub intention: String,
     pub invariants: Vec<InvariantFinding>,
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct LegitVulnerability {
-    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
-    pub is_legit_vulnerability: bool,
-    pub why_its_not_legit: Option<String>,
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct VulnerabilityQualityCheck {
-    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
-    pub is_quality_check_passed: bool, // quality check passes with no changes/update needed, true|false
-    pub where_quality_lacks: Option<String>, // breif description
-    pub impact: Option<String>,              // updated impact (if necessary)
-    pub proof_of_concept: Option<String>,    // updated POC (if necessary)
-    pub proof_of_code: Option<String>,       // updated Foundry Unit test (if necessary)
-    #[schemars(description = "Severity level: High, Medium, Low, Info")]
-    pub severity: Option<Severity>, // updated severity of issue (if necessary)
-    pub mitigation: Option<String>,          // updated mitigation (if necessary)
 }
 
 // #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -207,21 +186,21 @@ pub fn generated_llm_prompt(
         .to_string()
 }
 
-fn deserialize_bool_from_str_or_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let val: serde_json::Value = Deserialize::deserialize(deserializer)?;
-    match val {
-        serde_json::Value::Bool(b) => Ok(b),
-        serde_json::Value::String(s) => match s.as_str() {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            _ => Err(serde::de::Error::custom("expected 'true' or 'false'")),
-        },
-        _ => Err(serde::de::Error::custom("expected boolean or string")),
-    }
-}
+// fn deserialize_bool_from_str_or_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+// where
+//     D: Deserializer<'de>,
+// {
+//     let val: serde_json::Value = Deserialize::deserialize(deserializer)?;
+//     match val {
+//         serde_json::Value::Bool(b) => Ok(b),
+//         serde_json::Value::String(s) => match s.as_str() {
+//             "true" => Ok(true),
+//             "false" => Ok(false),
+//             _ => Err(serde::de::Error::custom("expected 'true' or 'false'")),
+//         },
+//         _ => Err(serde::de::Error::custom("expected boolean or string")),
+//     }
+// }
 
 impl Finding {
     pub fn title(&self) -> String {

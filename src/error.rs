@@ -3,11 +3,10 @@
 /// This module provides a unified error handling system that consolidates
 /// various error types from different modules into a cohesive hierarchy.
 /// This improves debugging, error propagation, and overall system reliability.
-
 use thiserror::Error;
 
 /// Main error type for the AI Agent Audit application.
-/// 
+///
 /// This enum encompasses all possible error conditions that can occur
 /// during the audit process, providing specific error types for different
 /// failure scenarios with descriptive messages and error chaining.
@@ -15,7 +14,7 @@ use thiserror::Error;
 pub enum AuditError {
     /// Database operation failures (SQLite, Qdrant)
     #[error("Database operation failed: {message}")]
-    Database { 
+    Database {
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
@@ -85,17 +84,11 @@ pub enum AuditError {
 
     /// Security validation failures
     #[error("Security validation failed: {check} - {message}")]
-    Security {
-        check: String,
-        message: String,
-    },
+    Security { check: String, message: String },
 
     /// Configuration and environment setup failures
     #[error("Configuration error: {setting} - {message}")]
-    Configuration {
-        setting: String,
-        message: String,
-    },
+    Configuration { setting: String, message: String },
 
     /// Network operations failures
     #[error("Network operation failed: {url} - {message}")]
@@ -117,10 +110,7 @@ pub enum AuditError {
 
     /// Generic validation failures
     #[error("Validation failed: {field} - {message}")]
-    Validation {
-        field: String,
-        message: String,
-    },
+    Validation { field: String, message: String },
 }
 
 /// Result type alias for consistent error handling throughout the application.
@@ -151,7 +141,11 @@ impl AuditError {
     }
 
     /// Creates a new Docker error with context.
-    pub fn docker(command: impl Into<String>, message: impl Into<String>, exit_code: Option<i32>) -> Self {
+    pub fn docker(
+        command: impl Into<String>,
+        message: impl Into<String>,
+        exit_code: Option<i32>,
+    ) -> Self {
         Self::Docker {
             command: command.into(),
             message: message.into(),
@@ -301,7 +295,10 @@ impl From<rusqlite::Error> for AuditError {
 impl From<reqwest::Error> for AuditError {
     fn from(err: reqwest::Error) -> Self {
         Self::Network {
-            url: err.url().map(|u| u.to_string()).unwrap_or_else(|| "unknown".to_string()),
+            url: err
+                .url()
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
             message: err.to_string(),
             source: Some(Box::new(err)),
         }

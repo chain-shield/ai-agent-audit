@@ -126,25 +126,34 @@ pub fn clone_and_filter_git_repo(
     let mut docs = Vec::new();
     for entry in WalkDir::new(&search_root)
         .into_iter()
+        .filter_entry(|e| {
+            let path = e.path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            // Skip out/, cache/, and .git
+            !(name == "out" || name == "cache" || name == ".git")
+        })
         .filter_map(Result::ok)
     {
         let path = entry.path();
 
+        if entry.file_type().is_dir() {
+            continue;
+        }
         // skip if gitignore or simlink
         if ign.matched(path, false).is_ignore()
             || fs::symlink_metadata(path)?.file_type().is_symlink()
         {
             continue;
         }
+
+        //only get md docs from /src folder /src/*.md
         match path.extension().and_then(|e| e.to_str()) {
             Some("sol") => sol_files.push(path.to_path_buf()),
-            Some("md")
-                if path
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .map(|f| f.eq_ignore_ascii_case("README.md"))
-                    .unwrap_or(false) =>
-            {
+            Some("md") if path.parent().map_or(false, |p| p == search_root.as_path()) => {
                 docs.push(path.to_path_buf())
             }
             _ => {}

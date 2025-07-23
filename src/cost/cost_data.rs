@@ -1,13 +1,12 @@
+use crate::llm_review::enums::AIAgent;
 /// Cost tracking and calculation for LLM inference across multiple providers.
 ///
 /// This module provides real-time cost tracking for AI agent operations,
 /// supporting OpenAI, Anthropic, Gemini, and DeepSeek providers with
 /// accurate token-based pricing calculations.
-
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::llm_review::enums::AIAgent;
 
 /// LLM provider cost types with specific model variants
 #[derive(Clone, Copy, Debug)]
@@ -120,4 +119,3 @@ pub fn get_token_count(text: &str) -> usize {
     // Use ceiling division: (n + divisor - 1) / divisor
     (char_count + 3) / 4
 }
-

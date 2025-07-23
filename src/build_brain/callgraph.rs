@@ -3,7 +3,6 @@
 /// This module processes Slither's call graph output in DOT format, extracting
 /// function relationships and building traversable graph structures for code
 /// slice generation and dependency analysis.
-
 use anyhow::Result;
 use regex::Regex;
 use rusqlite::Connection;

@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::fs;
 use walkdir::WalkDir;
 
+use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
@@ -89,13 +90,13 @@ pub async fn generate_code_slice_for_storage(
     Ok(storage_slice)
 }
 
-pub fn get_hashmap_of_contract_to_functions(
+pub async fn get_hashmap_of_contract_to_functions(
     repo: &RepoPaths,
     semantic_db: &Connection,
 ) -> anyhow::Result<HashMap<String, Vec<SmartContractFunction>>> {
     // find all main contracts for app (ones in /src)
     info!("grabbing all contracts...");
-    let contracts_in_src_folder = contracts_in_src(repo)?;
+    let contracts_in_src_folder = contracts_in_src(repo).await?;
 
     let placeholders = contracts_in_src_folder
         .iter()
@@ -219,7 +220,7 @@ async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec
 
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
-pub fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
+pub async fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
     let src_root = repo.root.join(&repo.repo_name).join("src");
     if !src_root.exists() {
         anyhow::bail!("no src/ folder found at {},", src_root.display());
@@ -265,6 +266,9 @@ pub fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
                 let contract = contract_name.as_str();
                 if !contract.to_ascii_lowercase().contains("mock") {
                     contracts.push(contract.to_string());
+
+                    // record in contract to file hashmap
+                    insert_contract_to_file_mapping(contract, file, repo).await?;
                 }
             }
         }

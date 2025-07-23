@@ -4,7 +4,7 @@
 /// providing efficient storage and retrieval of contextual code slices for
 /// AI analysis with metadata and token counting.
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -72,7 +72,7 @@ impl CodeBlocksDb {
                 /* ───────── deduped contract bodies ─────────── */
                 CREATE TABLE IF NOT EXISTS codeblocks(
                 id      TEXT PRIMARY KEY,  -- sha256(body)
-                filename TEXT,
+                contract TEXT,
                 tokens  INTEGER,
                 content TEXT
                 );
@@ -166,11 +166,11 @@ impl CodeBlocksDb {
     pub fn get_all_contracts(&self) -> rusqlite::Result<HashMap<String, String>> {
         let conn = Connection::open(&self.path)?;
 
-        let mut stmt = conn.prepare("SELECT filename, content FROM codeblocks")?;
+        let mut stmt = conn.prepare("SELECT contract, content FROM codeblocks")?;
 
         let rows = stmt.query_map([], |row| {
             Ok((
-                row.get::<_, String>(0)?, // filename/contract
+                row.get::<_, String>(0)?, // contract
                 row.get::<_, String>(1)?, // content
             ))
         })?;

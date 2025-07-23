@@ -53,4 +53,5 @@ Before providing your final JSON output, you must:
 - **Be precise** - Use exact classification criteria
 - **Think like an attacker** - Consider how each vulnerability could be exploited
 - **Provide only the JSON** - No additional commentary in final output
+
 "#;

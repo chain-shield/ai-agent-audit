@@ -1,11 +1,10 @@
+use super::audit::ReportType;
+use crate::prepare_code::git_clone::RepoPaths;
 /// File saving utilities for audit reports and analysis data.
 ///
 /// This module provides functions to save audit reports and other analysis
 /// outputs to the local filesystem with appropriate naming conventions.
-
 use std::{fs::File, io::Write};
-use crate::prepare_code::git_clone::RepoPaths;
-use super::audit::ReportType;
 
 /// Saves an audit report to a file with appropriate naming.
 ///
