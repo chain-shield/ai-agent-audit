@@ -12,7 +12,9 @@ use crate::{
 use log::info;
 use rig::providers::openai::O3;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use tokio::fs;
 
+use super::contract_file_map::get_file_from_contract;
 use super::{enums::AIAgent, phases};
 
 /// Multi-LLM security analysis orchestration.
@@ -51,7 +53,6 @@ pub async fn review_codebase_for_security_issues(
 
     for (contract, codeblock) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
-        // info!("codeblock => {}", codeblock);
 
         // grab additional context from RAG
         // let rag_context = get_rag_for_security_query(&codeblock, repo).await?;
@@ -60,20 +61,25 @@ pub async fn review_codebase_for_security_issues(
         //     metadata_context, rag_context
         // );
 
-        // Phase 1: Pre-fetch strategic files once to avoid rate limits during parallel analysis
-        let prefetched_files =
-            phases::prefetch_context::execute(&codeblock, repo, &ai_planning_agent).await?;
+        // // Phase 1: Pre-fetch strategic files once to avoid rate limits during parallel analysis
+        // let prefetched_files =
+        //     phases::prefetch_context::execute(&codeblock, repo, &ai_planning_agent).await?;
 
         // Combine original context with prefetched files
-        let metadata_context = if prefetched_files.is_empty() {
-            metadata_context.to_string()
-        } else {
-            format!(
-                "{}\n\n## Additional Protocol Files for More Context ------------------\n\n{}",
-                metadata_context, prefetched_files
-            )
-        };
-        // Phase 2: Generate findings using parallel AI agents
+        // let metadata_context = if prefetched_files.is_empty() {
+        //     metadata_context.to_string()
+        // } else {
+        //     format!(
+        //         "{}\n\n## Additional Protocol Files for More Context ------------------\n\n{}",
+        //         metadata_context, prefetched_files
+        //     )
+        // };
+
+        // Phase 1 generated enhanced codeblock
+        let codeblock = enhance_codeblock(&contract, &codeblock, repo).await?;
+        // info!("codeblock => {}", codeblock);
+
+        // // Phase 2: Generate findings using parallel AI agents
         let raw_findings = phases::generate_findings::execute(
             &contract,
             &codeblock,
@@ -117,6 +123,29 @@ pub async fn review_codebase_for_security_issues(
     Ok((all_security_issues, invariant_findings))
 }
 
+// combine codeblock with original file context (that codeblock came from)
+// this contains natspec and additional context
+pub async fn enhance_codeblock(
+    contract: &str,
+    codeblock: &str,
+    repo: &RepoPaths,
+) -> anyhow::Result<String> {
+    let file = get_file_from_contract(contract, repo).await?;
+
+    let file_content = fs::read_to_string(&file).await?;
+
+    let filename = file.strip_prefix(&repo.root)?;
+    info!("{} contains contract {}", filename.display(), contract);
+
+    let enhanced_block = format!(
+        "{} \n\n {}: \n\n {}",
+        codeblock,
+        filename.display(),
+        file_content
+    );
+
+    Ok(enhanced_block)
+}
 pub async fn generate_ai_agents(
     repo: &RepoPaths,
 ) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Vec<Arc<AIAgent>>)> {

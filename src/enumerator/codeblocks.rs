@@ -47,7 +47,7 @@ pub async fn generate_codeblock_from_codebase(
     token_budget: usize,
 ) -> Result<()> {
     log::info!("getting contract to func mapping");
-    let contract_to_func_map = get_hashmap_of_contract_to_functions(repo, semantic_db)?;
+    let contract_to_func_map = get_hashmap_of_contract_to_functions(repo, semantic_db).await?;
 
     for (contract, functions_of_contract) in contract_to_func_map {
         // Check if codeblock already generated for this seed
