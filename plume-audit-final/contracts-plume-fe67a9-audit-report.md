@@ -12,30 +12,30 @@ Plume is a modular, upgrade-friendly delegated-proof-of-stake protocol built wit
 
 State is kept in namespaced storage libraries so facets can be upgraded independently.  PLUME holders stake to validators; unstake triggers a cooldown (must exceed max slash-vote window).  Rewards accrue per-validator via checkpointed emission-rate and commission histories; users claim from a separate UUPS-upgradeable Treasury contract, preserving staking contract security.  Validators earn commission, subject to a 50 % system cap and 7-day withdrawal timelock.  Slashing requires unanimous votes from other active validators within a bounded window, burning offender’s stake.  All contracts use ERC1967 proxies for upgradeability, and role-gated admin paths.  Helper proxies (PlumeStakingProxy, RewardTreasuryProxy, etc.) and libraries complete the system, while DateTime, Spin, and Raffle provide ancillary dApp features.  
 ## High Risk Findings
-[H-1]. Upgradeability Initializer Safety issue in Raffle::NA
-[H-2]. Reentrancy issue in Raffle::spendRaffle
-[H-3]. DOS issue in ValidatorFacet::_cleanupExpiredVotes
-[H-4]. DOS issue in StakingFacet::withdraw
-[H-5]. Access Control issue in AccessControlFacet::renounceRole
-[H-6]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl
-[H-7]. Access Control issue in AccessControlFacet::initializeAccessControl
-[H-8]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl
-[H-9]. Reentrancy issue in StakingFacet::restakeRewards
-[H-10]. Upgradeability Initializer Safety issue in PlumeStakingRewardTreasury::NA
-[H-11]. Zero Code issue in RewardsFacet::setTreasury
-[H-12]. Reentrancy issue in RewardsFacet::claimAll
-[H-13]. Access Control issue in ManagementFacet::adminWithdraw
-[H-14]. Zero Code issue in RewardsFacet::setTreasury
-[H-15]. Access Control issue in AccessControlFacet::initializeAccessControl
-[H-16]. Access Control issue in Plume::burn
-[H-17]. Upgradeability Initializer Safety issue in Plume::initialize
-[H-18]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl
-[H-19]. Access Control issue in ManagementFacet::adminWithdraw
-[H-20]. Access Control issue in ManagementFacet::adminClearValidatorRecord
-[H-21]. Access Control issue in ManagementFacet::adminClearValidatorRecord
-[H-22]. Reentrancy issue in Raffle::spendRaffle
-[H-23]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl
-[H-24]. Access Control issue in AccessControlFacet::initializeAccessControl
+[H-1]. Upgradeability Initializer Safety issue in Raffle::NA - DONE
+[H-2]. Reentrancy issue in Raffle::spendRaffle - DONE
+[H-3]. DOS issue in ValidatorFacet::_cleanupExpiredVotes - DONE
+[H-4]. DOS issue in StakingFacet::withdraw - SKIP FOR NOW
+[H-5]. Access Control issue in AccessControlFacet::renounceRole - DONE
+[H-6]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl - DONE
+[H-7]. Access Control issue in AccessControlFacet::initializeAccessControl - DONE
+[H-8]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl - DONE
+[H-9]. Reentrancy issue in StakingFacet::restakeRewards - DONE
+[H-10]. Upgradeability Initializer Safety issue in PlumeStakingRewardTreasury::NA - FALSE POSITIVE
+[H-11]. Zero Code issue in RewardsFacet::setTreasury - SKIP FOR NOW
+[H-12]. Reentrancy issue in RewardsFacet::claimAll - DONE
+[H-13]. Access Control issue in ManagementFacet::adminWithdraw - SKIP FOR NOW
+[H-14]. Zero Code issue in RewardsFacet::setTreasury - DUP
+[H-15]. Access Control issue in AccessControlFacet::initializeAccessControl - DUP
+[H-16]. Access Control issue in Plume::burn - SKIP FOR NOW
+[H-17]. Upgradeability Initializer Safety issue in Plume::initialize - DONE
+[H-18]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl - DUP
+[H-19]. Access Control issue in ManagementFacet::adminWithdraw - DUP
+[H-20]. Access Control issue in ManagementFacet::adminClearValidatorRecord  - NOT LEGIT
+[H-21]. Access Control issue in ManagementFacet::adminClearValidatorRecord - DUP & NOT LEGIT
+[H-22]. Reentrancy issue in Raffle::spendRaffle - DUP
+[H-23]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl - DUP
+[H-24]. Access Control issue in AccessControlFacet::initializeAccessControl - DUP
 ## Medium Risk Findings
 [M-1]. Storage Layout issue in Raffle::NA
 [M-2]. DOS issue in ValidatorFacet::setValidatorCommission
@@ -395,6 +395,8 @@ function spendRaffle(uint256 prizeId, uint256 ticketAmount) external prizeIsActi
 }
 ```
 
+is this legit? can attacker create large number of validator nodes to skyrocket gas costs? if legit, lets create PoC test
+
 ## [H-3]. DOS issue in ValidatorFacet::_cleanupExpiredVotes
 
 ## Description
@@ -453,6 +455,7 @@ Refactor slashing data structures so that state-clean-up and vote-counting are O
 • In `_performSlash` simply zero the mapping with a fresh storage slot instead of iterating and `delete`-ing each key.
 These changes make each call’s gas cost independent of validator count and restore liveness.
 
+// TODO - do later
 ## [H-4]. DOS issue in StakingFacet::withdraw
 
 ## Description
@@ -611,6 +614,7 @@ function _processMaturedCooldowns(address user, uint16[] calldata validatorIds) 
 }
 ```
 This same paginated approach should be applied to `restake()` and `restakeRewards()`.
+
 
 ## [H-5]. Access Control issue in AccessControlFacet::renounceRole
 
@@ -802,7 +806,7 @@ contract AccessControlFacet is IAccessControl, AccessControlInternal, OwnableInt
 }
 ```
 This requires inheriting `OwnableInternal` and adding the `onlyOwner` modifier.
-
+#### DUP TO H-6
 ## [H-7]. Access Control issue in AccessControlFacet::initializeAccessControl
 
 ## Description
@@ -914,7 +918,7 @@ function initializeAccessControl(address initialAdmin) external onlyOwner {
 ```
 
 or make the function `internal` and call it only via the `diamondCut` initialization calldata so it can never be invoked again externally.
-
+### DUP!
 ## [H-8]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl
 
 ## Description
@@ -1786,6 +1790,7 @@ contract AccessControlExploitTest is Test {
 
 ## Suggested Mitigation
 Call initializeAccessControl atomically from the diamondCut (use the _init calldata parameter) and gate the function so it can only be executed by the diamond itself, e.g. `require(msg.sender == address(this), "onlyDiamond");`. This prevents external callers from front-running while still allowing initialization during deployment. Existing deployments can alternatively add `onlyOwner` or `onlyRole(ADMIN_ROLE)` protection.
+
 
 ## [H-16]. Access Control issue in Plume::burn
 

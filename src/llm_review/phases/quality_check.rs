@@ -104,7 +104,6 @@ pub async fn execute(
                         "{} did not pass quality check ",
                         arc_findings.findings[i].title(),
                     );
-                    info!("{:#?}", &qualify_checked_finding);
                     let updated_finding = Finding {
                         impact: Some(qualify_checked_finding.impact.clone().unwrap_or(
                             arc_findings.findings[i].impact.clone().unwrap_or_default(),
