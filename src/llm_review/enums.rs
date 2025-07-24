@@ -81,6 +81,7 @@ where
 /// ------------------------------------------------------------------
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
 pub enum Severity {
+    Critical,
     High,
     Medium,
     Low,
@@ -145,6 +146,7 @@ impl Default for Severity {
 impl Severity {
     pub fn as_str(self) -> &'static str {
         match self {
+            Severity::Critical => "Critical",
             Severity::High => "High",
             Severity::Medium => "Medium",
             Severity::Low => "Low",
@@ -154,6 +156,7 @@ impl Severity {
 
     pub fn as_initial(self) -> &'static str {
         match self {
+            Severity::Critical => "C",
             Severity::High => "H",
             Severity::Medium => "M",
             Severity::Low => "L",
@@ -457,13 +460,14 @@ impl<'de> Deserialize<'de> for Severity {
     {
         let s: String = Deserialize::deserialize(deserializer)?;
         match s.to_ascii_lowercase().as_str() {
+            "critical" => Ok(Severity::Critical),
             "high" => Ok(Severity::High),
             "medium" => Ok(Severity::Medium),
             "low" => Ok(Severity::Low),
             "info" => Ok(Severity::Info),
             other => Err(de::Error::unknown_variant(
                 other,
-                &["High", "Medium", "Low", "Info"],
+                &["Critical", "High", "Medium", "Low", "Info"],
             )),
         }
     }
