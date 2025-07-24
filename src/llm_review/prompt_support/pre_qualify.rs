@@ -12,7 +12,7 @@ Before instructions are provided on the task please note required output format:
   "impact": "Updated impact (omit if no update needed)",
   "proof_of_concept": "Revised PoC (omit if no update needed)",
   "proof_of_code": "Revised Foundry test (omit if no update needed)",
-  "severity": "High | Medium | Low | Info (omit if no update needed)",
+  "severity": "Critical | High | Medium | Low | Info (omit if no update needed)",
   "mitigation": "Improved mitigation (omit if no update needed)"
 }
 

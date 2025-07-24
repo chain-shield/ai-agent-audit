@@ -14,7 +14,8 @@ use crate::{
 use std::{collections::HashMap, path::Path};
 
 /// Severity levels for organizing findings in reports
-const SEVERITIES: [Severity; 4] = [
+const SEVERITIES: [Severity; 5] = [
+    Severity::Critical,
     Severity::High,
     Severity::Medium,
     Severity::Low,
@@ -45,7 +46,7 @@ pub enum ReportType {
 /// # Returns
 /// * `String` - Complete audit report in Markdown format
 pub async fn generated_audit_report(
-    issues: &HashMap<String, Findings>,
+    findings: &Findings,
     _invariants: &[ContractInvariants],
     repo: &RepoPaths,
     semantics_path: &Path,
@@ -57,8 +58,6 @@ pub async fn generated_audit_report(
 
     let report_title = format!("# {} - Findings Report\n", protocol_name);
     let subtitle = format!("## Commit hash: {}\n\n", commit);
-
-    let findings = combine_findings_for_all_contracts(issues.clone());
 
     // generated report
     audit_report.push_str(&report_title);

@@ -15,8 +15,8 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(UPGRADER_ROLE_12)
 #### PlumeStakingRewardTreasury.distributeReward(address,uint256,address) [EXTERNAL]
 ```slithir
 PLUME_NATIVE_1(address) := phi(['PLUME_NATIVE_0', 'PLUME_NATIVE_3'])
-DISTRIBUTOR_ROLE_11(bytes32) := phi(['DISTRIBUTOR_ROLE_0', 'DISTRIBUTOR_ROLE_13', 'DISTRIBUTOR_ROLE_10'])
-_isRewardToken_4(mapping(address => bool)) := phi(['_isRewardToken_6', '_isRewardToken_8', '_isRewardToken_3', '_isRewardToken_7', '_isRewardToken_0'])
+DISTRIBUTOR_ROLE_11(bytes32) := phi(['DISTRIBUTOR_ROLE_10', 'DISTRIBUTOR_ROLE_0', 'DISTRIBUTOR_ROLE_13'])
+_isRewardToken_4(mapping(address => bool)) := phi(['_isRewardToken_0', '_isRewardToken_3', '_isRewardToken_6', '_isRewardToken_8', '_isRewardToken_7'])
  recipient == address(0)
 TMP_12712 = CONVERT 0 to address
 TMP_12713(bool) = recipient_1 == TMP_12712
@@ -76,14 +76,14 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(DISTRIBUTOR_ROLE_12)
 ```
 #### PlumeStakingRewardTreasury.getRewardTokens() [EXTERNAL]
 ```slithir
-_rewardTokens_5(address[]) := phi(['_rewardTokens_0', '_rewardTokens_4'])
+_rewardTokens_5(address[]) := phi(['_rewardTokens_4', '_rewardTokens_0'])
  _rewardTokens
 RETURN _rewardTokens_5
 ```
 #### PlumeStakingRewardTreasury.getBalance(address) [EXTERNAL]
 ```slithir
 PLUME_NATIVE_4(address) := phi(['PLUME_NATIVE_0', 'PLUME_NATIVE_3'])
-_isRewardToken_7(mapping(address => bool)) := phi(['_isRewardToken_6', '_isRewardToken_8', '_isRewardToken_3', '_isRewardToken_7', '_isRewardToken_0'])
+_isRewardToken_7(mapping(address => bool)) := phi(['_isRewardToken_0', '_isRewardToken_3', '_isRewardToken_6', '_isRewardToken_8', '_isRewardToken_7'])
  token == PLUME_NATIVE
 TMP_12736(bool) = token_1 == PLUME_NATIVE_4
 CONDITION TMP_12736
@@ -110,9 +110,9 @@ INTERNAL_CALL, Initializable._disableInitializers()()
 ```
 #### PlumeStakingRewardTreasury.initialize(address,address) [PUBLIC]
 ```slithir
-DEFAULT_ADMIN_ROLE_1(bytes32) := phi(['DEFAULT_ADMIN_ROLE_6', 'DEFAULT_ADMIN_ROLE_0'])
-DISTRIBUTOR_ROLE_1(bytes32) := phi(['DISTRIBUTOR_ROLE_0', 'DISTRIBUTOR_ROLE_13', 'DISTRIBUTOR_ROLE_10'])
-ADMIN_ROLE_1(bytes32) := phi(['ADMIN_ROLE_11', 'ADMIN_ROLE_13', 'ADMIN_ROLE_0'])
+DEFAULT_ADMIN_ROLE_1(bytes32) := phi(['DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_6'])
+DISTRIBUTOR_ROLE_1(bytes32) := phi(['DISTRIBUTOR_ROLE_10', 'DISTRIBUTOR_ROLE_0', 'DISTRIBUTOR_ROLE_13'])
+ADMIN_ROLE_1(bytes32) := phi(['ADMIN_ROLE_13', 'ADMIN_ROLE_0', 'ADMIN_ROLE_11'])
 UPGRADER_ROLE_1(bytes32) := phi(['UPGRADER_ROLE_11', 'UPGRADER_ROLE_0', 'UPGRADER_ROLE_13'])
  admin == address(0)
 TMP_12686 = CONVERT 0 to address
@@ -149,9 +149,9 @@ MODIFIER_CALL, Initializable.initializer()()
 ```
 #### PlumeStakingRewardTreasury.addRewardToken(address) [EXTERNAL]
 ```slithir
-ADMIN_ROLE_12(bytes32) := phi(['ADMIN_ROLE_11', 'ADMIN_ROLE_13', 'ADMIN_ROLE_0'])
-_rewardTokens_1(address[]) := phi(['_rewardTokens_0', '_rewardTokens_4'])
-_isRewardToken_1(mapping(address => bool)) := phi(['_isRewardToken_6', '_isRewardToken_8', '_isRewardToken_3', '_isRewardToken_7', '_isRewardToken_0'])
+ADMIN_ROLE_12(bytes32) := phi(['ADMIN_ROLE_13', 'ADMIN_ROLE_0', 'ADMIN_ROLE_11'])
+_rewardTokens_1(address[]) := phi(['_rewardTokens_4', '_rewardTokens_0'])
+_isRewardToken_1(mapping(address => bool)) := phi(['_isRewardToken_0', '_isRewardToken_3', '_isRewardToken_6', '_isRewardToken_8', '_isRewardToken_7'])
  token == address(0)
 TMP_12703 = CONVERT 0 to address
 TMP_12704(bool) = token_1 == TMP_12703
@@ -183,7 +183,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(ADMIN_ROLE_12)
 ```
 #### PlumeStakingRewardTreasury.isRewardToken(address) [EXTERNAL]
 ```slithir
-_isRewardToken_8(mapping(address => bool)) := phi(['_isRewardToken_6', '_isRewardToken_8', '_isRewardToken_3', '_isRewardToken_7', '_isRewardToken_0'])
+_isRewardToken_8(mapping(address => bool)) := phi(['_isRewardToken_0', '_isRewardToken_3', '_isRewardToken_6', '_isRewardToken_8', '_isRewardToken_7'])
  _isRewardToken[token]
 REF_2739(bool) -> _isRewardToken_8[token_1]
 RETURN REF_2739

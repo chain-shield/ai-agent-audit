@@ -55,7 +55,7 @@ pub struct Finding {
     pub impact: Option<String>, // Impact of Issue
     pub proof_of_concept: Option<String>, // Demonstrate how issue can be exploited by hacker
     pub proof_of_code: Option<String>, // Write Foundry Unit test to prove issue exists
-    #[schemars(description = "Severity level: High, Medium, Low, Info")]
+    #[schemars(description = "Severity level: Critical, High, Medium, Low, Info")]
     pub severity: Severity, //severity of issue
     pub mitigation: Option<String>,
 }
@@ -214,7 +214,10 @@ impl Finding {
     }
 
     pub fn free_report_title(&self) -> String {
-        if self.severity == Severity::High || self.severity == Severity::Medium {
+        if self.severity == Severity::Critical
+            || self.severity == Severity::High
+            || self.severity == Severity::Medium
+        {
             format!(
                 "{} issue found with {} severity",
                 self.issue_type.as_fancy_str(),

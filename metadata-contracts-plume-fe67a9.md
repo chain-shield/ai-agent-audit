@@ -1,706 +1,693 @@
 
 ## SUMMARY OF FILE: contracts/plume/src/PlumeStaking.sol
-### PlumeStaking.sol
-The `PlumeStaking` contract serves as a Diamond pattern proxy for the Plume staking mechanism in a blockchain. It extends `SolidStateDiamond`, combining multiple facets for modular functionality. Key features of this contract include initial setup flexibility and robust validations during initialization.
+### PlumeStaking Contract
+The `PlumeStaking` contract is a proxy entry point for the Plume Staking system, inheriting functionalities from `SolidStateDiamond`. It handles the initialization of the staking system under specific parameters, and maintains control over configuration settings such as minimum stake amounts and validator commission limits.
 
-#### Contract Definition:
-```solidity
-contract PlumeStaking is SolidStateDiamond
-```
+#### Contract: PlumeStaking
+This contract is part of the Plume system, built on a Diamond Proxy architecture. It serves as a central configuration point, setting parameters and ownership within the staking protocol.
 
-### Function Summaries:
-
-#### `initializePlume()`
+#### Function: initializePlume
 ```solidity
 function initializePlume(address initialOwner, uint256 minStake, uint256 cooldown, uint256 maxSlashVoteDuration, uint256 maxValidatorCommission) external virtual onlyOwner
 ```
-Initializes staking parameters and allows ownership transfer. Validates inputs for `minStake`, `cooldown`, `maxSlashVoteDuration`, and `maxValidatorCommission`. Ensures `cooldown` exceeds `maxSlashVoteDuration` and limits validator commission rates to 50%. Sets internal storage values and flags contract as initialized.
+This function is designed to initialize the Plume Staking contract with critical parameters required for its operation. These include the minimum stake amount, cooldown interval, and maximum slash vote duration. It also verifies validity of parameters such as the maximum validator commission rate. If the initial owner is different from the current owner, it transfers ownership accordingly. The function ensures that initialization occurs only once by checking an `initialized` flag.
 
-#### `isInitialized()`
+#### Function: isInitialized
 ```solidity
 function isInitialized() external view returns (bool)
 ```
-Returns initialization status of the contract by checking internal storage flag `initialized`.
+This view function checks whether the staking system has been initialized. It returns a boolean based on the `initialized` status from storage.
 
-### Storage Variables:
-
-- **`minStakeAmount`**: The minimum amount required for the stake, set during initialization.
-- **`cooldownInterval`**: The cooldown period before a slashing decision can be finalized; initialized value.
-- **`maxSlashVoteDurationInSeconds`**: Maximum allowed duration for slashing votes.
-- **`maxAllowedValidatorCommission`**: Maximum validator commission rate, capped at 50%.
-- **`maxCommissionCheckpoints`**: The maximum number of commission rate change records; initialized to 500.
-- **`initialized`**: Boolean flag to check if contract settings have already been initialized.
+#### Storage Variables 
+- **$.initialized**: Indicates whether the contract has been initialized.
+- **$.minStakeAmount**: Sets the minimum amount required to stake.
+- **$.cooldownInterval**: Defines cooldown period before slash votes occur.
+- **$.maxSlashVoteDurationInSeconds**: Limits the duration of slash votes.
+- **$.maxAllowedValidatorCommission**: Caps validator commission rates to ensure fair practices.
+- **$.maxCommissionCheckpoints**: Sets a default limit on commission checkpoints to 500.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/facets/ValidatorFacet.sol
-The 'ValidatorFacet' contract facilitates management of validators, including adding, updating, and managing their status and commission within a staking protocol. It leverages several imports for logic, errors, and events handling, with major features framed under the Ethereum blockchain.
+The `ValidatorFacet` Solidity contract manages validators, handling operations like adding, updating, commission management, capacity updates, and validator status.
+
+### Contract Definition
+- **Contract Name:** ValidatorFacet
+- **Inherits:** ReentrancyGuardUpgradeable, OwnableInternal
+
+### Functions
+
+#### addValidator
+- **Purpose:** Adds a new validator with configured commission and addresses.
+- **Interface:** `function addValidator(uint16 validatorId, uint256 commission, address l2AdminAddress, address l2WithdrawAddress, string calldata l1ValidatorAddress, string calldata l1AccountAddress, address l1AccountEvmAddress, uint256 maxCapacity) external`
+- **Summary:** Checks basic validations, updates mappings and emits `ValidatorAdded` event.
+
+#### setValidatorCapacity
+- **Purpose:** Updates the validator's staking capacity.
+- **Interface:** `function setValidatorCapacity(uint16 validatorId, uint256 maxCapacity) external`
+- **Summary:** Modifies maximum staking capacity and emits `ValidatorCapacityUpdated`.
+
+#### setValidatorStatus
+- **Purpose:** Changes the active status of a validator.
+- **Interface:** `function setValidatorStatus(uint16 validatorId, bool newActiveStatus) external`
+- **Summary:** Modifies active state, handles associated behaviors and rates, and emits `ValidatorStatusUpdated`.
+
+#### setValidatorCommission
+- **Purpose:** Updates the commission rate for a validator.
+- **Interface:** `function setValidatorCommission(uint16 validatorId, uint256 newCommission) external`
+- **Summary:** Checks and updates validator's commission, uses checkpointing for reward logic.
+
+#### setValidatorAddresses
+- **Purpose:** Updates validator-related addresses.
+- **Interface:** `function setValidatorAddresses(uint16 validatorId, address newL2AdminAddress, address newL2WithdrawAddress, string calldata newL1ValidatorAddress, string calldata newL1AccountAddress, address newL1AccountEvmAddress) external`
+- **Summary:** Manages address updates, validates inputs, and triggers `ValidatorAddressesSet`.
+
+#### acceptAdmin
+- **Purpose:** Allows a proposed admin to accept their role for a validator.
+- **Interface:** `function acceptAdmin(uint16 validatorId) external nonReentrant`
+- **Summary:** Finalizes the admin transfer initiated in `setValidatorAddresses`.
+
+#### requestCommissionClaim
+- **Purpose:** Initiates a commission claim, subject to time-lock.
+- **Interface:** `function requestCommissionClaim(uint16 validatorId, address token) external`
+- **Summary:** Handles initiation, ensures commission is settled up to time, and locks amount.
+
+#### finalizeCommissionClaim
+- **Purpose:** Completes the commission claim process after time-lock.
+- **Interface:** `function finalizeCommissionClaim(uint16 validatorId, address token) external returns (uint256)`
+- **Summary:** Validates expiry, disburses payment from treasury to recipient and emits event.
+
+#### voteToSlashValidator
+- **Purpose:** Cast a vote to slash a malicious validator, enabling automated slashing.
+- **Interface:** `function voteToSlashValidator(uint16 validatorId, uint256 voteExpiration) external`
+- **Summary:** Ensures voting conditions, maintains vote integrity, and invokes slashing if needed.
+
+#### slashValidator
+- **Purpose:** Allows manual enforcement of slashing conditions.
+- **Interface:** `function slashValidator(uint16 validatorId) external`
+- **Summary:** Validates all conditions, performs slashing with penalties, and handles events.
+
+#### Various Other Helpers
+- Includes utilities for cleaning expired votes, tracking commission, managing validators/tokens, and providing essential data interfaces.
+
+### Storage Variables
+
+#### PlumeStakingStorage
+- **Definition:** Handles all validator-related storage, including mappings of validator IDs, commissions, states, and voting.
+- **Summary:** Centralized management of validator data, critical for maintaining state integrity and managing operations.
+
+Overall, `ValidatorFacet` plays a pivotal role in managing validators' lifecycle, ensuring efficient and secure handling of their operations.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/facets/StakingFacet.sol
-### Summary of StakingFacet contract
+### Summary of `StakingFacet` Contract
+The `StakingFacet` contract provides functionalities related to staking, unstaking, restaking, and withdrawal of PLUME tokens associated with validators. It incorporates robust validation, reward handling, and state management reliant on the `PlumeStakingStorage`, `PlumeRewardLogic`, and `PlumeValidatorLogic` libraries, leveraging `ReentrancyGuardUpgradeable` for safety.
 
-**Contract:** StakingFacet
+#### Contract Definition
+`contract StakingFacet is ReentrancyGuardUpgradeable`
 
-The `StakingFacet` contract in Solidity is a core component designed for staking, unstaking, and managing rewards within the Plume staking mechanism. The contract employs the `ReentrancyGuardUpgradeable` to avoid reentrancy attacks and extends functionality through external modules for error handling, events, and logic operations.
+### Functions Overview
 
-#### Key Functions:
+#### `_checkValidatorSlashedAndRevert`
+```solidity
+function _checkValidatorSlashedAndRevert(uint16 validatorId) internal view
+```
+Validates that a validator is not slashed; reverts if a slashed validator is specified.
 
-1. **_checkValidatorSlashedAndRevert(uint16 validatorId)**
-   - **Purpose:** Ensures a validator isn't slashed before proceeding with staking operations.
-   - **Interface:** `internal(view) returns ()`
-   - **Logic:** Retrieves the validator's status and reverts if it's slashed.
+#### `_validateValidatorForStaking`
+```solidity
+function _validateValidatorForStaking(uint16 validatorId) internal view
+```
+Checks the existence and activity of a validator, ensuring it's not slashed.
 
-2. **_validateValidatorForStaking(uint16 validatorId)**
-   - **Purpose:** Confirms a validator's existence and active status.
-   - **Interface:** `internal(view) returns ()`
-   - **Logic:** Checks if a validator exists and is active, otherwise reverts with appropriate error.
+#### `_validateStakeAmount`
+```solidity
+function _validateStakeAmount(uint256 amount) internal view
+```
+Ensures a stake amount is non-zero and meets minimum requirements.
 
-3. **_validateStakeAmount(uint256 amount)**
-   - **Purpose:** Ensures the stake amount is above the minimum threshold.
-   - **Interface:** `internal(view) returns ()`
-   - **Logic:** Verifies against minimum stake requirements, reverting on failure.
+#### `_validateStaking`
+```solidity
+function _validateStaking(uint16 validatorId, uint256 amount) internal view
+```
+Combines validator and stake amount validations for staking operations.
 
-4. **_validateStaking(uint16 validatorId, uint256 amount)**
-   - **Purpose:** Conducts comprehensive validation for staking operations.
-   - **Interface:** `internal(view) returns ()`
-   - **Logic:** Combines validator and amount validation steps.
+#### `_validateValidatorCapacity`
+```solidity
+function _validateValidatorCapacity(uint16 validatorId, uint256 stakeAmount) internal view
+```
+Validates that staking does not exceed a validator's capacity.
 
-5. **stake(uint16 validatorId)**
-   - **Purpose:** Allows users to stake PLUME funds directly from their wallet to a designated validator.
-   - **Interface:** `external(payable) returns (uint256)`
-   - **Logic:** Validates staking setup, enables the transaction, and emits the stake event.
+#### `_validateValidatorPercentage`
+```solidity
+function _validateValidatorPercentage(uint16 validatorId, uint256 stakeAmount) internal view
+```
+Ensures validator's percentage limits are not exceeded by new stake amounts.
 
-6. **restake(uint16 validatorId, uint256 amount)**
-   - **Purpose:** Allows the restaking of funds from cooled/parked states to a validator.
-   - **Interface:** `external(nonReentrant) returns ()`
-   - **Logic:** Executes safe validation, processes cooldowns, and updates stake setups.
+#### `_validateCapacityLimits`
+```solidity
+function _validateCapacityLimits(uint16 validatorId, uint256 stakeAmount) internal view
+```
+Performs both capacity and percentage validation checks.
 
-7. **withdraw()**
-   - **Purpose:** Facilitates the withdrawal of all PLUME available in the parked balance for the caller.
-   - **Interface:** `external() returns ()`
-   - **Logic:** Transfers withdrawable balances, emits events, and handles any due transfers to the user.
+#### `_validateValidatorForUnstaking`
+```solidity
+function _validateValidatorForUnstaking(uint16 validatorId) internal view
+```
+Ensures a validator exists and isn't slashed for unstaking operations.
 
-8. **restakeRewards(uint16 validatorId)**
-   - **Purpose:** Automatically restakes accrued rewards to specified validators.
-   - **Interface:** `external(nonReentrant) returns (uint256)`
-   - **Logic:** Claims all pending rewards, validates the process, and executes restaking transactions.
+#### `_performStakeSetup`
+```solidity
+function _performStakeSetup(address user, uint16 validatorId, uint256 stakeAmount) internal returns (bool isNewStake)
+```
+Executes setup and validation when initiating a new stake, updating records and validating capacity limits.
 
-#### Storage Variables
+#### `_performRestakeWorkflow`
+```solidity
+function _performRestakeWorkflow(address user, uint16 validatorId, uint256 amount, string memory fromSource) internal
+```
+Handles restaking from cooled or parked funds, ensuring validations and stake updates.
 
-- **PlumeStakingStorage.Layout storage $**
-  - **Description:** Manages all elements of staking, including validation, staker information, and accumulated rewards.
-  - **Definition:** Central data structure maintained across actions for validator and staker contexts.
+#### `stake`
+```solidity
+function stake(uint16 validatorId) external payable returns (uint256)
+```
+Allows user to stake PLUME tokens to a validator using wallet funds.
 
-- **PlumeValidatorLogic**
-  - **Description:** Provides methods to handle staking-related validator logic, such as adding/removing stakers.
-  - **Definition:** Imported logic that integrates and manages validator activities within staking operations.
+### Variable Descriptions
 
-- **PlumeRewardLogic**
-  - **Description:** Offers functions to handle reward-related calculations and updates for staking participants.
-  - **Definition:** External library for maintaining reward balances and distribution logic.
+#### `$`
+`PlumeStakingStorage.Layout` instance managing the entire staking state.
 
+#### `msg.sender`
+Address representing the caller of a function.
+
+#### `stakeAmount`
+`uint256` representing the amount of funds being staked or restaked.
+
+### Concluding Summary
+The `StakingFacet` is comprehensive in its facilities to manage stake-related operations rigorously. It ensures precise stake setup, follows safe withdrawal/logistic paths, handles complex validation scenarios and calculation for various states involved in staking.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/facets/ManagementFacet.sol
-### Project File List Summary
+### Contract Summary: ManagementFacet
+The ManagementFacet contract handles administrative functions for a staking platform. It incorporates various utility libraries and inherits from OpenZeppelin and Solidstate contracts, adding protective functionalities like reentrancy guards.
 
-The project is structured into several categories: deployment scripts, upgrade scripts, source files, proxies, tests, and various utility scripts. 
+### Function: setMinStakeAmount
+```solidity
+function setMinStakeAmount(uint256 _minStakeAmount) external
+```
+Sets the minimum stake amount required, ensuring it isn't zero. Requires admin role to execute. Emits `MinStakeAmountSet` event.
 
-- **Deployment Scripts** (e.g., `DeployDateTimeContract.s.sol`, `DeployMockPUSD.s.sol`): Facilitate initial contract deployment.
-- **Upgrade Scripts** (e.g., `UpgradeMockPUSD.s.sol`, `UpgradeStakingFacet.s.sol`): Handle contract upgrades.
-- **Source Files** (e.g., `Plume.sol`, `PlumeStaking.sol`): Core logic and facets.
-- **Interfaces and Libraries** (e.g., `IAccessControl.sol`, `PlumeRewardLogic.sol`): Define contract interfaces and reusable logic.
-- **Proxies** (e.g., `PlumeProxy.sol`, `SPINProxy.sol`): Facilitate interactions with other contracts while providing upgradeability.
-- **Spin Components** (e.g., `DateTime.sol`, `Raffle.sol`): Implement specific application logic.
-- **Tests** (e.g., `MockPUSD.t.sol`, `Raffle.t.sol`): Ensure contract reliability through simulated interactions.
+### Function: setCooldownInterval
+```solidity
+function setCooldownInterval(uint256 interval) external
+```
+Sets a new cooldown period for unstaking. If the interval is either zero or shorter than max slash vote duration, it reverts. Requires admin role.
 
-### ManagementFacet Contract Summary
+### Variable: $.minStakeAmount
+Represents the minimum staking amount set in the system. Changes dynamically based on admin actions.
 
-#### Contract Definition 
-**ManagementFacet**: This contract is responsible for managing administrative functions related to staking, cooldown intervals, withdrawal of funds, and correcting historical reward data. Inherits functionality from `ReentrancyGuardUpgradeable` and `OwnableInternal` to manage access control and prevent reentrancy attacks.
-
-#### Function Definitions 
-- **Modifier onlyRole(bytes32 _role)**: Checks if the caller has the specified role via the AccessControlFacet.
-- **Function setMinStakeAmount(uint256 _minStakeAmount)**: Sets the minimum staking amount required and emits `MinStakeAmountSet`.
-- **Function setCooldownInterval(uint256 interval)**: Updates with the new cooldown interval for unstaking operations, emitting `CooldownIntervalSet`.
-- **Function adminWithdraw(address token, uint256 amount, address recipient)**: Allows admin role to withdraw tokens, both ERC20, and native, from the contract.
-- **Function getMinStakeAmount()**: Returns the currently set minimum stake amount.
-- **Function getCooldownInterval()**: Fetches the current cooldown interval from storage.
-- **Function setMaxSlashVoteDuration(uint256 duration)**: Adjusts the maximum allowable slashing vote duration and updates the relevant storage value.
-- **Function setMaxAllowedValidatorCommission(uint256 newMaxRate)**: Allows timelock roles to set maximum validator commission rates while applying it to all validators.
-- **Function setMaxCommissionCheckpoints(uint16 newLimit)**: Ensures validators do not exceed the set checkpoint count, guarding against gas attack vectors.
-- **Function setMaxValidatorPercentage(uint256 newPercentage)**: Establishes the maximum stake percentage a validator can maintain globally.
-- **Function pruneCommissionCheckpoints(uint16 validatorId, uint256 count)**: Prunes validator checkpoints to the maximum count allowed.
-- **Function pruneRewardRateCheckpoints(uint16 validatorId, address token, uint256 count, bool includeAll)**: Cleans up historical reward checkpoints for given parameters.
-- **Function adminClearValidatorRecord(address user, uint16 validatorId)**: Clears user records statically assigned to a validator, updating stake and cooldown records.
-- **Function adminBatchClearValidatorRecords(address[] calldata users, uint16 validatorId)**: Batched version of `adminClearValidatorRecord` for multiple users.
-- **Function addHistoricalRewardToken(address token)**: Registers a token in the historical rewards list.
-- **Function removeHistoricalRewardToken(address token)**: Eliminates a token from the given historical reward list.
-- **Function isHistoricalRewardToken(address token)**: Views if a token was historically marked as a reward.
-- **Function getHistoricalRewardTokens()**: Returns an array of all historically significant tokens.
-- **Function adminCreateHistoricalRewardCheckpoint(uint16 validatorId, address token, uint256 timestamp, uint256 rate)**: Enables the addition of historical checkpoints for later sorting.
-- **Function adminSetTokenAdditionTimestamp(address token, uint256 timestamp)**: Logs the token's addition timestamp to migrate older data points.
-
-#### Storage Variables
-- **External Libraries**: Imports `PlumeErrors`, `PlumeEvents`, `PlumeRewardLogic`, `PlumeStakingStorage`, `PlumeValidatorLogic` and utility libraries from OpenZeppelin to power methods within the contract.
-- **Using Library Directives**: Utilizes SafeERC20 for secure token handling and address manipulations.
+### Variable: $.cooldownInterval
+Specifies the time a staker must wait before unstaking after initiating withdrawal. Can change based on governance decisions.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/facets/RewardsFacet.sol
-### RewardsFacet Contract
-The `RewardsFacet` is a smart contract focused on managing reward tokens, setting reward rates, calculating rewards, and processing claims. It extends `ReentrancyGuardUpgradeable` for contract upgrade safety and `OwnableInternal` for access control. Key imported components include `PlumeRewardLogic` for reward calculations and several storage classes for managing data.
+### Contract: RewardsFacet
 
-#### Functions:
-- **getTreasuryAddress():** `internal view returns (address)` - Reads treasury address from storage using low-level assembly. Essential for handling reward distributions.
+The `RewardsFacet` is a Solidity smart contract implementing a functionality for managing reward tokens associated with a staking system. It handles reward token management, rate setting, reward calculation, claiming mechanisms, and interacts with the PlumeStakingRewardTreasury for distributing rewards. Being part of a diamond architecture, it inherits from `ReentrancyGuardUpgradeable` and `OwnableInternal` for security and ownership management.
 
-- **setTreasuryAddress(address _treasury):** `internal` - Sets the treasury address using assembly for direct storage operations. Ensures rewards are distributed from the correct contract.
+#### Constants
+- **BASE**: `uint256` - Represents a base multiplier, set to `1e18`.
+- **MAX_REWARD_RATE**: `uint256` - Maximum reward rate threshold, defined as `3171 * 1e9`.
 
-- **onlyRole:** `modifier` - Checks if a caller possesses a specific role using `IAccessControl`. Secures functions to authorized users.
+#### Storage Variable
+- **TREASURY_STORAGE_POSITION**: `bytes32` - A slot identifier for storing the treasury address in contract storage.
 
-- **_earned(address user, address token, uint16 validatorId):** `internal returns (uint256 rewards)` - Computes rewards accumulated by a user for a specific token and validator. Utilizes `calculateRewardsWithCheckpoints` to ensure accuracy.
+#### Functions
 
-- **_calculateTotalEarned(address user, address token):** `internal returns (uint256 totalEarned)` - Totals up earned rewards across all validators for a user and token. Leverages the aforementioned earned method.
+- **getTreasuryAddress**: Internal view function returning the currently set treasury address from storage.
 
-#### Storage Variables:
-- **BASE:** `internal constant uint256 = 1e18` - Useful base unit constant for reward calculations.
+- **setTreasuryAddress**: Internal function to store a new treasury address.
 
-- **MAX_REWARD_RATE:** `internal constant uint256 = 3171 * 1e9` - Defines the upper limit for reward rate to mitigate excessive reward distributions.
+- **onlyRole**: Modifier ensuring that the caller possesses a specific access role.
 
-- **TREASURY_STORAGE_POSITION:** `internal constant bytes32` - Storage slot key for holding the treasury contract address, crucial for managing where rewards should be sent from.
+- **_earned**: Calculates the earned rewards for a user from a specific validator, updating its records.
+
+- **_calculateTotalEarned**: Aggregates a user's total rewards across all validators.
+
+- **setTreasury**: Allows an admin to set a new treasury address, emitting the `TreasurySet` event.
+
+- **addRewardToken**: Enables the addition of new reward tokens to the system with restrictions on rates.
+
+- **removeRewardToken**: Removes a reward token from the list, preventing new accruals but maintains historical data for ongoing claims.
+
+- **setRewardRates**: Updates reward rates for multiple tokens with verification against max thresholds and using rate checkpoints.
+
+- **setMaxRewardRate**: Adjusts the maximum allowable reward rate for a token, enforced across all validators.
+
+- **claim**: Multiple versions to allow claims for specific and all tokens/validators, applying non-reentrancy and updating global state prior to transferring rewards.
+
+- **_validateTokenForClaim**: Confirms whether a token is eligible for claiming, checking current and pending reward status.
+
+- **_validateValidatorForClaim**: Verifies validator eligibility based on existence and sanction state.
+
+- **_processValidatorRewards**: Handles user reward settlement for a distinct validator/token combination.
+
+- **_updateUserRewardState**: Resets user accrual records during reward claims.
+
+- **_finalizeRewardClaim**: Completes the reward claim process by transferring accrued rewards from the treasury.
+
+- **_clearPendingRewardFlags**: Manages and clears reward claim flags post-claim.
+
+- **_processAllValidatorRewards**: Computes total rewards from all validators for a user and a specified token.
+
+- **_transferRewardFromTreasury**: Transfers user rewards from the treasury after ensuring setup validity.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/facets/AccessControlFacet.sol
-### Contract: AccessControlFacet
-The `AccessControlFacet` contract is designed to manage roles within the Plume system using SolidState's AccessControl logic. This contract provides the capability to initialize and manage a role hierarchy with specific roles and admin roles, thus facilitating access control management in a modular system like Plume.
+# AccessControlFacet
 
-### Function: initializeAccessControl
-- **Definition:** `function initializeAccessControl() external`
-- **Summary:** Initializes the AccessControl facet by assigning the necessary roles and their respective admins. It ensures that only authorized accounts can perform this initialization by checking a storage flag. This function can only be invoked once and typically by the diamond owner.
+**Contract Description:**
+The `AccessControlFacet` contract facilitates role management using SolidState's AccessControl library. It defines multiple roles for managing access permissions within the contract system. This contract relies on SolidState's storage operations and the Plume project's specific role definitions.
 
-### Function: hasRole
-- **Definition:** `function hasRole(bytes32 role, address account) external view override returns (bool)`
-- **Summary:** Checks whether an account holds a specific role. This function utilizes the internal `_hasRole` method from the SolidState `AccessControlInternal` to perform the check.
+## Functions
 
-### Function: getRoleAdmin
-- **Definition:** `function getRoleAdmin(bytes32 role) external view override returns (bytes32)`
-- **Summary:** Retrieves the admin role associated with a given role, leveraging the internal `_getRoleAdmin` method from SolidState.
+### initializeAccessControl
+- **Description:** Initializes the contract's access control by setting up role hierarchies and granting initial roles to the contract deployer.
+- **Function Signature:** `function initializeAccessControl() external`
+- **Details:** It replaces the old initialization flag with a new one from PlumeStakingStorage, avoiding re-initialization issues by enforcing a one-time setup (caller must have default admin rights). Initial roles granted include `ADMIN_ROLE` and `UPGRADER_ROLE`.
 
-### Function: grantRole
-- **Definition:** `function grantRole(bytes32 role, address account) external override onlyRole(_getRoleAdmin(role))`
-- **Summary:** Assigns a specific role to an account if the caller possesses the admin role for that role, ensuring proper authority.
+### hasRole
+- **Description:** Checks if an account possesses a specific role.
+- **Function Signature:** `function hasRole(bytes32 role, address account) external view returns (bool)`
+- **Details:** Uses `_hasRole` to verify role membership for an account.
 
-### Function: revokeRole
-- **Definition:** `function revokeRole(bytes32 role, address account) external override onlyRole(_getRoleAdmin(role))`
-- **Summary:** Revokes a role from an account, granted that the caller has the necessary admin privileges.
+### getRoleAdmin
+- **Description:** Returns the admin role for a specified role.
+- **Function Signature:** `function getRoleAdmin(bytes32 role) external view returns (bytes32)`
+- **Details:** Retrieves role admin via `_getRoleAdmin` for access governance.
 
-### Function: renounceRole
-- **Definition:** `function renounceRole(bytes32 role, address account) external override`
-- **Summary:** Allows an account to renounce a role voluntarily, validating that the caller is the account itself.
+### grantRole
+- **Description:** Assigns a role to an account, requiring related admin permissions from the caller.
+- **Function Signature:** `function grantRole(bytes32 role, address account) external`
+- **Details:** Uses `_grantRole` to delegate role, ensuring caller has admin rights for specific role modifications.
 
-### Function: setRoleAdmin
-- **Definition:** `function setRoleAdmin(bytes32 role, bytes32 adminRole) external override onlyRole(ADMIN_ROLE)`
-- **Summary:** Changes the admin role of a specified role, accessible only to accounts with `ADMIN_ROLE` authority.
+### revokeRole
+- **Description:** Revokes a role from an account; caller must have the required admin role.
+- **Function Signature:** `function revokeRole(bytes32 role, address account) external`
+- **Details:** Ensures governance consistency by requiring corresponding role administrator to execute revocation.
 
-### Storage Variable: DEFAULT_ADMIN_ROLE
+### renounceRole
+- **Description:** Permits an account to relinquish its role.
+- **Function Signature:** `function renounceRole(bytes32 role, address account) external`
+- **Details:** Ensures self-managed role relinquishment, validating the requesting account's identity for security.
+
+### setRoleAdmin
+- **Description:** Allows modification of admin roles, demanding `ADMIN_ROLE` by the caller.
+- **Function Signature:** `function setRoleAdmin(bytes32 role, bytes32 adminRole) external`
+- **Details:** Uses `_setRoleAdmin` for restructuring role oversight within governance framework.
+
+
+## Variables
+
+### DEFAULT_ADMIN_ROLE
 - **Definition:** `bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;`
-- **Summary:** Identifies the default admin role within the contract for broad authority.
+- **Explanation:** SolidState's default role identifier for top-tier admin access.
 
-### Storage Variable: ADMIN_ROLE
+### ADMIN_ROLE
 - **Definition:** `bytes32 public constant ADMIN_ROLE = PlumeRoles.ADMIN_ROLE;`
-- **Summary:** Dedicated for users who manage and configure other roles within the contract.
+- **Explanation:** Directly related to high-level administrative tasks; context-specific from PlumeRoles.
 
-### Storage Variables: Other Role Constants
-- **Definitions:**
-  - `bytes32 public constant UPGRADER_ROLE = PlumeRoles.UPGRADER_ROLE;`
-  - `bytes32 public constant VALIDATOR_ROLE = PlumeRoles.VALIDATOR_ROLE;`
-  - `bytes32 public constant REWARD_MANAGER_ROLE = PlumeRoles.REWARD_MANAGER_ROLE;`
-  - `bytes32 public constant TIMELOCK_ROLE = PlumeRoles.TIMELOCK_ROLE;`
-- **Summaries:** Each corresponds to specific functionalities within the Plume system, such as contract upgrades, validation tasks, rewards management, and time-bound operations.
+### UPGRADER_ROLE
+- **Definition:** `bytes32 public constant UPGRADER_ROLE = PlumeRoles.UPGRADER_ROLE;`
+- **Explanation:** Assigned for contract upgrade activities, sourced from PlumeRoles.
+
+### VALIDATOR_ROLE
+- **Definition:** `bytes32 public constant VALIDATOR_ROLE = PlumeRoles.VALIDATOR_ROLE;`
+- **Explanation:** Ensures code validation processes; inline with PlumeRoles definitions.
+
+### REWARD_MANAGER_ROLE
+- **Definition:** `bytes32 public constant REWARD_MANAGER_ROLE = PlumeRoles.REWARD_MANAGER_ROLE;`
+- **Explanation:** Pertains to reward handling operations, based on PlumeRoles setup.
+
+### TIMELOCK_ROLE
+- **Definition:** `bytes32 public constant TIMELOCK_ROLE = PlumeRoles.TIMELOCK_ROLE;`
+- **Explanation:** Governs timelock functionalities as per PlumeRoles plan.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/proxy/PlumeStakingRewardTreasuryProxy.sol
-### **Proxy Contract: PlumeStakingRewardTreasuryProxy**
+## Project File List Summary
+The project comprises various scripts and Solidity contracts used for deployment, upgrade, and testing purposes. A notable collection of scripts is organized under the 'script' directory, including deployment scripts (e.g., `DeployDateTimeContract.s.sol`), upgrade scripts (e.g., `UpgradeMockPUSD.s.sol`), and specific facet scripts for fixing and querying (e.g., `FixAccessControlRoles.s.sol`). Under the 'src' directory, core contracts like `Plume.sol` and several facets such as `AccessControlFacet.sol`, `RewardsFacet.sol`, and `ValidatorFacet.sol` are outlined, along with helper libraries and interfaces. Additionally, there are mock contracts and multiple proxy implementations (e.g., `PlumeProxy.sol`, `RaffleProxy.sol`). The project also encompasses various tests stored in the 'test' directory to ensure seamless operation and integration.
 
-**Contract Overview:**
-PlumeStakingRewardTreasuryProxy is a smart contract that acts as a proxy for the PlumeStakingRewardTreasury. It extends the OpenZeppelin ERC1967Proxy contract, ensuring that all functionalities are inherited from the well-tested proxy implementations.
-
-**Contract Authors:** Eugene Y. Q. Shen, Alp Guneysel
-
-### **Key Functions**
-
-- **Constructor**
-  ```solidity
-  constructor(address logic, bytes memory data) ERC1967Proxy(logic, data) { }
-  ```
-  **Summary:** Initializes the proxy by invoking the ERC1967Proxy constructor with the specified logic contract and initialization data.
-
-- **receive()**
-  ```solidity
-  receive() external payable { }
-  ```
-  **Summary:** Allows the proxy contract to receive Ether directly.
-
-### **Storage Variables**
-
-- **PROXY_NAME**
-  ```solidity
-  bytes32 public constant PROXY_NAME = keccak256("PlumeStakingRewardTreasuryProxy");
-  ```
-  **Summary:** This is a constant variable that stores a unique identifier for the proxy. It helps ensure that the proxy bytecode is unique. Containing this as a hash ensures a decent level of security against accidental duplicate naming.
+## PlumeStakingRewardTreasuryProxy Contract Summary
+The `PlumeStakingRewardTreasuryProxy` is a Solidity contract serving as a proxy for `PlumeStakingRewardTreasury`. It extends from OpenZeppelin's `ERC1967Proxy`, a standard implementation for proxy contracts supporting upgradable patterns. The key feature is its constant `PROXY_NAME`, ensuring unique bytecode identification of the proxy, and its ability to receive Ether. The constructor initializes the proxy with a specified logic contract and an optional data payload, while enabling dynamic upgrades.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/proxy/SPINProxy.sol
-### Project File Overview
+The provided text contains a comprehensive file list from a project, predominantly written in Solidity, which involves deployment and upgrade scripts, smart contract source files, interfaces, proxies, spin-related files, and tests. 
 
-The project contains various Solidity scripts and contracts categorized into deployment, upgrade, facets, auxiliary libraries, interfaces, and tests. Key components involve deploying and upgrading contracts like Plume and MockPUSD, along with various facets for managing role-based access, rewards, and staking functionalities. Supportive libraries for events, errors, and staking logic aid in contract operations, while test files ensure contract functionality and security.
+1. **Deployment and Upgrade Scripts**: These scripts facilitate the deployment or updating of smart contracts. They include deployment scripts for a variety of contracts like `MockPUSD`, `PlumeStaking`, `PlumeStakingRewardTreasury`, and others. Upgrade scripts are similarly numerous and provide functionality for enhancing or changing existing contracts.
 
-### SpinProxy.sol
+2. **Smart Contract Files**: 
+   - **Source Files**: Contracts such as `Plume.sol` and `PlumeStaking.sol` suggest functionalities related to staking mechanisms and token management.
+   - **Facets**: Include various access control and rewards functionalities.
+   - **Helpers**: Likely provide auxiliary functionalities, possibly interacting with underlying systems such as Ethereum.
 
-**SpinProxy Contract**
-- **Summary**: The `SpinProxy` contract, developed by Eugene Y. Q. Shen and Alp Guneysel, is a proxy implementation extending OpenZeppelin's `ERC1967Proxy`. It functions as an on-chain proxy for the Faucet mechanism.
+3. **Interfaces and Libraries**: A variety of interfaces suggest modularity and implement different contract functionalities.
 
-**Contract Definition**: `contract SpinProxy is ERC1967Proxy { ... }`
+4. **Proxies**: Proxy files indicate the use of upgradeable contracts, a common pattern to ensure contracts can be updated without disruption.
 
-**Storage Variables**:
-- **PROXY_NAME**: `bytes32 public constant PROXY_NAME = keccak256("SpinProxy");`
-  - This constant defines the name of the proxy, ensuring unique bytecode for each named proxy.
+5. **Spin and Mocks**: Contract files related to Spin suggest gamified or lottery-style mechanisms, while Mock files suggest test doubles used for testing.
 
-**Constructor**:
-- **Definition**: `constructor(address logic, bytes memory data) ERC1967Proxy(logic, data) { }`
-  - **Summary**: Initializes the proxy with the logic contract address and initialization data, ensuring the proxy is linked to the specified logic contract.
-
-**Functions**:
-- **receive**: `receive() external payable { }`
-  - **Summary**: A fallback function allowing the contract to accept Ether, supporting future financial logic or operational flexibility.
+6. **Tests**: Files such as `ForkTestPlumeStaking.s.sol` indicate the presence of robust testing mechanisms, emphasizing security and functionality verification.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/proxy/PlumeStakingProxy.sol
-### PlumeStakingProxy Contract
+The document provides a list of various Solidity script files associated with a project focused on deploying, upgrading, and managing smart contracts related to PlumeStaking and SpinRaffle. These scripts are segregated into categories such as scripts for deployment, facets for specific contract functionalities, upgrades, helpers, interfaces, and mock and proxy contracts. 
 
-The `PlumeStakingProxy` contract is a Solidity contract that serves as a proxy for the `PlumeStaking` implementation. It inherits from OpenZeppelin's `ERC1967Proxy`, providing upgradable proxy capabilities.
+The core components include contracts for PlumeStaking, PlumeStakingRewardTreasury, and various facets including AccessControl, Management, Rewards, and more. The interfaces outline the contracts' interaction standards, while mock contracts simulate specific functionalities for testing purposes. Furthermore, the library files such as PlumeErrors and PlumeEvents likely serve to manage errors and events across the contracts.
 
-#### Constructor
-- **Interface:** `constructor(address logic, bytes memory data) ERC1967Proxy(logic, data)`
-- **Summary:** Initializes the `PlumeStakingProxy` with the implementation logic address and any initialization data required by the logic contract. It passes these parameters to the `ERC1967Proxy` constructor from OpenZeppelin.
-
-#### Storage Variables
-- **`PROXY_NAME`**
-  - **Definition:** `bytes32 public constant PROXY_NAME = keccak256("PlumeStakingProxy");`
-  - **Explanation:** A fixed constant storing the hash of the string "PlumeStakingProxy" to ensure uniqueness of the proxy's bytecode.
+The test files are indicative of comprehensive unit testing practices to ensure contract reliability and performance under various conditions. Overall, the file list depicts a robust and modular structuring of the project's Solidity code base, emphasizing upgradability, precise access control, and extensive testing.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/proxy/RaffleProxy.sol
-### RaffleProxy Contract
-This contract is an implementation of an ERC1967Proxy, specifically designed for a Raffle proxy contract. It is part of a larger smart contract project and ensures that a Raffle logic contract can be upgraded while preserving its state. This pattern enhances modularity and upgradeability of the contract system.
+The `RaffleProxy` contract is a proxy contract that inherits from OpenZeppelin's `ERC1967Proxy`, which implements the Ethereum Proxy pattern allowing for contract upgrades. It rejects all Ether transfers to the proxy through the `receive` function by reverting with an error. 
 
-#### Constructor
-- **Definition:** `constructor(address logic, bytes memory data) ERC1967Proxy(logic, data)`
-- **Summary:** This constructor initializes an ERC1967Proxy with the specified logic (implementation address) and initialization data, setting up a proxy contract that delegates calls to the specified logic contract.
+### Contract: RaffleProxy
+This contract serves as a proxy for a "Raffle" logic contract, ensuring upgradability and maintaining a unique identifier for each instance.
 
-#### Fallback Function
-- **Definition:** `receive() external payable`
-- **Summary:** A receive function is defined to intercept any incoming Ether transactions, but it explicitly reverts all such attempts as ETH transfers are unsupported by this proxy.
+### Constructor
+```solidity
+constructor(address logic, bytes memory data) ERC1967Proxy(logic, data)
+```
+**Summary:** Initializes the proxy with a logic contract address and initializes it with optional data, leveraging the ERC1967 proxy mechanism to enable upgrades.
+
+### receive Function
+```solidity
+receive() external payable
+```
+**Summary:** This fallback function is meant to catch any Ethereum transfers to the contract, which it prevents by reverting with the `ETHTransferUnsupported` error.
 
 ### Storage Variables
-- **PROXY_NAME:** `bytes32 public constant PROXY_NAME = keccak256("RaffleProxy");`
-  - **Summary:** This constant holds the unique proxy name as a hash, which serves to give the proxy a distinct bytecode identifier within the codebase.
-
-### Error Messages
-- **ETHTransferUnsupported**: Indicates a failed attempt to transfer ETH to the proxy, as it does not support such operations.
+- **PROXY_NAME:**
+  ```solidity
+  bytes32 public constant PROXY_NAME = keccak256("RaffleProxy");
+  ```
+  **Summary:** A constant variable defining the name for the proxy contract to ensure each proxy can be uniquely identified by its bytecode.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/proxy/PlumeProxy.sol
-### File: project_file_list
-This section outlines a comprehensive list of Solidity script filenames within a project, which consists of deployment, upgrade, and facet scripts related to Plume Contracts, alongside utility, test, interface, and proxy files. Key script categories include Plume staking, Plume staking reward treasury, and Plume proxies. This file serves as an index for navigating the project's directories and is essential for quickly identifying specific functionalities, such as deploying or upgrading Plume-related contracts or accessing various facets.
+# PlumeProxy Contract
+The `PlumeProxy` contract is a proxy implementation based on the ERC1967 standard from OpenZeppelin. It is designed to delegate calls to a logic contract which contains the actual implementation logic. The contract primarily features a constructor and a fallback function.
 
-### File: PlumeProxy.sol
-#### Contract: PlumeProxy
-The `PlumeProxy` contract is an implementation of the `ERC1967Proxy` from the OpenZeppelin library. Its purpose is to manage the logic of the Plume contract system by routing requests and ensuring that state changes are consistent with its governance rules.
+## Contract Definition
+This contract is defined as `PlumeProxy` inheriting from OpenZeppelin's `ERC1967Proxy`. It is utilized to manage interactions with the logic contract while maintaining upgradeability.
 
-#### Functions:
-1. **constructor**
-   - **Summary:** Initializes the proxy with a specified address (`logic`) for the logic contract and optional initialization data (`data`). This establishes a foundational setup of the proxy pattern where contract logic can be changed without altering the proxy.
-   - **Interface:** `constructor(address logic, bytes memory data) ERC1967Proxy(logic, data) {}`
+## Variables
+- `error ETHTransferUnsupported`: Defines an error type to indicate that ETH transfers to this contract are unsupported.
 
-2. **receive**
-   - **Summary:** A payable but unsupported function that will revert transactions involving ETH transfers to the proxy, ensuring ETH cannot be sent to this smart contract.
-   - **Interface:** `receive() external payable { revert ETHTransferUnsupported(); }`
+- `bytes32 public constant PROXY_NAME = keccak256("PlumeProxy");`
+  - **Description**: Holds the hashed name of the proxy to ensure the uniqueness of its bytecode.
 
-#### Storage Variables:
-1. **PROXY_NAME**
-   - **Definition:** `bytes32 public constant PROXY_NAME = keccak256("PlumeProxy");`
-   - **Summary:** Holds a unique identifier for the proxy, derived by hashing its name to ensure the proxy has unique bytecode across different instances.
+## Constructor
+- **Function Definition**: `constructor(address logic, bytes memory data)`
+  - **Summary**: Initializes the `PlumeProxy` contract by invoking the `ERC1967Proxy` constructor with the given logic address and initialization data.
+
+## Fallback Function
+- **Function Definition**: `receive() external payable`
+  - **Summary**: A fallback function implementation designed to revert transactions on receiving ETH, enforcing that this contract cannot hold ETH.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/PlumeStakingRewardTreasury.sol
-## File Structure Overview
-This document provides a list of file names in a project. Most files are categorized into scripts for deployments, upgrades, facets, interfaces, libraries, mocks, proxies, spins, and tests. These categories indicate various functionalities such as contract management (deployments and upgrades), role and reward logic (facets), utility libraries, and testing infrastructure.
----
-## PlumeStakingRewardTreasury Contract
-The **PlumeStakingRewardTreasury** contract manages and distributes reward tokens within the PlumeStaking system. It supports upgrades through the UUPS pattern and uses AccessControl for role-based permissions. Key roles include ADMIN, DISTRIBUTOR, and UPGRADER. The contract can accept both ERC20 tokens and native PLUME tokens.
+The `PlumeStakingRewardTreasury` is a Solidity smart contract designed to manage the holding and distribution of reward tokens for the PlumeStaking system. It employs the UUPS upgrade pattern for upgradability and uses roles managed by AccessControl for authorization purposes. Key roles include ADMIN_ROLE, DISTRIBUTOR_ROLE, and UPGRADER_ROLE, each performing specific duties within the contract's structure.
+
+### Contract Definition
+- **Contract Name**: `PlumeStakingRewardTreasury`
+- **Inheritance**: Implements `IPlumeStakingRewardTreasury`, inherits `Initializable`, `AccessControlUpgradeable`, `ReentrancyGuardUpgradeable`, `UUPSUpgradeable`.
+
+### State Variables:
+- **PLUME_NATIVE**: `address public constant PLUME_NATIVE = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;`
+  - Represents the native PLUME token address.
+- **DISTRIBUTOR_ROLE**: `bytes32 public constant DISTRIBUTOR_ROLE = keccak256("DISTRIBUTOR_ROLE");`
+  - A specific role for entities that can distribute rewards.
+- **ADMIN_ROLE**: `bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");`
+  - A role for administrative access within the contract.
+- **UPGRADER_ROLE**: `bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");`
+  - Role given to entities allowed to perform contract upgrades.
+- **_rewardTokens**: `address[] private _rewardTokens;`
+  - Array storing all registered reward token addresses.
+- **_isRewardToken**: `mapping(address => bool) private _isRewardToken;`
+  - A mapping to check if a token is recognized as a reward token.
 
 ### Functions
-- **initialize(address admin, address distributor)**: Sets up initial roles by granting ADMIN role to an admin address and DISTRIBUTOR role to a specified distributor. The function ensures non-zero addresses are provided.
+- **initialize**
+  - 
+  `function initialize(address admin, address distributor) public initializer`
+  - Initializes the contract, sets up roles for admin and distributor. Checks for valid addresses to ensure no zero addresses are set.
 
-- **_authorizeUpgrade(address newImplementation)**: Ensures only users with UPGRADER_ROLE can authorize a contract upgrade.
+- **_authorizeUpgrade**
+  - 
+  `function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE)`
+  - Restricts contract upgrades to entities with the UPGRADER_ROLE.
 
-- **addRewardToken(address token)**: Adds a new token as a reward. Checks for zero addresses and duplicates before adding.
+- **addRewardToken**
+  - 
+  `function addRewardToken(address token) external onlyRole(ADMIN_ROLE)`
+  - Adds a new token to the list of reward tokens, only callable by someone with the ADMIN_ROLE.
 
-- **distributeReward(address token, uint256 amount, address recipient)**: Distributes specified amounts of rewards. It supports both PLUME native tokens and ERC20 tokens, ensuring non-zero amounts and registered tokens.
+- **distributeReward**
+  - 
+  `function distributeReward(address token, uint256 amount, address recipient) external override nonReentrant onlyRole(DISTRIBUTOR_ROLE)`
+  - Distributes a specified amount of reward token or native PLUME to a recipient, ensuring the address has the requisite balance.
 
-- **getRewardTokens() returns (address[] memory)**: Retrieves the list of all reward tokens managed by the treasury.
+- **getRewardTokens**
+  - 
+  `function getRewardTokens() external view override returns (address[] memory)`
+  - Returns the list of all reward tokens registered within the contract.
 
-- **getBalance(address token) returns (uint256)**: Returns the balance of a specified token, including PLUME native tokens.
+- **getBalance**
+  - 
+  `function getBalance(address token) external view override returns (uint256)`
+  - Provides the current balance of a specified token within the treasury, with special handling for PLUME_NATIVE.
 
-- **isRewardToken(address token) returns (bool)**: Checks if a token is registered as a reward token.
+- **isRewardToken**
+  - 
+  `function isRewardToken(address token) external view returns (bool)`
+  - Checks if a given address is listed as a reward token.
 
-- **receive() payable**: Allows the contract to accept PLUME tokens.
-
-### Storage Variables
-- **PLUME_NATIVE (address public constant)**: Indicates the constant address for native PLUME tokens.
-- **DISTRIBUTOR_ROLE, ADMIN_ROLE, UPGRADER_ROLE (bytes32 public constant)**: These variables represent hashed constants for different roles.
-- **_rewardTokens (address[] private)**: Stores a list of addresses marked as reward tokens.
-- **_isRewardToken (mapping(address => bool) private)**: A map to confirm if a token has been registered as a reward token. 
+- **receive**
+  - 
+  `receive() external payable`
+  - Function to handle direct transfers of PLUME, triggering the `PlumeReceived` event with sender and amount data.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/Plume.sol
 ### Plume Contract Summary
 
-#### Contract Definition
-Plume is an ERC20 smart contract used as a governance token for the Plume Network. It utilizes several OpenZeppelin upgradable contracts, including AccessControl, ERC20, ERC20Burnable, ERC20Pausable, and UUPS proxy mechanisms.
+The `Plume` contract is a governance ERC20 token for the Plume Network, authored by Eugene Y. Q. Shen. It is built on OpenZeppelin's upgradeable contract framework, allowing it to be paused, minted, burned, and permit operations (signature-based approvals). It also includes access control features to manage roles and an upgradeable proxy pattern via `UUPSUpgradeable`.
 
-#### Storage Variables
-- **UPGRADER_ROLE**: `bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");`
-  - Denotes the role responsible for upgrading the contract.
-- **MINTER_ROLE**: `bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");`
-  - Defines the role allowed to mint new tokens.
-- **BURNER_ROLE**: `bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");`
-  - Specifies the role that can burn tokens.
-- **PAUSER_ROLE**: `bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");`
-  - Indicates the role allowed to pause the contract.
+### Storage Variables
 
-#### Functions
-- **constructor():**
-  - Interface: `constructor()`
-  - Summary: Prevents the implementation contract from being initialized or reinitialized, ensuring safe upgrades.
+- **`UPGRADER_ROLE`** (`bytes32`): Defines the role identifier for any account that can upgrade the contract.
+- **`MINTER_ROLE`** (`bytes32`): Signifies accounts that are permitted to mint new tokens.
+- **`BURNER_ROLE`** (`bytes32`): Indicates who can burn tokens from addresses.
+- **`PAUSER_ROLE`** (`bytes32`): Specifies accounts that can pause contract functions.
 
-- **initialize():**
-  - Interface: `function initialize(address owner) public initializer`
-  - Summary: Initializes the contract with all roles granted to the owner, sets up necessary configurations and initial roles.
+### Functions
 
-- **reinitialize():**
-  - Interface: `function reinitialize() public reinitializer(1) onlyRole(UPGRADER_ROLE)`
-  - Summary: Reinitializes the contract with a symbol set to "PLUME", requires upgrader rights.
+- **`constructor()`**
+  *Initializes the contract to disallow any subsequent initialization calls.*
+  ```solidity
+  constructor() { _disableInitializers(); }
+  ```
 
-- **_authorizeUpgrade():**
-  - Interface: `function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE)`
-  - Summary: Checks if the caller has the UPGRADER_ROLE before authorizing an upgrade.
+- **`initialize(address owner)`**
+  *Initializes the contract with roles assigned to the owner, setting up token metadata and enabling necessary upgrades and permissions.*
+  ```solidity
+  function initialize(address owner) public initializer { ... }
+  ```
 
-- **_update():**
-  - Interface: `function _update(address from, address to, uint256 value) internal override(ERC20Upgradeable, ERC20PausableUpgradeable)`
-  - Summary: Updates the balances after token transfer; used internally.
+- **`reinitialize()`**
+  *Allows reinitialization of the contract, specifically altering the token's symbol.*
+  ```solidity
+  function reinitialize() public reinitializer(1) onlyRole(UPGRADER_ROLE) { ... }
+  ```
 
-- **mint():**
-  - Interface: `function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE)`
-  - Summary: Allows token minting to a specified address, restricted to MINTER_ROLE.
+- **`_authorizeUpgrade(address newImplementation)`**
+  *Ensures only addresses with the UPGRADER_ROLE can authorize contract upgrades.*
+  ```solidity
+  function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) { }
+  ```
 
-- **burn():**
-  - Interface: `function burn(address from, uint256 amount) external onlyRole(BURNER_ROLE)`
-  - Summary: Enables token burning from a specified address, limited to BURNER_ROLE.
+- **`_update(address from, address to, uint256 value)`**
+  *Ensures proper balance updates in transfers, overriding required base functions.*
+  ```solidity
+  function _update(address from, address to, uint256 value) internal override(ERC20Upgradeable, ERC20PausableUpgradeable) { ... }
+  ```
 
-- **pause():**
-  - Interface: `function pause() external onlyRole(PAUSER_ROLE)`
-  - Summary: Pauses the contract to halt operations temporarily, requires PAUSER_ROLE.
+- **`mint(address to, uint256 amount)`**
+  *Mints new tokens to a specified address, available only to MINTER_ROLE.*
+  ```solidity
+  function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) { ... }
+  ```
 
-- **unpause():**
-  - Interface: `function unpause() external onlyRole(PAUSER_ROLE)`
-  - Summary: Unpauses the contract to resume operations, needs PAUSER_ROLE.
+- **`burn(address from, uint256 amount)`**
+  *Burns a set number of tokens from a given address, restricted to BURNER_ROLE.*
+  ```solidity
+  function burn(address from, uint256 amount) external onlyRole(BURNER_ROLE) { ... }
+  ```
+
+- **`pause()`**
+  *Pauses token-related operations within the contract under PAUSER_ROLE permissions.*
+  ```solidity
+  function pause() external onlyRole(PAUSER_ROLE) { ... }
+  ```
+
+- **`unpause()`**
+  *Resumes normal operations in the contract, undoing a pause directive.*
+  ```solidity
+  function unpause() external onlyRole(PAUSER_ROLE) { ... }
+  ```
 
 
 ## SUMMARY OF FILE: contracts/plume/src/spin/DateTime.sol
-### DateTime Contract Summary
+### DateTime Contract
+The `DateTime` contract provides date and time utility functions for Ethereum contracts. It converts Unix timestamps to human-readable date components and vice versa.
 
-The `DateTime` contract is a Solidity utility for converting and working with Unix timestamps in Ethereum smart contracts. It includes functions to determine leap years, calculate day counts, and convert timestamps to human-readable date and time components as well as vice versa.
+#### Struct: `_DateTime`
+- **Definition:** Struct representing a full date and time.
+- **Purpose:** To hold date and time components like year, month, day, hour, minute, second, and weekday.
 
-### Contract Definition
-```solidity
-contract DateTime {
-```
+#### Constants:
+- **DAY_IN_SECONDS, YEAR_IN_SECONDS, LEAP_YEAR_IN_SECONDS, etc.**
+  - **Purpose:** Define time-based constants used in date calculations.
 
-### Function Summaries
-
-- **isLeapYear**
-   
-  **Interface:**
-  ```solidity
-  function isLeapYear(uint16 year) public pure returns (bool)
-  ```
-
-  Determines if a given year is a leap year. Returns true if yes, false otherwise.
-  
-- **leapYearsBefore**
-
-  **Interface:**
-  ```solidity
-  function leapYearsBefore(uint256 year) public pure returns (uint256)
-  ```
-
-  Calculates the number of leap years before a given year.
-  
-- **getDaysInMonth**
-
-  **Interface:**
-  ```solidity
-  function getDaysInMonth(uint8 month, uint16 year) public pure returns (uint8)
-  ```
-
-  Returns the number of days in a specified month and year taking into account leap years.
-
-- **parseTimestamp**
-  
-  **Interface:**
-  ```solidity
-  function parseTimestamp(uint256 timestamp) internal pure returns (_DateTime memory)
-  ```
-
-  Converts a Unix timestamp into a `_DateTime` struct containing year, month, day, hour, minute, second, and weekday.
-
-- **getYear**
-
-  **Interface:**
-  ```solidity
-  function getYear(uint256 timestamp) public pure returns (uint16)
-  ```
-
-  Extracts the year from a given Unix timestamp.
-
-- **getMonth**
-
-  **Interface:**
-  ```solidity
-  function getMonth(uint256 timestamp) public pure returns (uint8)
-  ```
-
-  Extracts the month from a given Unix timestamp.
-
-- **getDay**
-
-  **Interface:**
-  ```solidity
-  function getDay(uint256 timestamp) public pure returns (uint8)
-  ```
-
-  Extracts the day from a given Unix timestamp.
-
-- **getHour**
-
-  **Interface:**
-  ```solidity
-  function getHour(uint256 timestamp) public pure returns (uint8)
-  ```
-
-  Extracts the hour from a given Unix timestamp.
-
-- **getMinute**
-
-  **Interface:**
-  ```solidity
-  function getMinute(uint256 timestamp) public pure returns (uint8)
-  ```
-
-  Extracts the minute from a given Unix timestamp.
-
-- **getSecond**
-
-  **Interface:**
-  ```solidity
-  function getSecond(uint256 timestamp) public pure returns (uint8)
-  ```
-
-  Extracts the second from a given Unix timestamp.
-
-- **getWeekday**
-
-  **Interface:**
-  ```solidity
-  function getWeekday(uint256 timestamp) public pure returns (uint8)
-  ```
-
-  Calculates the weekday from a given Unix timestamp.
-
+#### Functions:
+- **isLeapYear(uint16 year) → bool**
+  - **Summary:** Determines if a given year is a leap year.
+- **leapYearsBefore(uint256 year) → uint256**
+  - **Summary:** Computes the number of leap years before a given year.
+- **getDaysInMonth(uint8 month, uint16 year) → uint8**
+  - **Summary:** Returns the number of days in a specific month and year.
+- **parseTimestamp(uint256 timestamp) → _DateTime**
+  - **Summary:** Decomposes a timestamp into a `_DateTime` structure with components like year, month, and day.
+- **getYear(uint256 timestamp) → uint16**
+  - **Summary:** Extracts the year from a timestamp.
+- **getMonth(uint256 timestamp) → uint8**
+  - **Summary:** Extracts the month from a timestamp.
+- **getDay(uint256 timestamp) → uint8**
+  - **Summary:** Extracts the day from a timestamp.
+- **getHour(uint256 timestamp) → uint8**
+  - **Summary:** Extracts the hour from a timestamp.
+- **getMinute(uint256 timestamp) → uint8**
+  - **Summary:** Extracts the minute from a timestamp.
+- **getSecond(uint256 timestamp) → uint8**
+  - **Summary:** Extracts the second from a timestamp.
+- **getWeekday(uint256 timestamp) → uint8**
+  - **Summary:** Computes the day of week for a timestamp.
 - **toTimestamp**
-
-  **Interface for Overloaded Function:**
-  ```solidity
-  function toTimestamp(uint16 year, uint8 month, uint8 day) public pure returns (uint256)
-  function toTimestamp(uint16 year, uint8 month, uint8 day, uint8 hour) public pure returns (uint256)
-  function toTimestamp(uint16 year, uint8 month, uint8 day, uint8 hour, uint8 minute) public pure returns (uint256)
-  function toTimestamp(uint16 year, uint8 month, uint8 day, uint8 hour, uint8 minute, uint8 second) public pure returns (uint256)
-  ```
-
-  Converts date components (year, month, day, etc.) into a Unix timestamp. Supports multiple overloads to include varying levels of time precision.
-
-- **getWeekNumber**
-
-  **Interface:**
-  ```solidity
-  function getWeekNumber(uint256 timestamp) public pure returns (uint8)
-  ```
-
-  Calculates the week number of a given Unix timestamp based on ISO 8601.
-
-- **getDaysSinceYearStart** (Internal)
-
-  **Interface:**
-  ```solidity
-  function getDaysSinceYearStart(uint16 year, uint8 month, uint8 day) internal pure returns (uint256)
-  ```
-
-  Helper function that computes the number of days that have elapsed since the beginning of the year based on given date components.
-
-### Storage Variables Explanations
-
-- **DAY_IN_SECONDS**
-
-  **Definition:**
-  ```solidity
-  uint256 constant DAY_IN_SECONDS = 86_400;
-  ```
-
-  Represents the number of seconds in a day.
-
-- **YEAR_IN_SECONDS**
-
-  **Definition:**
-  ```solidity
-  uint256 constant YEAR_IN_SECONDS = 31_536_000;
-  ```
-
-  Represents the number of seconds in a standard year.
-
-- **LEAP_YEAR_IN_SECONDS**
-
-  **Definition:**
-  ```solidity
-  uint256 constant LEAP_YEAR_IN_SECONDS = 31_622_400;
-  ```
-
-  Represents the number of seconds in a leap year.
-
-- **HOUR_IN_SECONDS**
-
-  **Definition:**
-  ```solidity
-  uint256 constant HOUR_IN_SECONDS = 3600;
-  ```
-
-  Represents the number of seconds in an hour.
-
-- **MINUTE_IN_SECONDS**
-
-  **Definition:**
-  ```solidity
-  uint256 constant MINUTE_IN_SECONDS = 60;
-  ```
-
-  Represents the number of seconds in a minute.
-
-- **ORIGIN_YEAR**
-
-  **Definition:**
-  ```solidity
-  uint16 constant ORIGIN_YEAR = 1970;
-  ```
-
-  The base year used as a reference for Unix timestamp calculations.
+  - Various overloads to convert date components into a Unix timestamp.
+- **getWeekNumber(uint256 timestamp) → uint8**
+  - **Summary:** Determines the week number for a given timestamp.
+- **getDaysSinceYearStart(uint16 year, uint8 month, uint8 day) → uint256**
+  - **Summary:** Calculates the number of days since the start of a calendar year.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/spin/Spin.sol
-# Project File Summary
+# Spin Contract Summary
+This contract is an upgradable Solidity smart contract implementing a spinning game with reward mechanics. It integrates multiple upgradable features from OpenZeppelin, such as access control, pausable, and reentrancy guard. The players can spin to gain rewards like jackpot prizes, tokens, or raffle tickets, using randomness generated by the Supra Oracle.
 
-The project consists of deployment, querying, upgrading, and test scripts within the Solidity framework. Below is a classification of the files based on their purposes:
+## Contract Definition
+```solidity
+contract Spin is Initializable, AccessControlUpgradeable, UUPSUpgradeable, PausableUpgradeable, ReentrancyGuardUpgradeable { ... }
+```
 
-**Deployment Scripts**:
-- Handle the deployment of contracts like MockPUSD, PlumeStaking, etc.
-- Located in `script/deploy/` and `script/` folders.
+The Spin contract is initialized via the `initialize` function and can be upgraded via UUPS proxy mechanisms.
 
-**Upgrade Scripts**:
-- Ensure the contracts can be upgraded, such as for MockPUSD, StakingFacets, etc.
-- Found under `script/upgrade/` and `script/` directories.
+## Functions
+### initialize
+Initializes the Spin contract with necessary dependencies and roles, setting default values.
+```solidity
+function initialize(address supraRouterAddress, address dateTimeAddress) public initializer { ... }
+```
+### startSpin
+Begins the spin process using randomness. Requires appropriate payment and emits a SpinRequested event.
+```solidity
+function startSpin() external payable whenNotPaused canSpin { ... }
+```
+### handleRandomness
+Handles randomness received from a Supra Router to determine and apply spin rewards.
+```solidity
+function handleRandomness(uint256 nonce, uint256[] memory rngList) external { ... }
+```
+### determineReward
+Determines the reward category based on random values and user streak.
+```solidity
+function determineReward(uint256 randomness, uint256 streakForReward) internal view returns (string memory, uint256) { ... }
+```
+### currentStreak
+Returns the user's current streak count.
+```solidity
+function currentStreak(address user) public view returns (uint256) { ... }
+```
+### spendRaffleTickets
+Allows the raffle contract to deduct raffle tickets from a user's account.
+```solidity
+function spendRaffleTickets(address user, uint256 amount) external { ... }
+```
+### adminWithdraw
+Allows admins to withdraw PLUME tokens from the contract.
+```solidity
+function adminWithdraw(address payable recipient, uint256 amount) external { ... }
+```
+### pause / unpause
+Pauses or unpauses the contract’s operations.
+```solidity
+function pause() external onlyRole(ADMIN_ROLE) { ... }
+```
+```solidity
+function unpause() external onlyRole(ADMIN_ROLE) { ... }
+```
+### _authorizeUpgrade
+Allows admin-authorized contract upgrades.
+```solidity
+function _authorizeUpgrade(address newImplementation) internal override onlyRole(ADMIN_ROLE) { ... }
+```
 
-**Facets Scripts**:
-- Contains operations for accessing and managing contract functionalities.
-- Located in `script/facets/`.
+## Storage Variables
+- `ADMIN_ROLE`, `SUPRA_ROLE`: Keccak256 hashed constants for role identification.
+- `admin`: Address of the system admin.
+- `lastJackpotClaimWeek`: Tracks weeks of last jackpot claim.
+- `userData`: Mapping to store each user’s gaming data.
+- `jackpotProbabilities`: An array for storing daily jackpot probabilities.
+- `baseRaffleMultiplier`, `PP_PerSpin`: Constants defining base raffle and spin points.
+- `plumeAmounts`, `userNonce`, `rewardProbabilities`: Govern reward mechanics.
+- `supraRouter`, `dateTime`: External contract interfaces.
+- `campaignStartDate`, `enableSpin`, `spinPrice`: Controls game campaign status and price.
+- `pendingNonce`, `isSpinPending`: Manages transactional state of spins.
 
-**Source Contracts**:
-- Main contracts like Plume and its facets responsible for core functionalities.
-- Available in `src/` folder.
-
-**Lib and Proxy**:
-- Libraries and proxies to assist contract operations and upgradability in `src/lib/` and `src/proxy/`.
-
-**Interfaces**:
-- Interfaces outline the required functions for main operations.
-- Located in `src/interfaces/`.
-
-**Mocks**:
-- Simulate contract functions for testing environments (`src/mocks/`).
-
-**Spin Contracts**:
-- Specific contracts like DateTime, Raffle, and Spin for additional functionalities (`src/spin/`).
-
-**Tests**:
-- Various test scripts for different elements of the project (`test/`).
+These variables are vital for managing access control, current game state, and historical gameplay data.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/spin/Raffle.sol
-The document outlines a smart contract that serves as a Raffle system. It allows users to spend raffle tickets to enter drawings for prizes, which are selected randomly via a VRF (Verifiable Random Function) service. Key features include the management of prizes, the entry and tracking of participants, the selection of multiple winners using VRF callbacks, and the functionality for users or admins to claim prizes or resolve drawing issues. The contract uses several upgradeable features from the OpenZeppelin library, ensuring flexibility in future functionality additions.
+### Raffle Contract
+The Raffle contract is a system for managing prize draws using a raffle ticket system. It extends Initializable, AccessControlUpgradeable, and UUPSUpgradeable contracts to facilitate upgradeability and access control.
 
-### Contract: `Raffle`
-The `Raffle` contract extends `AccessControlUpgradeable` and `UUPSUpgradeable`, allowing for access control and upgradeable functionality. It interfaces with `ISpin` for ticket management and `ISupraRouterContract` for VRF services.
+#### Contracts & Interfaces:
+- **ISpin**: Interface for user interactions related to raffle tickets.
+- **ISupraRouterContract**: Interface for handling random number generation requests.
 
-#### Function: `initialize(address _spinContract, address _supraRouter)`
-- Interface: `function initialize(address _spinContract, address _supraRouter) public initializer`
-- Summary: Initializes the contract, setting up roles and linking to the `spinContract` and `supraRouter` for ticket and verification management.
+#### Key Functionalities:
+1. **initialize**: Initializes the contract, sets key contracts, and configures initial roles and prize ID.
+2. **addPrize**: Allows admin to add a new prize.
+3. **editPrize**: Updates existing prize details.
+4. **spendRaffle**: Users spend tickets to enter a raffle.
+5. **requestWinner**: Admin initiates a process to select a winner through VRF.
+6. **handleWinnerSelection**: Callback from VRF to select the winner.
+7. **claimPrize**: Users claim their prizes if they have won.
+8. **upgradability & roles**: Admin roles and prize active status functions.
 
-#### Function: `addPrize(string calldata name, string calldata description, uint256 value, uint256 quantity)`
-- Interface: `function addPrize(string calldata name, string calldata description, uint256 value, uint256 quantity) external onlyRole(ADMIN_ROLE)`
-- Summary: Allows admin to create a new prize with specific details, tracking it via a newly assigned prize ID.
-
-#### Function: `editPrize(uint256 prizeId, ...)`
-- Interface: `function editPrize(uint256 prizeId, string calldata name, string calldata description, uint256 value, uint256 quantity) external onlyRole(ADMIN_ROLE)`
-- Summary: Enables editing of existing prize details by the admin to update its attributes while it remains active.
-
-#### Function: `removePrize(uint256 prizeId)`
-- Interface: `function removePrize(uint256 prizeId) external onlyRole(ADMIN_ROLE)`
-- Summary: Allows admin to deactivate a prize, removing it from the active prize list.
-
-#### Function: `spendRaffle(uint256 prizeId, uint256 ticketAmount)`
-- Interface: `function spendRaffle(uint256 prizeId, uint256 ticketAmount) external prizeIsActive(prizeId)`
-- Summary: Users can spend tickets to enter a raffle for a specific prize, with entries tracked and validated.
-
-#### Function: `requestWinner(uint256 prizeId)`
-- Interface: `function requestWinner(uint256 prizeId) external onlyRole(ADMIN_ROLE)`
-- Summary: Admin requests random selection of a winner via VRF, ensuring all prize attributes are correctly validated before the request.
-
-#### Function: `handleWinnerSelection(uint256 requestId, uint256[] memory rng)`
-- Interface: `function handleWinnerSelection(uint256 requestId, uint256[] memory rng) external onlyRole(SUPRA_ROLE)`
-- Summary: Callback function handles the setting of a winner based on VRF-generated random numbers.
-
-#### Function: `claimPrize(uint256 prizeId, uint256 winnerIndex)`
-- Interface: `function claimPrize(uint256 prizeId, uint256 winnerIndex) external`
-- Summary: Lets users claim their prize securely if they are the authenticated winner.
-
-#### Storage Variable: `mapping(uint256 => Prize) public prizes`
-- Definition: Stores details of each prize, including name, description, isActive status, and other relevant metadata.
-
-#### Storage Variable: `uint256[] public prizeIds`
-- Definition: An array of all active prize IDs to track available prizes.
-
-#### Storage Variable: `ISpin public spinContract`
-- Definition: Interface to `Spin` contract, facilitating ticket management for raffle entries.
-
-The contract includes several other mappings and variables for tracking prizes, tickets, and VRF requests, as well as various events and errors pertinent to the raffle's operation.
+The contract also includes storage for managing prizes, tickets, winners, and integrates SupraOracles for VRF to ensure random and fair winner selection. Notably, it caters to multi-winner draws.
 
 
 ## Main List of Files in Project
@@ -1605,2637 +1592,249 @@ spin.setCampaignStartDate(startTimestamp);
 spin.setEnabledSpin(true);
 ```
 
-
-
 ---
 
 *This documentation is maintained alongside the smart contracts. For the latest updates, please refer to the repository.*
 
 
-### README.md
+### SPIN.md
 
-# Forge Standard Library • [![CI status](https://github.com/foundry-rs/forge-std/actions/workflows/ci.yml/badge.svg)](https://github.com/foundry-rs/forge-std/actions/workflows/ci.yml)
+# Daily Spin & Raffle Contracts
 
-Forge Standard Library is a collection of helpful contracts and libraries for use with [Forge and Foundry](https://github.com/foundry-rs/foundry). It leverages Forge's cheatcodes to make writing tests easier and faster, while improving the UX of cheatcodes.
+> [!NOTE]
+> **The Daily Spin is now live on Plume!**
+> Try it out here: [https://portal.plume.org/daily-spin](https://portal.plume.org/daily-spin)
 
-**Learn how to use Forge-Std with the [📖 Foundry Book (Forge-Std Guide)](https://book.getfoundry.sh/forge/forge-std.html).**
+This document provides a technical overview of the `Spin.sol` and `Raffle.sol` smart contracts, which together create a gamified daily spin and raffle system.
 
-## Install
+## Table of Contents
+1.  [High-Level Overview](#high-level-overview)
+2.  [The Spin Contract (`Spin.sol`)](#1-the-spin-contract-spin.sol)
+    -   [Spinning Process](#spinning-process)
+    -   [Reward Determination Logic](#reward-determination-logic)
+    -   [Daily Streak Mechanic](#daily-streak-mechanic)
+    -   [`Spin.sol` Technical Reference](#spin.sol-technical-reference)
+3.  [The Raffle Contract (`Raffle.sol`)](#2-the-raffle-contract-raffle.sol)
+    -   [Raffle Process](#raffle-process)
+    -   [Multi-Winner Selection](#multi-winner-selection)
+    -   [Claiming a Prize](#claiming-a-prize-multi-winner-aware)
+    -   [`Raffle.sol` Technical Reference](#raffle.sol-technical-reference)
 
-```bash
-forge install foundry-rs/forge-std
+## High-Level Overview
+
+The daily spin is a feature where users pay a fee to spin a virtual wheel once per day for a chance to win various rewards, including raffle tickets. These tickets can then be used in a separate raffle system to win larger prizes. The system is built around two main contracts, `Spin.sol` and `Raffle.sol`, and uses the Supra oracle for verifiable on-chain randomness.
+
+The overall process can be visualized as follows:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Spin.sol
+    participant Supra Oracle
+    participant Admin
+    participant Raffle.sol
+
+    User->>+Spin.sol: 1. startSpin() with payment
+    Spin.sol->>+Supra Oracle: 2. Request randomness for spin
+    Supra Oracle-->>-Spin.sol: 3. handleRandomness(rng) [callback]
+    Note over Spin.sol: 4. Determines reward (Jackpot, Tokens, Raffle Tickets, etc.)<br/>Transfers reward or updates user's ticket balance.
+
+    User->>+Raffle.sol: 5. spendRaffle(prizeId, tickets)
+    Raffle.sol->>+Spin.sol: 6. Verifies & spends tickets
+    Spin.sol-->>-Raffle.sol: 7. Confirms ticket spend
+
+    Admin->>+Raffle.sol: 8. requestWinner(prizeId) for each winner
+    Raffle.sol->>+Supra Oracle: 9. Request randomness for winner
+    Supra Oracle-->>-Raffle.sol: 10. handleWinnerSelection(rng) [callback]
+    Note over Raffle.sol: 11. Selects and records one winner.<br/>This can be repeated up to the prize quantity.
+
+    User->>+Raffle.sol: 12. User claims prize with claimPrize(prizeId, winnerIndex)
+
 ```
 
-## Contracts
-### stdError
+---
 
-This is a helper contract for errors and reverts. In Forge, this contract is particularly helpful for the `expectRevert` cheatcode, as it provides all compiler built-in errors.
+## 1. The Spin Contract (`Spin.sol`)
 
-See the contract itself for all error codes.
+This is the core of the feature. It manages the user's ability to spin, the rewards, and the daily streak mechanic.
 
-#### Example usage
+### Spinning Process
 
-```solidity
+-   **Initiation**: A user calls the `startSpin()` function, sending a payment equal to the `spinPrice`.
+-   **Cooldown**: The `canSpin` modifier ensures a user can only spin once per calendar day. This check is bypassed for whitelisted addresses. An attempt to spin more than once a day will result in an `AlreadySpunToday` error.
+-   **Randomness**: The contract requests a random number from the Supra oracle. The spin is considered "pending" until the oracle returns a value.
+-   **Reward Callback**: The Supra oracle calls `handleRandomness()` with the random number. This function is protected against re-entrancy and can only be called by the trusted oracle address.
 
-import "forge-std/Test.sol";
+### Reward Determination Logic
 
-contract TestContract is Test {
-    ErrorsTest test;
+The `determineReward` function uses a multi-stage process to assign a reward based on a pseudo-random number (`rng`) from the Supra oracle. The `rng` is normalized to a value between 0 and 999,999.
 
-    function setUp() public {
-        test = new ErrorsTest();
-    }
+```mermaid
+flowchart TD
+    A[Start: handleRandomness] --> B{Normalize rng % 1,000,000};
+    B --> C{Day of Week};
+    C --> D[Get Jackpot Threshold<br/>from jackpotProbabilities-dayOfWeek];
+    D --> E{rng < Jackpot Threshold?};
+    E -->|Yes| F[Check Jackpot Eligibility];
+    F --> G{Streak & Weekly Limit OK?};
+    G -->|Yes| H[Reward: Jackpot];
+    G -->|No| I[Reward: Nothing];
+    E -->|No| J{rng <= plumeTokenThreshold?};
+    J -->|Yes| K[Reward: Plume Token];
+    J -->|No| L{rng <= raffleTicketThreshold?};
+    L -->|Yes| M[Reward: Raffle Ticket];
+    L -->|No| N{rng <= ppThreshold?};
+    N -->|Yes| O[Reward: PP];
+    N -->|No| P[Reward: Nothing];
 
-    function testExpectArithmetic() public {
-        vm.expectRevert(stdError.arithmeticError);
-        test.arithmeticError(10);
-    }
-}
-
-contract ErrorsTest {
-    function arithmeticError(uint256 a) public {
-        a = a - 100;
-    }
-}
+    H --> Q[End];
+    I --> Q;
+    K --> Q;
+    M --> Q;
+    O --> Q;
+    P --> Q;
 ```
 
-### stdStorage
+**Reward Tiers & Probabilities:**
 
-This is a rather large contract due to all of the overloading to make the UX decent. Primarily, it is a wrapper around the `record` and `accesses` cheatcodes. It can *always* find and write the storage slot(s) associated with a particular variable without knowing the storage layout. The one _major_ caveat to this is while a slot can be found for packed storage variables, we can't write to that variable safely. If a user tries to write to a packed slot, the execution throws an error, unless it is uninitialized (`bytes32(0)`).
+| Reward Category | Probability Logic | Notes |
+| :--- | :--- |:---|
+| **Jackpot** | `rng < jackpotProbabilities-dayOfWeek` | The probability changes daily. Requires passing additional eligibility checks. |
+| **Plume Token** | `rng <= plumeTokenThreshold` | A fixed amount of PLUME tokens. |
+| **Raffle Ticket** | `rng <= raffleTicketThreshold` | Amount is `baseRaffleMultiplier * streakCount`. |
+| **PP** | `rng <= ppThreshold` | A fixed amount of Plume Points. |
+| **Nothing** | `rng > ppThreshold` | The default outcome if no other tier is met. |
 
-This works by recording all `SLOAD`s and `SSTORE`s during a function call. If there is a single slot read or written to, it immediately returns the slot. Otherwise, behind the scenes, we iterate through and check each one (assuming the user passed in a `depth` parameter). If the variable is a struct, you can pass in a `depth` parameter which is basically the field depth.
+**Jackpot Eligibility:**
+Even if a user's `rng` falls within the jackpot range, they must meet two additional criteria:
+1.  **Weekly Limit**: Only one jackpot can be won per campaign week across all users. The `lastJackpotClaimWeek` variable prevents further jackpot rewards within the same week. If this check fails, the reward defaults to "Nothing".
+2.  **Streak Requirement**: The user's `streakCount` must be greater than or equal to `currentWeek + 2`. This means the required streak to be eligible for the jackpot increases as the campaign progresses. If this check fails, the reward also defaults to "Nothing".
 
-I.e.:
+### Daily Streak Mechanic
+
+The contract calculates a user's streak of consecutive daily spins to reward consistent engagement. The core logic resides in the internal `_computeStreak` function.
+
+- **Calculation**: The streak is based on calendar days, not 24-hour periods. This is achieved by dividing the `lastSpinTimestamp` and `block.timestamp` by `SECONDS_PER_DAY` (86,400) and comparing the resulting day numbers.
+    - If `today == lastDaySpun`, the streak is unchanged.
+    - If `today == lastDaySpun + 1`, the streak is incremented.
+    - If `today > lastDaySpun + 1`, the streak is considered broken and resets to `1` (for the current day's spin).
+- **Impact**: The `streakCount` directly multiplies the number of raffle tickets awarded, significantly increasing rewards for daily players. It is also a critical requirement for jackpot eligibility.
+
+---
+### `Spin.sol` Technical Reference
+
+#### **Key Functions**
+| Function | Description | Access |
+|:---|:---|:---|
+| `startSpin()` | User-callable function to initiate a spin by sending the required `spinPrice`. | Public |
+| `handleRandomness(...)` | The callback function for the Supra oracle. Processes the spin result and updates user state. | `SUPRA_ROLE` |
+| `spendRaffleTickets(...)` | Allows the `Raffle` contract to deduct tickets from a user's balance. | `raffleContract` only |
+| `pause()` / `unpause()` | Pauses or unpauses the `startSpin` functionality. | `ADMIN_ROLE` |
+| `adminWithdraw(...)` | Allows admin to withdraw PLUME tokens from the contract balance. | `ADMIN_ROLE` |
+| `cancelPendingSpin(address user)` | Escape hatch to cancel a user's spin request that is stuck pending an oracle callback. | `ADMIN_ROLE` |
+| `set...()` functions | A suite of functions (`setSpinPrice`, `setRaffleContract`, etc.) for configuring contract parameters. | `ADMIN_ROLE` |
+| `currentStreak(address user)` | View function to get a user's current consecutive daily spin streak. | Public View |
+| `getUserData(address user)` | View function that returns a comprehensive struct of a user's spin-related data. | Public View |
+| `getWeeklyJackpot()` | View function to get the current week's jackpot prize and required streak. | Public View |
+
+#### **Events**
+-   `SpinRequested(uint256 indexed nonce, address indexed user)`: Emitted when a user successfully initiates a spin.
+-   `SpinCompleted(address indexed walletAddress, string rewardCategory, uint256 rewardAmount)`: Emitted after the oracle callback is processed, detailing the reward.
+-   `RaffleTicketsSpent(address indexed walletAddress, uint256 ticketsUsed, uint256 remainingTickets)`: Emitted when the `Raffle` contract spends a user's tickets.
+-   `NotEnoughStreak(string message)`: Emitted if a user meets the odds for a jackpot but does not have the required streak count.
+-   `JackpotAlreadyClaimed(string message)`: Emitted if a user meets the odds for a jackpot but it has already been won that week.
+
+#### **Errors**
+-   `AlreadySpunToday()`: Reverts if a user tries to spin more than once in a calendar day.
+-   `CampaignNotStarted()`: Reverts if `startSpin()` is called before the campaign is enabled by an admin.
+-   `InvalidNonce()`: Reverts if the `handleRandomness` callback receives a nonce that does not correspond to a pending spin.
+-   `SpinRequestPending(address user)`: Reverts if a user tries to `startSpin()` while another spin is already pending an oracle callback.
+
+---
+
+## 2. The Raffle Contract (`Raffle.sol`)
+
+This contract allows users to spend the raffle tickets they've earned from the Spin contract to enter drawings for prizes that can have **multiple winners**.
+
+### Raffle Process
+
+-   **Prize Management**: An admin can call `addPrize` and `editPrize`. A critical parameter is `quantity`, which defines how many winners a single prize can have.
+-   **Entering a Raffle**: A user calls `spendRaffle(prizeId, ticketAmount)` to enter a specific prize drawing. The `Raffle` contract communicates with the `Spin` contract to verify the user has enough `raffleTicketsBalance` and then to deduct the spent amount.
+
+### Multi-Winner Selection
+
+Winner selection is an admin-initiated process that can be repeated for each available prize slot. It is designed to be fair and transparent.
+
+1.  **Request**: The admin calls `requestWinner(prizeId)`. This can be done as long as the number of `winnersDrawn` is less than the prize `quantity`.
+2.  **Oracle Callback**: The function requests a random number from the Supra oracle. The oracle's callback, `handleWinnerSelection`, receives the random number and performs a binary search on the ticket entries to find the winner.
+3.  **Recording Winner**: The winner's details are stored in the `prizeWinners` array for that prize.
+4.  **Repeat**: This process can be repeated by the admin until the `quantity` of winners for that prize has been drawn. Once `winnersDrawn == quantity`, the prize automatically becomes inactive.
+
+### Claiming a Prize (Multi-Winner Aware)
+
+-   **Individual Claims**: Each winner must call `claimPrize(prizeId, winnerIndex)` to claim their specific prize. Since a prize can have multiple winners, the `winnerIndex` (starting from 0) is used to identify which winning slot is being claimed.
+-   **Independent Status**: Each winner's claim status is tracked independently. One user claiming their prize has no effect on the ability of other winners to claim theirs. The actual delivery of the prize is handled off-chain.
+
+---
+### `Raffle.sol` Technical Reference
+
+#### Data Structures
+
+**`Prize` Struct**
 ```solidity
-struct T {
-    // depth 0
-    uint256 a;
-    // depth 1
-    uint256 b;
+struct Prize {
+    string name;
+    string description;
+    uint256 value;
+    uint256 endTimestamp;
+    bool isActive;
+    uint256 quantity;
+    // --- Deprecated Fields ---
+    address winner;
+    uint256 winnerIndex;
+    bool claimed;
 }
 ```
+> *Note: The `winner`, `winnerIndex`, and `claimed` fields on the `Prize` struct are deprecated and are no longer used in favor of the multi-winner `prizeWinners` mapping.*
 
-#### Example usage
-
+**`Winner` Struct**
 ```solidity
-import "forge-std/Test.sol";
-
-contract TestContract is Test {
-    using stdStorage for StdStorage;
-
-    Storage test;
-
-    function setUp() public {
-        test = new Storage();
-    }
-
-    function testFindExists() public {
-        // Lets say we want to find the slot for the public
-        // variable `exists`. We just pass in the function selector
-        // to the `find` command
-        uint256 slot = stdstore.target(address(test)).sig("exists()").find();
-        assertEq(slot, 0);
-    }
-
-    function testWriteExists() public {
-        // Lets say we want to write to the slot for the public
-        // variable `exists`. We just pass in the function selector
-        // to the `checked_write` command
-        stdstore.target(address(test)).sig("exists()").checked_write(100);
-        assertEq(test.exists(), 100);
-    }
-
-    // It supports arbitrary storage layouts, like assembly based storage locations
-    function testFindHidden() public {
-        // `hidden` is a random hash of a bytes, iteration through slots would
-        // not find it. Our mechanism does
-        // Also, you can use the selector instead of a string
-        uint256 slot = stdstore.target(address(test)).sig(test.hidden.selector).find();
-        assertEq(slot, uint256(keccak256("my.random.var")));
-    }
-
-    // If targeting a mapping, you have to pass in the keys necessary to perform the find
-    // i.e.:
-    function testFindMapping() public {
-        uint256 slot = stdstore
-            .target(address(test))
-            .sig(test.map_addr.selector)
-            .with_key(address(this))
-            .find();
-        // in the `Storage` constructor, we wrote that this address' value was 1 in the map
-        // so when we load the slot, we expect it to be 1
-        assertEq(uint(vm.load(address(test), bytes32(slot))), 1);
-    }
-
-    // If the target is a struct, you can specify the field depth:
-    function testFindStruct() public {
-        // NOTE: see the depth parameter - 0 means 0th field, 1 means 1st field, etc.
-        uint256 slot_for_a_field = stdstore
-            .target(address(test))
-            .sig(test.basicStruct.selector)
-            .depth(0)
-            .find();
-
-        uint256 slot_for_b_field = stdstore
-            .target(address(test))
-            .sig(test.basicStruct.selector)
-            .depth(1)
-            .find();
-
-        assertEq(uint(vm.load(address(test), bytes32(slot_for_a_field))), 1);
-        assertEq(uint(vm.load(address(test), bytes32(slot_for_b_field))), 2);
-    }
-}
-
-// A complex storage contract
-contract Storage {
-    struct UnpackedStruct {
-        uint256 a;
-        uint256 b;
-    }
-
-    constructor() {
-        map_addr[msg.sender] = 1;
-    }
-
-    uint256 public exists = 1;
-    mapping(address => uint256) public map_addr;
-    // mapping(address => Packed) public map_packed;
-    mapping(address => UnpackedStruct) public map_struct;
-    mapping(address => mapping(address => uint256)) public deep_map;
-    mapping(address => mapping(address => UnpackedStruct)) public deep_map_struct;
-    UnpackedStruct public basicStruct = UnpackedStruct({
-        a: 1,
-        b: 2
-    });
-
-    function hidden() public view returns (bytes32 t) {
-        // an extremely hidden storage slot
-        bytes32 slot = keccak256("my.random.var");
-        assembly {
-            t := sload(slot)
-        }
-    }
-}
-```
-
-### stdCheats
-
-This is a wrapper over miscellaneous cheatcodes that need wrappers to be more dev friendly. Currently there are only functions related to `prank`. In general, users may expect ETH to be put into an address on `prank`, but this is not the case for safety reasons. Explicitly this `hoax` function should only be used for addresses that have expected balances as it will get overwritten. If an address already has ETH, you should just use `prank`. If you want to change that balance explicitly, just use `deal`. If you want to do both, `hoax` is also right for you.
-
-
-#### Example usage:
-```solidity
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import "forge-std/Test.sol";
-
-// Inherit the stdCheats
-contract StdCheatsTest is Test {
-    Bar test;
-    function setUp() public {
-        test = new Bar();
-    }
-
-    function testHoax() public {
-        // we call `hoax`, which gives the target address
-        // eth and then calls `prank`
-        hoax(address(1337));
-        test.bar{value: 100}(address(1337));
-
-        // overloaded to allow you to specify how much eth to
-        // initialize the address with
-        hoax(address(1337), 1);
-        test.bar{value: 1}(address(1337));
-    }
-
-    function testStartHoax() public {
-        // we call `startHoax`, which gives the target address
-        // eth and then calls `startPrank`
-        //
-        // it is also overloaded so that you can specify an eth amount
-        startHoax(address(1337));
-        test.bar{value: 100}(address(1337));
-        test.bar{value: 100}(address(1337));
-        vm.stopPrank();
-        test.bar(address(this));
-    }
-}
-
-contract Bar {
-    function bar(address expectedSender) public payable {
-        require(msg.sender == expectedSender, "!prank");
-    }
+struct Winner {
+    address winnerAddress;
+    uint256 winningTicketIndex;
+    uint256 drawnAt;
+    bool claimed;
 }
 ```
 
-### Std Assertions
-
-Contains various assertions.
-
-### `console.log`
-
-Usage follows the same format as [Hardhat](https://hardhat.org/hardhat-network/reference/#console-log).
-It's recommended to use `console2.sol` as shown below, as this will show the decoded logs in Forge traces.
-
-```solidity
-// import it indirectly via Test.sol
-import "forge-std/Test.sol";
-// or directly import it
-import "forge-std/console2.sol";
-...
-console2.log(someValue);
-```
-
-If you need compatibility with Hardhat, you must use the standard `console.sol` instead.
-Due to a bug in `console.sol`, logs that use `uint256` or `int256` types will not be properly decoded in Forge traces.
-
-```solidity
-// import it indirectly via Test.sol
-import "forge-std/Test.sol";
-// or directly import it
-import "forge-std/console.sol";
-...
-console.log(someValue);
-```
-
-## Contributing
-
-See our [contributing guidelines](./CONTRIBUTING.md).
-
-## Getting Help
-
-First, see if the answer to your question can be found in [book](https://book.getfoundry.sh).
-
-If the answer is not there:
-
--   Join the [support Telegram](https://t.me/foundry_support) to get help, or
--   Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new/choose) with your question, or
--   Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new/choose)
-
-If you want to contribute, or follow along with contributor discussion, you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
-
-## License
-
-Forge Standard Library is offered under either [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) license.
-
-
-### README.md
-
-# Audits
-
-| Date          | Version | Commit                                                                           | Auditor      | Scope                | Links                                                       |
-| ------------- | ------- | -------------------------------------------------------------------------------- | ------------ | -------------------- | ----------------------------------------------------------- |
-| April 2025    | v5.3.0  | [`d4b2e98`](https://github.com/openzeppelin/openzeppelin-contracts/tree/d4b2e98) | OpenZeppelin | v5.3 Changes         | [🔗](./2025-04-v5.3.pdf)                                    |
-| December 2024 | v5.2.0  | [`98d28f9`](https://github.com/openzeppelin/openzeppelin-contracts/tree/98d28f9) | OpenZeppelin | v5.2 Changes         | [🔗](./2024-12-v5.2.pdf)                                    |
-| October 2024  | v5.1.0  | [`aba9ff6`](https://github.com/openzeppelin/openzeppelin-contracts/tree/aba9ff6) | OpenZeppelin | v5.1 Changes         | [🔗](./2024-10-v5.1.pdf)                                    |
-| October 2023  | v5.0.0  | [`b5a3e69`](https://github.com/openzeppelin/openzeppelin-contracts/tree/b5a3e69) | OpenZeppelin | v5.0 Changes         | [🔗](./2023-10-v5.0.pdf)                                    |
-| May 2023      | v4.9.0  | [`91df66c`](https://github.com/openzeppelin/openzeppelin-contracts/tree/91df66c) | OpenZeppelin | v4.9 Changes         | [🔗](./2023-05-v4.9.pdf)                                    |
-| October 2022  | v4.8.0  | [`14f98db`](https://github.com/openzeppelin/openzeppelin-contracts/tree/14f98db) | OpenZeppelin | ERC4626, Checkpoints | [🔗](./2022-10-ERC4626.pdf) [🔗](./2022-10-Checkpoints.pdf) |
-| October 2018  | v2.0.0  | [`dac5bcc`](https://github.com/openzeppelin/openzeppelin-contracts/tree/dac5bcc) | LevelK       | Everything           | [🔗](./2018-10.pdf)                                         |
-| March 2017    | v1.0.4  | [`9c5975a`](https://github.com/openzeppelin/openzeppelin-contracts/tree/9c5975a) | New Alchemy  | Everything           | [🔗](./2017-03.md)                                          |
-
-# Formal Verification
-
-| Date         | Version | Commit    | Tool    | Scope                                                                                                                            | Links                                |
-| ------------ | ------- | --------- | ------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| May 2022     | v4.7.0  | `109778c` | Certora | Initializable, GovernorPreventLateQuorum, ERC1155Burnable, ERC1155Pausable, ERC1155Supply, ERC1155Holder, ERC1155Receiver        | [🔗](../certora/reports/2022-05.pdf) |
-| March 2022   | v4.4.0  | `4088540` | Certora | ERC20Votes, ERC20FlashMint, ERC20Wrapper, TimelockController, ERC721Votes, Votes, AccessControl, ERC1155                         | [🔗](../certora/reports/2022-03.pdf) |
-| October 2021 | v4.4.0  | `4088540` | Certora | Governor, GovernorCountingSimple, GovernorProposalThreshold, GovernorTimelockControl, GovernorVotes, GovernorVotesQuorumFraction | [🔗](../certora/reports/2021-10.pdf) |
-
-
-### README.md
-
-Documentation is hosted at https://docs.openzeppelin.com/contracts.
-
-All of the content for the site is in this repository. The guides are in the
-[docs](/docs) directory, and the API Reference is extracted from comments in
-the source code. If you want to help improve the content, this is the
-repository you should be contributing to.
-
-[`solidity-docgen`](https://github.com/OpenZeppelin/solidity-docgen) is the
-program that extracts the API Reference from source code.
-
-The [`docs.openzeppelin.com`](https://github.com/OpenZeppelin/docs.openzeppelin.com)
-repository hosts the configuration for the entire site, which includes
-documentation for all of the OpenZeppelin projects.
-
-To run the docs locally you should run `npm run docs:watch` on this
-repository.
-
-
-### README.md
-
-# <img src="logo.svg" alt="OpenZeppelin" height="40px">
-
-[![NPM Package](https://img.shields.io/npm/v/@openzeppelin/contracts.svg)](https://www.npmjs.org/package/@openzeppelin/contracts)
-[![Coverage Status](https://codecov.io/gh/OpenZeppelin/openzeppelin-contracts/graph/badge.svg)](https://codecov.io/gh/OpenZeppelin/openzeppelin-contracts)
-[![GitPOAPs](https://public-api.gitpoap.io/v1/repo/OpenZeppelin/openzeppelin-contracts/badge)](https://www.gitpoap.io/gh/OpenZeppelin/openzeppelin-contracts)
-[![Docs](https://img.shields.io/badge/docs-%F0%9F%93%84-yellow)](https://docs.openzeppelin.com/contracts)
-[![Forum](https://img.shields.io/badge/forum-%F0%9F%92%AC-yellow)](https://forum.openzeppelin.com/)
-
-**A library for secure smart contract development.** Build on a solid foundation of community-vetted code.
-
- * Implementations of standards like [ERC20](https://docs.openzeppelin.com/contracts/erc20) and [ERC721](https://docs.openzeppelin.com/contracts/erc721).
- * Flexible [role-based permissioning](https://docs.openzeppelin.com/contracts/access-control) scheme.
- * Reusable [Solidity components](https://docs.openzeppelin.com/contracts/utilities) to build custom contracts and complex decentralized systems.
-
-:mage: **Not sure how to get started?** Check out [Contracts Wizard](https://wizard.openzeppelin.com/) — an interactive smart contract generator.
-
-:building_construction: **Want to scale your decentralized application?** Check out [OpenZeppelin Defender](https://openzeppelin.com/defender) — a mission-critical developer security platform to code, audit, deploy, monitor, and operate with confidence.
-
-> [!IMPORTANT]
-> OpenZeppelin Contracts uses semantic versioning to communicate backwards compatibility of its API and storage layout. For upgradeable contracts, the storage layout of different major versions should be assumed incompatible, for example, it is unsafe to upgrade from 4.9.3 to 5.0.0. Learn more at [Backwards Compatibility](https://docs.openzeppelin.com/contracts/backwards-compatibility).
-
-+> [!NOTE]
-+> You are looking at the upgradeable variant of OpenZeppelin Contracts. Be sure to review the documentation on [Using OpenZeppelin Contracts with Upgrades](https://docs.openzeppelin.com/contracts/upgradeable).
-+
-## Overview
-
-### Installation
-
-#### Hardhat (npm)
-
-```
-$ npm install @openzeppelin/contracts-upgradeable
-```
-
-#### Foundry (git)
-
-> [!WARNING]
-> When installing via git, it is a common error to use the `master` branch. This is a development branch that should be avoided in favor of tagged releases. The release process involves security measures that the `master` branch does not guarantee.
-
-> [!WARNING]
-> Foundry installs the latest version initially, but subsequent `forge update` commands will use the `master` branch.
-
-```
-$ forge install OpenZeppelin/openzeppelin-contracts-upgradeable
-```
-
-Add `@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/` in `remappings.txt.`
-
-### Usage
-
-Once installed, you can use the contracts in the library by importing them:
-
-```solidity
-pragma solidity ^0.8.20;
-
-import {ERC721Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
-
-contract MyCollectible is ERC721Upgradeable {
-    function initialize() initializer public {
-        __ERC721_init("MyCollectible", "MCO");
-    }
-}
-```
-
-_If you're new to smart contract development, head to [Developing Smart Contracts](https://docs.openzeppelin.com/learn/developing-smart-contracts) to learn about creating a new project and compiling your contracts._
-
-To keep your system secure, you should **always** use the installed code as-is, and neither copy-paste it from online sources nor modify it yourself. The library is designed so that only the contracts and functions you use are deployed, so you don't need to worry about it needlessly increasing gas costs.
-
-## Learn More
-
-The guides in the [documentation site](https://docs.openzeppelin.com/contracts) will teach about different concepts, and how to use the related contracts that OpenZeppelin Contracts provides:
-
-* [Access Control](https://docs.openzeppelin.com/contracts/access-control): decide who can perform each of the actions on your system.
-* [Tokens](https://docs.openzeppelin.com/contracts/tokens): create tradeable assets or collectives, and distribute them via [Crowdsales](https://docs.openzeppelin.com/contracts/crowdsales).
-* [Utilities](https://docs.openzeppelin.com/contracts/utilities): generic useful tools including non-overflowing math, signature verification, and trustless paying systems.
-
-The [full API](https://docs.openzeppelin.com/contracts/api/token/ERC20) is also thoroughly documented, and serves as a great reference when developing your smart contract application. You can also ask for help or follow Contracts' development in the [community forum](https://forum.openzeppelin.com).
-
-Finally, you may want to take a look at the [guides on our blog](https://blog.openzeppelin.com/), which cover several common use cases and good practices. The following articles provide great background reading, though please note that some of the referenced tools have changed, as the tooling in the ecosystem continues to rapidly evolve.
-
-* [The Hitchhiker’s Guide to Smart Contracts in Ethereum](https://blog.openzeppelin.com/the-hitchhikers-guide-to-smart-contracts-in-ethereum-848f08001f05) will help you get an overview of the various tools available for smart contract development, and help you set up your environment.
-* [A Gentle Introduction to Ethereum Programming, Part 1](https://blog.openzeppelin.com/a-gentle-introduction-to-ethereum-programming-part-1-783cc7796094) provides very useful information on an introductory level, including many basic concepts from the Ethereum platform.
-* For a more in-depth dive, you may read the guide [Designing the Architecture for Your Ethereum Application](https://blog.openzeppelin.com/designing-the-architecture-for-your-ethereum-application-9cec086f8317), which discusses how to better structure your application and its relationship to the real world.
-
-## Security
-
-This project is maintained by [OpenZeppelin](https://openzeppelin.com) with the goal of providing a secure and reliable library of smart contract components for the ecosystem. We address security through risk management in various areas such as engineering and open source best practices, scoping and API design, multi-layered review processes, and incident response preparedness.
-
-The [OpenZeppelin Contracts Security Center](https://contracts.openzeppelin.com/security) contains more details about the secure development process.
-
-The security policy is detailed in [`SECURITY.md`](./SECURITY.md) as well, and specifies how you can report security vulnerabilities, which versions will receive security patches, and how to stay informed about them. We run a [bug bounty program on Immunefi](https://immunefi.com/bounty/openzeppelin) to reward the responsible disclosure of vulnerabilities.
-
-The engineering guidelines we follow to promote project quality can be found in [`GUIDELINES.md`](./GUIDELINES.md).
-
-Past audits can be found in [`audits/`](./audits).
-
-Smart contracts are a nascent technology and carry a high level of technical risk and uncertainty. Although OpenZeppelin is well known for its security audits, using OpenZeppelin Contracts is not a substitute for a security audit.
-
-OpenZeppelin Contracts is made available under the MIT License, which disclaims all warranties in relation to the project and which limits the liability of those that contribute and maintain the project, including OpenZeppelin. As set out further in the Terms, you acknowledge that you are solely responsible for any use of OpenZeppelin Contracts and you assume all risks associated with any such use.
-
-## Contribute
-
-OpenZeppelin Contracts exists thanks to its contributors. There are many ways you can participate and help build high quality software. Check out the [contribution guide](CONTRIBUTING.md)!
-
-## License
-
-OpenZeppelin Contracts is released under the [MIT License](LICENSE).
-
-## Legal
-
-Your use of this Project is governed by the terms found at www.openzeppelin.com/tos (the "Terms").
-
-
-### README.md
-
-The upgradeable variant of OpenZeppelin Contracts is automatically generated from the original Solidity code. We call this process "transpilation" and it is implemented by our [Upgradeability Transpiler](https://github.com/OpenZeppelin/openzeppelin-transpiler/).
-
-When the `master` branch or `release-v*` branches are updated, the code is transpiled and pushed to [OpenZeppelin/openzeppelin-contracts-upgradeable](https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable) by the `upgradeable.yml` workflow.
-
-## `transpile.sh`
-
-Applies patches and invokes the transpiler with the command line flags we need for our requirements (for example, excluding certain files).
-
-## `transpile-onto.sh`
-
-```
-bash scripts/upgradeable/transpile-onto.sh <target> [<base>]
-```
-
-Transpiles the contents of the current git branch and commits the result as a new commit on branch `<target>`. If branch `<target>` doesn't exist, it will copy the commit history of `[<base>]` (this is used in GitHub Actions, but is usually not necessary locally).
-
-## `patch-apply.sh` & `patch-save.sh`
-
-Some of the upgradeable contract variants require ad-hoc changes that are not implemented by the transpiler. These changes are implemented by patches stored in `upgradeable.patch` in this directory. `patch-apply.sh` applies these patches.
-
-If the patches fail to apply due to changes in the repo, the conflicts have to be resolved manually. Once fixed, `patch-save.sh` will take the changes staged in Git and update `upgradeable.patch` to match.
-
-
-### README.md
-
-# Halmos Cheat Codes
-
-Halmos cheatcodes are abstract functions designed to facilitate writing symbolic tests, such as the creation of new symbolic values at runtime. While these cheatcodes are currently exclusive to [Halmos][halmos], they are not limited to it and could potentially be supported by other symbolic testing tools in the future.
-
-Please refer to [the list of currently available cheatcodes][list]. More cheatcodes will be added in the future.
-
-Join the [Halmos Telegram Group][chat] for any inquiries or further discussions.
-
-[halmos]: <https://github.com/a16z/halmos>
-[list]: <src/SVM.sol>
-[chat]: <https://t.me/+4UhzHduai3MzZmUx>
-
-## Installation
-
-To install using Foundry:
-```
-forge install a16z/halmos-cheatcodes
-```
-Alternatively, you can directly add it as a submodule:
-```
-git submodule add https://github.com/a16z/halmos-cheatcodes
-```
-
-## Example usage
-
-Below is an example of a symbolic test that checks for potential unauthorized access to others' tokens. The approach involves setting up an initial symbolic state of the token contract, executing an arbitrary function call to the token contract, and checking if there is an execution path that increases the caller's balance and/or decreases the balance of others. This example illustrates how to utilize cheatcodes to set up initial symbolic states and execute arbitrary function calls.
-
-```solidity
-// import Halmos cheatcodes
-import {SymTest} from "halmos-cheatcodes/SymTest.sol";
-
-import {Test} from "forge-std/Test.sol";
-
-import {Token} from "/path/to/Token.sol";
-
-contract TokenTest is SymTest, Test {
-    Token token;
-
-    function setUp() public {
-        token = new Token();
-
-        // set the balances of three arbitrary accounts to arbitrary symbolic values
-        for (uint256 i = 0; i < 3; i++) {
-            address receiver = svm.createAddress('receiver'); // create a new symbolic address
-            uint256 amount = svm.createUint256('amount'); // create a new symbolic uint256 value
-            token.transfer(receiver, amount);
-        }
-    }
-
-    function checkBalanceUpdate() public {
-        // consider two arbitrary distinct accounts
-        address caller = svm.createAddress('caller'); // create a symbolic address
-        address others = svm.createAddress('others'); // create another symbolic address
-        vm.assume(others != caller); // assume the two addresses are different
-
-        // record their current balances
-        uint256 oldBalanceCaller = token.balanceOf(caller);
-        uint256 oldBalanceOthers = token.balanceOf(others);
-
-        // execute an arbitrary function call to the token from the caller
-        vm.prank(caller);
-        uint256 dataSize = 100; // the max calldata size for the public functions in the token
-        bytes memory data = svm.createBytes(dataSize, 'data'); // create a symbolic calldata
-        address(token).call(data);
-
-        // ensure that the caller cannot spend others' tokens
-        assert(token.balanceOf(caller) <= oldBalanceCaller); // cannot increase their own balance
-        assert(token.balanceOf(others) >= oldBalanceOthers); // cannot decrease others' balance
-    }
-}
-```
-
-When running the above test against the following buggy token contract, Halmos will provide a counterexample that may be overlooked during manual reviews.
-
-```solidity
-/// @notice This is a buggy token contract. DO NOT use it in production.
-contract Token {
-    mapping(address => uint) public balanceOf;
-
-    constructor() public {
-        balanceOf[msg.sender] = 1e27;
-    }
-
-    function transfer(address to, uint amount) public {
-        _transfer(msg.sender, to, amount);
-    }
-
-    function _transfer(address from, address to, uint amount) public {
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
-    }
-}
-```
-
-## Disclaimer
-
-_These smart contracts and code are being provided as is. No guarantee, representation or warranty is being made, express or implied, as to the safety or correctness of the user interface or the smart contracts and code. They have not been audited and as such there can be no assurance they will work as intended, and users may experience delays, failures, errors, omissions or loss of transmitted information. THE SMART CONTRACTS AND CODE CONTAINED HEREIN ARE FURNISHED AS IS, WHERE IS, WITH ALL FAULTS AND WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF MERCHANTABILITY, NON-INFRINGEMENT OR FITNESS FOR ANY PARTICULAR PURPOSE. Further, use of any of these smart contracts and code may be restricted or prohibited under applicable law, including securities laws, and it is therefore strongly advised for you to contact a reputable attorney in any jurisdiction where these smart contracts and code may be accessible for any questions or concerns with respect thereto. Further, no information provided in this repo should be construed as investment advice or legal advice for any particular facts or circumstances, and is not meant to replace competent counsel. a16z is not liable for any use of the foregoing, and users should proceed with caution and use at their own risk. See a16z.com/disclosures for more info._
-
-
-### README.md
-
-# Forge Standard Library • [![CI status](https://github.com/foundry-rs/forge-std/actions/workflows/ci.yml/badge.svg)](https://github.com/foundry-rs/forge-std/actions/workflows/ci.yml)
-
-Forge Standard Library is a collection of helpful contracts and libraries for use with [Forge and Foundry](https://github.com/foundry-rs/foundry). It leverages Forge's cheatcodes to make writing tests easier and faster, while improving the UX of cheatcodes.
-
-**Learn how to use Forge-Std with the [📖 Foundry Book (Forge-Std Guide)](https://book.getfoundry.sh/forge/forge-std.html).**
-
-## Install
-
-```bash
-forge install foundry-rs/forge-std
-```
-
-## Contracts
-### stdError
-
-This is a helper contract for errors and reverts. In Forge, this contract is particularly helpful for the `expectRevert` cheatcode, as it provides all compiler builtin errors.
-
-See the contract itself for all error codes.
-
-#### Example usage
-
-```solidity
-
-import "forge-std/Test.sol";
-
-contract TestContract is Test {
-    ErrorsTest test;
-
-    function setUp() public {
-        test = new ErrorsTest();
-    }
-
-    function testExpectArithmetic() public {
-        vm.expectRevert(stdError.arithmeticError);
-        test.arithmeticError(10);
-    }
-}
-
-contract ErrorsTest {
-    function arithmeticError(uint256 a) public {
-        a = a - 100;
-    }
-}
-```
-
-### stdStorage
-
-This is a rather large contract due to all of the overloading to make the UX decent. Primarily, it is a wrapper around the `record` and `accesses` cheatcodes. It can *always* find and write the storage slot(s) associated with a particular variable without knowing the storage layout. The one _major_ caveat to this is while a slot can be found for packed storage variables, we can't write to that variable safely. If a user tries to write to a packed slot, the execution throws an error, unless it is uninitialized (`bytes32(0)`).
-
-This works by recording all `SLOAD`s and `SSTORE`s during a function call. If there is a single slot read or written to, it immediately returns the slot. Otherwise, behind the scenes, we iterate through and check each one (assuming the user passed in a `depth` parameter). If the variable is a struct, you can pass in a `depth` parameter which is basically the field depth.
-
-I.e.:
-```solidity
-struct T {
-    // depth 0
-    uint256 a;
-    // depth 1
-    uint256 b;
-}
-```
-
-#### Example usage
-
-```solidity
-import "forge-std/Test.sol";
-
-contract TestContract is Test {
-    using stdStorage for StdStorage;
-
-    Storage test;
-
-    function setUp() public {
-        test = new Storage();
-    }
-
-    function testFindExists() public {
-        // Lets say we want to find the slot for the public
-        // variable `exists`. We just pass in the function selector
-        // to the `find` command
-        uint256 slot = stdstore.target(address(test)).sig("exists()").find();
-        assertEq(slot, 0);
-    }
-
-    function testWriteExists() public {
-        // Lets say we want to write to the slot for the public
-        // variable `exists`. We just pass in the function selector
-        // to the `checked_write` command
-        stdstore.target(address(test)).sig("exists()").checked_write(100);
-        assertEq(test.exists(), 100);
-    }
-
-    // It supports arbitrary storage layouts, like assembly based storage locations
-    function testFindHidden() public {
-        // `hidden` is a random hash of a bytes, iteration through slots would
-        // not find it. Our mechanism does
-        // Also, you can use the selector instead of a string
-        uint256 slot = stdstore.target(address(test)).sig(test.hidden.selector).find();
-        assertEq(slot, uint256(keccak256("my.random.var")));
-    }
-
-    // If targeting a mapping, you have to pass in the keys necessary to perform the find
-    // i.e.:
-    function testFindMapping() public {
-        uint256 slot = stdstore
-            .target(address(test))
-            .sig(test.map_addr.selector)
-            .with_key(address(this))
-            .find();
-        // in the `Storage` constructor, we wrote that this address' value was 1 in the map
-        // so when we load the slot, we expect it to be 1
-        assertEq(uint(vm.load(address(test), bytes32(slot))), 1);
-    }
-
-    // If the target is a struct, you can specify the field depth:
-    function testFindStruct() public {
-        // NOTE: see the depth parameter - 0 means 0th field, 1 means 1st field, etc.
-        uint256 slot_for_a_field = stdstore
-            .target(address(test))
-            .sig(test.basicStruct.selector)
-            .depth(0)
-            .find();
-
-        uint256 slot_for_b_field = stdstore
-            .target(address(test))
-            .sig(test.basicStruct.selector)
-            .depth(1)
-            .find();
-
-        assertEq(uint(vm.load(address(test), bytes32(slot_for_a_field))), 1);
-        assertEq(uint(vm.load(address(test), bytes32(slot_for_b_field))), 2);
-    }
-}
-
-// A complex storage contract
-contract Storage {
-    struct UnpackedStruct {
-        uint256 a;
-        uint256 b;
-    }
-
-    constructor() {
-        map_addr[msg.sender] = 1;
-    }
-
-    uint256 public exists = 1;
-    mapping(address => uint256) public map_addr;
-    // mapping(address => Packed) public map_packed;
-    mapping(address => UnpackedStruct) public map_struct;
-    mapping(address => mapping(address => uint256)) public deep_map;
-    mapping(address => mapping(address => UnpackedStruct)) public deep_map_struct;
-    UnpackedStruct public basicStruct = UnpackedStruct({
-        a: 1,
-        b: 2
-    });
-
-    function hidden() public view returns (bytes32 t) {
-        // an extremely hidden storage slot
-        bytes32 slot = keccak256("my.random.var");
-        assembly {
-            t := sload(slot)
-        }
-    }
-}
-```
-
-### stdCheats
-
-This is a wrapper over miscellaneous cheatcodes that need wrappers to be more dev friendly. Currently there are only functions related to `prank`. In general, users may expect ETH to be put into an address on `prank`, but this is not the case for safety reasons. Explicitly this `hoax` function should only be used for addresses that have expected balances as it will get overwritten. If an address already has ETH, you should just use `prank`. If you want to change that balance explicitly, just use `deal`. If you want to do both, `hoax` is also right for you.
-
-
-#### Example usage:
-```solidity
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import "forge-std/Test.sol";
-
-// Inherit the stdCheats
-contract StdCheatsTest is Test {
-    Bar test;
-    function setUp() public {
-        test = new Bar();
-    }
-
-    function testHoax() public {
-        // we call `hoax`, which gives the target address
-        // eth and then calls `prank`
-        hoax(address(1337));
-        test.bar{value: 100}(address(1337));
-
-        // overloaded to allow you to specify how much eth to
-        // initialize the address with
-        hoax(address(1337), 1);
-        test.bar{value: 1}(address(1337));
-    }
-
-    function testStartHoax() public {
-        // we call `startHoax`, which gives the target address
-        // eth and then calls `startPrank`
-        //
-        // it is also overloaded so that you can specify an eth amount
-        startHoax(address(1337));
-        test.bar{value: 100}(address(1337));
-        test.bar{value: 100}(address(1337));
-        vm.stopPrank();
-        test.bar(address(this));
-    }
-}
-
-contract Bar {
-    function bar(address expectedSender) public payable {
-        require(msg.sender == expectedSender, "!prank");
-    }
-}
-```
-
-### Std Assertions
-
-Contains various assertions.
-
-### `console.log`
-
-Usage follows the same format as [Hardhat](https://hardhat.org/hardhat-network/reference/#console-log).
-It's recommended to use `console2.sol` as shown below, as this will show the decoded logs in Forge traces.
-
-```solidity
-// import it indirectly via Test.sol
-import "forge-std/Test.sol";
-// or directly import it
-import "forge-std/console2.sol";
-...
-console2.log(someValue);
-```
-
-If you need compatibility with Hardhat, you must use the standard `console.sol` instead.
-Due to a bug in `console.sol`, logs that use `uint256` or `int256` types will not be properly decoded in Forge traces.
-
-```solidity
-// import it indirectly via Test.sol
-import "forge-std/Test.sol";
-// or directly import it
-import "forge-std/console.sol";
-...
-console.log(someValue);
-```
-
-## Contributing
-
-See our [contributing guidelines](./CONTRIBUTING.md).
-
-## Getting Help
-
-First, see if the answer to your question can be found in [book](https://book.getfoundry.sh).
-
-If the answer is not there:
-
--   Join the [support Telegram](https://t.me/foundry_support) to get help, or
--   Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new/choose) with your question, or
--   Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new/choose)
-
-If you want to contribute, or follow along with contributor discussion, you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
-
-## License
-
-Forge Standard Library is offered under either [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) license.
-
-
-### README.md
-
-# ERC4626 Property Tests
-
-Foundry (dapptools-style) property-based tests for [ERC4626] standard conformance.
-
-[ERC4626]: <https://eips.ethereum.org/EIPS/eip-4626>
-
-You can read our post on "_[Generalized property tests for ERC4626 vaults][post]_."
-
-[post]: <https://a16zcrypto.com/generalized-property-tests-for-erc4626-vaults>
-
-## Overview
-
-#### What is it?
-- Test suites for checking if the given ERC4626 implementation satisfies the **standard requirements**.
-- Dapptools-style **property-based tests** for fuzzing or symbolic execution testing.
-- Tests that are **independent** from implementation details, thus applicable for any ERC4626 vaults.
-
-#### What isn’t it?
-- It does NOT test implementation-specific details, e.g., how to generate and distribute yields, how to compute the share price, etc.
-
-#### Testing properties:
-
-- **Round-trip properties**: no one can make a free profit by depositing and immediately withdrawing back and forth.
-
-- **Functional correctness**: the `deposit()`, `mint()`, `withdraw()`, and `redeem()` functions update the balance and allowance properly.
-
-- The `preview{Deposit,Redeem}()` functions **MUST NOT over-estimate** the exact amount.[^1]
-
-[^1]: That is, the `deposit()` and `redeem()` functions “MUST return the same or more amounts as their preview function if called in the same transaction.”
-
-- The `preview{Mint,Withdraw}()` functions **MUST NOT under-estimate** the exact amount.[^2]
-
-[^2]: That is, the `mint()` and `withdraw()` functions “MUST return the same or fewer amounts as their preview function if called in the same transaction.”
-
-- The `convertTo{Shares,Assets}` functions “**MUST NOT show any variations** depending on the caller.”
-
-- The `asset()`, `totalAssets()`, and `max{Deposit,Mint,Withdraw,Redeem}()` functions “**MUST NOT revert**.”
-
-## Usage
-
-**Step 0**: Install [foundry] and add [forge-std] in your vault repo:
-```bash
-$ curl -L https://foundry.paradigm.xyz | bash
-
-$ cd /path/to/your-erc4626-vault
-$ forge install foundry-rs/forge-std
-```
-
-[foundry]: <https://getfoundry.sh/>
-[forge-std]: <https://github.com/foundry-rs/forge-std>
-
-**Step 1**: Add this [erc4626-tests] as a dependency to your vault:
-```bash
-$ cd /path/to/your-erc4626-vault
-$ forge install a16z/erc4626-tests
-```
-
-[erc4626-tests]: <https://github.com/a16z/erc4626-tests>
-
-**Step 2**: Extend the abstract test contract [`ERC4626Test`](ERC4626.test.sol) with your own custom vault setup method, for example:
-
-```solidity
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity >=0.8.0 <0.9.0;
-
-import "erc4626-tests/ERC4626.test.sol";
-
-import { ERC20Mock   } from "/path/to/mocks/ERC20Mock.sol";
-import { ERC4626Mock } from "/path/to/mocks/ERC4626Mock.sol";
-
-contract ERC4626StdTest is ERC4626Test {
-    function setUp() public override {
-        _underlying_ = address(new ERC20Mock("Mock ERC20", "MERC20", 18));
-        _vault_ = address(new ERC4626Mock(ERC20Mock(__underlying__), "Mock ERC4626", "MERC4626"));
-        _delta_ = 0;
-        _vaultMayBeEmpty = false;
-        _unlimitedAmount = false;
-    }
-}
-```
-
-Specifically, set the state variables as follows:
-- `_vault_`: the address of your ERC4626 vault.
-- `_underlying_`: the address of the underlying asset of your vault. Note that the default `setupVault()` and `setupYield()` methods of `ERC4626Test` assume that it implements `mint(address to, uint value)` and `burn(address from, uint value)`. You can override the setup methods with your own if such `mint()` and `burn()` are not implemented.
-- `_delta_`: the maximum approximation error size to be passed to [`assertApproxEqAbs()`]. It must be given as an absolute value (not a percentage) in the smallest unit (e.g., Wei or Satoshi). Note that all the tests are expected to pass with `__delta__ == 0` as long as your vault follows the [preferred rounding direction] as specified in the standard. If your vault doesn't follow the preferred rounding direction, you can set `__delta__` to a reasonable size of rounding errors where the adversarial profit of exploiting such rounding errors stays sufficiently small compared to the gas cost. (You can read our [post] for more about the adversarial profit.)
-- `_vaultMayBeEmpty`: when set to false, fuzz inputs that empties the vault are ignored.
-- `_unlimitedAmount`: when set to false, fuzz inputs are restricted to the currently available amount from the caller. Limiting the amount can speed up fuzzing, but may miss some edge cases.
-
-[`assertApproxEqAbs()`]: <https://book.getfoundry.sh/reference/forge-std/assertApproxEqAbs>
-
-[preferred rounding direction]: <https://eips.ethereum.org/EIPS/eip-4626#security-considerations>
-
-**Step 3**: Run `forge test`
-
-```
-$ forge test
-```
-
-## Examples
-
-Below are examples of adding these property tests to existing ERC4626 vaults:
-- [OpenZeppelin ERC4626] [[diff](https://github.com/daejunpark/openzeppelin-contracts/pull/1/files)]
-- [Solmate ERC4626] [[diff](https://github.com/daejunpark/solmate/pull/1/files)]
-- [Revenue Distribution Token] [[diff](https://github.com/daejunpark/revenue-distribution-token/pull/1/files)]
-- [Yield Daddy ERC4626 wrappers] [[diff](https://github.com/daejunpark/yield-daddy/pull/1/files)][^bug]
-
-[OpenZeppelin ERC4626]: <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/a1948250ab8c441f6d327a65754cb20d2b1b4554/contracts/token/ERC20/extensions/ERC4626.sol>
-[Solmate ERC4626]: <https://github.com/transmissions11/solmate/blob/c2594bf4635ad773a8f4763e20b7e79582e41535/src/mixins/ERC4626.sol>
-[Revenue Distribution Token]: <https://github.com/maple-labs/revenue-distribution-token/blob/be9592fd72bfa7142a217507f2d5500a7856329e/contracts/RevenueDistributionToken.sol>
-[Yield Daddy ERC4626 wrappers]: <https://github.com/timeless-fi/yield-daddy>
-
-[^bug]: Our property tests indeed revealed an [issue](https://github.com/timeless-fi/yield-daddy/issues/7) in their eToken testing mock contract. The tests passed after it is [fixed](https://github.com/daejunpark/yield-daddy/commit/721cf4bd766805fd409455434aa5fd1a9b2df25c).
-
-## Disclaimer
-
-_These smart contracts are being provided as is. No guarantee, representation or warranty is being made, express or implied, as to the safety or correctness of the user interface or the smart contracts. They have not been audited and as such there can be no assurance they will work as intended, and users may experience delays, failures, errors, omissions or loss of transmitted information. THE SMART CONTRACTS CONTAINED HEREIN ARE FURNISHED AS IS, WHERE IS, WITH ALL FAULTS AND WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF MERCHANTABILITY, NON-INFRINGEMENT OR FITNESS FOR ANY PARTICULAR PURPOSE. Further, use of any of these smart contracts may be restricted or prohibited under applicable law, including securities laws, and it is therefore strongly advised for you to contact a reputable attorney in any jurisdiction where these smart contracts may be accessible for any questions or concerns with respect thereto. Further, no information provided in this repo should be construed as investment advice or legal advice for any particular facts or circumstances, and is not meant to replace competent counsel. a16z is not liable for any use of the foregoing, and users should proceed with caution and use at their own risk. See a16z.com/disclosures for more info._
-
-
-### README.md
-
-# Audits
-
-| Date          | Version | Commit                                                                           | Auditor      | Scope                | Links                                                       |
-| ------------- | ------- | -------------------------------------------------------------------------------- | ------------ | -------------------- | ----------------------------------------------------------- |
-| April 2025    | v5.3.0  | [`d4b2e98`](https://github.com/openzeppelin/openzeppelin-contracts/tree/d4b2e98) | OpenZeppelin | v5.3 Changes         | [🔗](./2025-04-v5.3.pdf)                                    |
-| December 2024 | v5.2.0  | [`98d28f9`](https://github.com/openzeppelin/openzeppelin-contracts/tree/98d28f9) | OpenZeppelin | v5.2 Changes         | [🔗](./2024-12-v5.2.pdf)                                    |
-| October 2024  | v5.1.0  | [`aba9ff6`](https://github.com/openzeppelin/openzeppelin-contracts/tree/aba9ff6) | OpenZeppelin | v5.1 Changes         | [🔗](./2024-10-v5.1.pdf)                                    |
-| October 2023  | v5.0.0  | [`b5a3e69`](https://github.com/openzeppelin/openzeppelin-contracts/tree/b5a3e69) | OpenZeppelin | v5.0 Changes         | [🔗](./2023-10-v5.0.pdf)                                    |
-| May 2023      | v4.9.0  | [`91df66c`](https://github.com/openzeppelin/openzeppelin-contracts/tree/91df66c) | OpenZeppelin | v4.9 Changes         | [🔗](./2023-05-v4.9.pdf)                                    |
-| October 2022  | v4.8.0  | [`14f98db`](https://github.com/openzeppelin/openzeppelin-contracts/tree/14f98db) | OpenZeppelin | ERC4626, Checkpoints | [🔗](./2022-10-ERC4626.pdf) [🔗](./2022-10-Checkpoints.pdf) |
-| October 2018  | v2.0.0  | [`dac5bcc`](https://github.com/openzeppelin/openzeppelin-contracts/tree/dac5bcc) | LevelK       | Everything           | [🔗](./2018-10.pdf)                                         |
-| March 2017    | v1.0.4  | [`9c5975a`](https://github.com/openzeppelin/openzeppelin-contracts/tree/9c5975a) | New Alchemy  | Everything           | [🔗](./2017-03.md)                                          |
-
-# Formal Verification
-
-| Date         | Version | Commit    | Tool    | Scope                                                                                                                            | Links                                |
-| ------------ | ------- | --------- | ------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| May 2022     | v4.7.0  | `109778c` | Certora | Initializable, GovernorPreventLateQuorum, ERC1155Burnable, ERC1155Pausable, ERC1155Supply, ERC1155Holder, ERC1155Receiver        | [🔗](../certora/reports/2022-05.pdf) |
-| March 2022   | v4.4.0  | `4088540` | Certora | ERC20Votes, ERC20FlashMint, ERC20Wrapper, TimelockController, ERC721Votes, Votes, AccessControl, ERC1155                         | [🔗](../certora/reports/2022-03.pdf) |
-| October 2021 | v4.4.0  | `4088540` | Certora | Governor, GovernorCountingSimple, GovernorProposalThreshold, GovernorTimelockControl, GovernorVotes, GovernorVotesQuorumFraction | [🔗](../certora/reports/2021-10.pdf) |
-
-
-### README.md
-
-Documentation is hosted at https://docs.openzeppelin.com/contracts.
-
-All of the content for the site is in this repository. The guides are in the
-[docs](/docs) directory, and the API Reference is extracted from comments in
-the source code. If you want to help improve the content, this is the
-repository you should be contributing to.
-
-[`solidity-docgen`](https://github.com/OpenZeppelin/solidity-docgen) is the
-program that extracts the API Reference from source code.
-
-The [`docs.openzeppelin.com`](https://github.com/OpenZeppelin/docs.openzeppelin.com)
-repository hosts the configuration for the entire site, which includes
-documentation for all of the OpenZeppelin projects.
-
-To run the docs locally you should run `npm run docs:watch` on this
-repository.
-
-
-### README.md
-
-# <img src="logo.svg" alt="OpenZeppelin" height="40px">
-
-[![NPM Package](https://img.shields.io/npm/v/@openzeppelin/contracts.svg)](https://www.npmjs.org/package/@openzeppelin/contracts)
-[![Coverage Status](https://codecov.io/gh/OpenZeppelin/openzeppelin-contracts/graph/badge.svg)](https://codecov.io/gh/OpenZeppelin/openzeppelin-contracts)
-[![GitPOAPs](https://public-api.gitpoap.io/v1/repo/OpenZeppelin/openzeppelin-contracts/badge)](https://www.gitpoap.io/gh/OpenZeppelin/openzeppelin-contracts)
-[![Docs](https://img.shields.io/badge/docs-%F0%9F%93%84-yellow)](https://docs.openzeppelin.com/contracts)
-[![Forum](https://img.shields.io/badge/forum-%F0%9F%92%AC-yellow)](https://forum.openzeppelin.com/)
-
-**A library for secure smart contract development.** Build on a solid foundation of community-vetted code.
-
- * Implementations of standards like [ERC20](https://docs.openzeppelin.com/contracts/erc20) and [ERC721](https://docs.openzeppelin.com/contracts/erc721).
- * Flexible [role-based permissioning](https://docs.openzeppelin.com/contracts/access-control) scheme.
- * Reusable [Solidity components](https://docs.openzeppelin.com/contracts/utilities) to build custom contracts and complex decentralized systems.
-
-:mage: **Not sure how to get started?** Check out [Contracts Wizard](https://wizard.openzeppelin.com/) — an interactive smart contract generator.
-
-:building_construction: **Want to scale your decentralized application?** Check out [OpenZeppelin Defender](https://openzeppelin.com/defender) — a mission-critical developer security platform to code, audit, deploy, monitor, and operate with confidence.
-
-> [!IMPORTANT]
-> OpenZeppelin Contracts uses semantic versioning to communicate backwards compatibility of its API and storage layout. For upgradeable contracts, the storage layout of different major versions should be assumed incompatible, for example, it is unsafe to upgrade from 4.9.3 to 5.0.0. Learn more at [Backwards Compatibility](https://docs.openzeppelin.com/contracts/backwards-compatibility).
-
-## Overview
-
-### Installation
-
-#### Hardhat (npm)
-
-```
-$ npm install @openzeppelin/contracts
-```
-
-#### Foundry (git)
-
-> [!WARNING]
-> When installing via git, it is a common error to use the `master` branch. This is a development branch that should be avoided in favor of tagged releases. The release process involves security measures that the `master` branch does not guarantee.
-
-> [!WARNING]
-> Foundry installs the latest version initially, but subsequent `forge update` commands will use the `master` branch.
-
-```
-$ forge install OpenZeppelin/openzeppelin-contracts
-```
-
-Add `@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/` in `remappings.txt.`
-
-### Usage
-
-Once installed, you can use the contracts in the library by importing them:
-
-```solidity
-pragma solidity ^0.8.20;
-
-import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-
-contract MyCollectible is ERC721 {
-    constructor() ERC721("MyCollectible", "MCO") {
-    }
-}
-```
-
-_If you're new to smart contract development, head to [Developing Smart Contracts](https://docs.openzeppelin.com/learn/developing-smart-contracts) to learn about creating a new project and compiling your contracts._
-
-To keep your system secure, you should **always** use the installed code as-is, and neither copy-paste it from online sources nor modify it yourself. The library is designed so that only the contracts and functions you use are deployed, so you don't need to worry about it needlessly increasing gas costs.
-
-## Learn More
-
-The guides in the [documentation site](https://docs.openzeppelin.com/contracts) will teach about different concepts, and how to use the related contracts that OpenZeppelin Contracts provides:
-
-* [Access Control](https://docs.openzeppelin.com/contracts/access-control): decide who can perform each of the actions on your system.
-* [Tokens](https://docs.openzeppelin.com/contracts/tokens): create tradeable assets or collectives, and distribute them via [Crowdsales](https://docs.openzeppelin.com/contracts/crowdsales).
-* [Utilities](https://docs.openzeppelin.com/contracts/utilities): generic useful tools including non-overflowing math, signature verification, and trustless paying systems.
-
-The [full API](https://docs.openzeppelin.com/contracts/api/token/ERC20) is also thoroughly documented, and serves as a great reference when developing your smart contract application. You can also ask for help or follow Contracts' development in the [community forum](https://forum.openzeppelin.com).
-
-Finally, you may want to take a look at the [guides on our blog](https://blog.openzeppelin.com/), which cover several common use cases and good practices. The following articles provide great background reading, though please note that some of the referenced tools have changed, as the tooling in the ecosystem continues to rapidly evolve.
-
-* [The Hitchhiker’s Guide to Smart Contracts in Ethereum](https://blog.openzeppelin.com/the-hitchhikers-guide-to-smart-contracts-in-ethereum-848f08001f05) will help you get an overview of the various tools available for smart contract development, and help you set up your environment.
-* [A Gentle Introduction to Ethereum Programming, Part 1](https://blog.openzeppelin.com/a-gentle-introduction-to-ethereum-programming-part-1-783cc7796094) provides very useful information on an introductory level, including many basic concepts from the Ethereum platform.
-* For a more in-depth dive, you may read the guide [Designing the Architecture for Your Ethereum Application](https://blog.openzeppelin.com/designing-the-architecture-for-your-ethereum-application-9cec086f8317), which discusses how to better structure your application and its relationship to the real world.
-
-## Security
-
-This project is maintained by [OpenZeppelin](https://openzeppelin.com) with the goal of providing a secure and reliable library of smart contract components for the ecosystem. We address security through risk management in various areas such as engineering and open source best practices, scoping and API design, multi-layered review processes, and incident response preparedness.
-
-The [OpenZeppelin Contracts Security Center](https://contracts.openzeppelin.com/security) contains more details about the secure development process.
-
-The security policy is detailed in [`SECURITY.md`](./SECURITY.md) as well, and specifies how you can report security vulnerabilities, which versions will receive security patches, and how to stay informed about them. We run a [bug bounty program on Immunefi](https://immunefi.com/bounty/openzeppelin) to reward the responsible disclosure of vulnerabilities.
-
-The engineering guidelines we follow to promote project quality can be found in [`GUIDELINES.md`](./GUIDELINES.md).
-
-Past audits can be found in [`audits/`](./audits).
-
-Smart contracts are a nascent technology and carry a high level of technical risk and uncertainty. Although OpenZeppelin is well known for its security audits, using OpenZeppelin Contracts is not a substitute for a security audit.
-
-OpenZeppelin Contracts is made available under the MIT License, which disclaims all warranties in relation to the project and which limits the liability of those that contribute and maintain the project, including OpenZeppelin. As set out further in the Terms, you acknowledge that you are solely responsible for any use of OpenZeppelin Contracts and you assume all risks associated with any such use.
-
-## Contribute
-
-OpenZeppelin Contracts exists thanks to its contributors. There are many ways you can participate and help build high quality software. Check out the [contribution guide](CONTRIBUTING.md)!
-
-## License
-
-OpenZeppelin Contracts is released under the [MIT License](LICENSE).
-
-## Legal
-
-Your use of this Project is governed by the terms found at www.openzeppelin.com/tos (the "Terms").
-
-
-### README.md
-
-The upgradeable variant of OpenZeppelin Contracts is automatically generated from the original Solidity code. We call this process "transpilation" and it is implemented by our [Upgradeability Transpiler](https://github.com/OpenZeppelin/openzeppelin-transpiler/).
-
-When the `master` branch or `release-v*` branches are updated, the code is transpiled and pushed to [OpenZeppelin/openzeppelin-contracts-upgradeable](https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable) by the `upgradeable.yml` workflow.
-
-## `transpile.sh`
-
-Applies patches and invokes the transpiler with the command line flags we need for our requirements (for example, excluding certain files).
-
-## `transpile-onto.sh`
-
-```
-bash scripts/upgradeable/transpile-onto.sh <target> [<base>]
-```
-
-Transpiles the contents of the current git branch and commits the result as a new commit on branch `<target>`. If branch `<target>` doesn't exist, it will copy the commit history of `[<base>]` (this is used in GitHub Actions, but is usually not necessary locally).
-
-## `patch-apply.sh` & `patch-save.sh`
-
-Some of the upgradeable contract variants require ad-hoc changes that are not implemented by the transpiler. These changes are implemented by patches stored in `upgradeable.patch` in this directory. `patch-apply.sh` applies these patches.
-
-If the patches fail to apply due to changes in the repo, the conflicts have to be resolved manually. Once fixed, `patch-save.sh` will take the changes staged in Git and update `upgradeable.patch` to match.
-
-
-### README.md
-
-# Halmos Cheat Codes
-
-Halmos cheatcodes are abstract functions designed to facilitate writing symbolic tests, such as the creation of new symbolic values at runtime. While these cheatcodes are currently exclusive to [Halmos][halmos], they are not limited to it and could potentially be supported by other symbolic testing tools in the future.
-
-Please refer to [the list of currently available cheatcodes][list]. More cheatcodes will be added in the future.
-
-Join the [Halmos Telegram Group][chat] for any inquiries or further discussions.
-
-[halmos]: <https://github.com/a16z/halmos>
-[list]: <src/SVM.sol>
-[chat]: <https://t.me/+4UhzHduai3MzZmUx>
-
-## Installation
-
-To install using Foundry:
-```
-forge install a16z/halmos-cheatcodes
-```
-Alternatively, you can directly add it as a submodule:
-```
-git submodule add https://github.com/a16z/halmos-cheatcodes
-```
-
-## Example usage
-
-Below is an example of a symbolic test that checks for potential unauthorized access to others' tokens. The approach involves setting up an initial symbolic state of the token contract, executing an arbitrary function call to the token contract, and checking if there is an execution path that increases the caller's balance and/or decreases the balance of others. This example illustrates how to utilize cheatcodes to set up initial symbolic states and execute arbitrary function calls.
-
-```solidity
-// import Halmos cheatcodes
-import {SymTest} from "halmos-cheatcodes/SymTest.sol";
-
-import {Test} from "forge-std/Test.sol";
-
-import {Token} from "/path/to/Token.sol";
-
-contract TokenTest is SymTest, Test {
-    Token token;
-
-    function setUp() public {
-        token = new Token();
-
-        // set the balances of three arbitrary accounts to arbitrary symbolic values
-        for (uint256 i = 0; i < 3; i++) {
-            address receiver = svm.createAddress('receiver'); // create a new symbolic address
-            uint256 amount = svm.createUint256('amount'); // create a new symbolic uint256 value
-            token.transfer(receiver, amount);
-        }
-    }
-
-    function checkBalanceUpdate() public {
-        // consider two arbitrary distinct accounts
-        address caller = svm.createAddress('caller'); // create a symbolic address
-        address others = svm.createAddress('others'); // create another symbolic address
-        vm.assume(others != caller); // assume the two addresses are different
-
-        // record their current balances
-        uint256 oldBalanceCaller = token.balanceOf(caller);
-        uint256 oldBalanceOthers = token.balanceOf(others);
-
-        // execute an arbitrary function call to the token from the caller
-        vm.prank(caller);
-        uint256 dataSize = 100; // the max calldata size for the public functions in the token
-        bytes memory data = svm.createBytes(dataSize, 'data'); // create a symbolic calldata
-        address(token).call(data);
-
-        // ensure that the caller cannot spend others' tokens
-        assert(token.balanceOf(caller) <= oldBalanceCaller); // cannot increase their own balance
-        assert(token.balanceOf(others) >= oldBalanceOthers); // cannot decrease others' balance
-    }
-}
-```
-
-When running the above test against the following buggy token contract, Halmos will provide a counterexample that may be overlooked during manual reviews.
-
-```solidity
-/// @notice This is a buggy token contract. DO NOT use it in production.
-contract Token {
-    mapping(address => uint) public balanceOf;
-
-    constructor() public {
-        balanceOf[msg.sender] = 1e27;
-    }
-
-    function transfer(address to, uint amount) public {
-        _transfer(msg.sender, to, amount);
-    }
-
-    function _transfer(address from, address to, uint amount) public {
-        balanceOf[from] -= amount;
-        balanceOf[to] += amount;
-    }
-}
-```
-
-## Disclaimer
-
-_These smart contracts and code are being provided as is. No guarantee, representation or warranty is being made, express or implied, as to the safety or correctness of the user interface or the smart contracts and code. They have not been audited and as such there can be no assurance they will work as intended, and users may experience delays, failures, errors, omissions or loss of transmitted information. THE SMART CONTRACTS AND CODE CONTAINED HEREIN ARE FURNISHED AS IS, WHERE IS, WITH ALL FAULTS AND WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF MERCHANTABILITY, NON-INFRINGEMENT OR FITNESS FOR ANY PARTICULAR PURPOSE. Further, use of any of these smart contracts and code may be restricted or prohibited under applicable law, including securities laws, and it is therefore strongly advised for you to contact a reputable attorney in any jurisdiction where these smart contracts and code may be accessible for any questions or concerns with respect thereto. Further, no information provided in this repo should be construed as investment advice or legal advice for any particular facts or circumstances, and is not meant to replace competent counsel. a16z is not liable for any use of the foregoing, and users should proceed with caution and use at their own risk. See a16z.com/disclosures for more info._
-
-
-### README.md
-
-# Forge Standard Library • [![CI status](https://github.com/foundry-rs/forge-std/actions/workflows/ci.yml/badge.svg)](https://github.com/foundry-rs/forge-std/actions/workflows/ci.yml)
-
-Forge Standard Library is a collection of helpful contracts and libraries for use with [Forge and Foundry](https://github.com/foundry-rs/foundry). It leverages Forge's cheatcodes to make writing tests easier and faster, while improving the UX of cheatcodes.
-
-**Learn how to use Forge-Std with the [📖 Foundry Book (Forge-Std Guide)](https://book.getfoundry.sh/forge/forge-std.html).**
-
-## Install
-
-```bash
-forge install foundry-rs/forge-std
-```
-
-## Contracts
-### stdError
-
-This is a helper contract for errors and reverts. In Forge, this contract is particularly helpful for the `expectRevert` cheatcode, as it provides all compiler builtin errors.
-
-See the contract itself for all error codes.
-
-#### Example usage
-
-```solidity
-
-import "forge-std/Test.sol";
-
-contract TestContract is Test {
-    ErrorsTest test;
-
-    function setUp() public {
-        test = new ErrorsTest();
-    }
-
-    function testExpectArithmetic() public {
-        vm.expectRevert(stdError.arithmeticError);
-        test.arithmeticError(10);
-    }
-}
-
-contract ErrorsTest {
-    function arithmeticError(uint256 a) public {
-        a = a - 100;
-    }
-}
-```
-
-### stdStorage
-
-This is a rather large contract due to all of the overloading to make the UX decent. Primarily, it is a wrapper around the `record` and `accesses` cheatcodes. It can *always* find and write the storage slot(s) associated with a particular variable without knowing the storage layout. The one _major_ caveat to this is while a slot can be found for packed storage variables, we can't write to that variable safely. If a user tries to write to a packed slot, the execution throws an error, unless it is uninitialized (`bytes32(0)`).
-
-This works by recording all `SLOAD`s and `SSTORE`s during a function call. If there is a single slot read or written to, it immediately returns the slot. Otherwise, behind the scenes, we iterate through and check each one (assuming the user passed in a `depth` parameter). If the variable is a struct, you can pass in a `depth` parameter which is basically the field depth.
-
-I.e.:
-```solidity
-struct T {
-    // depth 0
-    uint256 a;
-    // depth 1
-    uint256 b;
-}
-```
-
-#### Example usage
-
-```solidity
-import "forge-std/Test.sol";
-
-contract TestContract is Test {
-    using stdStorage for StdStorage;
-
-    Storage test;
-
-    function setUp() public {
-        test = new Storage();
-    }
-
-    function testFindExists() public {
-        // Lets say we want to find the slot for the public
-        // variable `exists`. We just pass in the function selector
-        // to the `find` command
-        uint256 slot = stdstore.target(address(test)).sig("exists()").find();
-        assertEq(slot, 0);
-    }
-
-    function testWriteExists() public {
-        // Lets say we want to write to the slot for the public
-        // variable `exists`. We just pass in the function selector
-        // to the `checked_write` command
-        stdstore.target(address(test)).sig("exists()").checked_write(100);
-        assertEq(test.exists(), 100);
-    }
-
-    // It supports arbitrary storage layouts, like assembly based storage locations
-    function testFindHidden() public {
-        // `hidden` is a random hash of a bytes, iteration through slots would
-        // not find it. Our mechanism does
-        // Also, you can use the selector instead of a string
-        uint256 slot = stdstore.target(address(test)).sig(test.hidden.selector).find();
-        assertEq(slot, uint256(keccak256("my.random.var")));
-    }
-
-    // If targeting a mapping, you have to pass in the keys necessary to perform the find
-    // i.e.:
-    function testFindMapping() public {
-        uint256 slot = stdstore
-            .target(address(test))
-            .sig(test.map_addr.selector)
-            .with_key(address(this))
-            .find();
-        // in the `Storage` constructor, we wrote that this address' value was 1 in the map
-        // so when we load the slot, we expect it to be 1
-        assertEq(uint(vm.load(address(test), bytes32(slot))), 1);
-    }
-
-    // If the target is a struct, you can specify the field depth:
-    function testFindStruct() public {
-        // NOTE: see the depth parameter - 0 means 0th field, 1 means 1st field, etc.
-        uint256 slot_for_a_field = stdstore
-            .target(address(test))
-            .sig(test.basicStruct.selector)
-            .depth(0)
-            .find();
-
-        uint256 slot_for_b_field = stdstore
-            .target(address(test))
-            .sig(test.basicStruct.selector)
-            .depth(1)
-            .find();
-
-        assertEq(uint(vm.load(address(test), bytes32(slot_for_a_field))), 1);
-        assertEq(uint(vm.load(address(test), bytes32(slot_for_b_field))), 2);
-    }
-}
-
-// A complex storage contract
-contract Storage {
-    struct UnpackedStruct {
-        uint256 a;
-        uint256 b;
-    }
-
-    constructor() {
-        map_addr[msg.sender] = 1;
-    }
-
-    uint256 public exists = 1;
-    mapping(address => uint256) public map_addr;
-    // mapping(address => Packed) public map_packed;
-    mapping(address => UnpackedStruct) public map_struct;
-    mapping(address => mapping(address => uint256)) public deep_map;
-    mapping(address => mapping(address => UnpackedStruct)) public deep_map_struct;
-    UnpackedStruct public basicStruct = UnpackedStruct({
-        a: 1,
-        b: 2
-    });
-
-    function hidden() public view returns (bytes32 t) {
-        // an extremely hidden storage slot
-        bytes32 slot = keccak256("my.random.var");
-        assembly {
-            t := sload(slot)
-        }
-    }
-}
-```
-
-### stdCheats
-
-This is a wrapper over miscellaneous cheatcodes that need wrappers to be more dev friendly. Currently there are only functions related to `prank`. In general, users may expect ETH to be put into an address on `prank`, but this is not the case for safety reasons. Explicitly this `hoax` function should only be used for addresses that have expected balances as it will get overwritten. If an address already has ETH, you should just use `prank`. If you want to change that balance explicitly, just use `deal`. If you want to do both, `hoax` is also right for you.
-
-
-#### Example usage:
-```solidity
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import "forge-std/Test.sol";
-
-// Inherit the stdCheats
-contract StdCheatsTest is Test {
-    Bar test;
-    function setUp() public {
-        test = new Bar();
-    }
-
-    function testHoax() public {
-        // we call `hoax`, which gives the target address
-        // eth and then calls `prank`
-        hoax(address(1337));
-        test.bar{value: 100}(address(1337));
-
-        // overloaded to allow you to specify how much eth to
-        // initialize the address with
-        hoax(address(1337), 1);
-        test.bar{value: 1}(address(1337));
-    }
-
-    function testStartHoax() public {
-        // we call `startHoax`, which gives the target address
-        // eth and then calls `startPrank`
-        //
-        // it is also overloaded so that you can specify an eth amount
-        startHoax(address(1337));
-        test.bar{value: 100}(address(1337));
-        test.bar{value: 100}(address(1337));
-        vm.stopPrank();
-        test.bar(address(this));
-    }
-}
-
-contract Bar {
-    function bar(address expectedSender) public payable {
-        require(msg.sender == expectedSender, "!prank");
-    }
-}
-```
-
-### Std Assertions
-
-Contains various assertions.
-
-### `console.log`
-
-Usage follows the same format as [Hardhat](https://hardhat.org/hardhat-network/reference/#console-log).
-It's recommended to use `console2.sol` as shown below, as this will show the decoded logs in Forge traces.
-
-```solidity
-// import it indirectly via Test.sol
-import "forge-std/Test.sol";
-// or directly import it
-import "forge-std/console2.sol";
-...
-console2.log(someValue);
-```
-
-If you need compatibility with Hardhat, you must use the standard `console.sol` instead.
-Due to a bug in `console.sol`, logs that use `uint256` or `int256` types will not be properly decoded in Forge traces.
-
-```solidity
-// import it indirectly via Test.sol
-import "forge-std/Test.sol";
-// or directly import it
-import "forge-std/console.sol";
-...
-console.log(someValue);
-```
-
-## Contributing
-
-See our [contributing guidelines](./CONTRIBUTING.md).
-
-## Getting Help
-
-First, see if the answer to your question can be found in [book](https://book.getfoundry.sh).
-
-If the answer is not there:
-
--   Join the [support Telegram](https://t.me/foundry_support) to get help, or
--   Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new/choose) with your question, or
--   Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new/choose)
-
-If you want to contribute, or follow along with contributor discussion, you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
-
-## License
-
-Forge Standard Library is offered under either [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) license.
-
-
-### README.md
-
-# ERC4626 Property Tests
-
-Foundry (dapptools-style) property-based tests for [ERC4626] standard conformance.
-
-[ERC4626]: <https://eips.ethereum.org/EIPS/eip-4626>
-
-You can read our post on "_[Generalized property tests for ERC4626 vaults][post]_."
-
-[post]: <https://a16zcrypto.com/generalized-property-tests-for-erc4626-vaults>
-
-## Overview
-
-#### What is it?
-- Test suites for checking if the given ERC4626 implementation satisfies the **standard requirements**.
-- Dapptools-style **property-based tests** for fuzzing or symbolic execution testing.
-- Tests that are **independent** from implementation details, thus applicable for any ERC4626 vaults.
-
-#### What isn’t it?
-- It does NOT test implementation-specific details, e.g., how to generate and distribute yields, how to compute the share price, etc.
-
-#### Testing properties:
-
-- **Round-trip properties**: no one can make a free profit by depositing and immediately withdrawing back and forth.
-
-- **Functional correctness**: the `deposit()`, `mint()`, `withdraw()`, and `redeem()` functions update the balance and allowance properly.
-
-- The `preview{Deposit,Redeem}()` functions **MUST NOT over-estimate** the exact amount.[^1]
-
-[^1]: That is, the `deposit()` and `redeem()` functions “MUST return the same or more amounts as their preview function if called in the same transaction.”
-
-- The `preview{Mint,Withdraw}()` functions **MUST NOT under-estimate** the exact amount.[^2]
-
-[^2]: That is, the `mint()` and `withdraw()` functions “MUST return the same or fewer amounts as their preview function if called in the same transaction.”
-
-- The `convertTo{Shares,Assets}` functions “**MUST NOT show any variations** depending on the caller.”
-
-- The `asset()`, `totalAssets()`, and `max{Deposit,Mint,Withdraw,Redeem}()` functions “**MUST NOT revert**.”
-
-## Usage
-
-**Step 0**: Install [foundry] and add [forge-std] in your vault repo:
-```bash
-$ curl -L https://foundry.paradigm.xyz | bash
-
-$ cd /path/to/your-erc4626-vault
-$ forge install foundry-rs/forge-std
-```
-
-[foundry]: <https://getfoundry.sh/>
-[forge-std]: <https://github.com/foundry-rs/forge-std>
-
-**Step 1**: Add this [erc4626-tests] as a dependency to your vault:
-```bash
-$ cd /path/to/your-erc4626-vault
-$ forge install a16z/erc4626-tests
-```
-
-[erc4626-tests]: <https://github.com/a16z/erc4626-tests>
-
-**Step 2**: Extend the abstract test contract [`ERC4626Test`](ERC4626.test.sol) with your own custom vault setup method, for example:
-
-```solidity
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity >=0.8.0 <0.9.0;
-
-import "erc4626-tests/ERC4626.test.sol";
-
-import { ERC20Mock   } from "/path/to/mocks/ERC20Mock.sol";
-import { ERC4626Mock } from "/path/to/mocks/ERC4626Mock.sol";
-
-contract ERC4626StdTest is ERC4626Test {
-    function setUp() public override {
-        _underlying_ = address(new ERC20Mock("Mock ERC20", "MERC20", 18));
-        _vault_ = address(new ERC4626Mock(ERC20Mock(__underlying__), "Mock ERC4626", "MERC4626"));
-        _delta_ = 0;
-        _vaultMayBeEmpty = false;
-        _unlimitedAmount = false;
-    }
-}
-```
-
-Specifically, set the state variables as follows:
-- `_vault_`: the address of your ERC4626 vault.
-- `_underlying_`: the address of the underlying asset of your vault. Note that the default `setupVault()` and `setupYield()` methods of `ERC4626Test` assume that it implements `mint(address to, uint value)` and `burn(address from, uint value)`. You can override the setup methods with your own if such `mint()` and `burn()` are not implemented.
-- `_delta_`: the maximum approximation error size to be passed to [`assertApproxEqAbs()`]. It must be given as an absolute value (not a percentage) in the smallest unit (e.g., Wei or Satoshi). Note that all the tests are expected to pass with `__delta__ == 0` as long as your vault follows the [preferred rounding direction] as specified in the standard. If your vault doesn't follow the preferred rounding direction, you can set `__delta__` to a reasonable size of rounding errors where the adversarial profit of exploiting such rounding errors stays sufficiently small compared to the gas cost. (You can read our [post] for more about the adversarial profit.)
-- `_vaultMayBeEmpty`: when set to false, fuzz inputs that empties the vault are ignored.
-- `_unlimitedAmount`: when set to false, fuzz inputs are restricted to the currently available amount from the caller. Limiting the amount can speed up fuzzing, but may miss some edge cases.
-
-[`assertApproxEqAbs()`]: <https://book.getfoundry.sh/reference/forge-std/assertApproxEqAbs>
-
-[preferred rounding direction]: <https://eips.ethereum.org/EIPS/eip-4626#security-considerations>
-
-**Step 3**: Run `forge test`
-
-```
-$ forge test
-```
-
-## Examples
-
-Below are examples of adding these property tests to existing ERC4626 vaults:
-- [OpenZeppelin ERC4626] [[diff](https://github.com/daejunpark/openzeppelin-contracts/pull/1/files)]
-- [Solmate ERC4626] [[diff](https://github.com/daejunpark/solmate/pull/1/files)]
-- [Revenue Distribution Token] [[diff](https://github.com/daejunpark/revenue-distribution-token/pull/1/files)]
-- [Yield Daddy ERC4626 wrappers] [[diff](https://github.com/daejunpark/yield-daddy/pull/1/files)][^bug]
-
-[OpenZeppelin ERC4626]: <https://github.com/OpenZeppelin/openzeppelin-contracts/blob/a1948250ab8c441f6d327a65754cb20d2b1b4554/contracts/token/ERC20/extensions/ERC4626.sol>
-[Solmate ERC4626]: <https://github.com/transmissions11/solmate/blob/c2594bf4635ad773a8f4763e20b7e79582e41535/src/mixins/ERC4626.sol>
-[Revenue Distribution Token]: <https://github.com/maple-labs/revenue-distribution-token/blob/be9592fd72bfa7142a217507f2d5500a7856329e/contracts/RevenueDistributionToken.sol>
-[Yield Daddy ERC4626 wrappers]: <https://github.com/timeless-fi/yield-daddy>
-
-[^bug]: Our property tests indeed revealed an [issue](https://github.com/timeless-fi/yield-daddy/issues/7) in their eToken testing mock contract. The tests passed after it is [fixed](https://github.com/daejunpark/yield-daddy/commit/721cf4bd766805fd409455434aa5fd1a9b2df25c).
-
-## Disclaimer
-
-_These smart contracts are being provided as is. No guarantee, representation or warranty is being made, express or implied, as to the safety or correctness of the user interface or the smart contracts. They have not been audited and as such there can be no assurance they will work as intended, and users may experience delays, failures, errors, omissions or loss of transmitted information. THE SMART CONTRACTS CONTAINED HEREIN ARE FURNISHED AS IS, WHERE IS, WITH ALL FAULTS AND WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF MERCHANTABILITY, NON-INFRINGEMENT OR FITNESS FOR ANY PARTICULAR PURPOSE. Further, use of any of these smart contracts may be restricted or prohibited under applicable law, including securities laws, and it is therefore strongly advised for you to contact a reputable attorney in any jurisdiction where these smart contracts may be accessible for any questions or concerns with respect thereto. Further, no information provided in this repo should be construed as investment advice or legal advice for any particular facts or circumstances, and is not meant to replace competent counsel. a16z is not liable for any use of the foregoing, and users should proceed with caution and use at their own risk. See a16z.com/disclosures for more info._
-
-
-### README.md
-
-# Running the certora verification tool
-
-These instructions detail the process for running Certora Verification Tool on OpenZeppelin Contracts.
-
-Documentation for CVT and the specification language is available [here](https://certora.atlassian.net/wiki/spaces/CPD/overview).
-
-## Prerequisites
-
-Follow the [Certora installation guide](https://docs.certora.com/en/latest/docs/user-guide/getting-started/install.html) in order to get the Certora Prover Package and the `solc` executable folder in your path.
-
-> **Note**
-> An API Key is required for local testing. Although the prover will run on a GitHub Actions' CI environment on selected Pull Requests.
-
-## Running the verification
-
-The Certora Verification Tool proves specs for contracts, which are defined by the `./specs.json` file along with their pre-configured options.
-
-The verification script `./run.js` is used to submit verification jobs to the Certora Verification service.
-
-You can run it from the root of the repository with the following command:
-
-```bash
-node certora/run.js [[CONTRACT_NAME:]SPEC_NAME] [OPTIONS...]
-```
-
-Where:
-
-- `CONTRACT_NAME` matches the `contract` key in the `./spec.json` file and may be empty. It will run all matching contracts if not provided.
-- `SPEC_NAME` refers to a `spec` key from the `./specs.json` file. It will run every spec if not provided.
-- `OPTIONS` extend the [Certora Prover CLI options](https://docs.certora.com/en/latest/docs/prover/cli/options.html#certora-prover-cli-options) and will respect the preconfigured options in the `specs.json` file.
-
-> **Note**
-> A single spec may be configured to run for multiple contracts, whereas a single contract may run multiple specs.
-
-Example usage:
-
-```bash
-node certora/run.js AccessControl # Run the AccessControl spec against every contract implementing it
-```
-
-## Adapting to changes in the contracts
-
-Some of our rules require the code to be simplified in various ways. Our primary tool for performing these simplifications is to run verification on a contract that extends the original contracts and overrides some of the methods. These "harness" contracts can be found in the `certora/harness` directory.
-
-This pattern does require some modifications to the original code: some methods need to be made virtual or public, for example. These changes are handled by applying a patch
-to the code before verification by running:
-
-```bash
-make -C certora apply
-```
-
-Before running the `certora/run.js` script, it's required to apply the corresponding patches to the `contracts` directory, placing the output in the `certora/patched` directory. Then, the contracts are verified by running the verification for the `certora/patched` directory.
-
-If the original contracts change, it is possible to create a conflict with the patch. In this case, the verify scripts will report an error message and output rejected changes in the `patched` directory. After merging the changes, run `make record` in the `certora` directory; this will regenerate the patch file, which can then be checked into git.
-
-For more information about the `make` scripts available, run:
-
-```bash
-make -C certora help
-```
-
-
-### README.md
-
-# Running the certora verification tool
-
-These instructions detail the process for running Certora Verification Tool on OpenZeppelin Contracts.
-
-Documentation for CVT and the specification language is available [here](https://certora.atlassian.net/wiki/spaces/CPD/overview).
-
-## Prerequisites
-
-Follow the [Certora installation guide](https://docs.certora.com/en/latest/docs/user-guide/getting-started/install.html) in order to get the Certora Prover Package and the `solc` executable folder in your path.
-
-> **Note**
-> An API Key is required for local testing. Although the prover will run on a GitHub Actions' CI environment on selected Pull Requests.
-
-## Running the verification
-
-The Certora Verification Tool proves specs for contracts, which are defined by the `./specs.json` file along with their pre-configured options.
-
-The verification script `./run.js` is used to submit verification jobs to the Certora Verification service.
-
-You can run it from the root of the repository with the following command:
-
-```bash
-node certora/run.js [[CONTRACT_NAME:]SPEC_NAME] [OPTIONS...]
-```
-
-Where:
-
-- `CONTRACT_NAME` matches the `contract` key in the `./spec.json` file and may be empty. It will run all matching contracts if not provided.
-- `SPEC_NAME` refers to a `spec` key from the `./specs.json` file. It will run every spec if not provided.
-- `OPTIONS` extend the [Certora Prover CLI options](https://docs.certora.com/en/latest/docs/prover/cli/options.html#certora-prover-cli-options) and will respect the preconfigured options in the `specs.json` file.
-
-> **Note**
-> A single spec may be configured to run for multiple contracts, whereas a single contract may run multiple specs.
-
-Example usage:
-
-```bash
-node certora/run.js AccessControl # Run the AccessControl spec against every contract implementing it
-```
-
-## Adapting to changes in the contracts
-
-Some of our rules require the code to be simplified in various ways. Our primary tool for performing these simplifications is to run verification on a contract that extends the original contracts and overrides some of the methods. These "harness" contracts can be found in the `certora/harness` directory.
-
-This pattern does require some modifications to the original code: some methods need to be made virtual or public, for example. These changes are handled by applying a patch
-to the code before verification by running:
-
-```bash
-make -C certora apply
-```
-
-Before running the `certora/run.js` script, it's required to apply the corresponding patches to the `contracts` directory, placing the output in the `certora/patched` directory. Then, the contracts are verified by running the verification for the `certora/patched` directory.
-
-If the original contracts change, it is possible to create a conflict with the patch. In this case, the verify scripts will report an error message and output rejected changes in the `patched` directory. After merging the changes, run `make record` in the `certora` directory; this will regenerate the patch file, which can then be checked into git.
-
-For more information about the `make` scripts available, run:
-
-```bash
-make -C certora help
-```
-
-
-### README.md
-
-# OpenZeppelin Foundry Upgrades
-
-[![Docs](https://img.shields.io/badge/docs-%F0%9F%93%84-blue)](https://docs.openzeppelin.com/upgrades-plugins/foundry-upgrades)
-
-Foundry library for deploying and managing upgradeable contracts, which includes upgrade safety validations.
-
-## Installing
-
-Follow one of the sections below depending on which version of OpenZeppelin Contracts you are using. OpenZeppelin Contracts v5 is required for new deployments.
-
-### Using OpenZeppelin Contracts v5
-
-Run these commands:
-```console
-forge install foundry-rs/forge-std
-forge install OpenZeppelin/openzeppelin-foundry-upgrades
-forge install OpenZeppelin/openzeppelin-contracts-upgradeable
-```
-
-Set the following in `remappings.txt`, replacing any previous definitions of these remappings:
-```
-@openzeppelin/contracts/=lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/
-@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
-```
-
-> **Note**
-> The above remappings mean that both `@openzeppelin/contracts/` (including proxy contracts deployed by this library) and `@openzeppelin/contracts-upgradeable/` come from your installation of the `openzeppelin-contracts-upgradeable` submodule and its subdirectories, which includes its own transitive copy of `openzeppelin-contracts` of the same release version number. This format is needed for Etherscan verification to work. Particularly, any copies of `openzeppelin-contracts` that you install separately are NOT used.
-
-### Using OpenZeppelin Contracts v4
-
-Run these commands, replacing `v4.9.6` with the specific version of OpenZeppelin Contracts that you are using:
-```console
-forge install foundry-rs/forge-std
-forge install OpenZeppelin/openzeppelin-foundry-upgrades
-forge install OpenZeppelin/openzeppelin-contracts@v4.9.6
-forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v4.9.6
-```
-
-Set the following in `remappings.txt`:
-```
-@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
-@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
-```
-
-> **Note**
-> Use [LegacyUpgrades.sol](src/LegacyUpgrades.sol) instead of `Upgrades.sol` to upgrade existing deployments that were created with OpenZeppelin Contracts v4.
-
-### Optional: Alternative installation methods
-
-#### NPM
-
-Follow the steps above, but instead of running `forge install OpenZeppelin/openzeppelin-foundry-upgrades`, use this command instead:
-```
-npm install @openzeppelin/foundry-upgrades
-```
-
-Then add the following additional line to `remappings.txt`, in addition to the ones described above:
-```
-openzeppelin-foundry-upgrades/=node_modules/@openzeppelin/foundry-upgrades/src/
-```
-
-#### Soldeer
-
-Follow the steps above, but instead of running `forge install OpenZeppelin/openzeppelin-foundry-upgrades`, use one of the install commands described in https://soldeer.xyz/project/openzeppelin-foundry-upgrades
-
-Then add the following additional line to `remappings.txt`, in addition to the ones described above (replace `0.3.6` with the version of the plugin that you installed):
-```
-openzeppelin-foundry-upgrades/=dependencies/openzeppelin-foundry-upgrades-0.3.6/src/
-```
-
-## OpenZeppelin Defender integration
-
-See [DEFENDER.md](DEFENDER.md)
-
-## Foundry Requirements
-
-This library requires [forge-std](https://github.com/foundry-rs/forge-std) version 1.9.5 or higher.
-
-## Before Running
-
-This library uses the [OpenZeppelin Upgrades CLI](https://docs.openzeppelin.com/upgrades-plugins/api-core) for upgrade safety validations, which are run by default during deployments and upgrades.
-
-If you want to be able to run upgrade safety validations, the following are needed:
-1. Install [Node.js](https://nodejs.org/).
-2. Configure your `foundry.toml` to enable ffi, ast, build info and storage layout:
-```toml
-[profile.default]
-ffi = true
-ast = true
-build_info = true
-extra_output = ["storageLayout"]
-```
-3. If you are upgrading your contract from a previous version, add the `@custom:oz-upgrades-from <reference>` annotation to the new version of your contract according to [Define Reference Contracts](https://docs.openzeppelin.com/upgrades-plugins/api-core#define-reference-contracts) or specify the `referenceContract` option when calling the library's functions.
-4. Run `forge clean` before running your Foundry script or tests, or include the `--force` option when running `forge script` or `forge test`.
-
-If you do not want to run upgrade safety validations, you can skip the above steps and use the [`unsafeSkipAllChecks` option](src/Options.sol) when calling the `Upgrades` library's functions, or use the `UnsafeUpgrades` library instead. Note that these are dangerous options meant to be used as a last resort.
-
-### Optional: Custom output directory
-
-By default, this library assumes your Foundry output directory is set to "out".
-
-If you want to use a custom output directory, set it in your `foundry.toml` and provide read permissions for the directory. For example (replace `my-output-dir` with the directory that you want to use):
-```toml
-[profile.default]
-out = "my-output-dir"
-fs_permissions = [{ access = "read", path = "my-output-dir" }]
-```
-Then in a `.env` at your project root, set the `FOUNDRY_OUT` environment variable to match the custom output directory, for example:
-```env
-FOUNDRY_OUT=my-output-dir
-```
-
-### Windows environments
-
-If you are using Windows, set the `OPENZEPPELIN_BASH_PATH` environment variable to the fully qualified path of the `bash` executable.
-For example, if you are using [Git for Windows](https://gitforwindows.org/), add the following line in the `.env` file of your project (using forward slashes):
-```env
-OPENZEPPELIN_BASH_PATH="C:/Program Files/Git/bin/bash"
-```
-
-## Usage
-
-Depending on which major version of OpenZeppelin Contracts you are using, and whether you want to run upgrade safety validations and/or use OpenZeppelin Defender, use the table below to determine which library to import:
-
-|     | OpenZeppelin Contracts v5 | OpenZeppelin Contracts v4 |
-| --- | --- | --- |
-| **Runs validations, supports Defender** | `import {Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";` | `import {Upgrades} from "openzeppelin-foundry-upgrades/LegacyUpgrades.sol";` |
-| **No validations, does not support Defender** | `import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";` | `import {UnsafeUpgrades} from "openzeppelin-foundry-upgrades/LegacyUpgrades.sol";` |
-
-
-Import one of the above libraries in your Foundry scripts or tests, for example:
-```solidity
-import {Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
-```
-
-Also import the implementation contract that you want to validate, deploy, or upgrade to, for example:
-```solidity
-import {MyToken} from "src/MyToken.sol";
-```
-
-Then call functions from the imported library to run validations, deployments, or upgrades.
-
-## Examples
-
-The following examples assume you are using OpenZeppelin Contracts v5 and want to run upgrade safety validations.
-
-### Deploy a proxy
-
-Deploy a UUPS proxy:
-```solidity
-address proxy = Upgrades.deployUUPSProxy(
-    "MyContract.sol",
-    abi.encodeCall(MyContract.initialize, ("arguments for the initialize function"))
-);
-```
-
-Deploy a transparent proxy:
-```solidity
-address proxy = Upgrades.deployTransparentProxy(
-    "MyContract.sol",
-    INITIAL_OWNER_ADDRESS_FOR_PROXY_ADMIN,
-    abi.encodeCall(MyContract.initialize, ("arguments for the initialize function"))
-);
-```
-
-Deploy an upgradeable beacon and a beacon proxy:
-```solidity
-address beacon = Upgrades.deployBeacon("MyContract.sol", INITIAL_OWNER_ADDRESS_FOR_BEACON);
-
-address proxy = Upgrades.deployBeaconProxy(
-    beacon,
-    abi.encodeCall(MyContract.initialize, ("arguments for the initialize function"))
-);
-```
-
-### Use your contract
-
-Call your contract's functions as normal, but remember to always use the proxy address:
-```solidity
-MyContract instance = MyContract(proxy);
-instance.myFunction();
-```
-
-### Upgrade a proxy or beacon
-
-Upgrade a transparent or UUPS proxy and call an arbitrary function (such as a reinitializer) during the upgrade process:
-```solidity
-Upgrades.upgradeProxy(
-    transparentProxy,
-    "MyContractV2.sol",
-    abi.encodeCall(MyContractV2.foo, ("arguments for foo"))
-);
-```
-
-Upgrade a transparent or UUPS proxy without calling any additional function:
-```solidity
-Upgrades.upgradeProxy(
-    transparentProxy,
-    "MyContractV2.sol",
-    ""
-);
-```
-
-Upgrade a beacon:
-```solidity
-Upgrades.upgradeBeacon(beacon, "MyContractV2.sol");
-```
-
-> **Warning**
-> When upgrading a proxy or beacon, ensure that the new contract either has its `@custom:oz-upgrades-from <reference>` annotation set to the current implementation contract used by the proxy or beacon, or set it with the `referenceContract` option, for example:
-> ```solidity
-> Options memory opts;
-> opts.referenceContract = "MyContractV1.sol";
-> Upgrades.upgradeProxy(proxy, "MyContractV2.sol", "", opts);
-> // or Upgrades.upgradeBeacon(beacon, "MyContractV2.sol", opts);
-> ```
-
-> **Tip**
-> If possible, keep the old version of the implementation contract's source code somewhere in your project to use as a reference as above. This requires the new version to be in a different directory, Solidity file, or using a different contract name. Otherwise, if you want to use the same directory and name for the new version, keep the build info directory from the previous deployment (or build it from an older branch of your project repository) and reference it as follows:
-> ```solidity
-> Options memory opts;
-> opts.referenceBuildInfoDir = "/old-builds/build-info-v1";
-> opts.referenceContract = "build-info-v1:MyContract";
-> Upgrades.upgradeProxy(proxy, "MyContract.sol", "", opts);
-> // or Upgrades.upgradeBeacon(beacon, "MyContract.sol", opts);
-> ```
-
-## Coverage Testing
-
-To enable code coverage reports with `forge coverage`, use the following deployment pattern in your tests: instantiate your implementation contracts directly and use the `UnsafeUpgrades` library. For example:
-```solidity
-address implementation = address(new MyContract());
-address proxy = UnsafeUpgrades.deployUUPSProxy(
-    implementation,
-    abi.encodeCall(MyContract.initialize, ("arguments for the initialize function"))
-);
-```
-
-> **Warning**
-`UnsafeUpgrades` is not recommended for use in Forge scripts. It does not validate whether your contracts are upgrade safe or whether new implementations are compatible with previous ones. Ensure you run validations before any actual deployments or upgrades, such as by using the `Upgrades` library in scripts.
-
-## Deploying and Verifying
-
-Run your script with `forge script` to broadcast and deploy. See Foundry's [Solidity Scripting](https://book.getfoundry.sh/guides/scripting-with-solidity) guide.
-
-> **Important**
-> Include the `--sender <ADDRESS>` flag for the `forge script` command when performing upgrades, specifying an address that owns the proxy or proxy admin. Otherwise, `OwnableUnauthorizedAccount` errors will occur.
-
-> **Note**
-> Include the `--verify` flag for the `forge script` command if you want to verify source code such as on Etherscan. This will verify your implementation contracts along with any proxy contracts as part of the deployment.
-
-## API
-
-See [Foundry Upgrades API](https://docs.openzeppelin.com/upgrades-plugins/api-foundry-upgrades) for the full API documentation.
-
-
-### README.md
-
-# Forge Standard Library • [![CI status](https://github.com/foundry-rs/forge-std/actions/workflows/ci.yml/badge.svg)](https://github.com/foundry-rs/forge-std/actions/workflows/ci.yml)
-
-Forge Standard Library is a collection of helpful contracts and libraries for use with [Forge and Foundry](https://github.com/foundry-rs/foundry). It leverages Forge's cheatcodes to make writing tests easier and faster, while improving the UX of cheatcodes.
-
-**Learn how to use Forge-Std with the [📖 Foundry Book (Forge-Std Guide)](https://book.getfoundry.sh/forge/forge-std.html).**
-
-## Install
-
-```bash
-forge install foundry-rs/forge-std
-```
-
-## Contracts
-### stdError
-
-This is a helper contract for errors and reverts. In Forge, this contract is particularly helpful for the `expectRevert` cheatcode, as it provides all compiler builtin errors.
-
-See the contract itself for all error codes.
-
-#### Example usage
-
-```solidity
-
-import "forge-std/Test.sol";
-
-contract TestContract is Test {
-    ErrorsTest test;
-
-    function setUp() public {
-        test = new ErrorsTest();
-    }
-
-    function testExpectArithmetic() public {
-        vm.expectRevert(stdError.arithmeticError);
-        test.arithmeticError(10);
-    }
-}
-
-contract ErrorsTest {
-    function arithmeticError(uint256 a) public {
-        uint256 a = a - 100;
-    }
-}
-```
-
-### stdStorage
-
-This is a rather large contract due to all of the overloading to make the UX decent. Primarily, it is a wrapper around the `record` and `accesses` cheatcodes. It can *always* find and write the storage slot(s) associated with a particular variable without knowing the storage layout. The one _major_ caveat to this is while a slot can be found for packed storage variables, we can't write to that variable safely. If a user tries to write to a packed slot, the execution throws an error, unless it is uninitialized (`bytes32(0)`).
-
-This works by recording all `SLOAD`s and `SSTORE`s during a function call. If there is a single slot read or written to, it immediately returns the slot. Otherwise, behind the scenes, we iterate through and check each one (assuming the user passed in a `depth` parameter). If the variable is a struct, you can pass in a `depth` parameter which is basically the field depth.
-
-I.e.:
-```solidity
-struct T {
-    // depth 0
-    uint256 a;
-    // depth 1
-    uint256 b;
-}
-```
-
-#### Example usage
-
-```solidity
-import "forge-std/Test.sol";
-
-contract TestContract is Test {
-    using stdStorage for StdStorage;
-
-    Storage test;
-
-    function setUp() public {
-        test = new Storage();
-    }
-
-    function testFindExists() public {
-        // Lets say we want to find the slot for the public
-        // variable `exists`. We just pass in the function selector
-        // to the `find` command
-        uint256 slot = stdstore.target(address(test)).sig("exists()").find();
-        assertEq(slot, 0);
-    }
-
-    function testWriteExists() public {
-        // Lets say we want to write to the slot for the public
-        // variable `exists`. We just pass in the function selector
-        // to the `checked_write` command
-        stdstore.target(address(test)).sig("exists()").checked_write(100);
-        assertEq(test.exists(), 100);
-    }
-
-    // It supports arbitrary storage layouts, like assembly based storage locations
-    function testFindHidden() public {
-        // `hidden` is a random hash of a bytes, iteration through slots would
-        // not find it. Our mechanism does
-        // Also, you can use the selector instead of a string
-        uint256 slot = stdstore.target(address(test)).sig(test.hidden.selector).find();
-        assertEq(slot, uint256(keccak256("my.random.var")));
-    }
-
-    // If targeting a mapping, you have to pass in the keys necessary to perform the find
-    // i.e.:
-    function testFindMapping() public {
-        uint256 slot = stdstore
-            .target(address(test))
-            .sig(test.map_addr.selector)
-            .with_key(address(this))
-            .find();
-        // in the `Storage` constructor, we wrote that this address' value was 1 in the map
-        // so when we load the slot, we expect it to be 1
-        assertEq(uint(vm.load(address(test), bytes32(slot))), 1);
-    }
-
-    // If the target is a struct, you can specify the field depth:
-    function testFindStruct() public {
-        // NOTE: see the depth parameter - 0 means 0th field, 1 means 1st field, etc.
-        uint256 slot_for_a_field = stdstore
-            .target(address(test))
-            .sig(test.basicStruct.selector)
-            .depth(0)
-            .find();
-
-        uint256 slot_for_b_field = stdstore
-            .target(address(test))
-            .sig(test.basicStruct.selector)
-            .depth(1)
-            .find();
-
-        assertEq(uint(vm.load(address(test), bytes32(slot_for_a_field))), 1);
-        assertEq(uint(vm.load(address(test), bytes32(slot_for_b_field))), 2);
-    }
-}
-
-// A complex storage contract
-contract Storage {
-    struct UnpackedStruct {
-        uint256 a;
-        uint256 b;
-    }
-
-    constructor() {
-        map_addr[msg.sender] = 1;
-    }
-
-    uint256 public exists = 1;
-    mapping(address => uint256) public map_addr;
-    // mapping(address => Packed) public map_packed;
-    mapping(address => UnpackedStruct) public map_struct;
-    mapping(address => mapping(address => uint256)) public deep_map;
-    mapping(address => mapping(address => UnpackedStruct)) public deep_map_struct;
-    UnpackedStruct public basicStruct = UnpackedStruct({
-        a: 1,
-        b: 2
-    });
-
-    function hidden() public view returns (bytes32 t) {
-        // an extremely hidden storage slot
-        bytes32 slot = keccak256("my.random.var");
-        assembly {
-            t := sload(slot)
-        }
-    }
-}
-```
-
-### stdCheats
-
-This is a wrapper over miscellaneous cheatcodes that need wrappers to be more dev friendly. Currently there are only functions related to `prank`. In general, users may expect ETH to be put into an address on `prank`, but this is not the case for safety reasons. Explicitly this `hoax` function should only be used for addresses that have expected balances as it will get overwritten. If an address already has ETH, you should just use `prank`. If you want to change that balance explicitly, just use `deal`. If you want to do both, `hoax` is also right for you.
-
-
-#### Example usage:
-```solidity
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import "forge-std/Test.sol";
-
-// Inherit the stdCheats
-contract StdCheatsTest is Test {
-    Bar test;
-    function setUp() public {
-        test = new Bar();
-    }
-
-    function testHoax() public {
-        // we call `hoax`, which gives the target address
-        // eth and then calls `prank`
-        hoax(address(1337));
-        test.bar{value: 100}(address(1337));
-
-        // overloaded to allow you to specify how much eth to
-        // initialize the address with
-        hoax(address(1337), 1);
-        test.bar{value: 1}(address(1337));
-    }
-
-    function testStartHoax() public {
-        // we call `startHoax`, which gives the target address
-        // eth and then calls `startPrank`
-        //
-        // it is also overloaded so that you can specify an eth amount
-        startHoax(address(1337));
-        test.bar{value: 100}(address(1337));
-        test.bar{value: 100}(address(1337));
-        vm.stopPrank();
-        test.bar(address(this));
-    }
-}
-
-contract Bar {
-    function bar(address expectedSender) public payable {
-        require(msg.sender == expectedSender, "!prank");
-    }
-}
-```
-
-### Std Assertions
-
-Contains various assertions.
-
-### `console.log`
-
-Usage follows the same format as [Hardhat](https://hardhat.org/hardhat-network/reference/#console-log).
-It's recommended to use `console2.sol` as shown below, as this will show the decoded logs in Forge traces.
-
-```solidity
-// import it indirectly via Test.sol
-import "forge-std/Test.sol";
-// or directly import it
-import "forge-std/console2.sol";
-...
-console2.log(someValue);
-```
-
-If you need compatibility with Hardhat, you must use the standard `console.sol` instead.
-Due to a bug in `console.sol`, logs that use `uint256` or `int256` types will not be properly decoded in Forge traces.
-
-```solidity
-// import it indirectly via Test.sol
-import "forge-std/Test.sol";
-// or directly import it
-import "forge-std/console.sol";
-...
-console.log(someValue);
-```
-
-## Contributing
-
-See our [contributing guidelines](./CONTRIBUTING.md).
-
-## Getting Help
-
-First, see if the answer to your question can be found in [book](https://book.getfoundry.sh).
-
-If the answer is not there:
-
--   Join the [support Telegram](https://t.me/foundry_support) to get help, or
--   Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new/choose) with your question, or
--   Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new/choose)
-
-If you want to contribute, or follow along with contributor discussion, you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
-
-## License
-
-Forge Standard Library is offered under either [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) license.
-
-
-### README.md
-
-# Proxy Contracts
-
-## Variants
-
-### Base Proxy
-
-Solidstate includes a base `Proxy` implementation which handle call delegation to an implementation contract. To get one running, inherit from `Proxy` and do either of the following:
-
-- Add a constructor which writes an implementation address to `ERC1967Storage.implementation`.
-- Override `_getImplementation` to return a constant or immutable implementation address.
-
-The latter approach is recommended for basic proxies because it is more gas-efficient. The storage-based approach is useful only for upgradeable proxies.
-
-### Transparent Proxies
-
-A `TransparentProxy` is a secure upgradeable proxy. It is "transparent" in the sense that no administrative functions are defined on its interface; instead, calls made by the admin with certain selectors are routed internally to administrative functions. This prevents undetected function selector clashes between the proxy and its implementation, which can cause security issues in some situations.
-
-The EIP-173 `owner` account (from the `Ownable` contract) is not used as the proxy admin because the implementation contract might make use of the same storage slot. The owner of a proxy
-
-### Beacon Proxies
-
-`BeaconProxy` is used when multiple proxies must reference the same implementation contract. The implementation address is stored in a `Beacon` and exposed though its external interface. If the implementation address is changed, all proxies are upgraded at once.
-
-`DiamondBeacon` is a beacon which supports multiple implementations.
-
-| beacon proxy             | beacon          | description                                                                                      |
-| ------------------------ | --------------- | ------------------------------------------------------------------------------------------------ |
-| `BeaconProxy`            | `Beacon`        | Standard beacon which fetches its implementation through `IERC1967Beacon#implementation()`.      |
-| `TransparentBeaconProxy` | `Beacon`        | Variant of `BeaconProxy` with transparently upgradeable beacon address.                          |
-| `DiamondBeaconProxy`     | `DiamondBeacon` | Nonstandard beacon variant with support for multiple function-selector-specific implementations. |
-
-See the `contracts/beacon/` directory for the beacon implementations.
-
-### Diamond Proxies
-
-ERC-2535 "Diamond" proxies support multiple implementations.
-
-The diamond proxy modules are unique in that they are defined separately, despite the ERC's requirement that all diamonds implement the `IERC2535DiamondLoupe` functions. However, they also rely on shared behavior defined in `_DiamondProxy`; the internal module contracts inherit from `_DiamondProxy`, but not all of the external module contracts inherit from `DiamondProxy`.
-
-| module                 | description                                                                                                                                                | required? |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `DiamondProxy`         | Base diamond proxy implementation without external accessors to its internal structure.                                                                    | yes       |
-| `DiamondProxyReadable` | External interface for the "Diamond Loupe" view functions.                                                                                                 | yes       |
-| `DiamondProxyWritable` | External interface for the `diamondCut` function.                                                                                                          | no        |
-| `DiamondProxyFallback` | Extension of proxy functionality which introduces a last-resort fallback for situations in which no matching selector has been added to the diamond proxy. | no        |
-
-The `SolidstateDiamondProxy` includes all of these modules in the same contract, and registers their selectors as "immutable".
-
-The ERC stipulates that all instances of `DiamondProxy` must register their immutable function selectors. This precludes the need for "transparent" administration - any new functions added via `diamondCut` are validated against the existing funtions to prevent selector clashes.
-
-### Minimal Proxies
-
-EIP-1167 minimal proxies can be deployed by the `MinimalProxyFactory` library. These are the most gas-efficient proxies, but come with two drawbacks:
-
-- Constructors are not supported, so any initialization must be done through a dedicated external function (see `Initializable`).
-- Upgrades are not possible.
-
-### Summary
-
-| proxy type                 | upgradeable | multi-instance | multi-implementation | notes                                                                                             |
-| -------------------------- | ----------- | -------------- | -------------------- | ------------------------------------------------------------------------------------------------- |
-| `Proxy`                    |             |                |                      | Extensible for advanced use-cases. Base contract for most other proxies.                          |
-| `TransparentProxy`         | ✔️          |                |                      | Simple and safely upgradeable.                                                                    |
-| `BeaconProxy`              | ✔️          | ✔️             |                      | Multiple deployments can be upgraded at once via a `Beacon`.                                      |
-| `DiamondProxy`             | ✔️          |                | ✔️                   | Most flexible upgradeability. Workaround for the contract size limit.                             |
-| `TransparentBeaconProxy`   | ✔️          | ✔️             |                      | Same as `BeaconProxy`, but the beacon can be updated.                                             |
-| `DiamondBeaconProxy`       | ✔️          | ✔️             | ✔️                   | Same as `BeaconProxy`, but the beacon is a `DiamondBeacon` and supports multiple implementations. |
-| **EIP-1167 minimal proxy** |             | ✔️             |                      | Most gas-efficient multi-instance solution.                                                       |
-
-
-### README.md
-
-# Solidstate Contracts
-
-Solidstate contract library. Part of the Solidstate Solidity monorepo.
-
-> **Note**: An old version of this library has been audited by Hacken. More details are available in [the report](https://hacken.io/wp-content/uploads/2021/10/15092021_Premia_SC_Audit_Report.pdf).
-
-## Installation
-
-Install the package as a development dependency:
-
-```bash
-npm install --save-dev @solidstate/contracts
-# or
-yarn add --dev @solidstate/contracts
-```
-
-## Contents
-
-| directory       | description                                                         | 📕                      |
-| --------------- | ------------------------------------------------------------------- | ----------------------- |
-| `access/`       | modules for restricting calls to certain senders or certain times   |                         |
-| `cryptography/` | libraries for generating cryptographic hashes and validating proofs |                         |
-| `data/`         | data strucutures and manipulators                                   |                         |
-| `factory/`      | factories for programmatic deployment with `CREATE` and `CREATE2`   |                         |
-| `interfaces/`   | standard ERC interfaces                                             |                         |
-| `meta/`         | metadata accessors and extensions with metatransaction support      |                         |
-| `proxy/`        | proxy contracts for upgradeability and mass deployments             | [📖](./proxy/README.md) |
-| `signature/`    | modules for contract-based signatures                               |                         |
-| `storage/`      | ERC-7201 storage accessors                                          |                         |
-| `token/`        | token contracts and extensions                                      |                         |
-| `utils/`        | primitive type extensions and other utilities                       |                         |
-
-## Code Structure
-
-All contracts are designed to either be deployed through the standard `constructor` method, or referenced by a proxy. To this end, the [ERC-7201 namespaced storage](https://eips.ethereum.org/EIPS/eip-7201) pattern is employed exclusively.
-
-### Layers Pattern
-
-Each of the Solidstate contracts is split into multiple "layers" across multiple files: external contracts, internal contracts, external interfaces, internal interfaces, and storage libraries.
-
-This is done to give the developer granular control over which functions are available in each context. Some examples:
-
-- A proxy may need to be initialized by calling some `internal` functions. It should not inherit any `external` functions because these should be defined on its implementation contract. Instead, it can inherit `internal` functions only from an internal contract and call them in its `constructor`.
-- A diamond proxy may require that some code be shared among its implementation contracts. To avoid code duplication or making external calls between implementations, each implementation can inherit the shared `internal` functions from a single internal contract.
-- On the client side, a diamond proxy is typically interacted with through the use of a composite ABI which includes the functions, errors, and events from each of the implementation contracts. The compiler can create such an ABI if the implementations are all inherited into a single contract, but this composite contract may exceed the size limit. Instead, the implementations' respective interfaces may be imported and combined without running this risk.
-- An upgradeable contract might change drastically over its lifetime, and some of its functions (including `internal` functions) might be removed entirely. The storage data corresponding to old code will remain, however, and can be accessed using a storage library.
-
-An overview of the uses of each layer is as follows:
-
-| layer              | contents                                                                                                                 | description                                                                                                                                                                                        | example               |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| External Contract  | `external` functions                                                                                                     | set of externally callable functions                                                                                                                                                               | `FungibleToken.sol`   |
-| Internal Contract  | `internal` functions                                                                                                     | set of internal functions that define a module's core logic; may be called by inheriting contracts                                                                                                 | `_FungibleToken.sol`  |
-| External Interface | `external` function declarations and NatSpec documentation                                                               | set of function declarations that constitute a module's external interface                                                                                                                         | `IFungibleToken.sol`  |
-| Internal Interface | `event`, `error`, `enum`, `struct`                                                                                       | set of non-function elements of a module's interface                                                                                                                                               | `_IFungibleToken.sol` |
-| Storage Library    | storage layout `struct` (`Layout`), getter function (`layout()`), and standard storage location (`DEFAULT_STORAGE_SLOT`) | library for accessing and modifying storage; useful when sharing access to storage between implementation contracts that will be deployed separately (such as in the "diamond" proxy architecture) | `ERC20Storage.sol`    |
-
-### Solidstate Pre-Configured Contracts
-
-Solidstate maintains "recommended" implementations of various standards, which are suitable for most users. Internally, these implementations may be composed of several modules, which themselves may be composed of several "visibility layers". Visibility layers are subject to a consistent naming convention so that their purposes may be easily identified.
-
-For example, the `SolidstateFungibleToken` contract contains `FungibleToken`, `FungibleTokenExtended` and `FungibleTokenMetadata` modules (among others), which are recommended for most projects.
-
-### Standard Interfaces
-
-The repository also contains a set of standard interfaces for interacting with third-party contracts. These interfaces are typically taken directly from their EIPs (`IERC20`, `IERC721`) sometimes correspond to conventions that aren't defined standards (`IWETH`). These are found in the [interfaces/](./interfaces/) directory, and also follow the layers pattern.
-
-
-### README.md
-
-# Solidstate Spec
-
-Portable specifications for Solidstate contracts. Part of the Solidstate Solidity monorepo.
-
-## Installation
-
-Install the package as a development dependency:
-
-```bash
-npm install --save-dev @solidstate/spec
-# or
-yarn add --dev @solidstate/spec
-```
-
-## Usage
-
-Where possible, automated tests are designed to be imported by repositories which make use of the Solidstate contracts and run against any derived contracts. This is to help prevent unintended changes to the base contract behavior.
-
-For example, consider a custom `FungibleToken` implementation:
-
-```solidity
-import '@solidstate/contracts/token/fungible/FungibleToken.sol';
-
-contract CustomToken is FungibleToken {
-  // custom code...
-}
-```
-
-Rather than rewrite the `FungibleToken` tests or assume that all core behavior remains untouched, one can import the included tests and run them against the custom implementation:
-
-```javascript
-describe('CustomToken', () => {
-  let instance;
-
-  beforeEach(async () => {
-    const factory = await ethers.getContractFactory('CustomToken');
-    instance = await factory.deploy();
-    await instance.deployed();
-  });
-
-  describeBehaviorOfFungibleToken(
-    async () => instance,
-    {
-      args: ...,
-    }
-  );
-
-  // custom tests...
-});
-```
-
-If parts of the base implementation are changed intentionally, tests can be selectively skipped:
-
-```javascript
-describeBehaviorOfFungibleToken(
-  async () => instance,
-  {
-    args: ...
-  },
-  ['#balanceOf'],
-);
-
-describe('#balanceOf', () => {
-  // custom tests
-});
-```
-
-
-### README.md
-
-# Solidstate ABI
-
-Solidstate smart contract ABIs. Part of the Solidstate Solidity monorepo.
-
-## Installation
-
-Install the package as a development dependency:
-
-```bash
-npm install --save-dev @solidstate/abi
-# or
-yarn add --dev @solidstate/abi
-```
-
-## Development
-
-The contents of this package are generated automatically as a part of the contract compilation process.
-
-
-### README.md
-
-<div align="center">
-  <h1>Solidstate Solidity</h1>
-  <br/>
-  <img width=240 src="./assets/solidstate_mark.png" alt="solidstate logo"/>
-  <h5 align="center">The Solidstate smart contract development library.</h5>
-  <br/>
-  <img src="https://img.shields.io/npm/v/@solidstate/contracts?color=FDF685&style=flat-square" />
-  <img src="https://img.shields.io/github/stars/solidstate-network/solidstate-solidity?color=FDF685&style=flat-square" />
-  <img src="https://img.shields.io/github/contributors/solidstate-network/solidstate-solidity?color=FDF685&style=flat-square" />
-  <img src="https://img.shields.io/npm/dy/@solidstate/contracts?color=FDF685&style=flat-square" />
-  <br/>
-  <br/>
-</div>
-
-## Packages
-
-Solidstate is an upgradeable-first Solidity smart contract development library.
-
-It consists of the following packages:
-
-| package                 | description                                                                           | 📕                          |
-| ----------------------- | ------------------------------------------------------------------------------------- | --------------------------- |
-| `@solidstate/abi`       | contract ABIs                                                                         | [📖](./abi/README.md)       |
-| `@solidstate/contracts` | core contracts                                                                        | [📖](./contracts/README.md) |
-| `@solidstate/library`   | functions for interacting with and validating contracts                               | [📖](./lib/README.md)       |
-| `@solidstate/spec`      | portable tests which may be run against third-party implementations of core contracts | [📖](./spec/README.md)      |
-
-## Development
-
-Install dependencies via Yarn:
-
-```bash
-yarn install
-```
-
-Setup Husky to format code on commit:
-
-```bash
-yarn prepare
-```
-
-Compile contracts via Hardhat:
-
-```bash
-yarn run hardhat compile
-```
-
-### Testing
-
-Test contracts with Hardhat and generate gas report using `hardhat-gas-reporter`:
-
-```bash
-yarn run hardhat test
-```
-
-Generate a code coverage report using `solidity-coverage`:
-
-```bash
-yarn run hardhat coverage
-```
-
-### Publication
-
-Publish packages via Lerna:
-
-```bash
-yarn lerna-publish
-```
-
-
-### README.md
-
-# Solidstate Library
-
-Utility functions for interaction with Solidstate contracts. Part of the Solidstate Solidity monorepo.
-
-## Installation
-
-Install the package as a development dependency:
-
-```bash
-npm install --save-dev @solidstate/library
-# or
-yarn add --dev @solidstate/library
-```
-
-
-### README.md
-
-# SolidState Contracts
-
-SolidState contract library. Part of the SolidState Solidity monorepo.
-
-> **Note**: An old version of this library has been audited by Hacken. More details are available in [the report](https://hacken.io/wp-content/uploads/2021/10/15092021_Premia_SC_Audit_Report.pdf).
-
-## Installation
-
-Install the package as a development dependency:
-
-```bash
-npm install --save-dev @solidstate/contracts
-# or
-yarn add --dev @solidstate/contracts
-```
-
-## Layout
-
-SolidState maintains "recommended" implementations of various EIP standards, which are suitable for most users. Internally, these implementations may be composed of several modules, which themselves may be composed of several "visibility layers". Visibility layers are subject to a consistent naming convention so that their purposes may be easily identified.
-
-For example, the `SolidStateERC20` contract contains `ERC20Base`, `ERC20Extended` and `ERC20Metadata` modules. The `ERC20Base` module is composed of the external functions specified by the `IERC20` interface, `ERC20BaseInternal`, and `ERC20BaseStorage`.
-
-An overview of the uses of each visibility layer is as follows:
-
-| layer      | contents                            | description                                                                                                                                                                                        | example                 |
-| ---------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| `external` | external and public functions       | set of functions that constitute a module's external interface; useful for most common situations                                                                                                  | `ERC20Base.sol`         |
-| `internal` | internal functions, events          | set of internal functions that define a module's core logic; may be called by inheriting contracts                                                                                                 | `ERC20BaseInternal.sol` |
-| `storage`  | internal library functions, structs | library for accessing and modifying storage; useful when sharing access to storage between implementation contracts that will be deployed separately (such as in the "diamond" proxy architecture) | `ERC20BaseStorage.sol`  |
-
+#### **Key Functions**
+| Function | Description | Access |
+|:---|:---|:---|
+| `spendRaffle(prizeId, ticketAmount)` | User-callable function to spend raffle tickets and enter a prize drawing. | Public |
+| `requestWinner(prizeId)` | Initiates the winner selection process for a specific prize. | `ADMIN_ROLE` |
+| `handleWinnerSelection(...)` | The callback from the Supra oracle. Finds and records a winner. | `SUPRA_ROLE` |
+| `claimPrize(prizeId, winnerIndex)` | User-callable for a winner to claim their prize slot. | Public |
+| `addPrize(...)` / `editPrize(...)` / `removePrize(...)` | Functions for managing prize details. | `ADMIN_ROLE` |
+| `setPrizeActive(prizeId, active)` | Manually activates or deactivates a prize. | `ADMIN_ROLE` |
+| `cancelWinnerRequest(prizeId)` | Escape hatch to cancel a pending VRF request for a winner drawing. | `ADMIN_ROLE` |
+| `getPrizeDetails(...)` | View function to get all public details about a specific prize. | Public View |
+| `getPrizeWinners(prizeId)` | View function to get an array of all the `Winner` structs for a prize. | Public View |
+| `getUserWinnings(address user)` | View function to get an array of prize IDs that a specific user has won. | Public View |
+
+#### **Events**
+-   `PrizeAdded(uint256 indexed prizeId, string name)`: Emitted when a new prize is created.
+-   `PrizeEdited(uint256 indexed prizeId, ...)`: Emitted when an existing prize is modified via `editPrize`.
+-   `TicketSpent(address indexed user, uint256 indexed prizeId, uint256 tickets)`: Emitted when a user successfully spends tickets on a prize.
+-   `WinnerRequested(uint256 indexed prizeId, uint256 indexed requestId)`: Emitted when an admin requests a winner to be drawn.
+-   `WinnerSelected(uint256 indexed prizeId, address indexed winner, uint256 winningTicketIndex)`: Emitted when the oracle callback successfully selects and records a winner.
+-   `PrizeClaimed(address indexed user, uint256 indexed prizeId, uint256 winnerIndex)`: Emitted when a winner successfully claims their prize.
+
+#### **Errors**
+-   `AllWinnersDrawn()`: Reverts if `requestWinner` is called after all available winner slots for a prize have been filled.
+-   `EmptyTicketPool()`: Reverts if `requestWinner` is called for a prize that has no ticket entries.
+-   `InsufficientTickets()`: Reverts if a user tries to spend more raffle tickets than they have.
+-   `WinnerNotDrawn()`: Reverts if a user tries to claim a prize before the winner selection process is complete for that slot.
+-   `NotAWinner()`: Reverts if a user tries to claim a prize they did not win.
+-   `WinnerClaimed()`: Reverts if a winner tries to claim the same prize slot more than once.
+-   `WinnerRequestPending(uint256 prizeId)`: Reverts if `requestWinner` is called for a prize that already has a pending VRF request.
 
