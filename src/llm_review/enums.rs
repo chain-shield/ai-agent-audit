@@ -81,6 +81,7 @@ where
 /// ------------------------------------------------------------------
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
 pub enum Severity {
+    Critical,
     High,
     Medium,
     Low,
@@ -145,6 +146,7 @@ impl Default for Severity {
 impl Severity {
     pub fn as_str(self) -> &'static str {
         match self {
+            Severity::Critical => "Critical",
             Severity::High => "High",
             Severity::Medium => "Medium",
             Severity::Low => "Low",
@@ -154,6 +156,7 @@ impl Severity {
 
     pub fn as_initial(self) -> &'static str {
         match self {
+            Severity::Critical => "C",
             Severity::High => "H",
             Severity::Medium => "M",
             Severity::Low => "L",
