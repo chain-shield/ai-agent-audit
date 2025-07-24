@@ -15,7 +15,7 @@ pub const MAX_DEPTH: usize = 3;
 pub const TOKEN_BUDGET: usize = 150_000;
 
 /// Number of discovery rounds per contract during analysis
-pub const RUNS: usize = 5;
+pub const RUNS: usize = 10;
 
 pub const MAX_FILE_RUNS: usize = 3;
 
