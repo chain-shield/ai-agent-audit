@@ -159,9 +159,9 @@ INTERNAL_CALL, StakingFacet._checkValidatorSlashedAndRevert(uint16)(validatorId_
 ```
 #### StakingFacet._performStakeSetup(address,uint16,uint256) [INTERNAL]
 ```slithir
-user_1(address) := phi(['msg.sender', 'user_1', 'staker_1', 'user_1'])
+user_1(address) := phi(['user_1', 'user_1', 'staker_1', 'msg.sender'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1', 'validatorId_1', 'validatorId_1'])
-stakeAmount_1(uint256) := phi(['stakeAmount_1', 'amount_1', 'stakeAmount_1', 'amountRestaked_1'])
+stakeAmount_1(uint256) := phi(['amountRestaked_1', 'stakeAmount_1', 'stakeAmount_1', 'amount_1'])
  $ = PlumeStakingStorage.layout()
 TMP_13442(PlumeStakingStorage.Layout) = LIBRARY_CALL, dest:PlumeStakingStorage, function:PlumeStakingStorage.layout(), arguments:[] 
 $_1 (-> ['TMP_13442'])(PlumeStakingStorage.Layout) := TMP_13442(PlumeStakingStorage.Layout)
@@ -1573,6 +1573,27 @@ l_1 (-> ['position'])(PlumeStakingStorage.Layout) := position_1(bytes32)
  l
 RETURN l_1 (-> ['position'])
 ```
+#### PlumeRewardLogic.updateRewardsForValidator(PlumeStakingStorage.Layout,address,uint16) [INTERNAL]
+```slithir
+ historicalTokens = $.historicalRewardTokens
+REF_4205(address[]) -> $_1 (-> []).historicalRewardTokens
+historicalTokens_1 (-> [])(address[]) = ['REF_4205(address[])']
+ i = 0
+i_1(uint256) := 0(uint256)
+ i < historicalTokens.length
+i_2(uint256) := phi(['i_1', 'i_3'])
+REF_4206 -> LENGTH historicalTokens_1 (-> [])
+TMP_14034(bool) = i_2 < REF_4206
+CONDITION TMP_14034
+ token = historicalTokens[i]
+REF_4207(address) -> historicalTokens_1 (-> [])[i_2]
+token_1(address) := REF_4207(address)
+ updateRewardsForValidatorAndToken($,user,validatorId,token)
+INTERNAL_CALL, PlumeRewardLogic.updateRewardsForValidatorAndToken(PlumeStakingStorage.Layout,address,uint16,address)($_1 (-> []),user_1,validatorId_1,token_1)
+ i ++
+TMP_14036(uint256) := i_2(uint256)
+i_3(uint256) = i_2 (c)+ 1
+```
 #### PlumeValidatorLogic.addStakerToValidator(PlumeStakingStorage.Layout,address,uint16) [INTERNAL]
 ```slithir
  ! $.userHasStakedWithValidator[staker][validatorId]
@@ -1633,27 +1654,6 @@ REF_4484(mapping(uint16 => uint256)) -> REF_4483[staker_1]
 REF_4485(uint256) -> REF_4484[validatorId_1]
 $_9 (-> [])(PlumeStakingStorage.Layout) := phi(['$_8 (-> [])'])
 REF_4485(uint256) (->$_9 (-> [])) := index_1(uint256)
-```
-#### PlumeRewardLogic.updateRewardsForValidator(PlumeStakingStorage.Layout,address,uint16) [INTERNAL]
-```slithir
- historicalTokens = $.historicalRewardTokens
-REF_4205(address[]) -> $_1 (-> []).historicalRewardTokens
-historicalTokens_1 (-> [])(address[]) = ['REF_4205(address[])']
- i = 0
-i_1(uint256) := 0(uint256)
- i < historicalTokens.length
-i_2(uint256) := phi(['i_1', 'i_3'])
-REF_4206 -> LENGTH historicalTokens_1 (-> [])
-TMP_14034(bool) = i_2 < REF_4206
-CONDITION TMP_14034
- token = historicalTokens[i]
-REF_4207(address) -> historicalTokens_1 (-> [])[i_2]
-token_1(address) := REF_4207(address)
- updateRewardsForValidatorAndToken($,user,validatorId,token)
-INTERNAL_CALL, PlumeRewardLogic.updateRewardsForValidatorAndToken(PlumeStakingStorage.Layout,address,uint16,address)($_1 (-> []),user_1,validatorId_1,token_1)
- i ++
-TMP_14036(uint256) := i_2(uint256)
-i_3(uint256) = i_2 (c)+ 1
 ```
 #### PlumeValidatorLogic.removeStakerFromValidator(PlumeStakingStorage.Layout,address,uint16) [INTERNAL]
 ```slithir
@@ -2076,7 +2076,7 @@ REF_4251(uint256) (->$_9 (-> [])) := block.timestamp(uint256)
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_1 (-> [])', '$_1 (-> [])', '$_1 (-> [])'])
 token_1(address) := phi(['token_1', 'token_1', 'token_1', 'token_1'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1', 'validatorId_1', 'validatorId_1'])
-timestamp_1(uint256) := phi(['block.timestamp', 'segmentStartTime_1', 'segmentStartTime_1', 'validatorLastUpdateTime_1'])
+timestamp_1(uint256) := phi(['block.timestamp', 'segmentStartTime_1', 'validatorLastUpdateTime_1', 'segmentStartTime_1'])
  checkpoints = $.validatorRewardRateCheckpoints[validatorId][token]
 REF_4353(mapping(uint16 => mapping(address => PlumeStakingStorage.RateCheckpoint[]))) -> $_1 (-> []).validatorRewardRateCheckpoints
 REF_4354(mapping(address => PlumeStakingStorage.RateCheckpoint[])) -> REF_4353[validatorId_1]
@@ -2130,7 +2130,7 @@ RETURN effectiveCheckpoint_3
 ```slithir
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_3 (-> [])'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1'])
-timestamp_1(uint256) := phi(['segmentStartTime_1', 'oldLastUpdateTime_1'])
+timestamp_1(uint256) := phi(['oldLastUpdateTime_1', 'segmentStartTime_1'])
  checkpoints = $.validatorCommissionCheckpoints[validatorId]
 REF_4365(mapping(uint16 => PlumeStakingStorage.RateCheckpoint[])) -> $_1 (-> []).validatorCommissionCheckpoints
 REF_4366(PlumeStakingStorage.RateCheckpoint[]) -> REF_4365[validatorId_1]
@@ -2368,7 +2368,7 @@ user_1(address) := phi(['user_1', 'user_1'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1'])
 token_1(address) := phi(['token_1', 'token_1'])
 userStakedAmount_1(uint256) := phi(['userStakedAmount_1', 'userStakedAmount_1'])
-currentCumulativeRewardPerToken_1(uint256) := phi(['currentCumulativeRewardPerToken_3', 'finalCumulativeRewardPerToken_1', 'simulatedCumulativeRPT_1'])
+currentCumulativeRewardPerToken_1(uint256) := phi(['simulatedCumulativeRPT_1', 'currentCumulativeRewardPerToken_3', 'finalCumulativeRewardPerToken_1'])
  lastUserPaidCumulativeRewardPerToken = $.userValidatorRewardPerTokenPaid[user][validatorId][token]
 REF_4281(mapping(address => mapping(uint16 => mapping(address => uint256)))) -> $_1 (-> []).userValidatorRewardPerTokenPaid
 REF_4282(mapping(uint16 => mapping(address => uint256))) -> REF_4281[user_1]

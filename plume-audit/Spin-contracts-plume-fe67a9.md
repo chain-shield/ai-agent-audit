@@ -1,3 +1,4 @@
+
 ### Storage layout (Spin) 
 
 ```text
@@ -23,7 +24,6 @@ pendingNonce mapping(address => uint256)
 __gap uint256[49]
 
 ```
-
 #### Spin._authorizeUpgrade(address) [INTERNAL]
 ```slithir
 newImplementation_1(address) := phi(['newImplementation_1'])
@@ -131,7 +131,7 @@ MODIFIER_CALL, Initializable.initializer()()
 admin_2(address) := phi(['admin_1', 'admin_5', 'admin_0'])
 supraRouter_2(ISupraRouterContract) := phi(['supraRouter_5', 'supraRouter_1', 'supraRouter_0'])
 enableSpin_2(bool) := phi(['enableSpin_1', 'enableSpin_4', 'enableSpin_5', 'enableSpin_0'])
-isSpinPending_1(mapping(address => bool)) := phi(['isSpinPending_5', 'isSpinPending_8', 'isSpinPending_0', 'isSpinPending_4'])
+isSpinPending_1(mapping(address => bool)) := phi(['isSpinPending_5', 'isSpinPending_0', 'isSpinPending_4', 'isSpinPending_8'])
 spinPrice_2(uint256) := phi(['spinPrice_4', 'spinPrice_1', 'spinPrice_6', 'spinPrice_0'])
  ! enableSpin
 TMP_23927 = UnaryType.BANG enableSpin_4 
@@ -328,7 +328,7 @@ REF_9942(-> userDataStorage_7 (-> ['userData'])) = REF_9942 (c)+ 1
 userData_9(mapping(address => Spin.UserData)) := phi(["userDataStorage_7 (-> ['userData'])"])
 userDataStorage_9 (-> ['userData'])(Spin.UserData) := phi(["userDataStorage_8 (-> ['userData'])", "userDataStorage_7 (-> ['userData'])"])
 userDataStorage_11 (-> ['userData'])(Spin.UserData) := phi(["userDataStorage_1 (-> ['userData'])", "userDataStorage_10 (-> ['userData'])"])
-userDataStorage_14 (-> ['userData'])(Spin.UserData) := phi(["userDataStorage_13 (-> ['userData'])", "userDataStorage_1 (-> ['userData'])"])
+userDataStorage_14 (-> ['userData'])(Spin.UserData) := phi(["userDataStorage_1 (-> ['userData'])", "userDataStorage_13 (-> ['userData'])"])
  userDataStorage.streakCount = currentSpinStreak
 REF_9943(uint256) -> userDataStorage_14 (-> ['userData']).streakCount
 userDataStorage_15 (-> ['userData'])(Spin.UserData) := phi(["userDataStorage_14 (-> ['userData'])"])
@@ -367,10 +367,10 @@ streakForReward_1(uint256) := phi(['currentSpinStreak_1'])
 jackpotProbabilities_2(uint256[7]) := phi(['jackpotProbabilities_4', 'jackpotProbabilities_3', 'jackpotProbabilities_1', 'jackpotProbabilities_0'])
 baseRaffleMultiplier_2(uint256) := phi(['baseRaffleMultiplier_0', 'baseRaffleMultiplier_4', 'baseRaffleMultiplier_1', 'baseRaffleMultiplier_3'])
 PP_PerSpin_2(uint256) := phi(['PP_PerSpin_0', 'PP_PerSpin_3', 'PP_PerSpin_1', 'PP_PerSpin_4'])
-plumeAmounts_2(uint256[3]) := phi(['plumeAmounts_1', 'plumeAmounts_4', 'plumeAmounts_3', 'plumeAmounts_0'])
+plumeAmounts_2(uint256[3]) := phi(['plumeAmounts_1', 'plumeAmounts_3', 'plumeAmounts_0', 'plumeAmounts_4'])
 campaignStartDate_2(uint256) := phi(['campaignStartDate_7', 'campaignStartDate_0'])
 jackpotPrizes_13(mapping(uint8 => uint256)) := phi(['jackpotPrizes_0', 'jackpotPrizes_14', 'jackpotPrizes_12', 'jackpotPrizes_16', 'jackpotPrizes_15'])
-rewardProbabilities_2(Spin.RewardProbabilities) := phi(['rewardProbabilities_3', 'rewardProbabilities_0', 'rewardProbabilities_8', 'rewardProbabilities_1'])
+rewardProbabilities_2(Spin.RewardProbabilities) := phi(['rewardProbabilities_0', 'rewardProbabilities_8', 'rewardProbabilities_3', 'rewardProbabilities_1'])
  probability = randomness % 1_000_000
 TMP_23983(uint256) = randomness_1 % 1000000
 probability_1(uint256) := TMP_23983(uint256)
@@ -696,7 +696,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(ADMIN_ROLE_33)
 #### Spin.setRewardProbabilities(uint256,uint256,uint256) [EXTERNAL]
 ```slithir
 ADMIN_ROLE_35(bytes32) := phi(['ADMIN_ROLE_16', 'ADMIN_ROLE_30', 'ADMIN_ROLE_8', 'ADMIN_ROLE_22', 'ADMIN_ROLE_36', 'ADMIN_ROLE_38', 'ADMIN_ROLE_10', 'ADMIN_ROLE_0', 'ADMIN_ROLE_18', 'ADMIN_ROLE_42', 'ADMIN_ROLE_24', 'ADMIN_ROLE_32', 'ADMIN_ROLE_26', 'ADMIN_ROLE_12', 'ADMIN_ROLE_40', 'ADMIN_ROLE_20', 'ADMIN_ROLE_14', 'ADMIN_ROLE_34', 'ADMIN_ROLE_28'])
-rewardProbabilities_4(Spin.RewardProbabilities) := phi(['rewardProbabilities_3', 'rewardProbabilities_0', 'rewardProbabilities_8', 'rewardProbabilities_1'])
+rewardProbabilities_4(Spin.RewardProbabilities) := phi(['rewardProbabilities_0', 'rewardProbabilities_8', 'rewardProbabilities_3', 'rewardProbabilities_1'])
  require(bool,string)(_plumeTokenThreshold < _raffleTicketThreshold,Invalid thresholds order)
 TMP_24046(bool) = _plumeTokenThreshold_1 < _raffleTicketThreshold_1
 TMP_24047(None) = SOLIDITY_CALL require(bool,string)(TMP_24046,Invalid thresholds order)
@@ -739,7 +739,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(ADMIN_ROLE_37)
 ```slithir
 ADMIN_ROLE_39(bytes32) := phi(['ADMIN_ROLE_16', 'ADMIN_ROLE_30', 'ADMIN_ROLE_8', 'ADMIN_ROLE_22', 'ADMIN_ROLE_36', 'ADMIN_ROLE_38', 'ADMIN_ROLE_10', 'ADMIN_ROLE_0', 'ADMIN_ROLE_18', 'ADMIN_ROLE_42', 'ADMIN_ROLE_24', 'ADMIN_ROLE_32', 'ADMIN_ROLE_26', 'ADMIN_ROLE_12', 'ADMIN_ROLE_40', 'ADMIN_ROLE_20', 'ADMIN_ROLE_14', 'ADMIN_ROLE_34', 'ADMIN_ROLE_28'])
 userNonce_6(mapping(uint256 => address)) := phi(['userNonce_7', 'userNonce_8', 'userNonce_0', 'userNonce_1', 'userNonce_5'])
-isSpinPending_6(mapping(address => bool)) := phi(['isSpinPending_5', 'isSpinPending_8', 'isSpinPending_0', 'isSpinPending_4'])
+isSpinPending_6(mapping(address => bool)) := phi(['isSpinPending_5', 'isSpinPending_0', 'isSpinPending_4', 'isSpinPending_8'])
 pendingNonce_6(mapping(address => uint256)) := phi(['pendingNonce_0', 'pendingNonce_5', 'pendingNonce_8', 'pendingNonce_1'])
  require(bool,string)(isSpinPending[user],No spin pending for this user)
 REF_9975(bool) -> isSpinPending_7[user_1]
@@ -873,7 +873,7 @@ TMP_23800(Initializable.InitializableStorage) := phi(["$_4 (-> ['TMP_23800'])"])
 Emit Initialized(version_1)
  _checkInitializing()
 INTERNAL_CALL, Initializable._checkInitializing()()
-role_1(bytes32) := phi(['SUPRA_ROLE_8', 'ADMIN_ROLE_21', 'ADMIN_ROLE_9', 'ADMIN_ROLE_19', 'ADMIN_ROLE_15', 'TMP_23649', 'TMP_23644', 'ADMIN_ROLE_11', 'ADMIN_ROLE_13', 'TMP_23642', 'ADMIN_ROLE_17', 'ADMIN_ROLE_7', 'TMP_23647', 'ADMIN_ROLE_23'])
+role_1(bytes32) := phi(['SUPRA_ROLE_8', 'ADMIN_ROLE_21', 'ADMIN_ROLE_9', 'ADMIN_ROLE_15', 'ADMIN_ROLE_19', 'TMP_23649', 'ADMIN_ROLE_11', 'ADMIN_ROLE_13', 'TMP_23642', 'ADMIN_ROLE_17', 'TMP_23644', 'ADMIN_ROLE_7', 'TMP_23647', 'ADMIN_ROLE_23'])
  _checkRole(role)
 INTERNAL_CALL, AccessControlUpgradeable._checkRole(bytes32)(role_1)
 prizeId_1(uint256) := phi(['prizeId_1', 'prizeId_1', 'prizeId_1', 'prizeId_1'])
