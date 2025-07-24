@@ -2,6 +2,7 @@
 
 
 
+
 #### ManagementFacet.setMinStakeAmount(uint256) [EXTERNAL]
 ```slithir
  $ = PlumeStakingStorage.layout()
@@ -944,6 +945,13 @@ l_1 (-> ['position'])(PlumeStakingStorage.Layout) := position_1(bytes32)
  l
 RETURN l_1 (-> ['position'])
 ```
+#### SafeERC20.safeTransfer(IERC20,address,uint256) [INTERNAL]
+```slithir
+ _callOptionalReturn(token,abi.encodeWithSelector(token.transfer.selector,to,value))
+REF_9558(bytes4) (->None) := 2835717307(bytes4)
+TMP_23068(bytes) = SOLIDITY_CALL abi.encodeWithSelector()(REF_9558,to_1,value_1)
+INTERNAL_CALL, SafeERC20._callOptionalReturn(IERC20,bytes)(token_1,TMP_23068)
+```
 #### PlumeRewardLogic._settleCommissionForValidatorUpToNow(PlumeStakingStorage.Layout,uint16) [INTERNAL]
 ```slithir
  rewardTokens = $.rewardTokens
@@ -1274,7 +1282,7 @@ REF_4280(uint256) (->$_7 (-> [])) := block.timestamp(uint256)
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_1 (-> [])', '$_1 (-> [])', '$_1 (-> [])'])
 token_1(address) := phi(['token_1', 'token_1', 'token_1', 'token_1'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1', 'validatorId_1', 'validatorId_1'])
-timestamp_1(uint256) := phi(['block.timestamp', 'segmentStartTime_1', 'validatorLastUpdateTime_1', 'segmentStartTime_1'])
+timestamp_1(uint256) := phi(['segmentStartTime_1', 'block.timestamp', 'segmentStartTime_1', 'validatorLastUpdateTime_1'])
  checkpoints = $.validatorRewardRateCheckpoints[validatorId][token]
 REF_4353(mapping(uint16 => mapping(address => PlumeStakingStorage.RateCheckpoint[]))) -> $_1 (-> []).validatorRewardRateCheckpoints
 REF_4354(mapping(address => PlumeStakingStorage.RateCheckpoint[])) -> REF_4353[validatorId_1]
@@ -1328,7 +1336,7 @@ RETURN effectiveCheckpoint_3
 ```slithir
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_3 (-> [])'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1'])
-timestamp_1(uint256) := phi(['oldLastUpdateTime_1', 'segmentStartTime_1'])
+timestamp_1(uint256) := phi(['segmentStartTime_1', 'oldLastUpdateTime_1'])
  checkpoints = $.validatorCommissionCheckpoints[validatorId]
 REF_4365(mapping(uint16 => PlumeStakingStorage.RateCheckpoint[])) -> $_1 (-> []).validatorCommissionCheckpoints
 REF_4366(PlumeStakingStorage.RateCheckpoint[]) -> REF_4365[validatorId_1]

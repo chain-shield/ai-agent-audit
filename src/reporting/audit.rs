@@ -14,7 +14,8 @@ use crate::{
 use std::{collections::HashMap, path::Path};
 
 /// Severity levels for organizing findings in reports
-const SEVERITIES: [Severity; 4] = [
+const SEVERITIES: [Severity; 5] = [
+    Severity::Critical,
     Severity::High,
     Severity::Medium,
     Severity::Low,
