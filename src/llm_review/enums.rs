@@ -460,13 +460,14 @@ impl<'de> Deserialize<'de> for Severity {
     {
         let s: String = Deserialize::deserialize(deserializer)?;
         match s.to_ascii_lowercase().as_str() {
+            "critical" => Ok(Severity::Critical),
             "high" => Ok(Severity::High),
             "medium" => Ok(Severity::Medium),
             "low" => Ok(Severity::Low),
             "info" => Ok(Severity::Info),
             other => Err(de::Error::unknown_variant(
                 other,
-                &["High", "Medium", "Low", "Info"],
+                &["Critical", "High", "Medium", "Low", "Info"],
             )),
         }
     }
