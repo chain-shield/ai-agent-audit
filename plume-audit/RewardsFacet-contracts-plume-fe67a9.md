@@ -638,7 +638,7 @@ TMP_13270(None) = SOLIDITY_CALL revert ValidatorDoesNotExist(uint16)(validatorId
 ```
 #### RewardsFacet._processValidatorRewards(address,uint16,address) [INTERNAL]
 ```slithir
-user_1(address) := phi(['msg.sender', 'user_1'])
+user_1(address) := phi(['user_1', 'msg.sender'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1'])
 token_1(address) := phi(['token_1', 'token_1'])
  $ = PlumeStakingStorage.layout()
@@ -682,7 +682,7 @@ TMP_13276(PlumeStakingStorage.Layout) := phi(["$_2 (-> ['TMP_13276'])"])
 #### RewardsFacet._finalizeRewardClaim(address,uint256,address) [INTERNAL]
 ```slithir
 token_1(address) := phi(['token_1', 'token_1', 'token_1'])
-totalAmount_1(uint256) := phi(['totalReward_1', 'totalReward_1', 'reward_1'])
+totalAmount_1(uint256) := phi(['reward_1', 'totalReward_1', 'totalReward_1'])
 recipient_1(address) := phi(['msg.sender'])
  totalAmount == 0
 TMP_13277(bool) = totalAmount_1 == 0
@@ -1418,59 +1418,6 @@ $_7 (-> [])(PlumeStakingStorage.Layout) := phi(['$_6 (-> [])'])
 REF_4280(uint256) (->$_7 (-> [])) := block.timestamp(uint256)
 ```
 
-#### PlumeRewardLogic.clearPendingRewardsFlagIfEmpty(PlumeStakingStorage.Layout,address,uint16) [INTERNAL]
-```slithir
- ! $.userHasPendingRewards[user][validatorId]
-REF_4416(mapping(address => mapping(uint16 => bool))) -> $_1 (-> []).userHasPendingRewards
-REF_4417(mapping(uint16 => bool)) -> REF_4416[user_1]
-REF_4418(bool) -> REF_4417[validatorId_1]
-TMP_14218 = UnaryType.BANG REF_4418 
-CONDITION TMP_14218
- historicalTokens = $.historicalRewardTokens
-REF_4419(address[]) -> $_1 (-> []).historicalRewardTokens
-historicalTokens_1 (-> [])(address[]) = ['REF_4419(address[])']
- userStakedAmount = $.userValidatorStakes[user][validatorId].staked
-REF_4420(mapping(address => mapping(uint16 => PlumeStakingStorage.UserValidatorStake))) -> $_1 (-> []).userValidatorStakes
-REF_4421(mapping(uint16 => PlumeStakingStorage.UserValidatorStake)) -> REF_4420[user_1]
-REF_4422(PlumeStakingStorage.UserValidatorStake) -> REF_4421[validatorId_1]
-REF_4423(uint256) -> REF_4422.staked
-userStakedAmount_1(uint256) := REF_4423(uint256)
- i = 0
-i_1(uint256) := 0(uint256)
- i < historicalTokens.length
-i_2(uint256) := phi(['i_1', 'i_3'])
-REF_4424 -> LENGTH historicalTokens_1 (-> [])
-TMP_14219(bool) = i_2 < REF_4424
-CONDITION TMP_14219
- token = historicalTokens[i]
-REF_4425(address) -> historicalTokens_1 (-> [])[i_2]
-token_1(address) := REF_4425(address)
- $.userRewards[user][validatorId][token] > 0
-REF_4426(mapping(address => mapping(uint16 => mapping(address => uint256)))) -> $_1 (-> []).userRewards
-REF_4427(mapping(uint16 => mapping(address => uint256))) -> REF_4426[user_1]
-REF_4428(mapping(address => uint256)) -> REF_4427[validatorId_1]
-REF_4429(uint256) -> REF_4428[token_1]
-TMP_14220(bool) = REF_4429 > 0
-CONDITION TMP_14220
- userStakedAmount > 0
-TMP_14221(bool) = userStakedAmount_1 > 0
-CONDITION TMP_14221
- (unsettledRewards,None,None) = calculateRewardsWithCheckpointsView($,user,validatorId,token,userStakedAmount)
-TUPLE_95(uint256,uint256,uint256) = INTERNAL_CALL, PlumeRewardLogic.calculateRewardsWithCheckpointsView(PlumeStakingStorage.Layout,address,uint16,address,uint256)($_1 (-> []),user_1,validatorId_1,token_1,userStakedAmount_1)
-unsettledRewards_1(uint256)= UNPACK TUPLE_95 index: 0 
- unsettledRewards > 0
-TMP_14222(bool) = unsettledRewards_1 > 0
-CONDITION TMP_14222
- i ++
-TMP_14223(uint256) := i_2(uint256)
-i_3(uint256) = i_2 (c)+ 1
- $.userHasPendingRewards[user][validatorId] = false
-REF_4430(mapping(address => mapping(uint16 => bool))) -> $_1 (-> []).userHasPendingRewards
-REF_4431(mapping(uint16 => bool)) -> REF_4430[user_1]
-REF_4432(bool) -> REF_4431[validatorId_1]
-$_2 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])'])
-REF_4432(bool) (->$_2 (-> [])) := False(bool)
-```
 #### PlumeValidatorLogic.removeStakerFromValidator(PlumeStakingStorage.Layout,address,uint16) [INTERNAL]
 ```slithir
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])'])
@@ -1626,6 +1573,59 @@ REF_4542(bool) -> REF_4541[validatorId_1]
 $_6 (-> [])(PlumeStakingStorage.Layout) := phi(['$_5 (-> [])'])
 REF_4542(bool) (->$_6 (-> [])) := False(bool)
 ```
+#### PlumeRewardLogic.clearPendingRewardsFlagIfEmpty(PlumeStakingStorage.Layout,address,uint16) [INTERNAL]
+```slithir
+ ! $.userHasPendingRewards[user][validatorId]
+REF_4416(mapping(address => mapping(uint16 => bool))) -> $_1 (-> []).userHasPendingRewards
+REF_4417(mapping(uint16 => bool)) -> REF_4416[user_1]
+REF_4418(bool) -> REF_4417[validatorId_1]
+TMP_14218 = UnaryType.BANG REF_4418 
+CONDITION TMP_14218
+ historicalTokens = $.historicalRewardTokens
+REF_4419(address[]) -> $_1 (-> []).historicalRewardTokens
+historicalTokens_1 (-> [])(address[]) = ['REF_4419(address[])']
+ userStakedAmount = $.userValidatorStakes[user][validatorId].staked
+REF_4420(mapping(address => mapping(uint16 => PlumeStakingStorage.UserValidatorStake))) -> $_1 (-> []).userValidatorStakes
+REF_4421(mapping(uint16 => PlumeStakingStorage.UserValidatorStake)) -> REF_4420[user_1]
+REF_4422(PlumeStakingStorage.UserValidatorStake) -> REF_4421[validatorId_1]
+REF_4423(uint256) -> REF_4422.staked
+userStakedAmount_1(uint256) := REF_4423(uint256)
+ i = 0
+i_1(uint256) := 0(uint256)
+ i < historicalTokens.length
+i_2(uint256) := phi(['i_1', 'i_3'])
+REF_4424 -> LENGTH historicalTokens_1 (-> [])
+TMP_14219(bool) = i_2 < REF_4424
+CONDITION TMP_14219
+ token = historicalTokens[i]
+REF_4425(address) -> historicalTokens_1 (-> [])[i_2]
+token_1(address) := REF_4425(address)
+ $.userRewards[user][validatorId][token] > 0
+REF_4426(mapping(address => mapping(uint16 => mapping(address => uint256)))) -> $_1 (-> []).userRewards
+REF_4427(mapping(uint16 => mapping(address => uint256))) -> REF_4426[user_1]
+REF_4428(mapping(address => uint256)) -> REF_4427[validatorId_1]
+REF_4429(uint256) -> REF_4428[token_1]
+TMP_14220(bool) = REF_4429 > 0
+CONDITION TMP_14220
+ userStakedAmount > 0
+TMP_14221(bool) = userStakedAmount_1 > 0
+CONDITION TMP_14221
+ (unsettledRewards,None,None) = calculateRewardsWithCheckpointsView($,user,validatorId,token,userStakedAmount)
+TUPLE_95(uint256,uint256,uint256) = INTERNAL_CALL, PlumeRewardLogic.calculateRewardsWithCheckpointsView(PlumeStakingStorage.Layout,address,uint16,address,uint256)($_1 (-> []),user_1,validatorId_1,token_1,userStakedAmount_1)
+unsettledRewards_1(uint256)= UNPACK TUPLE_95 index: 0 
+ unsettledRewards > 0
+TMP_14222(bool) = unsettledRewards_1 > 0
+CONDITION TMP_14222
+ i ++
+TMP_14223(uint256) := i_2(uint256)
+i_3(uint256) = i_2 (c)+ 1
+ $.userHasPendingRewards[user][validatorId] = false
+REF_4430(mapping(address => mapping(uint16 => bool))) -> $_1 (-> []).userHasPendingRewards
+REF_4431(mapping(uint16 => bool)) -> REF_4430[user_1]
+REF_4432(bool) -> REF_4431[validatorId_1]
+$_2 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])'])
+REF_4432(bool) (->$_2 (-> [])) := False(bool)
+```
 
 #### PlumeRewardLogic.updateRewardsForValidatorAndToken(PlumeStakingStorage.Layout,address,uint16,address) [INTERNAL]
 ```slithir
@@ -1727,61 +1727,6 @@ REF_4251(uint256) (->$_9 (-> [])) := block.timestamp(uint256)
 ```slithir
 
 ```
-#### PlumeRewardLogic.getEffectiveRewardRateAt(PlumeStakingStorage.Layout,address,uint16,uint256) [INTERNAL]
-```slithir
-$_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_1 (-> [])', '$_1 (-> [])', '$_1 (-> [])'])
-token_1(address) := phi(['token_1', 'token_1', 'token_1', 'token_1'])
-validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1', 'validatorId_1', 'validatorId_1'])
-timestamp_1(uint256) := phi(['block.timestamp', 'segmentStartTime_1', 'segmentStartTime_1', 'validatorLastUpdateTime_1'])
- checkpoints = $.validatorRewardRateCheckpoints[validatorId][token]
-REF_4353(mapping(uint16 => mapping(address => PlumeStakingStorage.RateCheckpoint[]))) -> $_1 (-> []).validatorRewardRateCheckpoints
-REF_4354(mapping(address => PlumeStakingStorage.RateCheckpoint[])) -> REF_4353[validatorId_1]
-REF_4355(PlumeStakingStorage.RateCheckpoint[]) -> REF_4354[token_1]
-checkpoints_1 (-> [])(PlumeStakingStorage.RateCheckpoint[]) = ['REF_4355(PlumeStakingStorage.RateCheckpoint[])']
- chkCount = checkpoints.length
-REF_4356 -> LENGTH checkpoints_1 (-> [])
-chkCount_1(uint256) := REF_4356(uint256)
- chkCount > 0
-TMP_14154(bool) = chkCount_1 > 0
-CONDITION TMP_14154
- idx = findRewardRateCheckpointIndexAtOrBefore($,validatorId,token,timestamp)
-TMP_14155(uint256) = INTERNAL_CALL, PlumeRewardLogic.findRewardRateCheckpointIndexAtOrBefore(PlumeStakingStorage.Layout,uint16,address,uint256)($_1 (-> []),validatorId_1,token_1,timestamp_1)
-idx_1(uint256) := TMP_14155(uint256)
- idx < chkCount && checkpoints[idx].timestamp <= timestamp
-TMP_14156(bool) = idx_1 < chkCount_1
-REF_4357(PlumeStakingStorage.RateCheckpoint) -> checkpoints_1 (-> [])[idx_1]
-REF_4358(uint256) -> REF_4357.timestamp
-TMP_14157(bool) = REF_4358 <= timestamp_1
-TMP_14158(bool) = TMP_14156 && TMP_14157
-CONDITION TMP_14158
- idx + 1 < chkCount && checkpoints[idx + 1].timestamp <= timestamp
-TMP_14159(uint256) = idx_1 (c)+ 1
-TMP_14160(bool) = TMP_14159 < chkCount_1
-TMP_14161(uint256) = idx_1 (c)+ 1
-REF_4359(PlumeStakingStorage.RateCheckpoint) -> checkpoints_1 (-> [])[TMP_14161]
-REF_4360(uint256) -> REF_4359.timestamp
-TMP_14162(bool) = REF_4360 <= timestamp_1
-TMP_14163(bool) = TMP_14160 && TMP_14162
-CONDITION TMP_14163
- checkpoints[idx]
-REF_4361(PlumeStakingStorage.RateCheckpoint) -> checkpoints_1 (-> [])[idx_1]
-RETURN REF_4361
- effectiveCheckpoint.rate = 0
-REF_4362(uint256) -> effectiveCheckpoint_0.rate
-effectiveCheckpoint_1(PlumeStakingStorage.RateCheckpoint) := phi(['effectiveCheckpoint_0'])
-REF_4362(uint256) (->effectiveCheckpoint_1) := 0(uint256)
- effectiveCheckpoint.timestamp = timestamp
-REF_4363(uint256) -> effectiveCheckpoint_1.timestamp
-effectiveCheckpoint_2(PlumeStakingStorage.RateCheckpoint) := phi(['effectiveCheckpoint_1'])
-REF_4363(uint256) (->effectiveCheckpoint_2) := timestamp_1(uint256)
- effectiveCheckpoint.cumulativeIndex = 0
-REF_4364(uint256) -> effectiveCheckpoint_2.cumulativeIndex
-effectiveCheckpoint_3(PlumeStakingStorage.RateCheckpoint) := phi(['effectiveCheckpoint_2'])
-REF_4364(uint256) (->effectiveCheckpoint_3) := 0(uint256)
- effectiveCheckpoint
-RETURN effectiveCheckpoint_3
- effectiveCheckpoint
-```
 #### PlumeRewardLogic._calculateRewardsCore(PlumeStakingStorage.Layout,address,uint16,address,uint256,uint256) [INTERNAL]
 ```slithir
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_1 (-> [])'])
@@ -1789,7 +1734,7 @@ user_1(address) := phi(['user_1', 'user_1'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1'])
 token_1(address) := phi(['token_1', 'token_1'])
 userStakedAmount_1(uint256) := phi(['userStakedAmount_1', 'userStakedAmount_1'])
-currentCumulativeRewardPerToken_1(uint256) := phi(['currentCumulativeRewardPerToken_3', 'finalCumulativeRewardPerToken_1', 'simulatedCumulativeRPT_1'])
+currentCumulativeRewardPerToken_1(uint256) := phi(['simulatedCumulativeRPT_1', 'currentCumulativeRewardPerToken_3', 'finalCumulativeRewardPerToken_1'])
  lastUserPaidCumulativeRewardPerToken = $.userValidatorRewardPerTokenPaid[user][validatorId][token]
 REF_4281(mapping(address => mapping(uint16 => mapping(address => uint256)))) -> $_1 (-> []).userValidatorRewardPerTokenPaid
 REF_4282(mapping(uint16 => mapping(address => uint256))) -> REF_4281[user_1]
@@ -1985,11 +1930,66 @@ k_3(uint256) = k_2 (c)+ 1
 RETURN totalUserRewardDelta_0,totalCommissionAmountDelta_0,effectiveTimeDelta_1
  (totalUserRewardDelta,totalCommissionAmountDelta,effectiveTimeDelta)
 ```
+#### PlumeRewardLogic.getEffectiveRewardRateAt(PlumeStakingStorage.Layout,address,uint16,uint256) [INTERNAL]
+```slithir
+$_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_1 (-> [])', '$_1 (-> [])', '$_1 (-> [])'])
+token_1(address) := phi(['token_1', 'token_1', 'token_1', 'token_1'])
+validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1', 'validatorId_1', 'validatorId_1'])
+timestamp_1(uint256) := phi(['block.timestamp', 'segmentStartTime_1', 'validatorLastUpdateTime_1', 'segmentStartTime_1'])
+ checkpoints = $.validatorRewardRateCheckpoints[validatorId][token]
+REF_4353(mapping(uint16 => mapping(address => PlumeStakingStorage.RateCheckpoint[]))) -> $_1 (-> []).validatorRewardRateCheckpoints
+REF_4354(mapping(address => PlumeStakingStorage.RateCheckpoint[])) -> REF_4353[validatorId_1]
+REF_4355(PlumeStakingStorage.RateCheckpoint[]) -> REF_4354[token_1]
+checkpoints_1 (-> [])(PlumeStakingStorage.RateCheckpoint[]) = ['REF_4355(PlumeStakingStorage.RateCheckpoint[])']
+ chkCount = checkpoints.length
+REF_4356 -> LENGTH checkpoints_1 (-> [])
+chkCount_1(uint256) := REF_4356(uint256)
+ chkCount > 0
+TMP_14154(bool) = chkCount_1 > 0
+CONDITION TMP_14154
+ idx = findRewardRateCheckpointIndexAtOrBefore($,validatorId,token,timestamp)
+TMP_14155(uint256) = INTERNAL_CALL, PlumeRewardLogic.findRewardRateCheckpointIndexAtOrBefore(PlumeStakingStorage.Layout,uint16,address,uint256)($_1 (-> []),validatorId_1,token_1,timestamp_1)
+idx_1(uint256) := TMP_14155(uint256)
+ idx < chkCount && checkpoints[idx].timestamp <= timestamp
+TMP_14156(bool) = idx_1 < chkCount_1
+REF_4357(PlumeStakingStorage.RateCheckpoint) -> checkpoints_1 (-> [])[idx_1]
+REF_4358(uint256) -> REF_4357.timestamp
+TMP_14157(bool) = REF_4358 <= timestamp_1
+TMP_14158(bool) = TMP_14156 && TMP_14157
+CONDITION TMP_14158
+ idx + 1 < chkCount && checkpoints[idx + 1].timestamp <= timestamp
+TMP_14159(uint256) = idx_1 (c)+ 1
+TMP_14160(bool) = TMP_14159 < chkCount_1
+TMP_14161(uint256) = idx_1 (c)+ 1
+REF_4359(PlumeStakingStorage.RateCheckpoint) -> checkpoints_1 (-> [])[TMP_14161]
+REF_4360(uint256) -> REF_4359.timestamp
+TMP_14162(bool) = REF_4360 <= timestamp_1
+TMP_14163(bool) = TMP_14160 && TMP_14162
+CONDITION TMP_14163
+ checkpoints[idx]
+REF_4361(PlumeStakingStorage.RateCheckpoint) -> checkpoints_1 (-> [])[idx_1]
+RETURN REF_4361
+ effectiveCheckpoint.rate = 0
+REF_4362(uint256) -> effectiveCheckpoint_0.rate
+effectiveCheckpoint_1(PlumeStakingStorage.RateCheckpoint) := phi(['effectiveCheckpoint_0'])
+REF_4362(uint256) (->effectiveCheckpoint_1) := 0(uint256)
+ effectiveCheckpoint.timestamp = timestamp
+REF_4363(uint256) -> effectiveCheckpoint_1.timestamp
+effectiveCheckpoint_2(PlumeStakingStorage.RateCheckpoint) := phi(['effectiveCheckpoint_1'])
+REF_4363(uint256) (->effectiveCheckpoint_2) := timestamp_1(uint256)
+ effectiveCheckpoint.cumulativeIndex = 0
+REF_4364(uint256) -> effectiveCheckpoint_2.cumulativeIndex
+effectiveCheckpoint_3(PlumeStakingStorage.RateCheckpoint) := phi(['effectiveCheckpoint_2'])
+REF_4364(uint256) (->effectiveCheckpoint_3) := 0(uint256)
+ effectiveCheckpoint
+RETURN effectiveCheckpoint_3
+ effectiveCheckpoint
+```
 #### PlumeRewardLogic.getEffectiveCommissionRateAt(PlumeStakingStorage.Layout,uint16,uint256) [INTERNAL]
 ```slithir
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_3 (-> [])'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1'])
-timestamp_1(uint256) := phi(['segmentStartTime_1', 'oldLastUpdateTime_1'])
+timestamp_1(uint256) := phi(['oldLastUpdateTime_1', 'segmentStartTime_1'])
  checkpoints = $.validatorCommissionCheckpoints[validatorId]
 REF_4365(mapping(uint16 => PlumeStakingStorage.RateCheckpoint[])) -> $_1 (-> []).validatorCommissionCheckpoints
 REF_4366(PlumeStakingStorage.RateCheckpoint[]) -> REF_4365[validatorId_1]
@@ -2207,6 +2207,22 @@ TMP_14153(uint256) := 1157920892373161954235709850086879078532699846656405640394
 t2_2(uint256) := TMP_14153(uint256)
 t2_3(uint256) := phi(['t2_1', 't2_2'])
 ```
+#### PlumeRewardLogic._ceilDiv(uint256,uint256) [INTERNAL]
+```slithir
+a_1(uint256) := phi(['TMP_14094'])
+b_1(uint256) := phi(['REF_4317'])
+ b == 0
+TMP_14109(bool) = b_1 == 0
+CONDITION TMP_14109
+ 0
+RETURN 0
+ (a + b - 1) / b
+TMP_14110(uint256) = a_1 (c)+ b_1
+TMP_14111(uint256) = TMP_14110 (c)- 1
+TMP_14112(uint256) = TMP_14111 (c)/ b_1
+RETURN TMP_14112
+ result
+```
 #### PlumeRewardLogic.findRewardRateCheckpointIndexAtOrBefore(PlumeStakingStorage.Layout,uint16,address,uint256) [INTERNAL]
 ```slithir
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])'])
@@ -2266,22 +2282,6 @@ high_3(uint256) := phi(['high_2', 'high_1'])
 ans_3(uint256) := phi(['ans_2', 'ans_1'])
  ans
 RETURN ans_1
-```
-#### PlumeRewardLogic._ceilDiv(uint256,uint256) [INTERNAL]
-```slithir
-a_1(uint256) := phi(['TMP_14094'])
-b_1(uint256) := phi(['REF_4317'])
- b == 0
-TMP_14109(bool) = b_1 == 0
-CONDITION TMP_14109
- 0
-RETURN 0
- (a + b - 1) / b
-TMP_14110(uint256) = a_1 (c)+ b_1
-TMP_14111(uint256) = TMP_14110 (c)- 1
-TMP_14112(uint256) = TMP_14111 (c)/ b_1
-RETURN TMP_14112
- result
 ```
 #### PlumeRewardLogic.findCommissionCheckpointIndexAtOrBefore(PlumeStakingStorage.Layout,uint16,uint256) [INTERNAL]
 ```slithir

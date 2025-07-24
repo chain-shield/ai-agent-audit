@@ -36,8 +36,10 @@ use super::{enums::AIAgent, phases};
 pub async fn review_codebase_for_security_issues(
     codeblocks_path: &PathBuf,
     repo: &RepoPaths,
-) -> Result<(HashMap<String, Findings>, Vec<ContractInvariants>)> {
-    let mut all_security_issues = HashMap::<String, Findings>::new();
+) -> Result<(Findings, Vec<ContractInvariants>)> {
+    let mut all_security_issues = Findings {
+        findings: Vec::new(),
+    };
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
 
     // grab all solidity contracts from database
@@ -112,15 +114,16 @@ pub async fn review_codebase_for_security_issues(
             )
             .await?;
 
-            all_security_issues.insert(contract.to_string(), final_findings);
+            all_security_issues.findings.extend(final_findings.findings);
 
             // TODO - save issues to Findings db
         }
     }
 
-    // info!("standard security findings => {:#?}", all_security_issues);
-    // info!("invariant findings => {:#?}", invariant_findings);
-    Ok((all_security_issues, invariant_findings))
+    // dedup combined findings
+    let deduped_security_bugs = all_security_issues.dedup().await?;
+
+    Ok((deduped_security_bugs, invariant_findings))
 }
 
 // combine codeblock with original file context (that codeblock came from)
