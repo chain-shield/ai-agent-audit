@@ -1,5 +1,6 @@
 use crate::config::audit_config;
 use crate::error::Result;
+use crate::llm_review::config::CLAUDE_4_0_SONNET;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
@@ -11,7 +12,7 @@ use crate::{
 };
 use log::info;
 use rig::providers::openai::O3;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use tokio::fs;
 
 use super::contract_file_map::get_file_from_contract;
@@ -46,7 +47,7 @@ pub async fn review_codebase_for_security_issues(
     info!("grabbing contracts from db...");
     let contracts = codeblocks_db.get_all_contracts()?;
 
-    let (ai_verify_agent, ai_planning_agent, ai_discovery_agents) =
+    let (ai_verify_agent, second_ai_verify_agent, ai_discovery_agents) =
         generate_ai_agents(repo).await?;
 
     let invariant_findings = Vec::<ContractInvariants>::new();
@@ -92,6 +93,7 @@ pub async fn review_codebase_for_security_issues(
 
         if !raw_findings.findings.is_empty() {
             // Phase 3: Verify findings and remove false positives
+            info!("verify findings round 1....................\n\n");
             let verified_findings = phases::verify_findings::execute(
                 raw_findings,
                 &codeblock,
@@ -100,14 +102,18 @@ pub async fn review_codebase_for_security_issues(
             )
             .await?;
 
-            // add sleep for 10 seconds with info!
-            // info!("Waiting 20 seconds before starting next phase of analysis...");
-            // tokio::time::sleep(tokio::time::Duration::from_secs(20)).await;
-            // info!("Starting contract analysis now!");
+            info!("verify findings round 2....................\n\n");
+            let double_verified_findings = phases::verify_findings::execute(
+                verified_findings,
+                &codeblock,
+                &second_ai_verify_agent,
+                &metadata_context,
+            )
+            .await?;
 
             // Phase 4: Quality check and enhance findings
             let final_findings = phases::quality_check::execute(
-                verified_findings,
+                double_verified_findings,
                 &codeblock,
                 &ai_verify_agent,
                 &metadata_context,
@@ -183,7 +189,17 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         .with_preamble(verify_preamble)
         .with_file_picker(false); // Disabled to avoid rate limits
 
+    let second_verify_config = AgentConfig::new(repo.clone())
+        .with_temperature(1.0)
+        .with_model(CLAUDE_4_0_SONNET)
+        .with_max_tokens(64_000)
+        .with_preamble(verify_preamble)
+        .with_file_picker(false) // Disabled to avoid rate limits
+        .with_file_retrieval(false);
+
     let ai_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
+    let second_ai_verify_agent =
+        Arc::new(AgentFactory::create_anthropic_agent(&second_verify_config)?);
 
     // Enhanced preamble for discovery agents
     let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases.";
@@ -212,8 +228,8 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         ai_discovery_agents.push(agent);
     }
 
-    let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
-    info!("Created {} discovery agents", ai_discovery_agents.len());
+    // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
+    // info!("Created {} discovery agents", ai_discovery_agents.len());
 
-    Ok((ai_verify_agent, ai_planning_agent, ai_discovery_agents))
+    Ok((ai_verify_agent, second_ai_verify_agent, ai_discovery_agents))
 }
