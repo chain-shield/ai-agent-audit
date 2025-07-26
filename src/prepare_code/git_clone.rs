@@ -11,6 +11,7 @@ use std::process::Command;
 use std::{fs, path::Path};
 use walkdir::WalkDir;
 
+use crate::cli_args::parse::Cli;
 use crate::config::audit_config;
 use crate::utils::file_security::{validate_repo_url, validate_safe_path};
 
@@ -73,15 +74,17 @@ impl RepoPaths {
 /// All operations are performed in isolated Docker containers to prevent
 /// malicious code execution on the host system.
 pub fn clone_and_filter_git_repo(
-    url: &str,
-    subfolder: Option<&str>,
-    build_flags: BuildFlags,
+    // url: &str,
+    // subfolder: Option<&str>,
+    // build_flags: BuildFlags,
+    cli: &Cli,
 ) -> Result<RepoPaths> {
     // 🔐 Validate the repository URL for safety
-    validate_repo_url(url)?;
+    validate_repo_url(&cli.repo)?;
 
     // 2. Extract & sanitize the repo name
-    let mut repo_name = url
+    let mut repo_name = cli
+        .repo
         .trim_end_matches(".git")
         .rsplit('/')
         .next()
@@ -89,18 +92,18 @@ pub fn clone_and_filter_git_repo(
         .to_string();
 
     // Append subfolder to repo_name if specified
-    if let Some(sf) = subfolder {
+    if let Some(sf) = &cli.subfolder {
         repo_name = format!("{}/{}", repo_name, sf);
     }
     info!("repo_name ==> {}", repo_name);
 
     // 4. Read HEAD and get the first 6 chars of the commit SHA
-    let commit_hash = get_commit_hash(url)?;
+    let commit_hash = get_commit_hash(&cli.repo)?;
     let short_hash = &commit_hash[..6];
 
     // 5. git clone, install, and build in secure docker container
     // returns dierctory where files are located
-    let root = clone_and_build_repo(url, &repo_name, short_hash, build_flags)?;
+    let root = clone_and_build_repo(cli, &repo_name, short_hash)?;
 
     // 6. Build .gitignore matcher
     let mut ign = GitignoreBuilder::new(&root);
@@ -153,7 +156,7 @@ pub fn clone_and_filter_git_repo(
         //only get md docs from /src folder /src/*.md
         match path.extension().and_then(|e| e.to_str()) {
             Some("sol") => sol_files.push(path.to_path_buf()),
-            Some("md") if path.parent().map_or(false, |p| p == search_root.as_path()) => {
+            Some("md") if path.parent().map_or(false, |p| p == search_root) => {
                 docs.push(path.to_path_buf())
             }
             _ => {}
@@ -170,12 +173,7 @@ pub fn clone_and_filter_git_repo(
     })
 }
 
-pub fn clone_and_build_repo(
-    repo_url: &str,
-    repo_name: &str,
-    commit_hash: &str,
-    build_flags: BuildFlags,
-) -> Result<PathBuf> {
+pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, commit_hash: &str) -> Result<PathBuf> {
     let docker_volume = format!(
         "{}/{}-{}",
         audit_config().docker_volume,
@@ -183,11 +181,6 @@ pub fn clone_and_build_repo(
         &commit_hash[..6]
     );
     let docker_path = PathBuf::from(&docker_volume);
-
-    // if github repo clones to multiple sub folders with different apps
-    // then repo_name will be something like contracts/plume
-    // git clone will clone to contracts (repo_root) and then we cd into plume
-    let repo_root = repo_name.split('/').next().unwrap_or(repo_name);
 
     if docker_path.exists() {
         log::warn!(
@@ -202,18 +195,19 @@ pub fn clone_and_build_repo(
         })?;
     }
 
+    // if github repo clones to multiple sub folders with different apps
+    // then repo_name will be something like contracts/plume
+    // git clone will clone to contracts (repo_root) and then we cd into plume
+    let repo_root = repo_name.split('/').next().unwrap_or(repo_name);
+
     // Shallow clone for speed and security
     log::info!("git cloning repo...");
 
-    // Build forge command based on build flags
-    let forge_build_cmd = match build_flags {
-        BuildFlags::ViaIr => {
-            "forge install && forge build --via-ir --build-info --skip test --skip script"
-        }
-        BuildFlags::Standard => {
-            "forge install && forge build --build-info --skip test --skip script"
-        }
-    };
+    let build_command = cli.generate_build_command();
+    let repo_url = &cli.repo;
+
+    let clone_and_build_command =
+        format!("git clone --depth=1 {repo_url} {repo_root} && cd {repo_name} && {build_command}");
 
     let status = Command::new("docker")
         .args([
@@ -226,14 +220,7 @@ pub fn clone_and_build_repo(
             "ghcr.io/trailofbits/eth-security-toolbox:nightly",
             "bash",
             "-c",
-            &format!(
-                "git clone --depth=1 {repo_url} {repo_root} && \
-             cd {repo_name} && \
-             if [ -f foundry.toml ]; then {forge_build_cmd}; \
-             elif [ -f hardhat.config.js ] || [ -f hardhat.config.ts ]; then \
-             npm install -g hardhat && npm install && npx hardhat compile; \
-             else echo 'No build system detected'; fi"
-            ),
+            &clone_and_build_command,
         ])
         .status()
         .context("Failed to clone and build repository in Docker")?;
@@ -243,14 +230,6 @@ pub fn clone_and_build_repo(
         anyhow::bail!("Clone and Build failed in Docker");
     }
 
-    if docker_path.exists() {
-        validate_safe_path(&docker_path, Path::new(&audit_config().docker_volume))?;
-    } else {
-        log::warn!(
-            "Skipping path validation because {} does not exist yet",
-            docker_path.display()
-        );
-    }
     Ok(PathBuf::from(docker_volume))
 }
 

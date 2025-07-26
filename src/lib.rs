@@ -128,6 +128,9 @@ pub mod llm_review {
     }
 }
 
+pub mod cli_args {
+    pub mod parse;
+}
 /// Cost tracking and management for LLM inference
 pub mod cost {
     /// Cost calculation and tracking across providers
