@@ -205,9 +205,14 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, commit_hash: &str) -> Re
 
     let build_command = cli.generate_build_command();
     let repo_url = &cli.repo;
-
-    let clone_and_build_command =
-        format!("git clone --depth=1 {repo_url} {repo_root} && cd {repo_name} && {build_command}");
+    let clone_and_build_command = format!(
+        "git clone --depth=1 {repo_url} {repo_root} && \
+     cd {repo_name} && \
+     git config --global url.\"https://github.com/\".insteadOf \"ssh://git@github.com/\" && \
+     git config --global url.\"https://github.com/\".insteadOf \"git@github.com:\" && \
+     git config --global url.\"https://\".insteadOf \"ssh://\" && \
+     {build_command}"
+    );
 
     let status = Command::new("docker")
         .args([
