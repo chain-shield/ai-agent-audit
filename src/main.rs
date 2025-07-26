@@ -9,22 +9,24 @@
 /// 6. Generating professional audit reports with findings and cost tracking
 use ai_agent_audit::{
     build_brain::{enrichment, vector_db},
+    cli_args::parse,
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
     enumerator::codeblock_maker,
-    error::{AuditError, Result},
+    error::Result,
     llm_review::{
         agent_factory::init_llm_clients,
         code_review,
         context_state::{self},
     },
-    prepare_code::{self, git_clone::BuildFlags},
+    prepare_code::{self},
     reporting::{
         audit::{self, ReportType},
         contract_data, save_file,
     },
     utils::delete_docker_volumes::cleanup_repo_volume,
 };
+use clap::Parser;
 use dotenvy::dotenv;
 use log::info;
 
@@ -37,62 +39,25 @@ async fn main() -> Result<()> {
     // Initialize configuration from environment
     init_config()?;
 
-    // Initialize LLM clients
-    init_llm_clients()?;
-
     // Initialize the logger
     env_logger::init();
 
-    // ────────────────────────────────
-    // 1. Repository Preparation
-    // ────────────────────────────────
-    let repo_url = std::env::args().nth(1).ok_or_else(|| {
-        AuditError::validation("repo_url", "Repository URL is required as first argument")
-    })?;
+    // Initialize LLM clients
+    init_llm_clients()?;
 
-    // Optional subfolder argument for analyzing specific directories in multi-app repositories
-    let subfolder = std::env::args().nth(2);
+    // parse command line args
+    // Cli struct contains all info we need to execute audit
+    let cli = parse::Cli::parse();
 
-    // Optional --via-ir flag for forge build
-    let build_flags = match std::env::args().nth(3).as_deref() {
-        Some("--via-ir") => BuildFlags::ViaIr,
-        _ => BuildFlags::Standard,
-    };
-
-    // Validate URL format and length before processing
-    if repo_url.len() > audit_config().max_repo_url_length {
-        return Err(AuditError::validation(
-            "repo_url",
-            &format!(
-                "Repository URL is too long (max {} characters)",
-                audit_config().max_repo_url_length
-            ),
-        ));
-    }
-
-    if !repo_url.starts_with("https://") && !repo_url.starts_with("http://") {
-        return Err(AuditError::validation(
-            "repo_url",
-            "Only HTTP/HTTPS repository URLs are supported",
-        ));
-    }
-
-    info!("Processing repository: {}", repo_url);
-    if let Some(ref sf) = subfolder {
-        info!("Analyzing subfolder: {}", sf);
-    }
     info!("git cloning and extraction source code");
 
     // Clone repository in Docker container and build with Foundry/Hardhat
-    let repo = prepare_code::git_clone::clone_and_filter_git_repo(
-        &repo_url,
-        subfolder.as_deref(),
-        build_flags,
-    )?;
+    let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli)?;
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
     info!("repo docs => {:?}", &repo.docs);
 
+    return Ok(());
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
     // ────────────────────────────────
