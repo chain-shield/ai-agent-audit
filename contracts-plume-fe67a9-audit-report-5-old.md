@@ -16,14 +16,14 @@ Spin & Raffle add a gamified layer: users pay to spin once a day, winning PLUME,
 
 Everything is upgradeable (ERC1967/UUPS proxies), guarded by roles and ReentrancyGuard, and extensively tested with Foundry.
 ## High Risk Findings
-[H-1]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl
-[H-2]. Access Control issue in ManagementFacet::adminWithdraw
-[H-3]. Access Control issue in AccessControlFacet::initializeAccessControl
-[H-4]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl
-[H-5]. Upgradeability Initializer Safety issue in PlumeStakingProxy::constructor
-[H-6]. Zero Code issue in StakingFacet::restakeRewards
+[H-1]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl - OUT OF SCOPE
+[H-2]. Access Control issue in ManagementFacet::adminWithdraw - OUT OF SCOPE
+[H-3]. Access Control issue in AccessControlFacet::initializeAccessControl - DONE
+[H-4]. Upgradeability Initializer Safety issue in AccessControlFacet::initializeAccessControl - DONE
+[H-5]. Upgradeability Initializer Safety issue in PlumeStakingProxy::constructor - OUT OF SCOPE
+[H-6]. Zero Code issue in StakingFacet::restakeRewards - OFS
 [H-7]. Zero Code issue in StakingFacet::_transferRewardFromTreasury
-[H-8]. Upgradeability Initializer Safety issue in PlumeStakingRewardTreasuryProxy::constructor
+[H-8]. Upgradeability Initializer Safety issue in PlumeStakingRewardTreasuryProxy::constructor - OFS
 [H-9]. DOS issue in ValidatorFacet::_cleanupExpiredVotes
 ## Medium Risk Findings
 [M-1]. Integer Overflow/Math issue in DateTime::toTimestamp
