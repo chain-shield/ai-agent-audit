@@ -39,9 +39,10 @@ Before providing your final JSON output, you must:
 4. **Double-check** that no category was skipped
 
 ## ⚠️ CRITICAL REMINDERS
-- **ANALYZE ALL 20 CATEGORIES** - No exceptions
+- **ANALYZE ALL 13 CATEGORIES** - No exceptions
 - **Be thorough** - Don't rush through categories
 - **Be precise** - Use exact classification criteria
+- **Scope** - if scope is provided below, then only report vulnerability that are in scope
 - **Think like an attacker** - Consider how each vulnerability could be exploited
 - **Provide only the JSON** - No additional commentary in final output
 "#;

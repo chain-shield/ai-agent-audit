@@ -7,10 +7,12 @@ use crate::{
     error::Result,
     llm_review::{
         config::{generated_llm_prompt, Findings},
+        context_state::{generate_audit_scope, get_metadata_context},
         enums::AIAgent,
         prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
     },
     master_prompts::prompt_2x_aa::PROMPT_2X_AA,
+    prepare_code::git_clone::RepoPaths,
 };
 use log::info;
 use std::sync::Arc;
@@ -23,8 +25,8 @@ use tokio::sync::Mutex;
 pub async fn execute(
     contract: &str,
     code: &str,
-    context: &str,
     agents: &Vec<Arc<AIAgent>>,
+    repo: &RepoPaths,
 ) -> Result<Findings> {
     info!("🔍 Phase 2: Generating findings from contract codebase...");
 
@@ -32,6 +34,13 @@ pub async fn execute(
     let all_findings = Arc::new(Mutex::new(Findings {
         findings: Vec::new(),
     }));
+
+    let context = get_metadata_context(repo)
+        .await
+        .expect("could not extract context");
+
+    let audit_scope = generate_audit_scope(repo).await?;
+
     let contract = Arc::new(contract.to_string());
     let codeblock = Arc::new(code.to_string());
 
@@ -46,6 +55,16 @@ pub async fn execute(
             let contract_name = Arc::clone(&contract);
             let code = Arc::clone(&codeblock);
             let added_content = Arc::clone(&added_content_from_brain);
+            let prompt_plus_scope = if audit_scope.is_empty() {
+                Arc::new(prompt.to_string())
+            } else {
+                Arc::new(format!(
+                    "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY REPORT FINDINGS WITHIN SCOPE \n\n{}",
+                    prompt, &audit_scope
+                ))
+            };
+
+            // info!("discovery prompt + scope => {}", prompt_plus_scope);
 
             handles.push(tokio::spawn(async move {
                 if let Err(e) = run_security_prompt(
@@ -53,7 +72,7 @@ pub async fn execute(
                     contract_name,
                     code,
                     added_content,
-                    prompt,
+                    prompt_plus_scope,
                     (run + 1) * (i + 1),
                     combined_findings,
                 )
@@ -90,12 +109,13 @@ pub async fn run_security_prompt(
     contract_name: Arc<String>,
     code: Arc<String>,
     added_context: Arc<String>,
-    instructions: &'static str,
+    instructions: Arc<String>,
     idx_of_review_round: usize,
     shared_findings: Arc<Mutex<Findings>>,
 ) -> Result<()> {
     // 1. Build full prompt
-    let prompt_header = generated_llm_prompt(&contract_name, instructions, PRE_PROMPT, POST_PROMPT);
+    let prompt_header =
+        generated_llm_prompt(&contract_name, &instructions, PRE_PROMPT, POST_PROMPT);
     let prompt_body = generate_content_plus_context_block(&code, &added_context);
     let full_prompt = format!("{prompt_header}{prompt_body}");
 

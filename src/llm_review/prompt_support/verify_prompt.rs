@@ -14,6 +14,8 @@ Only return `"false"` if the issue is clearly meets **All** of these conditions:
 - A deliberate pattern that is safe and idiomatic
 - Fully unrelated to security, correctness, or best practice
 
+Also if vulnerability is *out of scope* return `"false"` (applies only if scope is provided below)
+
 INPUT  
 You will receive **one report** with the following structure:
 

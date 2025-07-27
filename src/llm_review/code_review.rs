@@ -7,7 +7,6 @@ use crate::{
     llm_review::{
         agent_factory::{AgentConfig, AgentFactory},
         config::{ContractInvariants, Findings},
-        context_state::get_metadata_context,
     },
 };
 use log::info;
@@ -52,8 +51,6 @@ pub async fn review_codebase_for_security_issues(
 
     let invariant_findings = Vec::<ContractInvariants>::new();
 
-    let metadata_context = get_metadata_context().await?;
-
     for (contract, codeblock) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
 
@@ -83,31 +80,23 @@ pub async fn review_codebase_for_security_issues(
         // info!("codeblock => {}", codeblock);
 
         // // Phase 2: Generate findings using parallel AI agents
-        let raw_findings = phases::generate_findings::execute(
-            &contract,
-            &codeblock,
-            &metadata_context,
-            &ai_discovery_agents,
-        )
-        .await?;
+        let raw_findings =
+            phases::generate_findings::execute(&contract, &codeblock, &ai_discovery_agents, repo)
+                .await?;
 
         if !raw_findings.findings.is_empty() {
             // Phase 3: Verify findings and remove false positives
             info!("verify findings round 1....................\n\n");
-            let verified_findings = phases::verify_findings::execute(
-                raw_findings,
-                &codeblock,
-                &ai_verify_agent,
-                &metadata_context,
-            )
-            .await?;
+            let verified_findings =
+                phases::verify_findings::execute(raw_findings, &codeblock, &ai_verify_agent, repo)
+                    .await?;
 
             info!("verify findings round 2....................\n\n");
             let double_verified_findings = phases::verify_findings::execute(
                 verified_findings,
                 &codeblock,
                 &second_ai_verify_agent,
-                &metadata_context,
+                repo,
             )
             .await?;
 
@@ -116,7 +105,7 @@ pub async fn review_codebase_for_security_issues(
                 double_verified_findings,
                 &codeblock,
                 &ai_verify_agent,
-                &metadata_context,
+                repo,
             )
             .await?;
 

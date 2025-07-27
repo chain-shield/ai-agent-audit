@@ -11,6 +11,7 @@ use rusqlite::{Connection, OptionalExtension};
 /// counting for optimal code slice generation within LLM context limits.
 use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 use walkdir::WalkDir;
 
 use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
@@ -225,15 +226,30 @@ pub async fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
     if !src_root.exists() {
         anyhow::bail!("no src/ folder found at {},", src_root.display());
     }
+    // get exclusions if any
+    let excluded_folders = repo.excluded_folders.clone().unwrap_or(Vec::new());
+
     // Regex matches `contract Foo`, ignores `interface` / `library`
     let re = Regex::new(r"(?m)^\s*contract\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     let mut contracts = Vec::<String>::new();
 
-    for file in &repo.sol_files {
+    let in_scope_files: &Vec<PathBuf> = &repo
+        .sol_files
+        .iter()
+        .filter(|f| f.starts_with(&src_root))
+        .filter(|f| {
+            !excluded_folders
+                .iter()
+                .any(|excluded| f.starts_with(excluded))
+        })
+        .map(|f| f.to_owned())
+        .collect();
+
+    for file in in_scope_files {
         // ✅ is in src ?
-        if !file.starts_with(&src_root) {
-            continue;
-        }
+        // if !file.starts_with(&src_root) {
+        //     continue;
+        // }
 
         // 🚫 Skip if path contains /lib/ or /mock/
         if file.components().any(|comp| {
