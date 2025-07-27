@@ -7,6 +7,7 @@ use crate::{
     error::Result,
     llm_review::{
         config::{Finding, Findings},
+        context_state::get_metadata_context,
         enums::{AIAgent, Severity},
         prompt_support::{
             post_qualify::POST_QUALIFY, pre_qualify::PRE_QUALIFY, qualify_prompt::QUALIFY_PROMPT,
@@ -14,6 +15,7 @@ use crate::{
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
     },
+    prepare_code::git_clone::RepoPaths,
 };
 use log::info;
 use schemars::JsonSchema;
@@ -59,13 +61,16 @@ pub async fn execute(
     findings: Findings,
     code: &str,
     agent: &Arc<AIAgent>,
-    context: &str,
+    repo: &RepoPaths,
 ) -> Result<Findings> {
     info!("🔍 Phase 4: Quality checking findings...");
 
     let mut handles = vec![];
     let findings = Arc::new(findings.dedup().await?);
-    let code_and_context = generate_content_plus_context_block(code, context);
+    let context = get_metadata_context(repo)
+        .await
+        .expect("could not extract context");
+    let code_and_context = generate_content_plus_context_block(code, &context);
     let arc_code_context = Arc::new(code_and_context);
 
     let finding_count = findings.findings.len();

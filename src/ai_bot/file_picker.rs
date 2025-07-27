@@ -222,6 +222,8 @@ mod tests {
             root: PathBuf::from("/tmp"),
             sol_files: vec![PathBuf::from("/tmp/test.sol")],
             docs: vec![PathBuf::from("/tmp/README.md")],
+            audit_scope: None,
+            excluded_folders: None,
             repo_name: "test-repo".to_string(),
             commit_hash: "abc123".to_string(),
         };
@@ -256,7 +258,9 @@ mod tests {
         let repo = RepoPaths {
             root: PathBuf::from("/tmp"),
             sol_files: vec![PathBuf::from("/tmp/test.sol")],
+            audit_scope: None,
             docs: vec![PathBuf::from("/tmp/README.md")],
+            excluded_folders: None,
             repo_name: "test-repo".to_string(),
             commit_hash: "abc123".to_string(),
         };

@@ -7,6 +7,7 @@ use crate::{
     error::Result,
     llm_review::{
         config::{Finding, Findings},
+        context_state::{generate_audit_scope, get_metadata_context},
         enums::AIAgent,
         prompt_support::{
             post_verify::POST_VERIFY, pre_verify::PRE_VERIFY, verify_prompt::VERIFY_PROMPT,
@@ -14,6 +15,7 @@ use crate::{
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
     },
+    prepare_code::git_clone::RepoPaths,
 };
 use log::info;
 
@@ -55,13 +57,16 @@ pub async fn execute(
     findings: Findings,
     code: &str,
     agent: &Arc<AIAgent>,
-    context: &str,
+    repo: &RepoPaths,
 ) -> Result<Findings> {
     info!("🔍 Phase 3: Deduplicating and verifying findings...");
 
     let mut handles = vec![];
     let deduped_findings = Arc::new(findings.dedup().await?);
-    let code_and_context = generate_content_plus_context_block(code, context);
+    let context = get_metadata_context(repo)
+        .await
+        .expect("could not extract context");
+    let code_and_context = generate_content_plus_context_block(code, &context);
     let arc_code_context = Arc::new(code_and_context);
 
     let dedup_finding_count = deduped_findings.findings.len();
@@ -71,11 +76,24 @@ pub async fn execute(
     info!("# of findings AFTER deduping => {}", dedup_finding_count);
     info!("now verifying each finding...");
 
+    let audit_scope = generate_audit_scope(repo).await?;
+    let verify_prompt_plus_scope = if audit_scope.is_empty() {
+        Arc::new(VERIFY_PROMPT.to_string())
+    } else {
+        Arc::new(format!(
+            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN SCOPE ARE LEGIT \n\n{}",
+            VERIFY_PROMPT, audit_scope
+        ))
+    };
+
+    // info!("verify prompt + scope => {}", verify_prompt_plus_scope);
+
     for i in 0..dedup_finding_count {
         let codeblock_plus_context = Arc::clone(&arc_code_context);
-        let arc_agent = Arc::clone(agent);
         let arc_findings = Arc::clone(&deduped_findings);
+        let arc_agent = Arc::clone(&agent);
         let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
+        let verify_prompt_and_scope = Arc::clone(&verify_prompt_plus_scope);
         let sem = Arc::clone(&VERIFY_SEM);
 
         handles.push(tokio::spawn(async move {
@@ -86,7 +104,7 @@ pub async fn execute(
                     &codeblock_plus_context,
                     &arc_findings.findings[i],
                     PRE_VERIFY,
-                    VERIFY_PROMPT,
+                    &verify_prompt_and_scope,
                     POST_VERIFY,
                 );
 

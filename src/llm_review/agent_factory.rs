@@ -9,17 +9,17 @@ use crate::ai_bot::file_retrival::FileRetrievalTool;
 use crate::config::audit_config;
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
-use qdrant_client::{Qdrant, qdrant::QueryPointsBuilder};
+use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
 use rig::{
     client::{CompletionClient, EmbeddingsClient, ProviderClient},
     providers::{
         anthropic::{self, CLAUDE_3_7_SONNET},
         deepseek::{self, DEEPSEEK_CHAT},
         gemini::{self},
-        openai::{self, O3, TEXT_EMBEDDING_3_SMALL},
+        openai::{self, O3, TEXT_EMBEDDING_3_SMALL, GPT_4O},
     },
 };
-use rig_qdrant::QdrantVectorStore;
+// use rig_qdrant::QdrantVectorStore;  // Temporarily disabled due to version conflicts
 use std::sync::OnceLock;
 
 /// Supported LLM providers.
@@ -270,34 +270,34 @@ fn deepseek_client() -> Result<&'static deepseek::Client> {
     })
 }
 
-/// Helper function to create vector store for dynamic context
-fn create_vector_store(repo: &RepoPaths) -> Result<QdrantVectorStore<openai::EmbeddingModel>> {
-    let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL").map_err(|_| {
-        AuditError::configuration("qdrant_url", "QDRANT_URL environment variable not set")
-    })?)
-    .build()
-    .map_err(|e| {
-        AuditError::configuration(
-            "qdrant_connection",
-            &format!("Failed to connect to Qdrant: {}", e),
-        )
-    })?;
+// /// Helper function to create vector store for dynamic context
+// fn create_vector_store(repo: &RepoPaths) -> Result<QdrantVectorStore<openai::EmbeddingModel>> {
+//     let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL").map_err(|_| {
+//         AuditError::configuration("qdrant_url", "QDRANT_URL environment variable not set")
+//     })?)
+//     .build()
+//     .map_err(|e| {
+//         AuditError::configuration(
+//             "qdrant_connection",
+//             &format!("Failed to connect to Qdrant: {}", e),
+//         )
+//     })?;
 
-    let openai = openai::Client::new(&std::env::var("OPENAI_API_KEY").map_err(|_| {
-        AuditError::configuration(
-            "openai_api_key",
-            "OPENAI_API_KEY environment variable not set",
-        )
-    })?);
-    let model = openai.embedding_model(TEXT_EMBEDDING_3_SMALL);
+//     let openai = openai::Client::new(&std::env::var("OPENAI_API_KEY").map_err(|_| {
+//         AuditError::configuration(
+//             "openai_api_key",
+//             "OPENAI_API_KEY environment variable not set",
+//         )
+//     })?);
+//     let model = openai.embedding_model(TEXT_EMBEDDING_3_SMALL);
 
-    let collection_name = format!("{}-contract_chunks", repo.unique_repo_hash());
-    let qp = QueryPointsBuilder::new(&collection_name)
-        .with_payload(true)
-        .build();
+//     let collection_name = format!("{}-contract_chunks", repo.unique_repo_hash());
+//     let qp = QueryPointsBuilder::new(&collection_name)
+//         .with_payload(true)
+//         .build();
 
-    Ok(QdrantVectorStore::new(qdrant, model, qp))
-}
+//     Ok(QdrantVectorStore::new(qdrant, model, qp))
+// }
 
 /// Helper function to create file retrieval tool
 fn create_file_retrieval_tool(repo: &RepoPaths) -> Result<FileRetrievalTool> {
@@ -346,10 +346,11 @@ impl AgentFactory {
         }
 
         // Add dynamic context if enabled
-        if config.enable_dynamic_context {
-            let vector_store = create_vector_store(&config.repo_paths)?;
-            builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
-        }
+        // Temporarily disabled due to rig-qdrant version conflicts
+        // if config.enable_dynamic_context {
+        //     let vector_store = create_vector_store(&config.repo_paths)?;
+        //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
+        // }
 
         // Add file retrieval tool if enabled
         if config.enable_file_retrieval {
@@ -385,10 +386,11 @@ impl AgentFactory {
         }
 
         // Add dynamic context if enabled
-        if config.enable_dynamic_context {
-            let vector_store = create_vector_store(&config.repo_paths)?;
-            builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
-        }
+        // Temporarily disabled due to rig-qdrant version conflicts
+        // if config.enable_dynamic_context {
+        //     let vector_store = create_vector_store(&config.repo_paths)?;
+        //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
+        // }
 
         // Add file retrieval tool if enabled
         if config.enable_file_retrieval {
@@ -424,10 +426,11 @@ impl AgentFactory {
         }
 
         // Add dynamic context if enabled
-        if config.enable_dynamic_context {
-            let vector_store = create_vector_store(&config.repo_paths)?;
-            builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
-        }
+        // Temporarily disabled due to rig-qdrant version conflicts
+        // if config.enable_dynamic_context {
+        //     let vector_store = create_vector_store(&config.repo_paths)?;
+        //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
+        // }
 
         // Add file retrieval tool if enabled
         if config.enable_file_retrieval {
@@ -463,10 +466,11 @@ impl AgentFactory {
         }
 
         // Add dynamic context if enabled
-        if config.enable_dynamic_context {
-            let vector_store = create_vector_store(&config.repo_paths)?;
-            builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
-        }
+        // Temporarily disabled due to rig-qdrant version conflicts
+        // if config.enable_dynamic_context {
+        //     let vector_store = create_vector_store(&config.repo_paths)?;
+        //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
+        // }
 
         // Add file retrieval tool if enabled
         if config.enable_file_retrieval {

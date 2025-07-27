@@ -131,6 +131,9 @@ pub mod llm_review {
 pub mod cli_args {
     pub mod parse;
 }
+
+// /// Test module for rig-core API testing
+// pub mod test_rig;
 /// Cost tracking and management for LLM inference
 pub mod cost {
     /// Cost calculation and tracking across providers
@@ -234,8 +237,6 @@ pub mod utils {
     pub mod file_security;
     /// Function labeling utilities
     pub mod fn_labels;
-    /// Documentation extraction
-    pub mod get_file_content;
     /// Function name extraction
     pub mod get_fn_name;
     /// Logging utilities

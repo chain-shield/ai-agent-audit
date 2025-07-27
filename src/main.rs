@@ -8,6 +8,7 @@
 /// 5. Creating vector embeddings and storing in Qdrant for semantic search
 /// 6. Generating professional audit reports with findings and cost tracking
 use ai_agent_audit::{
+    // test_rig,
     build_brain::{enrichment, vector_db},
     cli_args::parse,
     config::{audit_config, init_config},
@@ -49,6 +50,17 @@ async fn main() -> Result<()> {
     // Cli struct contains all info we need to execute audit
     let cli = parse::Cli::parse();
 
+    // TEST: Run rig API test first - TEMPORARILY DISABLED
+    // println!("🧪 Running rig-core API test...");
+    // match test_rig::test_rig_basic().await {
+    //     Ok(_) => println!("✅ Rig API test completed successfully!"),
+    //     Err(e) => println!("❌ Rig API test failed: {}", e),
+    // }
+
+    // Exit early for testing
+    // println!("🔬 Test completed - exiting early for analysis");
+    // return Ok(());
+
     info!("git cloning and extraction source code");
 
     // Clone repository in Docker container and build with Foundry/Hardhat
@@ -56,8 +68,8 @@ async fn main() -> Result<()> {
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
     info!("repo docs => {:?}", &repo.docs);
+    info!("excluded folders => {:?}", &repo.excluded_folders);
 
-    return Ok(());
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
     // ────────────────────────────────

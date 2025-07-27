@@ -6,7 +6,7 @@ use rig::client::EmbeddingsClient;
 use rig::providers::openai::{Client, TEXT_EMBEDDING_3_SMALL};
 use rig::vector_store::VectorStoreIndex;
 use rig::{completion::ToolDefinition, tool::Tool};
-use rig_qdrant::QdrantVectorStore;
+// use rig_qdrant::QdrantVectorStore;  // Temporarily disabled due to version conflicts
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tiktoken_rs::cl100k_base;
@@ -162,164 +162,14 @@ impl Tool for FileRetrievalTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        log::info!(
-            "🔧 FileRetrievalTool called with file_type='{}', query='{}'",
+        log::warn!(
+            "🚫 FileRetrievalTool called but temporarily disabled due to rig-qdrant version conflicts with rig-core 0.13.0. Args: file_type='{}', query='{}'",
             args.file_type,
             args.query
         );
-
-        // Validate file_type parameter
-        if !["source", "test", "script", "library"].contains(&args.file_type.as_str()) {
-            let error_msg = format!(
-                "Invalid file_type: '{}'. Must be 'source', 'test', 'script', or 'library'.",
-                args.file_type
-            );
-            log::error!("❌ FileRetrievalTool validation failed: {}", error_msg);
-            return Err(RetrievalError::Other(anyhow::anyhow!(error_msg)));
-        }
-
-        // Sanitize query to prevent JSON parsing issues
-        let sanitized_query = match sanitize_tool_input(&args.query) {
-            Ok(query) => {
-                if query != args.query {
-                    log::info!("🧹 Query sanitized: '{}' -> '{}'", args.query, query);
-                }
-                query
-            }
-            Err(e) => {
-                let error_msg = format!("Invalid query: {}", e);
-                log::error!("❌ Query validation failed: {}", error_msg);
-                return Err(RetrievalError::Other(anyhow::anyhow!(error_msg)));
-            }
-        };
-
-        // Use tokio::task::spawn_blocking to move the non-Sync operation to a blocking context
-        let qdrant_url = self.qdrant_url.clone();
-        let openai_api_key = self.openai_api_key.clone();
-        let repo = self.repo.clone();
-        let query = sanitized_query; // Use sanitized query instead of raw input
-        let file_type = args.file_type.clone();
-
-        let result = tokio::task::spawn_blocking(move || {
-            // Create a new tokio runtime for the blocking task
-            let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                RetrievalError::Other(anyhow::anyhow!("Failed to create runtime: {}", e))
-            })?;
-
-            rt.block_on(async move {
-                // Create vector store
-                let qdrant = Qdrant::from_url(&qdrant_url).build()?;
-                let openai = Client::new(&openai_api_key);
-                let model = openai.embedding_model(TEXT_EMBEDDING_3_SMALL);
-
-                let collection_name = format!("{}-contract_chunks", repo.unique_repo_hash());
-                let qp = QueryPointsBuilder::new(&collection_name)
-                    .with_payload(true)
-                    .build();
-
-                let vector_store = QdrantVectorStore::new(qdrant, model, qp);
-
-                // Truncate query to fit embedding token limits
-                let truncated_query = truncate_query_for_embedding(&query)
-                    .map_err(|e| RetrievalError::Other(anyhow::anyhow!("Query truncation failed: {}", e)))?;
-
-                if truncated_query.len() != query.len() {
-                    log::info!("📏 Query truncated from {} to {} characters", query.len(), truncated_query.len());
-                }
-
-                // Perform search - get more results to combine related chunks
-                let search_results = vector_store.top_n::<SourceChunk>(&truncated_query, 10).await?;
-                log::info!("🔍 Vector search returned {} results", search_results.len());
-
-                // Filter results by file type and score, then combine related chunks
-                let mut file_chunks: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-                let mut total_results = 0;
-                let mut score_filtered = 0;
-                let mut type_filtered = 0;
-
-                for (score, _doc_id, source_chunk) in &search_results {
-                    total_results += 1;
-                    log::debug!("📄 Result {}: score={:.3}, file_type='{}', metadata='{}'",
-                               total_results, score, source_chunk.file_type, source_chunk.metadata);
-
-                    // Only include results with good relevance scores
-                    if *score <= 0.5 {
-                        score_filtered += 1;
-                        log::debug!("⚠️  Filtered out due to low score: {:.3}", score);
-                        continue;
-                    }
-
-                    // Filter by file type using the direct field access
-                    if source_chunk.file_type == file_type {
-                        // Extract file name from metadata (format: "path/file.sol:chunk N")
-                        let file_name = source_chunk.metadata
-                            .split(':')
-                            .next()
-                            .unwrap_or(&source_chunk.metadata)
-                            .to_string();
-
-                        log::debug!("✅ Included result: {} chars from {}", source_chunk.text.len(), file_name);
-
-                        file_chunks.entry(file_name)
-                            .or_insert_with(Vec::new)
-                            .push(source_chunk.text.clone());
-                    } else {
-                        type_filtered += 1;
-                        log::debug!("⚠️  Filtered out due to file type mismatch: expected '{}', got '{}'",
-                                   file_type, source_chunk.file_type);
-                    }
-                }
-
-                // Combine chunks from the same files to provide more complete context
-                let mut combined_content = Vec::new();
-                for (file_name, chunks) in file_chunks {
-                    let file_content = chunks.join("\n\n");
-                    combined_content.push(format!("=== {} ===\n{}", file_name, file_content));
-                }
-
-                log::info!("📊 Filter results: {} total, {} score-filtered, {} type-filtered, {} files with chunks",
-                          total_results, score_filtered, type_filtered, combined_content.len());
-
-                let content = combined_content.join("\n\n");
-
-                if content.is_empty() {
-                    let error_msg = format!("No relevant content found for file type '{}' with query '{}' (searched {} results)",
-                                           file_type, query, total_results);
-                    log::warn!("❌ {}", error_msg);
-                    return Err(RetrievalError::Other(anyhow::anyhow!(error_msg)));
-                }
-
-                log::info!("✅ FileRetrievalTool returning {} characters of content", content.len());
-                print_first_four_lines(&content);
-
-                // Sanitize content to prevent JSON parsing issues
-                let sanitized_content = sanitize_content_for_json(&content);
-                if sanitized_content.len() != content.len() {
-                    log::info!("📝 Content sanitized: {} -> {} characters", content.len(), sanitized_content.len());
-                }
-
-                // Test JSON serialization to catch issues early
-                let test_output = RetrieveOut { content: sanitized_content.clone() };
-                match serde_json::to_string(&test_output) {
-                    Ok(_) => {
-                        log::debug!("✅ Content serialization test passed");
-                    }
-                    Err(e) => {
-                        log::error!("❌ Content serialization test failed: {}", e);
-                        log::error!("Problematic content preview: {}",
-                                   sanitized_content.chars().take(500).collect::<String>());
-                        return Err(RetrievalError::Other(anyhow::anyhow!(
-                            "Content serialization failed: {}", e
-                        )));
-                    }
-                }
-
-                Ok(RetrieveOut { content: sanitized_content })
-            })
-        })
-        .await
-        .map_err(|e| RetrievalError::Other(anyhow::anyhow!("Task join error: {}", e)))??;
-
-        Ok(result)
+        
+        Err(RetrievalError::Other(anyhow::anyhow!(
+            "File retrieval functionality temporarily disabled due to rig-qdrant version conflicts with rig-core 0.13.0"
+        )))
     }
 }

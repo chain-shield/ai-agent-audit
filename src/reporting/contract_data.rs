@@ -1,6 +1,6 @@
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
-    llm_review::utils::prompt_context::generate_context_for_code_review,
+    llm_review::context_state::generate_context_for_code_review,
     prepare_code::git_clone::RepoPaths, reporting::save_file::save_file_locally,
 };
 /// Contract data export utilities for analysis artifacts.

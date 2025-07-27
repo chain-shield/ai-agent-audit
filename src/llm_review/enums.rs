@@ -36,7 +36,7 @@ use rig::{
         anthropic::{self},
         deepseek::DeepSeekCompletionModel,
         gemini::{self},
-        openai::{O3, responses_api::ResponsesCompletionModel},
+        openai::{self, O3},
     },
 };
 
@@ -55,7 +55,7 @@ pub enum AIAgent {
     /// Anthropic Claude models (3.7 Sonnet, 4.0 Sonnet)
     Anthropic(Agent<anthropic::completion::CompletionModel>),
     /// OpenAI models (GPT-4o, O3)
-    Openai(Agent<ResponsesCompletionModel>),
+    Openai(Agent<openai::completion::CompletionModel>),
     /// Google Gemini models
     Gemini(Agent<gemini::completion::CompletionModel>),
     /// DeepSeek models (cost-effective option)
@@ -71,7 +71,7 @@ where
     T: 'static + JsonSchema + Serialize + for<'a> Deserialize<'a> + Send + Sync,
 {
     Anthropic(Extractor<anthropic::completion::CompletionModel, T>),
-    Openai(Extractor<ResponsesCompletionModel, T>),
+    Openai(Extractor<openai::completion::CompletionModel, T>),
     Gemini(Extractor<gemini::completion::CompletionModel, T>),
     Deepseek(Extractor<DeepSeekCompletionModel, T>),
 }

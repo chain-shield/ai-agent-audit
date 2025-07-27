@@ -16,23 +16,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::{
-    sync::{Mutex, Semaphore},
-    task,
-};
+use tokio::sync::{Mutex, Semaphore};
 
-use crate::{
-    cost::cost_data::LlmCostType,
-    llm_review::utils::prompt_context::{self as prompt_context, generate_context_for_code_review},
-};
 use crate::{
     cost::cost_data::add_to_inference_cost_by_type,
     prepare_code::git_clone::RepoPaths,
-    utils::{
-        contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry,
-        get_file_content::extract_content_from_docs,
-    },
+    utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
+use crate::{cost::cost_data::LlmCostType, llm_review::context_state};
 
 use super::slither_ffi::cache_key;
 
@@ -69,14 +60,14 @@ pub async fn summarize_docs(
         return Ok(cached.clone());
     }
 
-    let documentation = extract_content_from_docs(repo)?;
+    let documentation = repo.extract_content_from_docs()?;
     let mut doc_summaries = Vec::new();
 
     let mut docs_plus_context = format!("\n ## DOCUMENTATION: \n\n {}\n\n", documentation);
     docs_plus_context.push_str("\n ## CURRENT SECURITY AUDIT CONTEXT \n\n");
     docs_plus_context.push_str(&format!("\n #### The Documentation Summary should NOT contain content that is already included below.\n\n {} \n\n", current_context));
 
-    let openai_client = openai::Client::from_env();
+    let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
     info!("generate summmary of all major files and docs in repo...");
     let preamble =
@@ -93,7 +84,7 @@ pub async fn summarize_docs(
 
     add_to_inference_cost_by_type(
         &format!("{}{}", preamble, documentation),
-        LlmCostType::Openai4oInput,
+        LlmCostType::OpenaiO3Input,
     )
     .await;
 
@@ -102,7 +93,7 @@ pub async fn summarize_docs(
     let doc_summary = match extractor_with_retry(
         &ai_summary_agent,
         &docs_plus_context,
-        LlmCostType::Openai4oOutput,
+        LlmCostType::OpenaiO3Output,
     )
     .await
     {
@@ -139,10 +130,10 @@ pub async fn summarize_src_files(
         return Ok(cached.clone());
     }
 
-    let openai_client = openai::Client::from_env();
+    let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
     let context =
-        prompt_context::generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
+        context_state::generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
@@ -265,7 +256,7 @@ pub async fn summarize_src_files(
 
 pub async fn summarize_protocol(repo: &RepoPaths, semantics_path: &Path) -> Result<String> {
     // content retrival MUST come first to prevent race condition
-    let context = generate_context_for_code_review(repo, &semantics_path).await?;
+    let context = context_state::generate_context_for_code_review(repo, &semantics_path).await?;
 
     let key = cache_key(&repo.root, "protocol-summary");
     let cache = Arc::clone(&FILE_SUMMARY_CACHE);
@@ -284,7 +275,7 @@ pub async fn summarize_protocol(repo: &RepoPaths, semantics_path: &Path) -> Resu
     // Initialize vectors to store file paths
     let mut summaries = Vec::<SrcFileSummary>::new();
 
-    let openai_client = openai::Client::from_env();
+    let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
     log::info!("generate context for code review");
     let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, 
@@ -301,7 +292,7 @@ pub async fn summarize_protocol(repo: &RepoPaths, semantics_path: &Path) -> Resu
 
     add_to_inference_cost_by_type(
         &format!("{}{}", preamble, context),
-        LlmCostType::OpenaiO3Output,
+        LlmCostType::OpenaiO3Input,
     )
     .await;
 

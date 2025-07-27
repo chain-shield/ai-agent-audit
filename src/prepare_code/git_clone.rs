@@ -37,20 +37,12 @@ pub struct RepoPaths {
     pub docs: Vec<PathBuf>,
     /// e.g. `"my-cool-repo"`
     pub repo_name: String,
+    /// audit scope file
+    pub audit_scope: Option<PathBuf>,
+    /// folder exclude from scope
+    pub excluded_folders: Option<Vec<PathBuf>>,
     /// full 40-char SHA, e.g. `"1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t"`
     pub commit_hash: String,
-}
-
-impl RepoPaths {
-    /// Generates a unique identifier for the repository using name and short commit hash.
-    /// Used for creating unique vector database collections and cache keys.
-    pub fn unique_repo_hash(&self) -> String {
-        format!(
-            "{}-{}",
-            self.repo_name.replace("/", "-"),
-            &self.commit_hash[..6]
-        )
-    }
 }
 
 /// Clones a repository and builds it in a secure Docker environment.
@@ -124,6 +116,18 @@ pub fn clone_and_filter_git_repo(
         );
     }
 
+    // create excluded folders
+    let excluded_folders = if let Some(folders) = &cli.exclude_folders {
+        let folder_paths: Vec<PathBuf> = folders
+            .iter()
+            .map(|f| search_root.join(f).to_path_buf())
+            .filter(|p| p.exists())
+            .collect();
+        Some(folder_paths)
+    } else {
+        None
+    };
+
     // Initialize vectors to store file paths
     let mut sol_files = Vec::new();
     let mut docs = Vec::new();
@@ -163,12 +167,19 @@ pub fn clone_and_filter_git_repo(
         }
     }
 
+    let audit_scope = match &cli.audit_scope {
+        Some(scope) => Some(Path::new(scope).to_path_buf()),
+        None => None,
+    };
+
     // Return the collected paths
     Ok(RepoPaths {
         root,
         sol_files,
         docs,
         repo_name,
+        audit_scope,
+        excluded_folders,
         commit_hash,
     })
 }
@@ -259,4 +270,106 @@ fn get_commit_hash(repo_url: &str) -> Result<String> {
         .to_string();
 
     Ok(commit_hash)
+}
+
+impl RepoPaths {
+    /// Generates a unique identifier for the repository using name and short commit hash.
+    /// Used for creating unique vector database collections and cache keys.
+    pub fn unique_repo_hash(&self) -> String {
+        format!(
+            "{}-{}",
+            self.repo_name.replace("/", "-"),
+            &self.commit_hash[..6]
+        )
+    }
+
+    pub fn extract_content_from_scope_file(&self) -> Result<String> {
+        let scope_file = match &self.audit_scope {
+            Some(scope) => scope,
+            None => return Ok("".to_string()),
+        };
+
+        // Skip directories and symlinks
+        if fs::symlink_metadata(scope_file)?.file_type().is_symlink() {
+            return Ok("".to_string());
+        }
+
+        let filename = scope_file
+            .file_name()
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_default();
+        let content = match fs::read_to_string(scope_file) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("Could not read {}: {}", scope_file.display(), e);
+                return Ok("".to_string());
+            }
+        };
+
+        if content.trim().is_empty() {
+            return Ok("".to_string());
+        }
+
+        info!("extracting audit scope from {}", filename);
+        Ok(content)
+    }
+
+    pub fn extract_content_from_docs(&self) -> Result<String> {
+        let mut docs = String::new();
+
+        for doc in &self.docs {
+            // Skip directories and symlinks
+            if fs::symlink_metadata(doc)?.file_type().is_symlink() {
+                continue;
+            }
+
+            let filename = doc
+                .file_name()
+                .map(|name| name.to_string_lossy())
+                .unwrap_or_default();
+            let content = match fs::read_to_string(doc) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("Could not read {}: {}", doc.display(), e);
+                    continue;
+                }
+            };
+
+            if content.trim().is_empty() {
+                continue; // skip empty files
+            }
+            info!("extracting content from {} doc file", filename);
+            docs.push_str(&format!("### {}\n\n{}\n\n", filename, content));
+        }
+        Ok(docs)
+    }
+
+    pub fn extract_content_from_source_code(&self) -> Result<String> {
+        let mut source_code = String::new();
+
+        for code in &self.sol_files {
+            // Skip directories and symlinks
+            if fs::symlink_metadata(code)?.file_type().is_symlink() {
+                continue;
+            }
+
+            let filename = code
+                .file_name()
+                .map(|name| name.to_string_lossy())
+                .unwrap_or_default();
+            let content = match fs::read_to_string(code) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("Could not read {}: {}", code.display(), e);
+                    continue;
+                }
+            };
+
+            if content.trim().is_empty() {
+                continue; // skip empty files
+            }
+            source_code.push_str(&format!("### {}\n\n{}\n\n", filename, content));
+        }
+        Ok(source_code)
+    }
 }
