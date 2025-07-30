@@ -90,6 +90,8 @@ pub mod llm_review {
         pub mod prefetch_context;
         /// Phase 4: Quality assurance and final finding refinement
         pub mod quality_check;
+        /// Phase 3a: Check finding are in scope, if scope is provided
+        pub mod scope_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_findings;
     }

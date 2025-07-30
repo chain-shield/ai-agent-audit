@@ -1,6 +1,7 @@
-use crate::config::audit_config;
+use crate::config::{audit_config, SCOPE_CHECK_RUNS, VERIFY_RUNS};
 use crate::error::Result;
 use crate::llm_review::config::CLAUDE_4_0_SONNET;
+use crate::llm_review::context_state::generate_audit_scope;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
@@ -45,6 +46,7 @@ pub async fn review_codebase_for_security_issues(
     // grab all solidity contracts from database
     info!("grabbing contracts from db...");
     let contracts = codeblocks_db.get_all_contracts()?;
+    let audit_scope = generate_audit_scope(repo).await?;
 
     let (ai_verify_agent, second_ai_verify_agent, ai_discovery_agents) =
         generate_ai_agents(repo).await?;
@@ -67,7 +69,7 @@ pub async fn review_codebase_for_security_issues(
 
         // Combine original context with prefetched files
         // let metadata_context = if prefetched_files.is_empty() {
-        //     metadata_context.to_string()
+        //     metadata_context.to_string(Responsese)
         // } else {
         //     format!(
         //         "{}\n\n## Additional Protocol Files for More Context ------------------\n\n{}",
@@ -85,24 +87,40 @@ pub async fn review_codebase_for_security_issues(
                 .await?;
 
         if !raw_findings.findings.is_empty() {
-            // Phase 3: Verify findings and remove false positives
-            info!("verify findings round 1....................\n\n");
-            let verified_findings =
-                phases::verify_findings::execute(raw_findings, &codeblock, &ai_verify_agent, repo)
-                    .await?;
+            let ai_verify_agents = [&ai_verify_agent, &second_ai_verify_agent];
 
-            info!("verify findings round 2....................\n\n");
-            let double_verified_findings = phases::verify_findings::execute(
-                verified_findings,
-                &codeblock,
-                &second_ai_verify_agent,
-                repo,
-            )
-            .await?;
+            // Phase 3: Verify findings and remove false positives
+            let mut verify_findings = raw_findings;
+            for j in 1..=VERIFY_RUNS {
+                info!("verify findings round {j}....................\n\n");
+                verify_findings = phases::verify_findings::execute(
+                    verify_findings,
+                    &codeblock,
+                    ai_verify_agents[j - 1],
+                    repo,
+                )
+                .await?;
+            }
+
+            let mut in_scope_findings = verify_findings;
+            // if no scope provided - all findings in scope !
+            if !audit_scope.is_empty() {
+                // Phase 3a: Scope findings and remove out of scope ones
+                for i in 1..=SCOPE_CHECK_RUNS {
+                    info!("in scope findings round {i}....................\n\n");
+                    in_scope_findings = phases::scope_findings::execute(
+                        in_scope_findings,
+                        &codeblock,
+                        ai_verify_agents[i - 1],
+                        repo,
+                    )
+                    .await?;
+                }
+            }
 
             // Phase 4: Quality check and enhance findings
             let final_findings = phases::quality_check::execute(
-                double_verified_findings,
+                in_scope_findings,
                 &codeblock,
                 &ai_verify_agent,
                 repo,

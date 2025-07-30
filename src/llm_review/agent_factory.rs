@@ -9,14 +9,13 @@ use crate::ai_bot::file_retrival::FileRetrievalTool;
 use crate::config::audit_config;
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
-use qdrant_client::{qdrant::QueryPointsBuilder, Qdrant};
 use rig::{
-    client::{CompletionClient, EmbeddingsClient, ProviderClient},
+    client::{CompletionClient, ProviderClient},
     providers::{
         anthropic::{self, CLAUDE_3_7_SONNET},
         deepseek::{self, DEEPSEEK_CHAT},
         gemini::{self},
-        openai::{self, O3, TEXT_EMBEDDING_3_SMALL, GPT_4O},
+        openai::{self, O3},
     },
 };
 // use rig_qdrant::QdrantVectorStore;  // Temporarily disabled due to version conflicts

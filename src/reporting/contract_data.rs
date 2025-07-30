@@ -24,10 +24,12 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
     // grab all solidity contracts from database
     log::info!("grabbing contracts from db...");
     let contracts = codeblocks_db.get_all_contracts()?;
+    let output_dir = Path::new(&repo.repo_name);
 
     for (contract, codeblock) in contracts {
         let filename = format!("{}-{}.md", contract, repo.unique_repo_hash());
-        save_file_locally(&codeblock, &filename)?;
+        let full_path = output_dir.join(filename);
+        save_file_locally(&codeblock, &full_path)?;
     }
     Ok(())
 }
@@ -43,7 +45,9 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
 pub async fn save_metadata(semantics_path: &Path, repo: &RepoPaths) -> anyhow::Result<()> {
     let metadata = generate_context_for_code_review(repo, semantics_path).await?;
 
+    let output_dir = Path::new(&repo.repo_name);
     let filename = format!("metadata-{}.md", repo.unique_repo_hash());
-    save_file_locally(&metadata, &filename)?;
+    let full_path = output_dir.join(filename);
+    save_file_locally(&metadata, &full_path)?;
     Ok(())
 }

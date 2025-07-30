@@ -28,7 +28,7 @@ pub async fn execute(
     agents: &Vec<Arc<AIAgent>>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
-    info!("🔍 Phase 2: Generating findings from contract codebase...");
+    info!("🔍 Phase 1: Generating findings from contract codebase...");
 
     let mut handles = vec![];
     let all_findings = Arc::new(Mutex::new(Findings {

@@ -7,6 +7,15 @@ use crate::error::{AuditError, Result};
 use serde::{Deserialize, Serialize};
 use std::env;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuditType {
+    BugBounty,
+    Client,
+}
+
+// TYPE OF AUDIT
+pub const AUDIT_TYPE: AuditType = AuditType::BugBounty;
+
 // Application constants - these don't need to be configurable via environment
 /// Maximum call graph traversal depth for code slice generation
 pub const MAX_DEPTH: usize = 3;
@@ -15,7 +24,9 @@ pub const MAX_DEPTH: usize = 3;
 pub const TOKEN_BUDGET: usize = 150_000;
 
 /// Number of discovery rounds per contract during analysis
-pub const RUNS: usize = 1;
+pub const DISCOVERY_RUNS: usize = 10;
+pub const VERIFY_RUNS: usize = 2;
+pub const SCOPE_CHECK_RUNS: usize = 2;
 
 pub const MAX_FILE_RUNS: usize = 3;
 
@@ -108,7 +119,7 @@ impl Default for AuditConfig {
         Self {
             max_depth: MAX_DEPTH,
             token_budget: TOKEN_BUDGET,
-            runs: RUNS,
+            runs: DISCOVERY_RUNS,
             qdrant_url: "http://localhost:6334".to_string(),
             openai_api_key: None,
             anthropic_api_key: None,
@@ -250,7 +261,7 @@ impl AuditConfig {
         Self {
             max_depth: MAX_DEPTH,
             token_budget: TOKEN_BUDGET,
-            runs: RUNS,
+            runs: DISCOVERY_RUNS,
             qdrant_url: "http://localhost:6334".to_string(),
             openai_api_key: Some("test-key".to_string()),
             anthropic_api_key: None,
@@ -310,7 +321,7 @@ mod tests {
         let config = AuditConfig::default();
         assert_eq!(config.max_depth, MAX_DEPTH);
         assert_eq!(config.token_budget, TOKEN_BUDGET);
-        assert_eq!(config.runs, RUNS);
+        assert_eq!(config.runs, DISCOVERY_RUNS);
         // Config validation will fail because no API keys are set
     }
 

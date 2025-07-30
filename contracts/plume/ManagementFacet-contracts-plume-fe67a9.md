@@ -1274,7 +1274,7 @@ REF_4280(uint256) (->$_7 (-> [])) := block.timestamp(uint256)
 $_1 (-> [])(PlumeStakingStorage.Layout) := phi(['$_1 (-> [])', '$_1 (-> [])', '$_1 (-> [])', '$_1 (-> [])'])
 token_1(address) := phi(['token_1', 'token_1', 'token_1', 'token_1'])
 validatorId_1(uint16) := phi(['validatorId_1', 'validatorId_1', 'validatorId_1', 'validatorId_1'])
-timestamp_1(uint256) := phi(['block.timestamp', 'segmentStartTime_1', 'segmentStartTime_1', 'validatorLastUpdateTime_1'])
+timestamp_1(uint256) := phi(['segmentStartTime_1', 'block.timestamp', 'segmentStartTime_1', 'validatorLastUpdateTime_1'])
  checkpoints = $.validatorRewardRateCheckpoints[validatorId][token]
 REF_4353(mapping(uint16 => mapping(address => PlumeStakingStorage.RateCheckpoint[]))) -> $_1 (-> []).validatorRewardRateCheckpoints
 REF_4354(mapping(address => PlumeStakingStorage.RateCheckpoint[])) -> REF_4353[validatorId_1]

@@ -1,7 +1,7 @@
 
 #### DateTime.isLeapYear(uint16) [PUBLIC]
 ```slithir
-year_1(uint16) := phi(['year_1', 'year_1', 'TMP_23548', 'i_2'])
+year_1(uint16) := phi(['year_1', 'year_1', 'i_2', 'TMP_23548'])
  year % 4 != 0
 TMP_23481(uint16) = year_1 % 4
 TMP_23482(bool) = TMP_23481 != 0

@@ -3,6 +3,7 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
+    config::{AuditType, AUDIT_TYPE},
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
@@ -10,7 +11,9 @@ use crate::{
         context_state::{generate_audit_scope, get_metadata_context},
         enums::AIAgent,
         prompt_support::{
-            post_verify::POST_VERIFY, pre_verify::PRE_VERIFY, verify_prompt::VERIFY_PROMPT,
+            post_verify::POST_VERIFY,
+            pre_verify::PRE_VERIFY,
+            verify_prompt::{VERIFY_BUG_BOUNTY_PROMPT, VERIFY_PROMPT},
         },
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
@@ -33,7 +36,9 @@ pub struct LegitVulnerability {
 }
 
 /// Helper function to deserialize boolean from string or boolean
-fn deserialize_bool_from_str_or_bool<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+pub fn deserialize_bool_from_str_or_bool<'de, D>(
+    deserializer: D,
+) -> std::result::Result<bool, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -76,14 +81,10 @@ pub async fn execute(
     info!("# of findings AFTER deduping => {}", dedup_finding_count);
     info!("now verifying each finding...");
 
-    let audit_scope = generate_audit_scope(repo).await?;
-    let verify_prompt_plus_scope = if audit_scope.is_empty() {
+    let verify_prompt = if AUDIT_TYPE == AuditType::Client {
         Arc::new(VERIFY_PROMPT.to_string())
     } else {
-        Arc::new(format!(
-            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN SCOPE ARE LEGIT \n\n{}",
-            VERIFY_PROMPT, audit_scope
-        ))
+        Arc::new(VERIFY_BUG_BOUNTY_PROMPT.to_string())
     };
 
     // info!("verify prompt + scope => {}", verify_prompt_plus_scope);
@@ -93,7 +94,7 @@ pub async fn execute(
         let arc_findings = Arc::clone(&deduped_findings);
         let arc_agent = Arc::clone(&agent);
         let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
-        let verify_prompt_and_scope = Arc::clone(&verify_prompt_plus_scope);
+        let verify_prompt_and_scope = Arc::clone(&verify_prompt);
         let sem = Arc::clone(&VERIFY_SEM);
 
         handles.push(tokio::spawn(async move {
@@ -165,7 +166,7 @@ pub async fn execute(
 ///
 /// Combines the contract code with additional context information
 /// in a structured format for optimal verification processing.
-fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
+pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
     let mut code_plus_context = String::new();
 
     code_plus_context.push_str("\n\n# SOLIDITY CONTRACT + STORAGE TO CODE REVIEW\n\n");

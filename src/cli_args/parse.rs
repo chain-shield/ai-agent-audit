@@ -27,6 +27,14 @@ pub struct Cli {
     #[arg(long)]
     pub audit_scope: Option<String>,
 
+    /// Optional doc folders, specify where to find documention if not in src/*.md
+    #[arg(long)]
+    pub doc_folder: Option<String>,
+
+    /// Optional custom doc to replace docs in /src folder, should be md file in current directory
+    #[arg(long)]
+    pub custom_doc: Option<String>,
+
     // Optional exclude folders from scope
     #[arg(long, value_delimiter = ',')]
     pub exclude_folders: Option<Vec<String>>,
