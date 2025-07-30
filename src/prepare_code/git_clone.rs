@@ -4,6 +4,7 @@
 /// auto-detection of build systems (Foundry/Hardhat), and file filtering
 /// for smart contract analysis.
 use anyhow::{Context, Result};
+use glob::glob;
 use ignore::gitignore::GitignoreBuilder;
 use log::info;
 use std::path::PathBuf;
@@ -128,9 +129,41 @@ pub fn clone_and_filter_git_repo(
         None
     };
 
+    // check if custom doc folder set it up
+    let mut docs = Vec::new();
+
+    let has_custom_docs = match &cli.custom_doc {
+        Some(doc) => {
+            let doc_path = Path::new(doc).to_path_buf();
+            if doc_path.exists() {
+                docs.push(doc_path);
+                true
+            } else {
+                false
+            }
+        }
+        None => false,
+    };
+
+    let has_doc_folder = match &cli.doc_folder {
+        Some(doc) => {
+            let doc_path = search_root.join(doc).to_string_lossy().to_string();
+
+            info!("doc path => {}", doc_path);
+
+            for e in glob(&format!("{}/*.md", doc_path)).expect("invalid doc folder") {
+                if let Ok(path) = e {
+                    docs.push(path)
+                }
+            }
+
+            true
+        }
+        None => false,
+    };
+
     // Initialize vectors to store file paths
     let mut sol_files = Vec::new();
-    let mut docs = Vec::new();
     for entry in WalkDir::new(&search_root)
         .into_iter()
         .filter_entry(|e| {
@@ -160,7 +193,11 @@ pub fn clone_and_filter_git_repo(
         //only get md docs from /src folder /src/*.md
         match path.extension().and_then(|e| e.to_str()) {
             Some("sol") => sol_files.push(path.to_path_buf()),
-            Some("md") if path.parent().map_or(false, |p| p == search_root) => {
+            Some("md")
+                if path.parent().map_or(false, |p| p == search_root)
+                    && !has_doc_folder
+                    && !has_custom_docs =>
+            {
                 docs.push(path.to_path_buf())
             }
             _ => {}

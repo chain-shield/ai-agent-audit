@@ -60,6 +60,7 @@ dependencies = [
  "dotenvy",
  "env_logger",
  "git2",
+ "glob",
  "hex",
  "ignore",
  "log",

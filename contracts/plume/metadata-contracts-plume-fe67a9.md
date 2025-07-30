@@ -1,693 +1,619 @@
 
 ## SUMMARY OF FILE: contracts/plume/src/PlumeStaking.sol
-### PlumeStaking Contract
-The `PlumeStaking` contract is a proxy entry point for the Plume Staking system, inheriting functionalities from `SolidStateDiamond`. It handles the initialization of the staking system under specific parameters, and maintains control over configuration settings such as minimum stake amounts and validator commission limits.
-
-#### Contract: PlumeStaking
-This contract is part of the Plume system, built on a Diamond Proxy architecture. It serves as a central configuration point, setting parameters and ownership within the staking protocol.
-
-#### Function: initializePlume
-```solidity
-function initializePlume(address initialOwner, uint256 minStake, uint256 cooldown, uint256 maxSlashVoteDuration, uint256 maxValidatorCommission) external virtual onlyOwner
-```
-This function is designed to initialize the Plume Staking contract with critical parameters required for its operation. These include the minimum stake amount, cooldown interval, and maximum slash vote duration. It also verifies validity of parameters such as the maximum validator commission rate. If the initial owner is different from the current owner, it transfers ownership accordingly. The function ensures that initialization occurs only once by checking an `initialized` flag.
-
-#### Function: isInitialized
-```solidity
-function isInitialized() external view returns (bool)
-```
-This view function checks whether the staking system has been initialized. It returns a boolean based on the `initialized` status from storage.
-
-#### Storage Variables 
-- **$.initialized**: Indicates whether the contract has been initialized.
-- **$.minStakeAmount**: Sets the minimum amount required to stake.
-- **$.cooldownInterval**: Defines cooldown period before slash votes occur.
-- **$.maxSlashVoteDurationInSeconds**: Limits the duration of slash votes.
-- **$.maxAllowedValidatorCommission**: Caps validator commission rates to ensure fair practices.
-- **$.maxCommissionCheckpoints**: Sets a default limit on commission checkpoints to 500.
+### Main List of Files in Project
+The project contains various script and source files related to deployment and upgrade of multiple contracts related to a PlumeStaking and PUSD system. Deployment scripts are in `script/` and `script/deploy/`, while upgrade scripts are organized in `script/upgrade/`. Contracts are found in `src/`, including core logic, facets, libraries, mocks, proxies, spin logic, and interfaces. Lastly, test files are located in `test/`, covering different aspects like diamond, stress, and security tests. This setup aids in systematic development and testing of smart contracts.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/facets/ValidatorFacet.sol
-The `ValidatorFacet` Solidity contract manages validators, handling operations like adding, updating, commission management, capacity updates, and validator status.
+The `ValidatorFacet` smart contract in Solidity manages validator-related operations such as adding, updating, commission settings, and slashing votes. It extends `ReentrancyGuardUpgradeable` and `OwnableInternal` from SolidState modules to enhance security and ownership control.
 
 ### Contract Definition
-- **Contract Name:** ValidatorFacet
-- **Inherits:** ReentrancyGuardUpgradeable, OwnableInternal
+- `ValidatorFacet` is designed for validator management within a blockchain-based staking system.
 
-### Functions
+### Key Functions
+1. **addValidator()**
+   - Functionality: Adds a new validator with a specific ID, commission rate, and addresses for admin and withdrawal.
+   - Signature: `function addValidator(uint16 validatorId, uint256 commission, address l2AdminAddress, address l2WithdrawAddress, string calldata l1ValidatorAddress, string calldata l1AccountAddress, address l1AccountEvmAddress, uint256 maxCapacity) external`.
+   - Summary: Ensures that a validator doesn't already exist, verifies addresses, and sets up for reward distribution.
 
-#### addValidator
-- **Purpose:** Adds a new validator with configured commission and addresses.
-- **Interface:** `function addValidator(uint16 validatorId, uint256 commission, address l2AdminAddress, address l2WithdrawAddress, string calldata l1ValidatorAddress, string calldata l1AccountAddress, address l1AccountEvmAddress, uint256 maxCapacity) external`
-- **Summary:** Checks basic validations, updates mappings and emits `ValidatorAdded` event.
+2. **setValidatorCapacity()**
+   - Functionality: Updates the maximum staking capacity of an existing validator.
+   - Signature: `function setValidatorCapacity(uint16 validatorId, uint256 maxCapacity) external`.
+   - Summary: Adjusts the staking limits of a validator and emits update events.
 
-#### setValidatorCapacity
-- **Purpose:** Updates the validator's staking capacity.
-- **Interface:** `function setValidatorCapacity(uint16 validatorId, uint256 maxCapacity) external`
-- **Summary:** Modifies maximum staking capacity and emits `ValidatorCapacityUpdated`.
+3. **setValidatorStatus()**
+   - Functionality: Toggles a validator's active status.
+   - Signature: `function setValidatorStatus(uint16 validatorId, bool newActiveStatus) external`.
+   - Summary: Validates conditions to change a validator’s ability to accept new stakes and manages rewards accordingly.
 
-#### setValidatorStatus
-- **Purpose:** Changes the active status of a validator.
-- **Interface:** `function setValidatorStatus(uint16 validatorId, bool newActiveStatus) external`
-- **Summary:** Modifies active state, handles associated behaviors and rates, and emits `ValidatorStatusUpdated`.
+4. **setValidatorCommission()**
+   - Functionality: Updates the commission rate for a validator.
+   - Signature: `function setValidatorCommission(uint16 validatorId, uint256 newCommission) external`.
+   - Summary: Ensures commission rate compliance, settles old commissions, and updates new commission checkpoints.
 
-#### setValidatorCommission
-- **Purpose:** Updates the commission rate for a validator.
-- **Interface:** `function setValidatorCommission(uint16 validatorId, uint256 newCommission) external`
-- **Summary:** Checks and updates validator's commission, uses checkpointing for reward logic.
+5. **setValidatorAddresses()**
+   - Functionality: Updates associated addresses of a validator (admin, withdrawal, etc.).
+   - Signature: `function setValidatorAddresses(uint16 validatorId, address newL2AdminAddress, address newL2WithdrawAddress, string calldata newL1ValidatorAddress, string calldata newL1AccountAddress, address newL1AccountEvmAddress) external`.
+   - Summary: Facilitates address changes, verifying proposals for admin address changes.
 
-#### setValidatorAddresses
-- **Purpose:** Updates validator-related addresses.
-- **Interface:** `function setValidatorAddresses(uint16 validatorId, address newL2AdminAddress, address newL2WithdrawAddress, string calldata newL1ValidatorAddress, string calldata newL1AccountAddress, address newL1AccountEvmAddress) external`
-- **Summary:** Manages address updates, validates inputs, and triggers `ValidatorAddressesSet`.
+6. **acceptAdmin()**
+   - Functionality: Allows a proposed admin to finalize their role.
+   - Signature: `function acceptAdmin(uint16 validatorId) external`.
+   - Summary: Ensures the new admin is eligible and finalizes reassignment.
 
-#### acceptAdmin
-- **Purpose:** Allows a proposed admin to accept their role for a validator.
-- **Interface:** `function acceptAdmin(uint16 validatorId) external nonReentrant`
-- **Summary:** Finalizes the admin transfer initiated in `setValidatorAddresses`.
+7. **requestCommissionClaim()**
+   - Functionality: Initiates a commission claim for a validator.
+   - Signature: `function requestCommissionClaim(uint16 validatorId, address token) external`.
+   - Summary: Prepares commission payouts, locking amounts at request initiation.
 
-#### requestCommissionClaim
-- **Purpose:** Initiates a commission claim, subject to time-lock.
-- **Interface:** `function requestCommissionClaim(uint16 validatorId, address token) external`
-- **Summary:** Handles initiation, ensures commission is settled up to time, and locks amount.
+8. **finalizeCommissionClaim()**
+   - Functionality: Completes a pending commission claim.
+   - Signature: `function finalizeCommissionClaim(uint16 validatorId, address token) external returns (uint256)`.
+   - Summary: Validates conditions to distribute claimed commissions to admins.
 
-#### finalizeCommissionClaim
-- **Purpose:** Completes the commission claim process after time-lock.
-- **Interface:** `function finalizeCommissionClaim(uint16 validatorId, address token) external returns (uint256)`
-- **Summary:** Validates expiry, disburses payment from treasury to recipient and emits event.
+9. **_cleanupExpiredVotes()**
+   - Functionality: Removes and counts expired votes relevant to validator slashing.
+   - Signature: `function _cleanupExpiredVotes(uint16 validatorId) internal returns (uint256)`.
+   - Summary: Filters active votes and assists in slashing logic.
 
-#### voteToSlashValidator
-- **Purpose:** Cast a vote to slash a malicious validator, enabling automated slashing.
-- **Interface:** `function voteToSlashValidator(uint16 validatorId, uint256 voteExpiration) external`
-- **Summary:** Ensures voting conditions, maintains vote integrity, and invokes slashing if needed.
-
-#### slashValidator
-- **Purpose:** Allows manual enforcement of slashing conditions.
-- **Interface:** `function slashValidator(uint16 validatorId) external`
-- **Summary:** Validates all conditions, performs slashing with penalties, and handles events.
-
-#### Various Other Helpers
-- Includes utilities for cleaning expired votes, tracking commission, managing validators/tokens, and providing essential data interfaces.
+10. **voteToSlashValidator()**
+    - Functionality: Processes voting to penalize a validator.
+    - Signature: `function voteToSlashValidator(uint16 maliciousValidatorId, uint256 voteExpiration) external`.
+    - Summary: Registers votes, ensures validity, and slashes upon consensus.
 
 ### Storage Variables
-
-#### PlumeStakingStorage
-- **Definition:** Handles all validator-related storage, including mappings of validator IDs, commissions, states, and voting.
-- **Summary:** Centralized management of validator data, critical for maintaining state integrity and managing operations.
-
-Overall, `ValidatorFacet` plays a pivotal role in managing validators' lifecycle, ensuring efficient and secure handling of their operations.
+- Consists mostly of mappings and arrays to track validator states, such as `validators`, `validatorExists`, `adminToValidatorId`, and `isAdminAssigned`, among others ensuring efficient data management in validator dynamics.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/facets/StakingFacet.sol
-### Summary of `StakingFacet` Contract
-The `StakingFacet` contract provides functionalities related to staking, unstaking, restaking, and withdrawal of PLUME tokens associated with validators. It incorporates robust validation, reward handling, and state management reliant on the `PlumeStakingStorage`, `PlumeRewardLogic`, and `PlumeValidatorLogic` libraries, leveraging `ReentrancyGuardUpgradeable` for safety.
+### Main List of Files in Project
 
-#### Contract Definition
-`contract StakingFacet is ReentrancyGuardUpgradeable`
+The project includes a number of scripts for deploying and upgrading contracts, query operations, and facets for specific functionalities such as access control, rewards, and staking. The source code includes various smart contracts related to staking, reward treasury, facets for staking and rewards, proxies, and spin-related contracts. Additionally, there are interfaces for different components and several tests covering functionalities such as staking, raffle operations, and security.
 
-### Functions Overview
+### StakingFacet Contract Summary
 
-#### `_checkValidatorSlashedAndRevert`
-```solidity
-function _checkValidatorSlashedAndRevert(uint16 validatorId) internal view
-```
-Validates that a validator is not slashed; reverts if a slashed validator is specified.
+The `StakingFacet` contract handles core user staking operations within a blockchain system, using a proxy pattern for upgradeability. It provides methods for staking, unstaking, withdrawing funds, and managing rewards related to validator nodes.
 
-#### `_validateValidatorForStaking`
-```solidity
-function _validateValidatorForStaking(uint16 validatorId) internal view
-```
-Checks the existence and activity of a validator, ensuring it's not slashed.
+**Functions:**
+- **_checkValidatorSlashedAndRevert**: Ensures a validator isn't slashed before operations.
+- **_validateValidatorForStaking**: Validates active status of a validator.
+- **_validateStakeAmount**: Ensures minimum stake requirements are met.
+- **_validateStaking**: Combines validations for staking operations.
+- **_validateValidatorCapacity**: Checks validator capacity limits.
+- **_validateValidatorPercentage**: Validates percentage limits against total stakes.
+- **_validateCapacityLimits**: Combines capacity and percentage checks.
+- **_validateValidatorForUnstaking**: Validates the existence of a validator for unstaking.
+- **_performStakeSetup**: Handles all necessary state changes for initiating a stake.
+- **_performRestakeWorkflow**: Facilitates restaking using cooled/parked funds.
+- **stake**: Begins staking of PLUME tokens to a validator.
+- **restake**: Restakes cooled or parked funds to a validator.
+- **unstake**: Unstakes all or a specified amount from a validator.
+- **withdraw**: Withdraws all matured cooldowns as available funds.
+- **stakeOnBehalf**: Allows staking of tokens on behalf of another user.
+- **restakeRewards**: Restakes all pending rewards on behalf of the user.
 
-#### `_validateStakeAmount`
-```solidity
-function _validateStakeAmount(uint256 amount) internal view
-```
-Ensures a stake amount is non-zero and meets minimum requirements.
-
-#### `_validateStaking`
-```solidity
-function _validateStaking(uint16 validatorId, uint256 amount) internal view
-```
-Combines validator and stake amount validations for staking operations.
-
-#### `_validateValidatorCapacity`
-```solidity
-function _validateValidatorCapacity(uint16 validatorId, uint256 stakeAmount) internal view
-```
-Validates that staking does not exceed a validator's capacity.
-
-#### `_validateValidatorPercentage`
-```solidity
-function _validateValidatorPercentage(uint16 validatorId, uint256 stakeAmount) internal view
-```
-Ensures validator's percentage limits are not exceeded by new stake amounts.
-
-#### `_validateCapacityLimits`
-```solidity
-function _validateCapacityLimits(uint16 validatorId, uint256 stakeAmount) internal view
-```
-Performs both capacity and percentage validation checks.
-
-#### `_validateValidatorForUnstaking`
-```solidity
-function _validateValidatorForUnstaking(uint16 validatorId) internal view
-```
-Ensures a validator exists and isn't slashed for unstaking operations.
-
-#### `_performStakeSetup`
-```solidity
-function _performStakeSetup(address user, uint16 validatorId, uint256 stakeAmount) internal returns (bool isNewStake)
-```
-Executes setup and validation when initiating a new stake, updating records and validating capacity limits.
-
-#### `_performRestakeWorkflow`
-```solidity
-function _performRestakeWorkflow(address user, uint16 validatorId, uint256 amount, string memory fromSource) internal
-```
-Handles restaking from cooled or parked funds, ensuring validations and stake updates.
-
-#### `stake`
-```solidity
-function stake(uint16 validatorId) external payable returns (uint256)
-```
-Allows user to stake PLUME tokens to a validator using wallet funds.
-
-### Variable Descriptions
-
-#### `$`
-`PlumeStakingStorage.Layout` instance managing the entire staking state.
-
-#### `msg.sender`
-Address representing the caller of a function.
-
-#### `stakeAmount`
-`uint256` representing the amount of funds being staked or restaked.
-
-### Concluding Summary
-The `StakingFacet` is comprehensive in its facilities to manage stake-related operations rigorously. It ensures precise stake setup, follows safe withdrawal/logistic paths, handles complex validation scenarios and calculation for various states involved in staking.
+**Storage Variables:**
+- Uses `PlumeStakingStorage` to manage all stake and reward-related state variables, ensuring well-organized and upgradeable storage management for staking operations.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/facets/ManagementFacet.sol
-### Contract Summary: ManagementFacet
-The ManagementFacet contract handles administrative functions for a staking platform. It incorporates various utility libraries and inherits from OpenZeppelin and Solidstate contracts, adding protective functionalities like reentrancy guards.
+The file begins with a documented list of scripts and source files that are part of a project focusing on deploying and upgrading various smart contracts and facets in a system likely dealing with staking and reward logic. The contract `ManagementFacet` handles administrative functionalities such as setting parameters, managing funds, and cleaning stale data records in a staking and rewards system. 
 
-### Function: setMinStakeAmount
-```solidity
-function setMinStakeAmount(uint256 _minStakeAmount) external
-```
-Sets the minimum stake amount required, ensuring it isn't zero. Requires admin role to execute. Emits `MinStakeAmountSet` event.
+### Contract: **ManagementFacet**
+- **Summary**: Implements administrative functionalities for handling parameters, contract funds, and user records associated with staking and validator slashing within a system.
 
-### Function: setCooldownInterval
-```solidity
-function setCooldownInterval(uint256 interval) external
-```
-Sets a new cooldown period for unstaking. If the interval is either zero or shorter than max slash vote duration, it reverts. Requires admin role.
-
-### Variable: $.minStakeAmount
-Represents the minimum staking amount set in the system. Changes dynamically based on admin actions.
-
-### Variable: $.cooldownInterval
-Specifies the time a staker must wait before unstaking after initiating withdrawal. Can change based on governance decisions.
+### Functions:
+- **`setMinStakeAmount`**: Sets a new minimum staking amount requiring admin rights.
+- **`setCooldownInterval`**: Adjusts the unstaking cooldown interval with a new duration.
+- **`adminWithdraw`**: Admin withdrawal function for ERC20 or native tokens.
+- **`getMinStakeAmount`**: Fetches current minimum staking amount.
+- **`getCooldownInterval`**: Fetches current cooldown interval.
+- **`setMaxSlashVoteDuration`**: Sets maximal duration for slashing votes.
+- **`setMaxAllowedValidatorCommission`**: Establishes maximal commission rates for validators.
+- **`setMaxCommissionCheckpoints`**: Sets maximum checkpoints available per validator for commissions.
+- **`setMaxValidatorPercentage`**: Limits the percentage a single validator can hold from total stakes.
+- **`pruneCommissionCheckpoints`**: Pruning old commission checkpoints to manage gas use.
+- **`pruneRewardRateCheckpoints`**: Similar pruning function for reward checkpoints.
+- **`adminClearValidatorRecord`**: Clears stale records for validators due to slashing.
+- **`adminBatchClearValidatorRecords`**: Batch clears stale data for multiple users linked to a slashed validator.
+- **`addHistoricalRewardToken`**: Allows admin to mark a token as historically used for rewards.
+- **`removeHistoricalRewardToken`**: Removes historical status from a reward token.
+- **`isHistoricalRewardToken`**: Checks historical reward status of a token.
+- **`getHistoricalRewardTokens`**: Lists all tokens marked in history for rewards.
+- **`adminCreateHistoricalRewardCheckpoint`**: Facilitates creation of a historical reward checkpoint for validator.
+- **`adminSetTokenAdditionTimestamp`**: Sets timestamps associated with historical reward tokens.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/facets/RewardsFacet.sol
-### Contract: RewardsFacet
+# Summary of RewardsFacet Contract
 
-The `RewardsFacet` is a Solidity smart contract implementing a functionality for managing reward tokens associated with a staking system. It handles reward token management, rate setting, reward calculation, claiming mechanisms, and interacts with the PlumeStakingRewardTreasury for distributing rewards. Being part of a diamond architecture, it inherits from `ReentrancyGuardUpgradeable` and `OwnableInternal` for security and ownership management.
+## Contract Overview
+The `RewardsFacet` contract facilitates reward token management, reward rate settings, reward calculations, and claims. This contract imports various modules for errors, events, storage, and logic to handle the Plume rewards efficiently. It relies on several libraries and interfaces, such as `PlumeRewardLogic`, `PlumeStakingStorage`, `IAccessControl`, and more.
 
-#### Constants
-- **BASE**: `uint256` - Represents a base multiplier, set to `1e18`.
-- **MAX_REWARD_RATE**: `uint256` - Maximum reward rate threshold, defined as `3171 * 1e9`.
+### Stored Variables and Constants
+- `uint256 internal constant BASE`: Standardized base for calculations.
+- `uint256 internal constant MAX_REWARD_RATE`: Defines the max allowed reward rate.
+- `bytes32 internal constant TREASURY_STORAGE_POSITION`: Indicates the storage position for the treasury address.
 
-#### Storage Variable
-- **TREASURY_STORAGE_POSITION**: `bytes32` - A slot identifier for storing the treasury address in contract storage.
+### Key Functions
 
-#### Functions
+#### getTreasuryAddress
+- **Purpose**: Retrieves the treasury address from storage.
+- **Definition**: `function getTreasuryAddress() internal view returns (address)`
+- **Summary**: Utilizes low-level calls to read the treasury address from a predefined storage position.
 
-- **getTreasuryAddress**: Internal view function returning the currently set treasury address from storage.
+#### setTreasuryAddress
+- **Purpose**: Stores the treasury address in a specific storage position.
+- **Definition**: `function setTreasuryAddress(address _treasury) internal`
+- **Summary**: Saves the given treasury address using low-level storage access.
 
-- **setTreasuryAddress**: Internal function to store a new treasury address.
+#### onlyRole
+- **Purpose**: Modifier to restrict function access based on roles.
+- **Summary**: Checks if the caller has the necessary role, otherwise reverts.
 
-- **onlyRole**: Modifier ensuring that the caller possesses a specific access role.
+#### _earned
+- **Purpose**: Calculates the earned rewards for a user on a specific validator and token.
+- **Definition**: `function _earned(address user, address token, uint16 validatorId) internal returns (uint256 rewards)`
+- **Summary**: Uses `PlumeRewardLogic` to determine the rewards earned by a user for a specific validator and token and returns the total.
 
-- **_earned**: Calculates the earned rewards for a user from a specific validator, updating its records.
+#### _calculateTotalEarned
+- **Purpose**: Calculates total rewards for a user across all validators for a certain token.
+- **Definition**: `function _calculateTotalEarned(address user, address token) internal returns (uint256 totalEarned)`
+- **Summary**: Sums earned rewards from all validators for a user for a given token.
 
-- **_calculateTotalEarned**: Aggregates a user's total rewards across all validators.
+#### setTreasury
+- **Purpose**: Allows setting the treasury address by the ADMIN role.
+- **Definition**: `function setTreasury(address _treasury) external onlyRole(PlumeRoles.TIMELOCK_ROLE)`
+- **Summary**: Sets a new treasury address and emits the `TreasurySet` event.
 
-- **setTreasury**: Allows an admin to set a new treasury address, emitting the `TreasurySet` event.
+#### addRewardToken
+- **Purpose**: Adds a new reward token with specified initial and max rates.
+- **Definition**: `function addRewardToken(address token, uint256 initialRate, uint256 maxRate) external`
+- **Summary**: Adds a new token if it does not already exist and sets its reward rates.
 
-- **addRewardToken**: Enables the addition of new reward tokens to the system with restrictions on rates.
+#### removeRewardToken
+- **Purpose**: Removes an existing reward token.
+- **Definition**: `function removeRewardToken(address token) external`
+- **Summary**: Removes the specified token from the list of reward tokens and stops further accrual by creating a final checkpoint.
 
-- **removeRewardToken**: Removes a reward token from the list, preventing new accruals but maintains historical data for ongoing claims.
+#### setRewardRates
+- **Purpose**: Updates the reward rates for a given list of tokens.
+- **Definition**: `function setRewardRates(address[] calldata tokens, uint256[] calldata rewardRates_) external`
+- **Summary**: Sets new rates for reward tokens and updates corresponding checkpoints.
 
-- **setRewardRates**: Updates reward rates for multiple tokens with verification against max thresholds and using rate checkpoints.
+#### claim
+- **Purpose**: Allows users to claim rewards from either a specific validator or from all validators.
+- **Definition**: Overloaded with `function claim(address token, uint16 validatorId) external returns (uint256)` and `function claim(address token) external returns (uint256)`.
+- **Summary**: Processes and transfers the accumulated rewards.
 
-- **setMaxRewardRate**: Adjusts the maximum allowable reward rate for a token, enforced across all validators.
+#### claimAll
+- **Purpose**: Claims rewards for all tokens and validators for a user.
+- **Definition**: `function claimAll() external returns (uint256[] memory)`
+- **Summary**: Iterates over all reward tokens to calculate and transfer rewards, emitting `RewardClaimed` events.
 
-- **claim**: Multiple versions to allow claims for specific and all tokens/validators, applying non-reentrancy and updating global state prior to transferring rewards.
+### Internal Helpers
+- **Purpose**: Includes functions like `_updateUserRewardState`, `_finalizeRewardClaim`, among others, assisting main logic with state updates and validations.
 
-- **_validateTokenForClaim**: Confirms whether a token is eligible for claiming, checking current and pending reward status.
-
-- **_validateValidatorForClaim**: Verifies validator eligibility based on existence and sanction state.
-
-- **_processValidatorRewards**: Handles user reward settlement for a distinct validator/token combination.
-
-- **_updateUserRewardState**: Resets user accrual records during reward claims.
-
-- **_finalizeRewardClaim**: Completes the reward claim process by transferring accrued rewards from the treasury.
-
-- **_clearPendingRewardFlags**: Manages and clears reward claim flags post-claim.
-
-- **_processAllValidatorRewards**: Computes total rewards from all validators for a user and a specified token.
-
-- **_transferRewardFromTreasury**: Transfers user rewards from the treasury after ensuring setup validity.
+### View Functions
+- Provides utility functions like `getRewardTokens`, `isRewardToken`, `getMaxRewardRate`, etc., to interface and access state data externally.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/facets/AccessControlFacet.sol
-# AccessControlFacet
+### File: AccessControlFacet.sol
 
-**Contract Description:**
-The `AccessControlFacet` contract facilitates role management using SolidState's AccessControl library. It defines multiple roles for managing access permissions within the contract system. This contract relies on SolidState's storage operations and the Plume project's specific role definitions.
+**Contract**: `AccessControlFacet`
 
-## Functions
+**Summary**: This contract is an implementation of an Access Control system, leveraging SolidState's `AccessControl` logic. The main purpose is to manage and initialize roles within a Plume project environment, defining roles such as `ADMIN_ROLE`, `UPGRADER_ROLE`, `VALIDATOR_ROLE`, and others, and setting up their hierarchies. This includes role grants, revocations, and checks using SolidState's internal mechanisms.
 
-### initializeAccessControl
-- **Description:** Initializes the contract's access control by setting up role hierarchies and granting initial roles to the contract deployer.
-- **Function Signature:** `function initializeAccessControl() external`
-- **Details:** It replaces the old initialization flag with a new one from PlumeStakingStorage, avoiding re-initialization issues by enforcing a one-time setup (caller must have default admin rights). Initial roles granted include `ADMIN_ROLE` and `UPGRADER_ROLE`.
+#### Storage Variables:
 
-### hasRole
-- **Description:** Checks if an account possesses a specific role.
-- **Function Signature:** `function hasRole(bytes32 role, address account) external view returns (bool)`
-- **Details:** Uses `_hasRole` to verify role membership for an account.
+- `DEFAULT_ADMIN_ROLE`, `ADMIN_ROLE`, `UPGRADER_ROLE`, `VALIDATOR_ROLE`, `REWARD_MANAGER_ROLE`, `TIMELOCK_ROLE`
+  - **Description**: These are byte32 constants representing role definitions within the contract, used to control access to various functions. These constants facilitate checking and granting permissions for different roles.
 
-### getRoleAdmin
-- **Description:** Returns the admin role for a specified role.
-- **Function Signature:** `function getRoleAdmin(bytes32 role) external view returns (bytes32)`
-- **Details:** Retrieves role admin via `_getRoleAdmin` for access governance.
+#### Functions:
 
-### grantRole
-- **Description:** Assigns a role to an account, requiring related admin permissions from the caller.
-- **Function Signature:** `function grantRole(bytes32 role, address account) external`
-- **Details:** Uses `_grantRole` to delegate role, ensuring caller has admin rights for specific role modifications.
+- `initializeAccessControl()`
+  - **Summary**: Initializes the roles and permissions structure, granting the invoker default roles and establishing the admin role as the administrative role for all other roles. This function can only be called once.
+  - **Interface**: `function initializeAccessControl() external`
 
-### revokeRole
-- **Description:** Revokes a role from an account; caller must have the required admin role.
-- **Function Signature:** `function revokeRole(bytes32 role, address account) external`
-- **Details:** Ensures governance consistency by requiring corresponding role administrator to execute revocation.
+- `hasRole()`
+  - **Summary**: Checks if a given account possesses a specific role.
+  - **Interface**: `function hasRole(bytes32 role, address account) external view returns (bool)`
 
-### renounceRole
-- **Description:** Permits an account to relinquish its role.
-- **Function Signature:** `function renounceRole(bytes32 role, address account) external`
-- **Details:** Ensures self-managed role relinquishment, validating the requesting account's identity for security.
+- `getRoleAdmin()`
+  - **Summary**: Returns the admin role responsible for managing a specified role.
+  - **Interface**: `function getRoleAdmin(bytes32 role) external view returns (bytes32)`
 
-### setRoleAdmin
-- **Description:** Allows modification of admin roles, demanding `ADMIN_ROLE` by the caller.
-- **Function Signature:** `function setRoleAdmin(bytes32 role, bytes32 adminRole) external`
-- **Details:** Uses `_setRoleAdmin` for restructuring role oversight within governance framework.
+- `grantRole()`
+  - **Summary**: Assigns a specified role to an account, ensuring the caller has admin rights over that role.
+  - **Interface**: `function grantRole(bytes32 role, address account) external`
 
+- `revokeRole()`
+  - **Summary**: Removes a role from an account, requiring the caller to have admin rights over the role.
+  - **Interface**: `function revokeRole(bytes32 role, address account) external`
 
-## Variables
+- `renounceRole()`
+  - **Summary**: Allows an account to voluntarily relinquish a role assigned to themselves.
+  - **Interface**: `function renounceRole(bytes32 role, address account) external`
 
-### DEFAULT_ADMIN_ROLE
-- **Definition:** `bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;`
-- **Explanation:** SolidState's default role identifier for top-tier admin access.
-
-### ADMIN_ROLE
-- **Definition:** `bytes32 public constant ADMIN_ROLE = PlumeRoles.ADMIN_ROLE;`
-- **Explanation:** Directly related to high-level administrative tasks; context-specific from PlumeRoles.
-
-### UPGRADER_ROLE
-- **Definition:** `bytes32 public constant UPGRADER_ROLE = PlumeRoles.UPGRADER_ROLE;`
-- **Explanation:** Assigned for contract upgrade activities, sourced from PlumeRoles.
-
-### VALIDATOR_ROLE
-- **Definition:** `bytes32 public constant VALIDATOR_ROLE = PlumeRoles.VALIDATOR_ROLE;`
-- **Explanation:** Ensures code validation processes; inline with PlumeRoles definitions.
-
-### REWARD_MANAGER_ROLE
-- **Definition:** `bytes32 public constant REWARD_MANAGER_ROLE = PlumeRoles.REWARD_MANAGER_ROLE;`
-- **Explanation:** Pertains to reward handling operations, based on PlumeRoles setup.
-
-### TIMELOCK_ROLE
-- **Definition:** `bytes32 public constant TIMELOCK_ROLE = PlumeRoles.TIMELOCK_ROLE;`
-- **Explanation:** Governs timelock functionalities as per PlumeRoles plan.
+- `setRoleAdmin()`
+  - **Summary**: Assigns a new admin role for a given role, requiring the caller to possess `ADMIN_ROLE`.
+  - **Interface**: `function setRoleAdmin(bytes32 role, bytes32 adminRole) external`
 
 
 ## SUMMARY OF FILE: contracts/plume/src/proxy/PlumeStakingRewardTreasuryProxy.sol
-## Project File List Summary
-The project comprises various scripts and Solidity contracts used for deployment, upgrade, and testing purposes. A notable collection of scripts is organized under the 'script' directory, including deployment scripts (e.g., `DeployDateTimeContract.s.sol`), upgrade scripts (e.g., `UpgradeMockPUSD.s.sol`), and specific facet scripts for fixing and querying (e.g., `FixAccessControlRoles.s.sol`). Under the 'src' directory, core contracts like `Plume.sol` and several facets such as `AccessControlFacet.sol`, `RewardsFacet.sol`, and `ValidatorFacet.sol` are outlined, along with helper libraries and interfaces. Additionally, there are mock contracts and multiple proxy implementations (e.g., `PlumeProxy.sol`, `RaffleProxy.sol`). The project also encompasses various tests stored in the 'test' directory to ensure seamless operation and integration.
+### PlumeStakingRewardTreasuryProxy Contract
+This contract provides a proxy implementation for the PlumeStakingRewardTreasury using the ERC1967Proxy from OpenZeppelin. This pattern allows for upgradeability of the underlying logic while maintaining the address and state in the proxy.
 
-## PlumeStakingRewardTreasuryProxy Contract Summary
-The `PlumeStakingRewardTreasuryProxy` is a Solidity contract serving as a proxy for `PlumeStakingRewardTreasury`. It extends from OpenZeppelin's `ERC1967Proxy`, a standard implementation for proxy contracts supporting upgradable patterns. The key feature is its constant `PROXY_NAME`, ensuring unique bytecode identification of the proxy, and its ability to receive Ether. The constructor initializes the proxy with a specified logic contract and an optional data payload, while enabling dynamic upgrades.
+#### Constructor
+- **Function**: `constructor(address logic, bytes memory data)`
+  - **Summary**: Initializes the proxy contract by calling the ERC1967Proxy constructor, providing the address of the logic contract and initialization data.
+  - **Interface**: `constructor(address logic, bytes memory data)`
+
+#### Storage Variables
+- **`PROXY_NAME`**: `bytes32 public constant PROXY_NAME = keccak256('PlumeStakingRewardTreasuryProxy');`
+  - **Explanation**: A constant that holds the name of the proxy for uniqueness in bytecode.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/proxy/SPINProxy.sol
-The provided text contains a comprehensive file list from a project, predominantly written in Solidity, which involves deployment and upgrade scripts, smart contract source files, interfaces, proxies, spin-related files, and tests. 
+### Plume Project Files Overview
 
-1. **Deployment and Upgrade Scripts**: These scripts facilitate the deployment or updating of smart contracts. They include deployment scripts for a variety of contracts like `MockPUSD`, `PlumeStaking`, `PlumeStakingRewardTreasury`, and others. Upgrade scripts are similarly numerous and provide functionality for enhancing or changing existing contracts.
+This document outlines the files included in the Plume project.
 
-2. **Smart Contract Files**: 
-   - **Source Files**: Contracts such as `Plume.sol` and `PlumeStaking.sol` suggest functionalities related to staking mechanisms and token management.
-   - **Facets**: Include various access control and rewards functionalities.
-   - **Helpers**: Likely provide auxiliary functionalities, possibly interacting with underlying systems such as Ethereum.
+1. **Script Files (Deployment & Upgrade)**:
+   - Files related to the deployment and upgrading of various contracts such as DateTime, MockPUSD, Plume Staking, Raffle Contracts, and more.
+   - Contain scripts organized under directories for deployment, upgrade tasks, and querying.
 
-3. **Interfaces and Libraries**: A variety of interfaces suggest modularity and implement different contract functionalities.
+2. **Source Files**:
+   - Core smart contracts such as `Plume.sol`, `PlumeStaking.sol`, `PlumeStakingRewardTreasury.sol` and associated facets, helpers, and libraries.
+   - Facets are modular contracts that divide the logic into specific domains such as `AccessControlFacet`, `RewardsFacet`, etc.
+   - Libraries and interfaces to support core functionality.
 
-4. **Proxies**: Proxy files indicate the use of upgradeable contracts, a common pattern to ensure contracts can be updated without disruption.
+3. **Mocks and Proxies**:
+   - Includes mock contracts for development testing like `MockPUSD.sol`.
+   - Proxy contracts for upgradability and deployment architecture.
 
-5. **Spin and Mocks**: Contract files related to Spin suggest gamified or lottery-style mechanisms, while Mock files suggest test doubles used for testing.
+4. **Spin and Raffle Logic**:
+   - Contracts related to spin and raffle functionalities like `Raffle.sol`, `Spin.sol`.
 
-6. **Tests**: Files such as `ForkTestPlumeStaking.s.sol` indicate the presence of robust testing mechanisms, emphasizing security and functionality verification.
+5. **Test Files**:
+   - A comprehensive suite of tests designed to ensure security and functionality through stress testing, migration tests, and more.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/proxy/PlumeStakingProxy.sol
-The document provides a list of various Solidity script files associated with a project focused on deploying, upgrading, and managing smart contracts related to PlumeStaking and SpinRaffle. These scripts are segregated into categories such as scripts for deployment, facets for specific contract functionalities, upgrades, helpers, interfaces, and mock and proxy contracts. 
+### PlumeStakingProxy Contract Summary
 
-The core components include contracts for PlumeStaking, PlumeStakingRewardTreasury, and various facets including AccessControl, Management, Rewards, and more. The interfaces outline the contracts' interaction standards, while mock contracts simulate specific functionalities for testing purposes. Furthermore, the library files such as PlumeErrors and PlumeEvents likely serve to manage errors and events across the contracts.
+**Contract Definition:** The `PlumeStakingProxy` contract is a proxy contract for `PlumeStaking`. It extends the OpenZeppelin `ERC1967Proxy` to facilitate upgradeable proxy deployments.
 
-The test files are indicative of comprehensive unit testing practices to ensure contract reliability and performance under various conditions. Overall, the file list depicts a robust and modular structuring of the project's Solidity code base, emphasizing upgradability, precise access control, and extensive testing.
+**Contract Summary:**
+This contract utilizes a proxy pattern to handle interactions with the `PlumeStaking` logic contract. It can receive Ether transactions and ensures that proxy instances are uniquely addressable via a name hash.
+
+**Functions:**
+- **Constructor | `constructor(address logic, bytes memory data)`:**
+  Initializes the proxy with a logic contract address and delegates calls to it based on the state defined by `data`. This allows for the setup of an upgradeable proxy.
+
+- **receive() | `receive() external payable`:**
+  Allows the proxy to accept Ether transactions, making it compatible with Ether payment forwarding if the underlying logic contract requires it.
+
+**Storage Variables:**
+- **PROXY_NAME | `bytes32 public constant PROXY_NAME`:**
+  A constant hash representing the name of the proxy. It serves as an identifier to ensure that each deployed proxy has a unique bytecode based on its assigned name.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/proxy/RaffleProxy.sol
-The `RaffleProxy` contract is a proxy contract that inherits from OpenZeppelin's `ERC1967Proxy`, which implements the Ethereum Proxy pattern allowing for contract upgrades. It rejects all Ether transfers to the proxy through the `receive` function by reverting with an error. 
+### Project Structure Documentation
 
-### Contract: RaffleProxy
-This contract serves as a proxy for a "Raffle" logic contract, ensuring upgradability and maintaining a unique identifier for each instance.
+The project organization document lists scripts and source files in a Solidity-based project:
 
-### Constructor
-```solidity
-constructor(address logic, bytes memory data) ERC1967Proxy(logic, data)
-```
-**Summary:** Initializes the proxy with a logic contract address and initializes it with optional data, leveraging the ERC1967 proxy mechanism to enable upgrades.
+- **Deployment and Upgrade Scripts**: Located in `script/` with subdirectories for different tasks, e.g. deployment (`deploy/`) and upgrades (`upgrade/`). Key deployment files include mock tokens and several staking mechanisms.
+- **Contracts**: In the `src/` directory, notable contracts include `Plume.sol`, `PlumeStaking.sol`, and `PlumeStakingRewardTreasury.sol`. Access control, rewards, staking, and validation functionalities are structured as facets, indicating a modular or diamond pattern architecture.
+- **Library and Proxy Files**: Include utility files like `PlumeErrors.sol` and proxy contracts such as `MockPUSDProxy.sol` in the `lib/` and `proxy/` directories, respectively.
+- **Mocks and Tests**: `mocks/` contains mock implementations, while `test/` includes a variety of test scripts, indicating a comprehensive testing strategy for both functionality and security integrity.
 
-### receive Function
-```solidity
-receive() external payable
-```
-**Summary:** This fallback function is meant to catch any Ethereum transfers to the contract, which it prevents by reverting with the `ETHTransferUnsupported` error.
-
-### Storage Variables
-- **PROXY_NAME:**
-  ```solidity
-  bytes32 public constant PROXY_NAME = keccak256("RaffleProxy");
-  ```
-  **Summary:** A constant variable defining the name for the proxy contract to ensure each proxy can be uniquely identified by its bytecode.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/proxy/PlumeProxy.sol
-# PlumeProxy Contract
-The `PlumeProxy` contract is a proxy implementation based on the ERC1967 standard from OpenZeppelin. It is designed to delegate calls to a logic contract which contains the actual implementation logic. The contract primarily features a constructor and a fallback function.
+## Main List of Files in Project
 
-## Contract Definition
-This contract is defined as `PlumeProxy` inheriting from OpenZeppelin's `ERC1967Proxy`. It is utilized to manage interactions with the logic contract while maintaining upgradeability.
-
-## Variables
-- `error ETHTransferUnsupported`: Defines an error type to indicate that ETH transfers to this contract are unsupported.
-
-- `bytes32 public constant PROXY_NAME = keccak256("PlumeProxy");`
-  - **Description**: Holds the hashed name of the proxy to ensure the uniqueness of its bytecode.
-
-## Constructor
-- **Function Definition**: `constructor(address logic, bytes memory data)`
-  - **Summary**: Initializes the `PlumeProxy` contract by invoking the `ERC1967Proxy` constructor with the given logic address and initialization data.
-
-## Fallback Function
-- **Function Definition**: `receive() external payable`
-  - **Summary**: A fallback function implementation designed to revert transactions on receiving ETH, enforcing that this contract cannot hold ETH.
+This document provides an organized list of all the scripts and source files within the specified project. It categorizes files into several sections such as deployment scripts, upgrade scripts, facets, proxies, interfaces, libraries, mocks, spins, and tests. Each section contains the respective script or smart contract files related to their functionalities, for instance, under 'script/upgrade,' files focus on upgrading different facets and contracts, whereas 'src/facets' includes files defining various contract facets such as access control, management, and rewards. Libraries provide utilities and logic implementations like error and event definitions. Additionally, the list includes interfaces defining contract interactions, and proxies that handle the deployment process. This structured catalog helps in navigation and management of the project's various components, from smart contract logic to deployment and testing scripts.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/PlumeStakingRewardTreasury.sol
-The `PlumeStakingRewardTreasury` is a Solidity smart contract designed to manage the holding and distribution of reward tokens for the PlumeStaking system. It employs the UUPS upgrade pattern for upgradability and uses roles managed by AccessControl for authorization purposes. Key roles include ADMIN_ROLE, DISTRIBUTOR_ROLE, and UPGRADER_ROLE, each performing specific duties within the contract's structure.
-
-### Contract Definition
-- **Contract Name**: `PlumeStakingRewardTreasury`
-- **Inheritance**: Implements `IPlumeStakingRewardTreasury`, inherits `Initializable`, `AccessControlUpgradeable`, `ReentrancyGuardUpgradeable`, `UUPSUpgradeable`.
-
-### State Variables:
-- **PLUME_NATIVE**: `address public constant PLUME_NATIVE = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;`
-  - Represents the native PLUME token address.
-- **DISTRIBUTOR_ROLE**: `bytes32 public constant DISTRIBUTOR_ROLE = keccak256("DISTRIBUTOR_ROLE");`
-  - A specific role for entities that can distribute rewards.
-- **ADMIN_ROLE**: `bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");`
-  - A role for administrative access within the contract.
-- **UPGRADER_ROLE**: `bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");`
-  - Role given to entities allowed to perform contract upgrades.
-- **_rewardTokens**: `address[] private _rewardTokens;`
-  - Array storing all registered reward token addresses.
-- **_isRewardToken**: `mapping(address => bool) private _isRewardToken;`
-  - A mapping to check if a token is recognized as a reward token.
+### Contract: PlumeStakingRewardTreasury
+The **PlumeStakingRewardTreasury** contract manages the holding and distribution of reward tokens for the PlumeStaking system. It is upgradeable and utilizes the UUPS proxy pattern. This contract incorporates roles for access control, specifically for administrative tasks, distribution, and upgrades.
 
 ### Functions
 - **initialize**
-  - 
-  `function initialize(address admin, address distributor) public initializer`
-  - Initializes the contract, sets up roles for admin and distributor. Checks for valid addresses to ensure no zero addresses are set.
+    - **Interface**: `function initialize(address admin, address distributor) public initializer`
+    - **Summary**: Configures initial roles (admin and distributor) and setups necessary upgrade and access control mechanisms. It ensures that the provided addresses are non-zero, and grants appropriate roles using OpenZeppelin’s AccessControl and role-admin configuration.
 
 - **_authorizeUpgrade**
-  - 
-  `function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE)`
-  - Restricts contract upgrades to entities with the UPGRADER_ROLE.
+    - **Interface**: `function _authorizeUpgrade(address newImplementation) internal override`
+    - **Summary**: Authorizes contract upgrades but restricts this functionality to addresses possessing the UPGRADER_ROLE. This follows the UUPS pattern for upgrade safety.
 
 - **addRewardToken**
-  - 
-  `function addRewardToken(address token) external onlyRole(ADMIN_ROLE)`
-  - Adds a new token to the list of reward tokens, only callable by someone with the ADMIN_ROLE.
+    - **Interface**: `function addRewardToken(address token) external`
+    - **Summary**: Adds a token to the treasury for rewards, and verifies that the token is not already added and is a valid address. Access is restricted to ADMIN_ROLE.
 
 - **distributeReward**
-  - 
-  `function distributeReward(address token, uint256 amount, address recipient) external override nonReentrant onlyRole(DISTRIBUTOR_ROLE)`
-  - Distributes a specified amount of reward token or native PLUME to a recipient, ensuring the address has the requisite balance.
+    - **Interface**: `function distributeReward(address token, uint256 amount, address recipient) external nonReentrant`
+    - **Summary**: Distributes a specified amount of either native PLUME or ERC20 reward token to a recipient. It checks for sufficient balances and proper registration of the token, with access limited to DISTRIBUTOR_ROLE.
 
 - **getRewardTokens**
-  - 
-  `function getRewardTokens() external view override returns (address[] memory)`
-  - Returns the list of all reward tokens registered within the contract.
+    - **Interface**: `function getRewardTokens() external view returns (address[] memory)`
+    - **Summary**: Provides a list of all token addresses currently managed by the treasury for rewards.
 
 - **getBalance**
-  - 
-  `function getBalance(address token) external view override returns (uint256)`
-  - Provides the current balance of a specified token within the treasury, with special handling for PLUME_NATIVE.
+    - **Interface**: `function getBalance(address token) external view returns (uint256)`
+    - **Summary**: Returns the balance of a specified token (or native PLUME) held by the treasury, ensuring the token is registered.
 
 - **isRewardToken**
-  - 
-  `function isRewardToken(address token) external view returns (bool)`
-  - Checks if a given address is listed as a reward token.
+    - **Interface**: `function isRewardToken(address token) external view returns (bool)`
+    - **Summary**: Checks and returns true if the token is registered for rewards.
 
 - **receive**
-  - 
-  `receive() external payable`
-  - Function to handle direct transfers of PLUME, triggering the `PlumeReceived` event with sender and amount data.
+    - **Interface**: `receive() external payable`
+    - **Summary**: Allows the contract to receive Ether, triggering a PlumeReceived event.
+
+### Storage Variables
+- **PLUME_NATIVE**: Constant address placeholder for native PLUME, facilitating easier identification of native currency transactions.
+
+- **DISTRIBUTOR_ROLE, ADMIN_ROLE, UPGRADER_ROLE**: Bytes32 constants enabling role-based access control to various operations within the contract.
+
+- **_rewardTokens**: Maintains a dynamic list of addresses of tokens that are authorized for reward distribution.
+
+- **_isRewardToken**: Mapping that confirms whether a specific token address is registered as a reward token, aiding in validation during reward distribution.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/Plume.sol
-### Plume Contract Summary
-
-The `Plume` contract is a governance ERC20 token for the Plume Network, authored by Eugene Y. Q. Shen. It is built on OpenZeppelin's upgradeable contract framework, allowing it to be paused, minted, burned, and permit operations (signature-based approvals). It also includes access control features to manage roles and an upgradeable proxy pattern via `UUPSUpgradeable`.
-
-### Storage Variables
-
-- **`UPGRADER_ROLE`** (`bytes32`): Defines the role identifier for any account that can upgrade the contract.
-- **`MINTER_ROLE`** (`bytes32`): Signifies accounts that are permitted to mint new tokens.
-- **`BURNER_ROLE`** (`bytes32`): Indicates who can burn tokens from addresses.
-- **`PAUSER_ROLE`** (`bytes32`): Specifies accounts that can pause contract functions.
+### Contract: Plume
+The `Plume` contract is an ERC20 token designed as the governance token for the Plume Network. It extends functionalities such as burning, pausing, and permitting via OpenZeppelin upgradeable libraries. The contract implements a UUPS upgradeable pattern, allowing secure upgrades.
 
 ### Functions
 
-- **`constructor()`**
-  *Initializes the contract to disallow any subsequent initialization calls.*
+- **initialize**
   ```solidity
-  constructor() { _disableInitializers(); }
+  function initialize(address owner) public initializer
   ```
+  This function sets up the Plume token with various roles assigned to the specified owner. It initializes various facets of ERC20, burnable, pausable, and upgradeable functionalities.
 
-- **`initialize(address owner)`**
-  *Initializes the contract with roles assigned to the owner, setting up token metadata and enabling necessary upgrades and permissions.*
+- **reinitialize**
   ```solidity
-  function initialize(address owner) public initializer { ... }
+  function reinitialize() public reinitializer(1) onlyRole(UPGRADER_ROLE)
   ```
+  Allows contract reinitialization by upgrading the symbol to "$PLUME" by authorized upgraders.
 
-- **`reinitialize()`**
-  *Allows reinitialization of the contract, specifically altering the token's symbol.*
+- **_authorizeUpgrade**
   ```solidity
-  function reinitialize() public reinitializer(1) onlyRole(UPGRADER_ROLE) { ... }
+  function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE)
   ```
+  Ensures that only holders of the `UPGRADER_ROLE` can authorize contract upgrades.
 
-- **`_authorizeUpgrade(address newImplementation)`**
-  *Ensures only addresses with the UPGRADER_ROLE can authorize contract upgrades.*
+- **_update**
   ```solidity
-  function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) { }
+  function _update(address from, address to, uint256 value) internal override
   ```
+  Internal function to handle token transfer updates while considering pausing logic.
 
-- **`_update(address from, address to, uint256 value)`**
-  *Ensures proper balance updates in transfers, overriding required base functions.*
+- **mint**
   ```solidity
-  function _update(address from, address to, uint256 value) internal override(ERC20Upgradeable, ERC20PausableUpgradeable) { ... }
+  function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE)
   ```
+  Allows minting of new tokens to a specified address by authorized minters.
 
-- **`mint(address to, uint256 amount)`**
-  *Mints new tokens to a specified address, available only to MINTER_ROLE.*
+- **burn**
   ```solidity
-  function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) { ... }
+  function burn(address from, uint256 amount) external onlyRole(BURNER_ROLE)
   ```
+  Enables burning of tokens from a specified address, accessible only by holders of the burner role.
 
-- **`burn(address from, uint256 amount)`**
-  *Burns a set number of tokens from a given address, restricted to BURNER_ROLE.*
+- **pause**
   ```solidity
-  function burn(address from, uint256 amount) external onlyRole(BURNER_ROLE) { ... }
+  function pause() external onlyRole(PAUSER_ROLE)
   ```
+  Pauses all token-related activities within the contract, executable by pausers.
 
-- **`pause()`**
-  *Pauses token-related operations within the contract under PAUSER_ROLE permissions.*
+- **unpause**
   ```solidity
-  function pause() external onlyRole(PAUSER_ROLE) { ... }
+  function unpause() external onlyRole(PAUSER_ROLE)
   ```
+  Resumes operations that were prevented by pause(), accessible by authorized pausers.
 
-- **`unpause()`**
-  *Resumes normal operations in the contract, undoing a pause directive.*
+### Variables
+
+- **UPGRADER_ROLE**
   ```solidity
-  function unpause() external onlyRole(PAUSER_ROLE) { ... }
+  bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE")
   ```
+  Defines a unique role for contract upgraders.
+
+- **MINTER_ROLE**
+  ```solidity
+  bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE")
+  ```
+  Designates a role specifically for minting operations.
+
+- **BURNER_ROLE**
+  ```solidity
+  bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE")
+  ```
+  Assigns a unique role for burning tokens.
+
+- **PAUSER_ROLE**
+  ```solidity
+  bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE")
+  ```
+  Specifies a role that manages pausing and unpausing abilities of the contract.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/spin/DateTime.sol
-### DateTime Contract
-The `DateTime` contract provides date and time utility functions for Ethereum contracts. It converts Unix timestamps to human-readable date components and vice versa.
+### Contract Definition
+The `DateTime` contract provides utilities for date and time management in Ethereum smart contracts. It offers functions to convert timestamps into human-readable date and time components and vice versa, highlighting features such as leap year calculations and month/day distinctions.
 
-#### Struct: `_DateTime`
-- **Definition:** Struct representing a full date and time.
-- **Purpose:** To hold date and time components like year, month, day, hour, minute, second, and weekday.
-
-#### Constants:
-- **DAY_IN_SECONDS, YEAR_IN_SECONDS, LEAP_YEAR_IN_SECONDS, etc.**
-  - **Purpose:** Define time-based constants used in date calculations.
-
-#### Functions:
+### Function and Interface Summaries:
 - **isLeapYear(uint16 year) → bool**
-  - **Summary:** Determines if a given year is a leap year.
+  
+  Determines if a given year is a leap year. Returns `true` if the year is divisible by 4 but not by 100 unless divisible by 400.
+
 - **leapYearsBefore(uint256 year) → uint256**
-  - **Summary:** Computes the number of leap years before a given year.
+  
+  Calculates the total number of leap years that have occurred up to the specified year.
+
 - **getDaysInMonth(uint8 month, uint16 year) → uint8**
-  - **Summary:** Returns the number of days in a specific month and year.
+  
+  Returns the number of days in a given month and year, accounting for leap years in February.
+
 - **parseTimestamp(uint256 timestamp) → _DateTime**
-  - **Summary:** Decomposes a timestamp into a `_DateTime` structure with components like year, month, and day.
+  
+  Decomposes a Unix timestamp into year, month, day, hour, minute, second, and weekday components.
+
 - **getYear(uint256 timestamp) → uint16**
-  - **Summary:** Extracts the year from a timestamp.
+  
+  Retrieves the year from a given Unix timestamp.
+
 - **getMonth(uint256 timestamp) → uint8**
-  - **Summary:** Extracts the month from a timestamp.
+  
+  Retrieves the month from a given Unix timestamp.
+
 - **getDay(uint256 timestamp) → uint8**
-  - **Summary:** Extracts the day from a timestamp.
+  
+  Retrieves the day from a given Unix timestamp.
+
 - **getHour(uint256 timestamp) → uint8**
-  - **Summary:** Extracts the hour from a timestamp.
+  
+  Retrieves the hour from a given Unix timestamp.
+
 - **getMinute(uint256 timestamp) → uint8**
-  - **Summary:** Extracts the minute from a timestamp.
+  
+  Retrieves the minute from a given Unix timestamp.
+
 - **getSecond(uint256 timestamp) → uint8**
-  - **Summary:** Extracts the second from a timestamp.
+  
+  Retrieves the second from a given Unix timestamp.
+
 - **getWeekday(uint256 timestamp) → uint8**
-  - **Summary:** Computes the day of week for a timestamp.
-- **toTimestamp**
-  - Various overloads to convert date components into a Unix timestamp.
+  
+  Calculates the weekday for a given timestamp with Sunday represented as 0.
+
+- **toTimestamp(uint16 year, uint8 month, uint8 day, ...) → uint256**
+  
+  Converts year, month, day, and optional hour, minute, and second into a Unix timestamp.
+
 - **getWeekNumber(uint256 timestamp) → uint8**
-  - **Summary:** Determines the week number for a given timestamp.
+  
+  Computes the week number of the year for a timestamp, with weeks starting on Monday.
+
 - **getDaysSinceYearStart(uint16 year, uint8 month, uint8 day) → uint256**
-  - **Summary:** Calculates the number of days since the start of a calendar year.
+  
+  Calculates days elapsed since the beginning of the year for a given date.
+
+### Storage Variables
+- **uint256 constant DAY_IN_SECONDS = 86,400:**
+  Represents the number of seconds in a day.
+
+- **uint256 constant YEAR_IN_SECONDS = 31,536,000:**
+  Represents the number of seconds in a non-leap year.
+
+- **uint256 constant LEAP_YEAR_IN_SECONDS = 31,622,400:**
+  Represents the number of seconds in a leap year.
+
+- **uint256 constant HOUR_IN_SECONDS = 3600:**
+  Represents the number of seconds in an hour.
+
+- **uint256 constant MINUTE_IN_SECONDS = 60:**
+  Represents the number of seconds in a minute.
+
+- **uint16 constant ORIGIN_YEAR = 1970:**
+  Serves as the base year from which timestamps are calculated.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/spin/Spin.sol
-# Spin Contract Summary
-This contract is an upgradable Solidity smart contract implementing a spinning game with reward mechanics. It integrates multiple upgradable features from OpenZeppelin, such as access control, pausable, and reentrancy guard. The players can spin to gain rewards like jackpot prizes, tokens, or raffle tickets, using randomness generated by the Supra Oracle.
+The `Spin` contract is an upgradable contract that facilitates a spin-based reward system with integrated administrative control and security measures. It implements roles and access control, thus constraining certain functionalities to specific roles. Key features include upgradeability, randomness-based rewards, and daily interaction limits.
 
-## Contract Definition
-```solidity
-contract Spin is Initializable, AccessControlUpgradeable, UUPSUpgradeable, PausableUpgradeable, ReentrancyGuardUpgradeable { ... }
-```
+### Contract Definition
+- **Spin**: The contract enables users to spin for rewards, implementing user data management, reward probabilities, and role-based operations.
 
-The Spin contract is initialized via the `initialize` function and can be upgraded via UUPS proxy mechanisms.
+**Structs**
+- **UserData**: Stores individual user data like spin results and timestamps.
+- **RewardProbabilities**: Defines probability thresholds for rewards such as tokens and raffle tickets.
 
-## Functions
-### initialize
-Initializes the Spin contract with necessary dependencies and roles, setting default values.
-```solidity
-function initialize(address supraRouterAddress, address dateTimeAddress) public initializer { ... }
-```
-### startSpin
-Begins the spin process using randomness. Requires appropriate payment and emits a SpinRequested event.
-```solidity
-function startSpin() external payable whenNotPaused canSpin { ... }
-```
-### handleRandomness
-Handles randomness received from a Supra Router to determine and apply spin rewards.
-```solidity
-function handleRandomness(uint256 nonce, uint256[] memory rngList) external { ... }
-```
-### determineReward
-Determines the reward category based on random values and user streak.
-```solidity
-function determineReward(uint256 randomness, uint256 streakForReward) internal view returns (string memory, uint256) { ... }
-```
-### currentStreak
-Returns the user's current streak count.
-```solidity
-function currentStreak(address user) public view returns (uint256) { ... }
-```
-### spendRaffleTickets
-Allows the raffle contract to deduct raffle tickets from a user's account.
-```solidity
-function spendRaffleTickets(address user, uint256 amount) external { ... }
-```
-### adminWithdraw
-Allows admins to withdraw PLUME tokens from the contract.
-```solidity
-function adminWithdraw(address payable recipient, uint256 amount) external { ... }
-```
-### pause / unpause
-Pauses or unpauses the contract’s operations.
-```solidity
-function pause() external onlyRole(ADMIN_ROLE) { ... }
-```
-```solidity
-function unpause() external onlyRole(ADMIN_ROLE) { ... }
-```
-### _authorizeUpgrade
-Allows admin-authorized contract upgrades.
-```solidity
-function _authorizeUpgrade(address newImplementation) internal override onlyRole(ADMIN_ROLE) { ... }
-```
+### Key Functions
+- **initialize**(address, address): Initializes contract parameters and roles.
+- **startSpin**: Initiates a spin, integrating randomness and transaction validation.
+- **handleRandomness**: Callback for handling spin results based on randomness delivered by an oracle.
+- **determineReward**(uint256, uint256): Decides the type and amount of reward based on a random number and streak status.
+- **spendRaffleTickets**: Enables reduction of a user's raffle ticket balance by the raffle contract.
+- **adminWithdraw**: Allows admins to withdraw funds from the contract.
 
-## Storage Variables
-- `ADMIN_ROLE`, `SUPRA_ROLE`: Keccak256 hashed constants for role identification.
-- `admin`: Address of the system admin.
-- `lastJackpotClaimWeek`: Tracks weeks of last jackpot claim.
-- `userData`: Mapping to store each user’s gaming data.
-- `jackpotProbabilities`: An array for storing daily jackpot probabilities.
-- `baseRaffleMultiplier`, `PP_PerSpin`: Constants defining base raffle and spin points.
-- `plumeAmounts`, `userNonce`, `rewardProbabilities`: Govern reward mechanics.
-- `supraRouter`, `dateTime`: External contract interfaces.
-- `campaignStartDate`, `enableSpin`, `spinPrice`: Controls game campaign status and price.
-- `pendingNonce`, `isSpinPending`: Manages transactional state of spins.
-
-These variables are vital for managing access control, current game state, and historical gameplay data.
+### Storage Variables
+- **User data mappings and states** such as `userData`, `pendingNonce`, etc.
+- **Reward configurations**: Variables like `jackpotProbabilities`, `rewardProbabilities` hold reward-related measures.
+- **Security and control parameters**: Role-defining constants and boolean `enableSpin` regulate operations.
 
 
 ## SUMMARY OF FILE: contracts/plume/src/spin/Raffle.sol
-### Raffle Contract
-The Raffle contract is a system for managing prize draws using a raffle ticket system. It extends Initializable, AccessControlUpgradeable, and UUPSUpgradeable contracts to facilitate upgradeability and access control.
+### Contract Summary
+The `Raffle` contract facilitates a multi-winner raffle utilizing the UUPS upgradeable proxy pattern and integrates with Supra's randomness oracle for verifiable randomness (VRF). The contract defines several structs such as `Prize`, `Range`, and `Winner` to manage prize information, ticket ranges, and winners respectively.
 
-#### Contracts & Interfaces:
-- **ISpin**: Interface for user interactions related to raffle tickets.
-- **ISupraRouterContract**: Interface for handling random number generation requests.
+### Key Functions
+- **initialize**: Initializes the contract and assigns default roles, sets up the `spinContract` and `supraRouter`.
+  ```solidity
+  function initialize(address _spinContract, address _supraRouter) public initializer
+  ```
+- **addPrize**: Admin function to add a new prize to the raffle.
+  ```solidity
+  function addPrize(string calldata name, string calldata description, uint256 value, uint256 quantity) external onlyRole(ADMIN_ROLE)
+  ```
+- **editPrize**: Allows admin to edit prize details while active.
+  ```solidity
+  function editPrize(uint256 prizeId, string calldata name, string calldata description, uint256 value, uint256 quantity) external onlyRole(ADMIN_ROLE) prizeIsActive(prizeId)
+  ```
+- **removePrize**: Deactivates a prize and removes it from active entries.
+  ```solidity
+  function removePrize(uint256 prizeId) external onlyRole(ADMIN_ROLE) prizeIsActive(prizeId)
+  ```
+- **spendRaffle**: Allows users to spend raffle tickets for a chance at prizes.
+  ```solidity
+  function spendRaffle(uint256 prizeId, uint256 ticketAmount) external prizeIsActive(prizeId)
+  ```
+- **requestWinner**: Admin initiates a VRF request to select a winner.
+  ```solidity
+  function requestWinner(uint256 prizeId) external onlyRole(ADMIN_ROLE)
+  ```
+- **handleWinnerSelection**: Handles VRF callback setting the winner.
+  ```solidity
+  function handleWinnerSelection(uint256 requestId, uint256[] memory rng) external onlyRole(SUPRA_ROLE)
+  ```
+- **claimPrize**: Lets a user claim their prize if successful.
+  ```solidity
+  function claimPrize(uint256 prizeId, uint256 winnerIndex) external
+  ```
+- **cancelWinnerRequest**: Cancels a pending VRF request.
+  ```solidity
+  function cancelWinnerRequest(uint256 prizeId) external onlyRole(ADMIN_ROLE)
+  ```
 
-#### Key Functionalities:
-1. **initialize**: Initializes the contract, sets key contracts, and configures initial roles and prize ID.
-2. **addPrize**: Allows admin to add a new prize.
-3. **editPrize**: Updates existing prize details.
-4. **spendRaffle**: Users spend tickets to enter a raffle.
-5. **requestWinner**: Admin initiates a process to select a winner through VRF.
-6. **handleWinnerSelection**: Callback from VRF to select the winner.
-7. **claimPrize**: Users claim their prizes if they have won.
-8. **upgradability & roles**: Admin roles and prize active status functions.
+### Storage Variables
+- **ADMIN_ROLE** (bytes32): Role that has admin rights to execute critical functions.
+- **SUPRA_ROLE** (bytes32): Role that allows interaction with the Supra VRF contract.
+- **admin** (address): The address of the admin.
+- **spinContract** (ISpin): External contract handling ticket transactions.
+- **supraRouter** (ISupraRouterContract): Handles interactions with the VRF randomness oracle.
+- **prizes** (mapping): Maps prize IDs to Prize structs.
+- **prizeIds** (uint256[]): Array of active prize IDs.
+- **prizeRanges** (mapping): Tracks user ticket allocations for each prize.
+- **totalTickets** (mapping): Total tickets entered for each prize.
+- **userHasEnteredPrize** (mapping): Tracks if a user has entered a particular prize.
+- **totalUniqueUsers** (mapping): Total unique users per prize.
+- **winnings** (mapping): Records prizes won by each address.
+- **pendingVRFRequests** (mapping): Maps VRF request IDs to associated prizes.
+- **isWinnerRequestPending** (mapping): Flags pending requests for a prize.
+- **prizeWinners** (mapping): Stores winner data for each prize.
+- **winnersDrawn** (mapping): Counter for winners drawn per prize.
+- **userWinCount** (mapping): Number of times a user has won per prize.
+- **nextPrizeId** (uint256): Counter for new prize IDs.
+- **_migrationComplete** (bool): Indicates if migration processes are complete.
 
-The contract also includes storage for managing prizes, tickets, winners, and integrates SupraOracles for VRF to ensure random and fair winner selection. Notably, it caters to multi-winner draws.
 
 
 ## Main List of Files in Project

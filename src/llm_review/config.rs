@@ -33,16 +33,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LanguageModel {
-    OpenAI,
-    Anthropic,
-}
-
 pub const CLAUDE_4_0_SONNET: &str = "claude-sonnet-4-0";
 pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
-pub const LANGUAGE_MODEL: LanguageModel = LanguageModel::Anthropic;
-pub const INSTRUCTION_PROMPTS: [&str; 2] = [PROMPT_2X_A, PROMPT_2X_B];
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct Finding {

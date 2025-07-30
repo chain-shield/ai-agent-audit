@@ -77,7 +77,8 @@ pub fn get_all_files_src(repo: &RepoPaths) -> String {
 
         // ADD LIB exclusion
         let lib_folder = code_root.join("lib");
-        if path.starts_with(lib_folder) {
+        let node_modules_folder = code_root.join("node_modules");
+        if path.starts_with(lib_folder) || path.starts_with(node_modules_folder) {
             continue;
         }
 
@@ -123,6 +124,178 @@ fn should_skip(rel: &str) -> bool {
     false
 }
 
+/// Detects the project type based on configuration files present in the repository.
+#[derive(Debug, Clone, Copy)]
+enum ProjectType {
+    Foundry,
+    FoundryYarn,  // Hybrid projects with both Foundry and Yarn/npm
+    Hardhat,
+    Truffle,
+    Generic,
+}
+
+fn detect_project_type(repo: &RepoPaths) -> ProjectType {
+    let repo_path = repo.root.join(&repo.repo_name);
+
+    // Check for various configuration files
+    let has_foundry = repo_path.join("foundry.toml").exists() || repo_path.join("forge.toml").exists();
+    let has_package_json = repo_path.join("package.json").exists();
+    let has_yarn_lock = repo_path.join("yarn.lock").exists();
+    let has_npm_lock = repo_path.join("package-lock.json").exists();
+    let has_pnpm_lock = repo_path.join("pnpm-lock.yaml").exists();
+    let has_hardhat_config = repo_path.join("hardhat.config.js").exists()
+        || repo_path.join("hardhat.config.ts").exists()
+        || repo_path.join("hardhat.config.cjs").exists();
+    let has_truffle_config = repo_path.join("truffle-config.js").exists() || repo_path.join("truffle.js").exists();
+    let has_out_dir = repo_path.join("out").exists();
+    let has_artifacts_dir = repo_path.join("artifacts").exists();
+
+    // Priority-based detection to handle overlapping configurations
+
+    // 1. Check for hybrid Foundry + Node.js package manager projects
+    if has_foundry && has_package_json && (has_yarn_lock || has_npm_lock || has_pnpm_lock) {
+        // This covers projects that use Foundry for Solidity compilation but npm/yarn for dependencies
+        return ProjectType::FoundryYarn;
+    }
+
+    // 2. Check for Hardhat projects (even if they also have Foundry config)
+    if has_hardhat_config && has_package_json {
+        // Hardhat projects typically have package.json and hardhat config
+        // Note: Some projects might have both Hardhat and Foundry, but Hardhat takes precedence
+        // if there's an explicit Hardhat config
+        return ProjectType::Hardhat;
+    }
+
+    // 3. Check for Truffle projects
+    if has_truffle_config && has_package_json {
+        return ProjectType::Truffle;
+    }
+
+    // 4. Check for pure Foundry projects (with build artifacts)
+    if has_foundry && has_out_dir {
+        return ProjectType::Foundry;
+    }
+
+    // 5. Fallback: if foundry.toml exists but no clear package manager setup
+    if has_foundry {
+        return ProjectType::Foundry;
+    }
+
+    // 6. Check for Hardhat without explicit config (artifacts directory suggests Hardhat)
+    if has_package_json && has_artifacts_dir && !has_out_dir {
+        return ProjectType::Hardhat;
+    }
+
+    ProjectType::Generic
+}
+
+/// Builds Slither command arguments based on the detected project type.
+fn build_slither_args(repo: &RepoPaths, printer: Option<&str>, json_output: bool) -> Vec<String> {
+    let project_type = detect_project_type(repo);
+    let mut args = vec![
+        "run".to_string(),
+        "--rm".to_string(),
+        "-v".to_string(),
+        format!("{}:/workspace", repo.root.display()),
+        "-w".to_string(),
+        "/workspace".to_string(),
+        "ghcr.io/trailofbits/eth-security-toolbox:nightly".to_string(),
+        "slither".to_string(),
+        repo.repo_name.clone(),
+    ];
+
+    // Add project-specific arguments
+    match project_type {
+        ProjectType::Foundry => {
+            args.extend([
+                "--foundry-ignore-compile".to_string(),
+                "--foundry-out-directory".to_string(),
+                "out".to_string(),
+            ]);
+        }
+        ProjectType::FoundryYarn => {
+            // For hybrid Foundry + Yarn projects, let Slither compile the contracts
+            // since the build artifacts might not be in the expected Foundry format
+            // or the project might need npm dependencies to compile properly
+            log::info!("FoundryYarn project detected - letting Slither handle compilation");
+            // Don't add any ignore-compile flags - let Slither compile from source
+        }
+        ProjectType::Hardhat => {
+            // Hardhat projects typically compile to artifacts/contracts
+            if repo.root.join(&repo.repo_name).join("artifacts").exists() {
+                args.extend([
+                    "--hardhat-ignore-compile".to_string(),
+                    "--hardhat-artifacts-directory".to_string(),
+                    "artifacts".to_string(),
+                ]);
+            }
+        }
+        ProjectType::Truffle => {
+            // Truffle projects typically compile to build/contracts
+            if repo.root.join(&repo.repo_name).join("build").exists() {
+                args.extend([
+                    "--truffle-ignore-compile".to_string(),
+                    "--truffle-build-directory".to_string(),
+                    "build".to_string(),
+                ]);
+            }
+        }
+        ProjectType::Generic => {
+            // For generic projects, try to detect common build directories
+            let repo_path = repo.root.join(&repo.repo_name);
+            if repo_path.join("out").exists() {
+                args.extend([
+                    "--foundry-ignore-compile".to_string(),
+                    "--foundry-out-directory".to_string(),
+                    "out".to_string(),
+                ]);
+            } else if repo_path.join("artifacts").exists() {
+                args.extend([
+                    "--hardhat-ignore-compile".to_string(),
+                    "--hardhat-artifacts-directory".to_string(),
+                    "artifacts".to_string(),
+                ]);
+            } else if repo_path.join("build").exists() {
+                args.extend([
+                    "--truffle-ignore-compile".to_string(),
+                    "--truffle-build-directory".to_string(),
+                    "build".to_string(),
+                ]);
+            }
+            // If no build directory found, let Slither try to compile
+        }
+    }
+
+    // Add printer-specific arguments
+    if let Some(printer_name) = printer {
+        args.extend([
+            "--print".to_string(),
+            printer_name.to_string(),
+        ]);
+    }
+
+    // Add common arguments
+    args.extend([
+        "--exclude-low".to_string(),
+        "--exclude-medium".to_string(),
+        "--exclude-high".to_string(),
+        "--exclude-informational".to_string(),
+        "--disable-color".to_string(),
+    ]);
+
+    // Add JSON output if requested
+    if json_output {
+        args.extend([
+            "--json".to_string(),
+            "-".to_string(),
+        ]);
+    }
+
+    log::info!("Detected project type: {:?}", project_type);
+
+    args
+}
+
 pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
     let key = cache_key(&repo.root, "detector");
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
@@ -134,24 +307,12 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
     }
 
     log::info!("Running Slither detector");
-    let volume = format!("{}:/workspace", &repo.root.display());
+    let mut args = build_slither_args(repo, None, false);
+    // Add detector-specific arguments
+    args.push("--exclude-dependencies".to_string());
+
     let out = Command::new("docker")
-        .args([
-            "run",
-            "--read-only",
-            "--rm",
-            "-v",
-            &volume,
-            "-w",
-            "/workspace",
-            "ghcr.io/trailofbits/eth-security-toolbox:nightly",
-            "slither",
-            &repo.repo_name,            // Use the already-built repo folder
-            "--foundry-ignore-compile", // Skip compilation as we've already built with Forge
-            "--exclude-dependencies",
-            "--foundry-out-directory", // Specify where to find Forge build artifacts
-            "out",
-        ])
+        .args(&args)
         .output()?;
 
     // anyhow::ensure!(out.status.success(), "slither --sarif failed");
@@ -168,10 +329,11 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
     Ok(text)
 }
 
-/// Runs a single Slither printer and captures its output.
+/// Runs a single Slither printer with fallback strategies for hybrid projects.
 ///
 /// This function executes the Slither static analysis tool with a specific printer
-/// and returns the captured output as a string.
+/// and returns the captured output as a string. For hybrid projects (e.g., Yarn + Foundry),
+/// it will try multiple approaches if the first one fails.
 ///
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @param printer - Name of the Slither printer to run (e.g., "slithir-ssa", "variable-order")
@@ -187,30 +349,9 @@ pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
     }
 
     log::info!("Running Slither printer: {}", printer);
-    let volume = format!("{}:/workspace", &repo.root.display());
+    let args = build_slither_args(repo, Some(printer), false);
     let output = Command::new("docker")
-        .args([
-            "run",
-            "--read-only",
-            "--rm",
-            "-v",
-            &volume,
-            "-w",
-            "/workspace",
-            "ghcr.io/trailofbits/eth-security-toolbox:nightly",
-            "slither",
-            &repo.repo_name,            // Use the already-built repo folder
-            "--foundry-ignore-compile", // Skip compilation as we've already built with Forge
-            "--foundry-out-directory",  // Specify where to find Forge build artifacts
-            "out",
-            "--print",
-            printer,
-            "--exclude-low",
-            "--exclude-medium",
-            "--exclude-high",
-            "--exclude-informational",
-            "--disable-color", // Disable ANSI color codes for easier parsing
-        ])
+        .args(&args)
         .stdout(Stdio::piped()) // Capture printer text from stdout
         .stderr(Stdio::piped()) // Capture banner & errors from stderr
         .output()?;
@@ -221,9 +362,27 @@ pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
         text = String::from_utf8_lossy(&output.stderr).into_owned();
     }
 
+    // Check if the command failed and provide better error information
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(anyhow!(
+            "Slither {} failed with exit code {:?}.\nStdout: {}\nStderr: {}",
+            printer,
+            output.status.code(),
+            stdout,
+            stderr
+        ));
+    }
+
     // Ensure we got some output
     if text.trim().is_empty() {
-        return Err(anyhow!("Slither ran but produced no `{}` output", printer));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "Slither ran but produced no `{}` output. Stderr: {}",
+            printer,
+            stderr
+        ));
     }
 
     info!("{} printer complete with size {}", printer, text.len());
@@ -244,31 +403,9 @@ pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String>
     }
 
     log::info!("Running Slither printer: {}", printer);
-    let volume = format!("{}:/workspace", &repo.root.display());
+    let args = build_slither_args(repo, Some(printer), true);
     let out = Command::new("docker")
-        .args([
-            "run",
-            "--rm",
-            "-v",
-            &volume,
-            "-w",
-            "/workspace",
-            "ghcr.io/trailofbits/eth-security-toolbox:nightly",
-            "slither",
-            &repo.repo_name,
-            "--foundry-ignore-compile", // Skip compilation as we've already built with Forge
-            "--foundry-out-directory",  // Specify where to find Forge build artifacts
-            "out",
-            "--print",
-            printer,
-            "--exclude-low",
-            "--exclude-medium",
-            "--exclude-high",
-            "--exclude-informational",
-            "--disable-color",
-            "--json",
-            "-",
-        ])
+        .args(&args)
         .output()?;
 
     anyhow::ensure!(out.status.success(), format!("slither {} failed", printer));

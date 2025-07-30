@@ -12,3 +12,18 @@ Before instructions are provided on the task please note required output format:
 }
 
 "#;
+
+pub const PRE_IN_SCOPE_VERIFY: &str = r#"
+
+Before instructions are provided on the task please note required output format:
+
+## JSON Output Requirement
+
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
+
+{
+    "is_vulnerability_in_scope": true|false,
+    "why_its_not_in_scope": "explain why NOT in scope"
+}
+
+"#;

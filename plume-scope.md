@@ -1,7 +1,6 @@
-```markdown
 # Public Disclosure of Known Issues
 
-Bug reports for publicly disclosed bugs are **not eligible** for a reward.
+Bug reports for publicly disclosed bugs are **not eligible**, DO NOT report. 
 
 **None**
 
@@ -54,5 +53,26 @@ The project has the following key external dependencies:
 
 - **solidstate-solidity**: Used for the core Diamond Proxy architecture.  
 - **@openzeppelin/contracts-upgradeable**: Used for standard, secure, and upgradeable components like `ReentrancyGuardUpgradeable` and `SafeERC20`.
-```
 
+##  All of the Below are **Out of Scope**
+
+### Smart Contract specific
+
+- Incorrect data supplied by third party oracles
+- Not to exclude oracle manipulation/flash loan attacks
+- Impacts requiring basic economic and governance attacks (e.g. 51% attack)
+- Lack of liquidity impacts
+- Impacts from Sybil attacks
+- Impacts involving centralization risks
+
+### All categories
+
+- Impacts requiring attacks that the reporter has already exploited themselves, leading to damage
+- Impacts caused by attacks requiring access to leaked keys/credentials
+- Impacts caused by attacks requiring access to privileged addresses (including, but not limited to: governance and strategist contracts) without additional modifications to the privileges attributed
+- Impacts relying on attacks involving the depegging of an external stablecoin where the attacker does not directly cause the depegging due to a bug in code
+Mentions of secrets, access tokens, API keys, private keys, etc. in Github will be considered out of scope without proof that they are in-use in production
+- Best practice recommendations
+- Feature requests
+- Impacts on test files and configuration files unless stated otherwise in the bug bounty program
+- Impacts requiring phishing or other social engineering attacks against project's employees and/or customers
