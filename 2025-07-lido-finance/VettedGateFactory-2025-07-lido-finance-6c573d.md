@@ -1,3 +1,4 @@
+
 ### Storage layout (VettedGate) 
 
 ```text
@@ -13,7 +14,6 @@ _referralCounts mapping(bytes32 => uint256)
 _consumedReferrers mapping(bytes32 => bool)
 
 ```
-
 #### IVettedGateFactory.create(uint256,bytes32,string,address) [EXTERNAL]
 ```slithir
 

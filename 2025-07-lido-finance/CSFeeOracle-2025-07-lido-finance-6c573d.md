@@ -1,5 +1,4 @@
 
-
 ### Storage layout (CSFeeOracle) 
 
 ```text
@@ -7,6 +6,7 @@ _feeDistributor ICSFeeDistributor
 _avgPerfLeewayBP uint256
 
 ```
+
 #### CSFeeOracle._onlyRecoverer() [INTERNAL]
 ```slithir
 RECOVERER_ROLE_1(bytes32) := phi(['RECOVERER_ROLE_0', 'RECOVERER_ROLE_2'])
@@ -235,11 +235,11 @@ CONDITION TMP_2070
  revert SenderIsNotOracle()()
 TMP_2071(None) = SOLIDITY_CALL revert SenderIsNotOracle()()
 ```
-#### ICSStrikes.processOracleReport(bytes32,string) [EXTERNAL]
+#### ICSFeeDistributor.processOracleReport(bytes32,string,string,uint256,uint256,uint256) [EXTERNAL]
 ```slithir
 
 ```
-#### ICSFeeDistributor.processOracleReport(bytes32,string,string,uint256,uint256,uint256) [EXTERNAL]
+#### ICSStrikes.processOracleReport(bytes32,string) [EXTERNAL]
 ```slithir
 
 ```

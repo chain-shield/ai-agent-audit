@@ -502,6 +502,10 @@ CONDITION TMP_3423
  revert SenderIsNotOracle()()
 TMP_3424(None) = SOLIDITY_CALL revert SenderIsNotOracle()()
 ```
+#### ICSModule.getSigningKeys(uint256,uint256,uint256) [EXTERNAL]
+```slithir
+
+```
 #### SSZ.hashTreeRoot(Withdrawal) [INTERNAL]
 ```slithir
  sha256(bytes)(bytes.concat(sha256(bytes)(bytes.concat(toLittleEndian(withdrawal.index),toLittleEndian(withdrawal.validatorIndex))),sha256(bytes)(bytes.concat(bytes20(withdrawal.withdrawalAddress),bytes12(0),toLittleEndian(withdrawal.amount)))))
@@ -523,10 +527,6 @@ TMP_4467(bytes32) = SOLIDITY_CALL sha256(bytes)(TMP_4466)
 RETURN TMP_4467
 ```
 #### ICSModule.submitWithdrawals(ValidatorWithdrawalInfo[]) [EXTERNAL]
-```slithir
-
-```
-#### ICSModule.getSigningKeys(uint256,uint256,uint256) [EXTERNAL]
 ```slithir
 
 ```

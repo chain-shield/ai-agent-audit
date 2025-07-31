@@ -1,4 +1,6 @@
 
+
+
 ### Storage layout (CSExitPenalties) 
 
 ```text
@@ -6,23 +8,21 @@ _exitPenaltyInfo mapping(bytes32 => ExitPenaltyInfo)
 
 ```
 
-
-
 #### CSExitPenalties.processExitDelayReport(uint256,bytes,uint256) [EXTERNAL]
 ```slithir
 PARAMETERS_REGISTRY_2(ICSParametersRegistry) := phi(['PARAMETERS_REGISTRY_9', 'PARAMETERS_REGISTRY_1', 'PARAMETERS_REGISTRY_21', 'PARAMETERS_REGISTRY_15', 'PARAMETERS_REGISTRY_17', 'PARAMETERS_REGISTRY_10', 'PARAMETERS_REGISTRY_6', 'PARAMETERS_REGISTRY_12', 'PARAMETERS_REGISTRY_7', 'PARAMETERS_REGISTRY_0'])
 ACCOUNTING_2(ICSAccounting) := phi(['ACCOUNTING_8', 'ACCOUNTING_6', 'ACCOUNTING_15', 'ACCOUNTING_11', 'ACCOUNTING_1', 'ACCOUNTING_7', 'ACCOUNTING_0', 'ACCOUNTING_12', 'ACCOUNTING_4'])
-_exitPenaltyInfo_1(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_21', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10', '_exitPenaltyInfo_0'])
+_exitPenaltyInfo_1(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_21', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10', '_exitPenaltyInfo_0'])
  curveId = ACCOUNTING.getBondCurveId(nodeOperatorId)
 TMP_1824(uint256) = HIGH_LEVEL_CALL, dest:ACCOUNTING_3(ICSAccounting), function:getBondCurveId, arguments:['nodeOperatorId_1']  
 PARAMETERS_REGISTRY_4(ICSParametersRegistry) := phi(['PARAMETERS_REGISTRY_9', 'PARAMETERS_REGISTRY_1', 'PARAMETERS_REGISTRY_21', 'PARAMETERS_REGISTRY_15', 'PARAMETERS_REGISTRY_17', 'PARAMETERS_REGISTRY_10', 'PARAMETERS_REGISTRY_6', 'PARAMETERS_REGISTRY_12', 'PARAMETERS_REGISTRY_7', 'PARAMETERS_REGISTRY_3'])
 ACCOUNTING_4(ICSAccounting) := phi(['ACCOUNTING_3', 'ACCOUNTING_8', 'ACCOUNTING_6', 'ACCOUNTING_15', 'ACCOUNTING_11', 'ACCOUNTING_1', 'ACCOUNTING_7', 'ACCOUNTING_12', 'ACCOUNTING_4'])
-_exitPenaltyInfo_3(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_21', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_2', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10'])
+_exitPenaltyInfo_3(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_2', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_21', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10'])
 curveId_1(uint256) := TMP_1824(uint256)
  allowedExitDelay = PARAMETERS_REGISTRY.getAllowedExitDelay(curveId)
 TMP_1825(uint256) = HIGH_LEVEL_CALL, dest:PARAMETERS_REGISTRY_4(ICSParametersRegistry), function:getAllowedExitDelay, arguments:['curveId_1']  
 PARAMETERS_REGISTRY_5(ICSParametersRegistry) := phi(['PARAMETERS_REGISTRY_9', 'PARAMETERS_REGISTRY_1', 'PARAMETERS_REGISTRY_21', 'PARAMETERS_REGISTRY_15', 'PARAMETERS_REGISTRY_17', 'PARAMETERS_REGISTRY_10', 'PARAMETERS_REGISTRY_6', 'PARAMETERS_REGISTRY_4', 'PARAMETERS_REGISTRY_12', 'PARAMETERS_REGISTRY_7'])
-_exitPenaltyInfo_4(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_3', '_exitPenaltyInfo_21', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10'])
+_exitPenaltyInfo_4(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_3', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_21', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10'])
 allowedExitDelay_1(uint256) := TMP_1825(uint256)
  eligibleToExitInSec <= allowedExitDelay
 TMP_1826(bool) = eligibleToExitInSec_1 <= allowedExitDelay_1
@@ -60,7 +60,7 @@ MODIFIER_CALL, CSExitPenalties.onlyModule()()
 VOLUNTARY_EXIT_TYPE_ID_1(uint8) := phi(['VOLUNTARY_EXIT_TYPE_ID_2', 'VOLUNTARY_EXIT_TYPE_ID_0'])
 PARAMETERS_REGISTRY_8(ICSParametersRegistry) := phi(['PARAMETERS_REGISTRY_9', 'PARAMETERS_REGISTRY_1', 'PARAMETERS_REGISTRY_21', 'PARAMETERS_REGISTRY_15', 'PARAMETERS_REGISTRY_17', 'PARAMETERS_REGISTRY_10', 'PARAMETERS_REGISTRY_6', 'PARAMETERS_REGISTRY_12', 'PARAMETERS_REGISTRY_7', 'PARAMETERS_REGISTRY_0'])
 ACCOUNTING_5(ICSAccounting) := phi(['ACCOUNTING_8', 'ACCOUNTING_6', 'ACCOUNTING_15', 'ACCOUNTING_11', 'ACCOUNTING_1', 'ACCOUNTING_7', 'ACCOUNTING_0', 'ACCOUNTING_12', 'ACCOUNTING_4'])
-_exitPenaltyInfo_7(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_21', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10', '_exitPenaltyInfo_0'])
+_exitPenaltyInfo_7(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_21', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10', '_exitPenaltyInfo_0'])
  exitType == VOLUNTARY_EXIT_TYPE_ID
 TMP_1834(bool) = exitType_1 == VOLUNTARY_EXIT_TYPE_ID_2
 CONDITION TMP_1834
@@ -102,7 +102,7 @@ MODIFIER_CALL, CSExitPenalties.onlyModule()()
 ```slithir
 PARAMETERS_REGISTRY_13(ICSParametersRegistry) := phi(['PARAMETERS_REGISTRY_9', 'PARAMETERS_REGISTRY_1', 'PARAMETERS_REGISTRY_21', 'PARAMETERS_REGISTRY_15', 'PARAMETERS_REGISTRY_17', 'PARAMETERS_REGISTRY_10', 'PARAMETERS_REGISTRY_6', 'PARAMETERS_REGISTRY_12', 'PARAMETERS_REGISTRY_7', 'PARAMETERS_REGISTRY_0'])
 ACCOUNTING_9(ICSAccounting) := phi(['ACCOUNTING_8', 'ACCOUNTING_6', 'ACCOUNTING_15', 'ACCOUNTING_11', 'ACCOUNTING_1', 'ACCOUNTING_7', 'ACCOUNTING_0', 'ACCOUNTING_12', 'ACCOUNTING_4'])
-_exitPenaltyInfo_11(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_21', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10', '_exitPenaltyInfo_0'])
+_exitPenaltyInfo_11(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_21', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10', '_exitPenaltyInfo_0'])
  keyPointer = _keyPointer(nodeOperatorId,publicKey)
 TMP_1843(bytes32) = INTERNAL_CALL, CSExitPenalties._keyPointer(uint256,bytes)(nodeOperatorId_1,publicKey_1)
 keyPointer_1(bytes32) := TMP_1843(bytes32)
@@ -138,17 +138,17 @@ MODIFIER_CALL, CSExitPenalties.onlyStrikes()()
 ```slithir
 PARAMETERS_REGISTRY_18(ICSParametersRegistry) := phi(['PARAMETERS_REGISTRY_9', 'PARAMETERS_REGISTRY_1', 'PARAMETERS_REGISTRY_21', 'PARAMETERS_REGISTRY_15', 'PARAMETERS_REGISTRY_17', 'PARAMETERS_REGISTRY_10', 'PARAMETERS_REGISTRY_6', 'PARAMETERS_REGISTRY_12', 'PARAMETERS_REGISTRY_7', 'PARAMETERS_REGISTRY_0'])
 ACCOUNTING_13(ICSAccounting) := phi(['ACCOUNTING_8', 'ACCOUNTING_6', 'ACCOUNTING_15', 'ACCOUNTING_11', 'ACCOUNTING_1', 'ACCOUNTING_7', 'ACCOUNTING_0', 'ACCOUNTING_12', 'ACCOUNTING_4'])
-_exitPenaltyInfo_15(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_21', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10', '_exitPenaltyInfo_0'])
+_exitPenaltyInfo_15(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_21', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10', '_exitPenaltyInfo_0'])
  curveId = ACCOUNTING.getBondCurveId(nodeOperatorId)
 TMP_1850(uint256) = HIGH_LEVEL_CALL, dest:ACCOUNTING_14(ICSAccounting), function:getBondCurveId, arguments:['nodeOperatorId_1']  
 PARAMETERS_REGISTRY_20(ICSParametersRegistry) := phi(['PARAMETERS_REGISTRY_9', 'PARAMETERS_REGISTRY_1', 'PARAMETERS_REGISTRY_21', 'PARAMETERS_REGISTRY_15', 'PARAMETERS_REGISTRY_19', 'PARAMETERS_REGISTRY_17', 'PARAMETERS_REGISTRY_10', 'PARAMETERS_REGISTRY_6', 'PARAMETERS_REGISTRY_12', 'PARAMETERS_REGISTRY_7'])
 ACCOUNTING_15(ICSAccounting) := phi(['ACCOUNTING_8', 'ACCOUNTING_6', 'ACCOUNTING_15', 'ACCOUNTING_11', 'ACCOUNTING_14', 'ACCOUNTING_1', 'ACCOUNTING_7', 'ACCOUNTING_12', 'ACCOUNTING_4'])
-_exitPenaltyInfo_17(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_21', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_16', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10'])
+_exitPenaltyInfo_17(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_21', '_exitPenaltyInfo_16', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10'])
 curveId_1(uint256) := TMP_1850(uint256)
  allowedExitDelay = PARAMETERS_REGISTRY.getAllowedExitDelay(curveId)
 TMP_1851(uint256) = HIGH_LEVEL_CALL, dest:PARAMETERS_REGISTRY_20(ICSParametersRegistry), function:getAllowedExitDelay, arguments:['curveId_1']  
 PARAMETERS_REGISTRY_21(ICSParametersRegistry) := phi(['PARAMETERS_REGISTRY_9', 'PARAMETERS_REGISTRY_1', 'PARAMETERS_REGISTRY_20', 'PARAMETERS_REGISTRY_21', 'PARAMETERS_REGISTRY_15', 'PARAMETERS_REGISTRY_17', 'PARAMETERS_REGISTRY_10', 'PARAMETERS_REGISTRY_6', 'PARAMETERS_REGISTRY_12', 'PARAMETERS_REGISTRY_7'])
-_exitPenaltyInfo_18(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_21', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_17', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10'])
+_exitPenaltyInfo_18(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_21', '_exitPenaltyInfo_17', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10'])
 allowedExitDelay_1(uint256) := TMP_1851(uint256)
  eligibleToExitInSec <= allowedExitDelay
 TMP_1852(bool) = eligibleToExitInSec_1 <= allowedExitDelay_1
@@ -171,7 +171,7 @@ MODIFIER_CALL, CSExitPenalties.onlyModule()()
 ```
 #### CSExitPenalties.getExitPenaltyInfo(uint256,bytes) [EXTERNAL]
 ```slithir
-_exitPenaltyInfo_20(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_21', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10', '_exitPenaltyInfo_0'])
+_exitPenaltyInfo_20(mapping(bytes32 => ExitPenaltyInfo)) := phi(['_exitPenaltyInfo_9', '_exitPenaltyInfo_19', '_exitPenaltyInfo_14', '_exitPenaltyInfo_6', '_exitPenaltyInfo_8', '_exitPenaltyInfo_18', '_exitPenaltyInfo_21', '_exitPenaltyInfo_13', '_exitPenaltyInfo_5', '_exitPenaltyInfo_10', '_exitPenaltyInfo_0'])
  keyPointer = _keyPointer(nodeOperatorId,publicKey)
 TMP_1856(bytes32) = INTERNAL_CALL, CSExitPenalties._keyPointer(uint256,bytes)(nodeOperatorId_1,publicKey_1)
 keyPointer_1(bytes32) := TMP_1856(bytes32)
@@ -257,11 +257,11 @@ TMP_455(None) = SOLIDITY_CALL revert SafeCastOverflowedUintDowncast(uint8,uint25
 TMP_456 = CONVERT value_1 to uint248
 RETURN TMP_456
 ```
-#### ICSParametersRegistry.getExitDelayPenalty(uint256) [EXTERNAL]
+#### ICSParametersRegistry.getAllowedExitDelay(uint256) [EXTERNAL]
 ```slithir
 
 ```
-#### ICSParametersRegistry.getAllowedExitDelay(uint256) [EXTERNAL]
+#### ICSParametersRegistry.getExitDelayPenalty(uint256) [EXTERNAL]
 ```slithir
 
 ```

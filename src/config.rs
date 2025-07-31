@@ -9,12 +9,13 @@ use std::env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditType {
-    BugBounty,
+    Code4rena,
+    Sherlock,
     Client,
 }
 
 // TYPE OF AUDIT
-pub const AUDIT_TYPE: AuditType = AuditType::BugBounty;
+pub const AUDIT_TYPE: AuditType = AuditType::Code4rena;
 
 // Application constants - these don't need to be configurable via environment
 /// Maximum call graph traversal depth for code slice generation

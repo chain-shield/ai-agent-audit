@@ -3,11 +3,6 @@
 
 
 
-
-
-
-
-
 ### Storage layout (CSModule) 
 
 ```text
@@ -26,6 +21,11 @@ _depositableValidatorsCount uint64
 _nodeOperatorsCount uint64
 
 ```
+
+
+
+
+
 
 #### CSModule._onlyRecoverer() [INTERNAL]
 ```slithir
@@ -1580,7 +1580,7 @@ newCount_8(uint256) := phi(['newCount_6', 'newCount_7'])
 #### CSModule._enqueueNodeOperatorKeys(uint256,uint256,uint32) [INTERNAL]
 ```slithir
 nodeOperatorId_1(uint256) := phi(['nodeOperatorId_1', 'nodeOperatorId_1'])
-queuePriority_1(uint256) := phi(['priority_1', 'QUEUE_LOWEST_PRIORITY_19', 'priority_1'])
+queuePriority_1(uint256) := phi(['QUEUE_LOWEST_PRIORITY_19', 'priority_1', 'priority_1'])
 count_1(uint32) := phi(['toEnqueue_3', 'count_1', 'toMigrate_1'])
 _nodeOperators_75(mapping(uint256 => NodeOperator)) := phi(['_nodeOperators_66', '_nodeOperators_27', '_nodeOperators_67', '_nodeOperators_77', '_nodeOperators_54', '_nodeOperators_63', '_nodeOperators_73', '_nodeOperators_57', '_nodeOperators_60', '_nodeOperators_53', '_nodeOperators_78', '_nodeOperators_55', '_nodeOperators_18', '_nodeOperators_0', '_nodeOperators_6', '_nodeOperators_69', '_nodeOperators_31', '_nodeOperators_29', '_nodeOperators_7', '_nodeOperators_20', '_nodeOperators_56', '_nodeOperators_59', '_nodeOperators_76', '_nodeOperators_68', '_nodeOperators_42'])
  no = _nodeOperators[nodeOperatorId]
@@ -1832,11 +1832,11 @@ Emit Initialized(version_1)
  _checkInitializing()
 INTERNAL_CALL, Initializable._checkInitializing()()
 ```
-#### ICSAccounting.depositETH(uint256) [EXTERNAL]
+#### ICSAccounting.getRequiredBondForNextKeys(uint256,uint256) [EXTERNAL]
 ```slithir
 
 ```
-#### ICSAccounting.getRequiredBondForNextKeys(uint256,uint256) [EXTERNAL]
+#### ICSAccounting.depositETH(uint256) [EXTERNAL]
 ```slithir
 
 ```
@@ -1852,11 +1852,11 @@ INTERNAL_CALL, Initializable._checkInitializing()()
 ```slithir
 
 ```
-#### ICSParametersRegistry.getElRewardsStealingAdditionalFine(uint256) [EXTERNAL]
+#### ICSAccounting.lockBondETH(uint256,uint256) [EXTERNAL]
 ```slithir
 
 ```
-#### ICSAccounting.lockBondETH(uint256,uint256) [EXTERNAL]
+#### ICSParametersRegistry.getElRewardsStealingAdditionalFine(uint256) [EXTERNAL]
 ```slithir
 
 ```
@@ -2072,25 +2072,6 @@ Emit NodeOperatorRewardAddressChanged(nodeOperatorId_1,oldAddress_1,msg.sender)
 ```
 
 
-#### TransientUintUintMapLib.create() [INTERNAL]
-```slithir
- anchor = 0x6e38e7eaa4307e6ee6c66720337876ca65012869fbef035f57219354c1728400
-anchor_1(uint256) := 49854957409111686035671519084563680553609307894666343862696953572565795898368(uint256)
- prev_create_asm_0 = tload(uint256)(anchor)
-TMP_4644(uint256) = SOLIDITY_CALL tload(uint256)(anchor_1)
-prev_create_asm_0_1(uint256) := TMP_4644(uint256)
- mstore(uint256,uint256)(0x00,anchor)
-TMP_4645(None) = SOLIDITY_CALL mstore(uint256,uint256)(0,anchor_1)
- mstore(uint256,uint256)(0x20,prev_create_asm_0)
-TMP_4646(None) = SOLIDITY_CALL mstore(uint256,uint256)(32,prev_create_asm_0_1)
- self = keccak256(uint256,uint256)(0x00,0x40)
-TMP_4647(uint256) = SOLIDITY_CALL keccak256(uint256,uint256)(0,64)
-self_1(TransientUintUintMap) := TMP_4647(uint256)
- tstore(uint256,uint256)(anchor,self)
-TMP_4648(None) = SOLIDITY_CALL tstore(uint256,uint256)(anchor_1,self_1)
- self
-RETURN self_1
-```
 #### QueueLib.clean(QueueLib.Queue,mapping(uint256 => NodeOperator),uint256,TransientUintUintMap) [EXTERNAL]
 ```slithir
  removed = 0
@@ -2184,6 +2165,25 @@ curr_3(uint128) := TMP_4361(uint128)
 reachedOutOfQueue_3(bool) := phi(['reachedOutOfQueue_2', 'reachedOutOfQueue_1'])
  (removed,lastRemovedAtDepth,visited,reachedOutOfQueue)
 RETURN removed_1,lastRemovedAtDepth_1,visited_2,reachedOutOfQueue_3
+```
+#### TransientUintUintMapLib.create() [INTERNAL]
+```slithir
+ anchor = 0x6e38e7eaa4307e6ee6c66720337876ca65012869fbef035f57219354c1728400
+anchor_1(uint256) := 49854957409111686035671519084563680553609307894666343862696953572565795898368(uint256)
+ prev_create_asm_0 = tload(uint256)(anchor)
+TMP_4644(uint256) = SOLIDITY_CALL tload(uint256)(anchor_1)
+prev_create_asm_0_1(uint256) := TMP_4644(uint256)
+ mstore(uint256,uint256)(0x00,anchor)
+TMP_4645(None) = SOLIDITY_CALL mstore(uint256,uint256)(0,anchor_1)
+ mstore(uint256,uint256)(0x20,prev_create_asm_0)
+TMP_4646(None) = SOLIDITY_CALL mstore(uint256,uint256)(32,prev_create_asm_0_1)
+ self = keccak256(uint256,uint256)(0x00,0x40)
+TMP_4647(uint256) = SOLIDITY_CALL keccak256(uint256,uint256)(0,64)
+self_1(TransientUintUintMap) := TMP_4647(uint256)
+ tstore(uint256,uint256)(anchor,self)
+TMP_4648(None) = SOLIDITY_CALL tstore(uint256,uint256)(anchor_1,self_1)
+ self
+RETURN self_1
 ```
 #### Math.min(uint256,uint256) [INTERNAL]
 ```slithir
@@ -2298,6 +2298,7 @@ TMP_4638(uint256) = count_1 (c)* SIGNATURE_LENGTH_2
 TMP_4639 = new bytes(TMP_4638)
 RETURN TMP_4636,TMP_4639
 ```
+
 #### ICSAccounting.penalize(uint256,uint256) [EXTERNAL]
 ```slithir
 
@@ -2306,7 +2307,6 @@ RETURN TMP_4636,TMP_4639
 ```slithir
 
 ```
-
 #### SigningKeys.removeKeysSigs(uint256,uint256,uint256,uint256) [INTERNAL]
 ```slithir
 SIGNING_KEYS_POSITION_2(bytes32) := phi(['SIGNING_KEYS_POSITION_0'])
@@ -2421,6 +2421,7 @@ RETURN totalKeysCount_2
 ```slithir
 
 ```
+
 #### ValidatorCountsReport.safeCountOperators(bytes,bytes) [INTERNAL]
 ```slithir
  counts.length / 16 != ids.length / 8 || ids.length % 8 != 0 || counts.length % 16 != 0
@@ -2445,7 +2446,6 @@ REF_1995 -> LENGTH ids_1
 TMP_4674(uint256) = REF_1995 (c)/ 8
 RETURN TMP_4674
 ```
-
 #### QueueLib.dequeue(QueueLib.Queue) [INTERNAL]
 ```slithir
  item = peek(self)
@@ -2473,7 +2473,7 @@ REF_1956(uint128) -> self_1 (-> []).head
 REF_1957(Batch) -> REF_1955[REF_1956]
 RETURN REF_1957
 ```
-#### ICSParametersRegistry.QUEUE_LOWEST_PRIORITY() [EXTERNAL]
+#### ICSParametersRegistry.QUEUE_LEGACY_PRIORITY() [EXTERNAL]
 ```slithir
 
 ```
@@ -2481,15 +2481,19 @@ RETURN REF_1957
 ```slithir
 
 ```
+#### ICSParametersRegistry.QUEUE_LOWEST_PRIORITY() [EXTERNAL]
+```slithir
+
+```
 #### ILidoLocator.lido() [EXTERNAL]
 ```slithir
 
 ```
-#### ICSParametersRegistry.QUEUE_LEGACY_PRIORITY() [EXTERNAL]
+#### ILidoLocator.stakingRouter() [EXTERNAL]
 ```slithir
 
 ```
-#### ILidoLocator.stakingRouter() [EXTERNAL]
+#### ICSParametersRegistry.getKeysLimit(uint256) [EXTERNAL]
 ```slithir
 
 ```
@@ -2593,10 +2597,6 @@ Emit SigningKeyAdded(nodeOperatorId_1,tmpKey_1)
  startIndex
 RETURN startIndex_2
 ```
-#### ICSParametersRegistry.getKeysLimit(uint256) [EXTERNAL]
-```slithir
-
-```
 #### ICSAccounting.getUnbondedKeysCount(uint256) [EXTERNAL]
 ```slithir
 
@@ -2626,13 +2626,6 @@ REF_1951(-> self_3 (-> [])) = REF_1951 + 1
  item
 RETURN item_2
 ```
-#### TransientUintUintMapLib.load(bytes32) [INTERNAL]
-```slithir
- self = tslot
-self_1(TransientUintUintMap) := tslot_1(bytes32)
- self
-RETURN self_1
-```
 #### TransientUintUintMapLib.set(TransientUintUintMap,uint256,uint256) [INTERNAL]
 ```slithir
  slot = _slot(self,key)
@@ -2640,6 +2633,13 @@ TMP_4653(uint256) = INTERNAL_CALL, TransientUintUintMapLib._slot(TransientUintUi
 slot_1(uint256) := TMP_4653(uint256)
  tstore(uint256,uint256)(slot,value)
 TMP_4654(None) = SOLIDITY_CALL tstore(uint256,uint256)(slot_1,value_1)
+```
+#### TransientUintUintMapLib.load(bytes32) [INTERNAL]
+```slithir
+ self = tslot
+self_1(TransientUintUintMap) := tslot_1(bytes32)
+ self
+RETURN self_1
 ```
 #### TransientUintUintMapLib.get(TransientUintUintMap,uint256) [INTERNAL]
 ```slithir

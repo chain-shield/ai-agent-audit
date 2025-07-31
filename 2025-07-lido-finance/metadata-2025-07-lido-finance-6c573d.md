@@ -1,718 +1,797 @@
 
 ## SUMMARY OF FILE: 2025-07-lido-finance/src/CSModule.sol
-### Contract: `CSModule`
-The `CSModule` contract extends several modules like `ICSModule`, `AccessControlEnumerableUpgradeable`, and others. It serves as a comprehensive staking module managing operations for node operators including key management, penalties, module state transitions, and interaction with staking routers and fee distributors.
+### CSModule Contract Summary
+CSModule is a contract for managing staking operations, utilizing roles for controlled actions like pausing, resuming, and managing node operators. It extends several contracts for access control, pause functionality, and asset recovery.
 
-### Key Storage Variables:
-- **Roles**: Various roles like `PAUSE_ROLE`, `RESUME_ROLE`, `STAKING_ROUTER_ROLE` are defined using `keccak256`. These facilitate access control in the contract.
-- **Constants**: Constants like `DEPOSIT_SIZE` and `FORCED_TARGET_LIMIT_MODE_ID` are used for defining limits and operational modes.
-- **Immutables**: `MODULE_TYPE`, `LIDO_LOCATOR`, `STETH`, `PARAMETERS_REGISTRY` are initialized through the constructor, aiding in module identification and contract interaction.
-- **Mappings**: `_queueByPriority`, `_nodeOperators`, `_isValidatorWithdrawn` manage queue priorities, node operator details, and validator withdrawal states.
-- **Counters**: `_nonce`, `_totalDepositedValidators`, `_totalExitedValidators` keep track of state changes and validator activity.
+#### Functions and Interfaces
+- **initialize(address admin)**: Initializes the module with a specific function of settung an admin and roles. 
+- **finalizeUpgradeV2()**: Prepares state for post-upgrade changes.
+- **resume()**: Resumes the module's operations if paused.
+- **pauseFor(uint256 duration)**: Pauses the contract for a specified duration.
+- **createNodeOperator**: Registers a new node operator, setting management and reward addresses, handling referrer logic. 
+- **reportELRewardsStealingPenalty**: Charges penalties for EL rewards stealing, with role-based access.
+- **submitWithdrawals**: Processes validators' withdrawals with penalties if applicable.
+- **obtainDepositData**: Retrieves deposit data for validators, organizing it by priority.
 
-### Functions Summary:
-1. **Constructor**: Initializes key external dependencies and constants defining core parameters for operation.
-2. **initialize**: Sets up access control and initializes the module like pausing the CSM initially.
-3. **finalizeUpgradeV2**: Housekeeping operation to nullify deprecated references post-upgrade.
-4. **resume & pauseFor**: Manage the active state, transitioning between paused and resumed states.
-5. **createNodeOperator**: Establishes a new node operator, configured with management and reward properties.
-6. **addValidatorKeysETH/WstETH/StETH**: Upload keys with corresponding stETH or wstETH as collateral.
-7. **propose/confirm/modifyNodeOperatorAddress**: Manage node operator address changes for management or rewards.
-8. **onRewardsMinted & onNodeOperatorXXXX**: Handle reward distribution and update node operator summary.
-9. **obtainDepositData**: Fetch depositable keys and signatures from the queue based on demands.
-10. **_enqueueNodeOperatorKeys**: Internally manage the queue of keys for maximum allowable limits and prioritization.
+#### Variables
+- **MODULE_TYPE (bytes32)**: Identifies the module.
+- **LIDO_LOCATOR (ILidoLocator)**: Provides access to the Lido contract.
+- **STETH (IStETH)**: Reference to the stETH contract.
+- **PARAMETERS_REGISTRY (ICSParametersRegistry)**: Holds parameter configurations.
+- **ACCOUNTING (ICSAccounting)**: Manages validator accounts and fees.
+- **_nodeOperators (mapping)**: Stores details of each node operator.
+- **_queueByPriority (mapping)**: Organizes validator queues by priority.
+
 
 
 ## SUMMARY OF FILE: 2025-07-lido-finance/src/CSParametersRegistry.sol
-### Contract Summary: CSParametersRegistry
-The `CSParametersRegistry` contract is responsible for managing various configuration parameters used in staking operations. It offers flexibility to modify these parameters depending on specific curves while providing a set of default values. Dual Governance is implemented to ensure malicious changes can be checked by stETH holders.
+### CSParametersRegistry Contract Summary
+The `CSParametersRegistry` smart contract is a comprehensive parameter registry for the crypto staking ecosystem, focusing on Curve Staking Module parameters. It's designed with an emphasis on flexible control of staking parameters by admins.
 
-### Function Summaries
+#### Key Features:
+- Utilizes role-based access control to limit who can alter parameters.
+- Implements default settings integrated with dynamic curve-based configurations.
 
-- **Constructor (uint256 queueLowestPriority)**
-  - **Summary:** Initializes the contract with a specified `queueLowestPriority`, ensuring it's non-zero, and disables initializers for upgradeability.
-  - **Interface:** `constructor(uint256 queueLowestPriority)`
+#### Key Functions:
+- **initialize** - Sets up the admin role and initializes multiple default parameters.
+- **Configurations Setters and Getters** - Functions allow admins to set and get configurations related to key removal charges, performance leeway, strikes parameters, etc.
+- **Data Management** - Internal functions manage parameter validity, storage, and event emission for state changes.
 
-- **Initialize (address admin, InitializationData calldata data)**
-  - **Summary:** Sets initial configuration parameters based on input data and assigns the admin role, ensuring necessary validations.
-  - **Interface:** `function initialize(address admin, InitializationData calldata data) external initializer`
+#### Key Storage Variables:
+- `QUEUE_LOWEST_PRIORITY`, `QUEUE_LEGACY_PRIORITY` - Constants defining operational priorities.
+- Mappings for parameter storage per curve, e.g., `_keyRemovalCharges`, `_performanceCoefficients`.
 
-- **Various set and unset functions**
-  - **Summary:** Functions like `setDefaultKeyRemovalCharge`, `unsetKeyRemovalCharge`, etc., allow admins to set and unset various configuration parameters specific to curveIds. They are guarded by role-based access.
-  - **Interface:** Functions include setting methods like `function setDefaultKeyRemovalCharge(uint256 keyRemovalCharge) external` or unsetting like `function unsetKeyRemovalCharge(uint256 curveId) external`
-
-- **Getters for configuration parameters**
-  - **Summary:** Functions such as `getKeyRemovalCharge` provide access to configuration values, defaulting to global defaults if specific values are unset.
-  - **Interface:** `function getKeyRemovalCharge(uint256 curveId) external view returns (uint256)`
-
-- **Internal Setters**
-  - **Summary:** Internal methods such as `_setDefaultQueueConfig` handle validations and state updates for default parameters.
-  - **Interface:** Internal functions are not directly accessible but are invoked within the public functions to perform core logic.
-
-### Storage Variables
-
-- **MAX_BP**
-  - **Definition:** An internal constant representing the maximal allowable value for basis points, set to 10,000.
-  - **Explanation:** Used to validate configurations ensuring they don't exceed limits.
-
-- **defaultKeyRemovalCharge, defaultElRewardsStealingAdditionalFine, defaultKeysLimit**
-  - **Definition:** Public uint256 variables representing default values for key removal, additional EL fines, and key limits.
-  - **Explanation:** These defaults apply at the contract level unless overridden for specific curves.
-
-- **Mapping `curveId` Mappings**
-  - **Definition:** Mappings such as `_keyRemovalCharges`, `_performanceLeewayData` link curveId to specific parameter settings.
-  - **Explanation:** They allow customized configurations per curveId, offering tailored parameter management.
-
-- **Queue and Strikes Configurations**
-  - **Definition:** Public and internal variables managing default queue settings and strike policies for operations.
-  - **Explanation:** Provide control over staking queues and performance penalties through adjustable parameters.
+The code structure relies on modular parameter setting methods with robust validation to prevent sybil attacks or malicious changes.
 
 
 ## SUMMARY OF FILE: 2025-07-lido-finance/src/CSAccounting.sol
 ### Contract: CSAccounting
 
-The `CSAccounting` contract manages Node Operators' bonds using stETH shares. It handles bond lock periods, supports pausing and resuming operations, and includes penalty and fee charge mechanisms.
+**Purpose**: The `CSAccounting` contract manages Node Operators' bonds in the form of stETH shares and is part of the Node Operator management and recovery process within the Lido protocol.
 
-#### Functions:
+**Inheritance**: This contract inherits from `ICSAccounting`, `CSBondCore`, `CSBondCurve`, `CSBondLock`, `PausableUntil`, `AccessControlEnumerableUpgradeable`, and `AssetRecoverer`.
 
-- **constructor:** Configures parameters for Lido locator, module, fee distributor, and bond lock periods. Initializes immutable variables for the MODULE and FEE_DISTRIBUTOR.
-- **initialize:** Sets up roles and approvals, configures bond curves, and sets the charge penalty recipient. Requires non-zero admin and charge penalty recipient addresses.
-- **finalizeUpgradeV2:** Migrates bond curves to the new format and initializes them.
-- **resume:** Allows operations to continue by removing the paused state.
-- **pauseFor:** Temporarily halts operations for a specified duration.
-- **setChargePenaltyRecipient:** Updates the recipient address for charge penalties.
-- **setBondLockPeriod:** Modifies the bond lock period.
-- **addBondCurve:** Adds new bond curves and returns their ID.
-- **updateBondCurve:** Updates existing bond curve values using a specified ID.
-- **setBondCurve:** Assigns a bond curve to a Node Operator and updates its depositable validators count.
-- **depositETH:** Handles ETH deposits for Node Operators, either directly or via a module.
-- **depositStETH & depositWstETH:** Manages stETH and wstETH deposits, validating ownership through permit if needed.
-- **claimRewardsStETH & claimRewardsWstETH:** Facilitates rewards claim, optionally using a proof, and updates available validators.
-- **lockBondETH, releaseLockedBondETH, and compensateLockedBondETH:** Manages bond locking and compensation mechanisms.
-- **settleLockedBondETH:** Processes locked bond settlement with core burning.
-- **penalize:** Reduces Node Operator's bond by burning.
-- **chargeFee:** Charges fees from Node Operator’s bond.
-- **pullFeeRewards:** Retrieves and accounts for pending rewards, updating the validator count.
-- **recoverERC20 and recoverStETHShares:** Implements asset recovery mechanisms ensuring bonds are not affected.
-- **renewBurnerAllowance:** Re-approves the burner address for all LIDO tokens.
-- **getInitializedVersion, getBondSummary, getUnbondedKeysCount, etc.**: Getter functions provide bond and operator data.
+### Summary of Key Functions and Variables
 
-#### Storage Variables:
+#### Storage Variables
+- **MODULE**: An immutable interface to the Staking Module, used for interaction with node operators.
+- **FEE_DISTRIBUTOR**: An immutable interface to the Fee Distributor for handling fee operations.
+- **chargePenaltyRecipient**: Address of the recipient for penalty charges, modifiable by admin roles.
 
-- **bytes32 public constant PAUSE_ROLE, RESUME_ROLE, etc.:** Define roles for specific contract permissions.
-- **ICSModule public immutable MODULE, ICSFeeDistributor public immutable FEE_DISTRIBUTOR:** Store module and fee distributor addresses.
-- **address public chargePenaltyRecipient:** Address that receives penalties, configurable by the admin role.
+#### Functions
+
+1. **Constructor**
+   - Initializes the contract with addresses for Lido locator, module, fee distributor, and bond lock periods.
+   - Validates that essential addresses are non-zero.
+
+2. **Initialize**
+   - Reinitializer for setting up roles, bonding curves, and admin privileges.
+   - Sets up Lido allowance for transactions.
+
+3. **finalizeUpgradeV2**
+   - Migrates existing bond curves to a new format during upgrades, ensuring consistency in bond-related parameters.
+
+4. **resume**
+   - Resumes contract operations that were previously paused.
+
+5. **pauseFor**
+   - Pauses the contract for a specified duration if invoked by an authorized role.
+
+6. **setChargePenaltyRecipient**
+   - Updates the penalty charge recipient address, restricting changes to admin role holders.
+
+7. **setBondLockPeriod**
+   - Sets the duration for which bonds are locked, managed by admin roles.
+
+8. **addBondCurve**
+   - Allows for the addition of new bond curves by members with manage privileges.
+
+9. **depositETH**
+   - Handles deposits in ETH to node operators' bond accounts, enforcing module-only access.
+
+10. **claimRewardsStETH**
+    - Claims rewards in stETH, with proof verification for node operators.
+
+11. **lockBondETH**
+    - Locks a specified amount of ETH in bond for node operators, module restricted.
+
+12. **recoverERC20**
+    - Enables ERC20 token recovery, excluding Lido tokens, restricted to recoverer roles.
+
+### Overall Summary
+The `CSAccounting` contract implements comprehensive functions for managing bonds, distributing fees, and controlling operational states related to node operator management in the Lido ecosystem. It enables role-based access control, supports bond curve modifications, and facilitates staking and fee reward handling through secure allowances and verifications. The contract ensures structured upgrades through initializer functions and maintains recovery and penalty mechanisms to align with Lido's network reliability and security standards.
 
 
 ## SUMMARY OF FILE: 2025-07-lido-finance/src/CSStrikes.sol
-### CSStrikes Contract Summary
-
-The `CSStrikes` contract in Solidity is an implementation of the `ICSStrikes` interface aimed at handling bad performance proofs via Merkle proofs. It incorporates modules like ICSModule, ICSAccounting, ICSExitPenalties, and ICSParametersRegistry. The contract provides methods to set ejectors, process Oracle reports, and manage bad performance proofs.
-
-#### Contract Definition
-- **Name**: `CSStrikes`
-- **Author**: vgorkavenko
-- **Inherits**: `ICSStrikes`, `Initializable`, `AccessControlEnumerableUpgradeable`
+### Contract: CSStrikes
+The `CSStrikes` contract manages key strikes within a defined module, accounting for bad performance of keys validated through a Merkle proof system. It uses multiple interfaces to facilitate these operations.
 
 #### Storage Variables
-- **ORACLE**: (`address`) immutable address of the Oracle responsible for reports.
-- **MODULE**: (`ICSModule`) immutable module address used for accounting.
-- **ACCOUNTING**: (`ICSAccounting`) immutable associated accounting interface.
-- **EXIT_PENALTIES**: (`ICSExitPenalties`) immutable penalties interface for exits.
-- **PARAMETERS_REGISTRY**: (`ICSParametersRegistry`) immutable registry for parameter settings.
-- **`ejector`**: (`ICSEjector`) responsible for executing the ejection of bad performance.
-- **`treeRoot`**: (`bytes32`) latest Merkle Tree root representing valid performance data.
-- **`treeCid`**: (`string`) CID of the latest published Merkle Tree for validation purposes.
+- **ORACLE** (`address`) - The address of the Oracle used for processing reports.
+- **MODULE, ACCOUNTING, EXIT_PENALTIES, PARAMETERS_REGISTRY** (`immutable` instances) - References to module contracts for organizing related operations.
+- **ejector** (`ICSEjector`) - Reference to the Ejector contract facilitating the ejection of nodes after verifying strikes.
+- **treeRoot** (`bytes32`) - Holds the latest Merkle tree root for strike data validation.
+- **treeCid** (`string`) - Stores CID for the last published Merkle tree for tracing data sources.
+
+#### Constructor
+```solidity
+constructor(
+    address module,
+    address oracle,
+    address exitPenalties,
+    address parametersRegistry
+)
+```
+- Initializes the contract with module, oracle, exit penalties, and parameters registry addresses.
 
 #### Functions
+- **initialize**
+```solidity
+function initialize(address admin, address _ejector) external initializer
+```
+Initializes the contract, setting up roles and the ejector.
 
-- **Constructor**: 
-  - **Interface**: `constructor(address module, address oracle, address exitPenalties, address parametersRegistry)`
-  - **Summary**: Initializes immutables for module interaction, oracle setup, exit penalties, and parameters registry, also disables further initializers.
+- **setEjector**
+```solidity
+function setEjector(address _ejector) external onlyRole(DEFAULT_ADMIN_ROLE)
+```
+Allows admin to update the ejector address.
 
-- **initialize**:
-  - **Interface**: `function initialize(address admin, address _ejector) external initializer`
-  - **Summary**: Sets up the admin role and assigns an ejector for managing bad performers.
+- **processOracleReport**
+```solidity
+function processOracleReport(bytes32 _treeRoot, string calldata _treeCid) external onlyOracle
+```
+Handles new data from the Oracle, updating the tree root and CID.
 
-- **setEjector**:
-  - **Interface**: `function setEjector(address _ejector) external onlyRole(DEFAULT_ADMIN_ROLE)`
-  - **Summary**: Updates the ejector address responsible for managing poorly performing nodes.
+- **processBadPerformanceProof**
+```solidity
+function processBadPerformanceProof(KeyStrikes[] calldata keyStrikesList, bytes32[] calldata proof, bool[] calldata proofFlags, address refundRecipient) external payable
+```
+Processes proofs of bad performance, ejecting and refunding accordingly.
 
-- **processOracleReport**: 
-  - **Interface**: `function processOracleReport(bytes32 _treeRoot, string calldata _treeCid) external onlyOracle`
-  - **Summary**: Processes a new oracle report to update the Merkle Tree root and CID, ensuring consistency.
+- **getInitializedVersion**
+```solidity
+function getInitializedVersion() external view returns (uint64)
+```
+Returns the initialized version of the contract.
 
-- **processBadPerformanceProof**: 
-  - **Interface**: `function processBadPerformanceProof(KeyStrikes[] calldata keyStrikesList, bytes32[] calldata proof, bool[] calldata proofFlags, address refundRecipient) external payable`
-  - **Summary**: Validates performance data using Merkle proof, handling any penalties and refunds accordingly.
+- **verifyProof**
+```solidity
+function verifyProof(KeyStrikes[] calldata keyStrikesList, bytes[] memory pubkeys, bytes32[] calldata proof, bool[] calldata proofFlags) public view returns (bool)
+```
+Verifies the Merkle proof of key strikes.
 
-- **getInitializedVersion**: 
-  - **Interface**: `function getInitializedVersion() external view returns (uint64)`
-  - **Summary**: Retrieves the initialized version of the contract.
+- **hashLeaf**
+```solidity
+function hashLeaf(KeyStrikes calldata keyStrikes, bytes memory pubkey) public pure returns (bytes32)
+```
+Creates a hash from key strikes data using a Merkle proof leaf.
 
-- **verifyProof**:
-  - **Interface**: `function verifyProof(KeyStrikes[] calldata keyStrikesList, bytes[] memory pubkeys, bytes32[] calldata proof, bool[] calldata proofFlags) public view returns (bool)`
-  - **Summary**: Verifies given performance data against stored Merkle Tree proof.
-
-- **hashLeaf**:
-  - **Interface**: `function hashLeaf(KeyStrikes calldata keyStrikes, bytes memory pubkey) public pure returns (bytes32)`
-  - **Summary**: Generates a hash for Merkle Tree verification from the given leaf data.
-
-- **_setEjector**:
-  - **Interface**: `function _setEjector(address _ejector) internal`
-  - **Summary**: Internal method to safely update the ejector address.
-
-- **_ejectByStrikes**:
-  - **Interface**: `function _ejectByStrikes(KeyStrikes calldata keyStrikes, bytes memory pubkey, uint256 value, address refundRecipient) internal`
-  - **Summary**: Internal logic to manage node ejection based on performance threshold.
+This contract relies on accurate Merkle proofs to maintain integrity and enforce ejections related to performance issues.
 
 
 ## SUMMARY OF FILE: 2025-07-lido-finance/src/CSFeeOracle.sol
-### Contract: CSFeeOracle
-The `CSFeeOracle` contract, inheriting from multiple libraries and interfaces, manages reporting related to fees and strikes on a blockchain system. It defines several ACL roles such as `SUBMIT_DATA_ROLE`, `PAUSE_ROLE`, `RESUME_ROLE`, and `RECOVERER_ROLE`. These roles manage permissions for data submission, pausing and resuming operations, and recovering assets respectively. The contract references fee distribution through `ICSFeeDistributor` and handles strike data using `ICSStrikes`.
+### CSFeeOracle Contract Summary
 
-### Storage Variables
-- **SUBMIT_DATA_ROLE** `bytes32`: A constant defining permissions for data submission related to committee reports.
-- **PAUSE_ROLE** `bytes32`: A constant defining permissions to pause oracle report acceptance.
-- **RESUME_ROLE** `bytes32`: A constant that allows resuming paused oracle operations.
-- **RECOVERER_ROLE** `bytes32`: A constant that grants permission to recover assets.
-- **FEE_DISTRIBUTOR** `ICSFeeDistributor`: Immutable reference to the fee distributor.
-- **STRIKES** `ICSStrikes`: Immutable reference to the strikes management.
-- **_feeDistributor** `ICSFeeDistributor`: Deprecated internal storage for fee distributor reference.
-- **_avgPerfLeewayBP** `uint256`: Deprecated internal storage likely for performance leeway.
+The `CSFeeOracle` contract inherits from `ICSFeeOracle`, `BaseOracle`, `PausableUntil`, and `AssetRecoverer`. It provides fee distribution logic and handles consensus report data processing by interacting with `ICSFeeDistributor` and `ICSStrikes` interfaces.
 
-### Functions
-- **constructor**
-```solidity
-constructor(address feeDistributor, address strikes, uint256 secondsPerSlot, uint256 genesisTime)
-```
-This initializes the contract with addresses for the fee distributor and strikes, and includes time parameters for the `BaseOracle`.
+### Function Summaries
+
+- **Constructor**
+  - **Definition:** `constructor(address feeDistributor, address strikes, uint256 secondsPerSlot, uint256 genesisTime)`
+  - **Summary:** Initializes the `CSFeeOracle` contract with fee distributor and strikes addresses, validating that they are not zero. Inherits initialization from `BaseOracle` using slot timing parameters.
 
 - **initialize**
-```solidity
-function initialize(address admin, address consensusContract, uint256 consensusVersion) external
-```
-Initializes the contract from scratch, requisite roles are assigned, and consensus parameters are set.
+  - **Definition:** `initialize(address admin, address consensusContract, uint256 consensusVersion) external`
+  - **Summary:** Sets up initial roles and contract parameters, specifically granting the admin the default role. It also initializes the base oracle contract with consensus details.
 
 - **finalizeUpgradeV2**
-```solidity
-function finalizeUpgradeV2(uint256 consensusVersion) external
-```
-Finalizes upgrades by setting the consensus version and clearing deprecated storage.
+  - **Definition:** `finalizeUpgradeV2(uint256 consensusVersion) external`
+  - **Summary:** Upgrades the contract consensus version and clears deprecated storage slots. Updates the version to 2.
 
 - **resume**
-```solidity
-function resume() external
-```
-Resumes contract operations post-pause, needs `RESUME_ROLE` permission.
+  - **Definition:** `function resume() external onlyRole(RESUME_ROLE)`
+  - **Summary:** Resumes the oracle operations using the `_resume` method, requiring the `RESUME_ROLE` permission.
 
 - **pauseFor**
-```solidity
-function pauseFor(uint256 duration) external
-```
-Pauses contract operations for a given duration, accessible under `PAUSE_ROLE`.
+  - **Definition:** `function pauseFor(uint256 duration) external onlyRole(PAUSE_ROLE)`
+  - **Summary:** Temporarily pauses the oracle using the `_pauseFor` method for a specified duration, needing the `PAUSE_ROLE`.
 
 - **submitReportData**
-```solidity
-function submitReportData(ReportData calldata data, uint256 contractVersion) external
-```
-Allows submission of report data ensuring the sender is authorized, and processes consensus-aligned data.
+  - **Definition:** `function submitReportData(ReportData calldata data, uint256 contractVersion) external whenResumed`
+  - **Summary:** Submits oracle report data for processing, conducting all necessary checks on roles, consensus data, and contract version.
 
 - **_handleConsensusReport**
-```solidity
-function _handleConsensusReport(ConsensusReport memory, uint256, uint256) internal
-```
-Handles consensus report but remains unimplemented as no async processing is required.
+  - **Definition:** `function _handleConsensusReport(ConsensusReport memory, uint256, uint256) internal override`
+  - **Summary:** Placeholder for handling report consensus once reached; currently no action taken.
 
 - **_handleConsensusReportData**
-```solidity
-function _handleConsensusReportData(ReportData calldata data) internal
-```
-Processes oracle report data utilizing `FEE_DISTRIBUTOR` and `STRIKES` for information related to fees and strikes.
+  - **Definition:** `function _handleConsensusReportData(ReportData calldata data) internal`
+  - **Summary:** Processes oracle report data via external contracts `FEE_DISTRIBUTOR` and `STRIKES`.
 
 - **_checkMsgSenderIsAllowedToSubmitData**
-```solidity
-function _checkMsgSenderIsAllowedToSubmitData() internal view
-```
-Verifies if the sender is permitted to submit data based on consensus or role assignment.
+  - **Definition:** `function _checkMsgSenderIsAllowedToSubmitData() internal view`
+  - **Summary:** Ensures the message sender has permission to submit data by checking roles.
 
 - **_onlyRecoverer**
-```solidity
-function _onlyRecoverer() internal view
-```
-Asserts role presence necessary for asset recovery.
+  - **Definition:** `function _onlyRecoverer() internal view override`
+  - **Summary:** Validates if the caller has the recovery role.
+
+### Storage Variables
+
+- **SUBMIT_DATA_ROLE**
+  - **Definition:** `bytes32 public constant SUBMIT_DATA_ROLE = keccak256("SUBMIT_DATA_ROLE");`
+  - **Explanation:** Unique identifier for role allowing report data submission.
+
+- **PAUSE_ROLE**
+  - **Definition:** `bytes32 public constant PAUSE_ROLE = keccak256("PAUSE_ROLE");`
+  - **Explanation:** Identifier for the role authorized to pause oracle reports.
+
+- **RESUME_ROLE**
+  - **Definition:** `bytes32 public constant RESUME_ROLE = keccak256("RESUME_ROLE");`
+  - **Explanation:** Role that allows resumption of paused reports.
+
+- **RECOVERER_ROLE**
+  - **Definition:** `bytes32 public constant RECOVERER_ROLE = keccak256("RECOVERER_ROLE");`
+  - **Explanation:** Grants permission for asset recovery operations.
+
+- **FEE_DISTRIBUTOR**
+  - **Definition:** `ICSFeeDistributor public immutable FEE_DISTRIBUTOR;`
+  - **Explanation:** Immutable reference to the fee distributor contract interface.
+
+- **STRIKES**
+  - **Definition:** `ICSStrikes public immutable STRIKES;`
+  - **Explanation:** Immutable reference to the strikes processing interface.
+
+- **_feeDistributor**
+  - **Definition:** `ICSFeeDistributor internal _feeDistributor;`
+  - **Explanation:** Deprecated storage for fee distributor, clearing in upgrade to V2.
+
+- **_avgPerfLeewayBP**
+  - **Definition:** `uint256 internal _avgPerfLeewayBP;`
+  - **Explanation:** Previously used for performance leeway, deprecated and cleared in upgrade.
 
 
 ## SUMMARY OF FILE: 2025-07-lido-finance/src/CSExitPenalties.sol
-### CSExitPenalties Contract
-The `CSExitPenalties` contract manages penalties and fees related to node operators' exit operations within a curved staking setup. It inherits the `ExitTypes` functionality and implements the `ICSExitPenalties` interface.
+### CSExitPenalties Contract Summary
+The `CSExitPenalties` contract is part of a smart contract system designed to manage penalties for node operators who do not comply with exit protocols. This contract addresses penalties related to delayed exits, triggered exits, and strikes (performance penalties). It uses interfaces to interact with modules for accounting and parameter management.
 
-#### Constructor
-- **Interface**: `constructor(address module, address parametersRegistry, address strikes)`
-- **Summary**: Initializes the contract with module, parameters registry, and strikes addresses, each of which must be non-zero.
+#### Storage Variables
+- **MODULE**: Holds the ICSModule instance, ensuring methods are called by authorized modules.
+- **PARAMETERS_REGISTRY**: Stores ICSParametersRegistry for configuring penalty parameters.
+- **ACCOUNTING**: Represents ICSAccounting module for accounting-related features.
+- **STRIKES**: Holds the address for STRIKES, ensuring only authorized contracts can report performance issues.
+- **_exitPenaltyInfo**: Mapping storing exit penalty information with a unique key comprising the node operator's ID and public key.
 
-#### processExitDelayReport
-- **Interface**: `function processExitDelayReport(uint256 nodeOperatorId, bytes calldata publicKey, uint256 eligibleToExitInSec) external onlyModule`
-- **Summary**: Processes the exit delay report for a node operator. Issues a delay penalty if applicable, and emits `ValidatorExitDelayProcessed`.
+#### Functions
+- **constructor**: Initializes the contract with module addresses, ensuring they are not zero addresses.
 
-#### processTriggeredExit
-- **Interface**: `function processTriggeredExit(uint256 nodeOperatorId, bytes calldata publicKey, uint256 withdrawalRequestPaidFee, uint256 exitType) external onlyModule`
-- **Summary**: Processes an exit triggered by a node operator. Sets a withdrawal request fee if not already set and emits `TriggeredExitFeeRecorded`.
+- **processExitDelayReport**: Allows the module to report delayed exits, calculating penalties if applicable, based on predefined parameters.
 
-#### processStrikesReport
-- **Interface**: `function processStrikesReport(uint256 nodeOperatorId, bytes calldata publicKey) external onlyStrikes`
-- **Summary**: Handles strikes reports for a node operator. Issues a strikes penalty and emits `StrikesPenaltyProcessed`.
+- **processTriggeredExit**: Handles penalties for non-voluntary exits. Updates penalty records and ensures fees are within limits.
 
-#### isValidatorExitDelayPenaltyApplicable
-- **Interface**: `function isValidatorExitDelayPenaltyApplicable(uint256 nodeOperatorId, bytes calldata publicKey, uint256 eligibleToExitInSec) external view onlyModule returns (bool)`
-- **Summary**: Checks if a delay penalty is applicable for a validator exit based on allowed delay. Returns true if applicable and not previously set.
+- **processStrikesReport**: Allows STRIKES to report performance issues, calculating penalties as needed.
 
-#### getExitPenaltyInfo
-- **Interface**: `function getExitPenaltyInfo(uint256 nodeOperatorId, bytes calldata publicKey) external view returns (ExitPenaltyInfo memory)`
-- **Summary**: Retrieves penalty information for a given node operator and public key.
+- **isValidatorExitDelayPenaltyApplicable**: Checks if a delayed exit penalty is applicable, only accessible to the module.
 
-#### _keyPointer
-- **Interface**: `function _keyPointer(uint256 nodeOperatorId, bytes calldata publicKey) internal pure returns (bytes32)`
-- **Summary**: Generates a unique key for storing penalty information based on node operator ID and public key.
+- **getExitPenaltyInfo**: Provides penalty information for a node operator's validator, accessible to external queries.
 
-### Storage Variables
-- **MODULE (ICSModule)**: References the module interface, set during initialization, immutable.
-- **PARAMETERS_REGISTRY (ICSParametersRegistry)**: Points to the parameters registry interface, immutable.
-- **ACCOUNTING (ICSAccounting)**: Holds the accounting interface reference, derived from the module.
-- **STRIKES (address)**: Address of the strikes, immutable.
-- **_exitPenaltyInfo (mapping)**: Stores exit penalty info, using a node operator's ID and public key hash as a key.
+- **_keyPointer**: Internal function generating a unique key for storage mapping using node operator ID and public key.
 
 
 ## SUMMARY OF FILE: 2025-07-lido-finance/src/VettedGateFactory.sol
-The `VettedGateFactory` contract is designed to create instances of `VettedGate` using an ossifiable proxy pattern. This allows a vetted gate implementation to be deployed and managed with an ability to upgrade if needed, while deploying new instances specific to a certain curve and tree. 
+### `VettedGateFactory` Contract
+The `VettedGateFactory` contract is a factory designed to create instances of the `VettedGate` contract. It uses the `OssifiableProxy` to delegate functionality to an implementation address, ensuring a flexible and upgradable architecture.
 
-### Contract: VettedGateFactory
-This contract implements `IVettedGateFactory` interface, providing the functionality to create new `VettedGate` instances.
+### `VETTED_GATE_IMPL` Storage Variable
+- **Definition**: `address public immutable VETTED_GATE_IMPL;`
+- **Explanation**: Stores the address of the `VettedGate` implementation, which is immutable and set at deployment. This ensures that all created proxies point to the same implementation, maintaining consistency across all `VettedGate` instances.
 
-#### Variable: 
-- `VETTED_GATE_IMPL`: An address that points to the implementation of the `VettedGate`. It is immutable and set at the time of the contract's construction.
+### Constructor
+- **Summary**: `constructor(address vettedGateImpl)`
+- **Interface**: Sets the `VETTED_GATE_IMPL` address during deployment. Throws an error if the provided address is zero.
 
-#### Constructor:
-```solidity
-constructor(address vettedGateImpl)
-```
-- **Summary**: Sets the vetted gate implementation address. Ensures the address is not zero to avoid deployment with an invalid implementation.
-
-#### Function: 
-- `create`: 
-```solidity
-function create(uint256 curveId, bytes32 treeRoot, string calldata treeCid, address admin) external returns (address instance)
-```
-- **Summary**: This function creates a new instance of a `VettedGate` by using an `OssifiableProxy` pointing to the `VETTED_GATE_IMPL`. It initializes the instance and emits a `VettedGateCreated` event to log the address of the newly created vetted gate.
+### `create` Function
+- **Summary**: `function create(uint256 curveId, bytes32 treeRoot, string calldata treeCid, address admin) external returns (address instance)`
+- **Interface**: Creates a new `OssifiableProxy` pointing to `VETTED_GATE_IMPL`, initializes it with given parameters, and returns its address. Emits a `VettedGateCreated` event upon successful creation.
 
 
 ## SUMMARY OF FILE: 2025-07-lido-finance/src/CSVerifier.sol
-The project documentation provides a comprehensive list of files included in the project, categorized by their location and purpose. The folders primarily consist of script and source (src) files, with additional test files to ensure functionality. These files include scripts for deploying various components in different environments (e.g., Mainnet, DevNet), constants, fork helpers, utilities, and core source files for different modules like CSVerifier, CSExitPenalties, and more. The abstracts and interfaces provide necessary structure and communication standards across various parts of the project. Numerous libraries assist in implementing tasks related to asset management, queue handling, and consensus. Additionally, test files exist to validate code functionality, with mocks provided for easier testing of components.
+### CSVerifier Contract Summary
+The `CSVerifier` contract is part of a smart contract ecosystem for Ethereum 2.0 staking and validator management by Lido. This contract implements the `ICSVerifier` interface and extends functionality from `AccessControlEnumerable` and `PausableUntil`. It performs tasks related to verifying Ethereum 2.0 validator withdrawals and integrates with a staking module to submit withdrawals.
 
+### Function Summaries
 
-## SUMMARY OF FILE: 2025-07-lido-finance/src/lib/proxy/OssifiableProxy.sol
-### OssifiableProxy Contract:
-
-The `OssifiableProxy` contract extends the `ERC1967Proxy` to include additional administrative features for managing proxy upgrades and ossification. An ossified proxy cannot be upgraded as it locks the admin rights permanently, effectively freezing the current implementation.
-
-#### Contract Definition
-- **OssifiableProxy**: Enhances an upgradeable proxy with functionalities to make the proxy immutable, or ossified, which disallows future changes after administration is relinquished.
-
-### Function Summaries:
-
-**onlyAdmin Modifier**
+#### amountWei
 ```solidity
-modifier onlyAdmin()
+function amountWei(Withdrawal memory withdrawal) pure returns (uint256)
 ```
-- Ensures that only the current admin can execute the function, and the proxy is not ossified (admin rights given to the zero address).
+Converts a withdrawal amount represented in gwei to wei.
 
-**Constructor**
+#### gweiToWei
 ```solidity
-constructor(address implementation_, address admin_, bytes memory data_)
+function gweiToWei(uint64 amount) pure returns (uint256)
 ```
-- Initializes the proxy with the given implementation and admin, and optionally executes a call with setup data.
+Helper function to convert a given amount in gwei to wei units by multiplying the gwei value by a factor of 1 gwei.
 
-**receive() Function**
+#### constructor
 ```solidity
-receive() external payable
+constructor(...)
 ```
-- Ensures fallback mechanism for receiving ether, primarily included for compatibility with legacy warning suppression.
+Initializes the `CSVerifier` contract with specified parameters for withdrawal addresses, module addresses, epochs, historical roots, and GIndices. It checks for valid configurations and sets default roles for admin.
 
-**proxy__ossify Function:**
-```solidity
-function proxy__ossify() external onlyAdmin
-```
-- Transfers admin rights to the zero address, thereby ossifying the proxy and preventing further upgrades.
-
-**proxy__changeAdmin Function**
-```solidity
-function proxy__changeAdmin(address newAdmin_) external onlyAdmin
-```
-- Allows changing the admin within the proxy.
-
-**proxy__upgradeTo Function:**
-```solidity
-function proxy__upgradeTo(address newImplementation_) external onlyAdmin
-```
-- Upgrades to a new implementation without additional setup calls.
-
-**proxy__upgradeToAndCall Function:**
-```solidity
-function proxy__upgradeToAndCall(address newImplementation_, bytes calldata setupCalldata_) external onlyAdmin
-```
-- Upgrades the proxy while allowing immediate setup calls with provided calldata.
-
-**proxy__getAdmin Function:**
-```solidity
-function proxy__getAdmin() external view returns (address)
-```
-- Returns the current admin address of the proxy.
-
-**proxy__getImplementation Function:**
-```solidity
-function proxy__getImplementation() external view returns (address)
-```
-- Retrieves the current implementation address.
-
-**proxy__getIsOssified Function:**
-```solidity
-function proxy__getIsOssified() external view returns (bool)
-```
-- Checks if the proxy is ossified by verifying if the admin address has been set to zero.
-
-### Storage Variables
-
-**Storage of the contract relies on inherited state management from `ERC1967Proxy` and uses utility functions within `ERC1967Utils` to manage proxy state such as admin and implementation addresses.**
-
-
-## SUMMARY OF FILE: 2025-07-lido-finance/src/lib/base-oracle/HashConsensus.sol
-# HashConsensus Contract Summary
-
-## Contract Overview
-HashConsensus is a smart contract that manages an oracle members committee allowing members to achieve consensus on hashed data reports over specified time frames. These time frames are defined by epochs and slots, aligning with Ethereum's consensus layer. This contract ensures that relevant on-chain data is sampled and processed efficiently within these frames, supporting functionalities such as quorum setting, member management, and reporting.
-
-## Functions
-
-### getChainConfig
-```solidity
-function getChainConfig() external view returns (uint256 slotsPerEpoch, uint256 secondsPerSlot, uint256 genesisTime);
-```
-Provides the chain parameters that relate epoch and slot to timestamp, crucial for determining timeframes and deadlines within the contract.
-
-### getFrameConfig
-```solidity
-function getFrameConfig() external view returns (uint256 initialEpoch, uint256 epochsPerFrame, uint256 fastLaneLengthSlots);
-```
-Returns the current frame configuration including the initial frame epoch, the length of frames in epochs, and the fast lane reporting slots.
-
-### getCurrentFrame
-```solidity
-function getCurrentFrame() external view returns (uint256 refSlot, uint256 reportProcessingDeadlineSlot);
-```
-Fetches details about the current reporting frame, providing the reference slot for consensus and the deadline for report processing.
-
-### getIsMember
-```solidity
-function getIsMember(address addr) external view returns (bool);
-```
-Checks if the provided address is part of the current oracle committee.
-
-### getMembers
-```solidity
-function getMembers() external view returns (address[] memory addresses, uint256[] memory lastReportedRefSlots);
-```
-Retrieves a list of all current members along with the reference slots of their latest reports.
-
-### submitReport
-```solidity
-function submitReport(uint256 slot, bytes32 report, uint256 consensusVersion) external;
-```
-Allows oracle members to submit a hash for the specific reference slot, facilitating the consensus process.
-
-## Main Storage Variables
-
-### MANAGE_MEMBERS_AND_QUORUM_ROLE
-```solidity
-bytes32 public constant MANAGE_MEMBERS_AND_QUORUM_ROLE = keccak256("MANAGE_MEMBERS_AND_QUORUM_ROLE");
-```
-Access Control List (ACL) role enabling modification of members and quorum.
-
-### DISABLE_CONSENSUS_ROLE
-```solidity
-bytes32 public constant DISABLE_CONSENSUS_ROLE = keccak256("DISABLE_CONSENSUS_ROLE");
-```
-ACL role permitting the disabling of consensus mechanisms.
-
-### SLOTS_PER_EPOCH
-```solidity
-uint64 internal immutable SLOTS_PER_EPOCH;
-```
-Defines the number of slots per epoch as per chain configuration, pivotal for frame calculations.
-
-### _quorum
-```solidity
-uint256 internal _quorum;
-```
-Describes the number of members required to reach consensus, ensuring the oracle's validity and operation.
-
-
-## SUMMARY OF FILE: 2025-07-lido-finance/src/lib/utils/PausableUntil.sol
-### Contract: PausableUntil
-The `PausableUntil` contract provides functionality to pause and resume contract operations based on time settings. It allows an indefinite pause or a specific time-limited pause, storing the information in a designated storage slot.
-
-### Storage Variables:
-- `RESUME_SINCE_TIMESTAMP_POSITION`: (bytes32) The storage position for storing the resumption timestamp, calculated using a hash.
-- `PAUSE_INFINITELY`: (uint256) A constant value used to denote indefinite pause using the maximum possible uint256 value.
-
-### Functions:
-- **getResumeSinceTimestamp()**: Returns the timestamp for when the contract will resume, or a special value if paused indefinitely.
-  ```solidity
-  function getResumeSinceTimestamp() external view returns (uint256);
-  ```
-- **isPaused()**: Checks if the contract is currently in a paused state.
-  ```solidity
-  function isPaused() public view returns (bool);
-  ```
-- **_resume()**: Ends the pause period prematurely and resumes contract operations, if currently paused.
-  ```solidity
-  function _resume() internal;
-  ```
-- **_pauseFor(uint256 duration)**: Pause the contract for a specific duration or indefinitely.
-  ```solidity
-  function _pauseFor(uint256 duration) internal;
-  ```
-- **_pauseUntil(uint256 pauseUntilInclusive)**: Pauses the contract until a specific future timestamp.
-  ```solidity
-  function _pauseUntil(uint256 pauseUntilInclusive) internal;
-  ```
-- **_setPausedState(uint256 resumeSince)**: Helper function to update the paused state with a new resume timestamp.
-  ```solidity
-  function _setPausedState(uint256 resumeSince) internal;
-  ```
-- **_checkPaused()**: Validates if the contract is paused, reverts if not.
-  ```solidity
-  function _checkPaused() internal view;
-  ```
-- **_checkResumed()**: Validates if the contract is not paused, reverts if it is.
-  ```solidity
-  function _checkResumed() internal view;
-  ```
-
-
-## SUMMARY OF FILE: 2025-07-lido-finance/src/lib/utils/Versioned.sol
-### Versioned Contract Summary
-
-The `Versioned` contract is part of the Lido project, focusing on managing the versioning of contracts. It utilizes the `UnstructuredStorage` library for handling storage slots and manages versions of a contract through events and revert errors.
-
-#### Constructor
-- **Purpose**: Initializes the contract by setting the version storage to petrified, preventing any initialization until explicitly set up.
-- **Definition**: `constructor()`.
-
-#### Functions
-
-- **getContractVersion**
-  - **Interface**: `function getContractVersion() public view returns (uint256)`
-  - **Summary**: Retrieves the current contract version stored in the blockchain storage.
-
-- **_initializeContractVersionTo**
-  - **Interface**: `function _initializeContractVersionTo(uint256 version) internal`
-  - **Summary**: Sets the initial contract version. Ensures the version is non-zero and the slot is not already initialized.
-
-- **_updateContractVersion**
-  - **Interface**: `function _updateContractVersion(uint256 newVersion) internal`
-  - **Summary**: Validates that the new version is exactly one increment above the current version before updating.
-
-- **_checkContractVersion**
-  - **Interface**: `function _checkContractVersion(uint256 version) internal view`
-  - **Summary**: Confirms the passed version matches the current contract version.
-
-- **_setContractVersion**
-  - **Interface**: `function _setContractVersion(uint256 version) private`
-  - **Summary**: Sets the contract version in storage and emits a `ContractVersionSet` event.
-
-#### Storage Variables
-
-- **CONTRACT_VERSION_POSITION**
-  - Represents the storage slot key for contract version. Ensures unique storage without conflict.
-
-- **PETRIFIED_VERSION_MARK**
-  - Marks the version as petrified, with the highest `uint256` to indicate an uninitialized state.
-
-### Special Events and Errors
-
-- **ContractVersionSet**: Emits when the contract version is set.
-- **NonZeroContractVersionOnInit**: Thrown if initialization is attempted on non-zero version.
-- **InvalidContractVersion & InvalidContractVersionIncrement**: Errors for invalid version settings.
-- **UnexpectedContractVersion**: Error for version mismatch.
-
-
-## SUMMARY OF FILE: 2025-07-lido-finance/src/VettedGate.sol
-### VettedGate Contract
-
-The `VettedGate` contract manages access and control for a staking system with additional functionalities such as referral programs, pausing, and setting Merkle Trees for eligible nodes. It inherits from `IVettedGate`, `AccessControlEnumerableUpgradeable`, `PausableUntil`, and `AssetRecoverer`. 
-
-### Functions
-
-- **initialize**: Initializes contract settings including a curve ID, tree root, and the admin role.  
-- **resume**: Resumes contract operations if paused, accessible via the `RESUME_ROLE`.  
-- **pauseFor**: Pauses operations for a set duration, protected by `PAUSE_ROLE`.  
-- **startNewReferralProgramSeason**: Starts a referral program season with a curve ID and threshold, controlled by `START_REFERRAL_SEASON_ROLE`.  
-- **endCurrentReferralProgramSeason**: Ends the active referral program season, requiring `END_REFERRAL_SEASON_ROLE`.  
-- **addNodeOperatorETH/StETH/WstETH**: Adds a node operator with specified parameters, using different assets (ETH, StETH, WstETH respectively); includes referral counting.  
-- **claimBondCurve/claimReferrerBondCurve**: Claims a bond curve for node operators or referrers, requiring proof via Merkle verification.  
-- **setTreeParams**: Sets the Merkle tree root and CID, needs `SET_TREE_ROLE`.  
-- **getReferralsCount**: Retrieves the referral count for an address, optionally in a specific season.  
-- **getInitializedVersion**: Returns the initialized version number.  
-- **isReferrerConsumed/isConsumed**: Checks if a referrer or address has been used.  
-- **verifyProof/hashLeaf**: Verifies a Merkle proof or hashes a member address for Merkle checking.
-
-### Storage Variables
-
-- **MODULE**: Immutable reference to `ICSModule` address, representing the staking module.  
-- **ACCOUNTING**: Immutable reference to `ICSAccounting`, linked to the `MODULE`.  
-- **curveId & referralCurveId**: Store bond curve IDs for different contexts (default and referrals).  
-- **treeRoot & treeCid**: Manage the Merkle Tree root and its corresponding CID for validation.  
-- **referralsThreshold**: Sets minimum referrals for bond curve eligibility.  
-- **isReferralProgramSeasonActive**: Boolean managing referral season status.  
-- **referralProgramSeasonNumber**: Tracks current referral program season number.  
-- **_consumedAddresses/_referralCounts/_consumedReferrers**: Mapping addresses and referrers for usage tracking and referral counts.
-
-
-## SUMMARY OF FILE: 2025-07-lido-finance/src/CSFeeDistributor.sol
-### CSFeeDistributor Contract Summary
-
-#### Contract Definition
-`CSFeeDistributor` is a contract designed to manage the distribution of fees in stETH to Node Operators (NOs) and rebate recipients. It integrates with various roles, supports rebates, and maintains a record of distribution history using Merkle proofs for validation.
-
-#### Storage Variables
-- **RECOVERER_ROLE**: A constant defining the role necessary to recover assets, initialized to the keccak256 hash of "RECOVERER_ROLE".
-- **STETH**: An immutable reference to the stETH contract to handle shares.
-- **ACCOUNTING**: The address of the accounting module, immutable for security.
-- **ORACLE**: The oracle's address responsible for providing data.
-- **treeRoot**: Holds the current Merkle Tree root for fee distribution.
-- **treeCid & logCid**: Strings that store IPFS CIDs for distribution logs and trees.
-- **distributedShares**: Maps Node Operator IDs to distributed stETH shares, allowing tracking.
-- **totalClaimableShares**: Total stETH shares available for NO claims.
-- **_distributionDataHistory & distributionDataHistoryCount**: Keeps historical distribution data and a count of these entries.
-- **rebateRecipient**: Address set for receiving rebates.
-
-#### Functions
-- **constructor**: Sets the stETH, accounting, and oracle addresses. Disables initializers after construction.
-- **initialize**: Initializes contract with admin and rebate recipient addresses.
-- **finalizeUpgradeV2**: Finishes a contract upgrade by setting the rebate recipient.
-- **setRebateRecipient**: Updates the rebate recipient address and emits an event.
-- **distributeFees**: Validates proofs and distributes fees to node operators based on cumulative fees and shares.
-- **processOracleReport**: Updates state variables based on the oracle's report, including rebate processing.
-- **recoverERC20**: Allows authorized recovery of ERC20 tokens, excluding stETH.
-- **getInitializedVersion**: Provides the version of initialization.
-- **pendingSharesToDistribute**: Returns pending shares for distribution.
-- **getHistoricalDistributionData**: Retrieves distribution history data by index.
-- **getFeesToDistribute**: Calculates and returns the stETH shares available for distribution.
-- **hashLeaf**: Computes the hash for Merkle tree leaves.
-- **_setRebateRecipient**: Internal function for setting the rebate recipient.
-
-
-## SUMMARY OF FILE: 2025-07-lido-finance/src/CSEjector.sol
-# CSEjector Contract
-
-The `CSEjector` contract in Solidity is part of a system that handles the management and ejection of validator keys in a staking environment. This contract relies on roles for access control and includes functionalities around pausing operations, recovering assets, and managing exits for validators.
-
-## Contract Overview
-### contract CSEjector
-Inherits from multiple contracts such as `ICSEjector`, `ExitTypes`, `AccessControlEnumerable`, `PausableUntil`, and `AssetRecoverer`. It centralizes the ejection process for validators through both voluntary or automated mechanisms, leveraging strict access control.
-
-## Important Functions
-
-### function resume()
+#### resume
 ```solidity
 function resume() external onlyRole(RESUME_ROLE)
 ```
-Resumes operations after a pause, requiring the caller to have the `RESUME_ROLE`.
+Allows resuming the verifier's operations if the caller has the `RESUME_ROLE`.
 
-### function pauseFor()
+#### pauseFor
 ```solidity
 function pauseFor(uint256 duration) external onlyRole(PAUSE_ROLE)
 ```
-Pauses operations for a specified duration, requiring the `PAUSE_ROLE`.
+Pauses the verifier's operations for a specified duration if the caller has the `PAUSE_ROLE`.
 
-### function voluntaryEject()
+#### processWithdrawalProof
 ```solidity
-function voluntaryEject(uint256 nodeOperatorId, uint256 startFrom, uint256 keysCount, address refundRecipient) external payable whenResumed
+function processWithdrawalProof(...)
 ```
-Ejects a specified number of validator keys starting from a given index for a node operator, ensuring all keys are non-withdrawn and deposited, potentially refunding the caller.
+Processes a withdrawal proof for a given validator using provided beacon block header and witness information when the verifier is not paused.
 
-### function voluntaryEjectByArray()
+#### processHistoricalWithdrawalProof
 ```solidity
-function voluntaryEjectByArray(uint256 nodeOperatorId, uint256[] calldata keyIndices, address refundRecipient) external payable whenResumed
+function processHistoricalWithdrawalProof(...)
 ```
-Allows ejection of non-sequential validator keys by their indices, ensuring they are deposited and non-withdrawn before proceeding.
+Handles proof processing for historical withdrawals with detailed validations and state checks, using supplied proof data.
 
-### function ejectBadPerformer()
+### Storage Variables
+
+- `PAUSE_ROLE` & `RESUME_ROLE`: Constants for access control roles.
+- `BEACON_ROOTS`: Address constant used in the EIP-4788 context.
+- `SLOTS_PER_EPOCH` & `SLOTS_PER_HISTORICAL_ROOT`: Constants defining Ethereum blockchain time parameters.
+- `GI_*`: Various `GIndex` instances holding constants related to GIndexing withdrawable states and historical summaries.
+- `FIRST_SUPPORTED_SLOT`, `PIVOT_SLOT`, `CAPELLA_SLOT`: Slots related to Ethereum chain forks and supported operations.
+- `WITHDRAWAL_ADDRESS`: Immutable address where validator withdrawals are directed.
+- `MODULE`: Immutable instance of the staking module contract.
+
+
+## SUMMARY OF FILE: 2025-07-lido-finance/src/lib/proxy/OssifiableProxy.sol
+The `OssifiableProxy` contract is an advanced proxy implementation based on the ERC1967 standard, featuring additional admin functionalities. The contract allows for the ossification of the proxy, a state where it cannot undergo further upgrades by removing admin privileges.
+
+### Functions:
+
+**`modifier onlyAdmin()`**
+- **Interface:** `modifier onlyAdmin()`
+- **Summary:** Validates that the method caller is the admin and that the proxy is not ossified. It throws a `NotAdmin` error if the caller is not the admin and a `ProxyIsOssified` error if the admin address is `0`.
+
+**`constructor (address implementation_, address admin_, bytes memory data_)`**
+- **Interface:** `constructor(address implementation_, address admin_, bytes memory data_)`
+- **Summary:** Initializes the proxy with a specified implementation and admin and calls the implementation's initialization logic if `data_` is not empty.
+
+**`receive()`**
+- **Interface:** `receive() external payable`
+- **Summary:** A fallback function that delegates calls to the address returned by `_implementation()`. It handles empty call data by suppressing Solidity warnings regarding payable fallback function with no receive function.
+
+**`proxy__ossify()`**
+- **Interface:** `function proxy__ossify() external onlyAdmin`
+- **Summary:** Transfers admin rights to the zero address, effectively ossifying the proxy to block any future upgrades. Emits `ProxyOssified` and `AdminChanged` events.
+
+**`proxy__changeAdmin(address newAdmin_)`**
+- **Interface:** `function proxy__changeAdmin(address newAdmin_) external onlyAdmin`
+- **Summary:** Updates the proxy's admin to a new address, ensuring future administrative actions can only be executed by the new admin address.
+
+**`proxy__upgradeTo(address newImplementation_)`**
+- **Interface:** `function proxy__upgradeTo(address newImplementation_) external onlyAdmin`
+- **Summary:** Upgrades the proxy to a new implementation using the `ERC1967Utils` utilities without any additional setup call.
+
+**`proxy__upgradeToAndCall(address newImplementation_, bytes calldata setupCalldata_)`**
+- **Interface:** `function proxy__upgradeToAndCall(address newImplementation_, bytes calldata setupCalldata_) external onlyAdmin`
+- **Summary:** Upgrades the proxy to a new implementation and executes a setup call if `setupCalldata_` is provided.
+
+**`proxy__getAdmin()`**
+- **Interface:** `function proxy__getAdmin() external view returns (address)`
+- **Summary:** Returns the current admin address, allowing external contracts or interfaces to verify the proxy's admin.
+
+**`proxy__getImplementation()`**
+- **Interface:** `function proxy__getImplementation() external view returns (address)`
+- **Summary:** Returns the address of the current implementation, providing transparency about whom the proxy is delegating calls to.
+
+**`proxy__getIsOssified()`**
+- **Interface:** `function proxy__getIsOssified() external view returns (bool)`
+- **Summary:** Verifies if the proxy has been ossified by checking if the admin address is `0`.
+
+### Storage Variables:
+- **N/A (No specific storage variables defined as all variables rely on inherited utility library functions and parent classes)**
+
+
+## SUMMARY OF FILE: 2025-07-lido-finance/src/lib/base-oracle/HashConsensus.sol
+HashConsensus is a smart contract for managing an oracle committee, which enables members to reach consensus on hash reports. It divides time into frames, each with a reference slot and processing deadline, ensuring all state changes a report could entail are observed before processing the next frame's report. The contract incorporates roles for managing members, reporting intervals, and changing the report processor.
+
+### Contract Definition
 ```solidity
-function ejectBadPerformer(uint256 nodeOperatorId, uint256 keyIndex, address refundRecipient) external payable whenResumed onlyStrikes
+contract HashConsensus is IConsensusContract, AccessControlEnumerableUpgradeable
 ```
-Ejects a specific validator key if it is deemed a 'bad performer', restricted to `STRIKES`.
 
-### function triggerableWithdrawalsGateway()
+### Key Functions
+
+**Constructor**
+Sets immutable parameters for the Ethereum chain and initializes consensus frame configuration.
 ```solidity
-function triggerableWithdrawalsGateway() public view returns (ITriggerableWithdrawalsGateway)
+constructor(
+    uint256 slotsPerEpoch,
+    uint256 secondsPerSlot,
+    uint256 genesisTime,
+    uint256 epochsPerFrame,
+    uint256 fastLaneLengthSlots,
+    address admin,
+    address reportProcessor
+)
 ```
-Retrieves the triggerable withdrawals gateway address from the module's lido locator, enabling withdrawals.
 
-## Storage Variables
-
-### PAUSE_ROLE
+**getChainConfig**
+Returns immutable chain parameters, such as slots per epoch and genesis time.
 ```solidity
-bytes32 public constant PAUSE_ROLE = keccak256("PAUSE_ROLE")
+function getChainConfig() external view returns (
+    uint256 slotsPerEpoch,
+    uint256 secondsPerSlot,
+    uint256 genesisTime
+)
 ```
-Role identifier for pausing operations.
 
-### RESUME_ROLE
+**getFrameConfig**
+Provides current configuration of time-related settings, like initial epoch and frame length.
 ```solidity
-bytes32 public constant RESUME_ROLE = keccak256("RESUME_ROLE")
+function getFrameConfig() external view returns (
+    uint256 initialEpoch,
+    uint256 epochsPerFrame,
+    uint256 fastLaneLengthSlots
+)
 ```
-Role identifier for resuming operations.
 
-### RECOVERER_ROLE
+**getCurrentFrame**
+Delivers the current frame details, including its reference and processing deadline slots.
 ```solidity
-bytes32 public constant RECOVERER_ROLE = keccak256("RECOVERER_ROLE")
+function getCurrentFrame() external view returns (
+    uint256 refSlot,
+    uint256 reportProcessingDeadlineSlot
+)
 ```
-Role identifier for asset recovery operations.
 
-### STAKING_MODULE_ID
+**getIsMember**
+Checks membership status in the oracle by address.
 ```solidity
-uint256 public immutable STAKING_MODULE_ID
+function getIsMember(address addr) external view returns (bool)
 ```
-The identifier for the staking module being used in the contract operations.
 
-### MODULE
+**getIsFastLaneMember**
+Determines if an address is a fast lane member for the reporting frame.
 ```solidity
-ICSModule public immutable MODULE
+function getIsFastLaneMember(address addr) external view returns (bool)
 ```
-Represents the associated module through which various functionalities like retrieving node operator owner's information are accessed.
 
-### STRIKES
+**setFrameConfig**
+Updates configuration for epochs per frame and fast lane slots, controlling the frame operations.
 ```solidity
-address public immutable STRIKES
+function setFrameConfig(
+    uint256 epochsPerFrame,
+    uint256 fastLaneLengthSlots
+) external
 ```
-Address designated for receiving strike actions in validator management.
+
+**submitReport**
+Enables oracle members to submit their computed hash reports for a specified reference slot.
+```solidity
+function submitReport(
+    uint256 slot,
+    bytes32 report,
+    uint256 consensusVersion
+) external
+```
+
+### Key Variables
+
+**SLOTS_PER_EPOCH**
+Immutable storage tracking the number of slots per epoch in Ethereum, setting time calculation parameters.
+```solidity
+uint64 internal immutable SLOTS_PER_EPOCH;
+```
+
+**SECONDS_PER_SLOT**
+Immutable storage indicating seconds per slot, essential for synchronizing with Ethereum timeframes.
+```solidity
+uint64 internal immutable SECONDS_PER_SLOT;
+```
+
+**GENESIS_TIME**
+Immutable genesis timestamp, fundamental for mapping Ethereum slots and epochs to real-world time.
+```solidity
+uint64 internal immutable GENESIS_TIME;
+```
+
+**_reportVariants**
+Maps report variant index to its structure, key for managing multiple data report states.
+```solidity
+mapping(uint256 => ReportVariant) internal _reportVariants;
+```
+
+**_frameConfig**
+Structure tracking reporting frame settings, affecting how data is divided and analyzed across time.
+```solidity
+FrameConfig internal _frameConfig;
+```
+
+**_reportProcessor**
+Stores the contract address responsible for processing and validating consensus reports.
+```solidity
+address internal _reportProcessor;
+```
+
+### Events
+
+- **FrameConfigSet(uint256 newInitialEpoch, uint256 newEpochsPerFrame);**
+- **FastLaneConfigSet(uint256 fastLaneLengthSlots);**
+- **MemberAdded(address indexed addr, uint256 newTotalMembers, uint256 newQuorum);**
+- **MemberRemoved(address indexed addr, uint256 newTotalMembers, uint256 newQuorum);**
+- **QuorumSet(uint256 newQuorum, uint256 totalMembers, uint256 prevQuorum);**
+- **ReportReceived(uint256 indexed refSlot, address indexed member, bytes32 report);**
+- **ConsensusReached(uint256 indexed refSlot, bytes32 report, uint256 support);**
+- **ConsensusLost(uint256 indexed refSlot);**
+- **ReportProcessorSet(address indexed processor, address indexed prevProcessor);**
+
+### Errors
+
+- **InvalidChainConfig** – Thrown if chain configuration is invalid.
+- **NumericOverflow** – Thrown when a value exceeds allowable numeric limits.
+- **AdminCannotBeZero** – Thrown if admin role address is zero.
+- **ReportProcessorCannotBeZero** – Thrown if report processor address is zero.
+- **DuplicateMember** – Thrown when attempting to add a member that already exists.
+- **AddressCannotBeZero** – Thrown if a zero address is used where it's not allowed.
+
+### Explanation
+
+HashConsensus organizes oracle-driven hash consensus in time frames, respecting the Ethereum epoch durations. It defines roles and reports processing workflow, with mechanisms to handle member management, quorum setting, and fast-lane features for prioritizing report submissions. This ensures robust and timely report visibility and facilitates decision-making in dynamic environments.
+
+
+## SUMMARY OF FILE: 2025-07-lido-finance/src/lib/utils/PausableUntil.sol
+### PausableUntil Contract
+The `PausableUntil` contract provides functionality to pause and resume operations for a configurable duration. It utilizes unstructured storage to maintain the pause state, ensuring flexibility and security.
+
+#### Key Variables:
+- **RESUME_SINCE_TIMESTAMP_POSITION**: Used to store the timestamp when the contract resumes post-pause.
+- **PAUSE_INFINITELY**: A special uint256 constant marking an indefinite pause.
+
+#### Events:
+- **Paused(uint256 duration)**: Triggered when the contract is paused, indicating the duration.
+- **Resumed()**: Triggered when the contract resumes.
+
+#### Functions:
+- **getResumeSinceTimestamp()**: Returns when the contract will resume if paused, an infinite pause marker, or a past timestamp.
+- **isPaused()**: Indicates whether the contract is currently paused.
+- **_resume()**: Internal function to resume the contract, marking the operation and emitting `Resumed`.
+- **_pauseFor(uint256 duration)**: Pauses the contract for a specified duration; throws if duration is zero.
+- **_pauseUntil(uint256 pauseUntilInclusive)**: Pauses until a specified future timestamp; throws if in the past.
+- **_setPausedState(uint256 resumeSince)**: Sets the pause state using the `resumeSince` value and emits `Paused`.
+- **_checkPaused()/_checkResumed()**: Internal checks ensuring the correct paused/resumed state.
+
+
+## SUMMARY OF FILE: 2025-07-lido-finance/src/lib/utils/Versioned.sol
+### Contract: `Versioned`
+The `Versioned` contract ensures correct contract version management. It uses `UnstructuredStorage` to store version information, supporting initialization and upgrade processes by managing the version state safely. It prevents reinitialization, with version control marked by `CONTRACT_VERSION_POSITION` and locked by `PETRIFIED_VERSION_MARK`.
+
+#### Storage Variables:
+- **`CONTRACT_VERSION_POSITION`**: `bytes32` constant storing the position of the contract version in storage, initialized to a specific keccak256 hash key.
+- **`PETRIFIED_VERSION_MARK`**: `uint256` constant set to the max uint256 value, used to lock the version in the contract's storage, preventing reinitialization.
+
+#### Functions:
+- **`constructor()`**: Initializes the contract's version to `PETRIFIED_VERSION_MARK` to prevent initialization. 
+  ```solidity
+  constructor()
+  ```
+- **`getContractVersion()`**: Returns the current contract version.
+  ```solidity
+  function getContractVersion() public view returns (uint256)
+  ```
+- **`_initializeContractVersionTo(uint256 version)`**: Internal function to set the initial contract version. Checks are done to ensure the version is non-zero and uninitialized.
+  ```solidity
+  function _initializeContractVersionTo(uint256 version) internal
+  ```
+- **`_updateContractVersion(uint256 newVersion)`**: Updates to a new version, ensuring correct increment from the current version.
+  ```solidity
+  function _updateContractVersion(uint256 newVersion) internal
+  ```
+- **`_checkContractVersion(uint256 version)`**: Validates expected version matches the current version.
+  ```solidity
+  function _checkContractVersion(uint256 version) internal view
+  ```
+- **`_setContractVersion(uint256 version)`**: Private setter function that updates the version and emits a version set event.
+  ```solidity
+  function _setContractVersion(uint256 version) private
+  ```
+
+
+## SUMMARY OF FILE: 2025-07-lido-finance/src/VettedGate.sol
+# VettedGate Contract Summary
+### Contract Definition
+The `VettedGate` contract integrates several functionalities including access control, staking management, and an optional referral program using merkle trees. It enables control over node operators within a smart contract ecosystem, particularly for staking applications.
+
+### Functions
+- `constructor(address module)`: Initializes with a module address and checks for zero address, setting up the MODULE and ACCOUNTING interfaces.
+
+- `initialize(uint256 _curveId, bytes32 _treeRoot, string calldata _treeCid, address admin) external`: Sets initial configurations such as curve ID, merkle tree parameters, and assigns admin role with access control.
+
+- `resume() external`: Allows contract functionality to resume by the authorized user, granting normal operations to continue.
+
+- `pauseFor(uint256 duration) external`: Pauses operations temporarily, controlled by users with PAUSE_ROLE.
+
+- `startNewReferralProgramSeason(uint256 _referralCurveId, uint256 _referralsThreshold) external`: Initiates a new referral program season, setting required parameters and emitting an event to log the start of the new season.
+
+- `endCurrentReferralProgramSeason() external`: Ends the current referral program season, ensuring no duplicate end actions by auth checks.
+
+- `addNodeOperatorETH(...) external payable`: Adds a new node operator using ETH, verifying merkle proof and updating referrals, if applicable.
+
+- `addNodeOperatorStETH(...) external`: Similar to ETH version, this adds node operators using StETH.
+
+- `addNodeOperatorWstETH(...) external`: Allows addition using wrapped StETH, sharing functionality with StETH operators.
+
+- `claimBondCurve(uint256 nodeOperatorId, bytes32[] calldata proof) external`: Claims a bond curve by verifying proof and ensuring unique claims.
+
+- `claimReferrerBondCurve(...) external`: Allows referrers who meet specific requirements to claim a referral bond curve.
+
+- `setTreeParams(bytes32 _treeRoot, string calldata _treeCid) external`: Updates the Merkle tree's root and CID, ensuring integrity and no unauthorized changes.
+
+- `getReferralsCount(address referrer) external view`: Retrieves a referrer’s number of referrals.
+
+- `getInitializedVersion() external view`: Fetches the initialized version of the contract for compatibility checks.
+
+- `isReferrerConsumed(address referrer) external view`: Checks if a referrer's claim actions have been fulfilled.
+
+- `isConsumed(address member) external view`: Determines if a member's account has been consumed within the proof tree.
+
+- `verifyProof(address member, bytes32[] calldata proof) external view`: Validates a Merkle proof for membership verification.
+
+### Storage Variables
+- `PAUSE_ROLE`, `RESUME_ROLE`, `RECOVERER_ROLE`, et al.: Bytes32 constants defining roles for access control, allowing specific operations by authorized users.
+
+- `MODULE`: Immutable address of the ICSModule, handling members' staking module operations.
+
+- `ACCOUNTING`: Immutable address for CS accounting operations, ensuring financial integrity within the module.
+
+- `curveId`, `treeRoot`, `treeCid`: Used to define and verify eligible members using Merkle tree properties, and to assign bond curves.
+
+
+## SUMMARY OF FILE: 2025-07-lido-finance/src/CSFeeDistributor.sol
+### `CSFeeDistributor` Contract
+The `CSFeeDistributor` is a contract designed to manage the distribution of fees in the form of stETH shares to node operators, with facilities for upgrading, recovering assets, and integrating with ACL roles.
+
+#### Key Contract Interfaces:
+- **constructor:** Initializes the contract with key addresses and sets them as immutable.
+- **initialize:** Sets up the admin and rebate recipient roles for the initial upgrade.
+- **finalizeUpgradeV2:** Allows setting a rebate recipient during contract upgrade.
+- **setRebateRecipient:** Restricted to Admin, sets the recipient of rebate amounts.
+- **distributeFees:** Allocates fees based on node operators' ID, utilizing Merkle proof validation to ensure legitimacy.
+- **processOracleReport:** Handles reporting from the oracle, updating shares and distributing rebates.
+- **recoverERC20:** Enables ERC20 recovery, with constraints on certain tokens.
+- **getInitializedVersion:** Returns the initialized version of the contract.
+- **pendingSharesToDistribute:** Calculates shares pending for distribution.
+- **getHistoricalDistributionData:** Retrieves historical distribution data.
+- **getFeesToDistribute:** Calculates distributable shares for a provided Merkle proof.
+- **hashLeaf:** Hashes the input node operator ID and shares for Merkle proof.
+
+#### Important Storage Variables:
+- **RECOVERER_ROLE**: Role identifier for authorization to perform recovery operations.
+- **STETH, ACCOUNTING, ORACLE**: Immutable addresses for stETH handling, accounting operations, and Oracle data.
+- **treeRoot, treeCid, logCid:** Hold the Merkle Tree root and related metadata.
+- **distributedShares, totalClaimableShares:** Track shares distributed to nodes and total shares available for claiming.
+- **_distributionDataHistory:** Stores historical distribution data entries.
+- **distributionDataHistoryCount:** Counter for the number of distribution history records.
+- **rebateRecipient:** Address designated to receive rebate shares.
+
+
+## SUMMARY OF FILE: 2025-07-lido-finance/src/CSEjector.sol
+### CSEjector Contract Summary
+
+The `CSEjector` contract orchestrates validators' ejection processes, crucial for managing staking modules, validators, and handling role-based control via OpenZeppelin's AccessControl.
+
+#### Contract Definition 
+- **Contract Name**: `CSEjector`
+- **Inherits**: `ICSEjector`, `ExitTypes`, `AccessControlEnumerable`, `PausableUntil`, `AssetRecoverer`
+
+### Variables
+- **PAUSE_ROLE (bytes32)**: Defined for role-based access to pause functionality.
+- **RESUME_ROLE (bytes32)**: For resuming control via access.
+- **RECOVERER_ROLE (bytes32)**: Grants role-based access for asset recovery.
+- **STAKING_MODULE_ID (uint256)**: Unique identifier for staking module group.
+- **MODULE (ICSModule)**: Immutable ICSModule interface reference aiding in validators operations.
+- **STRIKES (address)**: Immutable address accessing the STRIKES module.
+
+### Functions
+
+#### Constructor
+- **Interface**:  
+  ```solidity
+  constructor(address module, address strikes, uint256 stakingModuleId, address admin)
+  ```
+- **Summary**: Initializes critical contract variables by confirming valid non-zero addresses for module, strikes, and admin, and assigns the admin role.
+
+#### resume
+- **Interface**:  
+  ```solidity
+  function resume() external onlyRole(RESUME_ROLE) succinctly
+  ```
+- **Summary**: Enables resuming of paused operations, executing under the `RESUME_ROLE`.
+
+#### pauseFor
+- **Interface**:  
+  ```solidity
+  function pauseFor(uint256 duration) external onlyRole(PAUSE_ROLE)
+  ```
+- **Summary**: Pauses contract activity for a specified duration, accessible with the `PAUSE_ROLE`.
+
+#### voluntaryEject
+- **Interface**:  
+  ```solidity
+  function voluntaryEject(uint256 nodeOperatorId, uint256 startFrom, uint256 keysCount, address refundRecipient) external payable whenResumed
+  ```
+- **Summary**: Allows node operators with the `nodeOperatorId` to voluntarily eject validators, operating only when the contract is active, ensuring non-withdrawn state of validators.
+
+#### voluntaryEjectByArray
+- **Interface**:  
+  ```solidity
+  function voluntaryEjectByArray(uint256 nodeOperatorId, uint256[] calldata keyIndices, address refundRecipient) external payable whenResumed
+  ```
+- **Summary**: Facilitates non-sequential ejection of validators indexed by `keyIndices`, heightened by consolidated gas efficiency.
+
+#### ejectBadPerformer
+- **Interface**:  
+  ```solidity
+  function ejectBadPerformer(uint256 nodeOperatorId, uint256 keyIndex, address refundRecipient) external payable whenResumed onlyStrikes
+  ```
+- **Summary**: Enables strikes-triggered ejection operations for underperforming nodes or unchecked validators, verified against staking modules.
+
+#### triggerableWithdrawalsGateway
+- **Interface**:  
+  ```solidity
+  function triggerableWithdrawalsGateway() public view returns (ITriggerableWithdrawalsGateway)
+  ```
+- **Summary**: Facilitates access to a `triggerableWithdrawalsGateway`, critical for orchestrating validator exit operations.
+
+### Internal Functions
+#### _onlyNodeOperatorOwner
+- **Interface**:
+  ```solidity
+  function _onlyNodeOperatorOwner(uint256 nodeOperatorId) internal view
+  ```
+- **Summary**: Confirms the sender's ownership over a `nodeOperatorId`, essential for eligibility verification.
+
+#### _onlyRecoverer
+- **Interface**:
+  ```solidity
+  function _onlyRecoverer() internal view override
+  ```
+- **Summary**: Confirms role adherence for asset recovery operations, guarded by the `RECOVERER_ROLE`.
 
 
 ## SUMMARY OF FILE: 2025-07-lido-finance/src/PermissionlessGate.sol
-### PermissionlessGate Contract
-The `PermissionlessGate` contract, which extends `AccessControlEnumerable` and `AssetRecoverer`, implements the `IPermissionlessGate` interface for adding new Node Operators without restrictions in a decentralized staking module setup.
+### Contract: PermissionlessGate
+This Solidity contract, `PermissionlessGate`, enables the permissionless addition of Node Operators. It extends `AccessControlEnumerable` for role management and `AssetRecoverer` for asset recovery. The module has a fixed `CURVE_ID` from its associated staking module.
 
-#### Key Storage Variables
-- **`bytes32 public constant RECOVERER_ROLE`**: A hashed constant for the recoverer role, providing access control for asset recovery functionalities.
-- **`uint256 public immutable CURVE_ID`**: Stores the default bond curve ID from the accounting contract, ensuring consistency across gates.
-- **`ICSModule public immutable MODULE`**: Holds a reference to the Staking Module, represented by an ICSModule interface.
+### Storage Variables:
+- **RECOVERER_ROLE** (`bytes32`): A constant role identifier for managing asset recovery. 
+- **CURVE_ID** (`uint256`): Immutable ID associated with the default bond curve from the accounting contract.
+- **MODULE** (`ICSModule`): The staking module's address, immutable once set. Ensures interactions with staking infrastructure.
 
-#### Key Functions
-- **`constructor`**: Initializes the contract with a module and admin address, setting the MODULE and CURVE_ID variables, and granting the default administrator role.
-- **`function addNodeOperatorETH`**: Adds a new Node Operator using ETH for validator keys, managing properties, and registering through the MODULE, and returns the operator ID.
-- **`function addNodeOperatorStETH`**: Similar to `addNodeOperatorETH`, but uses staked ETH (StETH) instead, requiring a permit for the transaction.
-- **`function addNodeOperatorWstETH`**: Works like `addNodeOperatorStETH`, employing wrapped staked ETH (WstETH) for key addition, also permitting transaction details.
-- **`function _onlyRecoverer`**: Internal function enforcing recoverer role checks.
+### Constructor:
+- **PermissionlessGate(address module, address admin)**: Sets up the module and admin, assigning necessary roles. 
+  - Validates addresses, setting `MODULE` and `CURVE_ID`. Grants `DEFAULT_ADMIN_ROLE` to admin.
+
+### Functions:
+- **addNodeOperatorETH**: Adds node operators funded by ETH.
+  - Uses `MODULE` to create a node operator and add validator keys.
+- **addNodeOperatorStETH**: Adds node operators funded by staked ETH.
+  - Similar to ETH function, but uses `stETH` permits.
+- **addNodeOperatorWstETH**: Adds node operators funded by wrapped staked ETH.
+  - Similar to `stETH` function, but uses `wstETH` permits.
+- **_onlyRecoverer**: Checks if the caller has `RECOVERER_ROLE` before asset recovery.
 
 
 ## Main List of Files in Project

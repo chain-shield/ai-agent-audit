@@ -13,7 +13,7 @@ use crate::{
         prompt_support::{
             post_verify::POST_VERIFY,
             pre_verify::PRE_VERIFY,
-            verify_prompt::{VERIFY_BUG_BOUNTY_PROMPT, VERIFY_PROMPT},
+            verify_prompt::{VERIFY_C4_PROMPT, VERIFY_PROMPT, VERIFY_SHERLOCK_PROMPT},
         },
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
@@ -81,10 +81,10 @@ pub async fn execute(
     info!("# of findings AFTER deduping => {}", dedup_finding_count);
     info!("now verifying each finding...");
 
-    let verify_prompt = if AUDIT_TYPE == AuditType::Client {
-        Arc::new(VERIFY_PROMPT.to_string())
-    } else {
-        Arc::new(VERIFY_BUG_BOUNTY_PROMPT.to_string())
+    let verify_prompt = match AUDIT_TYPE {
+        AuditType::Client => Arc::new(VERIFY_PROMPT.to_string()),
+        AuditType::Code4rena => Arc::new(VERIFY_C4_PROMPT.to_string()),
+        AuditType::Sherlock => Arc::new(VERIFY_SHERLOCK_PROMPT.to_string()),
     };
 
     // info!("verify prompt + scope => {}", verify_prompt_plus_scope);
