@@ -1,10 +1,3 @@
-
-
-
-
-
-
-
 ### Storage layout (CSAccounting) 
 
 ```text
@@ -12,6 +5,13 @@ _feeDistributorOld ICSFeeDistributor
 chargePenaltyRecipient address
 
 ```
+
+
+
+
+
+
+
 
 #### CSAccounting.recoverERC20(address,uint256) [EXTERNAL]
 ```slithir
@@ -106,7 +106,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(PAUSE_ROLE_1)
 ```
 #### CSAccounting.setChargePenaltyRecipient(address) [EXTERNAL]
 ```slithir
-DEFAULT_ADMIN_ROLE_7(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_10', 'DEFAULT_ADMIN_ROLE_6'])
+DEFAULT_ADMIN_ROLE_7(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_10', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_6'])
  _setChargePenaltyRecipient(_chargePenaltyRecipient)
 INTERNAL_CALL, CSAccounting._setChargePenaltyRecipient(address)(_chargePenaltyRecipient_1)
  onlyRole(DEFAULT_ADMIN_ROLE)
@@ -114,7 +114,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(DEFAULT_ADMIN_ROLE_7)
 ```
 #### CSAccounting.setBondLockPeriod(uint256) [EXTERNAL]
 ```slithir
-DEFAULT_ADMIN_ROLE_9(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_10', 'DEFAULT_ADMIN_ROLE_6'])
+DEFAULT_ADMIN_ROLE_9(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_10', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_6'])
  CSBondLock._setBondLockPeriod(period)
 INTERNAL_CALL, CSBondLock._setBondLockPeriod(uint256)(period_1)
  onlyRole(DEFAULT_ADMIN_ROLE)
@@ -122,7 +122,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(DEFAULT_ADMIN_ROLE_9)
 ```
 #### CSAccounting.addBondCurve(ICSBondCurve.BondCurveIntervalInput[]) [EXTERNAL]
 ```slithir
-MANAGE_BOND_CURVES_ROLE_1(bytes32) := phi(['MANAGE_BOND_CURVES_ROLE_0', 'MANAGE_BOND_CURVES_ROLE_2', 'MANAGE_BOND_CURVES_ROLE_4'])
+MANAGE_BOND_CURVES_ROLE_1(bytes32) := phi(['MANAGE_BOND_CURVES_ROLE_0', 'MANAGE_BOND_CURVES_ROLE_4', 'MANAGE_BOND_CURVES_ROLE_2'])
  id = CSBondCurve._addBondCurve(bondCurve)
 TMP_1438(uint256) = INTERNAL_CALL, CSBondCurve._addBondCurve(ICSBondCurve.BondCurveIntervalInput[])(bondCurve_1)
 id_1(uint256) := TMP_1438(uint256)
@@ -133,7 +133,7 @@ RETURN id_1
 ```
 #### CSAccounting.updateBondCurve(uint256,ICSBondCurve.BondCurveIntervalInput[]) [EXTERNAL]
 ```slithir
-MANAGE_BOND_CURVES_ROLE_3(bytes32) := phi(['MANAGE_BOND_CURVES_ROLE_0', 'MANAGE_BOND_CURVES_ROLE_2', 'MANAGE_BOND_CURVES_ROLE_4'])
+MANAGE_BOND_CURVES_ROLE_3(bytes32) := phi(['MANAGE_BOND_CURVES_ROLE_0', 'MANAGE_BOND_CURVES_ROLE_4', 'MANAGE_BOND_CURVES_ROLE_2'])
  CSBondCurve._updateBondCurve(curveId,bondCurve)
 INTERNAL_CALL, CSBondCurve._updateBondCurve(uint256,ICSBondCurve.BondCurveIntervalInput[])(curveId_1,bondCurve_1)
  onlyRole(MANAGE_BOND_CURVES_ROLE)
@@ -478,7 +478,7 @@ LIDO_59(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_31', 'LIDO_34', 'LIDO_59', 'L
 ```
 #### CSAccounting.initialize(ICSBondCurve.BondCurveIntervalInput[],address,uint256,address) [EXTERNAL]
 ```slithir
-DEFAULT_ADMIN_ROLE_1(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_10', 'DEFAULT_ADMIN_ROLE_6'])
+DEFAULT_ADMIN_ROLE_1(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_10', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_6'])
 LIDO_LOCATOR_9(ILidoLocator) := phi(['LIDO_LOCATOR_26', 'LIDO_LOCATOR_3', 'LIDO_LOCATOR_0', 'LIDO_LOCATOR_23', 'LIDO_LOCATOR_19', 'LIDO_LOCATOR_8', 'LIDO_LOCATOR_6'])
 LIDO_40(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_59', 'LIDO_61', 'LIDO_52', 'LIDO_3', 'LIDO_1', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_6', 'LIDO_37', 'LIDO_11'])
 WITHDRAWAL_QUEUE_10(IWithdrawalQueue) := phi(['WITHDRAWAL_QUEUE_18', 'WITHDRAWAL_QUEUE_2', 'WITHDRAWAL_QUEUE_0', 'WITHDRAWAL_QUEUE_9'])
@@ -812,13 +812,13 @@ Emit StETHSharesRecovered(msg.sender,shares_1)
 ```slithir
  _callOptionalReturn(token,abi.encodeCall(token.transfer,(to,value)))
 REF_63(transfer) -> token_1.transfer
-TMP_150(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_63,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffff7df74a00>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffff7df756c0>])
+TMP_150(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_63,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa7834a00>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa78356c0>])
 INTERNAL_CALL, SafeERC20._callOptionalReturn(IERC20,bytes)(token_1,TMP_150)
 ```
 #### SafeERC20._callOptionalReturn(IERC20,bytes) [PRIVATE]
 ```slithir
 token_1(IERC20) := phi(['token_1', 'token_1', 'token_1'])
-data_1(bytes) := phi(['TMP_167', 'approvalCall_1', 'TMP_150', 'TMP_152'])
+data_1(bytes) := phi(['TMP_150', 'TMP_152', 'TMP_167', 'approvalCall_1'])
  returndata = address(token).functionCall(data)
 TMP_170 = CONVERT token_1 to address
 TMP_171(bytes) = LIBRARY_CALL, dest:Address, function:Address.functionCall(address,bytes), arguments:['TMP_170', 'data_1'] 
