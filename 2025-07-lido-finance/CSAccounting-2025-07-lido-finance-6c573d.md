@@ -1,3 +1,8 @@
+
+
+
+
+
 ### Storage layout (CSAccounting) 
 
 ```text
@@ -8,14 +13,9 @@ chargePenaltyRecipient address
 
 
 
-
-
-
-
-
 #### CSAccounting.recoverERC20(address,uint256) [EXTERNAL]
 ```slithir
-LIDO_51(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_59', 'LIDO_61', 'LIDO_52', 'LIDO_3', 'LIDO_1', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_6', 'LIDO_37', 'LIDO_11'])
+LIDO_51(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_37', 'LIDO_59', 'LIDO_52', 'LIDO_61', 'LIDO_3', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_1', 'LIDO_6', 'LIDO_11'])
  _onlyRecoverer()
 INTERNAL_CALL, CSAccounting._onlyRecoverer()()
  token == address(LIDO)
@@ -106,7 +106,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(PAUSE_ROLE_1)
 ```
 #### CSAccounting.setChargePenaltyRecipient(address) [EXTERNAL]
 ```slithir
-DEFAULT_ADMIN_ROLE_7(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_10', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_6'])
+DEFAULT_ADMIN_ROLE_7(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_6', 'DEFAULT_ADMIN_ROLE_10'])
  _setChargePenaltyRecipient(_chargePenaltyRecipient)
 INTERNAL_CALL, CSAccounting._setChargePenaltyRecipient(address)(_chargePenaltyRecipient_1)
  onlyRole(DEFAULT_ADMIN_ROLE)
@@ -114,7 +114,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(DEFAULT_ADMIN_ROLE_7)
 ```
 #### CSAccounting.setBondLockPeriod(uint256) [EXTERNAL]
 ```slithir
-DEFAULT_ADMIN_ROLE_9(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_10', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_6'])
+DEFAULT_ADMIN_ROLE_9(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_6', 'DEFAULT_ADMIN_ROLE_10'])
  CSBondLock._setBondLockPeriod(period)
 INTERNAL_CALL, CSBondLock._setBondLockPeriod(uint256)(period_1)
  onlyRole(DEFAULT_ADMIN_ROLE)
@@ -466,7 +466,7 @@ MODULE_48(ICSModule) := phi(['MODULE_1', 'MODULE_30', 'MODULE_55', 'MODULE_47', 
 #### CSAccounting.renewBurnerAllowance() [EXTERNAL]
 ```slithir
 LIDO_LOCATOR_24(ILidoLocator) := phi(['LIDO_LOCATOR_26', 'LIDO_LOCATOR_3', 'LIDO_LOCATOR_0', 'LIDO_LOCATOR_23', 'LIDO_LOCATOR_19', 'LIDO_LOCATOR_8', 'LIDO_LOCATOR_6'])
-LIDO_57(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_59', 'LIDO_61', 'LIDO_52', 'LIDO_3', 'LIDO_1', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_6', 'LIDO_37', 'LIDO_11'])
+LIDO_57(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_37', 'LIDO_59', 'LIDO_52', 'LIDO_61', 'LIDO_3', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_1', 'LIDO_6', 'LIDO_11'])
  LIDO.approve(LIDO_LOCATOR.burner(),type()(uint256).max)
 TMP_1526(address) = HIGH_LEVEL_CALL, dest:LIDO_LOCATOR_24(ILidoLocator), function:burner, arguments:[]  
 LIDO_LOCATOR_25(ILidoLocator) := phi(['LIDO_LOCATOR_26', 'LIDO_LOCATOR_3', 'LIDO_LOCATOR_24', 'LIDO_LOCATOR_23', 'LIDO_LOCATOR_19', 'LIDO_LOCATOR_8', 'LIDO_LOCATOR_6'])
@@ -478,9 +478,9 @@ LIDO_59(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_31', 'LIDO_34', 'LIDO_59', 'L
 ```
 #### CSAccounting.initialize(ICSBondCurve.BondCurveIntervalInput[],address,uint256,address) [EXTERNAL]
 ```slithir
-DEFAULT_ADMIN_ROLE_1(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_10', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_6'])
+DEFAULT_ADMIN_ROLE_1(bytes32) := phi(['DEFAULT_ADMIN_ROLE_8', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_6', 'DEFAULT_ADMIN_ROLE_10'])
 LIDO_LOCATOR_9(ILidoLocator) := phi(['LIDO_LOCATOR_26', 'LIDO_LOCATOR_3', 'LIDO_LOCATOR_0', 'LIDO_LOCATOR_23', 'LIDO_LOCATOR_19', 'LIDO_LOCATOR_8', 'LIDO_LOCATOR_6'])
-LIDO_40(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_59', 'LIDO_61', 'LIDO_52', 'LIDO_3', 'LIDO_1', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_6', 'LIDO_37', 'LIDO_11'])
+LIDO_40(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_37', 'LIDO_59', 'LIDO_52', 'LIDO_61', 'LIDO_3', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_1', 'LIDO_6', 'LIDO_11'])
 WITHDRAWAL_QUEUE_10(IWithdrawalQueue) := phi(['WITHDRAWAL_QUEUE_18', 'WITHDRAWAL_QUEUE_2', 'WITHDRAWAL_QUEUE_0', 'WITHDRAWAL_QUEUE_9'])
 WSTETH_14(IWstETH) := phi(['WSTETH_21', 'WSTETH_5', 'WSTETH_24', 'WSTETH_0', 'WSTETH_1', 'WSTETH_13', 'WSTETH_23'])
  __AccessControlEnumerable_init()
@@ -556,7 +556,7 @@ MODIFIER_CALL, Initializable.reinitializer(uint64)(2)
 ```
 #### CSAccounting.recoverStETHShares() [EXTERNAL]
 ```slithir
-LIDO_53(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_59', 'LIDO_61', 'LIDO_52', 'LIDO_3', 'LIDO_1', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_6', 'LIDO_37', 'LIDO_11'])
+LIDO_53(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_37', 'LIDO_59', 'LIDO_52', 'LIDO_61', 'LIDO_3', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_1', 'LIDO_6', 'LIDO_11'])
  _onlyRecoverer()
 INTERNAL_CALL, CSAccounting._onlyRecoverer()()
  shares = LIDO.sharesOf(address(this)) - totalBondShares()
@@ -585,9 +585,9 @@ INTERNAL_CALL, CSBondCore._increaseBond(uint256,uint256)(nodeOperatorId_1,distri
 ```
 #### CSAccounting._unwrapStETHPermitIfRequired(address,ICSAccounting.PermitInput) [INTERNAL]
 ```slithir
-from_1(address) := phi(['from_1', 'msg.sender'])
+from_1(address) := phi(['msg.sender', 'from_1'])
 permit_1(ICSAccounting.PermitInput) := phi(['permit_1', 'permit_1'])
-LIDO_60(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_59', 'LIDO_61', 'LIDO_52', 'LIDO_3', 'LIDO_1', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_6', 'LIDO_37', 'LIDO_11'])
+LIDO_60(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_0', 'LIDO_31', 'LIDO_34', 'LIDO_37', 'LIDO_59', 'LIDO_52', 'LIDO_61', 'LIDO_3', 'LIDO_25', 'LIDO_39', 'LIDO_50', 'LIDO_35', 'LIDO_19', 'LIDO_1', 'LIDO_6', 'LIDO_11'])
  permit.value > 0 && LIDO.allowance(from,address(this)) < permit.value
 REF_559(uint256) -> permit_1.value
 TMP_1552(bool) = REF_559 > 0
@@ -610,7 +610,7 @@ LIDO_62(ILido) := phi(['LIDO_62', 'LIDO_56', 'LIDO_31', 'LIDO_34', 'LIDO_59', 'L
 ```
 #### CSAccounting._unwrapWstETHPermitIfRequired(address,ICSAccounting.PermitInput) [INTERNAL]
 ```slithir
-from_1(address) := phi(['from_1', 'msg.sender'])
+from_1(address) := phi(['msg.sender', 'from_1'])
 permit_1(ICSAccounting.PermitInput) := phi(['permit_1', 'permit_1'])
 WSTETH_22(IWstETH) := phi(['WSTETH_21', 'WSTETH_5', 'WSTETH_24', 'WSTETH_0', 'WSTETH_1', 'WSTETH_13', 'WSTETH_23'])
  permit.value > 0 && WSTETH.allowance(from,address(this)) < permit.value
@@ -812,13 +812,13 @@ Emit StETHSharesRecovered(msg.sender,shares_1)
 ```slithir
  _callOptionalReturn(token,abi.encodeCall(token.transfer,(to,value)))
 REF_63(transfer) -> token_1.transfer
-TMP_150(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_63,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa7834a00>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa78356c0>])
+TMP_150(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_63,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffff980e4a00>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffff980e56c0>])
 INTERNAL_CALL, SafeERC20._callOptionalReturn(IERC20,bytes)(token_1,TMP_150)
 ```
 #### SafeERC20._callOptionalReturn(IERC20,bytes) [PRIVATE]
 ```slithir
 token_1(IERC20) := phi(['token_1', 'token_1', 'token_1'])
-data_1(bytes) := phi(['TMP_150', 'TMP_152', 'TMP_167', 'approvalCall_1'])
+data_1(bytes) := phi(['TMP_167', 'TMP_152', 'approvalCall_1', 'TMP_150'])
  returndata = address(token).functionCall(data)
 TMP_170 = CONVERT token_1 to address
 TMP_171(bytes) = LIBRARY_CALL, dest:Address, function:Address.functionCall(address,bytes), arguments:['TMP_170', 'data_1'] 

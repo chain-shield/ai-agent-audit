@@ -21,21 +21,21 @@ Lido’s Community Staking Module (CSM) turns Ethereum solo/home stakers into pe
 
 Security is layered with role-based ACL, pausable “GateSeal”, and OssifiableProxy upgradability that can be permanently ossified.  The design guarantees operators can’t over-claim rewards, keys remain bonded, and the DAO can fine or eject misbehaving validators, maintaining Lido’s safety while welcoming community stakers.
 ## Critical Risk Findings
-[C-1]. Reentrancy issue in CSAccounting::claimRewardsStETH
-[C-2]. Storage Layout issue in CSModule::NA
+[C-1]. Reentrancy issue in CSAccounting::claimRewardsStETH - INVAID
+[C-2]. Storage Layout issue in CSModule::NA - DONE 
 ## High Risk Findings
-[H-1]. Upgradeability Initializer Safety issue in CSFeeOracle::finalizeUpgradeV2
-[H-2]. Access Control issue in CSFeeOracle::finalizeUpgradeV2
-[H-3]. Flash Loan Economic Manipulation issue in CSAccounting::depositStETH
-[H-4]. DOS issue in CSEjector::ejectBadPerformer
-[H-5]. Upgradeability Initializer Safety issue in CSAccounting::initialize
-[H-6]. DOS issue in CSFeeOracle::submitReportData
-[H-7]. DOS issue in CSFeeOracle::submitReportData
+[H-1]. Upgradeability Initializer Safety issue in CSFeeOracle::finalizeUpgradeV2  - DONE
+[H-2]. Access Control issue in CSFeeOracle::finalizeUpgradeV4 - DONE
+[H-3]. Flash Loan Economic Manipulation issue in CSAccounting::depositStETH - COULD NOT REPRODUCE
+[H-4]. DOS issue in CSEjector::ejectBadPerformer - OUT OF SCOPE - TOO DEEP DIVE TO DETERMINE
+[H-5]. Upgradeability Initializer Safety issue in CSAccounting::initialize - DONE
+[H-6]. DOS issue in CSFeeOracle::submitReportData - likely OUT OF SCOPE
+[H-7]. DOS issue in CSFeeOracle::submitReportData - INVALID
 ## Medium Risk Findings
-[M-1]. Reentrancy issue in CSStrikes::processBadPerformanceProof
-[M-2]. DOS issue in CSVerifier::processWithdrawalProof
-[M-3]. DOS issue in PermissionlessGate::addNodeOperatorETH
-[M-4]. Upgradeability Initializer Safety issue in CSFeeOracle::initialize
+[M-1]. Reentrancy issue in CSStrikes::processBadPerformanceProof - OUT OF SCOPE and IFFY
+[M-2]. DOS issue in CSVerifier::processWithdrawalProof - LEGIT - REPORTING NOW
+[M-3]. DOS issue in PermissionlessGate::addNodeOperatorETH - LOW SEVERITY
+[M-4]. Upgradeability Initializer Safety issue in CSFeeOracle::initialize - INVALID
 ## Low Risk Findings
 [L-1]. Zero Code issue in CSStrikes::constructor
 [L-2]. Oracle issue in VettedGate::claimReferrerBondCurve

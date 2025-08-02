@@ -1,3 +1,4 @@
+
 ### Storage layout (CSParametersRegistry) 
 
 ```text
@@ -27,7 +28,6 @@ defaultMaxWithdrawalRequestFee uint256
 _maxWithdrawalRequestFees mapping(uint256 => ICSParametersRegistry.MarkedUint248)
 
 ```
-
 #### CSParametersRegistry.setDefaultKeyRemovalCharge(uint256) [EXTERNAL]
 ```slithir
 DEFAULT_ADMIN_ROLE_17(bytes32) := phi(['DEFAULT_ADMIN_ROLE_28', 'DEFAULT_ADMIN_ROLE_20', 'DEFAULT_ADMIN_ROLE_68', 'DEFAULT_ADMIN_ROLE_16', 'DEFAULT_ADMIN_ROLE_36', 'DEFAULT_ADMIN_ROLE_64', 'DEFAULT_ADMIN_ROLE_60', 'DEFAULT_ADMIN_ROLE_52', 'DEFAULT_ADMIN_ROLE_30', 'DEFAULT_ADMIN_ROLE_88', 'DEFAULT_ADMIN_ROLE_48', 'DEFAULT_ADMIN_ROLE_58', 'DEFAULT_ADMIN_ROLE_84', 'DEFAULT_ADMIN_ROLE_22', 'DEFAULT_ADMIN_ROLE_44', 'DEFAULT_ADMIN_ROLE_80', 'DEFAULT_ADMIN_ROLE_38', 'DEFAULT_ADMIN_ROLE_72', 'DEFAULT_ADMIN_ROLE_18', 'DEFAULT_ADMIN_ROLE_76', 'DEFAULT_ADMIN_ROLE_24', 'DEFAULT_ADMIN_ROLE_40', 'DEFAULT_ADMIN_ROLE_62', 'DEFAULT_ADMIN_ROLE_32', 'DEFAULT_ADMIN_ROLE_66', 'DEFAULT_ADMIN_ROLE_70', 'DEFAULT_ADMIN_ROLE_50', 'DEFAULT_ADMIN_ROLE_26', 'DEFAULT_ADMIN_ROLE_86', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_46', 'DEFAULT_ADMIN_ROLE_82', 'DEFAULT_ADMIN_ROLE_56', 'DEFAULT_ADMIN_ROLE_42', 'DEFAULT_ADMIN_ROLE_74', 'DEFAULT_ADMIN_ROLE_34', 'DEFAULT_ADMIN_ROLE_54', 'DEFAULT_ADMIN_ROLE_78'])
@@ -580,7 +580,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(DEFAULT_ADMIN_ROLE_71)
 ```
 #### CSParametersRegistry.getPerformanceCoefficients(uint256) [EXTERNAL]
 ```slithir
-defaultPerformanceCoefficients_1(ICSParametersRegistry.PerformanceCoefficients) := phi(['defaultPerformanceCoefficients_1', 'defaultPerformanceCoefficients_0', 'defaultPerformanceCoefficients_2'])
+defaultPerformanceCoefficients_1(ICSParametersRegistry.PerformanceCoefficients) := phi(['defaultPerformanceCoefficients_1', 'defaultPerformanceCoefficients_2', 'defaultPerformanceCoefficients_0'])
 _performanceCoefficients_5(mapping(uint256 => ICSParametersRegistry.PerformanceCoefficients)) := phi(['_performanceCoefficients_1', '_performanceCoefficients_4', '_performanceCoefficients_5', '_performanceCoefficients_0'])
  coefficients = _performanceCoefficients[curveId]
 REF_1298(ICSParametersRegistry.PerformanceCoefficients) -> _performanceCoefficients_5[curveId_1]
@@ -624,7 +624,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(DEFAULT_ADMIN_ROLE_77)
 #### CSParametersRegistry.unsetAllowedExitDelay(uint256) [EXTERNAL]
 ```slithir
 DEFAULT_ADMIN_ROLE_79(bytes32) := phi(['DEFAULT_ADMIN_ROLE_28', 'DEFAULT_ADMIN_ROLE_20', 'DEFAULT_ADMIN_ROLE_68', 'DEFAULT_ADMIN_ROLE_16', 'DEFAULT_ADMIN_ROLE_36', 'DEFAULT_ADMIN_ROLE_64', 'DEFAULT_ADMIN_ROLE_60', 'DEFAULT_ADMIN_ROLE_52', 'DEFAULT_ADMIN_ROLE_30', 'DEFAULT_ADMIN_ROLE_88', 'DEFAULT_ADMIN_ROLE_48', 'DEFAULT_ADMIN_ROLE_58', 'DEFAULT_ADMIN_ROLE_84', 'DEFAULT_ADMIN_ROLE_22', 'DEFAULT_ADMIN_ROLE_44', 'DEFAULT_ADMIN_ROLE_80', 'DEFAULT_ADMIN_ROLE_38', 'DEFAULT_ADMIN_ROLE_72', 'DEFAULT_ADMIN_ROLE_18', 'DEFAULT_ADMIN_ROLE_76', 'DEFAULT_ADMIN_ROLE_24', 'DEFAULT_ADMIN_ROLE_40', 'DEFAULT_ADMIN_ROLE_62', 'DEFAULT_ADMIN_ROLE_32', 'DEFAULT_ADMIN_ROLE_66', 'DEFAULT_ADMIN_ROLE_70', 'DEFAULT_ADMIN_ROLE_50', 'DEFAULT_ADMIN_ROLE_26', 'DEFAULT_ADMIN_ROLE_86', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_46', 'DEFAULT_ADMIN_ROLE_82', 'DEFAULT_ADMIN_ROLE_56', 'DEFAULT_ADMIN_ROLE_42', 'DEFAULT_ADMIN_ROLE_74', 'DEFAULT_ADMIN_ROLE_34', 'DEFAULT_ADMIN_ROLE_54', 'DEFAULT_ADMIN_ROLE_78'])
-_allowedExitDelay_2(mapping(uint256 => uint256)) := phi(['_allowedExitDelay_5', '_allowedExitDelay_1', '_allowedExitDelay_4', '_allowedExitDelay_0'])
+_allowedExitDelay_2(mapping(uint256 => uint256)) := phi(['_allowedExitDelay_1', '_allowedExitDelay_4', '_allowedExitDelay_0', '_allowedExitDelay_5'])
  delete _allowedExitDelay[curveId]
 REF_1267(uint256) -> _allowedExitDelay_3[curveId_1]
 _allowedExitDelay_4 = delete REF_1267 
@@ -636,7 +636,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(DEFAULT_ADMIN_ROLE_79)
 #### CSParametersRegistry.getAllowedExitDelay(uint256) [EXTERNAL]
 ```slithir
 defaultAllowedExitDelay_1(uint256) := phi(['defaultAllowedExitDelay_2', 'defaultAllowedExitDelay_0'])
-_allowedExitDelay_5(mapping(uint256 => uint256)) := phi(['_allowedExitDelay_5', '_allowedExitDelay_1', '_allowedExitDelay_4', '_allowedExitDelay_0'])
+_allowedExitDelay_5(mapping(uint256 => uint256)) := phi(['_allowedExitDelay_1', '_allowedExitDelay_4', '_allowedExitDelay_0', '_allowedExitDelay_5'])
  delay = _allowedExitDelay[curveId]
 REF_1314(uint256) -> _allowedExitDelay_5[curveId_1]
 delay_1(uint256) := REF_1314(uint256)
@@ -665,7 +665,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(DEFAULT_ADMIN_ROLE_81)
 #### CSParametersRegistry.unsetExitDelayPenalty(uint256) [EXTERNAL]
 ```slithir
 DEFAULT_ADMIN_ROLE_83(bytes32) := phi(['DEFAULT_ADMIN_ROLE_28', 'DEFAULT_ADMIN_ROLE_20', 'DEFAULT_ADMIN_ROLE_68', 'DEFAULT_ADMIN_ROLE_16', 'DEFAULT_ADMIN_ROLE_36', 'DEFAULT_ADMIN_ROLE_64', 'DEFAULT_ADMIN_ROLE_60', 'DEFAULT_ADMIN_ROLE_52', 'DEFAULT_ADMIN_ROLE_30', 'DEFAULT_ADMIN_ROLE_88', 'DEFAULT_ADMIN_ROLE_48', 'DEFAULT_ADMIN_ROLE_58', 'DEFAULT_ADMIN_ROLE_84', 'DEFAULT_ADMIN_ROLE_22', 'DEFAULT_ADMIN_ROLE_44', 'DEFAULT_ADMIN_ROLE_80', 'DEFAULT_ADMIN_ROLE_38', 'DEFAULT_ADMIN_ROLE_72', 'DEFAULT_ADMIN_ROLE_18', 'DEFAULT_ADMIN_ROLE_76', 'DEFAULT_ADMIN_ROLE_24', 'DEFAULT_ADMIN_ROLE_40', 'DEFAULT_ADMIN_ROLE_62', 'DEFAULT_ADMIN_ROLE_32', 'DEFAULT_ADMIN_ROLE_66', 'DEFAULT_ADMIN_ROLE_70', 'DEFAULT_ADMIN_ROLE_50', 'DEFAULT_ADMIN_ROLE_26', 'DEFAULT_ADMIN_ROLE_86', 'DEFAULT_ADMIN_ROLE_0', 'DEFAULT_ADMIN_ROLE_46', 'DEFAULT_ADMIN_ROLE_82', 'DEFAULT_ADMIN_ROLE_56', 'DEFAULT_ADMIN_ROLE_42', 'DEFAULT_ADMIN_ROLE_74', 'DEFAULT_ADMIN_ROLE_34', 'DEFAULT_ADMIN_ROLE_54', 'DEFAULT_ADMIN_ROLE_78'])
-_exitDelayPenalties_2(mapping(uint256 => ICSParametersRegistry.MarkedUint248)) := phi(['_exitDelayPenalties_0', '_exitDelayPenalties_1', '_exitDelayPenalties_5', '_exitDelayPenalties_4'])
+_exitDelayPenalties_2(mapping(uint256 => ICSParametersRegistry.MarkedUint248)) := phi(['_exitDelayPenalties_5', '_exitDelayPenalties_0', '_exitDelayPenalties_1', '_exitDelayPenalties_4'])
  delete _exitDelayPenalties[curveId]
 REF_1270(ICSParametersRegistry.MarkedUint248) -> _exitDelayPenalties_3[curveId_1]
 _exitDelayPenalties_4 = delete REF_1270 
@@ -677,7 +677,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(DEFAULT_ADMIN_ROLE_83)
 #### CSParametersRegistry.getExitDelayPenalty(uint256) [EXTERNAL]
 ```slithir
 defaultExitDelayPenalty_1(uint256) := phi(['defaultExitDelayPenalty_2', 'defaultExitDelayPenalty_0'])
-_exitDelayPenalties_5(mapping(uint256 => ICSParametersRegistry.MarkedUint248)) := phi(['_exitDelayPenalties_0', '_exitDelayPenalties_1', '_exitDelayPenalties_5', '_exitDelayPenalties_4'])
+_exitDelayPenalties_5(mapping(uint256 => ICSParametersRegistry.MarkedUint248)) := phi(['_exitDelayPenalties_5', '_exitDelayPenalties_0', '_exitDelayPenalties_1', '_exitDelayPenalties_4'])
  data = _exitDelayPenalties[curveId]
 REF_1315(ICSParametersRegistry.MarkedUint248) -> _exitDelayPenalties_5[curveId_1]
 data_1(ICSParametersRegistry.MarkedUint248) := REF_1315(ICSParametersRegistry.MarkedUint248)

