@@ -167,7 +167,7 @@ impl Tool for FileRetrievalTool {
             args.file_type,
             args.query
         );
-        
+
         Err(RetrievalError::Other(anyhow::anyhow!(
             "File retrieval functionality temporarily disabled due to rig-qdrant version conflicts with rig-core 0.13.0"
         )))

@@ -125,6 +125,7 @@ pub mod llm_review {
         pub mod pre_verify;
         /// Quality assessment prompts
         pub mod qualify_prompt;
+        pub mod severity_rubics;
         /// Verification prompts
         pub mod verify_prompt;
     }

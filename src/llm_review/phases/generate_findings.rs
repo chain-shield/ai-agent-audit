@@ -9,7 +9,7 @@ use crate::{
         config::{generated_llm_prompt, Findings},
         context_state::{generate_audit_scope, get_metadata_context},
         enums::AIAgent,
-        prompt_support::{post_prompt::POST_PROMPT, pre_prompt::PRE_PROMPT},
+        prompt_support::{post_prompt::generate_post_prompt, pre_prompt::PRE_PROMPT},
     },
     master_prompts::prompt_2x_aa::PROMPT_2X_AA,
     prepare_code::git_clone::RepoPaths,
@@ -114,8 +114,9 @@ pub async fn run_security_prompt(
     shared_findings: Arc<Mutex<Findings>>,
 ) -> Result<()> {
     // 1. Build full prompt
+    let post_prompt = generate_post_prompt(&contract_name);
     let prompt_header =
-        generated_llm_prompt(&contract_name, &instructions, PRE_PROMPT, POST_PROMPT);
+        generated_llm_prompt(&contract_name, &instructions, PRE_PROMPT, &post_prompt);
     let prompt_body = generate_content_plus_context_block(&code, &added_context);
     let full_prompt = format!("{prompt_header}{prompt_body}");
 

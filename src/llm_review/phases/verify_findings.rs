@@ -3,8 +3,8 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    config::{AuditType, AUDIT_TYPE},
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    config::{AUDIT_TYPE, AuditType},
+    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     error::Result,
     llm_review::{
         config::{Finding, Findings},

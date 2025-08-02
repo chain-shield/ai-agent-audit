@@ -1,3 +1,10 @@
+use crate::{
+    config::{AuditType, AUDIT_TYPE},
+    llm_review::prompt_support::severity_rubics::{
+        CODE4RENA_SEVERITY_RUBRIC, DEFAULT_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
+    },
+};
+
 pub const POST_PROMPT_AGENT: &str = r#"
 ### FINAL OUTPUT REQUIREMENTS 
 
@@ -57,7 +64,7 @@ they match up correctly.
 
 "#;
 
-pub const POST_PROMPT: &str = r#"
+pub const POST_PROMPT_STATIC: &str = r#"
 
 ### OUTPUT REQUIREMENTS 
 
@@ -110,3 +117,61 @@ pub const POST_PROMPT: &str = r#"
 they match up correctly.
 
 "#;
+
+pub fn generate_post_prompt(contract_name: &str) -> String {
+    let security_rubric = match AUDIT_TYPE {
+        AuditType::Code4rena => CODE4RENA_SEVERITY_RUBRIC,
+        AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
+        AuditType::Client => DEFAULT_SEVERITY_RUBRIC,
+    };
+
+    format!(
+        r#"
+
+### OUTPUT REQUIREMENTS 
+
+ **For Every VIOLATION** return:
+1. **Description**: Detailed explanation including vulnerable code snippet 
+2. **Issue Type**: AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontrunMev|UpgradeabilityInitializerSafety|PausableEmergencyStop|TimestampDependentLogic|FlashLoanEconomicManipulation|DelegatecallLowLevelOps|SignatureMalleability|EventConsistency|GasGriefBlockLimit|IntegerOverflow
+3. **Contract**: The exact contract name where vulnerability is found 
+4. **Function**: The exact function name where vulnerability is found, if not applicable return "NA"
+5. **Impact**: Financial and security consequences 
+6. **Proof of Concept**: Step-by-step exploitation scenario 
+7. **Proof of Code**: Complete Foundry unit test demonstrating vulnerability
+8. **Severity**: High/Medium/Low/Info based on table below
+
+{security_rubric}
+
+9. **Mitigation**: Suggested Mitigation with code example of fix
+
+*Please respond with ONLY valid JSON in the following exact format:*
+
+{{ 
+  "findings": [
+    {{
+      "description": "Detailed explanation if vulnerability including vulnerable code snippet",
+      "issue_type": "AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontrunMev|UpgradeabilityInitializerSafety|PausableEmergencyStop|TimestampDependentLogic|FlashLoanEconomicManipulation|DelegatecallLowLevelOps|SignatureMalleability|EventConsistency|GasGriefBlockLimit|IntegerOverflow",
+      "contract": "{contract_name}", 
+      "function": "<Function>", 
+      "impact": "Business and security consequences of the vulnerability",
+      "proof_of_concept": "Step-by-step exploitation scenario",
+      "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+      "severity": "Critical | High | Medium | Low | Info",
+      "mitigation": "suggested mitigation with code example for the fix"
+    }}
+  ]
+}}
+
+- If no vulnerabilities are found, return: 
+
+{{
+  "findings": []
+}}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
+**Please double-check opening and closing brakets: `}}` and `]`, make sure 
+they match up correctly.
+
+"#
+    )
+}

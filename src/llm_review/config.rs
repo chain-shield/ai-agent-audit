@@ -3,7 +3,7 @@ use super::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     master_prompts::{prompt_2x_a::PROMPT_2X_A, prompt_2x_b::PROMPT_2X_B},
     prompts::{
         access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
