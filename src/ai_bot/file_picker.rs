@@ -230,13 +230,17 @@ mod tests {
 
         let file_picker = FilePickerTool::new(repo);
         assert_eq!(file_picker.available_files.len(), 1); // Only test.sol, README.md is excluded
-        assert!(file_picker
-            .available_files
-            .contains(&"test.sol".to_string()));
+        assert!(
+            file_picker
+                .available_files
+                .contains(&"test.sol".to_string())
+        );
         // README.md should be excluded since it's already in context
-        assert!(!file_picker
-            .available_files
-            .contains(&"README.md".to_string()));
+        assert!(
+            !file_picker
+                .available_files
+                .contains(&"README.md".to_string())
+        );
     }
 
     #[test]

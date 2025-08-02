@@ -10,7 +10,8 @@ use crate::{
         context_state::get_metadata_context,
         enums::{AIAgent, Severity},
         prompt_support::{
-            post_qualify::POST_QUALIFY, pre_qualify::PRE_QUALIFY, qualify_prompt::QUALIFY_PROMPT,
+            post_qualify::generate_post_qualify, pre_qualify::PRE_QUALIFY,
+            qualify_prompt::QUALIFY_PROMPT,
         },
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
@@ -91,12 +92,13 @@ pub async fn execute(
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async {
+                let post_qualify = generate_post_qualify();
                 let prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
                     &arc_findings.findings[i],
                     PRE_QUALIFY,
                     QUALIFY_PROMPT,
-                    POST_QUALIFY,
+                    &post_qualify,
                 );
                 add_to_inference_cost_by_type(&prompt, LlmCostType::OpenaiO3Input).await;
                 info!("quality checking finding #{}", i + 1);

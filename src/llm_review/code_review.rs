@@ -1,4 +1,4 @@
-use crate::config::{audit_config, SCOPE_CHECK_RUNS, VERIFY_RUNS};
+use crate::config::{SCOPE_CHECK_RUNS, VERIFY_RUNS, audit_config};
 use crate::error::Result;
 use crate::llm_review::config::CLAUDE_4_0_SONNET;
 use crate::llm_review::context_state::generate_audit_scope;

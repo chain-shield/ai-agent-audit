@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -128,7 +128,7 @@ fn should_skip(rel: &str) -> bool {
 #[derive(Debug, Clone, Copy)]
 enum ProjectType {
     Foundry,
-    FoundryYarn,  // Hybrid projects with both Foundry and Yarn/npm
+    FoundryYarn, // Hybrid projects with both Foundry and Yarn/npm
     Hardhat,
     Truffle,
     Generic,
@@ -138,7 +138,8 @@ fn detect_project_type(repo: &RepoPaths) -> ProjectType {
     let repo_path = repo.root.join(&repo.repo_name);
 
     // Check for various configuration files
-    let has_foundry = repo_path.join("foundry.toml").exists() || repo_path.join("forge.toml").exists();
+    let has_foundry =
+        repo_path.join("foundry.toml").exists() || repo_path.join("forge.toml").exists();
     let has_package_json = repo_path.join("package.json").exists();
     let has_yarn_lock = repo_path.join("yarn.lock").exists();
     let has_npm_lock = repo_path.join("package-lock.json").exists();
@@ -146,7 +147,8 @@ fn detect_project_type(repo: &RepoPaths) -> ProjectType {
     let has_hardhat_config = repo_path.join("hardhat.config.js").exists()
         || repo_path.join("hardhat.config.ts").exists()
         || repo_path.join("hardhat.config.cjs").exists();
-    let has_truffle_config = repo_path.join("truffle-config.js").exists() || repo_path.join("truffle.js").exists();
+    let has_truffle_config =
+        repo_path.join("truffle-config.js").exists() || repo_path.join("truffle.js").exists();
     let has_out_dir = repo_path.join("out").exists();
     let has_artifacts_dir = repo_path.join("artifacts").exists();
 
@@ -268,10 +270,7 @@ fn build_slither_args(repo: &RepoPaths, printer: Option<&str>, json_output: bool
 
     // Add printer-specific arguments
     if let Some(printer_name) = printer {
-        args.extend([
-            "--print".to_string(),
-            printer_name.to_string(),
-        ]);
+        args.extend(["--print".to_string(), printer_name.to_string()]);
     }
 
     // Add common arguments
@@ -285,10 +284,7 @@ fn build_slither_args(repo: &RepoPaths, printer: Option<&str>, json_output: bool
 
     // Add JSON output if requested
     if json_output {
-        args.extend([
-            "--json".to_string(),
-            "-".to_string(),
-        ]);
+        args.extend(["--json".to_string(), "-".to_string()]);
     }
 
     log::info!("Detected project type: {:?}", project_type);
@@ -311,9 +307,7 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
     // Add detector-specific arguments
     args.push("--exclude-dependencies".to_string());
 
-    let out = Command::new("docker")
-        .args(&args)
-        .output()?;
+    let out = Command::new("docker").args(&args).output()?;
 
     // anyhow::ensure!(out.status.success(), "slither --sarif failed");
     //
@@ -404,9 +398,7 @@ pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String>
 
     log::info!("Running Slither printer: {}", printer);
     let args = build_slither_args(repo, Some(printer), true);
-    let out = Command::new("docker")
-        .args(&args)
-        .output()?;
+    let out = Command::new("docker").args(&args).output()?;
 
     anyhow::ensure!(out.status.success(), format!("slither {} failed", printer));
 

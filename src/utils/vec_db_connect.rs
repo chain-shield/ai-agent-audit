@@ -45,9 +45,11 @@ pub fn vector_index() -> anyhow::Result<Arc<dyn VectorStoreIndexDyn>> {
 use std::sync::Arc;
 
 /// Temporary placeholder function while vector database is disabled
-/// 
+///
 /// This function returns an error indicating that vector functionality is temporarily unavailable
 /// due to rig-qdrant version conflicts with rig-core 0.13.0
 pub fn vector_index() -> anyhow::Result<Arc<dyn std::any::Any + Send + Sync>> {
-    Err(anyhow::anyhow!("Vector database functionality temporarily disabled due to rig-qdrant version conflicts"))
+    Err(anyhow::anyhow!(
+        "Vector database functionality temporarily disabled due to rig-qdrant version conflicts"
+    ))
 }
