@@ -1,4 +1,3 @@
-
 ### Storage layout (CSFeeOracle) 
 
 ```text
@@ -6,6 +5,7 @@ _feeDistributor ICSFeeDistributor
 _avgPerfLeewayBP uint256
 
 ```
+
 
 #### CSFeeOracle._onlyRecoverer() [INTERNAL]
 ```slithir
@@ -222,7 +222,7 @@ TMP_2062(Initializable.InitializableStorage) := phi(["$_4 (-> ['TMP_2062'])"])
 Emit Initialized(version_1)
  _checkInitializing()
 INTERNAL_CALL, Initializable._checkInitializing()()
-ACCOUNTING_6(address) := phi(['ACCOUNTING_4', 'ACCOUNTING_5', 'ACCOUNTING_0', 'ACCOUNTING_1'])
+ACCOUNTING_6(address) := phi(['ACCOUNTING_5', 'ACCOUNTING_4', 'ACCOUNTING_0', 'ACCOUNTING_1'])
  msg.sender != ACCOUNTING
 TMP_2068(bool) = msg.sender != ACCOUNTING_6
 CONDITION TMP_2068
@@ -235,11 +235,11 @@ CONDITION TMP_2070
  revert SenderIsNotOracle()()
 TMP_2071(None) = SOLIDITY_CALL revert SenderIsNotOracle()()
 ```
-#### ICSFeeDistributor.processOracleReport(bytes32,string,string,uint256,uint256,uint256) [EXTERNAL]
+#### ICSStrikes.processOracleReport(bytes32,string) [EXTERNAL]
 ```slithir
 
 ```
-#### ICSStrikes.processOracleReport(bytes32,string) [EXTERNAL]
+#### ICSFeeDistributor.processOracleReport(bytes32,string,string,uint256,uint256,uint256) [EXTERNAL]
 ```slithir
 
 ```

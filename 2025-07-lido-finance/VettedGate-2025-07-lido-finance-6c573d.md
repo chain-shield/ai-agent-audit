@@ -1,5 +1,4 @@
 
-
 ### Storage layout (VettedGate) 
 
 ```text
@@ -15,6 +14,7 @@ _referralCounts mapping(bytes32 => uint256)
 _consumedReferrers mapping(bytes32 => bool)
 
 ```
+
 
 #### VettedGate._onlyRecoverer() [INTERNAL]
 ```slithir
@@ -100,7 +100,7 @@ MODIFIER_CALL, AccessControlUpgradeable.onlyRole(bytes32)(END_REFERRAL_SEASON_RO
 ```
 #### VettedGate.addNodeOperatorETH(uint256,bytes,bytes,NodeOperatorManagementProperties,bytes32[],address) [EXTERNAL]
 ```slithir
-MODULE_3(ICSModule) := phi(['MODULE_22', 'MODULE_8', 'MODULE_2', 'MODULE_14', 'MODULE_0', 'MODULE_20'])
+MODULE_3(ICSModule) := phi(['MODULE_22', 'MODULE_8', 'MODULE_2', 'MODULE_0', 'MODULE_14', 'MODULE_20'])
 ACCOUNTING_9(ICSAccounting) := phi(['ACCOUNTING_28', 'ACCOUNTING_0', 'ACCOUNTING_5', 'ACCOUNTING_34', 'ACCOUNTING_13', 'ACCOUNTING_1', 'ACCOUNTING_18', 'ACCOUNTING_8', 'ACCOUNTING_23'])
 curveId_2(uint256) := phi(['curveId_11', 'curveId_16', 'curveId_21', 'curveId_0', 'curveId_1', 'curveId_6'])
  _consume(proof)
@@ -128,7 +128,7 @@ RETURN nodeOperatorId_1
 ```
 #### VettedGate.addNodeOperatorStETH(uint256,bytes,bytes,NodeOperatorManagementProperties,ICSAccounting.PermitInput,bytes32[],address) [EXTERNAL]
 ```slithir
-MODULE_9(ICSModule) := phi(['MODULE_22', 'MODULE_8', 'MODULE_2', 'MODULE_14', 'MODULE_0', 'MODULE_20'])
+MODULE_9(ICSModule) := phi(['MODULE_22', 'MODULE_8', 'MODULE_2', 'MODULE_0', 'MODULE_14', 'MODULE_20'])
 ACCOUNTING_14(ICSAccounting) := phi(['ACCOUNTING_28', 'ACCOUNTING_0', 'ACCOUNTING_5', 'ACCOUNTING_34', 'ACCOUNTING_13', 'ACCOUNTING_1', 'ACCOUNTING_18', 'ACCOUNTING_8', 'ACCOUNTING_23'])
 curveId_7(uint256) := phi(['curveId_11', 'curveId_16', 'curveId_21', 'curveId_0', 'curveId_1', 'curveId_6'])
  _consume(proof)
@@ -156,7 +156,7 @@ RETURN nodeOperatorId_1
 ```
 #### VettedGate.addNodeOperatorWstETH(uint256,bytes,bytes,NodeOperatorManagementProperties,ICSAccounting.PermitInput,bytes32[],address) [EXTERNAL]
 ```slithir
-MODULE_15(ICSModule) := phi(['MODULE_22', 'MODULE_8', 'MODULE_2', 'MODULE_14', 'MODULE_0', 'MODULE_20'])
+MODULE_15(ICSModule) := phi(['MODULE_22', 'MODULE_8', 'MODULE_2', 'MODULE_0', 'MODULE_14', 'MODULE_20'])
 ACCOUNTING_19(ICSAccounting) := phi(['ACCOUNTING_28', 'ACCOUNTING_0', 'ACCOUNTING_5', 'ACCOUNTING_34', 'ACCOUNTING_13', 'ACCOUNTING_1', 'ACCOUNTING_18', 'ACCOUNTING_8', 'ACCOUNTING_23'])
 curveId_12(uint256) := phi(['curveId_11', 'curveId_16', 'curveId_21', 'curveId_0', 'curveId_1', 'curveId_6'])
  _consume(proof)
@@ -451,7 +451,7 @@ RETURN TMP_3908
 #### VettedGate._onlyNodeOperatorOwner(uint256) [INTERNAL]
 ```slithir
 nodeOperatorId_1(uint256) := phi(['nodeOperatorId_1', 'nodeOperatorId_1'])
-MODULE_21(ICSModule) := phi(['MODULE_22', 'MODULE_8', 'MODULE_2', 'MODULE_14', 'MODULE_0', 'MODULE_20'])
+MODULE_21(ICSModule) := phi(['MODULE_22', 'MODULE_8', 'MODULE_2', 'MODULE_0', 'MODULE_14', 'MODULE_20'])
  owner = MODULE.getNodeOperatorOwner(nodeOperatorId)
 TMP_3900(address) = HIGH_LEVEL_CALL, dest:MODULE_21(ICSModule), function:getNodeOperatorOwner, arguments:['nodeOperatorId_1']  
 MODULE_22(ICSModule) := phi(['MODULE_22', 'MODULE_8', 'MODULE_2', 'MODULE_21', 'MODULE_14', 'MODULE_20'])
@@ -476,7 +476,7 @@ role_1(bytes32) := phi(['TMP_3640', 'TMP_3633', 'TMP_3638', 'TMP_3635'])
  _checkRole(role)
 INTERNAL_CALL, AccessControl._checkRole(bytes32)(role_1)
 ```
-#### ICSModule.addValidatorKeysETH(address,uint256,uint256,bytes,bytes) [EXTERNAL]
+#### ICSAccounting.setBondCurve(uint256,uint256) [EXTERNAL]
 ```slithir
 
 ```
@@ -484,7 +484,7 @@ INTERNAL_CALL, AccessControl._checkRole(bytes32)(role_1)
 ```slithir
 
 ```
-#### ICSAccounting.setBondCurve(uint256,uint256) [EXTERNAL]
+#### ICSModule.addValidatorKeysETH(address,uint256,uint256,bytes,bytes) [EXTERNAL]
 ```slithir
 
 ```

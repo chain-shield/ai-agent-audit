@@ -1,12 +1,12 @@
 
 
-
 ### Storage layout (CSExitPenalties) 
 
 ```text
 _exitPenaltyInfo mapping(bytes32 => ExitPenaltyInfo)
 
 ```
+
 
 #### CSExitPenalties.processExitDelayReport(uint256,bytes,uint256) [EXTERNAL]
 ```slithir

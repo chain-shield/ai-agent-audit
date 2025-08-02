@@ -304,7 +304,7 @@ TMP_1799(None) = SOLIDITY_CALL revert SenderIsNotEligible()()
  MANAGE_BOND_CURVES_ROLE = keccak256(bytes)(MANAGE_BOND_CURVES_ROLE)
  SET_BOND_CURVE_ROLE = keccak256(bytes)(SET_BOND_CURVE_ROLE)
  RECOVERER_ROLE = keccak256(bytes)(RECOVERER_ROLE)
-role_1(bytes32) := phi(['DEFAULT_ADMIN_ROLE_7', 'TMP_1089', 'MANAGE_BOND_CURVES_ROLE_1', 'SET_BOND_CURVE_ROLE_1', 'TMP_1082', 'DEFAULT_ADMIN_ROLE_9', 'PAUSE_ROLE_1', 'TMP_1087', 'TMP_1084', 'MANAGE_BOND_CURVES_ROLE_3', 'RESUME_ROLE_1'])
+role_1(bytes32) := phi(['TMP_1084', 'DEFAULT_ADMIN_ROLE_7', 'TMP_1089', 'SET_BOND_CURVE_ROLE_1', 'TMP_1082', 'MANAGE_BOND_CURVES_ROLE_3', 'PAUSE_ROLE_1', 'TMP_1087', 'MANAGE_BOND_CURVES_ROLE_1', 'DEFAULT_ADMIN_ROLE_9', 'RESUME_ROLE_1'])
  _checkRole(role)
 INTERNAL_CALL, AccessControlUpgradeable._checkRole(bytes32)(role_1)
  $ = _getInitializableStorage()
@@ -400,7 +400,7 @@ CONDITION TMP_1634
  revert SenderIsNotModule()()
 TMP_1635(None) = SOLIDITY_CALL revert SenderIsNotModule()()
 ```
-#### ICSModule.isValidatorWithdrawn(uint256,uint256) [EXTERNAL]
+#### ICSModule.getSigningKeys(uint256,uint256,uint256) [EXTERNAL]
 ```slithir
 
 ```
@@ -408,7 +408,8 @@ TMP_1635(None) = SOLIDITY_CALL revert SenderIsNotModule()()
 ```slithir
 
 ```
-#### ICSModule.getSigningKeys(uint256,uint256,uint256) [EXTERNAL]
+
+#### ICSModule.isValidatorWithdrawn(uint256,uint256) [EXTERNAL]
 ```slithir
 
 ```
@@ -417,7 +418,6 @@ TMP_1635(None) = SOLIDITY_CALL revert SenderIsNotModule()()
 ```slithir
 
 ```
-
 #### ICSModule.getNodeOperatorOwner(uint256) [EXTERNAL]
 ```slithir
 

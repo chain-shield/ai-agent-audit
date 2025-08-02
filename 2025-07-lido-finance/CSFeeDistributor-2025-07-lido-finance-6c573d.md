@@ -1,6 +1,4 @@
 
-
-
 ### Storage layout (CSFeeDistributor) 
 
 ```text
@@ -14,6 +12,8 @@ distributionDataHistoryCount uint256
 rebateRecipient address
 
 ```
+
+
 
 #### CSFeeDistributor.recoverERC20(address,uint256) [EXTERNAL]
 ```slithir
@@ -88,7 +88,7 @@ RETURN sharesToDistribute_1
 #### CSFeeDistributor.distributeFees(uint256,uint256,bytes32[]) [EXTERNAL]
 ```slithir
 STETH_2(IStETH) := phi(['STETH_0', 'STETH_8', 'STETH_1', 'STETH_11', 'STETH_13', 'STETH_9', 'STETH_5', 'STETH_4'])
-ACCOUNTING_2(address) := phi(['ACCOUNTING_4', 'ACCOUNTING_5', 'ACCOUNTING_0', 'ACCOUNTING_1'])
+ACCOUNTING_2(address) := phi(['ACCOUNTING_5', 'ACCOUNTING_4', 'ACCOUNTING_0', 'ACCOUNTING_1'])
 distributedShares_1(mapping(uint256 => uint256)) := phi(['distributedShares_0', 'distributedShares_3', 'distributedShares_4', 'distributedShares_6'])
 totalClaimableShares_1(uint256) := phi(['totalClaimableShares_3', 'totalClaimableShares_0', 'totalClaimableShares_4', 'totalClaimableShares_7', 'totalClaimableShares_10'])
  sharesToDistribute = getFeesToDistribute(nodeOperatorId,cumulativeFeeShares,proof)
@@ -381,7 +381,7 @@ RETURN TMP_220
 ```slithir
  _callOptionalReturn(token,abi.encodeCall(token.transfer,(to,value)))
 REF_63(transfer) -> token_1.transfer
-TMP_150(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_63,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa7834a00>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffffa78356c0>])
+TMP_150(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_63,[<slither.slithir.variables.local_variable.LocalIRVariable object at 0xffff980e4a00>, <slither.slithir.variables.local_variable.LocalIRVariable object at 0xffff980e56c0>])
 INTERNAL_CALL, SafeERC20._callOptionalReturn(IERC20,bytes)(token_1,TMP_150)
 ```
 #### MerkleProof.processProofCalldata(bytes32[],bytes32) [INTERNAL]
@@ -411,7 +411,7 @@ RETURN computedHash_2
 #### SafeERC20._callOptionalReturn(IERC20,bytes) [PRIVATE]
 ```slithir
 token_1(IERC20) := phi(['token_1', 'token_1', 'token_1'])
-data_1(bytes) := phi(['TMP_150', 'TMP_152', 'TMP_167', 'approvalCall_1'])
+data_1(bytes) := phi(['TMP_167', 'TMP_152', 'approvalCall_1', 'TMP_150'])
  returndata = address(token).functionCall(data)
 TMP_170 = CONVERT token_1 to address
 TMP_171(bytes) = LIBRARY_CALL, dest:Address, function:Address.functionCall(address,bytes), arguments:['TMP_170', 'data_1'] 

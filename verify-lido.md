@@ -14,21 +14,24 @@ if its in scope then...
 If yes to above then...
 
 3. is the severity level accurately stated? where severity levels are: Critical | High | Medium | Low | informational ?
-when in doubt between 2 severity levels opt for more serious one (say it could be high or medium, please choose high).
-this severity scale is for a competitive audit. Refer to the below:
+Would it likely receive **≥ Medium severity** in a Code4rena contest
 
-| Severity     | Typical impact examples                                                                                                                                                                                                            | What it signals to the team               |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| **Critical** | - Direct theft of any funds - Permanent, **total** loss or control of all user or protocol funds - Arbitrary code execution                                                                                                  | “Drop everything—patch immediately.”      |
-| **High**     | - **Permanent freezing** or bricking of user or protocol funds (can’t be reversed without privileged migration) - Loss of governance control - Logic that lets an attacker mint/ burn / drain but under specific constraints | “Must fix before next release / upgrade.” |
-| **Medium**   | - Temporary loss (funds stuck until admin action) - Convincing grief / DoS that makes the protocol unusable - Oracle or math bugs that skew accounting but don’t directly drain value                                        | “Important, schedule a patch.”            |
-| **Low**      | - Minor economic grief (extra gas, incorrect event data) - Edge-case DoS that requires unusual conditions - Best-practice deviations with limited real-world impact                                                          | “Fix in regular development cycle.”       |
-| **Insight**  | Code cleanliness, documentation issues, minor style or test suggestions                                                                                                                                                            | “Nice-to-have, no security impact.”       |
+### Code4rena severity rubric
+-------------------------
+| Severity  | Typical impact                                                                                          |
+|-----------|----------------------------------------------------------------------------------------------------------|
+| High      | Direct theft of user or protocol funds, permanent total loss/control, arbitrary code execution, permanent freezing or bricking of funds, governance takeover, significant unauthorized mint/burn/drain
+| Medium    | Temporary loss until admin action, convincing DoS, reward/fee distortion, oracle/math skew with $ impact |
+| Low       | Minor economic grief, rare‑case DoS, best‑practice deviations                                             |
+| Gas/Info  | Gas optimizations, style, comments, docs                                                                  |
 
+**Note**
+• Costliness alone **does not** downgrade severity; assume a well‑funded attacker.  
+• Long‑lasting governance loss or deposit/withdrawal DoS ⇒ ≥ Medium even WITHOUT direct fund loss.  
 
 4. ADD test inside of test/PoC.t.sol (there are other tests there, KEEP THOSE and do NOT touch setup(), then use `just <test_name>` to run.  setup() generated everything you need to create test, look at other tests in PoC.t.sol as example.
 If PoC tests confirmes issue then...
-8. ->
+5. ->
 please write up full Poc report following poc-proof/readme.md guidelines 
 for this report please do NOT include simple local test. please INCLUDE testnet PoC (PoC.t.sol) 
 - full OUTPUT for test 
@@ -43,17 +46,21 @@ Does foundry test look right? is it correctly setup to demonstrate bug exists?
 Do the foundry test results look right?  Does it prove bug is real?
 
 2. is the severity level accurately stated? where severity levels are: Critical | High | Medium | Low | informational ?
-when in doubt between 2 severity levels opt for more serious one (say it could be high or medium, please choose high).
+Would it likely receive **≥ Medium severity** in a Code4rena contest
 this severity scale is for a competitive audit. Refer to the below:
 
-| Severity     | Typical impact examples                                                                                                                                                                                                            | What it signals to the team               |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| **Critical** | - Direct theft of any funds - Permanent, **total** loss or control of all user or protocol funds - Arbitrary code execution                                                                                                  | “Drop everything—patch immediately.”      |
-| **High**     | - **Permanent freezing** or bricking of user or protocol funds (can’t be reversed without privileged migration) - Loss of governance control - Logic that lets an attacker mint/ burn / drain but under specific constraints | “Must fix before next release / upgrade.” |
-| **Medium**   | - Temporary loss (funds stuck until admin action) - Convincing grief / DoS that makes the protocol unusable - Oracle or math bugs that skew accounting but don’t directly drain value                                        | “Important, schedule a patch.”            |
-| **Low**      | - Minor economic grief (extra gas, incorrect event data) - Edge-case DoS that requires unusual conditions - Best-practice deviations with limited real-world impact                                                          | “Fix in regular development cycle.”       |
-| **Insight**  | Code cleanliness, documentation issues, minor style or test suggestions                                                                                                                                                            | “Nice-to-have, no security impact.”       |
------------------------------------------------------------------
+### Code4rena severity rubric
+-------------------------
+| Severity  | Typical impact                                                                                          |
+|-----------|----------------------------------------------------------------------------------------------------------|
+| High      | Direct theft of user or protocol funds, permanent total loss/control, arbitrary code execution, permanent freezing or bricking of funds, governance takeover, significant unauthorized mint/burn/drain
+| Medium    | Temporary loss until admin action, convincing DoS, reward/fee distortion, oracle/math skew with $ impact |
+| Low       | Minor economic grief, rare‑case DoS, best‑practice deviations                                             |
+| Gas/Info  | Gas optimizations, style, comments, docs                                                                  |
+
+**Note**
+• Costliness alone **does not** downgrade severity; assume a well‑funded attacker.  
+• Long‑lasting governance loss or deposit/withdrawal DoS ⇒ ≥ Medium even WITHOUT direct fund loss.  
 
 3. what would this security bug (detailed in below report)  result in if exploited? list all that apply: 
 
@@ -67,6 +74,10 @@ this severity scale is for a competitive audit. Refer to the below:
 - Contract fails to deliver promised returns, but doesn't lose value
 - Unbounded gas consumption
 - Temporary freezing of funds for at least 1 hour
+
+## CONTEXT 
+
+<ADD SOLIDITY IR + STORAGE>
 
 ## REPORT CODE VERIFICATION
 
