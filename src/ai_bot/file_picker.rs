@@ -220,7 +220,11 @@ mod tests {
     fn test_file_picker_creation() {
         let repo = RepoPaths {
             root: PathBuf::from("/tmp"),
+            source_code_folder: PathBuf::from("/tmp"),
             sol_files: vec![PathBuf::from("/tmp/test.sol")],
+            test_files: vec![PathBuf::from("/tmp/test.sol")],
+            script_files: vec![PathBuf::from("/tmp/test.sol")],
+            config_files: vec![PathBuf::from("/tmp/test.sol")],
             docs: vec![PathBuf::from("/tmp/README.md")],
             audit_scope: None,
             excluded_folders: None,
@@ -230,17 +234,13 @@ mod tests {
 
         let file_picker = FilePickerTool::new(repo);
         assert_eq!(file_picker.available_files.len(), 1); // Only test.sol, README.md is excluded
-        assert!(
-            file_picker
-                .available_files
-                .contains(&"test.sol".to_string())
-        );
+        assert!(file_picker
+            .available_files
+            .contains(&"test.sol".to_string()));
         // README.md should be excluded since it's already in context
-        assert!(
-            !file_picker
-                .available_files
-                .contains(&"README.md".to_string())
-        );
+        assert!(!file_picker
+            .available_files
+            .contains(&"README.md".to_string()));
     }
 
     #[test]
@@ -261,7 +261,11 @@ mod tests {
     async fn test_call_limiting() {
         let repo = RepoPaths {
             root: PathBuf::from("/tmp"),
+            source_code_folder: PathBuf::from("/tmp"),
             sol_files: vec![PathBuf::from("/tmp/test.sol")],
+            test_files: vec![PathBuf::from("/tmp/test.sol")],
+            script_files: vec![PathBuf::from("/tmp/test.sol")],
+            config_files: vec![PathBuf::from("/tmp/test.sol")],
             audit_scope: None,
             docs: vec![PathBuf::from("/tmp/README.md")],
             excluded_folders: None,

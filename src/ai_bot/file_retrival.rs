@@ -1,21 +1,13 @@
-use crate::build_brain::enbeddings::SourceChunk;
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::utils::logging::print_first_four_lines;
-use qdrant_client::{Qdrant, qdrant::QueryPointsBuilder};
-use rig::client::EmbeddingsClient;
-use rig::providers::openai::{Client, TEXT_EMBEDDING_3_SMALL};
-use rig::vector_store::VectorStoreIndex;
 use rig::{completion::ToolDefinition, tool::Tool};
-// use rig_qdrant::QdrantVectorStore;  // Temporarily disabled due to version conflicts
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tiktoken_rs::cl100k_base;
 
-/// Maximum tokens for embedding queries (OpenAI embedding models have 8192 token limit)
-const MAX_EMBEDDING_TOKENS: usize = 8000; // Leave some headroom
-
 /// Truncates a query string to fit within embedding token limits
-fn truncate_query_for_embedding(query: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn _truncate_query_for_embedding(query: &str) -> Result<String, Box<dyn std::error::Error>> {
+    /// Maximum tokens for embedding queries (OpenAI embedding models have 8192 token limit)
+    const MAX_EMBEDDING_TOKENS: usize = 8000; // Leave some headroom
     let encoding = cl100k_base()?;
     let mut tokens = encoding.encode_with_special_tokens(query);
 
@@ -35,7 +27,7 @@ fn truncate_query_for_embedding(query: &str) -> Result<String, Box<dyn std::erro
 }
 
 /// Sanitizes and validates tool input arguments to prevent JSON parsing issues
-fn sanitize_tool_input(query: &str) -> Result<String, String> {
+fn _sanitize_tool_input(query: &str) -> Result<String, String> {
     // Check length
     if query.len() > 200 {
         return Err(format!("Query too long: {} chars (max 200)", query.len()));
@@ -64,7 +56,7 @@ fn sanitize_tool_input(query: &str) -> Result<String, String> {
 }
 
 /// Sanitizes content to ensure it can be safely serialized as JSON
-fn sanitize_content_for_json(content: &str) -> String {
+fn _sanitize_content_for_json(content: &str) -> String {
     // Limit content size to prevent huge JSON payloads
     const MAX_CONTENT_CHARS: usize = 80000; // ~50KB limit
 
@@ -115,9 +107,9 @@ pub enum RetrievalError {
 }
 
 pub struct FileRetrievalTool {
-    qdrant_url: String,
-    openai_api_key: String,
-    repo: RepoPaths, // For dynamic collection name
+    pub qdrant_url: String,
+    pub openai_api_key: String,
+    pub repo: RepoPaths, // For dynamic collection name
 }
 
 impl FileRetrievalTool {

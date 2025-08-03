@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -70,7 +70,7 @@ pub fn get_all_files_src(repo: &RepoPaths) -> String {
     let mut files = Vec::<String>::new();
 
     for path in &repo.sol_files {
-        // fast skip: must be under src/ and not a symlink
+        // fast skip: must be under protocol root and not a symlink
         if !path.starts_with(&code_root) {
             continue;
         }

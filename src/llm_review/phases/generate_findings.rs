@@ -35,6 +35,7 @@ pub async fn execute(
         findings: Vec::new(),
     }));
 
+    // TODO - add protocol summary to context
     let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");

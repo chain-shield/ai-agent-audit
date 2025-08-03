@@ -1,5 +1,5 @@
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use log::info;
 use regex::Regex;
 use rusqlite::params_from_iter;
@@ -12,7 +12,6 @@ use rusqlite::{Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use walkdir::WalkDir;
 
 use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
 use crate::prepare_code::git_clone::RepoPaths;
@@ -97,7 +96,7 @@ pub async fn get_hashmap_of_contract_to_functions(
 ) -> anyhow::Result<HashMap<String, Vec<SmartContractFunction>>> {
     // find all main contracts for app (ones in /src)
     info!("grabbing all contracts...");
-    let contracts_in_src_folder = contracts_in_src(repo).await?;
+    let contracts_in_src_folder = contracts_in_source_folder(repo).await?;
 
     let placeholders = contracts_in_src_folder
         .iter()
@@ -221,10 +220,12 @@ async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec
 
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
-pub async fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
-    let src_root = repo.root.join(&repo.repo_name).join("src");
-    if !src_root.exists() {
-        anyhow::bail!("no src/ folder found at {},", src_root.display());
+pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>> {
+    if !repo.source_code_folder.exists() {
+        anyhow::bail!(
+            "no src/ folder found at {},",
+            repo.source_code_folder.display()
+        );
     }
     // get exclusions if any
     let excluded_folders = repo.excluded_folders.clone().unwrap_or(Vec::new());
@@ -236,7 +237,7 @@ pub async fn contracts_in_src(repo: &RepoPaths) -> Result<Vec<String>> {
     let in_scope_files: &Vec<PathBuf> = &repo
         .sol_files
         .iter()
-        .filter(|f| f.starts_with(&src_root))
+        .filter(|f| f.starts_with(&repo.source_code_folder))
         .filter(|f| {
             !excluded_folders
                 .iter()

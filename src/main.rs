@@ -50,13 +50,6 @@ async fn main() -> Result<()> {
     // Cli struct contains all info we need to execute audit
     let cli = parse::Cli::parse();
 
-    // TEST: Run rig API test first - TEMPORARILY DISABLED
-    // println!("🧪 Running rig-core API test...");
-    // match test_rig::test_rig_basic().await {
-    //     Ok(_) => println!("✅ Rig API test completed successfully!"),
-    //     Err(e) => println!("❌ Rig API test failed: {}", e),
-    // }
-
     // Exit early for testing
     // println!("🔬 Test completed - exiting early for analysis");
     // return Ok(());
@@ -67,6 +60,10 @@ async fn main() -> Result<()> {
     let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli)?;
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
+    info!("repo source folder => {:?}", &repo.source_code_folder);
+    info!("repo tests => {:?}", &repo.test_files);
+    info!("repo scripts => {:?}", &repo.script_files);
+    info!("repo config files => {:?}", &repo.config_files);
     info!("repo docs => {:?}", &repo.docs);
     info!("excluded folders => {:?}", &repo.excluded_folders);
 
@@ -106,31 +103,19 @@ async fn main() -> Result<()> {
     // 5. AI Security Analysis
     // ────────────────────────────────
     // Run multi-LLM security analysis across vulnerability categories
-    let (security_issues, invariants) =
+    let (security_issues, _) =
         code_review::review_codebase_for_security_issues(&codeblocks_db, &repo).await?;
 
     // ────────────────────────────────
     // 6. Report Generation
     // ────────────────────────────────
     // Generate comprehensive audit report (paid version)
-    let audit_report = audit::generated_audit_report(
-        &security_issues,
-        &invariants,
-        &repo,
-        &semantics_db,
-        ReportType::Paid,
-    )
-    .await?;
+    let audit_report =
+        audit::generated_audit_report(&security_issues, &repo, ReportType::Paid).await?;
 
     // Generate limited audit report (free version)
-    let free_audit_report = audit::generated_audit_report(
-        &security_issues,
-        &invariants,
-        &repo,
-        &semantics_db,
-        ReportType::Free,
-    )
-    .await?;
+    let free_audit_report =
+        audit::generated_audit_report(&security_issues, &repo, ReportType::Free).await?;
 
     // ────────────────────────────────
     // 7. File Export & Cleanup

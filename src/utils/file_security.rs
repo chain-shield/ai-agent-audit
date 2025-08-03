@@ -160,7 +160,7 @@ pub fn validate_repo_url(url: &str) -> Result<()> {
 }
 
 /// Sanitizes repository name to prevent path traversal and injection attacks.
-fn sanitize_repo_name(name: &str) -> String {
+pub fn sanitize_repo_name(name: &str) -> String {
     // Remove any path traversal attempts and dangerous characters
     name.chars()
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')

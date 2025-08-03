@@ -1,9 +1,6 @@
 use crate::{
     build_brain::summarize,
-    llm_review::{
-        config::{ContractInvariants, Findings},
-        enums::Severity,
-    },
+    llm_review::{config::Findings, enums::Severity},
     prepare_code::git_clone::RepoPaths,
 };
 /// Professional audit report generation with findings categorization.
@@ -11,7 +8,6 @@ use crate::{
 /// This module generates comprehensive security audit reports in Markdown format,
 /// supporting both paid (full details) and free (limited) report versions with
 /// severity-based finding organization and protocol overviews.
-use std::{collections::HashMap, path::Path};
 
 /// Severity levels for organizing findings in reports
 const SEVERITIES: [Severity; 5] = [
@@ -47,9 +43,7 @@ pub enum ReportType {
 /// * `String` - Complete audit report in Markdown format
 pub async fn generated_audit_report(
     findings: &Findings,
-    _invariants: &[ContractInvariants],
     repo: &RepoPaths,
-    semantics_path: &Path,
     report_type: ReportType,
 ) -> anyhow::Result<String> {
     let mut audit_report = String::new();
@@ -65,7 +59,7 @@ pub async fn generated_audit_report(
     audit_report.push_str("## Protocol Overview \n\n");
 
     log::info!("generate summary of protocol");
-    let protocol_overview = summarize::summarize_protocol(repo, semantics_path).await?;
+    let protocol_overview = summarize::summarize_protocol(repo, None).await?;
 
     audit_report.push_str(&protocol_overview);
 
@@ -88,39 +82,6 @@ pub async fn generated_audit_report(
     Ok(audit_report)
 }
 
-// finding hashmap => vec
-fn combine_findings_for_all_contracts(findings_hash: HashMap<String, Findings>) -> Findings {
-    // all security issue findings
-    let mut findings = Findings {
-        findings: Vec::new(),
-    };
-
-    // conbine finding for each contract
-    for f in findings_hash.into_values() {
-        findings.findings.extend(f.findings);
-    }
-
-    findings
-}
-//
-// // finding hashmap => vec
-// fn combine_invariants_for_all_contracts(
-//     invariants_vec: &[ContractInvariants],
-// ) -> ContractInvariants {
-//     // all security issue findings
-//     let mut all_invariants = ContractInvariants {
-//         invariants: Vec::new(),
-//         ..Default::default()
-//     };
-//
-//     // conbine finding for each contract
-//     for inv in invariants_vec {
-//         all_invariants.invariants.extend(inv.invariants.clone());
-//     }
-//
-//     all_invariants
-// }
-//
 fn get_finding_report(findings: &Findings, report_type: ReportType) -> String {
     let mut findings_report = String::new();
 
