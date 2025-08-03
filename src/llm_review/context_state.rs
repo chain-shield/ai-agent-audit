@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize,
+        summarize::{self, summarize_protocol},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -39,10 +39,19 @@ pub async fn generate_and_save_metadata_context(
 ) -> anyhow::Result<()> {
     let metadata_context = Arc::clone(&METADATA_CONTEXT);
     let mut metadata_cache = metadata_context.lock().await;
+
+    let mut metadata = String::new();
     let context = generate_context_for_code_review(repo, semantics_path).await?;
+    let protocol_summary = summarize_protocol(repo, Some(&context)).await?;
+
+    metadata.push_str(&format!(
+        "\n## PROTOCOL OVERVIEW:\n\n{}\n\n",
+        protocol_summary
+    ));
+    metadata.push_str(&context);
 
     let key = cache_key(&repo.root, "metadata_context");
-    metadata_cache.insert(key, context);
+    metadata_cache.insert(key, metadata);
     Ok(())
 }
 
@@ -90,14 +99,15 @@ pub async fn generate_context_for_code_review(
     //     doc_summaries.push_str(&doc_summary.summary);
     //     doc_summaries.push_str("\n\n");
     // }
-    // full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
     // adding FULL DOCS not doc_summaries
+    full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
     full_prompt_context.push_str(&documentation);
 
-    // TODO - add FULL DOCS IF AUDIT TYPE BUGBOUNTY OTHERWISE ADD SUMMARY OF AUDIT
-    // test that documentation is being added
-    // ALSO add $100 more to chain shield to cover these costs!
-    // info!("documentation full size => {}", docs[0].summary.len());
+    let config_files_content = repo.extract_content_from_config_files()?;
+    // adding config files: foundry.toml, package.json, etc
+    full_prompt_context.push_str("\n ## CONFIG FILES: \n\n ");
+    full_prompt_context.push_str(&config_files_content);
+
     log::info!("documentation full size => {}", documentation.len());
     log::info!("full prompt context SIZE => {}", full_prompt_context.len());
 

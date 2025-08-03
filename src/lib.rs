@@ -145,8 +145,6 @@ pub mod cost {
 
 /// AI agent implementations with vector search
 pub mod ai_bot {
-    /// Core AI audit agent with dynamic context
-    pub mod agent;
     pub mod file_picker;
     pub mod file_retrival;
     /// Context retrieval for AI analysis
@@ -231,6 +229,7 @@ pub mod invariant_prompts {
 pub mod utils {
     /// OpenAI tokenizer (BPE) for text chunking
     pub mod bpe;
+    pub mod check_folder_name;
     pub mod contract_name_check;
     /// Docker volume cleanup utilities
     pub mod delete_docker_volumes;

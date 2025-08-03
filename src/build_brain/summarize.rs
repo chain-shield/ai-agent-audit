@@ -7,7 +7,7 @@ use anyhow::Result;
 use log::info;
 use once_cell::sync::Lazy;
 use rig::{
-    client::{CompletionClient, ProviderClient},
+    client::CompletionClient,
     providers::openai::{self, GPT_4O, O3},
 };
 use schemars::JsonSchema;
@@ -18,12 +18,16 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
-use crate::{cost::cost_data::LlmCostType, llm_review::context_state};
 use crate::{
     cost::cost_data::add_to_inference_cost_by_type,
     prepare_code::git_clone::RepoPaths,
-    utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
+    utils::{
+        check_folder_name::{is_script_file, is_test_file},
+        contract_name_check::has_non_mock_contract,
+        extract_retry::extractor_with_retry,
+    },
 };
+use crate::{cost::cost_data::LlmCostType, llm_review::context_state};
 
 use super::slither_ffi::cache_key;
 
@@ -137,8 +141,8 @@ pub async fn summarize_src_files(
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
-    let preamble ="You are a senior solidity dev. Please summarize below content (code or docs). Format in markdown for easy reading. 
-                    If content is code. Please write 200 word or less summary for each contract plus contract definition, 100 words or less summary 
+    let preamble ="You are a senior solidity dev. Please summarize below content (source code, tests, or deploy scripts). Format in markdown for easy reading. 
+                    Please write 200 word or less summary for each contract plus contract definition, 100 words or less summary 
                     of each function + function interface, and 50 word or less explanation of each storage variable + variable defintion. If docs 
                     please summarize each section of the docs with 150 words or less, max 500 words total for each doc file. 
                     Respond only with valid JSON matching the schema!";
@@ -153,48 +157,35 @@ pub async fn summarize_src_files(
     // ---------------------------------------------
     let mut work_items = Vec::new();
 
+    let protocol_root = repo.get_protocol_root();
     // Walk through the repository and collect relevant files
-    let repo_code_root = repo.root.join(repo.repo_name.clone());
     for file in &repo.sol_files {
-        let is_sol_in_src = file.extension().map_or(false, |ext| ext == "sol")
-            && file.starts_with(&repo_code_root.join("src"));
+        let is_file_we_want_summary_of = (file.extension().map_or(false, |ext| ext == "sol")
+            && file.starts_with(&repo.source_code_folder))
+            || is_test_file(file, protocol_root.as_path())
+            || is_script_file(file, protocol_root.as_path());
 
-        if !is_sol_in_src {
+        if !is_file_we_want_summary_of {
             continue;
         }
-
-        let is_readme_or_mock = file
-            .file_name()
-            .map(|f| {
-                f.to_ascii_lowercase() == "readme.md"
-                    || f.to_string_lossy().to_ascii_lowercase().contains("mock")
-            })
-            .unwrap_or(false)
-            && (file.parent() == Some(&repo_code_root)
-                || file.parent() == Some(&repo_code_root.join("src")));
-
-        let is_sol_in_src = file.extension().map_or(false, |ext| ext == "sol")
-            && file.starts_with(&repo_code_root.join("src"));
 
         // Skip directories and symlinks
         if !file.is_file() || fs::symlink_metadata(file)?.file_type().is_symlink() {
             continue;
         }
 
-        if is_readme_or_mock || is_sol_in_src {
-            let content = fs::read_to_string(file.clone())?;
+        let content = fs::read_to_string(&file)?;
 
-            // skip if content does not have have at least one line that start with contract and contract
-            // name does NOT contain 'mock' (case insensative)
-            let has_non_mock_contract = has_non_mock_contract(&content);
+        // skip if content does not have have at least one line that start with contract and contract
+        // name does NOT contain 'mock' (case insensative)
+        let has_non_mock_contract = has_non_mock_contract(&content);
 
-            if !has_non_mock_contract {
-                continue;
-            }
-
-            // push full path & content into the work queue
-            work_items.push((file.to_owned(), content));
+        if !has_non_mock_contract {
+            continue;
         }
+
+        // push full path & content into the work queue
+        work_items.push((file.to_owned(), content));
     }
 
     let max_parallel = 20;
@@ -254,10 +245,7 @@ pub async fn summarize_src_files(
     Ok(summaries)
 }
 
-pub async fn summarize_protocol(repo: &RepoPaths, semantics_path: &Path) -> Result<String> {
-    // content retrival MUST come first to prevent race condition
-    let context = context_state::generate_context_for_code_review(repo, &semantics_path).await?;
-
+pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Result<String> {
     let key = cache_key(&repo.root, "protocol-summary");
     let cache = Arc::clone(&FILE_SUMMARY_CACHE);
     let mut summaries_cache = cache.lock().await;
@@ -271,6 +259,9 @@ pub async fn summarize_protocol(repo: &RepoPaths, semantics_path: &Path) -> Resu
             .clone();
         return Ok(summary);
     }
+
+    // if no cached context is required
+    let context = context.expect("if summary of protocol is not cached must provide context");
 
     // Initialize vectors to store file paths
     let mut summaries = Vec::<SrcFileSummary>::new();

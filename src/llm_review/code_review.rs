@@ -1,4 +1,4 @@
-use crate::config::{SCOPE_CHECK_RUNS, VERIFY_RUNS, audit_config};
+use crate::config::audit_config;
 use crate::error::Result;
 use crate::llm_review::config::CLAUDE_4_0_SONNET;
 use crate::llm_review::context_state::generate_audit_scope;
@@ -48,8 +48,7 @@ pub async fn review_codebase_for_security_issues(
     let contracts = codeblocks_db.get_all_contracts()?;
     let audit_scope = generate_audit_scope(repo).await?;
 
-    let (ai_verify_agent, second_ai_verify_agent, ai_discovery_agents) =
-        generate_ai_agents(repo).await?;
+    let (ai_verify_agent, _, ai_discovery_agents) = generate_ai_agents(repo).await?;
 
     let invariant_findings = Vec::<ContractInvariants>::new();
 
@@ -87,8 +86,6 @@ pub async fn review_codebase_for_security_issues(
                 .await?;
 
         if !raw_findings.findings.is_empty() {
-            let ai_verify_agents = [&ai_verify_agent, &second_ai_verify_agent];
-
             // Phase 3: Verify findings and remove false positives
             let mut verify_findings = raw_findings;
             // for j in 1..=VERIFY_RUNS { //  TOO STRICT?
@@ -97,7 +94,6 @@ pub async fn review_codebase_for_security_issues(
                 verify_findings,
                 &codeblock,
                 &ai_verify_agent,
-                // ai_verify_agents[j - 1],
                 repo,
             )
             .await?;

@@ -19,11 +19,15 @@ pub struct Cli {
     #[arg(value_parser = validate_repo_url)]
     pub repo: String,
 
-    /// Optional subfolder pointing to code
+    /// Optional subfolder pointing to project root (if not root folder of git clone)
     #[arg(long)]
     pub subfolder: Option<String>,
 
-    /// Optional audit scope doc (markdown please)
+    /// Optional folders pointing to where main source is located (if not src/), defaults to src
+    #[arg(long, default_value = "src")]
+    pub code_folder: String,
+
+    /// Optional audit scope doc (markdown file please), should be in current directory
     #[arg(long)]
     pub audit_scope: Option<String>,
 
@@ -31,7 +35,7 @@ pub struct Cli {
     #[arg(long)]
     pub doc_folder: Option<String>,
 
-    /// Optional custom doc to replace docs in /src folder, should be md file in current directory
+    /// Optional custom doc to replace docs (md file) in /src folder, *should be md filename in current directory*
     #[arg(long)]
     pub custom_doc: Option<String>,
 

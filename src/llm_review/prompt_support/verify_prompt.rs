@@ -84,11 +84,11 @@ You will receive **one report** with the following structure:
 -------------------------
 | Severity  | Typical impact                                                                                          |
 |-----------|----------------------------------------------------------------------------------------------------------|
-| Critical  | Direct theft of user or protocol funds, permanent total loss/control, arbitrary code execution           |
-| High      | Permanent freezing or bricking of funds, governance takeover, constrained mint/burn/drain                |
+| High      | Direct theft of user or protocol funds, permanent total loss/control, arbitrary code execution, permanent freezing or bricking of funds, governance takeover, significant unauthorized mint/burn/drain
 | Medium    | Temporary loss until admin action, convincing DoS, reward/fee distortion, oracle/math skew with $ impact |
 | Low       | Minor economic grief, rare‑case DoS, best‑practice deviations                                             |
 | Gas/Info  | Gas optimizations, style, comments, docs                                                                  |
+| Severity  | Typical impact                                                                                          |
 
 ### Guidelines
 ----------
@@ -137,14 +137,12 @@ You will receive **one report** with the following structure:
 
 <Recommended fix>
 
-
-Severity  (Sherlock rubric)
---------------------------------------------
-Critical – Permanent, unrecoverable theft of protocol / user funds, or arbitrary code execution  
-High     – Irreversible freeze / burn of significant funds, governance take-over, or any bug that forces an emergency upgrade / migration  
-Medium   – Loss or value extraction that an admin can eventually reverse, repeatable profit, convincing or long-lasting DoS, accounting / oracle skew with $ impact  
-Low      – Minor grief, rare-edge DoS, spec deviation, unsafe pattern with no direct financial or governance impact  
-Info/Gas – Style, docs, gas optimisations (ignore unless sponsor explicitly pays for gas findings)
+  ### Sherlock Severity Rubric
+| Severity  | Typical impact                                                                                          |
+|-----------|----------------------------------------------------------------------------------------------------------|
+| High      | Direct loss of funds exceeding 1% and $10 of principal, yield, or protocol fees; permanent governance takeover; straightforward exploitable attack path |
+| Medium    | Loss of funds exceeding 0.01% and $10 under specific conditions or constraints (e.g., requiring particular market conditions, user interactions, or protocol states; limited by time windows, admin actions, or partial exploitability); DoS locking funds over a week or disrupting time-sensitive functions; replayable attacks with escalating impact |
+| Low       | Negligible impact on funds or functionality; gas optimizations, style issues, documentation gaps, or invalid categories (e.g., zero-address checks, front-running without irreversible damage) |
 
 Guidelines
 ----------
