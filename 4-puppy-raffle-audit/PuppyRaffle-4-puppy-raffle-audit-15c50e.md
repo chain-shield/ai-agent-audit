@@ -1,3 +1,4 @@
+
 ### Storage layout (PuppyRaffle) 
 
 ```text
@@ -15,7 +16,6 @@ rareImageUri string
 legendaryImageUri string
 
 ```
-
 
 #### PuppyRaffle.constructor(uint256,address,uint256) [INTERNAL]
 ```slithir
@@ -304,7 +304,7 @@ success_1(bool)= UNPACK TUPLE_55 index: 0
  require(bool,string)(success,PuppyRaffle: Failed to withdraw fees)
 TMP_11164(None) = SOLIDITY_CALL require(bool,string)(success_1,PuppyRaffle: Failed to withdraw fees)
 ```
-#### PuppyRaffle.changeFeeAddress(address) [EXTERNAL][OWNER]
+#### PuppyRaffle.changeFeeAddress(address) [EXTERNAL]
 ```slithir
  feeAddress = newFeeAddress
 feeAddress_4(address) := newFeeAddress_1(address)

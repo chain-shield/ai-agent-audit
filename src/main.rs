@@ -25,7 +25,6 @@ use ai_agent_audit::{
         audit::{self, ReportType},
         contract_data, save_file,
     },
-    utils::delete_docker_volumes::cleanup_repo_volume,
 };
 use clap::Parser;
 use dotenvy::dotenv;
@@ -124,14 +123,14 @@ async fn main() -> Result<()> {
     save_file::save_audit_report(&audit_report, &repo, ReportType::Paid)?;
     save_file::save_audit_report(&free_audit_report, &repo, ReportType::Free)?;
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
-    contract_data::save_metadata(&semantics_db, &repo).await?;
+    contract_data::save_metadata(&repo).await?;
 
     // Display total inference cost across all LLM providers
     let total_cost = get_total_inference_cost().await;
     info!("Total Inference Cost ===> {}", total_cost);
 
     // Clean up Docker volumes
-    cleanup_repo_volume(&repo.root)?;
+    // cleanup_repo_volume(&repo.root)?;
 
     Ok(())
 }

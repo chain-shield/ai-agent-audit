@@ -106,7 +106,7 @@ pub async fn get_hashmap_of_contract_to_functions(
         .join(",");
 
     let mut statement = semantic_db.prepare(&format!(
-        "SELECT id, contract, name, visibility, modifiers, mutability FROM functions WHERE contract IN ({})",
+        "SELECT id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE contract IN ({})",
         placeholders
     ))?;
 
@@ -123,9 +123,10 @@ pub async fn get_hashmap_of_contract_to_functions(
             id: row.get(0)?,
             contract: row.get(1)?,
             name: row.get(2)?,
-            visibility: row.get(3)?,
+            ir: row.get(3)?,
+            visibility: row.get(4)?,
             modifiers,
-            mutability: row.get(5)?,
+            mutability: row.get(6)?,
         })
     })?;
     let functions_of_contract: Vec<SmartContractFunction> =
@@ -178,13 +179,14 @@ pub async fn get_token_count_of_function_ir(
 ///
 /// # Returns
 /// * `anyhow::Result<HashMap<(String, String), SlithIRFn>>` - Map of (contract, function) to SlithIR
-async fn get_code_ir_map(repo: &RepoPaths) -> anyhow::Result<HashMap<(String, String), SlithIRFn>> {
+pub async fn get_code_ir_map(
+    repo: &RepoPaths,
+) -> anyhow::Result<HashMap<(String, String), SlithIRFn>> {
     // Regex to extract function name from full signature (e.g., "Contract.function(args)")
     let extract_function_name = Regex::new(r#"[A-Za-z0-9$_]+\.([A-Za-z0-9$_]+)\([^)]*\)"#)?;
 
     // Get IR and storage variables from Slither
-    let (ir_vec, _, _) =
-        build_brain::slither_ffi::get_slither_ir_and_storage_for_codeblockcodeblock(repo).await?;
+    let (ir_vec, _, _) = build_brain::slither_ffi::get_slither_ir_and_storage(repo).await?;
 
     // Create map of (contract, function) -> SlithIRFn
     let ir_map: HashMap<(String, String), SlithIRFn> = ir_vec
@@ -205,8 +207,7 @@ async fn get_code_ir_map(repo: &RepoPaths) -> anyhow::Result<HashMap<(String, St
 }
 
 async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec<StorageVar>>> {
-    let (_, storage_vec, _) =
-        build_brain::slither_ffi::get_slither_ir_and_storage_for_codeblockcodeblock(repo).await?;
+    let (_, storage_vec, _) = build_brain::slither_ffi::get_slither_ir_and_storage(repo).await?;
 
     let storage_map: HashMap<String, Vec<StorageVar>> = {
         let mut m = HashMap::<String, Vec<StorageVar>>::new();
@@ -299,7 +300,7 @@ pub fn get_function_metadata_from_id(
 ) -> Result<Option<SmartContractFunction>> {
     let fn_metadata: Option<SmartContractFunction> = semantic_db
                         .query_row(
-                            "SELECT id, contract, name, visibility, modifiers, mutability FROM functions WHERE id = ?1;",
+                            "SELECT id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE id = ?1;",
                             [id],
                             |row| {
                                 let modifier_str: String = row.get(4)?;
@@ -313,9 +314,10 @@ pub fn get_function_metadata_from_id(
                                     id: row.get(0)?,
                                     contract: row.get(1)?,
                                     name: row.get(2)?,
-                                    visibility: row.get(3)?,
+                                    ir: row.get(3)?,
+                                    visibility: row.get(4)?,
                                     modifiers,
-                                    mutability: row.get(5)?,
+                                    mutability: row.get(6)?,
                                 })
                             },
                         )

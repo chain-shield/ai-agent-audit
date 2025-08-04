@@ -4,7 +4,7 @@
 /// smart contract semantic data including functions, call relationships, and
 /// inheritance hierarchies extracted from Slither analysis.
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// Represents a smart contract function with complete metadata
@@ -16,6 +16,8 @@ pub struct SmartContractFunction {
     pub contract: String,
     /// Function name
     pub name: String,
+    /// IR of function
+    pub ir: String,
     /// Function visibility level
     pub visibility: String,
     /// Applied function modifiers
@@ -41,10 +43,19 @@ impl GraphDb {
               id TEXT PRIMARY KEY,   -- 3895_changeFeeAddress
               contract TEXT,
               name TEXT,
+              ir TEXT,
               visibility TEXT,
               modifiers TEXT,
               mutability TEXT
             );
+            
+            -- Add indexes to speed up queries on contract and name
+            CREATE INDEX IF NOT EXISTS idx_functions_contract ON functions(contract);
+            CREATE INDEX IF NOT EXISTS idx_functions_name ON functions(name);
+
+            -- Composite index for contract + name
+            CREATE INDEX IF NOT EXISTS idx_functions_contract_name ON functions(contract, name);
+
             CREATE TABLE IF NOT EXISTS edges(
             caller TEXT,
             callee TEXT
@@ -64,13 +75,14 @@ impl GraphDb {
         id: &str,
         contract: &str,
         name: &str,
+        ir: &str,
         visibility: &str,
         modifiers: &str,
         mutability: &str,
     ) -> Result<()> {
         self.0.execute(
-            "INSERT OR IGNORE INTO functions(id, contract, name, visibility, modifiers, mutability) VALUES (?1, ?2, ?3, ?4, ?5, ?6);",
-            params![id, contract, name, visibility, modifiers, mutability],
+            "INSERT OR IGNORE INTO functions(id, contract, name, ir, visibility, modifiers, mutability) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);",
+            params![id, contract, name, ir, visibility, modifiers, mutability],
         )?;
         Ok(())
     }

@@ -31,7 +31,7 @@ pub static PRINTER_OUTPUT_CACHE: Lazy<Arc<Mutex<HashMap<String, String>>>> =
 ///
 /// SlithIR is Slither's intermediate representation of Solidity code, which
 /// makes it easier to analyze the code's behavior and identify potential issues.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SlithIRFn {
     /// Name of the contract containing this function
     pub contract: String,
@@ -418,7 +418,7 @@ pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String>
 ///
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @return Result containing a tuple of SlithIRFn and StorageVar vectors
-pub async fn get_slither_ir_and_storage_for_codeblockcodeblock(
+pub async fn get_slither_ir_and_storage(
     repo: &RepoPaths,
 ) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>, Vec<String>)> {
     // Run the slithir-ssa printer to get IR information
@@ -454,7 +454,7 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
 ) -> Result<Vec<PathBuf>> {
     // 1 . gather IR + storage  (re-use existing function)
     info!("get ir and storage chunks");
-    let (_, _, slither_scan_vec) = get_slither_ir_and_storage_for_codeblockcodeblock(repo).await?;
+    let (_, _, slither_scan_vec) = get_slither_ir_and_storage(repo).await?;
     // info!("storage vec => {:?}", storage_vec);
 
     let (funcs, edges) = callgraph::get_dot_funcs_and_dot_edges(repo).await?;

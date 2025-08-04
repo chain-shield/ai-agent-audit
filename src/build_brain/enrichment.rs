@@ -1,4 +1,5 @@
 use crate::build_brain::callgraph::DotFunc;
+use crate::enumerator::utils::get_code_ir_map;
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::get_fn_name::get_function_name;
@@ -66,6 +67,7 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             let json = slither_ffi::run_printer_json(&repo_func, "call-graph").await?;
             let blobs = callgraph::extract_dot_blobs(&json)?;
             let mut rows = Vec::new();
+            let function_to_ir_map = get_code_ir_map(&repo_func).await?;
             let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs)?;
             let func_index: HashMap<(String, String), DotFunc> = funcs_id
                 .into_iter()
@@ -81,11 +83,16 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             // Insert function metadata into database
             for f in &funcs {
                 let func_name = get_function_name(&f.name);
+                let slither_ir_fn = function_to_ir_map
+                    .get(&(f.contract.clone(), func_name.clone()))
+                    .cloned()
+                    .unwrap_or_default();
                 if let Some(node) = func_index.get(&(f.contract.clone(), func_name)) {
                     rows.push((
                         node.full_id.clone(),
                         f.contract.clone(),
                         f.name.clone(),
+                        slither_ir_fn.ir,
                         f.visibility.clone(),
                         f.modifiers.join(","),
                         f.mutability.clone(),
@@ -96,7 +103,7 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             {
                 let db = db_func.lock().await;
                 for row in rows {
-                    db.insert_function(&row.0, &row.1, &row.2, &row.3, &row.4, &row.5)?;
+                    db.insert_function(&row.0, &row.1, &row.2, &row.3, &row.4, &row.5, &row.6)?;
                 }
             }
             info!("done inserting function metadata into database");
