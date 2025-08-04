@@ -103,7 +103,6 @@ You will receive **one report** with the following structure:
 3. Decide if impact meets or exceeds Medium per rubric.
 "#;
 
-// TODO - UPDATE
 pub const VERIFY_SHERLOCK_PROMPT: &str = r#"
 You are an expert triager for **Sherlock** smart‑contract audits.
 

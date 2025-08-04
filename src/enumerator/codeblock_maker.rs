@@ -8,7 +8,11 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
 use super::codeblocks::generate_codeblock_from_codebase;
-use crate::{enumerator::codeblock_db::CodeBlocksDb, prepare_code::git_clone::RepoPaths};
+use crate::{
+    config::{CHAINSHIELD_DB_FOLDER, CODEBLOCK_DB},
+    enumerator::codeblock_db::CodeBlocksDb,
+    prepare_code::git_clone::RepoPaths,
+};
 
 /// Generates and saves contextual code blocks for all contracts in a repository.
 ///
@@ -33,12 +37,13 @@ pub async fn generate_and_save_codeblocks_for_each_contract(
     // Open the three databases
     log::info!("connecting to databases..");
     let semantic_conn = Connection::open(semantics_db)?;
-    let slice_path = repo.root.join(".cache").join("slice.db");
-    let slice_db = CodeBlocksDb::open(&slice_path)?;
+    let codeblock_path =
+        Path::new(&format!("{}/{}", CHAINSHIELD_DB_FOLDER, CODEBLOCK_DB)).to_path_buf();
+    let slice_db = CodeBlocksDb::open(&codeblock_path)?;
 
     // Fetch all seeds and process each one
     generate_codeblock_from_codebase(repo, &semantic_conn, &slice_db, max_depth, token_budget)
         .await?;
 
-    Ok(slice_path)
+    Ok(codeblock_path)
 }

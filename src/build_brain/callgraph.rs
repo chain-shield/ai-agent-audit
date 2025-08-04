@@ -31,6 +31,7 @@ pub struct DotFunc {
 /// Represents a call relationship between two functions
 #[derive(Debug)]
 pub struct DotEdge {
+    pub project_id: String,
     /// Calling function's full_id
     pub caller: String,
     /// Called function's full_id
@@ -50,7 +51,7 @@ pub struct DotEdge {
 pub async fn get_dot_funcs_and_dot_edges(repo: &RepoPaths) -> Result<(Vec<DotFunc>, Vec<DotEdge>)> {
     let json = run_printer_json(repo, "call-graph").await?;
     let blobs = extract_dot_blobs(&json)?;
-    parse_dot_blobs(&blobs)
+    parse_dot_blobs(&blobs, repo)
 }
 
 /// Step 2: pull every DOT file’s `content` string
@@ -89,7 +90,7 @@ pub fn extract_dot_blobs(json: &str) -> Result<Vec<String>> {
 }
 
 /// Step 3: regex-scan DOT text → nodes & edges
-pub fn parse_dot_blobs(blobs: &[String]) -> Result<(Vec<DotFunc>, Vec<DotEdge>)> {
+pub fn parse_dot_blobs(blobs: &[String], repo: &RepoPaths) -> Result<(Vec<DotFunc>, Vec<DotEdge>)> {
     let node_re = Regex::new(r#""(\d+)_([A-Za-z0-9$_]+)" \[label"#)?;
     let edge_re = Regex::new(r#""(\d+_[^"]+)" -> "(\d+_[^"]+)""#)?;
     let cluster_re = Regex::new(r#"cluster_(\d+)_([A-Za-z0-9$_]+) \{"#)?;
@@ -113,6 +114,7 @@ pub fn parse_dot_blobs(blobs: &[String]) -> Result<(Vec<DotFunc>, Vec<DotEdge>)>
             }
             if let Some(e) = edge_re.captures(line) {
                 edges.push(DotEdge {
+                    project_id: repo.project_id.clone(),
                     caller: e[1].to_string(),
                     callee: e[2].to_string(),
                 });
@@ -142,6 +144,7 @@ pub async fn get_enriched_funcs_and_edges(
             None => edge.caller,
         };
         enriched_edges.push(DotEdge {
+            project_id: repo.project_id.clone(),
             callee: enriched_callee,
             caller: enriched_caller,
         });

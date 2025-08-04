@@ -4,11 +4,13 @@
 /// providing efficient storage and retrieval of contextual code slices for
 /// AI analysis with metadata and token counting.
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+
+use crate::prepare_code::git_clone::RepoPaths;
 
 /// Represents a contextual markdown code block for AI analysis.
 ///
@@ -72,10 +74,14 @@ impl CodeBlocksDb {
                 /* ───────── deduped contract bodies ─────────── */
                 CREATE TABLE IF NOT EXISTS codeblocks(
                 id      TEXT PRIMARY KEY,  -- sha256(body)
+                project_id TEXT,
                 contract TEXT,
                 tokens  INTEGER,
                 content TEXT
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_codeblocks_project_id
+                    ON codeblocks(project_id);
                "#,
         )?;
         Ok(db)
@@ -135,7 +141,7 @@ impl CodeBlocksDb {
     ///
     /// # Returns
     /// * `Result<()>` - Ok if successful, Error otherwise
-    pub fn insert_codeblock(&self, c: &MarkdownCodeblock) -> Result<()> {
+    pub fn insert_codeblock(&self, c: &MarkdownCodeblock, repo: &RepoPaths) -> Result<()> {
         let conn = Connection::open(&self.path)?;
 
         // Check if codeblock already exists
@@ -153,8 +159,14 @@ impl CodeBlocksDb {
 
         // Insert new codeblock
         conn.execute(
-            "INSERT INTO codeblocks VALUES (?1,?2,?3,?4);",
-            params![c.id, c.contract, c.tokens as i64, c.content],
+            "INSERT INTO codeblocks VALUES (?1,?2,?3,?4,?5);",
+            params![
+                c.id,
+                repo.project_id,
+                c.contract,
+                c.tokens as i64,
+                c.content
+            ],
         )?;
         Ok(())
     }

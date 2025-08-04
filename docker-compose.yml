@@ -12,4 +12,9 @@ services:
 
 volumes:
   qdrant_data:
-
+  sqlite_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /Users/apmfree/chainshield_db

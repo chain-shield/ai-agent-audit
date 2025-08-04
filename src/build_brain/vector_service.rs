@@ -245,6 +245,7 @@ mod tests {
     fn create_test_repo() -> RepoPaths {
         let temp_dir = TempDir::new().unwrap();
         RepoPaths {
+            project_id: "test-repo".to_string(),
             root: temp_dir.path().to_path_buf(),
             sol_files: vec![],
             test_files: vec![],
