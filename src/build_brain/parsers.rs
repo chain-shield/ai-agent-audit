@@ -71,7 +71,7 @@ pub fn parse_slithir_ir_code(text: &str) -> Vec<SlithIRFn> {
                     ir: ir_content_cleaned,
                 });
             }
-            // Extract new function name and reset buffer
+            // Extract new function name and reset buffer - [9..] revove 'Function '
             current_fn = line.trim()[9..].trim_end_matches(':').to_owned();
             buf.clear();
         }

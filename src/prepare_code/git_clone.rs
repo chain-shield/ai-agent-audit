@@ -112,10 +112,10 @@ pub fn clone_and_filter_git_repo(
 
     // Determine the search root - if subfolder is specified, search within that subdirectory
     let search_root = root.join(&repo_name);
-    info!("search_root => {}", search_root.display());
+    // info!("search_root => {}", search_root.display());
 
     let source_code_folder = search_root.join(&cli.code_folder);
-    info!("source_code_folder => {}", source_code_folder.display());
+    // info!("source_code_folder => {}", source_code_folder.display());
 
     // Validate that the search root exists
     if !search_root.exists() {

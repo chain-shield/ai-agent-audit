@@ -1,7 +1,8 @@
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
-    llm_review::context_state::generate_context_for_code_review,
-    prepare_code::git_clone::RepoPaths, reporting::save_file::save_file_locally,
+    llm_review::context_state::{generate_context_for_code_review, get_metadata_context},
+    prepare_code::git_clone::RepoPaths,
+    reporting::save_file::save_file_locally,
 };
 /// Contract data export utilities for analysis artifacts.
 ///
@@ -42,8 +43,10 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
 /// # Arguments
 /// * `semantics_path` - Path to the semantic analysis database
 /// * `repo` - Repository paths and metadata for naming
-pub async fn save_metadata(semantics_path: &Path, repo: &RepoPaths) -> anyhow::Result<()> {
-    let metadata = generate_context_for_code_review(repo, semantics_path).await?;
+pub async fn save_metadata(repo: &RepoPaths) -> anyhow::Result<()> {
+    let metadata = get_metadata_context(repo)
+        .await
+        .expect("cannot load metadata");
 
     let output_dir = Path::new(&repo.repo_name);
     let filename = format!("metadata-{}.md", repo.unique_repo_hash());
