@@ -1,7 +1,8 @@
 use crate::config::audit_config;
 use crate::error::Result;
-use crate::llm_review::config::CLAUDE_4_0_SONNET;
-use crate::llm_review::context_state::generate_audit_scope;
+use crate::llm_review::{
+    analysis_db::FindingsDb, config::CLAUDE_4_0_SONNET, context_state::generate_audit_scope,
+};
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
@@ -51,6 +52,8 @@ pub async fn review_codebase_for_security_issues(
     let (ai_verify_agent, _, ai_discovery_agents) = generate_ai_agents(repo).await?;
 
     let invariant_findings = Vec::<ContractInvariants>::new();
+
+    let findings_db = FindingsDb::open()?;
 
     for (contract, codeblock) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
@@ -122,9 +125,12 @@ pub async fn review_codebase_for_security_issues(
             )
             .await?;
 
-            all_security_issues.findings.extend(final_findings.findings);
+            // Save findings to database before extending
+            if let Err(e) = findings_db.insert_findings(&final_findings, repo) {
+                log::warn!("Failed to save findings to database: {}", e);
+            }
 
-            // TODO - save issues to Findings db
+            all_security_issues.findings.extend(final_findings.findings);
         }
     }
 

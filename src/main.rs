@@ -129,6 +129,8 @@ async fn main() -> Result<()> {
     let total_cost = get_total_inference_cost().await;
     info!("Total Inference Cost ===> {}", total_cost);
 
+    // save all repoPaths and context to db
+    prepare_code::repo_data::save_repo_data_to_db(&repo).await?;
     // Clean up Docker volumes
     // cleanup_repo_volume(&repo.root)?;
 

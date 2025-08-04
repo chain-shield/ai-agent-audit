@@ -106,13 +106,13 @@ pub async fn get_hashmap_of_contract_to_functions(
         .join(",");
 
     let mut statement = semantic_db.prepare(&format!(
-        "SELECT id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE contract IN ({})",
+        "SELECT id, project_id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE contract IN ({})",
         placeholders
     ))?;
 
     let rows = statement.query_map(params_from_iter(contracts_in_src_folder), |row| {
         // info!("rows => {:#?}", row);
-        let modifier_str: String = row.get(4)?;
+        let modifier_str: String = row.get(6)?;
         let modifiers: Vec<String> = modifier_str
             .split(',')
             .map(|s| s.trim_matches([' ', '\'']).to_string())
@@ -121,12 +121,13 @@ pub async fn get_hashmap_of_contract_to_functions(
 
         Ok(SmartContractFunction {
             id: row.get(0)?,
-            contract: row.get(1)?,
-            name: row.get(2)?,
-            ir: row.get(3)?,
-            visibility: row.get(4)?,
+            project_id: row.get(1)?,
+            contract: row.get(2)?,
+            name: row.get(3)?,
+            ir: row.get(4)?,
+            visibility: row.get(5)?,
             modifiers,
-            mutability: row.get(6)?,
+            mutability: row.get(7)?,
         })
     })?;
     let functions_of_contract: Vec<SmartContractFunction> =
@@ -300,10 +301,10 @@ pub fn get_function_metadata_from_id(
 ) -> Result<Option<SmartContractFunction>> {
     let fn_metadata: Option<SmartContractFunction> = semantic_db
                         .query_row(
-                            "SELECT id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE id = ?1;",
+                            "SELECT id, project_id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE id = ?1;",
                             [id],
                             |row| {
-                                let modifier_str: String = row.get(4)?;
+                                let modifier_str: String = row.get(6)?;
                                 let modifiers: Vec<String> = modifier_str
                                     .split(',')
                                     .map(|s| s.trim().to_string())
@@ -312,12 +313,13 @@ pub fn get_function_metadata_from_id(
 
                                 Ok(SmartContractFunction {
                                     id: row.get(0)?,
-                                    contract: row.get(1)?,
-                                    name: row.get(2)?,
-                                    ir: row.get(3)?,
-                                    visibility: row.get(4)?,
+                                    project_id: row.get(1)?,
+                                    contract: row.get(2)?,
+                                    name: row.get(3)?,
+                                    ir: row.get(4)?,
+                                    visibility: row.get(5)?,
                                     modifiers,
-                                    mutability: row.get(6)?,
+                                    mutability: row.get(7)?,
                                 })
                             },
                         )

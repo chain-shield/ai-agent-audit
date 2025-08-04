@@ -40,6 +40,7 @@ pub mod build_brain {
 pub mod prepare_code {
     /// Git cloning and Docker-based building
     pub mod git_clone;
+    pub mod repo_data;
 }
 
 /// Report generation and data export

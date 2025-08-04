@@ -31,13 +31,15 @@ pub enum BuildFlags {
 /// that will be processed for analysis.
 #[derive(Debug, Clone)]
 pub struct RepoPaths {
+    /// uniquely indentifies this project by protocol name and commit hash
+    pub project_id: String,
     /// Path to the repository root directory
     pub root: PathBuf,
     /// Paths to all Solidity (.sol) files in the repository
-    pub sol_files: Vec<PathBuf>,
+    pub sol_files: Vec<PathBuf>, // includes test and script files
     pub test_files: Vec<PathBuf>,
     pub script_files: Vec<PathBuf>,
-    pub config_files: Vec<PathBuf>,
+    pub config_files: Vec<PathBuf>, // NOT in sol_files
     pub source_code_folder: PathBuf,
     /// Paths to documentation files (README.md, etc.)
     pub docs: Vec<PathBuf>,
@@ -97,11 +99,13 @@ pub fn clone_and_filter_git_repo(
 
     // 4. Read HEAD and get the first 6 chars of the commit SHA
     let commit_hash = get_commit_hash(&cli.repo)?;
-    let short_hash = &commit_hash[..6];
 
     // 5. git clone, install, and build in secure docker container
     // returns dierctory where files are located
-    let root = clone_and_build_repo(cli, &repo_name, short_hash)?;
+    let project_id = format!("{}-{}", repo_name.replace("/", "-"), &commit_hash[..6]);
+    let root = clone_and_build_repo(cli, &repo_name, &project_id)?;
+
+    // 6. define project id
 
     // 6. Build .gitignore matcher
     let mut ign = GitignoreBuilder::new(&root);
@@ -234,6 +238,7 @@ pub fn clone_and_filter_git_repo(
 
     // Return the collected paths
     Ok(RepoPaths {
+        project_id,
         root,
         sol_files,
         test_files,
@@ -248,13 +253,8 @@ pub fn clone_and_filter_git_repo(
     })
 }
 
-pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, commit_hash: &str) -> Result<PathBuf> {
-    let docker_volume = format!(
-        "{}/{}-{}",
-        audit_config().docker_volume,
-        repo_name.replace("/", "-"),
-        &commit_hash[..6]
-    );
+pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Result<PathBuf> {
+    let docker_volume = format!("{}/{}", audit_config().docker_volume, project_id);
     let docker_path = PathBuf::from(&docker_volume);
 
     if docker_path.exists() {

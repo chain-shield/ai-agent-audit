@@ -65,7 +65,7 @@ INTERNAL_CALL, ERC721.constructor(string,string)(Puppy Raffle,PR)
 ```
 #### PuppyRaffle.tokenURI(uint256) [PUBLIC]
 ```slithir
-tokenIdToRarity_5(mapping(uint256 => uint256)) := phi(['tokenIdToRarity_1', 'tokenIdToRarity_0', 'tokenIdToRarity_6', 'tokenIdToRarity_4'])
+tokenIdToRarity_5(mapping(uint256 => uint256)) := phi(['tokenIdToRarity_6', 'tokenIdToRarity_0', 'tokenIdToRarity_1', 'tokenIdToRarity_4'])
 rarityToUri_4(mapping(uint256 => string)) := phi(['rarityToUri_3', 'rarityToUri_0', 'rarityToUri_5'])
 rarityToName_4(mapping(uint256 => string)) := phi(['rarityToName_0', 'rarityToName_3', 'rarityToName_5'])
  require(bool,string)(_exists(tokenId),PuppyRaffle: URI query for nonexistent token)
@@ -304,7 +304,7 @@ success_1(bool)= UNPACK TUPLE_55 index: 0
  require(bool,string)(success,PuppyRaffle: Failed to withdraw fees)
 TMP_11164(None) = SOLIDITY_CALL require(bool,string)(success_1,PuppyRaffle: Failed to withdraw fees)
 ```
-#### PuppyRaffle.changeFeeAddress(address) [EXTERNAL]
+#### PuppyRaffle.changeFeeAddress(address) [EXTERNAL][OWNER]
 ```slithir
  feeAddress = newFeeAddress
 feeAddress_4(address) := newFeeAddress_1(address)

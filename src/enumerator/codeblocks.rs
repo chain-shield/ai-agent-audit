@@ -131,7 +131,7 @@ pub async fn generate_codeblock_from_codebase(
             content: markdown_codeblock_for_llm,
         };
         // 4. store
-        codeblock_db.insert_codeblock(&codeblock)?;
+        codeblock_db.insert_codeblock(&codeblock, repo)?;
 
         // save to cache
         set_codeblock_cache(&contract, &codeblock).await;

@@ -6,10 +6,10 @@
 use anyhow::Result;
 use log::info;
 use rig::{
-    Embed,
     client::EmbeddingsClient,
     embeddings::EmbeddingsBuilder,
     providers::openai::{self, Client},
+    Embed,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
@@ -127,10 +127,6 @@ fn infer_file_type(path: &Path) -> String {
 
 /**
  * Processes a list of files and creates embeddings for their content.
- *
- * TODO - USE codellama:embed instead of openai embedding model
- * will need to either self host (need powerful computer) or self host on
- * on gcp ($250/month), this embedding is optimal for code
  *
  * @param paths - Array of file paths to process
  * @return Result containing a vector of tuples with metadata and embedding vectors

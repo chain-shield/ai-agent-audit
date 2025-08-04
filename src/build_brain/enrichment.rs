@@ -1,4 +1,5 @@
 use crate::build_brain::callgraph::DotFunc;
+use crate::config::{CHAINSHIELD_DB_FOLDER, SEMANTIC_DB};
 use crate::enumerator::utils::get_code_ir_map;
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
@@ -14,7 +15,7 @@ use super::slither_ffi::{self, SlithIRFn, StorageVar};
 use super::{callgraph, inheritance};
 use log::info;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -39,7 +40,7 @@ pub struct Enriched {
 /// * `PathBuf` - Path to the created semantic database
 pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathBuf> {
     // Create database file in cache directory
-    let db_path = repo.root.join(".cache").join("semantics.db");
+    let db_path = Path::new(&format!("{}/{}", CHAINSHIELD_DB_FOLDER, SEMANTIC_DB)).to_path_buf();
     let cache_dir = db_path.parent().ok_or_else(|| {
         AuditError::file_system(
             db_path.to_string_lossy().to_string(),
@@ -68,7 +69,7 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             let blobs = callgraph::extract_dot_blobs(&json)?;
             let mut rows = Vec::new();
             let function_to_ir_map = get_code_ir_map(&repo_func).await?;
-            let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs)?;
+            let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs, &repo_func)?;
             let func_index: HashMap<(String, String), DotFunc> = funcs_id
                 .into_iter()
                 .map(|node| ((node.contract.clone(), node.name.clone()), node))
@@ -90,6 +91,7 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
                 if let Some(node) = func_index.get(&(f.contract.clone(), func_name)) {
                     rows.push((
                         node.full_id.clone(),
+                        &repo_func.project_id,
                         f.contract.clone(),
                         f.name.clone(),
                         slither_ir_fn.ir,
@@ -103,7 +105,9 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             {
                 let db = db_func.lock().await;
                 for row in rows {
-                    db.insert_function(&row.0, &row.1, &row.2, &row.3, &row.4, &row.5, &row.6)?;
+                    db.insert_function(
+                        &row.0, &row.1, &row.2, &row.3, &row.4, &row.5, &row.6, &row.7,
+                    )?;
                 }
             }
             info!("done inserting function metadata into database");
@@ -112,7 +116,7 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             // Insert call graph edges
             for e in &edges {
                 let db_guard = db_func.lock().await;
-                db_guard.insert_edge(&e.caller, &e.callee)?;
+                db_guard.insert_edge(&repo_func.project_id, &e.caller, &e.callee)?;
             }
             info!("dot edges in db complete");
             Ok(())
@@ -141,7 +145,7 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             // Insert inheritance relationships into database
             for (child, parent) in inheritance_edges {
                 let db_guard = db_inheritance.lock().await;
-                db_guard.insert_inheritance(&child, &parent)?;
+                db_guard.insert_inheritance(&repo_inheritance.project_id, &child, &parent)?;
             }
             info!("done generating inheritance edges");
 

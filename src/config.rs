@@ -36,6 +36,12 @@ pub const MAX_RAG_QUERY_CONTENT_LENGTH: usize = 8192; // 8192 token limit for em
 /// Docker volume path for repository analysis
 pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
 
+pub const CHAINSHIELD_DB_FOLDER: &str = "/Users/apmfree/chainshield_db";
+pub const REPO_DATA_DB: &str = "repo_data.db";
+pub const SEMANTIC_DB: &str = "semantic.db";
+pub const CODEBLOCK_DB: &str = "codeblock.db";
+pub const FINDINGS_DB: &str = "findings.db";
+
 /// Maximum repository URL length for security validation
 pub const MAX_REPO_URL_LENGTH: usize = 2048;
 
