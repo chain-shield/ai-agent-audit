@@ -62,12 +62,10 @@ impl RepoDataDb {
     /// Creates a new repository data database with required schema.
     ///
     /// Initializes SQLite database with table for complete repository metadata.
-    /// Uses WAL mode for better concurrency.
     pub fn create(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch(
             r#"
-            PRAGMA journal_mode = WAL;
             CREATE TABLE IF NOT EXISTS repo_data(
               project_id TEXT PRIMARY KEY,
               root TEXT NOT NULL,
@@ -234,4 +232,3 @@ impl RepoData {
         })
     }
 }
-
