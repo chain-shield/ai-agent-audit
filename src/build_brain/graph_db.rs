@@ -34,12 +34,10 @@ impl GraphDb {
     /// Creates a new graph database with required schema.
     ///
     /// Initializes SQLite database with tables for functions, call edges,
-    /// and inheritance relationships. Uses WAL mode for better concurrency.
     pub fn create(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch(
             r#"
-            PRAGMA journal_mode = WAL;
             CREATE TABLE IF NOT EXISTS functions(
               id TEXT PRIMARY KEY,   -- 3895_changeFeeAddress
               project_id TEXT,

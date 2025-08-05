@@ -4,29 +4,28 @@
 ## Protocol Overview 
 
 ### Puppy Raffle Protocol
+Puppy Raffle is an on-chain game where users buy raffle tickets to win a randomly generated “puppy” NFT and a share of the ether pot.
 
-Puppy Raffle is an on-chain raffle that lets anyone vie for a cute dog NFT. Players call `enterRaffle`, passing an array of addresses and sending `entranceFee × n` ETH. The contract rejects duplicate addresses and records entrants in `players`. Until `raffleDuration` elapses, any entrant may call `refund` to reclaim their stake; only the player herself can trigger her own refund.
+1. **Enter** – Anyone calls `enterRaffle(address[] newPlayers)` supplying an array of participant addresses and `msg.value == entranceFee * newPlayers.length`. Duplicate addresses are rejected and the list is stored in `players`.
+2. **Refund** – A participant can leave before the draw via `refund(index)`, receiving their ticket price back. Only the original player can claim their refund; their slot in `players` is then deleted.
+3. **Draw** – After the configurable `duration` has elapsed and at least four players remain, anyone may call `selectWinner()`. A pseudo-random index is picked, the winner receives 80 % of the contract balance, and a Puppy NFT (ERC-721) with rarity-based metadata is minted to them. The remaining 20 % is earmarked as protocol fees.
+4. **Fee withdrawal** – Once no active players remain, the owner can send accumulated fees to `feeAddress` with `withdrawFees()`. The owner alone may change `feeAddress`, but cannot touch player funds.
 
-When the timer is up, anyone can invoke `selectWinner`. The function picks a pseudo-random player index, mints an ERC-721 puppy with rarity metadata, transfers the prize pot minus fees to the winner, and routes accumulated fees to `feeAddress`. The last winner is stored in `previousWinner` for transparency.
-
-If no players are active, the owner can call `withdrawFees` to collect residual fees and may update `feeAddress` through `changeFeeAddress`.
-
-Extensive Foundry tests cover entering, duplicate prevention, refunds, winner payout, URI correctness, and fee withdrawal. A Forge script automates deployment with a 1 ETH entrance fee, the deployer as `feeAddress`, and a 1-day raffle duration.
-
-In short, Puppy Raffle combines a fair ticketing mechanism, secure fund handling, and NFT rewards in under 300 lines of Solidity.
+All logic is covered by extensive Foundry tests and a deployment script, ensuring secure, reproducible launches.
 ## High Risk Findings
-[H-1]. Integer Overflow issue found with High severity
+[H-1]. Randomness issue found with High severity
 [H-2]. Reentrancy issue found with High severity
-[H-3]. Randomness issue found with High severity
-[H-4]. Unexpected Eth issue found with High severity
+[H-3]. Integer Overflow issue found with High severity
+[H-4]. DOS issue found with High severity
 ## Medium Risk Findings
 [M-1]. DOS issue found with Medium severity
+[M-2]. Unexpected Eth issue found with Medium severity
 
 
 ### Number of Findings
 - C: 0
 - H: 4
-- M: 1
+- M: 2
 - L: 0
 - I: 0
 
