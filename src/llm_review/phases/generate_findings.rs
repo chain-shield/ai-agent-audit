@@ -3,7 +3,7 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_agent, TokenType},
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         config::{generated_llm_prompt, Findings},
@@ -121,7 +121,7 @@ pub async fn run_security_prompt(
     let full_prompt = format!("{prompt_header}{prompt_body}");
 
     // add to cost
-    add_to_inference_cost_by_agent(&full_prompt, &agent, TokenType::Input).await;
+    add_to_inference_cost_by_type(&full_prompt, LlmCostType::Openai5Input).await;
 
     // 2. Send to the right provider
     info!("----LLM analysis Round #{}----", idx_of_review_round);

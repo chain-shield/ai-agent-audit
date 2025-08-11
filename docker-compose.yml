@@ -8,6 +8,7 @@ services:
       - "6333:6333"  # REST API
       - "6334:6334"  # gRPC API
     volumes:
+      - /tmp/audit-analysis:/workspace 
       - qdrant_data:/qdrant/storage
 
 volumes:
