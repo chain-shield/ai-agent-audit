@@ -222,17 +222,17 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         .with_file_retrieval(false)
         .with_file_picker(false);
 
-    // let claude_config = AgentConfig::new(repo.clone())
-    //     .with_temperature(1.0)
-    //     .with_model(CLAUDE_3_7_SONNET)
-    //     .with_preamble(solidity_auditor_preamble)
-    //     .with_max_tokens(64_000)
-    //     .with_file_retrieval(true)
+    let openai_config = AgentConfig::new(repo.clone())
+        .with_temperature(1.0)
+        .with_model("gpt-5")
+        .with_preamble(solidity_auditor_preamble)
+        .with_file_retrieval(false)
+        .with_file_picker(false);
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_dynamic_context(false);
     //
     for _ in 0..audit_config().runs {
-        let agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
+        let agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
         ai_discovery_agents.push(agent);
     }
 

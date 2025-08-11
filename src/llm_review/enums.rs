@@ -33,9 +33,7 @@ use rig::{
     completion::{CompletionModel, Prompt},
     extractor::Extractor,
     providers::{
-        anthropic::{self},
-        deepseek::DeepSeekCompletionModel,
-        gemini::{self},
+        anthropic, deepseek, gemini,
         openai::{self, O3},
     },
 };
@@ -55,11 +53,11 @@ pub enum AIAgent {
     /// Anthropic Claude models (3.7 Sonnet, 4.0 Sonnet)
     Anthropic(Agent<anthropic::completion::CompletionModel>),
     /// OpenAI models (GPT-4o, O3)
-    Openai(Agent<openai::completion::CompletionModel>),
+    Openai(Agent<openai::responses_api::ResponsesCompletionModel>),
     /// Google Gemini models
     Gemini(Agent<gemini::completion::CompletionModel>),
     /// DeepSeek models (cost-effective option)
-    Deepseek(Agent<DeepSeekCompletionModel>),
+    Deepseek(Agent<deepseek::CompletionModel>),
 }
 
 /// Unified AI extractor enum for structured data extraction.
@@ -71,9 +69,9 @@ where
     T: 'static + JsonSchema + Serialize + for<'a> Deserialize<'a> + Send + Sync,
 {
     Anthropic(Extractor<anthropic::completion::CompletionModel, T>),
-    Openai(Extractor<openai::completion::CompletionModel, T>),
+    Openai(Extractor<openai::responses_api::ResponsesCompletionModel, T>),
     Gemini(Extractor<gemini::completion::CompletionModel, T>),
-    Deepseek(Extractor<DeepSeekCompletionModel, T>),
+    Deepseek(Extractor<deepseek::CompletionModel, T>),
 }
 
 /// ------------------------------------------------------------------

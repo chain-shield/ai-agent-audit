@@ -3,29 +3,33 @@
 
 ## Protocol Overview 
 
-### Puppy Raffle Protocol
-Puppy Raffle is an on-chain game where users buy raffle tickets to win a randomly generated “puppy” NFT and a share of the ether pot.
+**Puppy Raffle Protocol**  
 
-1. **Enter** – Anyone calls `enterRaffle(address[] newPlayers)` supplying an array of participant addresses and `msg.value == entranceFee * newPlayers.length`. Duplicate addresses are rejected and the list is stored in `players`.
-2. **Refund** – A participant can leave before the draw via `refund(index)`, receiving their ticket price back. Only the original player can claim their refund; their slot in `players` is then deleted.
-3. **Draw** – After the configurable `duration` has elapsed and at least four players remain, anyone may call `selectWinner()`. A pseudo-random index is picked, the winner receives 80 % of the contract balance, and a Puppy NFT (ERC-721) with rarity-based metadata is minted to them. The remaining 20 % is earmarked as protocol fees.
-4. **Fee withdrawal** – Once no active players remain, the owner can send accumulated fees to `feeAddress` with `withdrawFees()`. The owner alone may change `feeAddress`, but cannot touch player funds.
+PuppyRaffle is a Solidity-based ERC-721 raffle that lets users compete for a randomly generated “puppy” NFT.  
 
-All logic is covered by extensive Foundry tests and a deployment script, ensuring secure, reproducible launches.
+• Entering: Anyone calls `enterRaffle(address[] participants)` and pays `entranceFee` (1 ETH) per address supplied. Duplicate addresses in the same or previous rounds are rejected, letting a single wallet buy multiple legitimate tickets.  
+
+• Refunds: A ticket holder may call `refund(index)` before the draw to reclaim their stake; the address is zeroed in the players array, preserving array order while freeing the slot.  
+
+• Draw: After `raffleDuration` (default 1 day) and with ≥ 4 active players, `selectWinner()` can be triggered. 90 % of pooled ETH is sent to the winner, 10 % accrues to `totalFees` for the `feeAddress`. A new ERC-721 token is minted to the winner with rarity determined by pseudo-randomness; `tokenURI` serves on-chain JSON containing name, description and image link.  
+
+• Fees: When no players are active, owner calls `withdrawFees()` to move accumulated fees to the designated address; `changeFeeAddress()` lets the owner update that wallet.  
+
+Comprehensive Forge tests and a deployment script are included.
 ## High Risk Findings
-[H-1]. Randomness issue found with High severity
-[H-2]. Reentrancy issue found with High severity
-[H-3]. Integer Overflow issue found with High severity
-[H-4]. DOS issue found with High severity
+[H-1]. Frontrun/Backrun/Sandwhich MEV issue found with High severity
+[H-2]. DOS issue found with High severity
+[H-3]. Reentrancy issue found with High severity
+[H-4]. Integer Overflow issue found with High severity
+[H-5]. Unexpected Eth issue found with High severity
 ## Medium Risk Findings
-[M-1]. DOS issue found with Medium severity
-[M-2]. Unexpected Eth issue found with Medium severity
+[M-1]. Randomness issue found with Medium severity
 
 
 ### Number of Findings
 - C: 0
-- H: 4
-- M: 2
+- H: 5
+- M: 1
 - L: 0
 - I: 0
 

@@ -1,12 +1,3 @@
-/// The main entry point for the AI Agent Audit tool.
-///
-/// This application performs comprehensive smart contract security audits by:
-/// 1. Cloning and building repositories (Foundry/Hardhat) in Docker containers
-/// 2. Extracting call graphs, IR, and storage layouts using Slither
-/// 3. Generating contextual code slices for focused AI analysis
-/// 5. Running multi-LLM security analysis across 19+ vulnerability categories
-/// 5. Creating vector embeddings and storing in Qdrant for semantic search
-/// 6. Generating professional audit reports with findings and cost tracking
 use ai_agent_audit::{
     // test_rig,
     build_brain::{enrichment, vector_db},
@@ -29,7 +20,15 @@ use ai_agent_audit::{
 use clap::Parser;
 use dotenvy::dotenv;
 use log::info;
-
+/// The main entry point for the AI Agent Audit tool.
+///
+/// This application performs comprehensive smart contract security audits by:
+/// 1. Cloning and building repositories (Foundry/Hardhat) in Docker containers
+/// 2. Extracting call graphs, IR, and storage layouts using Slither
+/// 3. Generating contextual code slices for focused AI analysis
+/// 5. Running multi-LLM security analysis across 19+ vulnerability categories
+/// 5. Creating vector embeddings and storing in Qdrant for semantic search
+/// 6. Generating professional audit reports with findings and cost tracking
 /// The main async function that orchestrates the entire process.
 #[tokio::main]
 async fn main() -> Result<()> {

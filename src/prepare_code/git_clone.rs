@@ -269,6 +269,8 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
             )
         })?;
     }
+    // create docker folder
+    fs::create_dir_all(&docker_path)?;
 
     // if github repo clones to multiple sub folders with different apps
     // then repo_name will be something like contracts/plume

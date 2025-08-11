@@ -11,6 +11,10 @@ use tokio::sync::Mutex;
 /// LLM provider cost types with specific model variants
 #[derive(Clone, Copy, Debug)]
 pub enum LlmCostType {
+    /// OpenAI GPT-5 input tokens
+    Openai5Input,
+    /// OpenAI GPT-5 input tokens
+    Openai5Output,
     /// OpenAI GPT-4o input tokens
     Openai4oInput,
     /// OpenAI GPT-4o output tokens
@@ -49,8 +53,10 @@ impl LlmCostType {
         match self {
             LlmCostType::Openai4oInput => 2.50,
             LlmCostType::Openai4oOutput => 10.00,
+            LlmCostType::Openai5Input => 1.25,
+            LlmCostType::Openai5Output => 10.00,
             LlmCostType::OpenaiO3Input => 2.00,
-            LlmCostType::OpenaiO3Output => 8.00,
+            LlmCostType::OpenaiO3Output => 10.00, // real cost is 8.00, bump it to 10 so it covers both gpt-5 and o3
             LlmCostType::AnthropicClaudeInput => 3.00,
             LlmCostType::AnthropicClaudeOutput => 15.00,
             LlmCostType::GeminiInput => 1.25,
