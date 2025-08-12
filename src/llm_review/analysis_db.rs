@@ -55,8 +55,8 @@ impl FindingsDb {
             "INSERT INTO findings VALUES (?1,?2,?3,?4,?5,?6,?7,?8);",
             params![
                 f.id,
-                f.title,
                 repo.project_id,
+                f.title,
                 f.description,
                 f.impact,
                 f.proof_of_concept,
