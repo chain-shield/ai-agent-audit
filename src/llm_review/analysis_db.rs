@@ -78,8 +78,8 @@ impl FindingsDb {
                 "INSERT INTO findings VALUES (?1,?2,?3,?4,?5,?6,?7,?8);",
                 params![
                     finding_db.id,
-                    finding_db.title,
                     finding_db.project_id,
+                    finding_db.title,
                     finding_db.description,
                     finding_db.impact,
                     finding_db.proof_of_concept,

