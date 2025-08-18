@@ -125,6 +125,14 @@ pub fn generate_post_prompt(contract_name: &str) -> String {
         AuditType::Client => DEFAULT_SEVERITY_RUBRIC,
     };
 
+    let comp_audit_issue_type = "AccessControl | Reentrancy | Oracle | PricePrecision | RoundingError | FeeOnTransferAssumption | UncheckedERC20Return | Dos | SignatureReplay | AuthByPass | UntrustedDelegateCall | TimestampManipulation | CrossChainMessageSpoofing | AccountingInvariantViolation | SlippageMissingOrInsufficient | FlashLoanEconomicManipulation";
+    let default_issue_type = "AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontrunMev|UpgradeabilityInitializerSafety|PausableEmergencyStop|TimestampDependentLogic|FlashLoanEconomicManipulation|DelegatecallLowLevelOps|SignatureMalleability|EventConsistency|GasGriefBlockLimit|IntegerOverflow";
+
+    let issue_type = match AUDIT_TYPE {
+        AuditType::Code4rena | AuditType::Sherlock => comp_audit_issue_type,
+        AuditType::Client => default_issue_type,
+    };
+
     format!(
         r#"
 
@@ -132,7 +140,7 @@ pub fn generate_post_prompt(contract_name: &str) -> String {
 
  **For Every VIOLATION** return:
 1. **Description**: Detailed explanation including vulnerable code snippet 
-2. **Issue Type**: AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontrunMev|UpgradeabilityInitializerSafety|PausableEmergencyStop|TimestampDependentLogic|FlashLoanEconomicManipulation|DelegatecallLowLevelOps|SignatureMalleability|EventConsistency|GasGriefBlockLimit|IntegerOverflow
+2. **Issue Type**: {issue_type}
 3. **Contract**: The exact contract name where vulnerability is found 
 4. **Function**: The exact function name where vulnerability is found, if not applicable return "NA"
 5. **Impact**: Financial and security consequences 
@@ -150,7 +158,7 @@ pub fn generate_post_prompt(contract_name: &str) -> String {
   "findings": [
     {{
       "description": "Detailed explanation if vulnerability including vulnerable code snippet",
-      "issue_type": "AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontrunMev|UpgradeabilityInitializerSafety|PausableEmergencyStop|TimestampDependentLogic|FlashLoanEconomicManipulation|DelegatecallLowLevelOps|SignatureMalleability|EventConsistency|GasGriefBlockLimit|IntegerOverflow",
+      "issue_type": "{issue_type}",
       "contract": "{contract_name}", 
       "function": "<Function>", 
       "impact": "Business and security consequences of the vulnerability",

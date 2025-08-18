@@ -1,12 +1,32 @@
 pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 
-| Severity  | Typical impact                                                                                          |
-|-----------|----------------------------------------------------------------------------------------------------------|
-| High      | Direct theft of user or protocol funds, permanent total loss/control, arbitrary code execution, permanent freezing or bricking of funds, governance takeover, significant unauthorized mint/burn/drain
-| Medium    | Temporary loss until admin action, convincing DoS, reward/fee distortion, oracle/math skew with $ impact |
-| Low       | Minor economic grief, rare‑case DoS, best‑practice deviations                                             |
-| Gas/Info  | Gas optimizations, style, comments, docs                                                                  |
+| Severity       | Typical Impact 
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **High**       | **Direct, permissionless monetary or control loss**:  
+- Permanent theft/drain of funds (vault, pool, treasury)  
+- Inflation/mint exploits (share inflation, reward overclaim, unbounded mint)  
+- Permanent freezing/bricking of funds (withdrawals impossible)  
+- Oracle/price manipulation enabling profitable trades or draining reserves  
+- Arbitrary code execution / delegatecall takeover  
+- Governance capture or voting-power theft                                                                                                                                                                                                                                             |
 
+| **Medium**     | **Convincing, repeatable permissionless exploit that needs admin intervention to fix**:  
+- Temporary DoS of core user flows (deposits/withdrawals paused or blocked)  
+- Reward distortion (attacker extracts unearned share of yield/fees, other users underpaid)  
+- Oracle/math skew that misprices swaps, collateral, or rewards with $$ impact  
+- Accounting errors that cause balance mismatches, temporary fund lockups, or reversible asset misallocation  
+- Token assumption break (fee-on-transfer/rebase/decimals) causing funds stuck, withdrawals underpaid, or vault shares inflated  
+- Unbounded gas growth (looping through storage arrays/mappings) that blocks function execution until admin fixes state                                                                                                                  |
+
+| **Low**        | **Griefing / minor safety issues**:  
+- Edge-case DoS (requires attacker to burn gas, little systemic impact)  
+- Mild precision drift (rounding pennies, no extractable gain)  
+- Best-practice deviations (reentrancy guard missing but no impact, unchecked SafeERC20 return that only causes revert)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+
+| **Gas / Info** | **Non-payable noise**:  
+- Gas optimizations  
+- NatSpec, comments, documentation errors  
+- Style/clarity issues                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 "#;
 
 pub const SHERLOCK_SEVERITY_RUBRIC: &str = r#"
