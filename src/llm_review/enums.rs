@@ -133,6 +133,18 @@ pub enum VulnerabilityType {
     EventConsistency,
     GasGriefBlockLimit,
     IntegerOverflow,
+    /* new aditions */
+    PricePrecision,
+    RoundingError,
+    FeeOnTransferAssumption,
+    UncheckedERC20Return,
+    SignatureReplay,
+    AuthByPass,
+    UntrustedDelegateCall,
+    TimestampManipulation,
+    CrossChainMessageSpoofing,
+    AccountingInvariantViolation,
+    SlippageMissingOrInsufficient,
 }
 
 impl Default for Severity {
@@ -383,6 +395,18 @@ impl VulnerabilityType {
             VulnerabilityType::EventConsistency => "EventConsistency",
             VulnerabilityType::GasGriefBlockLimit => "GasGriefBlockLimit",
             VulnerabilityType::IntegerOverflow => "IntegerOverflow",
+            // New additions
+            VulnerabilityType::PricePrecision => "PricePrecision",
+            VulnerabilityType::RoundingError => "RoundingError",
+            VulnerabilityType::FeeOnTransferAssumption => "FeeOnTransferAssumption",
+            VulnerabilityType::UncheckedERC20Return => "UncheckedERC20Return",
+            VulnerabilityType::SignatureReplay => "SignatureReplay",
+            VulnerabilityType::AuthByPass => "AuthByPass",
+            VulnerabilityType::UntrustedDelegateCall => "UntrustedDelegateCall",
+            VulnerabilityType::TimestampManipulation => "TimestampManipulation",
+            VulnerabilityType::CrossChainMessageSpoofing => "CrossChainMessageSpoofing",
+            VulnerabilityType::AccountingInvariantViolation => "AccountingInvariantViolation",
+            VulnerabilityType::SlippageMissingOrInsufficient => "SlippageMissingOrInsufficient",
         }
     }
 
@@ -419,6 +443,18 @@ impl VulnerabilityType {
             VulnerabilityType::EventConsistency => "Event Consistency",
             VulnerabilityType::GasGriefBlockLimit => "Gas Grief BlockLimit",
             VulnerabilityType::IntegerOverflow => "Integer Overflow",
+            // New additions
+            VulnerabilityType::PricePrecision => "Price Precision",
+            VulnerabilityType::RoundingError => "Rounding Error",
+            VulnerabilityType::FeeOnTransferAssumption => "Fee On Transfer Assumption",
+            VulnerabilityType::UncheckedERC20Return => "Unchecked ERC20 Return",
+            VulnerabilityType::SignatureReplay => "Signature Replay",
+            VulnerabilityType::AuthByPass => "Auth Bypass",
+            VulnerabilityType::UntrustedDelegateCall => "Untrusted Delegatecall",
+            VulnerabilityType::TimestampManipulation => "Timestamp Manipulation",
+            VulnerabilityType::CrossChainMessageSpoofing => "Cross-Chain Message Spoofing",
+            VulnerabilityType::AccountingInvariantViolation => "Accounting Invariant Violation",
+            VulnerabilityType::SlippageMissingOrInsufficient => "Slippage Missing Or Insufficient",
         }
     }
 
@@ -554,6 +590,18 @@ impl<'de> Deserialize<'de> for VulnerabilityType {
             "eventconsistency" => Ok(VulnerabilityType::EventConsistency),
             "gasgriefblocklimit" => Ok(VulnerabilityType::GasGriefBlockLimit),
             "integeroverflow" => Ok(VulnerabilityType::IntegerOverflow),
+            // New variants
+            "priceprecision" => Ok(VulnerabilityType::PricePrecision),
+            "roundingerror" => Ok(VulnerabilityType::RoundingError),
+            "feeontransferassumption" => Ok(VulnerabilityType::FeeOnTransferAssumption),
+            "uncheckederc20return" => Ok(VulnerabilityType::UncheckedERC20Return),
+            "signaturereplay" => Ok(VulnerabilityType::SignatureReplay),
+            "authbypass" => Ok(VulnerabilityType::AuthByPass),
+            "untrusteddelegatecall" => Ok(VulnerabilityType::UntrustedDelegateCall),
+            "timestampmanipulation" => Ok(VulnerabilityType::TimestampManipulation),
+            "crosschainmessagespoofing" => Ok(VulnerabilityType::CrossChainMessageSpoofing),
+            "accountinginvariantviolation" => Ok(VulnerabilityType::AccountingInvariantViolation),
+            "slippagemissingorinsufficient" => Ok(VulnerabilityType::SlippageMissingOrInsufficient),
             other => Err(de::Error::unknown_variant(
                 other,
                 &[
@@ -587,6 +635,17 @@ impl<'de> Deserialize<'de> for VulnerabilityType {
                     "eventconsistency",
                     "gasgriefblocklimit",
                     "integeroverflow",
+                    "priceprecision",
+                    "roundingerror",
+                    "feeontransferassumption",
+                    "uncheckederc20return",
+                    "signaturereplay",
+                    "authbypass",
+                    "untrusteddelegatecall",
+                    "timestampmanipulation",
+                    "crosschainmessagespoofing",
+                    "accountinginvariantviolation",
+                    "slippagemissingorinsufficient",
                 ],
             )),
         }
