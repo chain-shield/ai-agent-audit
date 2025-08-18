@@ -154,9 +154,10 @@ pub mod ai_bot {
 
 /// Master security analysis prompts
 pub mod master_prompts {
+    /// Security analysis prompt variants
+    pub mod code4rena;
     /// Base master security prompt
     pub mod master_prompt;
-    /// Security analysis prompt variants
     pub mod prompt_2x_a;
     pub mod prompt_2x_aa;
     pub mod prompt_2x_b;
