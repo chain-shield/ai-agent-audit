@@ -3,15 +3,19 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
+    config::{AuditType, AUDIT_TYPE},
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         config::{generated_llm_prompt, Findings},
         context_state::{generate_audit_scope, get_metadata_context},
         enums::AIAgent,
-        prompt_support::{post_prompt::generate_post_prompt, pre_prompt::PRE_PROMPT},
+        prompt_support::{
+            post_prompt::generate_post_prompt,
+            pre_prompt::{generate_pre_prompt, PRE_PROMPT},
+        },
     },
-    master_prompts::prompt_2x_aa::PROMPT_2X_AA,
+    master_prompts::{code4rena::CODE4RENA_PROMPT, prompt_2x_aa::PROMPT_2X_AA},
     prepare_code::git_clone::RepoPaths,
 };
 use log::info;
@@ -46,10 +50,15 @@ pub async fn execute(
 
     let added_content_from_brain = Arc::new(context.to_string());
 
+    let llm_instructions = match AUDIT_TYPE {
+        AuditType::Code4rena | AuditType::Sherlock => CODE4RENA_PROMPT,
+        _ => PROMPT_2X_AA,
+    };
+
     for (run, arc_agent) in agents.iter().enumerate() {
         // PAUSED FOR COMPETITIVE AUDIT, only focused on critical issues in code
         // for (i, prompt) in [PROMPT_2X_AA, PROMPT_2X_BB].into_iter().enumerate() {
-        for (i, prompt) in [PROMPT_2X_AA].into_iter().enumerate() {
+        for (i, prompt) in [llm_instructions].into_iter().enumerate() {
             let agent = Arc::clone(arc_agent);
             let combined_findings = Arc::clone(&all_findings);
             let contract_name = Arc::clone(&contract);
@@ -115,8 +124,10 @@ pub async fn run_security_prompt(
 ) -> Result<()> {
     // 1. Build full prompt
     let post_prompt = generate_post_prompt(&contract_name);
+    let pre_prompt = generate_pre_prompt(&contract_name);
+    // TODO - add conditional here if its code4rena run then different PRE and POST
     let prompt_header =
-        generated_llm_prompt(&contract_name, &instructions, PRE_PROMPT, &post_prompt);
+        generated_llm_prompt(&contract_name, &instructions, &pre_prompt, &post_prompt);
     let prompt_body = generate_content_plus_context_block(&code, &added_context);
     let full_prompt = format!("{prompt_header}{prompt_body}");
 

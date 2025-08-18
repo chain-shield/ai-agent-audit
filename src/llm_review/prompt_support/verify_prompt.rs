@@ -79,16 +79,35 @@ You will receive **one report** with the following structure:
 
 
 ## Code4rena Guidelines
+# Code4rena Severity Rubric (What C4 Actually Pays For)
 
-### Code4rena severity rubric
--------------------------
-| Severity  | Typical impact                                                                                          |
-|-----------|----------------------------------------------------------------------------------------------------------|
-| High      | Direct theft of user or protocol funds, permanent total loss/control, arbitrary code execution, permanent freezing or bricking of funds, governance takeover, significant unauthorized mint/burn/drain
-| Medium    | Temporary loss until admin action, convincing DoS, reward/fee distortion, oracle/math skew with $ impact |
-| Low       | Minor economic grief, rare‑case DoS, best‑practice deviations                                             |
-| Gas/Info  | Gas optimizations, style, comments, docs                                                                  |
-| Severity  | Typical impact                                                                                          |
+| Severity       | Typical Impact (what C4 actually pays for)                                                                                                                                                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **High**       | **Direct, permissionless monetary or control loss**:  
+- Permanent theft/drain of funds (vault, pool, treasury)  
+- Inflation/mint exploits (share inflation, reward overclaim, unbounded mint)  
+- Permanent freezing/bricking of funds (withdrawals impossible)  
+- Oracle/price manipulation enabling profitable trades or draining reserves  
+- Arbitrary code execution / delegatecall takeover  
+- Governance capture or voting-power theft |
+    
+| **Medium**     | **Convincing, repeatable permissionless exploit that needs admin intervention to fix**:  
+- Temporary DoS of core user flows (deposits/withdrawals paused or blocked)  
+- Reward distortion (attacker extracts unearned share of yield/fees, other users underpaid)  
+- Oracle/math skew that misprices swaps, collateral, or rewards with $$ impact  
+- Accounting errors that cause balance mismatches, temporary fund lockups, or reversible asset misallocation  
+- Token assumption break (fee-on-transfer/rebase/decimals) causing funds stuck, withdrawals underpaid, or vault shares inflated  
+- Unbounded gas growth (looping through storage arrays/mappings) that blocks function execution until admin fixes state |
+
+| **Low**        | **Griefing / minor safety issues**:  
+- Edge-case DoS (requires attacker to burn gas, little systemic impact)  
+- Mild precision drift (rounding pennies, no extractable gain)  
+- Best-practice deviations (reentrancy guard missing but no impact, unchecked SafeERC20 return that only causes revert) |
+
+| **Gas / Info** | **Non-payable noise**:  
+- Gas optimizations  
+- NatSpec, comments, documentation errors  
+- Style/clarity issues |
 
 ### Guidelines
 ----------
@@ -97,10 +116,12 @@ You will receive **one report** with the following structure:
 • Long‑lasting governance loss or deposit/withdrawal DoS ⇒ ≥ Medium even WITHOUT direct fund loss.  
 • Ignore findings that are purely gas, formatting, or documentation (≤ Low).
 
-## Evaluation Steps (think silently; do **not** reveal reasoning):
-1. Read Description, Impact, PoC, code.  
-2. Verify reachability (modifiers, access control, reentrancy guards, overflow checks ≥ 0.8).  
-3. Decide if impact meets or exceeds Medium per rubric.
+## Evaluation Steps (think silently; do not reveal reasoning):
+1. Read Description, Impact, PoC, and Code.
+2. Verify permissionless reachability (no onlyOwner/roles, no upgrade-only windows).
+3. Decide if the impact maps to ≥ Medium in the rubric.
+4. If bug is false, speculative, or < Medium, return "false".
+5. Otherwise return "true".
 "#;
 
 pub const VERIFY_SHERLOCK_PROMPT: &str = r#"
