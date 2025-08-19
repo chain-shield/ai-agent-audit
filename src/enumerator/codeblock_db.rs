@@ -21,6 +21,7 @@ pub struct MarkdownCodeblock {
     /// Unique identifier for the code block
     pub id: String,
     /// Contract name (e.g., "PuppyRaffle")
+    pub project_id: String,
     pub contract: String,
     /// Token count for LLM context window management
     pub tokens: usize,
@@ -82,6 +83,9 @@ impl CodeBlocksDb {
 
                 CREATE INDEX IF NOT EXISTS idx_codeblocks_project_id
                     ON codeblocks(project_id);
+
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_codeblocks_project_contract
+                    ON codeblocks(project_id, contract);
                "#,
         )?;
         Ok(db)
@@ -141,32 +145,18 @@ impl CodeBlocksDb {
     ///
     /// # Returns
     /// * `Result<()>` - Ok if successful, Error otherwise
-    pub fn insert_codeblock(&self, c: &MarkdownCodeblock, repo: &RepoPaths) -> Result<()> {
+    pub fn insert_codeblock(&self, c: &MarkdownCodeblock) -> Result<()> {
         let conn = Connection::open(&self.path)?;
-
-        // Check if codeblock already exists
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM codeblocks WHERE id = ?1);",
-            params![c.id],
-            |row| row.get(0),
-        )?;
-
-        if exists {
-            // Skip insertion if codeblock already exists
-            log::debug!("Skipping duplicate contract_slice with id {}", c.id);
-            return Ok(());
-        }
 
         // Insert new codeblock
         conn.execute(
-            "INSERT INTO codeblocks VALUES (?1,?2,?3,?4,?5);",
-            params![
-                c.id,
-                repo.project_id,
-                c.contract,
-                c.tokens as i64,
-                c.content
-            ],
+            r#"INSERT INTO codeblocks VALUES (?1,?2,?3,?4,?5)
+                  ON CONFLICT(project_id, contract) DO UPDATE SET
+                    id      = excluded.id,
+                    tokens  = excluded.tokens,
+                    content = excluded.content
+                    "#,
+            params![c.id, c.project_id, c.contract, c.tokens as i64, c.content],
         )?;
         Ok(())
     }
@@ -175,12 +165,13 @@ impl CodeBlocksDb {
     ///
     /// # Returns
     /// * `rusqlite::Result<HashMap<String, String>>` - HashMap mapping contract names to their content
-    pub fn get_all_contracts(&self) -> rusqlite::Result<HashMap<String, String>> {
+    pub fn get_all_contracts(&self, repo: &RepoPaths) -> rusqlite::Result<HashMap<String, String>> {
         let conn = Connection::open(&self.path)?;
 
-        let mut stmt = conn.prepare("SELECT contract, content FROM codeblocks")?;
+        let mut stmt =
+            conn.prepare("SELECT contract, content FROM codeblocks WHERE project_id = ?1")?;
 
-        let rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map([&repo.project_id.clone()], |row| {
             Ok((
                 row.get::<_, String>(0)?, // contract
                 row.get::<_, String>(1)?, // content
@@ -196,17 +187,21 @@ impl CodeBlocksDb {
         Ok(contracts)
     }
 
-    pub fn get_code_for_contract(&self, contract: &str) -> rusqlite::Result<String> {
+    pub fn get_code_for_contract(
+        &self,
+        contract: &str,
+        repo: &RepoPaths,
+    ) -> rusqlite::Result<String> {
         let conn = Connection::open(&self.path)?;
 
         conn.query_row(
             r#"
                 SELECT content
                 FROM   codeblocks
-                WHERE  contract = ?1
+                WHERE  project_id = ?1 AND contract = ?2
                 LIMIT  1;
                 "#,
-            params![contract],
+            params![&repo.project_id, contract],
             |row| row.get(0),
         )
     }
