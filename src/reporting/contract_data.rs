@@ -22,7 +22,7 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
 
     // grab all solidity contracts from database
     log::info!("grabbing contracts from db...");
-    let contracts = codeblocks_db.get_all_contracts()?;
+    let contracts = codeblocks_db.get_all_contracts(repo)?;
     let output_dir = Path::new(&repo.repo_name);
 
     for (contract, codeblock) in contracts {

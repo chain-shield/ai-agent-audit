@@ -135,11 +135,13 @@ pub async fn get_enriched_funcs_and_edges(
     let (funcs, edges) = get_dot_funcs_and_dot_edges(repo).await?;
 
     for edge in edges {
-        let enriched_callee = match get_function_metadata_from_id(&edge.callee, &semantic_db)? {
+        let enriched_callee = match get_function_metadata_from_id(&edge.callee, repo, &semantic_db)?
+        {
             Some(callee_fn) => generated_enriched_fn_label(&edge.callee, callee_fn),
             None => edge.callee,
         };
-        let enriched_caller = match get_function_metadata_from_id(&edge.caller, &semantic_db)? {
+        let enriched_caller = match get_function_metadata_from_id(&edge.caller, repo, &semantic_db)?
+        {
             Some(callee_fn) => generated_enriched_fn_label(&edge.caller, callee_fn),
             None => edge.caller,
         };
@@ -151,10 +153,11 @@ pub async fn get_enriched_funcs_and_edges(
     }
 
     for func in funcs {
-        let enriched_func_name = match get_function_metadata_from_id(&func.full_id, &semantic_db)? {
-            Some(full_func) => generated_enriched_fn_label(&func.name, full_func),
-            None => func.name,
-        };
+        let enriched_func_name =
+            match get_function_metadata_from_id(&func.full_id, repo, &semantic_db)? {
+                Some(full_func) => generated_enriched_fn_label(&func.name, full_func),
+                None => func.name,
+            };
         enriched_funcs.push(DotFunc {
             full_id: func.full_id,
             contract: func.contract,

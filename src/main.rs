@@ -4,13 +4,12 @@ use ai_agent_audit::{
     cli_args::parse,
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
-    enumerator::{codeblock_maker, utils::contracts_in_source_folder},
+    enumerator::codeblock_maker,
     error::Result,
     llm_review::{
         agent_factory::init_llm_clients,
         code_review,
         context_state::{self},
-        contract_file_map::get_file_from_contract,
     },
     prepare_code::{self},
     reporting::{

@@ -96,24 +96,40 @@ pub async fn get_hashmap_of_contract_to_functions(
 ) -> anyhow::Result<HashMap<String, Vec<SmartContractFunction>>> {
     // find all main contracts for app (ones in /src)
     info!("grabbing all contracts...");
-    let contracts_in_src_folder = contracts_in_source_folder(repo).await?;
+    let contracts = contracts_in_source_folder(repo).await?;
 
-    let placeholders = contracts_in_src_folder
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("?{}", i + 1))
+    if contracts.is_empty() {
+        // Either return empty map or error — your call
+        return Err(anyhow!("no contracts found in source folder"));
+        // return Ok(HashMap::new());
+    }
+
+    // Build ?1,?2,... for the contracts and put project_id as the LAST param
+    let placeholders = (1..=contracts.len())
+        .map(|i| format!("?{}", i))
         .collect::<Vec<_>>()
         .join(",");
 
-    let mut statement = semantic_db.prepare(&format!(
-        "SELECT id, project_id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE contract IN ({})",
-        placeholders
-    ))?;
+    let sql = format!(
+        "SELECT func_id, project_id, contract, name, ir, visibility, modifiers, mutability
+         FROM functions
+         WHERE contract IN ({}) AND project_id = ?{}",
+        placeholders,
+        contracts.len() + 1
+    );
 
-    let rows = statement.query_map(params_from_iter(contracts_in_src_folder), |row| {
-        // info!("rows => {:#?}", row);
-        let modifier_str: String = row.get(6)?;
+    let mut stmt = semantic_db.prepare(&sql)?;
+
+    // Params: all contracts first, then project_id
+    let params_iter = contracts
+        .iter()
+        .map(|s| s.as_str())
+        .chain(std::iter::once(repo.project_id.as_str()));
+
+    let rows = stmt.query_map(params_from_iter(params_iter), |row| {
+        let modifier_str: Option<String> = row.get(6)?;
         let modifiers: Vec<String> = modifier_str
+            .unwrap_or_default()
             .split(',')
             .map(|s| s.trim_matches([' ', '\'']).to_string())
             .filter(|s| !s.is_empty())
@@ -130,18 +146,14 @@ pub async fn get_hashmap_of_contract_to_functions(
             mutability: row.get(7)?,
         })
     })?;
+
     let functions_of_contract: Vec<SmartContractFunction> =
         rows.collect::<rusqlite::Result<_>>()?;
 
-    if functions_of_contract.is_empty() {
-        return Err(anyhow!("no entry fn found"));
-    }
     let mut map: HashMap<String, Vec<SmartContractFunction>> = HashMap::new();
-
-    for func in functions_of_contract {
-        map.entry(func.contract.clone()).or_default().push(func)
+    for f in functions_of_contract {
+        map.entry(f.contract.clone()).or_default().push(f);
     }
-
     Ok(map)
 }
 
@@ -309,13 +321,14 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
 }
 
 pub fn get_function_metadata_from_id(
-    id: &str,
+    func_id: &str,
+    repo: &RepoPaths,
     semantic_db: &Connection,
 ) -> Result<Option<SmartContractFunction>> {
     let fn_metadata: Option<SmartContractFunction> = semantic_db
                         .query_row(
-                            "SELECT id, project_id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE id = ?1;",
-                            [id],
+                            "SELECT func_id, project_id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE func_id = ?1 AND project_id = ?2;",
+                            [func_id,&repo.project_id],
                             |row| {
                                 let modifier_str: String = row.get(6)?;
                                 let modifiers: Vec<String> = modifier_str

@@ -293,7 +293,7 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     log::info!("git cloning repo...");
 
     let build_command = cli.generate_build_command();
-    info!("build command detected: {}", build_command);
+    // info!("build command detected: {}", build_command);
     let repo_url = &cli.repo;
     let clone_and_build_command = format!(
         "git clone --depth=1 {repo_url} {repo_root} && \
@@ -433,7 +433,7 @@ impl RepoPaths {
 
         for doc in &self.docs {
             if let Some((filename, content)) = Self::read_file_content(doc)? {
-                info!("extracting content from {} doc file", filename);
+                // info!("extracting content from {} doc file", filename);
                 docs.push_str(&format!("### {}\n\n{}\n\n", filename, content));
             }
         }

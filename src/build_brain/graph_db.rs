@@ -39,16 +39,17 @@ impl GraphDb {
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS functions(
-              id TEXT PRIMARY KEY,   -- 3895_changeFeeAddress
+              func_id TEXT,    -- 3895_changeFeeAddress
               project_id TEXT,
               contract TEXT,
               name TEXT,
               ir TEXT,
               visibility TEXT,
               modifiers TEXT,
-              mutability TEXT
+              mutability TEXT,
+              PRIMARY KEY (func_id, contract, project_id)
             );
-            
+
             -- Add indexes to speed up queries on contract and name
             CREATE INDEX IF NOT EXISTS idx_functions_contract ON functions(contract);
             CREATE INDEX IF NOT EXISTS idx_functions_name ON functions(name);
@@ -62,12 +63,18 @@ impl GraphDb {
             callee TEXT
             );
 
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_edges_triplet
+              ON edges(project_id, caller, callee);
+
             /* NEW ↓ */
             CREATE TABLE IF NOT EXISTS inheritance(
             project_id TEXT,
             child TEXT,
             parent TEXT
             );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_inheritance_triplet
+              ON inheritance(project_id, child, parent);
             "#,
         )?;
         Ok(Self(conn))
@@ -75,7 +82,7 @@ impl GraphDb {
 
     pub fn insert_function(
         &self,
-        id: &str,
+        func_id: &str,
         project_id: &str,
         contract: &str,
         name: &str,
@@ -85,15 +92,28 @@ impl GraphDb {
         mutability: &str,
     ) -> Result<()> {
         self.0.execute(
-            "INSERT OR IGNORE INTO functions(id, project_id, contract, name, ir, visibility, modifiers, mutability) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);",
-            params![id, project_id, contract, name, ir, visibility, modifiers, mutability],
-        )?;
+        r#"
+        INSERT INTO functions (func_id, project_id, contract, name, ir, visibility, modifiers, mutability)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(func_id, contract, project_id) DO UPDATE SET
+            name       = excluded.name,
+            ir         = excluded.ir,
+            visibility = excluded.visibility,
+            modifiers  = excluded.modifiers,
+            mutability = excluded.mutability
+        "#,
+        params![func_id, project_id, contract, name, ir, visibility, modifiers, mutability],
+    )?;
         Ok(())
     }
 
     pub fn insert_edge(&self, project_id: &str, caller: &str, callee: &str) -> Result<()> {
         self.0.execute(
-            "INSERT INTO edges(project_id, caller, callee) VALUES (?1, ?2, ?3);",
+            r#"
+        INSERT INTO edges (project_id, caller, callee)
+        VALUES (?1, ?2, ?3)
+        ON CONFLICT(project_id, caller, callee) DO NOTHING
+        "#,
             params![project_id, caller, callee],
         )?;
         Ok(())
@@ -101,7 +121,11 @@ impl GraphDb {
 
     pub fn insert_inheritance(&self, project_id: &str, child: &str, parent: &str) -> Result<()> {
         self.0.execute(
-            "INSERT INTO inheritance(project_id, child, parent) VALUES (?1, ?2, ?3);",
+            r#"
+        INSERT INTO inheritance (project_id, child, parent)
+        VALUES (?1, ?2, ?3)
+        ON CONFLICT(project_id, child, parent) DO NOTHING
+        "#,
             params![project_id, child, parent],
         )?;
         Ok(())

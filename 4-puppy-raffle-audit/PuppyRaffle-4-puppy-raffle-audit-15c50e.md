@@ -1,3 +1,4 @@
+
 ### Storage layout (PuppyRaffle) 
 
 ```text
@@ -16,8 +17,43 @@ legendaryImageUri string
 
 ```
 
-
-#### PuppyRaffle.constructor(uint256,address,uint256) [INTERNAL]
+#### PuppyRaffle._baseURI() [INTERNAL]
+```slithir
+ data:application/json;base64,
+RETURN data:application/json;base64,
+```
+#### PuppyRaffle._isActivePlayer() [INTERNAL]
+```slithir
+players_10(address[]) := phi(['players_1', 'players_5', 'players_10', 'players_0', 'players_6', 'players_9'])
+ i = 0
+i_1(uint256) := 0(uint256)
+ i < players.length
+i_2(uint256) := phi(['i_1', 'i_3'])
+REF_2337 -> LENGTH players_10
+TMP_11167(bool) = i_2 < REF_2337
+CONDITION TMP_11167
+ players[i] == msg.sender
+REF_2338(address) -> players_10[i_2]
+TMP_11168(bool) = REF_2338 == msg.sender
+CONDITION TMP_11168
+ true
+RETURN True
+ i ++
+TMP_11169(uint256) := i_2(uint256)
+i_3(uint256) = i_2 + 1
+ false
+RETURN False
+```
+#### PuppyRaffle.changeFeeAddress(address) [EXTERNAL][OWNER]
+```slithir
+ feeAddress = newFeeAddress
+feeAddress_4(address) := newFeeAddress_1(address)
+ FeeAddressChanged(newFeeAddress)
+Emit FeeAddressChanged(newFeeAddress_1)
+ onlyOwner()
+MODIFIER_CALL, Ownable.onlyOwner()()
+```
+#### PuppyRaffle.constructor(uint256,address,uint256) [PUBLIC]
 ```slithir
 commonImageUri_1(string) := phi(['commonImageUri_2', 'commonImageUri_0'])
 COMMON_RARITY_1(uint256) := phi(['COMMON_RARITY_0', 'COMMON_RARITY_2', 'COMMON_RARITY_4'])
@@ -62,33 +98,6 @@ rarityToName_3(mapping(uint256 => string)) := phi(['rarityToName_2'])
 REF_2310(string) (->rarityToName_3) := LEGENDARY_2(string)
  ERC721(Puppy Raffle,PR)
 INTERNAL_CALL, ERC721.constructor(string,string)(Puppy Raffle,PR)
-```
-#### PuppyRaffle.tokenURI(uint256) [PUBLIC]
-```slithir
-tokenIdToRarity_5(mapping(uint256 => uint256)) := phi(['tokenIdToRarity_6', 'tokenIdToRarity_1', 'tokenIdToRarity_0', 'tokenIdToRarity_4'])
-rarityToUri_4(mapping(uint256 => string)) := phi(['rarityToUri_5', 'rarityToUri_3', 'rarityToUri_0'])
-rarityToName_4(mapping(uint256 => string)) := phi(['rarityToName_0', 'rarityToName_3', 'rarityToName_5'])
- require(bool,string)(_exists(tokenId),PuppyRaffle: URI query for nonexistent token)
-TMP_11170(bool) = INTERNAL_CALL, ERC721._exists(uint256)(tokenId_1)
-TMP_11171(None) = SOLIDITY_CALL require(bool,string)(TMP_11170,PuppyRaffle: URI query for nonexistent token)
- rarity = tokenIdToRarity[tokenId]
-REF_2339(uint256) -> tokenIdToRarity_6[tokenId_1]
-rarity_1(uint256) := REF_2339(uint256)
- imageURI = rarityToUri[rarity]
-REF_2340(string) -> rarityToUri_5[rarity_1]
-imageURI_1(string) := REF_2340(string)
- rareName = rarityToName[rarity]
-REF_2341(string) -> rarityToName_5[rarity_1]
-rareName_1(string) := REF_2341(string)
- string(abi.encodePacked(_baseURI(),Base64.encode(bytes(abi.encodePacked({"name":",name(),", "description":"An adorable puppy!", ,"attributes": [{"trait_type": "rarity", "value": ,rareName,}], "image":",imageURI,"})))))
-TMP_11172(string) = INTERNAL_CALL, PuppyRaffle._baseURI()()
-TMP_11173(string) = INTERNAL_CALL, ERC721.name()()
-TMP_11174(bytes) = SOLIDITY_CALL abi.encodePacked()({"name":",TMP_11173,", "description":"An adorable puppy!", ,"attributes": [{"trait_type": "rarity", "value": ,rareName_1,}], "image":",imageURI_1,"})
-TMP_11175 = CONVERT TMP_11174 to bytes
-TMP_11176(string) = LIBRARY_CALL, dest:Base64, function:Base64.encode(bytes), arguments:['TMP_11175'] 
-TMP_11177(bytes) = SOLIDITY_CALL abi.encodePacked()(TMP_11172,TMP_11176)
-TMP_11178 = CONVERT TMP_11177 to string
-RETURN TMP_11178
 ```
 #### PuppyRaffle.enterRaffle(address[]) [PUBLIC]
 ```slithir
@@ -149,6 +158,28 @@ i_scope_0_3(uint256) = i_scope_0_2 + 1
  RaffleEnter(newPlayers)
 Emit RaffleEnter(newPlayers_1)
 ```
+#### PuppyRaffle.getActivePlayerIndex(address) [EXTERNAL]
+```slithir
+players_6(address[]) := phi(['players_1', 'players_5', 'players_10', 'players_0', 'players_6', 'players_9'])
+ i = 0
+i_1(uint256) := 0(uint256)
+ i < players.length
+i_2(uint256) := phi(['i_3', 'i_1'])
+REF_2324 -> LENGTH players_6
+TMP_11130(bool) = i_2 < REF_2324
+CONDITION TMP_11130
+ players[i] == player
+REF_2325(address) -> players_6[i_2]
+TMP_11131(bool) = REF_2325 == player_1
+CONDITION TMP_11131
+ i
+RETURN i_2
+ i ++
+TMP_11132(uint256) := i_2(uint256)
+i_3(uint256) = i_2 + 1
+ 0
+RETURN 0
+```
 #### PuppyRaffle.refund(uint256) [PUBLIC]
 ```slithir
 entranceFee_3(uint256) := phi(['entranceFee_0', 'entranceFee_1'])
@@ -173,28 +204,6 @@ players_5(address[]) := phi(['players_4'])
 REF_2323(address) (->players_5) := TMP_11128(address)
  RaffleRefunded(playerAddress)
 Emit RaffleRefunded(playerAddress_1)
-```
-#### PuppyRaffle.getActivePlayerIndex(address) [EXTERNAL]
-```slithir
-players_6(address[]) := phi(['players_1', 'players_5', 'players_10', 'players_0', 'players_6', 'players_9'])
- i = 0
-i_1(uint256) := 0(uint256)
- i < players.length
-i_2(uint256) := phi(['i_3', 'i_1'])
-REF_2324 -> LENGTH players_6
-TMP_11130(bool) = i_2 < REF_2324
-CONDITION TMP_11130
- players[i] == player
-REF_2325(address) -> players_6[i_2]
-TMP_11131(bool) = REF_2325 == player_1
-CONDITION TMP_11131
- i
-RETURN i_2
- i ++
-TMP_11132(uint256) := i_2(uint256)
-i_3(uint256) = i_2 + 1
- 0
-RETURN 0
 ```
 #### PuppyRaffle.selectWinner() [EXTERNAL]
 ```slithir
@@ -283,70 +292,6 @@ TMP_11157(None) = SOLIDITY_CALL require(bool,string)(success_1,PuppyRaffle: Fail
  _safeMint(winner,tokenId)
 INTERNAL_CALL, ERC721._safeMint(address,uint256)(winner_1,tokenId_1)
 ```
-#### PuppyRaffle.withdrawFees() [EXTERNAL]
-```slithir
-feeAddress_2(address) := phi(['feeAddress_1', 'feeAddress_4', 'feeAddress_3', 'feeAddress_0'])
-totalFees_3(uint64) := phi(['totalFees_2', 'totalFees_0', 'totalFees_4'])
- require(bool,string)(address(this).balance == uint256(totalFees),PuppyRaffle: There are currently players active!)
-TMP_11159 = CONVERT this to address
-TMP_11160(uint256) = SOLIDITY_CALL balance(address)(TMP_11159)
-TMP_11161 = CONVERT totalFees_3 to uint256
-TMP_11162(bool) = TMP_11160 == TMP_11161
-TMP_11163(None) = SOLIDITY_CALL require(bool,string)(TMP_11162,PuppyRaffle: There are currently players active!)
- feesToWithdraw = totalFees
-feesToWithdraw_1(uint256) := totalFees_3(uint64)
- totalFees = 0
-totalFees_4(uint64) := 0(uint256)
- (success,None) = feeAddress.call{value: feesToWithdraw}()
-TUPLE_55(bool,bytes) = LOW_LEVEL_CALL, dest:feeAddress_2, function:call, arguments:[''] value:feesToWithdraw_1 
-feeAddress_3(address) := phi(['feeAddress_1', 'feeAddress_4', 'feeAddress_3', 'feeAddress_2'])
-success_1(bool)= UNPACK TUPLE_55 index: 0 
- require(bool,string)(success,PuppyRaffle: Failed to withdraw fees)
-TMP_11164(None) = SOLIDITY_CALL require(bool,string)(success_1,PuppyRaffle: Failed to withdraw fees)
-```
-#### PuppyRaffle.changeFeeAddress(address) [EXTERNAL][OWNER]
-```slithir
- feeAddress = newFeeAddress
-feeAddress_4(address) := newFeeAddress_1(address)
- FeeAddressChanged(newFeeAddress)
-Emit FeeAddressChanged(newFeeAddress_1)
- onlyOwner()
-MODIFIER_CALL, Ownable.onlyOwner()()
-```
-#### PuppyRaffle._isActivePlayer() [INTERNAL]
-```slithir
-players_10(address[]) := phi(['players_1', 'players_5', 'players_10', 'players_0', 'players_6', 'players_9'])
- i = 0
-i_1(uint256) := 0(uint256)
- i < players.length
-i_2(uint256) := phi(['i_1', 'i_3'])
-REF_2337 -> LENGTH players_10
-TMP_11167(bool) = i_2 < REF_2337
-CONDITION TMP_11167
- players[i] == msg.sender
-REF_2338(address) -> players_10[i_2]
-TMP_11168(bool) = REF_2338 == msg.sender
-CONDITION TMP_11168
- true
-RETURN True
- i ++
-TMP_11169(uint256) := i_2(uint256)
-i_3(uint256) = i_2 + 1
- false
-RETURN False
-```
-#### PuppyRaffle._baseURI() [INTERNAL]
-```slithir
- data:application/json;base64,
-RETURN data:application/json;base64,
-```
-#### PuppyRaffle.slitherConstructorVariables() [INTERNAL]
-```slithir
- totalFees = 0
- commonImageUri = ipfs://QmSsYRx3LpDAb1GZQm7zZ1AuHZjfbPkD6J7s9r41xu1mf8
- rareImageUri = ipfs://QmUPjADFGEKmfohdTaNcWhp7VGk26h5jXDA7v3VtTnTLcW
- legendaryImageUri = ipfs://QmYx6GsYAKnNzZ9A6NvEKV9nf1VaDzJrqDR23Y8YSkebLU
-```
 #### PuppyRaffle.slitherConstructorConstantVariables() [INTERNAL]
 ```slithir
 Expression: COMMON_RARITY = 70
@@ -362,7 +307,61 @@ TMP_11180(address) = INTERNAL_CALL, Context._msgSender()()
 TMP_11181(bool) = TMP_11179 == TMP_11180
 TMP_11182(None) = SOLIDITY_CALL require(bool,string)(TMP_11181,Ownable: caller is not the owner)
 ```
-
+#### PuppyRaffle.slitherConstructorVariables() [INTERNAL]
+```slithir
+ totalFees = 0
+ commonImageUri = ipfs://QmSsYRx3LpDAb1GZQm7zZ1AuHZjfbPkD6J7s9r41xu1mf8
+ rareImageUri = ipfs://QmUPjADFGEKmfohdTaNcWhp7VGk26h5jXDA7v3VtTnTLcW
+ legendaryImageUri = ipfs://QmYx6GsYAKnNzZ9A6NvEKV9nf1VaDzJrqDR23Y8YSkebLU
+```
+#### PuppyRaffle.tokenURI(uint256) [PUBLIC]
+```slithir
+tokenIdToRarity_5(mapping(uint256 => uint256)) := phi(['tokenIdToRarity_1', 'tokenIdToRarity_6', 'tokenIdToRarity_0', 'tokenIdToRarity_4'])
+rarityToUri_4(mapping(uint256 => string)) := phi(['rarityToUri_5', 'rarityToUri_3', 'rarityToUri_0'])
+rarityToName_4(mapping(uint256 => string)) := phi(['rarityToName_0', 'rarityToName_3', 'rarityToName_5'])
+ require(bool,string)(_exists(tokenId),PuppyRaffle: URI query for nonexistent token)
+TMP_11170(bool) = INTERNAL_CALL, ERC721._exists(uint256)(tokenId_1)
+TMP_11171(None) = SOLIDITY_CALL require(bool,string)(TMP_11170,PuppyRaffle: URI query for nonexistent token)
+ rarity = tokenIdToRarity[tokenId]
+REF_2339(uint256) -> tokenIdToRarity_6[tokenId_1]
+rarity_1(uint256) := REF_2339(uint256)
+ imageURI = rarityToUri[rarity]
+REF_2340(string) -> rarityToUri_5[rarity_1]
+imageURI_1(string) := REF_2340(string)
+ rareName = rarityToName[rarity]
+REF_2341(string) -> rarityToName_5[rarity_1]
+rareName_1(string) := REF_2341(string)
+ string(abi.encodePacked(_baseURI(),Base64.encode(bytes(abi.encodePacked({"name":",name(),", "description":"An adorable puppy!", ,"attributes": [{"trait_type": "rarity", "value": ,rareName,}], "image":",imageURI,"})))))
+TMP_11172(string) = INTERNAL_CALL, PuppyRaffle._baseURI()()
+TMP_11173(string) = INTERNAL_CALL, ERC721.name()()
+TMP_11174(bytes) = SOLIDITY_CALL abi.encodePacked()({"name":",TMP_11173,", "description":"An adorable puppy!", ,"attributes": [{"trait_type": "rarity", "value": ,rareName_1,}], "image":",imageURI_1,"})
+TMP_11175 = CONVERT TMP_11174 to bytes
+TMP_11176(string) = LIBRARY_CALL, dest:Base64, function:Base64.encode(bytes), arguments:['TMP_11175'] 
+TMP_11177(bytes) = SOLIDITY_CALL abi.encodePacked()(TMP_11172,TMP_11176)
+TMP_11178 = CONVERT TMP_11177 to string
+RETURN TMP_11178
+```
+#### PuppyRaffle.withdrawFees() [EXTERNAL]
+```slithir
+feeAddress_2(address) := phi(['feeAddress_1', 'feeAddress_3', 'feeAddress_0', 'feeAddress_4'])
+totalFees_3(uint64) := phi(['totalFees_2', 'totalFees_0', 'totalFees_4'])
+ require(bool,string)(address(this).balance == uint256(totalFees),PuppyRaffle: There are currently players active!)
+TMP_11159 = CONVERT this to address
+TMP_11160(uint256) = SOLIDITY_CALL balance(address)(TMP_11159)
+TMP_11161 = CONVERT totalFees_3 to uint256
+TMP_11162(bool) = TMP_11160 == TMP_11161
+TMP_11163(None) = SOLIDITY_CALL require(bool,string)(TMP_11162,PuppyRaffle: There are currently players active!)
+ feesToWithdraw = totalFees
+feesToWithdraw_1(uint256) := totalFees_3(uint64)
+ totalFees = 0
+totalFees_4(uint64) := 0(uint256)
+ (success,None) = feeAddress.call{value: feesToWithdraw}()
+TUPLE_55(bool,bytes) = LOW_LEVEL_CALL, dest:feeAddress_2, function:call, arguments:[''] value:feesToWithdraw_1 
+feeAddress_3(address) := phi(['feeAddress_1', 'feeAddress_2', 'feeAddress_4', 'feeAddress_3'])
+success_1(bool)= UNPACK TUPLE_55 index: 0 
+ require(bool,string)(success,PuppyRaffle: Failed to withdraw fees)
+TMP_11164(None) = SOLIDITY_CALL require(bool,string)(success_1,PuppyRaffle: Failed to withdraw fees)
+```
 #### Address.sendValue(address,uint256) [INTERNAL]
 ```slithir
  require(bool,string)(address(this).balance >= amount,Address: insufficient balance)
@@ -376,3 +375,4 @@ success_1(bool)= UNPACK TUPLE_39 index: 0
  require(bool,string)(success,Address: unable to send value, recipient may have reverted)
 TMP_10333(None) = SOLIDITY_CALL require(bool,string)(success_1,Address: unable to send value, recipient may have reverted)
 ```
+

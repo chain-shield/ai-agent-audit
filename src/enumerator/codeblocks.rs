@@ -93,11 +93,12 @@ pub async fn generate_codeblock_from_codebase(
 
             // info!("token_count => {}", token_count);
             if depth < max_depth {
-                let mut statement =
-                    semantic_db.prepare("SELECT callee FROM edges WHERE caller = ?1;")?;
-                let rows = statement.query_map([&func.id], |r| r.get::<_, String>(0))?;
+                let mut statement = semantic_db
+                    .prepare("SELECT callee FROM edges WHERE caller = ?1 AND project_id = ?2;")?;
+                let rows =
+                    statement.query_map([&func.id, &repo.project_id], |r| r.get::<_, String>(0))?;
                 for callee in rows.flatten() {
-                    let callee_fn = get_function_metadata_from_id(&callee, semantic_db)?;
+                    let callee_fn = get_function_metadata_from_id(&callee, repo, semantic_db)?;
                     let Some(callee_fn) = callee_fn else { continue };
 
                     frontier.push_back((callee_fn, depth + 1));
@@ -126,12 +127,13 @@ pub async fn generate_codeblock_from_codebase(
 
         let codeblock = MarkdownCodeblock {
             id: Uuid::new_v4().to_string(),
+            project_id: repo.project_id.clone(),
             contract: contract.clone(),
             tokens: token_count,
             content: markdown_codeblock_for_llm,
         };
         // 4. store
-        codeblock_db.insert_codeblock(&codeblock, repo)?;
+        codeblock_db.insert_codeblock(&codeblock)?;
 
         // save to cache
         set_codeblock_cache(&contract, &codeblock).await;
