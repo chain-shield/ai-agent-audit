@@ -231,22 +231,27 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
     }
     // get exclusions if any
     let excluded_folders = repo.excluded_folders.clone().unwrap_or(Vec::new());
+    let scoped_files = repo.extract_scoped_files()?;
 
     // Regex matches `contract Foo`, ignores `interface` / `library`
     let re = Regex::new(r"(?m)^\s*contract\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     let mut contracts = Vec::<String>::new();
 
-    let in_scope_files: &Vec<PathBuf> = &repo
-        .sol_files
-        .iter()
-        .filter(|f| f.starts_with(&repo.source_code_folder))
-        .filter(|f| {
-            !excluded_folders
-                .iter()
-                .any(|excluded| f.starts_with(excluded))
-        })
-        .map(|f| f.to_owned())
-        .collect();
+    let in_scope_files: &Vec<PathBuf> = if !scoped_files.is_empty() {
+        &scoped_files
+    } else {
+        &repo
+            .sol_files
+            .iter()
+            .filter(|f| f.starts_with(&repo.source_code_folder))
+            .filter(|f| {
+                !excluded_folders
+                    .iter()
+                    .any(|excluded| f.starts_with(excluded))
+            })
+            .map(|f| f.to_owned())
+            .collect()
+    };
 
     for file in in_scope_files {
         // ✅ is in src ?
@@ -255,16 +260,18 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
         // }
 
         // 🚫 Skip if path contains /lib/ or /mock/
-        if file.components().any(|comp| {
-            let part = comp.as_os_str().to_ascii_lowercase();
-            part == "lib"
-                || part == "library"
-                || part.to_string_lossy().to_ascii_lowercase().contains("mock")
-                || part
-                    .to_string_lossy()
-                    .to_ascii_lowercase()
-                    .contains("helper")
-        }) {
+        if scoped_files.is_empty()
+            && file.components().any(|comp| {
+                let part = comp.as_os_str().to_ascii_lowercase();
+                part == "lib"
+                    || part == "library"
+                    || part.to_string_lossy().to_ascii_lowercase().contains("mock")
+                    || part
+                        .to_string_lossy()
+                        .to_ascii_lowercase()
+                        .contains("helper")
+            })
+        {
             continue;
         }
         // Skip directories and symlinks
@@ -272,6 +279,7 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
             continue;
         }
 
+        // info!("read scoped file: {}", file.display());
         let content = match fs::read_to_string(file) {
             Ok(c) => c,
             Err(e) => {
@@ -279,13 +287,18 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
                 continue;
             }
         };
+        // print_first_n_lines(20, &content);
 
         for cap in re.captures_iter(&content) {
             if let Some(contract_name) = cap.get(1) {
                 let contract = contract_name.as_str();
                 if !contract.to_ascii_lowercase().contains("mock") {
                     contracts.push(contract.to_string());
-
+                    // info!(
+                    //     "adding contract {} and file {} to map",
+                    //     contract,
+                    //     file.display()
+                    // );
                     // record in contract to file hashmap
                     insert_contract_to_file_mapping(contract, file, repo).await?;
                 }
