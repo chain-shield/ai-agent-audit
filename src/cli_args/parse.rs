@@ -8,6 +8,7 @@ use clap::{Parser, ValueEnum};
 pub enum BuilderType {
     Foundry,
     Hardhat,
+    HardhatYarn,
     Custom,
     Auto,
 }
@@ -42,6 +43,11 @@ pub struct Cli {
     // Optional exclude folders from scope
     #[arg(long, value_delimiter = ',')]
     pub exclude_folders: Option<Vec<String>>,
+
+    /// Optional provide file with list of files (relate links) that are in scope - works well with
+    /// code4rena
+    #[arg(long)]
+    pub scoped_files: Option<String>,
 
     /// Builder type (foundry, hardhat, custom, auto)
     #[arg(long, default_value_t = BuilderType::Auto)]
@@ -83,7 +89,10 @@ impl Cli {
 
         match self.builder {
             BuilderType::Hardhat => {
-                "npm install hardhat && npm install && npx hardhat compile".to_string()
+                "[ -f .env.example ] && cp .env.example .env; npm install hardhat --legacy-peer-deps && npm install --legacy-peer-deps && npx hardhat compile".to_string()
+            }
+            BuilderType::HardhatYarn => {
+                "[ -f .env.example ] && cp .env.example .env; yarn install && yarn hardhat compile".to_string()
             }
             BuilderType::Custom => self
                 .build_cmd
@@ -94,7 +103,8 @@ impl Cli {
                 format!(
                     "if [ -f foundry.toml ]; then {forge_build_cmd}; \
              elif [ -f hardhat.config.js ] || [ -f hardhat.config.ts ]; then \
-             npm install hardhat && npm install && npx hardhat compile; \
+             if [ -f yarn.lock ]; then [ -f .env.example ] && cp .env.example .env; yarn install && yarn hardhat compile; \
+             else [ -f .env.example ] && cp .env.example .env; npm install hardhat --legacy-peer-deps && npm install --legacy-peer-deps && npx hardhat compile; fi; \
              else echo 'No build system detected'; exit 1; fi"
                 )
             }
@@ -108,6 +118,7 @@ impl fmt::Display for BuilderType {
         let s = match self {
             BuilderType::Foundry => "foundry",
             BuilderType::Hardhat => "hardhat",
+            BuilderType::HardhatYarn => "hardhat-yarn",
             BuilderType::Custom => "custom",
             BuilderType::Auto => "auto",
         };

@@ -254,6 +254,7 @@ mod tests {
             docs: vec![],
             source_code_folder: temp_dir.path().to_path_buf(),
             audit_scope: None,
+            scoped_files: None,
             excluded_folders: None,
             repo_name: "test-repo".to_string(),
             commit_hash: "abc123def456".to_string(),

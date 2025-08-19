@@ -215,7 +215,7 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     // Create discovery agents using Gemini models
     let mut ai_discovery_agents = Vec::new();
 
-    let gemini_config = AgentConfig::new(repo.clone())
+    let _gemini_config = AgentConfig::new(repo.clone())
         .with_temperature(1.0)
         .with_model("gemini-2.5-pro")
         .with_preamble(solidity_auditor_preamble)

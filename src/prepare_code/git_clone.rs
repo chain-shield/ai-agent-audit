@@ -9,7 +9,12 @@ use ignore::gitignore::GitignoreBuilder;
 use log::info;
 use std::path::PathBuf;
 use std::process::Command;
-use std::{fs, path::Path};
+use std::{
+    fs,
+    fs::File,
+    io::{self, BufRead},
+    path::Path,
+};
 use walkdir::WalkDir;
 
 use crate::cli_args::parse::Cli;
@@ -49,6 +54,7 @@ pub struct RepoPaths {
     pub audit_scope: Option<PathBuf>,
     /// folder exclude from scope
     pub excluded_folders: Option<Vec<PathBuf>>,
+    pub scoped_files: Option<PathBuf>,
     /// full 40-char SHA, e.g. `"1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t"`
     pub commit_hash: String,
 }
@@ -236,6 +242,11 @@ pub fn clone_and_filter_git_repo(
         None => None,
     };
 
+    let scoped_files = match &cli.scoped_files {
+        Some(scope) => Some(Path::new(scope).to_path_buf()),
+        None => None,
+    };
+
     // Return the collected paths
     Ok(RepoPaths {
         project_id,
@@ -249,6 +260,7 @@ pub fn clone_and_filter_git_repo(
         repo_name,
         audit_scope,
         excluded_folders,
+        scoped_files,
         commit_hash,
     })
 }
@@ -281,6 +293,7 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     log::info!("git cloning repo...");
 
     let build_command = cli.generate_build_command();
+    info!("build command detected: {}", build_command);
     let repo_url = &cli.repo;
     let clone_and_build_command = format!(
         "git clone --depth=1 {repo_url} {repo_root} && \
@@ -390,6 +403,29 @@ impl RepoPaths {
         } else {
             Ok(String::new())
         }
+    }
+
+    pub fn extract_scoped_files(&self) -> Result<Vec<PathBuf>> {
+        let Some(scoped_files) = &self.scoped_files else {
+            return Ok(Vec::new());
+        };
+
+        let file = File::open(scoped_files)?;
+        let reader = io::BufReader::new(file);
+        let search_root = self.root.join(&self.repo_name);
+
+        let paths: Vec<PathBuf> = reader
+            .lines()
+            .filter_map(|line| line.ok()) // drop I/O errors
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty()) // skip blank lines
+            .map(|p| {
+                let path = p.strip_prefix("./").unwrap_or(&p);
+                search_root.join(path)
+            }) // turn String into PathBuf
+            .collect();
+
+        Ok(paths)
     }
 
     pub fn extract_content_from_docs(&self) -> Result<String> {

@@ -35,6 +35,7 @@ pub async fn get_file_from_contract(contract: &str, repo: &RepoPaths) -> anyhow:
 
     let key = format!("{}{}", repo.repo_name, contract);
 
+    // log::info!("getting file for contract {}", contract);
     let file = contract_file_map
         .get(&key)
         .expect("no filename found for contract");

@@ -4,7 +4,7 @@
 /// complete repository information including paths, file lists, documentation,
 /// and generated context data from RepoPaths and metadata analysis.
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -224,6 +224,7 @@ impl RepoData {
             script_files,
             config_files,
             source_code_folder: PathBuf::from(&self.source_code_folder),
+            scoped_files: None,
             docs,
             repo_name: self.repo_name.clone(),
             audit_scope: self.audit_scope.as_ref().map(PathBuf::from),
