@@ -82,8 +82,12 @@ pub mod llm_review {
     pub mod contract_file_map;
     /// AI agent and vulnerability type enums
     pub mod enums;
+    pub mod patterns;
     pub mod semaphore;
     /// Security audit phases
+    pub mod dynamic_prompts {
+        pub mod patterns;
+    }
     pub mod phases {
         /// Phase 2: Parallel vulnerability detection across multiple AI agents
         pub mod generate_findings;

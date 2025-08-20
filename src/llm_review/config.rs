@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    llm_review::patterns::{ImpactHint, VulnerabilityPattern},
     prompts::{
         access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
         confidential_data::SAVING_CONFIDENTIAL_DATA, default_visibility::DEFAULT_VISIBILITIES,
@@ -49,11 +50,41 @@ pub struct Finding {
     #[schemars(description = "Severity level: Critical, High, Medium, Low, Info")]
     pub severity: Severity, //severity of issue
     pub mitigation: Option<String>,
+    pub static_signals: Vec<String>, // e.g., "amountOutMin=0", "no onlyOwner"
+    pub assets_at_risk: Vec<String>, // e.g., ["treasury", "rewards", "LP"]
+    pub privilege: PrivilegeLevel,   // permissionless vs role-gated
+    pub preconditions: Vec<String>,  // state required to trigger (if any)
+    pub generated_from: String,      // id of invariant or pattern issue was generated from
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Findings {
     pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Patterns {
+    pub patterns: Vec<Pattern>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "PascalCase")]
+pub enum PrivilegeLevel {
+    Permissionless, // any EOA
+    RequiresRole,   // specific role / owner
+    TrustedActor,   // only if threat model distrusts admin
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct Pattern {
+    pub issue_type: VulnerabilityPattern,
+    pub contract: String,            // exact constract name where issue appears
+    pub function: String, // exact function name where issue appears, if not applicable set to 'NA'
+    pub description: String, // description of issue, include code snippet if relevant
+    pub static_signals: Vec<String>, // e.g., "amountOutMin=0", "no onlyOwner"
+    pub assets_at_risk: Vec<String>, // e.g., ["treasury", "rewards", "LP"]
+    pub privilege: PrivilegeLevel, // permissionless vs role-gated
+    pub impact: Option<ImpactHint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -328,6 +359,12 @@ impl ContractInvariants {
             .into_iter()
             .filter(|inv| inv.status == InvariantStatus::VIOLATION)
             .collect::<Vec<InvariantFinding>>()
+    }
+}
+
+impl Default for PrivilegeLevel {
+    fn default() -> Self {
+        PrivilegeLevel::Permissionless
     }
 }
 impl Findings {
