@@ -4,19 +4,21 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **High**       | **Direct, permissionless monetary or control loss**:  
 - Permanent theft/drain of funds (vault, pool, treasury)  
-- Inflation/mint exploits (share inflation, reward overclaim, unbounded mint)  
+- Inflation/mint exploits (share inflation, reward overclaim with immediate cashout, unbounded mint)  
+- **Reward redirection/distortion with immediate extractable value** (e.g., unauthorized validator/score/delegation that increases attacker’s payouts or diverts others’ rewards; governance/voting-power hijack that changes payout policy)  
 - Permanent freezing/bricking of funds (withdrawals impossible)  
 - Oracle/price manipulation enabling profitable trades or draining reserves  
 - Arbitrary code execution / delegatecall takeover  
-- Governance capture or voting-power theft                                                                                                                                                                                                                                             |
-
+- Governance capture or voting-power theft  
+- Critical ERC standard violation that enables theft or loss of redeemability (e.g., burn bypass that desynchronizes balances vs. totalSupply in a way that lets attacker cash out) |
+    
 | **Medium**     | **Convincing, repeatable permissionless exploit that needs admin intervention to fix**:  
 - Temporary DoS of core user flows (deposits/withdrawals paused or blocked)  
-- Reward distortion (attacker extracts unearned share of yield/fees, other users underpaid)  
-- Oracle/math skew that misprices swaps, collateral, or rewards with $$ impact  
-- Accounting errors that cause balance mismatches, temporary fund lockups, or reversible asset misallocation  
-- Token assumption break (fee-on-transfer/rebase/decimals) causing funds stuck, withdrawals underpaid, or vault shares inflated  
-- Unbounded gas growth (looping through storage arrays/mappings) that blocks function execution until admin fixes state                                                                                                                  |
+- **Reward distortion that is bounded/temporary or needs admin repair** (e.g., mis-weighted rewards that don’t allow immediate cashout or are limited to a small window until config is fixed)  
+- Oracle/math skew that misprices swaps, collateral, or rewards with $$ impact but not a direct drain  
+- Accounting errors causing balance mismatches, temporary fund lockups, or reversible asset misallocation  
+- Token assumption breaks (fee-on-transfer/rebase/decimals) causing stuck funds or under/overpayment but fixable by admin/state repair  
+- Unbounded gas growth that blocks execution until admin cleanup |
 
 | **Low**        | **Griefing / minor safety issues**:  
 - Edge-case DoS (requires attacker to burn gas, little systemic impact)  

@@ -58,6 +58,7 @@ D) Produce PoC + Foundry test:
 - AccountingInvariantViolation
 - SlippageMissingOrInsufficient
 - FlashLoanEconomicManipulation
+- Custom  // if your finding does not find into above categories, just provide details in `description`
 
 ## Code4rena Auditor Checklist of Top Issues to Look for
 1. Access Control
