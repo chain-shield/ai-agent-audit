@@ -1,0 +1,801 @@
+use schemars::JsonSchema;
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
+// Access,Auth &,Governance
+pub enum VulnerabilityPattern {
+    AccessControlOrAuthByPass, // High
+    GovernanceDelegationFlaw,
+    DoubleExecutionOrReplay,
+    PermitOrSignatureReplay,
+    EIP1271ByPass,
+    ConfigFootgun, // untrusted admin
+
+    // Call Order ,Reentrancy, External calls
+    CEIViolation,
+    Reentrancy, // High
+    ReadOnlyReentrancy,
+    ExternalCallAfterStateChange, // Medium
+
+    // Economic , Market, & Oracle
+    SlippageMissingOrInsufficient,
+    OracleUsingDEXorTWAP,
+    FlashLoanEconomicManipulation, // High
+    FeeOnTransferAssumption,
+    PricePrecisionOrRoundingError,
+    ReserveOrPriceDesync,
+
+    // Accounting & Invariants
+    AccountingInvariantViolation,
+    UnsafeRecipient,
+    PrecisionDriftAccumulation, // Medium
+
+    //Token Standard Allowance
+    StandardViolation,
+    AllowanceRace, // Medium
+    PermitMisuse,
+
+    // Upgradeability, Proxies, & Init
+    UpgradeAuthBypass,
+    InitOrderOrUnintialized,
+    StorageCollisionOrSelectorClash,
+    SelfdestructOrMetamorphicFootguns,
+
+    //Lifecycle & State Machines
+    MaturityorGatingByPass,
+    EpochOrIndexMonotonicity,
+
+    // DoS, Gas, and Complexity - all Mediums
+    UnboundedLoops,
+    GriefableCallbacks,
+    StateGrowthOrStorageBloat,
+
+    // Randomness, Time, & Chain Assumptions - all Medium or Low
+    TimestampOrBlockManipulation,
+    BlockhashOrPRNGWeakness,
+    ChainIdorDomainDrift,
+
+    // Cross-Chain & Bridging - only for L2 or briges
+    CrossChainMessageSpoofing,
+    FinalityOrReplayAcrossDomains,
+
+    // EVM/Assembly & Low-Level
+    UncheckedLowLevelCallResults,
+    UnsafeAssembyTypeCasts,
+    DivideByZeroOrOverFlowInCustomMath,
+
+    // ETH/WETH & Payment Flows
+    EthVsWethConfusion,
+    PullorPushPaymentbugs,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum ImpactHint {
+    High,
+    HighMedium, // between High and Medium
+    Medium,
+    MediumLow, // between Medium and Low
+    Low,
+}
+
+#[derive(Debug, Clone, JsonSchema)]
+pub struct VulnerabilityPatternSpec {
+    pub key: VulnerabilityPattern,
+    pub definition: &'static str,
+    pub static_signals: &'static [&'static str],
+    pub examples: &'static [&'static str],
+    pub impact_hint: ImpactHint,
+}
+
+impl Serialize for VulnerabilityPatternSpec {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("VulnerabilityPatternSpec", 5)?;
+        state.serialize_field("key", &self.key)?;
+        state.serialize_field("definition", self.definition)?;
+        state.serialize_field("static_signals", &self.static_signals)?;
+        state.serialize_field("examples", &self.examples)?;
+        state.serialize_field("impact_hint", &self.impact_hint)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for VulnerabilityPatternSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Key,
+            Definition,
+            StaticSignals,
+            Examples,
+            ImpactHint,
+        }
+
+        struct VulnerabilityPatternSpecVisitor;
+
+        impl<'de> Visitor<'de> for VulnerabilityPatternSpecVisitor {
+            type Value = VulnerabilityPatternSpec;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct VulnerabilityPatternSpec")
+            }
+
+            fn visit_map<V>(self, _map: V) -> Result<VulnerabilityPatternSpec, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                // For deserialization, we'll return an error since we can't create static references
+                // This is mainly used for serialization and JSON schema generation
+                Err(de::Error::custom(
+                    "VulnerabilityPatternSpec deserialization not supported - use static VULNERABILITY_PATTERN_LIBRARY",
+                ))
+            }
+        }
+
+        const FIELDS: &'static [&'static str] = &[
+            "key",
+            "definition",
+            "static_signals",
+            "examples",
+            "impact_hint",
+        ];
+        deserializer.deserialize_struct(
+            "VulnerabilityPatternSpec",
+            FIELDS,
+            VulnerabilityPatternSpecVisitor,
+        )
+    }
+}
+
+pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
+    // A) Access, Auth, Governance
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::AccessControlOrAuthByPass,
+        definition: "Sensitive state-changing function lacks or misconfigures role/ownership checks, enabling unauthorized actions.",
+        static_signals: &[
+            "no onlyOwner/hasRole on mint/upgrade/validator-set",
+            "role check after state change",
+            "msg.sender compared to wrong admin address",
+        ],
+        examples: &[
+            "mint() callable by anyone",
+            "addValidator() missing access control",
+            "setAssetToken() public",
+        ],
+        impact_hint: ImpactHint::High,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::GovernanceDelegationFlaw,
+        definition: "Delegation, validator, or voting power mappings get out of sync or can be bypassed.",
+        static_signals: &[
+            "delegates/votingPower/validatorSet updated inconsistently",
+            "withdraw/undelegate doesn't revoke power",
+            "delegate() path bypasses validator registration",
+        ],
+        examples: &[
+            "delegate() grants voting power to non-validator",
+            "withdraw() keeps prior votingPower",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::DoubleExecutionOrReplay,
+        definition: "Action can be executed more than once due to missing nonce/idempotency guard or replayable message.",
+        static_signals: &[
+            "no executed[proposalId] flag",
+            "no nonce consumed in execute()",
+            "offchain message reused without anti-replay",
+        ],
+        examples: &[
+            "earlyExecute() usable twice",
+            "re-submit identical proposal to double effects",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::PermitOrSignatureReplay,
+        definition: "EIP-712/EIP-2612 signatures can be reused or forged due to nonce/domain errors.",
+        static_signals: &[
+            "missing per-owner nonce",
+            "domain separator not binding chainId",
+            "no deadline/expiry enforced",
+        ],
+        examples: &[
+            "permit() accepts reused signature",
+            "wrong DOMAIN_SEPARATOR on chain fork",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::EIP1271ByPass,
+        definition: "Improper EIP-1271 contract signature validation allows unauthorized approvals/executions.",
+        static_signals: &[
+            "accepts non-magic return value",
+            "low-level call without checking success+result",
+        ],
+        examples: &["isValidSignature() return not verified"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ConfigFootgun,
+        definition: "Owner-configurable parameter can brick flows or redirect funds without safeguards/sanity checks.",
+        static_signals: &[
+            "owner can set arbitrary token/router/treasury",
+            "no zero-address/known-allowlist checks",
+        ],
+        examples: &[
+            "setAssetToken() leads to loss",
+            "setRouter() to malicious router",
+        ],
+        impact_hint: ImpactHint::MediumLow,
+    },
+    // B) Call Order, Reentrancy, External calls
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::CEIViolation,
+        definition: "External calls occur before internal state effects, enabling reentrancy or inconsistent state.",
+        static_signals: &[
+            "call/transfer/safeTransfer before state write",
+            "no reentrancy guard on money flows",
+        ],
+        examples: &["withdraw() sends ETH then updates balance"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::Reentrancy,
+        definition: "Re-enterable external call path allows attacker to perform multiple state updates per tx.",
+        static_signals: &[
+            "untrusted call before all updates",
+            "missing/nonfunctional nonReentrant",
+        ],
+        examples: &[
+            "claim() reentered via ERC777 hooks",
+            "NFT receiver hook reenters withdraw()",
+        ],
+        impact_hint: ImpactHint::High,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ReadOnlyReentrancy,
+        definition: "Observable state (e.g., AMM reserves) read mid-tx is manipulable within same transaction.",
+        static_signals: &[
+            "uses getReserves/price that can change intratx",
+            "no TWAP or staleness guard",
+        ],
+        examples: &["uses spot price to set reward weight this tx"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ExternalCallAfterStateChange,
+        definition: "State updates occur before an external call that may revert/grief, leaving partial state.",
+        static_signals: &[
+            "bookkeeping updated; external call at end",
+            "no try/catch or rollback on failure",
+        ],
+        examples: &["emit+state updated then transfer to user; transfer can revert"],
+        impact_hint: ImpactHint::Medium,
+    },
+    // C) Economic, Market, Oracle
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::SlippageMissingOrInsufficient,
+        definition: "Trades executed without meaningful slippage bounds or time bounds.",
+        static_signals: &[
+            "amountOutMin=0",
+            "deadline omitted or far future",
+            "minOut computed from same-tx price",
+        ],
+        examples: &["_swapTax passes 0 minOut", "router calls with no deadline"],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::OracleUsingDEXorTWAP,
+        definition: "Price/oracle derived from manipulable spot or too-short TWAP without staleness checks.",
+        static_signals: &[
+            "single spot read from AMM",
+            "TWAP window < 10–30 min",
+            "no min observation / heartbeat",
+        ],
+        examples: &[
+            "uses spot to value collateral",
+            "rewards based on last swap price",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::FlashLoanEconomicManipulation,
+        definition: "Critical decisions depend on balances/reserves that an attacker can flash-loan skew within a tx.",
+        static_signals: &[
+            "branches on pool.balanceOf()/getReserves()",
+            "no multi-block observation",
+        ],
+        examples: &["force graduation based on TVL check"],
+        impact_hint: ImpactHint::High,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::FeeOnTransferAssumption,
+        definition: "Assumes 1:1 transfers; ignores fee-on-transfer/rebase deltas.",
+        static_signals: &[
+            "uses input amount instead of post-transfer delta",
+            "no balanceBefore/After check",
+        ],
+        examples: &["deposit amount > actually received by vault"],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::PricePrecisionOrRoundingError,
+        definition: "Incorrect scaling/order of ops introduces exploitable rounding bias.",
+        static_signals: &[
+            "divide before multiply",
+            "mix 6/8/18 decimals without normalization",
+        ],
+        examples: &[
+            "lpSupply miscalc on division order",
+            "priceALast precision loss",
+        ],
+        impact_hint: ImpactHint::MediumLow,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ReserveOrPriceDesync,
+        definition: "Assumes reserve/price invariants that no longer hold (taxed tokens, unsynced AMM).",
+        static_signals: &[
+            "no sync() after taxed transfers",
+            "assumes invariant without verifying",
+        ],
+        examples: &["router math ignores fee-on-transfer in pool"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    // D) Accounting & Invariants
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::AccountingInvariantViolation,
+        definition: "Conservation/binding/monotonic invariants (supply, rewards, indexes) break.",
+        static_signals: &[
+            "totalSupply != sum(balances)",
+            "emitted != claimed + unclaimed",
+            "index decreases",
+        ],
+        examples: &[
+            "burnFrom doesn't reduce totalSupply",
+            "unauthorized validator increases rewards share",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::UnsafeRecipient,
+        definition: "Transfers to zero or non-receivable addresses cause value loss or stuck funds.",
+        static_signals: &[
+            "no zero-address guard",
+            "no onERC721Received check where required",
+        ],
+        examples: &["missing prevId→transfer to address(0)"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::PrecisionDriftAccumulation,
+        definition: "Systematic rounding accumulates value to attacker over time (penny-shaving).",
+        static_signals: &[
+            "consistent floor toward sender/receiver",
+            "looped rounding in distribution",
+        ],
+        examples: &["dust rounding favors caller each claim"],
+        impact_hint: ImpactHint::Medium,
+    },
+    // E) Token Standard & Allowances
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::StandardViolation,
+        definition: "ERC20/721/4626/Votes spec deviation enabling theft, stuck funds, or broken integrations.",
+        static_signals: &[
+            "wrong totalSupply/balance invariants",
+            "incorrect return values/events",
+        ],
+        examples: &[
+            "burnFrom without totalSupply decrement",
+            "transfer returns false silently",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::AllowanceRace,
+        definition: "Approve race (front-run) allows spender to drain before allowance change.",
+        static_signals: &["changes allowance from X to Y without zeroing"],
+        examples: &["UI/protocol sets new allowance directly"],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::PermitMisuse,
+        definition: "Permit/Permit2 misused (nonce/expiry/chain separation bugs).",
+        static_signals: &["no deadline check", "nonces reused or not incremented"],
+        examples: &["accepts expired permit"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    // F) Upgradeability, Proxies, Init
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::UpgradeAuthBypass,
+        definition: "Upgrade functions callable by non-admin or wrong admin context.",
+        static_signals: &["public upgradeTo", "no onlyProxy/admin guard"],
+        examples: &["UUPS upgrade callable by anyone"],
+        impact_hint: ImpactHint::High,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::InitOrderOrUnintialized,
+        definition: "Initializer can be (re)called or critical storage left uninitialized.",
+        static_signals: &[
+            "missing initializer/reinitializer",
+            "_disableInitializers() never called",
+        ],
+        examples: &["initialize() callable after deployment by anyone"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::StorageCollisionOrSelectorClash,
+        definition: "Overlapping storage slots/selectors across facets/impls corrupt state or hijack calls.",
+        static_signals: &[
+            "manual assembly slots without namespace",
+            "duplicate function selectors",
+        ],
+        examples: &["diamond storage overwritten after upgrade"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::SelfdestructOrMetamorphicFootguns,
+        definition: "Contracts can be destroyed or code changed via metamorphic patterns without safeguards.",
+        static_signals: &[
+            "selfdestruct present",
+            "CREATE2 redeploy without registry/lock",
+        ],
+        examples: &["implementation selfdestructs; proxy bricked"],
+        impact_hint: ImpactHint::High,
+    },
+    // G) Lifecycle & State Machines
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::MaturityorGatingByPass,
+        definition: "Lifecycle flags (launch/maturity) ignored or bypassable, enabling early/late actions.",
+        static_signals: &["no require(isLaunched/hasMatured) on gated funcs"],
+        examples: &["withdraw before maturity"],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::EpochOrIndexMonotonicity,
+        definition: "Cumulative indexes/epochs can decrease/reset breaking accrual math.",
+        static_signals: &["index set from smaller value", "epoch decrement path"],
+        examples: &["rewardIndex drops after migration"],
+        impact_hint: ImpactHint::Medium,
+    },
+    // H) DoS, Gas, Complexity
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::UnboundedLoops,
+        definition: "Unbounded iteration in hot path enables gas-based DoS.",
+        static_signals: &[
+            "loops over user-controlled arrays/sets",
+            "nested loops in external functions",
+        ],
+        examples: &["claim() iterates over all stakers"],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::GriefableCallbacks,
+        definition: "Untrusted callback can revert/grief and block core flow.",
+        static_signals: &[
+            "no try/catch around external hook",
+            "no bypass on callback failure",
+        ],
+        examples: &["onERC721Received revert bricks transfer"],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::StateGrowthOrStorageBloat,
+        definition: "Ever-growing state increases gas until functions become unusable.",
+        static_signals: &[
+            "append-only arrays with no pruning",
+            "mapping enumerations via arrays",
+        ],
+        examples: &["proposal history scanned every vote"],
+        impact_hint: ImpactHint::Medium,
+    },
+    // I) Randomness, Time, Chain
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::TimestampOrBlockManipulation,
+        definition: "Relies on timestamp/number in ways miners/validators/MEV can influence.",
+        static_signals: &[
+            "tight <= comparisons to now",
+            "timestamp used as RNG/source of truth",
+        ],
+        examples: &["lottery uses block.timestamp % N"],
+        impact_hint: ImpactHint::MediumLow,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::BlockhashOrPRNGWeakness,
+        definition: "Predictable or stale randomness via blockhash/poor PRNG.",
+        static_signals: &["blockhash used beyond 256 blocks", "no commit-reveal"],
+        examples: &["game picks winner via blockhash"],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ChainIdorDomainDrift,
+        definition: "Assumes static chain/domain; signatures or configs break on fork/migration.",
+        static_signals: &[
+            "cached DOMAIN_SEPARATOR not recomputed",
+            "chainid not bound in signatures",
+        ],
+        examples: &["permit valid across chains after fork"],
+        impact_hint: ImpactHint::Medium,
+    },
+    // J) Cross-Chain & Bridging
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::CrossChainMessageSpoofing,
+        definition: "Trusts arbitrary caller for cross-domain messages rather than canonical bridge/messenger.",
+        static_signals: &[
+            "receiveMessage trusts msg.sender",
+            "no xDomain origin verification",
+        ],
+        examples: &["L2 handler callable by any EOA"],
+        impact_hint: ImpactHint::High,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::FinalityOrReplayAcrossDomains,
+        definition: "Messages/receipts can be replayed across domains or before finality.",
+        static_signals: &["no per-domain nonce", "no finality delay verification"],
+        examples: &["same proof used twice on L2"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    // K) EVM/Assembly & Low-Level
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::UncheckedLowLevelCallResults,
+        definition: "Ignores success flag or return data from low-level calls.",
+        static_signals: &[
+            "(ok,) = target.call(...); but ok unused",
+            "no revert bubble",
+        ],
+        examples: &["token call fails silently; accounting continues"],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::UnsafeAssembyTypeCasts,
+        definition: "Assembly/casts cause truncation, sign, or aliasing bugs.",
+        static_signals: &[
+            "downcasts without range checks",
+            "assembly writes to unchecked slots",
+        ],
+        examples: &["uint256→uint128 truncation in balances"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath,
+        definition: "Hand-rolled math lacks guards leading to div-by-zero/overflow/underflow.",
+        static_signals: &[
+            "division by user-controlled value",
+            "exp/sqrt/log without bounds",
+        ],
+        examples: &["openTrading division by zero → dust stuck"],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    // L) ETH/WETH & Payment
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::EthVsWethConfusion,
+        definition: "Mismatch between ETH and WETH handling leads to lost funds or reverts.",
+        static_signals: &[
+            "call{value:...} to non-payable",
+            "assumes WETH unwrap without checking",
+        ],
+        examples: &["deposit expects ETH but receives WETH"],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::PullorPushPaymentbugs,
+        definition: "Push payments or refunds to attacker-controlled address enable grief or misdirection.",
+        static_signals: &[
+            "refund address sourced from user input",
+            "no pull-based withdrawal alternative",
+        ],
+        examples: &["loop of transfers to untrusted recipients"],
+        impact_hint: ImpactHint::Medium,
+    },
+];
+
+impl Default for VulnerabilityPattern {
+    fn default() -> Self {
+        VulnerabilityPattern::AccessControlOrAuthByPass
+    }
+}
+
+impl ImpactHint {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ImpactHint::High => "High",
+            ImpactHint::HighMedium => "High/Medium",
+            ImpactHint::Medium => "Medium",
+            ImpactHint::MediumLow => "Medium/Low",
+            ImpactHint::Low => "Low",
+        }
+    }
+}
+
+impl VulnerabilityPattern {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            VulnerabilityPattern::AccessControlOrAuthByPass => "AccessControlOrAuthByPass",
+            VulnerabilityPattern::GovernanceDelegationFlaw => "GovernanceDelegationFlaw",
+            VulnerabilityPattern::DoubleExecutionOrReplay => "DoubleExecutionOrReplay",
+            VulnerabilityPattern::PermitOrSignatureReplay => "PermitOrSignatureReplay",
+            VulnerabilityPattern::EIP1271ByPass => "EIP1271ByPass",
+            VulnerabilityPattern::ConfigFootgun => "ConfigFootgun",
+            VulnerabilityPattern::CEIViolation => "CEIViolation",
+            VulnerabilityPattern::Reentrancy => "Reentrancy",
+            VulnerabilityPattern::ReadOnlyReentrancy => "ReadOnlyReentrancy",
+            VulnerabilityPattern::ExternalCallAfterStateChange => "ExternalCallAfterStateChange",
+            VulnerabilityPattern::SlippageMissingOrInsufficient => "SlippageMissingOrInsufficient",
+            VulnerabilityPattern::OracleUsingDEXorTWAP => "OracleUsingDEXorTWAP",
+            VulnerabilityPattern::FlashLoanEconomicManipulation => "FlashLoanEconomicManipulation",
+            VulnerabilityPattern::FeeOnTransferAssumption => "FeeOnTransferAssumption",
+            VulnerabilityPattern::PricePrecisionOrRoundingError => "PricePrecisionOrRoundingError",
+            VulnerabilityPattern::ReserveOrPriceDesync => "ReserveOrPriceDesync",
+            VulnerabilityPattern::AccountingInvariantViolation => "AccountingInvariantViolation",
+            VulnerabilityPattern::UnsafeRecipient => "UnsafeRecipient",
+            VulnerabilityPattern::PrecisionDriftAccumulation => "PrecisionDriftAccumulation",
+            VulnerabilityPattern::StandardViolation => "StandardViolation",
+            VulnerabilityPattern::AllowanceRace => "AllowanceRace",
+            VulnerabilityPattern::PermitMisuse => "PermitMisuse",
+            VulnerabilityPattern::UpgradeAuthBypass => "UpgradeAuthBypass",
+            VulnerabilityPattern::InitOrderOrUnintialized => "InitOrderOrUnintialized",
+            VulnerabilityPattern::StorageCollisionOrSelectorClash => {
+                "StorageCollisionOrSelectorClash"
+            }
+            VulnerabilityPattern::SelfdestructOrMetamorphicFootguns => {
+                "SelfdestructOrMetamorphicFootguns"
+            }
+            VulnerabilityPattern::MaturityorGatingByPass => "MaturityorGatingByPass",
+            VulnerabilityPattern::EpochOrIndexMonotonicity => "EpochOrIndexMonotonicity",
+            VulnerabilityPattern::UnboundedLoops => "UnboundedLoopsOrGasDos",
+            VulnerabilityPattern::GriefableCallbacks => "GriefableCallbacks",
+            VulnerabilityPattern::StateGrowthOrStorageBloat => "StateGrowthOrStorageBloat",
+            VulnerabilityPattern::TimestampOrBlockManipulation => "TimestampOrBlockManipulation",
+            VulnerabilityPattern::BlockhashOrPRNGWeakness => "BlockhashOrPRNGWeakness",
+            VulnerabilityPattern::ChainIdorDomainDrift => "ChainIdorDomainDrift",
+            VulnerabilityPattern::CrossChainMessageSpoofing => "CrossChainMessageSpoofing",
+            VulnerabilityPattern::FinalityOrReplayAcrossDomains => "FinalityOrReplayAcrossDomains",
+            VulnerabilityPattern::UncheckedLowLevelCallResults => "UncheckedLowLevelCallResults",
+            VulnerabilityPattern::UnsafeAssembyTypeCasts => "UnsafeAssembyTypeCasts",
+            VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath => {
+                "DivideByZeroOrOverFlowInCustomMath"
+            }
+            VulnerabilityPattern::EthVsWethConfusion => "EthVsWethConfusion",
+            VulnerabilityPattern::PullorPushPaymentbugs => "PullorPushPaymentbugs",
+        }
+    }
+}
+
+impl Serialize for VulnerabilityPattern {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for VulnerabilityPattern {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_ascii_lowercase().as_str() {
+            "accesscontrolorauthbypass" => Ok(VulnerabilityPattern::AccessControlOrAuthByPass),
+            "governancedelegationflaw" => Ok(VulnerabilityPattern::GovernanceDelegationFlaw),
+            "doubleexecutionorreplay" => Ok(VulnerabilityPattern::DoubleExecutionOrReplay),
+            "permitorsignaturereplay" => Ok(VulnerabilityPattern::PermitOrSignatureReplay),
+            "eip1271bypass" => Ok(VulnerabilityPattern::EIP1271ByPass),
+            "configfootgun" => Ok(VulnerabilityPattern::ConfigFootgun),
+            "ceiviolation" => Ok(VulnerabilityPattern::CEIViolation),
+            "reentrancy" => Ok(VulnerabilityPattern::Reentrancy),
+            "readonlyreentrancy" => Ok(VulnerabilityPattern::ReadOnlyReentrancy),
+            "externalcallafterstatechange" => {
+                Ok(VulnerabilityPattern::ExternalCallAfterStateChange)
+            }
+            "slippagemissingorinsufficient" => {
+                Ok(VulnerabilityPattern::SlippageMissingOrInsufficient)
+            }
+            "oracleusingdexortwap" => Ok(VulnerabilityPattern::OracleUsingDEXorTWAP),
+            "flashloaneconomicmanipulation" => {
+                Ok(VulnerabilityPattern::FlashLoanEconomicManipulation)
+            }
+            "feeontransferassumption" => Ok(VulnerabilityPattern::FeeOnTransferAssumption),
+            "priceprecisionorroundingerror" => {
+                Ok(VulnerabilityPattern::PricePrecisionOrRoundingError)
+            }
+            "reserveorpricedesync" => Ok(VulnerabilityPattern::ReserveOrPriceDesync),
+            "accountinginvariantviolation" => {
+                Ok(VulnerabilityPattern::AccountingInvariantViolation)
+            }
+            "unsaferecipient" => Ok(VulnerabilityPattern::UnsafeRecipient),
+            "precisiondriftaccumulation" => Ok(VulnerabilityPattern::PrecisionDriftAccumulation),
+            "standardviolation" => Ok(VulnerabilityPattern::StandardViolation),
+            "allowancerace" => Ok(VulnerabilityPattern::AllowanceRace),
+            "permitmisuse" => Ok(VulnerabilityPattern::PermitMisuse),
+            "upgradeauthbypass" => Ok(VulnerabilityPattern::UpgradeAuthBypass),
+            "initorderorunintialized" => Ok(VulnerabilityPattern::InitOrderOrUnintialized),
+            "storagecollisionorselectorclash" => {
+                Ok(VulnerabilityPattern::StorageCollisionOrSelectorClash)
+            }
+            "selfdestructormetamorphicfootguns" => {
+                Ok(VulnerabilityPattern::SelfdestructOrMetamorphicFootguns)
+            }
+            "maturityorgatingbypass" => Ok(VulnerabilityPattern::MaturityorGatingByPass),
+            "epochorindexmonotonicity" => Ok(VulnerabilityPattern::EpochOrIndexMonotonicity),
+            "unboundedloopsorgasdos" => Ok(VulnerabilityPattern::UnboundedLoops),
+            "griefablecallbacks" => Ok(VulnerabilityPattern::GriefableCallbacks),
+            "stategrowthorstoragebloat" => Ok(VulnerabilityPattern::StateGrowthOrStorageBloat),
+            "timestamporblockmanipulation" => {
+                Ok(VulnerabilityPattern::TimestampOrBlockManipulation)
+            }
+            "blockhashorprngweakness" => Ok(VulnerabilityPattern::BlockhashOrPRNGWeakness),
+            "chainidordomaindrift" => Ok(VulnerabilityPattern::ChainIdorDomainDrift),
+            "crosschainmessagespoofing" => Ok(VulnerabilityPattern::CrossChainMessageSpoofing),
+            "finalityorreplayacrossdomains" => {
+                Ok(VulnerabilityPattern::FinalityOrReplayAcrossDomains)
+            }
+            "uncheckedlowlevelcallresults" => {
+                Ok(VulnerabilityPattern::UncheckedLowLevelCallResults)
+            }
+            "unsafeassembytypecasts" => Ok(VulnerabilityPattern::UnsafeAssembyTypeCasts),
+            "dividebyzerooroverflowincustommath" => {
+                Ok(VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath)
+            }
+            "ethvswethconfusion" => Ok(VulnerabilityPattern::EthVsWethConfusion),
+            "pullorpushpaymentbugs" => Ok(VulnerabilityPattern::PullorPushPaymentbugs),
+            _ => Err(de::Error::unknown_variant(
+                &s,
+                &[
+                    "accesscontrolorauthbypass",
+                    "governancedelegationflaw",
+                    "doubleexecutionorreplay",
+                    "permitorsignaturereplay",
+                    "eip1271bypass",
+                    "configfootgun",
+                    "ceiviolation",
+                    "reentrancy",
+                    "readonlyreentrancy",
+                    "externalcallafterstatechange",
+                    "slippagemissingorinsufficient",
+                    "oracleusingdexortwap",
+                    "flashloaneconomicmanipulation",
+                    "feeontransferassumption",
+                    "priceprecisionorroundingerror",
+                    "reserveorpricedesync",
+                    "accountinginvariantviolation",
+                    "unsaferecipient",
+                    "precisiondriftaccumulation",
+                    "standardviolation",
+                    "allowancerace",
+                    "permitmisuse",
+                    "upgradeauthbypass",
+                    "initorderorunintialized",
+                    "storagecollisionorselectorclash",
+                    "selfdestructormetamorphicfootguns",
+                    "maturityorgatingbypass",
+                    "epochorindexmonotonicity",
+                    "unboundedloopsorgasdos",
+                    "griefablecallbacks",
+                    "stategrowthorstoragebloat",
+                    "timestamporblockmanipulation",
+                    "blockhashorprngweakness",
+                    "chainidordomaindrift",
+                    "crosschainmessagespoofing",
+                    "finalityorreplayacrossdomains",
+                    "uncheckedlowlevelcallresults",
+                    "unsafeassembytypecasts",
+                    "dividebyzerooroverflowincustommath",
+                    "ethvswethconfusion",
+                    "pullorpushpaymentbugs",
+                ],
+            )),
+        }
+    }
+}

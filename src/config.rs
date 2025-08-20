@@ -4,6 +4,7 @@
 /// for application settings and environment variables only for sensitive
 /// configuration like API keys and URLs.
 use crate::error::{AuditError, Result};
+use crate::llm_review::patterns::VulnerabilityPattern;
 use serde::{Deserialize, Serialize};
 use std::env;
 
@@ -16,6 +17,39 @@ pub enum AuditType {
 
 // TYPE OF AUDIT
 pub const AUDIT_TYPE: AuditType = AuditType::Code4rena;
+
+// TOP VULNERABILITY PATTERNS
+pub const TOP_PAID_PATTERNS: &[VulnerabilityPattern; 14] = &[
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::Reentrancy,
+    VulnerabilityPattern::FlashLoanEconomicManipulation,
+    VulnerabilityPattern::OracleUsingDEXorTWAP,
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::UpgradeAuthBypass,
+    VulnerabilityPattern::StandardViolation,
+    VulnerabilityPattern::PermitOrSignatureReplay,
+    VulnerabilityPattern::EIP1271ByPass,
+    VulnerabilityPattern::PermitMisuse,
+    VulnerabilityPattern::GovernanceDelegationFlaw,
+    VulnerabilityPattern::DoubleExecutionOrReplay,
+    VulnerabilityPattern::InitOrderOrUnintialized,
+    VulnerabilityPattern::StorageCollisionOrSelectorClash,
+];
+
+pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 12] = &[
+    VulnerabilityPattern::SlippageMissingOrInsufficient,
+    VulnerabilityPattern::UnboundedLoops,
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::ReserveOrPriceDesync,
+    VulnerabilityPattern::PricePrecisionOrRoundingError,
+    VulnerabilityPattern::PrecisionDriftAccumulation,
+    VulnerabilityPattern::ExternalCallAfterStateChange,
+    VulnerabilityPattern::GriefableCallbacks,
+    VulnerabilityPattern::StateGrowthOrStorageBloat,
+    VulnerabilityPattern::EpochOrIndexMonotonicity,
+    VulnerabilityPattern::TimestampOrBlockManipulation,
+    VulnerabilityPattern::BlockhashOrPRNGWeakness,
+];
 
 // Application constants - these don't need to be configurable via environment
 /// Maximum call graph traversal depth for code slice generation
