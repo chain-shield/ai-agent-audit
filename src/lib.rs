@@ -86,6 +86,7 @@ pub mod llm_review {
     pub mod semaphore;
     /// Security audit phases
     pub mod dynamic_prompts {
+        pub mod invariants;
         pub mod patterns;
     }
     pub mod phases {

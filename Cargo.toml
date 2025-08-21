@@ -42,3 +42,5 @@ schemars = "0.8.22"
 nanoid = "0.4"
 clap = { version = "=4.5.41", features = ["derive"] }
 glob = "0.3.2"
+strum = "0.27.2"
+strum_macros = "0.27.2"

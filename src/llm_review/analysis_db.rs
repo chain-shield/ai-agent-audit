@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::{
     config::{CHAINSHIELD_DB_FOLDER, FINDINGS_DB},
     llm_review::config::{Finding, Findings},
+    llm_review::enums::EnumString,
     prepare_code::git_clone::RepoPaths,
 };
 

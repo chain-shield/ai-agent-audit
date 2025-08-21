@@ -1,4 +1,8 @@
-use crate::llm_review::config::Finding;
+use crate::llm_review::{
+    config::{Finding, InvariantFinding, Pattern},
+    enums::EnumString,
+    patterns::ImpactHint,
+};
 
 pub fn generate_prompt_for_issue_check(
     code: &str,
@@ -23,6 +27,63 @@ pub fn generate_prompt_for_issue_check(
     prompt.push_str(code);
 
     prompt
+}
+
+pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> String {
+    let mut invariant_finding = String::new();
+
+    invariant_finding.push_str("\n\n ### Invariant Type\n");
+    invariant_finding.push_str(&invariant.inv_type.as_str());
+
+    invariant_finding.push_str("\n ### Relevant Function/Location \n");
+    invariant_finding.push_str(&format!("{}.{}", invariant.contract, invariant.function));
+
+    invariant_finding.push_str("\n ### Description/Code Snippet\n");
+    invariant_finding.push_str(&invariant.desc.as_str());
+
+    invariant_finding.push_str("\n ### Checks\n");
+    invariant_finding.push_str(&invariant.checks.join(", "));
+
+    invariant_finding.push_str("\n ### Status\n");
+    invariant_finding.push_str(&invariant.status.as_str());
+
+    invariant_finding.push_str("\n ### Pre-State\n");
+    invariant_finding.push_str(&invariant.pre_state.clone().unwrap_or_default());
+
+    invariant_finding.push_str("\n ### Post-State\n");
+    invariant_finding.push_str(&invariant.post_state.clone().unwrap_or_default());
+
+    invariant_finding.push_str("\n ### Impact\n");
+    invariant_finding.push_str(&invariant.impact.clone().unwrap_or_default());
+
+    invariant_finding
+}
+
+pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
+    let mut pattern_list = String::new();
+
+    pattern_list.push_str("\n\n ### Issue Type\n");
+    pattern_list.push_str(&pattern.issue_type.as_str());
+
+    pattern_list.push_str("\n ### Relevant Function/Location \n");
+    pattern_list.push_str(&format!("{}.{}", pattern.contract, pattern.function));
+
+    pattern_list.push_str("\n ### Description/Code Snippet\n");
+    pattern_list.push_str(&pattern.description.as_str());
+
+    pattern_list.push_str("\n ### Static Signals\n");
+    pattern_list.push_str(&pattern.static_signals.join(", "));
+
+    pattern_list.push_str("\n ### Assets at Risk\n");
+    pattern_list.push_str(&pattern.static_signals.join(", "));
+
+    pattern_list.push_str("\n ### Minimum Privilege Required to Exploit Vulnerability\n");
+    pattern_list.push_str(&pattern.privilege.as_str());
+
+    pattern_list.push_str("\n ### Impact\n");
+    pattern_list.push_str(&pattern.impact.unwrap_or(ImpactHint::Low).as_str());
+
+    pattern_list
 }
 
 fn get_finding_report(finding: &Finding) -> String {

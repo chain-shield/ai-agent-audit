@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    llm_review::enums::EnumString,
     llm_review::patterns::{ImpactHint, VulnerabilityPattern},
     prompts::{
         access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
@@ -31,6 +32,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use strum_macros::EnumIter;
 use tokio::sync::Mutex;
 
 pub const CLAUDE_4_0_SONNET: &str = "claude-sonnet-4-0";
@@ -40,6 +42,7 @@ pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
 pub struct Finding {
     // [Severity-issue number] - List Issue (Reentrancy, Denial of Service, etc) and
     // <Contract>::<Function> its localed in
+    pub derived_from: VulnerabilityPattern,
     pub issue_type: VulnerabilityType,
     pub contract: String,            // exact constract name where issue appears
     pub function: String, // exact function name where issue appears, if not applicable set to 'NA'
@@ -53,8 +56,6 @@ pub struct Finding {
     pub static_signals: Vec<String>, // e.g., "amountOutMin=0", "no onlyOwner"
     pub assets_at_risk: Vec<String>, // e.g., ["treasury", "rewards", "LP"]
     pub privilege: PrivilegeLevel,   // permissionless vs role-gated
-    pub preconditions: Vec<String>,  // state required to trigger (if any)
-    pub generated_from: String,      // id of invariant or pattern issue was generated from
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -67,12 +68,12 @@ pub struct Patterns {
     pub patterns: Vec<Pattern>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, EnumIter)]
 #[serde(rename_all = "PascalCase")]
 pub enum PrivilegeLevel {
-    Permissionless, // any EOA
-    RequiresRole,   // specific role / owner
-    TrustedActor,   // only if threat model distrusts admin
+    Permissionless,   // any EOA
+    RequiresRole,     // specific role
+    RequireAdminRole, // admin or owner
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -89,25 +90,24 @@ pub struct Pattern {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct InvariantFinding {
-    pub id: String,
     #[schemars(
         description = "Type: Arithmetic, Balance, Permission, Temporal, Referential, StateMachine"
     )]
     pub inv_type: InvariantType,
+    pub contract: String, // exact constract name where invariant appears
+    pub function: String, // exact function name where invariant is relevant, if not applicable set to 'NA'
+    pub predicate: String,
     pub desc: String,
-    #[schemars(description = "Status: HOLDS, VIOLATION")]
+    pub checks: Vec<String>,
+    #[schemars(description = "Status: Holds, PossibleViolation")]
     pub status: InvariantStatus,
     pub pre_state: Option<String>,
     pub post_state: Option<String>,
     pub impact: Option<String>,
-    pub poc: Option<String>,
-    pub mitigation: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContractInvariants {
-    pub contract: String,
-    pub intention: String,
     pub invariants: Vec<InvariantFinding>,
 }
 
@@ -357,7 +357,7 @@ impl ContractInvariants {
     pub fn get_all_violations(self) -> Vec<InvariantFinding> {
         self.invariants
             .into_iter()
-            .filter(|inv| inv.status == InvariantStatus::VIOLATION)
+            .filter(|inv| inv.status == InvariantStatus::PossibleViolation)
             .collect::<Vec<InvariantFinding>>()
     }
 }
@@ -367,6 +367,17 @@ impl Default for PrivilegeLevel {
         PrivilegeLevel::Permissionless
     }
 }
+
+impl EnumString for PrivilegeLevel {
+    fn as_str(&self) -> &'static str {
+        match self {
+            PrivilegeLevel::Permissionless => "Permissionless",
+            PrivilegeLevel::RequiresRole => "RequiresRole",
+            PrivilegeLevel::RequireAdminRole => "RequireAdminRole",
+        }
+    }
+}
+
 impl Findings {
     pub async fn dedup(self) -> anyhow::Result<Findings> {
         if self.findings.is_empty() {
