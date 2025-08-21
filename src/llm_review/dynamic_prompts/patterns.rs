@@ -1,10 +1,13 @@
-use crate::llm_review::patterns::{
-    VulnerabilityPattern, VulnerabilityPatternSpec, VULNERABILITY_PATTERN_LIBRARY,
+use crate::llm_review::{
+    config::PrivilegeLevel,
+    enums::{all_enum_variants, generate_enum_list, EnumString},
+    patterns::{VulnerabilityPattern, VulnerabilityPatternSpec, VULNERABILITY_PATTERN_LIBRARY},
 };
 
 pub fn generate_pattern_prompt(p: &[VulnerabilityPattern]) -> String {
     let pattern_categories = generate_formated_list_from_pattern_data(p);
-    let enum_list = generate_pattern_enum_list(p);
+    let issue_enum_list = generate_enum_list(p);
+    let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
     let pattern_json = get_pattern_json(p);
 
     format!(
@@ -60,11 +63,12 @@ pub fn generate_pattern_prompt(p: &[VulnerabilityPattern]) -> String {
         4. **Function**: The exact function name where vulnerability is found, if not applicable return "NA"
         6. **Static Signals**: evidence of vulnerability as array of strings, i.e. ["missing onlyOwner","state update after external call","amountOutMin=0",...] 
         7. **Assets at Risk**: list assets at risk as array of strings i.e. ["treasury", "rewards",...]
-        8. **Privilege Level Required**: what is least privilege that can trigger vulnerability: Permissionless|RequiresRole|TrustedActor 
+        8. **Privilege Level Required**: what is least privilege that can trigger vulnerability: {privileges}
 
         *Please respond with ONLY valid JSON in the following exact format:*
 
         {json}
+
         - If no vulnerabilities are found, return: 
 
         {{
@@ -76,44 +80,36 @@ pub fn generate_pattern_prompt(p: &[VulnerabilityPattern]) -> String {
         they match up correctly.
     "#,
         categories = pattern_categories,
-        enums = enum_list,
+        enums = issue_enum_list,
+        privileges = privilege_enum_list,
         json = pattern_json
     )
 }
 
 pub fn get_pattern_json(patterns: &[VulnerabilityPattern]) -> String {
-    let enum_list = generate_pattern_enum_list(patterns);
+    let issue_list = generate_enum_list(patterns);
+    let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
 
     format!(
         r#"{{
         "patterns": [
-            {{
+            {{  
             "description": "Detailed explanation of vulnerability including vulnerable code snippet",
-            "issue_type": "{enums}",
+            "issue_type": "{issues}",
             "contract": "{{contract_name}}", 
             "function": "{{function_name}}", 
             "static_signals": ["amountOutMin=0","no onlyOwner",...],
             "assets_at_risk": ["treasury", "rewards", ...],
-            "privilege": "Permissionless|RequiresRole|TrustedActor"
+            "privilege": {privileges}
             }}
          ]
         }}
     "#,
-        enums = enum_list
+        issues = issue_list,
+        privileges = privilege_enum_list
     )
 }
 
-pub fn generate_pattern_enum_list(patterns: &[VulnerabilityPattern]) -> String {
-    let mut enum_list = String::new();
-    let top_pattern_count = patterns.len();
-    for (i, pattern) in patterns.iter().enumerate() {
-        enum_list.push_str(pattern.as_str());
-        if i < top_pattern_count - 1 {
-            enum_list.push_str("|");
-        }
-    }
-    enum_list
-}
 pub fn generate_formated_list_from_pattern_data(
     patterns_to_use: &[VulnerabilityPattern],
 ) -> String {

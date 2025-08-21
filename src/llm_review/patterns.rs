@@ -1,7 +1,9 @@
+use crate::llm_review::enums::EnumString;
 use schemars::JsonSchema;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use strum_macros::EnumIter;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
 // Access,Auth &,Governance
 pub enum VulnerabilityPattern {
     AccessControlOrAuthByPass, // High
@@ -69,7 +71,7 @@ pub enum VulnerabilityPattern {
     PullorPushPaymentbugs,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, EnumIter)]
 pub enum ImpactHint {
     High,
     HighMedium, // between High and Medium
@@ -605,8 +607,8 @@ impl Default for VulnerabilityPattern {
     }
 }
 
-impl ImpactHint {
-    pub fn as_str(&self) -> &'static str {
+impl EnumString for ImpactHint {
+    fn as_str(&self) -> &'static str {
         match self {
             ImpactHint::High => "High",
             ImpactHint::HighMedium => "High/Medium",
@@ -617,8 +619,8 @@ impl ImpactHint {
     }
 }
 
-impl VulnerabilityPattern {
-    pub fn as_str(&self) -> &'static str {
+impl EnumString for VulnerabilityPattern {
+    fn as_str(&self) -> &'static str {
         match self {
             VulnerabilityPattern::AccessControlOrAuthByPass => "AccessControlOrAuthByPass",
             VulnerabilityPattern::GovernanceDelegationFlaw => "GovernanceDelegationFlaw",

@@ -6,6 +6,8 @@ use log::info;
 /// and systematic vulnerability detection across 19+ security categories.
 use schemars::JsonSchema;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
@@ -77,7 +79,7 @@ where
 /// ------------------------------------------------------------------
 /// 1.  Strict-typed severity enum
 /// ------------------------------------------------------------------
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
 pub enum Severity {
     Critical,
     High,
@@ -86,7 +88,7 @@ pub enum Severity {
     Info,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
 pub enum InvariantType {
     Arithmetic,
     Balance,
@@ -96,13 +98,13 @@ pub enum InvariantType {
     StateMachine,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
 pub enum InvariantStatus {
-    HOLDS,
-    VIOLATION,
+    Holds,
+    PossibleViolation,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
 pub enum VulnerabilityType {
     AccessControl,
     ArrayLimits,
@@ -148,14 +150,27 @@ pub enum VulnerabilityType {
     Custom,
 }
 
-impl Default for Severity {
-    fn default() -> Self {
-        Severity::Info
-    }
+pub trait EnumString {
+    fn as_str(&self) -> &'static str;
 }
 
-impl Severity {
-    pub fn as_str(self) -> &'static str {
+pub fn generate_enum_list<T: EnumString>(patterns: &[T]) -> String {
+    let mut enum_list = String::new();
+    let top_pattern_count = patterns.len();
+    for (i, pattern) in patterns.iter().enumerate() {
+        enum_list.push_str(pattern.as_str());
+        if i < top_pattern_count - 1 {
+            enum_list.push_str("|");
+        }
+    }
+    enum_list
+}
+pub fn all_enum_variants<T: IntoEnumIterator>() -> Vec<T> {
+    T::iter().collect()
+}
+
+impl EnumString for Severity {
+    fn as_str(&self) -> &'static str {
         match self {
             Severity::Critical => "Critical",
             Severity::High => "High",
@@ -164,8 +179,87 @@ impl Severity {
             Severity::Info => "Info",
         }
     }
+}
 
-    pub fn as_initial(self) -> &'static str {
+impl EnumString for InvariantType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            InvariantType::Arithmetic => "Arithmetic",
+            InvariantType::Balance => "Balance",
+            InvariantType::Permission => "Permission",
+            InvariantType::Temporal => "Temporal",
+            InvariantType::Referential => "Referential",
+            InvariantType::StateMachine => "StateMachine",
+        }
+    }
+}
+
+impl EnumString for InvariantStatus {
+    fn as_str(&self) -> &'static str {
+        match self {
+            InvariantStatus::Holds => "Holds",
+            InvariantStatus::PossibleViolation => "PossibleViolation",
+        }
+    }
+}
+
+impl EnumString for VulnerabilityType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            VulnerabilityType::Oracle => "Oracle",
+            VulnerabilityType::AccessControl => "AccessControl",
+            VulnerabilityType::FrontrunMev => "FrontrunMev",
+            VulnerabilityType::UnexpectedEth => "UnexpectedEth",
+            VulnerabilityType::Pragma => "Pragma",
+            VulnerabilityType::Randomness => "Randomness",
+            VulnerabilityType::TxOrigin => "TxOrigin",
+            VulnerabilityType::ZeroCode => "ZeroCode",
+            VulnerabilityType::SelfDestruct => "SelfDestruct",
+            VulnerabilityType::StorageLayout => "StorageLayout",
+            VulnerabilityType::ReplayAttack => "ReplayAttack",
+            VulnerabilityType::ShortAddress => "ShortAddress",
+            VulnerabilityType::IntegerMath => "IntegerMath",
+            VulnerabilityType::UncheckedReturn => "UncheckedReturn",
+            VulnerabilityType::Dos => "Dos",
+            VulnerabilityType::DefaultVisibility => "DefaultVisibility",
+            VulnerabilityType::Inheritance => "Inheritance",
+            VulnerabilityType::ConfidentialData => "ConfidentialData",
+            VulnerabilityType::Reentrancy => "Reentrancy",
+            VulnerabilityType::ArrayLimits => "ArrayLimits",
+            VulnerabilityType::UpgradeabilityInitializerSafety => "UpgradeabilityInitializerSafety",
+            VulnerabilityType::PausableEmergencyStop => "PausableEmergencyStop",
+            VulnerabilityType::TimestampDependentLogic => "TimestampDependentLogic",
+            VulnerabilityType::FlashLoanEconomicManipulation => "FlashLoanEconomicManipulation",
+            VulnerabilityType::DelegatecallLowLevelOps => "DelegatecallLowLevelOps",
+            VulnerabilityType::SignatureMalleability => "SignatureMalleability",
+            VulnerabilityType::EventConsistency => "EventConsistency",
+            VulnerabilityType::GasGriefBlockLimit => "GasGriefBlockLimit",
+            VulnerabilityType::IntegerOverflow => "IntegerOverflow",
+            // New additions
+            VulnerabilityType::PricePrecision => "PricePrecision",
+            VulnerabilityType::RoundingError => "RoundingError",
+            VulnerabilityType::FeeOnTransferAssumption => "FeeOnTransferAssumption",
+            VulnerabilityType::UncheckedERC20Return => "UncheckedERC20Return",
+            VulnerabilityType::SignatureReplay => "SignatureReplay",
+            VulnerabilityType::AuthByPass => "AuthByPass",
+            VulnerabilityType::UntrustedDelegateCall => "UntrustedDelegateCall",
+            VulnerabilityType::TimestampManipulation => "TimestampManipulation",
+            VulnerabilityType::CrossChainMessageSpoofing => "CrossChainMessageSpoofing",
+            VulnerabilityType::AccountingInvariantViolation => "AccountingInvariantViolation",
+            VulnerabilityType::SlippageMissingOrInsufficient => "SlippageMissingOrInsufficient",
+            VulnerabilityType::Custom => "Custom",
+        }
+    }
+}
+
+impl Default for Severity {
+    fn default() -> Self {
+        Severity::Info
+    }
+}
+
+impl Severity {
+    pub fn as_initial(&self) -> &'static str {
         match self {
             Severity::Critical => "C",
             Severity::High => "H",
@@ -177,18 +271,7 @@ impl Severity {
 }
 
 impl InvariantType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            InvariantType::Arithmetic => "Arithmetic",
-            InvariantType::Balance => "Balance",
-            InvariantType::Permission => "Permission",
-            InvariantType::Temporal => "Temporal",
-            InvariantType::Referential => "Referential",
-            InvariantType::StateMachine => "StateMachine",
-        }
-    }
-
-    pub fn get_prompt(self) -> &'static str {
+    pub fn get_prompt(&self) -> &'static str {
         match self {
             InvariantType::Arithmetic => ARITHMETIC,
             InvariantType::Balance => BALANCE,
@@ -196,15 +279,6 @@ impl InvariantType {
             InvariantType::Temporal => TEMPORAL,
             InvariantType::Referential => REFERENTIAL,
             InvariantType::StateMachine => STATE_MACHINE,
-        }
-    }
-}
-
-impl InvariantStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            InvariantStatus::HOLDS => "Holds",
-            InvariantStatus::VIOLATION => "Violation",
         }
     }
 }
@@ -365,53 +439,6 @@ impl Default for VulnerabilityType {
 }
 
 impl VulnerabilityType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            VulnerabilityType::Oracle => "Oracle",
-            VulnerabilityType::AccessControl => "AccessControl",
-            VulnerabilityType::FrontrunMev => "FrontrunMev",
-            VulnerabilityType::UnexpectedEth => "UnexpectedEth",
-            VulnerabilityType::Pragma => "Pragma",
-            VulnerabilityType::Randomness => "Randomness",
-            VulnerabilityType::TxOrigin => "TxOrigin",
-            VulnerabilityType::ZeroCode => "ZeroCode",
-            VulnerabilityType::SelfDestruct => "SelfDestruct",
-            VulnerabilityType::StorageLayout => "StorageLayout",
-            VulnerabilityType::ReplayAttack => "ReplayAttack",
-            VulnerabilityType::ShortAddress => "ShortAddress",
-            VulnerabilityType::IntegerMath => "IntegerMath",
-            VulnerabilityType::UncheckedReturn => "UncheckedReturn",
-            VulnerabilityType::Dos => "Dos",
-            VulnerabilityType::DefaultVisibility => "DefaultVisibility",
-            VulnerabilityType::Inheritance => "Inheritance",
-            VulnerabilityType::ConfidentialData => "ConfidentialData",
-            VulnerabilityType::Reentrancy => "Reentrancy",
-            VulnerabilityType::ArrayLimits => "ArrayLimits",
-            VulnerabilityType::UpgradeabilityInitializerSafety => "UpgradeabilityInitializerSafety",
-            VulnerabilityType::PausableEmergencyStop => "PausableEmergencyStop",
-            VulnerabilityType::TimestampDependentLogic => "TimestampDependentLogic",
-            VulnerabilityType::FlashLoanEconomicManipulation => "FlashLoanEconomicManipulation",
-            VulnerabilityType::DelegatecallLowLevelOps => "DelegatecallLowLevelOps",
-            VulnerabilityType::SignatureMalleability => "SignatureMalleability",
-            VulnerabilityType::EventConsistency => "EventConsistency",
-            VulnerabilityType::GasGriefBlockLimit => "GasGriefBlockLimit",
-            VulnerabilityType::IntegerOverflow => "IntegerOverflow",
-            // New additions
-            VulnerabilityType::PricePrecision => "PricePrecision",
-            VulnerabilityType::RoundingError => "RoundingError",
-            VulnerabilityType::FeeOnTransferAssumption => "FeeOnTransferAssumption",
-            VulnerabilityType::UncheckedERC20Return => "UncheckedERC20Return",
-            VulnerabilityType::SignatureReplay => "SignatureReplay",
-            VulnerabilityType::AuthByPass => "AuthByPass",
-            VulnerabilityType::UntrustedDelegateCall => "UntrustedDelegateCall",
-            VulnerabilityType::TimestampManipulation => "TimestampManipulation",
-            VulnerabilityType::CrossChainMessageSpoofing => "CrossChainMessageSpoofing",
-            VulnerabilityType::AccountingInvariantViolation => "AccountingInvariantViolation",
-            VulnerabilityType::SlippageMissingOrInsufficient => "SlippageMissingOrInsufficient",
-            VulnerabilityType::Custom => "Custom",
-        }
-    }
-
     pub fn as_fancy_str(self) -> &'static str {
         match self {
             VulnerabilityType::Oracle => "Oracle",
@@ -545,11 +572,11 @@ impl<'de> Deserialize<'de> for InvariantStatus {
     {
         let s: String = Deserialize::deserialize(deserializer)?;
         match s.to_ascii_lowercase().as_str() {
-            "holds" => Ok(InvariantStatus::HOLDS),
-            "violation" => Ok(InvariantStatus::VIOLATION),
+            "holds" => Ok(InvariantStatus::Holds),
+            "possibleviolation" => Ok(InvariantStatus::PossibleViolation),
             other => Err(de::Error::unknown_variant(
                 other,
-                &["High", "Medium", "Low", "Info"],
+                &["holds", "possibleviolation"],
             )),
         }
     }

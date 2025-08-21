@@ -1,5 +1,6 @@
 use crate::{
     build_brain::summarize,
+    llm_review::enums::EnumString,
     llm_review::{config::Findings, enums::Severity},
     prepare_code::git_clone::RepoPaths,
 };
