@@ -147,6 +147,14 @@ pub enum VulnerabilityType {
     CrossChainMessageSpoofing,
     AccountingInvariantViolation,
     SlippageMissingOrInsufficient,
+    StandardViolation,     // ERC-20/721/1155 spec violations
+    AllowanceRace,         // approve/transferFrom race (ERC-20)
+    PermitDomainSeparator, // EIP-2612/EIP-712 domain mismatch
+    PermitNonceMisuse,     // nonces reused/not checked/incremented
+    PermitDeadlineBypass,  // missing/ignored deadline/expiry
+    ERC20DecimalsMismatch, // decimals/oracle/price math mismatches
+    ERC777HookReentrancy,  // reentrancy via ERC777 hooks
+    ERC4626SharePrice,     // vault exchange-rate/share-price bugs
     Custom,
 }
 
@@ -165,6 +173,17 @@ pub fn generate_enum_list<T: EnumString>(patterns: &[T]) -> String {
     }
     enum_list
 }
+
+pub fn generate_enum_bulleted_list<T: EnumString>(patterns: &[T]) -> String {
+    let mut enum_list = String::new();
+    enum_list.push_str("\n");
+    for pattern in patterns {
+        enum_list.push_str(&format!("- {}", pattern.as_str()));
+        enum_list.push_str("\n");
+    }
+    enum_list
+}
+
 pub fn all_enum_variants<T: IntoEnumIterator>() -> Vec<T> {
     T::iter().collect()
 }
@@ -248,6 +267,14 @@ impl EnumString for VulnerabilityType {
             VulnerabilityType::AccountingInvariantViolation => "AccountingInvariantViolation",
             VulnerabilityType::SlippageMissingOrInsufficient => "SlippageMissingOrInsufficient",
             VulnerabilityType::Custom => "Custom",
+            VulnerabilityType::StandardViolation => "StandardViolation",
+            VulnerabilityType::AllowanceRace => "AllowanceRace",
+            VulnerabilityType::PermitDomainSeparator => "PermitDomainSeparator",
+            VulnerabilityType::PermitNonceMisuse => "PermitNonceMisuse",
+            VulnerabilityType::PermitDeadlineBypass => "PermitDeadlineBypass",
+            VulnerabilityType::ERC20DecimalsMismatch => "ERC20DecimalsMismatch",
+            VulnerabilityType::ERC777HookReentrancy => "ERC777HookReentrancy",
+            VulnerabilityType::ERC4626SharePrice => "ERC4626SharePrice",
         }
     }
 }
@@ -485,6 +512,14 @@ impl VulnerabilityType {
             VulnerabilityType::AccountingInvariantViolation => "Accounting Invariant Violation",
             VulnerabilityType::SlippageMissingOrInsufficient => "Slippage Missing Or Insufficient",
             VulnerabilityType::Custom => "Unique Custom Issue",
+            VulnerabilityType::StandardViolation => "Standard Violation",
+            VulnerabilityType::AllowanceRace => "Allowance Race",
+            VulnerabilityType::PermitDomainSeparator => "Permit Domain Separator",
+            VulnerabilityType::PermitNonceMisuse => "Permit Nonce Misuse",
+            VulnerabilityType::PermitDeadlineBypass => "Permit Deadline Bypass",
+            VulnerabilityType::ERC20DecimalsMismatch => "ERC20 Decimals Mismatch",
+            VulnerabilityType::ERC777HookReentrancy => "ERC777 Hook Reentrancy",
+            VulnerabilityType::ERC4626SharePrice => "ERC4626 Share Price",
         }
     }
 
@@ -632,6 +667,14 @@ impl<'de> Deserialize<'de> for VulnerabilityType {
             "crosschainmessagespoofing" => Ok(VulnerabilityType::CrossChainMessageSpoofing),
             "accountinginvariantviolation" => Ok(VulnerabilityType::AccountingInvariantViolation),
             "slippagemissingorinsufficient" => Ok(VulnerabilityType::SlippageMissingOrInsufficient),
+            "standardviolation" => Ok(VulnerabilityType::StandardViolation),
+            "allowancerace" => Ok(VulnerabilityType::AllowanceRace),
+            "permitdomainseparator" => Ok(VulnerabilityType::PermitDomainSeparator),
+            "permitnoncemisuse" => Ok(VulnerabilityType::PermitNonceMisuse),
+            "permitdeadlinebypass" => Ok(VulnerabilityType::PermitDeadlineBypass),
+            "erc20decimalsmismatch" => Ok(VulnerabilityType::ERC20DecimalsMismatch),
+            "erc777hookreentrancy" => Ok(VulnerabilityType::ERC777HookReentrancy),
+            "erc4626shareprice" => Ok(VulnerabilityType::ERC4626SharePrice),
             "custom" => Ok(VulnerabilityType::Custom),
             other => Err(de::Error::unknown_variant(
                 other,
@@ -678,6 +721,14 @@ impl<'de> Deserialize<'de> for VulnerabilityType {
                     "accountinginvariantviolation",
                     "slippagemissingorinsufficient",
                     "custom",
+                    "standardviolation",
+                    "allowancerace",
+                    "permitdomainseparator",
+                    "permitnoncemisuse",
+                    "permitdeadlinebypass",
+                    "erc20decimalsmismatch",
+                    "erc777hookreentrancy",
+                    "erc4626shareprice",
                 ],
             )),
         }

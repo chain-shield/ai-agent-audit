@@ -86,7 +86,9 @@ pub mod llm_review {
     pub mod semaphore;
     /// Security audit phases
     pub mod dynamic_prompts {
+        pub mod inv_findings;
         pub mod invariants;
+        pub mod pattern_findings;
         pub mod patterns;
     }
     pub mod phases {
@@ -113,7 +115,6 @@ pub mod llm_review {
         /// Deduplication prompts
         pub mod dedup;
         pub mod extractor_prompt;
-        pub mod invariants;
         pub mod planner_prompt;
         pub mod post_file_select_prompt;
         /// Post-analysis prompts
