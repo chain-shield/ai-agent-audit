@@ -6,9 +6,9 @@ use crate::{
     cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     error::Result,
     llm_review::{
-        config::{Finding, Findings},
         context_state::{generate_audit_scope, get_metadata_context},
         enums::AIAgent,
+        findings::{Finding, Findings},
         phases::verify_findings::{
             deserialize_bool_from_str_or_bool, generate_content_plus_context_block,
         },

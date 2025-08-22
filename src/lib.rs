@@ -75,13 +75,14 @@ pub mod llm_review {
     pub mod analysis_db;
     /// Main security review orchestration
     pub mod code_review;
-    /// LLM configuration and models
-    pub mod config;
     /// Global context management
     pub mod context_state;
     pub mod contract_file_map;
     /// AI agent and vulnerability type enums
     pub mod enums;
+    /// LLM configuration and models
+    pub mod findings;
+    pub mod invariants;
     pub mod patterns;
     pub mod semaphore;
     /// Security audit phases

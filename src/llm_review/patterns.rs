@@ -1,7 +1,27 @@
-use crate::llm_review::enums::EnumString;
+use crate::llm_review::{
+    enums::{EnumString, VulnerabilityType},
+    findings::PrivilegeLevel,
+};
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use strum_macros::EnumIter;
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Patterns {
+    pub patterns: Vec<Pattern>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct Pattern {
+    pub issue_type: VulnerabilityPattern,
+    pub contract: String,            // exact constract name where issue appears
+    pub function: String, // exact function name where issue appears, if not applicable set to 'NA'
+    pub description: String, // description of issue, include code snippet if relevant
+    pub static_signals: Vec<String>, // e.g., "amountOutMin=0", "no onlyOwner"
+    pub assets_at_risk: Vec<String>, // e.g., ["treasury", "rewards", "LP"]
+    pub privilege: PrivilegeLevel, // permissionless vs role-gated
+    pub impact: Option<ImpactHint>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
 // Access,Auth &,Governance
@@ -85,22 +105,256 @@ pub enum VulnerabilityPattern {
     FeeAccountingDrift, // fee math rounding/order-of-ops lets dust siphon/accumulate
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, EnumIter)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, EnumIter, Default)]
 pub enum ImpactHint {
     High,
     HighMedium, // between High and Medium
     Medium,
     MediumLow, // between Medium and Low
+    #[default]
     Low,
 }
 
-#[derive(Debug, Clone, JsonSchema)]
+#[derive(Debug, Clone, JsonSchema, Default)]
 pub struct VulnerabilityPatternSpec {
     pub key: VulnerabilityPattern,
     pub definition: &'static str,
     pub static_signals: &'static [&'static str],
     pub examples: &'static [&'static str],
     pub impact_hint: ImpactHint,
+}
+
+impl VulnerabilityPattern {
+    pub fn get_vulnerability_spec(&self) -> VulnerabilityPatternSpec {
+        VULNERABILITY_PATTERN_LIBRARY
+            .iter()
+            .find(|v| v.key == *self)
+            .unwrap_or(&VulnerabilityPatternSpec::default())
+            .clone()
+    }
+
+    pub fn pattern_to_types(&self) -> &'static [VulnerabilityType] {
+        match self {
+            // Access, Auth & Governance
+            VulnerabilityPattern::AccessControlOrAuthByPass => &[
+                VulnerabilityType::AccessControl,
+                VulnerabilityType::AuthByPass,
+            ],
+            VulnerabilityPattern::GovernanceDelegationFlaw => &[
+                VulnerabilityType::AccessControl,
+                VulnerabilityType::AuthByPass,
+                VulnerabilityType::DelegatecallLowLevelOps,
+            ],
+            VulnerabilityPattern::DoubleExecutionOrReplay => &[VulnerabilityType::ReplayAttack],
+            VulnerabilityPattern::PermitOrSignatureReplay => &[
+                VulnerabilityType::SignatureReplay,
+                VulnerabilityType::ReplayAttack,
+                VulnerabilityType::SignatureMalleability,
+            ],
+            VulnerabilityPattern::EIP1271ByPass => &[
+                VulnerabilityType::AuthByPass,
+                VulnerabilityType::SignatureReplay,
+            ],
+            VulnerabilityPattern::ConfigFootgun => {
+                &[VulnerabilityType::AccessControl, VulnerabilityType::Custom]
+            }
+
+            // Call Order, Reentrancy, External calls
+            VulnerabilityPattern::CEIViolation => &[VulnerabilityType::Reentrancy],
+            VulnerabilityPattern::Reentrancy => &[VulnerabilityType::Reentrancy],
+            VulnerabilityPattern::ExternalCallAfterStateChange => &[
+                VulnerabilityType::Reentrancy,
+                VulnerabilityType::UncheckedReturn,
+            ],
+
+            // Economic, Market, Oracle
+            VulnerabilityPattern::SlippageMissingOrInsufficient => &[
+                VulnerabilityType::SlippageMissingOrInsufficient,
+                VulnerabilityType::FrontrunMev,
+            ],
+            VulnerabilityPattern::OracleUsingDEXorTWAP => {
+                &[VulnerabilityType::Oracle, VulnerabilityType::PricePrecision]
+            }
+            VulnerabilityPattern::FlashLoanEconomicManipulation => &[
+                VulnerabilityType::FlashLoanEconomicManipulation,
+                VulnerabilityType::Oracle,
+            ],
+            VulnerabilityPattern::FeeOnTransferAssumption => &[
+                VulnerabilityType::FeeOnTransferAssumption,
+                VulnerabilityType::UncheckedERC20Return,
+            ],
+            VulnerabilityPattern::ReserveOrPriceDesync => &[
+                VulnerabilityType::AccountingInvariantViolation,
+                VulnerabilityType::Oracle,
+            ],
+
+            // Accounting & Invariants
+            VulnerabilityPattern::PrecisionDriftAccumulation => &[
+                VulnerabilityType::RoundingError,
+                VulnerabilityType::PricePrecision,
+                VulnerabilityType::AccountingInvariantViolation,
+            ],
+
+            // Upgradeability, Proxies, Init
+            VulnerabilityPattern::UpgradeAuthBypass => &[
+                VulnerabilityType::UpgradeabilityInitializerSafety,
+                VulnerabilityType::AuthByPass,
+            ],
+            VulnerabilityPattern::InitOrderOrUnintialized => {
+                &[VulnerabilityType::UpgradeabilityInitializerSafety]
+            }
+            VulnerabilityPattern::StorageCollisionOrSelectorClash => {
+                &[VulnerabilityType::StorageLayout]
+            }
+            VulnerabilityPattern::SelfdestructOrMetamorphicFootguns => &[
+                VulnerabilityType::SelfDestruct,
+                VulnerabilityType::DelegatecallLowLevelOps,
+            ],
+
+            // Lifecycle & State Machines
+            VulnerabilityPattern::MaturityorGatingByPass => &[
+                VulnerabilityType::AuthByPass,
+                VulnerabilityType::TimestampDependentLogic,
+            ],
+            VulnerabilityPattern::EpochOrIndexMonotonicity => {
+                &[VulnerabilityType::AccountingInvariantViolation]
+            }
+
+            // DoS, Gas, Complexity
+            VulnerabilityPattern::UnboundedLoops => &[
+                VulnerabilityType::Dos,
+                VulnerabilityType::GasGriefBlockLimit,
+            ],
+            VulnerabilityPattern::GriefableCallbacks => {
+                &[VulnerabilityType::Dos, VulnerabilityType::Reentrancy]
+            }
+            VulnerabilityPattern::StateGrowthOrStorageBloat => &[
+                VulnerabilityType::Dos,
+                VulnerabilityType::GasGriefBlockLimit,
+            ],
+
+            // Randomness, Time, Chain assumptions
+            VulnerabilityPattern::TimestampOrBlockManipulation => &[
+                VulnerabilityType::TimestampManipulation,
+                VulnerabilityType::TimestampDependentLogic,
+            ],
+            VulnerabilityPattern::BlockhashOrPRNGWeakness => &[VulnerabilityType::Randomness],
+            VulnerabilityPattern::ChainIdorDomainDrift => &[
+                VulnerabilityType::SignatureReplay,
+                VulnerabilityType::CrossChainMessageSpoofing,
+            ],
+
+            // Cross-chain & Bridging
+            VulnerabilityPattern::CrossChainMessageSpoofing => {
+                &[VulnerabilityType::CrossChainMessageSpoofing]
+            }
+            VulnerabilityPattern::FinalityOrReplayAcrossDomains => &[
+                VulnerabilityType::ReplayAttack,
+                VulnerabilityType::CrossChainMessageSpoofing,
+            ],
+
+            // EVM/Assembly & Low-Level
+            VulnerabilityPattern::UncheckedLowLevelCallResults => {
+                &[VulnerabilityType::UncheckedReturn]
+            }
+            VulnerabilityPattern::UnsafeAssembyTypeCasts => &[
+                VulnerabilityType::DelegatecallLowLevelOps,
+                VulnerabilityType::StorageLayout,
+            ],
+            VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath => &[
+                VulnerabilityType::IntegerMath,
+                VulnerabilityType::IntegerOverflow,
+            ],
+
+            // ETH/WETH & Payment Flows
+            VulnerabilityPattern::EthVsWethConfusion => &[VulnerabilityType::UnexpectedEth],
+            VulnerabilityPattern::PullorPushPaymentbugs => &[
+                VulnerabilityType::UnexpectedEth,
+                VulnerabilityType::UncheckedReturn,
+            ],
+
+            // Token Standard / Allowance
+            VulnerabilityPattern::StandardViolation => &[VulnerabilityType::StandardViolation],
+            VulnerabilityPattern::AllowanceRace => &[VulnerabilityType::AllowanceRace],
+            VulnerabilityPattern::PermitMisuse => &[
+                VulnerabilityType::SignatureReplay,
+                VulnerabilityType::SignatureMalleability,
+                VulnerabilityType::PermitDomainSeparator,
+                VulnerabilityType::PermitNonceMisuse,
+                VulnerabilityType::PermitDeadlineBypass,
+                VulnerabilityType::AuthByPass,
+            ],
+
+            // Economic / Oracle (optional finer granularity)
+            VulnerabilityPattern::PricePrecisionOrRoundingError => &[
+                VulnerabilityType::PricePrecision,
+                VulnerabilityType::RoundingError,
+                VulnerabilityType::ERC20DecimalsMismatch, // <- new, if caused by decimals
+            ],
+
+            // Reentrancy via token standards (optional specialization)
+            VulnerabilityPattern::ReadOnlyReentrancy => &[VulnerabilityType::Reentrancy],
+            VulnerabilityPattern::UnsafeRecipient => &[
+                VulnerabilityType::UncheckedReturn,
+                VulnerabilityType::Reentrancy,
+                VulnerabilityType::ERC777HookReentrancy, // <- when applicable
+            ],
+
+            // Vault math / accounting (optional specialization)
+            VulnerabilityPattern::AccountingInvariantViolation => &[
+                VulnerabilityType::AccountingInvariantViolation,
+                VulnerabilityType::ERC4626SharePrice, // <- when in vault context
+            ],
+            // Token Standard / ERC20/777 quirks
+            VulnerabilityPattern::NonStandardERC20Behavior => &[
+                VulnerabilityType::UncheckedERC20Return,
+                VulnerabilityType::FeeOnTransferAssumption,
+            ],
+            VulnerabilityPattern::ERC20DecimalsMismatch => &[VulnerabilityType::PricePrecision],
+            VulnerabilityPattern::ERC777HookReentrancy => &[VulnerabilityType::Reentrancy],
+
+            // Oracle & Market Data
+            VulnerabilityPattern::StaleOracleAcceptance => &[VulnerabilityType::Oracle],
+            VulnerabilityPattern::SandwichableOracle => {
+                &[VulnerabilityType::Oracle, VulnerabilityType::FrontrunMev]
+            }
+
+            // Permit / Signatures
+            VulnerabilityPattern::PermitFrontRun => &[
+                VulnerabilityType::SignatureReplay,
+                VulnerabilityType::SignatureMalleability,
+                // add PermitDomainSeparator / PermitNonceMisuse / PermitDeadlineBypass if using your finer subtypes
+            ],
+
+            // Admin / Lifecycle
+            VulnerabilityPattern::UnprotectedPauseOrStop => &[
+                VulnerabilityType::PausableEmergencyStop,
+                VulnerabilityType::AccessControl,
+            ],
+
+            // Low-Level / Delegatecall
+            VulnerabilityPattern::UntrustedDelegateCall => &[
+                VulnerabilityType::UntrustedDelegateCall,
+                VulnerabilityType::DelegatecallLowLevelOps,
+            ],
+
+            // Cross-chain & Bridging
+            VulnerabilityPattern::ReplayAcrossForksOrL2s => &[
+                VulnerabilityType::ReplayAttack,
+                VulnerabilityType::CrossChainMessageSpoofing,
+            ],
+
+            // Vaults & Accounting
+            VulnerabilityPattern::ERC4626SharePriceMismatch => &[
+                VulnerabilityType::AccountingInvariantViolation,
+                VulnerabilityType::PricePrecision,
+            ],
+            VulnerabilityPattern::FeeAccountingDrift => &[
+                VulnerabilityType::RoundingError,
+                VulnerabilityType::AccountingInvariantViolation,
+            ],
+        }
+    }
 }
 
 impl Serialize for VulnerabilityPatternSpec {
@@ -611,6 +865,154 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
             "no pull-based withdrawal alternative",
         ],
         examples: &["loop of transfers to untrusted recipients"],
+        impact_hint: ImpactHint::Medium,
+    },
+    // E) Token Standard & Allowances (new)
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::NonStandardERC20Behavior,
+        definition: "ERC20 implementations that omit return values, return false, or have custom behaviors that break transfer assumptions.",
+        static_signals: &[
+            "low-level token.call(...) return value ignored",
+            "assumes transfer/transferFrom revert on failure",
+            "no balanceBefore/balanceAfter delta checks",
+        ],
+        examples: &[
+            "vault credits full deposit even when token takes fee",
+            "router assumes success on false-returning token",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ERC20DecimalsMismatch,
+        definition: "Mismatched decimals in amount/price math cause systematic value skew or underflows/overflows.",
+        static_signals: &[
+            "mixes token amounts with 18-decimal math unscaled",
+            "uses oracle price with different base decimals",
+        ],
+        examples: &[
+            "collateral value overestimated due to 6↔18 mismatch",
+            "mint shares with wrong scaling factor",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ERC777HookReentrancy,
+        definition: "Reentrancy via ERC777 tokensReceived/ tokensToSend hooks enabling multiple state updates per tx.",
+        static_signals: &[
+            "accepts ERC777 without nonReentrant",
+            "external transfer triggers hooks before state write",
+        ],
+        examples: &[
+            "claim() reentered via tokensReceived to double-claim",
+            "deposit() reentered to bypass share accounting",
+        ],
+        impact_hint: ImpactHint::High,
+    },
+    // C) Economic, Market, Oracle (new)
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::StaleOracleAcceptance,
+        definition: "Accepts stale prices/heartbeats or outdated observations; attacker trades against old data.",
+        static_signals: &[
+            "no updatedAt/answeredInRound checks",
+            "ignores heartbeat/threshold for max age",
+        ],
+        examples: &[
+            "values collateral with hours-old price",
+            "reward weights from outdated observation",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::SandwichableOracle,
+        definition: "On-chain spot reads that can be skewed within the same transaction (pre/post trade).",
+        static_signals: &[
+            "uses getReserves/spot before executing swap",
+            "no twap/min observation window",
+        ],
+        examples: &[
+            "price read then attacker trades to skew quote",
+            "mint amount based on manipulable spot",
+        ],
+        impact_hint: ImpactHint::High,
+    },
+    // Permit / Signatures (new)
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::PermitFrontRun,
+        definition: "Permit usable or front-runnable in same block due to nonce/deadline handling flaws.",
+        static_signals: &[
+            "nonces not incremented on failure",
+            "accepts expired or zero-deadline permits",
+        ],
+        examples: &[
+            "attacker front-runs victim permit then drains",
+            "deadline check missing or <= now without slack",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    // A) Access, Auth, Governance (new)
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::UnprotectedPauseOrStop,
+        definition: "Pause/unpause/emergency stop functions callable by anyone or weakly gated.",
+        static_signals: &[
+            "pause() lacks onlyOwner/role",
+            "guardian role set to zero or public",
+        ],
+        examples: &[
+            "anyone can pause withdrawals",
+            "malicious actor permanently pauses core flow",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    // K) EVM/Assembly & Low-Level (new)
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::UntrustedDelegateCall,
+        definition: "Delegatecall to untrusted targets (plugins/strategies) enabling state hijack or storage corruption.",
+        static_signals: &[
+            "delegatecall to user-supplied address",
+            "no allowlist/immutable codehash checks",
+        ],
+        examples: &[
+            "strategy set by EOA then delegatecalled",
+            "module registry missing auth on registration",
+        ],
+        impact_hint: ImpactHint::High,
+    },
+    // J) Cross-Chain & Bridging (new)
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ReplayAcrossForksOrL2s,
+        definition: "Messages/signatures valid across forks or sibling L2s can be replayed without domain separation.",
+        static_signals: &["chainid/domain not bound in message", "no per-domain nonce"],
+        examples: &[
+            "L2 inbox accepts proof from sibling chain",
+            "permit valid on fork post-chain-split",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    // D) Accounting & Invariants (new)
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ERC4626SharePriceMismatch,
+        definition: "Vault share/asset conversions drift due to precision/order-of-ops; share price mis-accounted.",
+        static_signals: &[
+            "divide before multiply in convertToShares/assets",
+            "rounding bias always favors caller",
+        ],
+        examples: &[
+            "withdraw more assets than shares imply",
+            "mint shares underpriced by rounding",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::FeeAccountingDrift,
+        definition: "Fee math (order/rounding) leaks value (penny-shaving) or accumulates dust to attacker.",
+        static_signals: &[
+            "fee taken before scaling normalization",
+            "flooring in looped reward distribution",
+        ],
+        examples: &[
+            "caller skims dust each claim via rounding",
+            "protocol fees under/over-charged on swaps",
+        ],
         impact_hint: ImpactHint::Medium,
     },
 ];

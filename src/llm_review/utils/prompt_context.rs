@@ -1,7 +1,8 @@
 use crate::llm_review::{
-    config::{Finding, InvariantFinding, Pattern},
     enums::EnumString,
-    patterns::ImpactHint,
+    findings::Finding,
+    invariants::InvariantFinding,
+    patterns::{ImpactHint, Pattern},
 };
 
 pub fn generate_prompt_for_issue_check(
@@ -75,7 +76,7 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
     pattern_list.push_str(&pattern.static_signals.join(", "));
 
     pattern_list.push_str("\n ### Assets at Risk\n");
-    pattern_list.push_str(&pattern.static_signals.join(", "));
+    pattern_list.push_str(&pattern.assets_at_risk.join(", "));
 
     pattern_list.push_str("\n ### Minimum Privilege Required to Exploit Vulnerability\n");
     pattern_list.push_str(&pattern.privilege.as_str());

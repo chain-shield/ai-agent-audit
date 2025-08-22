@@ -7,9 +7,9 @@ use crate::{
     cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     error::Result,
     llm_review::{
-        config::{Findings, generated_llm_prompt},
         context_state::{generate_audit_scope, get_metadata_context},
         enums::AIAgent,
+        findings::{Findings, generated_llm_prompt},
         prompt_support::{post_prompt::generate_post_prompt, pre_prompt::generate_pre_prompt},
     },
     master_prompts::{code4rena::CODE4RENA_PROMPT, prompt_2x_aa::PROMPT_2X_AA},
