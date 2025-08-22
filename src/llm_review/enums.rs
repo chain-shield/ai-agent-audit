@@ -88,8 +88,9 @@ pub enum Severity {
     Info,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter, Default)]
 pub enum InvariantType {
+    #[default]
     Arithmetic,
     Balance,
     Permission,
@@ -160,6 +161,12 @@ pub enum VulnerabilityType {
 
 pub trait EnumString {
     fn as_str(&self) -> &'static str;
+}
+
+pub trait EnumData {
+    type Spec;
+    fn to_types(&self) -> &'static [VulnerabilityType];
+    fn get_spec(&self) -> Self::Spec;
 }
 
 pub fn generate_enum_list<T: EnumString>(patterns: &[T]) -> String {

@@ -1,9 +1,9 @@
 use crate::llm_review::{
-    enums::{EnumString, VulnerabilityType},
+    enums::{EnumData, EnumString, VulnerabilityType},
     findings::PrivilegeLevel,
 };
 use schemars::JsonSchema;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use strum_macros::EnumIter;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -124,8 +124,9 @@ pub struct VulnerabilityPatternSpec {
     pub impact_hint: ImpactHint,
 }
 
-impl VulnerabilityPattern {
-    pub fn get_vulnerability_spec(&self) -> VulnerabilityPatternSpec {
+impl EnumData for VulnerabilityPattern {
+    type Spec = VulnerabilityPatternSpec;
+    fn get_spec(&self) -> VulnerabilityPatternSpec {
         VULNERABILITY_PATTERN_LIBRARY
             .iter()
             .find(|v| v.key == *self)
@@ -133,7 +134,7 @@ impl VulnerabilityPattern {
             .clone()
     }
 
-    pub fn pattern_to_types(&self) -> &'static [VulnerabilityType] {
+    fn to_types(&self) -> &'static [VulnerabilityType] {
         match self {
             // Access, Auth & Governance
             VulnerabilityPattern::AccessControlOrAuthByPass => &[
