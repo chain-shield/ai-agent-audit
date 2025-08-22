@@ -1,5 +1,5 @@
 use super::enums::{InvariantStatus, InvariantType, VulnerabilityType};
-use crate::llm_review::patterns::ImpactHint;
+use crate::llm_review::{enums::EnumData, patterns::ImpactHint};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -26,7 +26,7 @@ pub struct ContractInvariants {
     pub invariants: Vec<InvariantFinding>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InvariantSpec {
     pub key: InvariantType,
     /// Plain-English description of what the invariant guarantees.
@@ -42,14 +42,25 @@ pub struct InvariantSpec {
 }
 
 // 2) Your function can now just return these same statics (still DRY)
-pub fn invariant_to_types(inv: InvariantType) -> &'static [VulnerabilityType] {
-    match inv {
-        InvariantType::Arithmetic => INVARIANT_ARITH_TYPES,
-        InvariantType::Balance => INVARIANT_BAL_TYPES,
-        InvariantType::Permission => INVARIANT_PERM_TYPES,
-        InvariantType::Temporal => INVARIANT_TEMP_TYPES,
-        InvariantType::Referential => INVARIANT_REF_TYPES,
-        InvariantType::StateMachine => INVARIANT_SM_TYPES,
+impl EnumData for InvariantType {
+    type Spec = InvariantSpec;
+    fn to_types(&self) -> &'static [VulnerabilityType] {
+        match self {
+            InvariantType::Arithmetic => INVARIANT_ARITH_TYPES,
+            InvariantType::Balance => INVARIANT_BAL_TYPES,
+            InvariantType::Permission => INVARIANT_PERM_TYPES,
+            InvariantType::Temporal => INVARIANT_TEMP_TYPES,
+            InvariantType::Referential => INVARIANT_REF_TYPES,
+            InvariantType::StateMachine => INVARIANT_SM_TYPES,
+        }
+    }
+
+    fn get_spec(&self) -> InvariantSpec {
+        INVARIANT_LIBRARY
+            .iter()
+            .find(|v| v.key == *self)
+            .unwrap_or(&InvariantSpec::default())
+            .clone()
     }
 }
 
