@@ -83,6 +83,7 @@ pub mod llm_review {
     /// LLM configuration and models
     pub mod findings;
     pub mod invariants;
+    pub mod pattern_category;
     pub mod patterns;
     pub mod semaphore;
     /// Security audit phases
