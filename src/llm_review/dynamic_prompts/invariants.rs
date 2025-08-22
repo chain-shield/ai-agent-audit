@@ -1,10 +1,12 @@
-use crate::llm_review::enums::{
-    all_enum_variants, generate_enum_list, InvariantStatus, InvariantType,
+use crate::llm_review::{
+    enums::{all_enum_variants, generate_enum_list, EnumString, InvariantStatus, InvariantType},
+    invariants::{InvariantSpec, INVARIANT_LIBRARY},
 };
 
-pub fn generate_invariant_prompt() -> String {
-    let invariant_type_list = generate_enum_list(all_enum_variants::<InvariantType>().as_slice());
-    let invariant_json = get_invariant_json();
+pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
+    let invariant_type_list = generate_enum_list(inv);
+    let invariant_json = get_invariant_json(inv);
+    let invariant_categories = generate_formated_list_from_invariant_data(inv);
 
     format!(
         r#"Before instructions are provided on the task please note required output format:
@@ -36,13 +38,8 @@ pub fn generate_invariant_prompt() -> String {
         - "status": "Holds" if the invariant is demonstrably enforced in all paths; otherwise "PossibleViolation"
         - For "PossibleViolation", include "pre_state" (minimal setup), "post_state" (state/value change), and "impact".
 
-        ## INVARIANT TYPES
-        1. Arithmetic   values, sums, ratios must match expectations  
-        2. Balance      token/ETH balances and supply monotonicity  
-        3. Permission    only-owner / only-role / re-entrancy locks  
-        4. Temporal      timeouts, epochs, can’t rewind clock  
-        5. Referential   mappings/arrays stay in sync (index→value)  
-        6. StateMachine only allowed state transitions
+        ## INVARIANT TYPES TO FOCUS ON
+        {invariants}
 
         STRICT JSON ONLY (no markdown, no comments):
 
@@ -59,13 +56,14 @@ pub fn generate_invariant_prompt() -> String {
         they match up correctly.
 "#,
         types = invariant_type_list,
-        json = invariant_json
+        json = invariant_json,
+        invariants = invariant_categories
     )
 }
 
-pub fn get_invariant_json() -> String {
+pub fn get_invariant_json(inv: &[InvariantType]) -> String {
     let status_enum_list = generate_enum_list(all_enum_variants::<InvariantStatus>().as_slice());
-    let invariant_type_list = generate_enum_list(all_enum_variants::<InvariantType>().as_slice());
+    let invariant_type_list = generate_enum_list(inv);
 
     format!(
         r#"{{
@@ -89,4 +87,39 @@ pub fn get_invariant_json() -> String {
         types = invariant_type_list,
         status = status_enum_list
     )
+}
+
+pub fn generate_formated_list_from_invariant_data(patterns_to_use: &[InvariantType]) -> String {
+    let top_invariant_spec: Vec<InvariantSpec> = INVARIANT_LIBRARY
+        .iter()
+        .filter(|inv| patterns_to_use.contains(&inv.key))
+        .map(|inv| inv.to_owned())
+        .collect();
+
+    let mut top_invariant_list = String::new();
+
+    for pattern in top_invariant_spec {
+        top_invariant_list.push_str("\n\n");
+        top_invariant_list.push_str("### Invariant Type\n");
+        top_invariant_list.push_str(&pattern.key.as_str());
+        top_invariant_list.push_str("\n\n");
+
+        top_invariant_list.push_str("### Definition\n");
+        top_invariant_list.push_str(pattern.definition);
+        top_invariant_list.push_str("\n\n");
+
+        top_invariant_list.push_str("### Static Signals\n");
+        top_invariant_list.push_str(&pattern.static_signals.join("\n"));
+        top_invariant_list.push_str("\n\n");
+
+        top_invariant_list.push_str("### Examples\n");
+        top_invariant_list.push_str(&pattern.examples.join("\n"));
+        top_invariant_list.push_str("\n\n");
+
+        top_invariant_list.push_str("### Impact Hint\n");
+        top_invariant_list.push_str(&pattern.impact_hint.as_str());
+        top_invariant_list.push_str("\n\n");
+    }
+
+    top_invariant_list
 }

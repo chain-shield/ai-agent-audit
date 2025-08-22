@@ -1,12 +1,12 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::Serialize;
 use std::path::Path;
 
 use crate::{
     config::{CHAINSHIELD_DB_FOLDER, FINDINGS_DB},
-    llm_review::config::{Finding, Findings},
     llm_review::enums::EnumString,
+    llm_review::findings::{Finding, Findings},
     prepare_code::git_clone::RepoPaths,
 };
 

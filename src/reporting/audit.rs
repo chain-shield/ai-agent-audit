@@ -1,7 +1,7 @@
 use crate::{
     build_brain::summarize,
     llm_review::enums::EnumString,
-    llm_review::{config::Findings, enums::Severity},
+    llm_review::{enums::Severity, findings::Findings},
     prepare_code::git_clone::RepoPaths,
 };
 /// Professional audit report generation with findings categorization.

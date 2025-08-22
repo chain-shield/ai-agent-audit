@@ -1,6 +1,6 @@
 use crate::llm_review::{
-    config::PrivilegeLevel,
     enums::{all_enum_variants, generate_enum_list, EnumString},
+    findings::PrivilegeLevel,
     patterns::{VulnerabilityPattern, VulnerabilityPatternSpec, VULNERABILITY_PATTERN_LIBRARY},
 };
 
@@ -76,7 +76,7 @@ pub fn generate_pattern_prompt(p: &[VulnerabilityPattern]) -> String {
         }}
 
         **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
-        **Please double-check opening and closing brakets: `}}` and `]`, make sure 
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
         they match up correctly.
     "#,
         categories = pattern_categories,

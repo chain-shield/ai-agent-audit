@@ -3,12 +3,12 @@
 /// This phase performs final quality checks on verified findings and enhances
 /// them with improved details, impact analysis, and mitigation strategies.
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     error::Result,
     llm_review::{
-        config::{Finding, Findings},
         context_state::get_metadata_context,
         enums::{AIAgent, Severity},
+        findings::{Finding, Findings},
         prompt_support::{
             post_qualify::generate_post_qualify, pre_qualify::PRE_QUALIFY,
             qualify_prompt::QUALIFY_PROMPT,

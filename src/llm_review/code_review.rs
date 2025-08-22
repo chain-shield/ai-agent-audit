@@ -1,14 +1,15 @@
 use crate::config::audit_config;
 use crate::error::Result;
+use crate::llm_review::invariants::ContractInvariants;
 use crate::llm_review::{
-    analysis_db::FindingsDb, config::CLAUDE_4_0_SONNET, context_state::generate_audit_scope,
+    analysis_db::FindingsDb, context_state::generate_audit_scope, findings::CLAUDE_4_0_SONNET,
 };
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
         agent_factory::{AgentConfig, AgentFactory},
-        config::{ContractInvariants, Findings},
+        findings::Findings,
     },
 };
 use log::info;

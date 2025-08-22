@@ -147,13 +147,10 @@ If a candidate does not meet High or Medium severity and C4 acceptance criteria,
 
 ## ATTACKER MODEL & SCOPE (MANDATORY)
 - Attacker: an unprivileged EOA (or arbitrary contract) with no roles (PREFERRED over privileged role attack). 
-- Untrusted Roles: Check possible attacks from untrusted roled (as defined in scope) - however, always check unprivileged attack vector FIRST.
-- Time: present-state only (the deployed/fixture state for this contest). No deployment-only windows unless you can open them permissionlessly.
+- Untrusted Roles: Check possible attacks from untrusted roles (as defined in scope) - however, always check unprivileged attack vector FIRST.
+- Time: present-state only (the deployed/fixture state for this contest). 
 - Allowed actions: calling public/external functions; creating arbitrary ERC20/ERC777 tokens; using flash loans; sandwiching; reentrancy via callbacks, etc.
-- **Disallowed submissions (auto-reject)**: “owner can rug,” “onlyOwner/onlyRole could misconfigure,” “during upgrade admin could…,” undocumented speculation, read-only reentrancy with no impact, 
-  or anything that needs privileged access from trusted role. 
 - **Scope** - if scope is provided below, then only report vulnerability that are in scope
-- If you cannot prove a **permissionless** path to impact **now**, exclude it.
 
 ## WHAT TO LOOK FOR (BANKABLE CATEGORIES)
 1) Accounting & share/asset math bugs (rounding/precision/order-of-ops that allow value extraction, double counting, or share inflation/deflation).
@@ -165,7 +162,7 @@ If a candidate does not meet High or Medium severity and C4 acceptance criteria,
 
 ## METHOD (DO THIS, STEP BY STEP — KEEP REASONING INTERNAL)
 A) Surface map:
-  - Enumerate all public/external functions that are callable without auth gates.
+  - Enumerate all public/external functions that are callable. 
   - For each, list state written, external calls made, and invariants implied.
 
 B) Candidate generation:
@@ -173,7 +170,7 @@ B) Candidate generation:
   - Build a minimal permissionless path to break a core invariant or extract value.
 
 C) Validate C4 acceptance:
-  - Permissionless? (no roles) ✔
+  - Permissionless (no roles) or explicitly untrusted role (as defined in scope) ✔
   - Present-state? (no admin/upgrade-only) ✔
   - Monetary or functional impact? (funds lost/frozen, irreversible DoS, governance capture) ✔
   - Reproducible on contest fixture? ✔

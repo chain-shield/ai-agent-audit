@@ -1,231 +1,132 @@
-/*
-### Example ranking rubric (drop into your critic prompt)
-Severity (High/Medium) per C4: ✅ permissionless, ✅ present-state, ✅ financial path.
-Profit magnitude (attacker net gain) > payout denial (DoS) > stale/logic mismatch.
-Call count & complexity (fewer is better).
-Blast radius (affects many users/epochs is better).
-Reproducibility (Foundry asserts on balances/totals, not logs).
-*/
+use crate::llm_review::{
+    enums::{
+        all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumString, Severity,
+    },
+    findings::PrivilegeLevel,
+    patterns::{Pattern, VulnerabilityPattern},
+    utils::prompt_context::generate_formatted_pattern,
+};
 
-use crate::llm_review::{enums::VulnerabilityType, patterns::VulnerabilityPattern};
+pub fn generate_pattern_to_findings_prompt(pattern: &Pattern) -> String {
+    let exploit_enums = pattern.issue_type.pattern_to_types();
+    let exploit_bullets = generate_enum_bulleted_list(exploit_enums); // "- Oracle\n- Reentrancy\n..."
+    let exploit_types = generate_enum_list(exploit_enums); // "Oracle|Reentrancy|..."
+    let pattern_data = pattern.issue_type.get_vulnerability_spec();
+    let privilege_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
+    let json = get_findings_json(&pattern.issue_type);
+    let pattern_full_spec = generate_formatted_pattern(pattern);
 
-pub fn pattern_to_types(pattern: VulnerabilityPattern) -> &'static [VulnerabilityType] {
-    match pattern {
-        // Access, Auth & Governance
-        VulnerabilityPattern::AccessControlOrAuthByPass => &[
-            VulnerabilityType::AccessControl,
-            VulnerabilityType::AuthByPass,
-        ],
-        VulnerabilityPattern::GovernanceDelegationFlaw => &[
-            VulnerabilityType::AccessControl,
-            VulnerabilityType::AuthByPass,
-            VulnerabilityType::DelegatecallLowLevelOps,
-        ],
-        VulnerabilityPattern::DoubleExecutionOrReplay => &[VulnerabilityType::ReplayAttack],
-        VulnerabilityPattern::PermitOrSignatureReplay => &[
-            VulnerabilityType::SignatureReplay,
-            VulnerabilityType::ReplayAttack,
-            VulnerabilityType::SignatureMalleability,
-        ],
-        VulnerabilityPattern::EIP1271ByPass => &[
-            VulnerabilityType::AuthByPass,
-            VulnerabilityType::SignatureReplay,
-        ],
-        VulnerabilityPattern::ConfigFootgun => {
-            &[VulnerabilityType::AccessControl, VulnerabilityType::Custom]
-        }
+    format!(
+        r#"Before instructions are provided on the task please note required output format:
 
-        // Call Order, Reentrancy, External calls
-        VulnerabilityPattern::CEIViolation => &[VulnerabilityType::Reentrancy],
-        VulnerabilityPattern::Reentrancy => &[VulnerabilityType::Reentrancy],
-        VulnerabilityPattern::ExternalCallAfterStateChange => &[
-            VulnerabilityType::Reentrancy,
-            VulnerabilityType::UncheckedReturn,
-        ],
+        ## JSON Output Requirement
+        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
-        // Economic, Market, Oracle
-        VulnerabilityPattern::SlippageMissingOrInsufficient => &[
-            VulnerabilityType::SlippageMissingOrInsufficient,
-            VulnerabilityType::FrontrunMev,
-        ],
-        VulnerabilityPattern::OracleUsingDEXorTWAP => {
-            &[VulnerabilityType::Oracle, VulnerabilityType::PricePrecision]
-        }
-        VulnerabilityPattern::FlashLoanEconomicManipulation => &[
-            VulnerabilityType::FlashLoanEconomicManipulation,
-            VulnerabilityType::Oracle,
-        ],
-        VulnerabilityPattern::FeeOnTransferAssumption => &[
-            VulnerabilityType::FeeOnTransferAssumption,
-            VulnerabilityType::UncheckedERC20Return,
-        ],
-        VulnerabilityPattern::ReserveOrPriceDesync => &[
-            VulnerabilityType::AccountingInvariantViolation,
-            VulnerabilityType::Oracle,
-        ],
+        {json}
 
-        // Accounting & Invariants
-        VulnerabilityPattern::PrecisionDriftAccumulation => &[
-            VulnerabilityType::RoundingError,
-            VulnerabilityType::PricePrecision,
-            VulnerabilityType::AccountingInvariantViolation,
-        ],
+        You are a top Code4rena security warden. Your job: analyze the target contract **through the lens of the provided Security Vulnerability Pattern** and enumerate the **top exploits/attack vectors** a hacker may deploy.
 
-        // Upgradeability, Proxies, Init
-        VulnerabilityPattern::UpgradeAuthBypass => &[
-            VulnerabilityType::UpgradeabilityInitializerSafety,
-            VulnerabilityType::AuthByPass,
-        ],
-        VulnerabilityPattern::InitOrderOrUnintialized => {
-            &[VulnerabilityType::UpgradeabilityInitializerSafety]
-        }
-        VulnerabilityPattern::StorageCollisionOrSelectorClash => {
-            &[VulnerabilityType::StorageLayout]
-        }
-        VulnerabilityPattern::SelfdestructOrMetamorphicFootguns => &[
-            VulnerabilityType::SelfDestruct,
-            VulnerabilityType::DelegatecallLowLevelOps,
-        ],
+        ## Criteria for a Top Exploit/Attack
+        - Severity (High/Medium) per C4: **permissionless (or untrusted role), present-state, financial path**.
+        - Profit magnitude (attacker net gain) > payout denial (DoS) > stale/logic mismatch.
+        - Fewer calls & lower complexity is better.
+        - Larger blast radius (affects many users/epochs) is better.
+        - Reproducibility: **Foundry asserts on balances/totals, not logs**.
 
-        // Lifecycle & State Machines
-        VulnerabilityPattern::MaturityorGatingByPass => &[
-            VulnerabilityType::AuthByPass,
-            VulnerabilityType::TimestampDependentLogic,
-        ],
-        VulnerabilityPattern::EpochOrIndexMonotonicity => {
-            &[VulnerabilityType::AccountingInvariantViolation]
-        }
+        ## ATTACKER MODEL & SCOPE (MANDATORY)
+        - Attacker: an **unprivileged EOA** (or arbitrary contract) with **no roles** (prefer this over privileged role attacks).
+        - Untrusted Roles: do check vectors from **untrusted roles** if defined in scope — but always attempt an **unprivileged** path first.
+        - Time: **present-state only** (the deployed/fixture state for this contest).
+        - Focus: ONLY report attacks and exploits **stemming from** the Security Vulnerability Pattern below.
+        - Scope: If scope is provided, **only** report vulnerabilities **within scope**.
 
-        // DoS, Gas, Complexity
-        VulnerabilityPattern::UnboundedLoops => &[
-            VulnerabilityType::Dos,
-            VulnerabilityType::GasGriefBlockLimit,
-        ],
-        VulnerabilityPattern::GriefableCallbacks => {
-            &[VulnerabilityType::Dos, VulnerabilityType::Reentrancy]
-        }
-        VulnerabilityPattern::StateGrowthOrStorageBloat => &[
-            VulnerabilityType::Dos,
-            VulnerabilityType::GasGriefBlockLimit,
-        ],
+        ## Produce PoC + Foundry test
+        - Use forge-std. Show attacker EOA (`vm.prank(attacker)`), arrange/act/assert.
+        - Assert profit/state break with `assertGt`, `assertEq`, etc. **No logs-only**.
+        - Keep imports complete; test must compile with standard `forge` setup.
 
-        // Randomness, Time, Chain assumptions
-        VulnerabilityPattern::TimestampOrBlockManipulation => &[
-            VulnerabilityType::TimestampManipulation,
-            VulnerabilityType::TimestampDependentLogic,
-        ],
-        VulnerabilityPattern::BlockhashOrPRNGWeakness => &[VulnerabilityType::Randomness],
-        VulnerabilityPattern::ChainIdorDomainDrift => &[
-            VulnerabilityType::SignatureReplay,
-            VulnerabilityType::CrossChainMessageSpoofing,
-        ],
+        ## Security Vulnerability Pattern
+        - Pattern: **{pattern_name}**
+        - Definition: {pattern_def}
+        - The {pattern_name} commonly maps to:
+        ### Exploits
+        {exploit_bullets}
 
-        // Cross-chain & Bridging
-        VulnerabilityPattern::CrossChainMessageSpoofing => {
-            &[VulnerabilityType::CrossChainMessageSpoofing]
-        }
-        VulnerabilityPattern::FinalityOrReplayAcrossDomains => &[
-            VulnerabilityType::ReplayAttack,
-            VulnerabilityType::CrossChainMessageSpoofing,
-        ],
+        ## QUALITY BAR (reject if not met)
+        - Exploit/Attack MUST be tied to the Security Vulnerability Pattern above.
+        - No privileged calls UNLESS listed as untrusted in scope.
+        - No deployment/upgrade-only windows unless opened permissionlessly first.
+        - Assertions MUST show profit or invariant break (not just logs).
+        - If zero Highs/Mediums pass this bar, output **{{\"findings\": []}}**.
 
-        // EVM/Assembly & Low-Level
-        VulnerabilityPattern::UncheckedLowLevelCallResults => &[VulnerabilityType::UncheckedReturn],
-        VulnerabilityPattern::UnsafeAssembyTypeCasts => &[
-            VulnerabilityType::DelegatecallLowLevelOps,
-            VulnerabilityType::StorageLayout,
-        ],
-        VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath => &[
-            VulnerabilityType::IntegerMath,
-            VulnerabilityType::IntegerOverflow,
-        ],
+        ## OUTPUT REQUIREMENTS (for each finding)
+        - description: Detailed explanation + exact vulnerable snippet.
+        - issue_type: {exploit_types} (choose **one**)
+        - privilege: least privilege that can trigger vulnerability: {privileges}
+        - contract: Exact contract name.
+        - function: Exact function name (or "multiple" if truly necessary).
+        - impact: Monetary/functional consequence quantified where possible.
+        - proof_of_concept: Step-by-step exploitation scenario.
+        - proof_of_code: A COMPLETE Foundry test (compilable) that asserts impact.
+        - severity: "High|Medium" (choose **one**)
+        - mitigation: Concrete code-level change; include a short diff or snippet.
 
-        // ETH/WETH & Payment Flows
-        VulnerabilityPattern::EthVsWethConfusion => &[VulnerabilityType::UnexpectedEth],
-        VulnerabilityPattern::PullorPushPaymentbugs => &[
-            VulnerabilityType::UnexpectedEth,
-            VulnerabilityType::UncheckedReturn,
-        ],
+        *Please respond with ONLY valid JSON in the following exact format:*
 
-        // Token Standard / Allowance
-        VulnerabilityPattern::StandardViolation => &[VulnerabilityType::StandardViolation],
-        VulnerabilityPattern::AllowanceRace => &[VulnerabilityType::AllowanceRace],
-        VulnerabilityPattern::PermitMisuse => &[
-            VulnerabilityType::SignatureReplay,
-            VulnerabilityType::SignatureMalleability,
-            VulnerabilityType::PermitDomainSeparator,
-            VulnerabilityType::PermitNonceMisuse,
-            VulnerabilityType::PermitDeadlineBypass,
-            VulnerabilityType::AuthByPass,
-        ],
+        {json}
 
-        // Economic / Oracle (optional finer granularity)
-        VulnerabilityPattern::PricePrecisionOrRoundingError => &[
-            VulnerabilityType::PricePrecision,
-            VulnerabilityType::RoundingError,
-            VulnerabilityType::ERC20DecimalsMismatch, // <- new, if caused by decimals
-        ],
+        - Keep "derived_from" exactly as shown
+        - For "issue_type" choose the best match. If nothing fits after careful review, you may use "Custom".
+        - If no vulnerabilities are found, return: 
 
-        // Reentrancy via token standards (optional specialization)
-        VulnerabilityPattern::ReadOnlyReentrancy => &[VulnerabilityType::Reentrancy],
-        VulnerabilityPattern::UnsafeRecipient => &[
-            VulnerabilityType::UncheckedReturn,
-            VulnerabilityType::Reentrancy,
-            VulnerabilityType::ERC777HookReentrancy, // <- when applicable
-        ],
+        {{
+        "findings": []
+        }}
 
-        // Vault math / accounting (optional specialization)
-        VulnerabilityPattern::AccountingInvariantViolation => &[
-            VulnerabilityType::AccountingInvariantViolation,
-            VulnerabilityType::ERC4626SharePrice, // <- when in vault context
-        ],
-        // Token Standard / ERC20/777 quirks
-        VulnerabilityPattern::NonStandardERC20Behavior => &[
-            VulnerabilityType::UncheckedERC20Return,
-            VulnerabilityType::FeeOnTransferAssumption,
-        ],
-        VulnerabilityPattern::ERC20DecimalsMismatch => &[VulnerabilityType::PricePrecision],
-        VulnerabilityPattern::ERC777HookReentrancy => &[VulnerabilityType::Reentrancy],
+        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
+        they match up correctly.
 
-        // Oracle & Market Data
-        VulnerabilityPattern::StaleOracleAcceptance => &[VulnerabilityType::Oracle],
-        VulnerabilityPattern::SandwichableOracle => {
-            &[VulnerabilityType::Oracle, VulnerabilityType::FrontrunMev]
-        }
+        ## SECURITY VULNERABILITY PATTERN TO ANALYZE - FIND TOP EXPLOITS/ATTACKS FOR BELOW
+        {full_spec}
 
-        // Permit / Signatures
-        VulnerabilityPattern::PermitFrontRun => &[
-            VulnerabilityType::SignatureReplay,
-            VulnerabilityType::SignatureMalleability,
-            // add PermitDomainSeparator / PermitNonceMisuse / PermitDeadlineBypass if using your finer subtypes
-        ],
+        "#,
+        pattern_name = pattern.issue_type.as_str(),
+        pattern_def = pattern_data.definition,
+        exploit_bullets = exploit_bullets,
+        exploit_types = exploit_types,
+        privileges = privilege_list,
+        full_spec = pattern_full_spec
+    )
+}
 
-        // Admin / Lifecycle
-        VulnerabilityPattern::UnprotectedPauseOrStop => &[
-            VulnerabilityType::PausableEmergencyStop,
-            VulnerabilityType::AccessControl,
-        ],
+pub fn get_findings_json(pattern: &VulnerabilityPattern) -> String {
+    let issue_list = generate_enum_list(pattern.pattern_to_types());
+    let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
+    let severity_list = generate_enum_list(all_enum_variants::<Severity>().as_slice());
 
-        // Low-Level / Delegatecall
-        VulnerabilityPattern::UntrustedDelegateCall => &[
-            VulnerabilityType::UntrustedDelegateCall,
-            VulnerabilityType::DelegatecallLowLevelOps,
-        ],
-
-        // Cross-chain & Bridging
-        VulnerabilityPattern::ReplayAcrossForksOrL2s => &[
-            VulnerabilityType::ReplayAttack,
-            VulnerabilityType::CrossChainMessageSpoofing,
-        ],
-
-        // Vaults & Accounting
-        VulnerabilityPattern::ERC4626SharePriceMismatch => &[
-            VulnerabilityType::AccountingInvariantViolation,
-            VulnerabilityType::PricePrecision,
-        ],
-        VulnerabilityPattern::FeeAccountingDrift => &[
-            VulnerabilityType::RoundingError,
-            VulnerabilityType::AccountingInvariantViolation,
-        ],
-    }
+    format!(
+        r#"{{
+        "findings": [
+            {{
+            "derived_from": "{pattern_enum}",
+            "description": "Detailed explanation if vulnerability including vulnerable code snippet",
+            "issue_type": "{issues}",
+            "privilege": "{privileges}",
+            "contract": "{{contract_name}}", 
+            "function": "{{function_name}}", 
+            "impact": "Business and security consequences of the vulnerability",
+            "proof_of_concept": "Step-by-step exploitation scenario",
+            "proof_of_code": "Complete Foundry unit test demonstrating the vulnerability",
+            "severity": "{severity}",
+            "mitigation": "suggested mitigation with code example for the fix"
+            }}
+        ]
+        }}
+       "#,
+        pattern_enum = pattern.as_str(),
+        issues = issue_list,
+        privileges = privilege_enum_list,
+        severity = severity_list,
+    )
 }
