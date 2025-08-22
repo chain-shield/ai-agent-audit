@@ -1,12 +1,12 @@
+use crate::error::{AuditError, Result};
+use serde::{Deserialize, Serialize};
+use std::env;
+
 /// Configuration management for the AI Agent Audit application.
 ///
 /// This module provides centralized configuration handling, with constants
 /// for application settings and environment variables only for sensitive
 /// configuration like API keys and URLs.
-use crate::error::{AuditError, Result};
-use crate::llm_review::patterns::VulnerabilityPattern;
-use serde::{Deserialize, Serialize};
-use std::env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditType {
@@ -18,138 +18,6 @@ pub enum AuditType {
 // TYPE OF AUDIT
 pub const AUDIT_TYPE: AuditType = AuditType::Code4rena;
 
-//**************************************************
-//**************************************************
-// TIER 1 -> 3 LLM RUNS
-pub const ECONOMIC_HIT: &[VulnerabilityPattern; 7] = &[
-    VulnerabilityPattern::FlashLoanEconomicManipulation,
-    VulnerabilityPattern::FeeOnTransferAssumption,
-    VulnerabilityPattern::ReserveOrPriceDesync,
-    VulnerabilityPattern::OracleUsingDEXorTWAP,
-    VulnerabilityPattern::SlippageMissingOrInsufficient,
-    VulnerabilityPattern::StaleOracleAcceptance,
-    VulnerabilityPattern::SandwichableOracle,
-];
-
-// TIER 1 -> 2 LLM RUNS
-pub const CALL_ORDER: &[VulnerabilityPattern; 2] = &[
-    VulnerabilityPattern::Reentrancy,
-    VulnerabilityPattern::ExternalCallAfterStateChange,
-];
-
-// TIER 1 -> 3 rounds
-pub const AUTH_BYPASS: &[VulnerabilityPattern; 4] = &[
-    VulnerabilityPattern::AccessControlOrAuthByPass,
-    VulnerabilityPattern::GovernanceDelegationFlaw,
-    VulnerabilityPattern::DoubleExecutionOrReplay,
-    VulnerabilityPattern::EIP1271ByPass,
-];
-//**************************************************
-//**************************************************
-
-//**************************************************
-//**************************************************
-// TIER 2
-pub const ACCOUNTING_MISS: &[VulnerabilityPattern; 5] = &[
-    VulnerabilityPattern::AccountingInvariantViolation,
-    VulnerabilityPattern::PricePrecisionOrRoundingError,
-    VulnerabilityPattern::PrecisionDriftAccumulation,
-    VulnerabilityPattern::ERC4626SharePriceMismatch,
-    VulnerabilityPattern::FeeAccountingDrift,
-];
-
-// Token Standard / ALLOWANCE
-// TIER 2
-pub const TOKEN_HIT: &[VulnerabilityPattern; 4] = &[
-    VulnerabilityPattern::StandardViolation,
-    VulnerabilityPattern::NonStandardERC20Behavior,
-    VulnerabilityPattern::ERC20DecimalsMismatch,
-    VulnerabilityPattern::ERC777HookReentrancy,
-];
-
-// TIER 2
-pub const PERMIT_EXPIRED: &[VulnerabilityPattern; 3] = &[
-    VulnerabilityPattern::PermitOrSignatureReplay,
-    VulnerabilityPattern::PermitFrontRun,
-    VulnerabilityPattern::PermitMisuse,
-];
-//**************************************************
-//**************************************************
-
-//**************************************************
-//**************************************************
-// TIER 3
-pub const GASY: &[VulnerabilityPattern; 3] = &[
-    VulnerabilityPattern::UnboundedLoops,
-    VulnerabilityPattern::GriefableCallbacks,
-    VulnerabilityPattern::StateGrowthOrStorageBloat,
-];
-
-// TIER 3
-pub const BROKEN_MACHINE: &[VulnerabilityPattern; 2] = &[
-    VulnerabilityPattern::EpochOrIndexMonotonicity,
-    VulnerabilityPattern::SelfdestructOrMetamorphicFootguns,
-];
-
-// TIER 3
-pub const UPGRADE_FLOP: &[VulnerabilityPattern; 3] = &[
-    VulnerabilityPattern::InitOrderOrUnintialized,
-    VulnerabilityPattern::UpgradeAuthBypass,
-    VulnerabilityPattern::StorageCollisionOrSelectorClash,
-];
-//**************************************************
-//**************************************************
-
-//**************************************************
-//**************************************************
-// TIER 4
-pub const EVM: &[VulnerabilityPattern; 3] = &[
-    VulnerabilityPattern::UntrustedDelegateCall,
-    VulnerabilityPattern::UnsafeAssembyTypeCasts,
-    VulnerabilityPattern::UncheckedLowLevelCallResults,
-];
-
-// TIER 4
-pub const RANDOMNESS: &[VulnerabilityPattern; 2] = &[
-    VulnerabilityPattern::TimestampOrBlockManipulation,
-    VulnerabilityPattern::BlockhashOrPRNGWeakness,
-];
-
-//**************************************************
-//**************************************************
-
-pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 12] = &[
-    VulnerabilityPattern::SlippageMissingOrInsufficient,
-    VulnerabilityPattern::UnboundedLoops,
-    VulnerabilityPattern::FeeOnTransferAssumption,
-    VulnerabilityPattern::ReserveOrPriceDesync,
-    VulnerabilityPattern::PricePrecisionOrRoundingError,
-    VulnerabilityPattern::PrecisionDriftAccumulation,
-    VulnerabilityPattern::ExternalCallAfterStateChange,
-    VulnerabilityPattern::GriefableCallbacks,
-    VulnerabilityPattern::StateGrowthOrStorageBloat,
-    VulnerabilityPattern::EpochOrIndexMonotonicity,
-    VulnerabilityPattern::TimestampOrBlockManipulation,
-    VulnerabilityPattern::BlockhashOrPRNGWeakness,
-];
-
-// TOP VULNERABILITY PATTERNS
-pub const TOP_PAID_PATTERNS: &[VulnerabilityPattern; 14] = &[
-    VulnerabilityPattern::AccessControlOrAuthByPass,
-    VulnerabilityPattern::GovernanceDelegationFlaw,
-    VulnerabilityPattern::DoubleExecutionOrReplay,
-    VulnerabilityPattern::EIP1271ByPass,
-    VulnerabilityPattern::PermitOrSignatureReplay,
-    VulnerabilityPattern::Reentrancy,
-    VulnerabilityPattern::FlashLoanEconomicManipulation,
-    VulnerabilityPattern::OracleUsingDEXorTWAP,
-    VulnerabilityPattern::AccountingInvariantViolation,
-    VulnerabilityPattern::StandardViolation,
-    VulnerabilityPattern::PermitMisuse,
-    VulnerabilityPattern::InitOrderOrUnintialized,
-    VulnerabilityPattern::UpgradeAuthBypass,
-    VulnerabilityPattern::StorageCollisionOrSelectorClash,
-];
 // Application constants - these don't need to be configurable via environment
 /// Maximum call graph traversal depth for code slice generation
 pub const MAX_DEPTH: usize = 3;

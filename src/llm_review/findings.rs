@@ -5,7 +5,6 @@ use super::{
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     llm_review::enums::EnumString,
-    llm_review::patterns::VulnerabilityPattern,
 };
 use regex::Regex;
 use rig::{
