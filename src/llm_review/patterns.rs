@@ -1,11 +1,12 @@
 use crate::llm_review::enums::EnumString;
 use schemars::JsonSchema;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use strum_macros::EnumIter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
 // Access,Auth &,Governance
 pub enum VulnerabilityPattern {
+    // auth bypass
     AccessControlOrAuthByPass, // High
     GovernanceDelegationFlaw,
     DoubleExecutionOrReplay,
@@ -24,13 +25,13 @@ pub enum VulnerabilityPattern {
     OracleUsingDEXorTWAP,
     FlashLoanEconomicManipulation, // High
     FeeOnTransferAssumption,
-    PricePrecisionOrRoundingError,
     ReserveOrPriceDesync,
 
     // Accounting & Invariants
     AccountingInvariantViolation,
     UnsafeRecipient,
     PrecisionDriftAccumulation, // Medium
+    PricePrecisionOrRoundingError,
 
     //Token Standard Allowance
     StandardViolation,
@@ -69,6 +70,19 @@ pub enum VulnerabilityPattern {
     // ETH/WETH & Payment Flows
     EthVsWethConfusion,
     PullorPushPaymentbugs,
+
+    // New patterns to add
+    NonStandardERC20Behavior, // tokens that return false/no-return/custom decimals; breaks transfers/assumptions
+    ERC20DecimalsMismatch,    // amount/price math assumes wrong decimals -> value skew
+    ERC777HookReentrancy, // reentrancy via ERC777 hooks (tokensReceived), even with CEI elsewhere
+    StaleOracleAcceptance, // accepts stale prices/heartbeats; attacker trades against old data
+    SandwichableOracle,   // on-chain spot read manipulable within one tx (pre/post trade skew)
+    PermitFrontRun, // permit usable/front-runnable in same block (nonce/deadline handling flaws)
+    UnprotectedPauseOrStop, // anyone/weakly-gated pause/unpause/emergency stop
+    UntrustedDelegateCall, // delegatecall to untrusted target (plugins/strategies) -> state hijack
+    ReplayAcrossForksOrL2s, // message valid on fork/sibling chain replays (bridges/inbox)
+    ERC4626SharePriceMismatch, // vault share/asset conversions lose precision or drift over time
+    FeeAccountingDrift, // fee math rounding/order-of-ops lets dust siphon/accumulate
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, EnumIter)]
@@ -654,7 +668,7 @@ impl EnumString for VulnerabilityPattern {
             }
             VulnerabilityPattern::MaturityorGatingByPass => "MaturityorGatingByPass",
             VulnerabilityPattern::EpochOrIndexMonotonicity => "EpochOrIndexMonotonicity",
-            VulnerabilityPattern::UnboundedLoops => "UnboundedLoopsOrGasDos",
+            VulnerabilityPattern::UnboundedLoops => "UnboundedLoops",
             VulnerabilityPattern::GriefableCallbacks => "GriefableCallbacks",
             VulnerabilityPattern::StateGrowthOrStorageBloat => "StateGrowthOrStorageBloat",
             VulnerabilityPattern::TimestampOrBlockManipulation => "TimestampOrBlockManipulation",
@@ -669,6 +683,17 @@ impl EnumString for VulnerabilityPattern {
             }
             VulnerabilityPattern::EthVsWethConfusion => "EthVsWethConfusion",
             VulnerabilityPattern::PullorPushPaymentbugs => "PullorPushPaymentbugs",
+            VulnerabilityPattern::NonStandardERC20Behavior => "NonStandardERC20Behavior",
+            VulnerabilityPattern::ERC20DecimalsMismatch => "ERC20DecimalsMismatch",
+            VulnerabilityPattern::ERC777HookReentrancy => "ERC777HookReentrancy",
+            VulnerabilityPattern::StaleOracleAcceptance => "StaleOracleAcceptance",
+            VulnerabilityPattern::SandwichableOracle => "SandwichableOracle",
+            VulnerabilityPattern::PermitFrontRun => "PermitFrontRun",
+            VulnerabilityPattern::UnprotectedPauseOrStop => "UnprotectedPauseOrStop",
+            VulnerabilityPattern::UntrustedDelegateCall => "UntrustedDelegateCall",
+            VulnerabilityPattern::ReplayAcrossForksOrL2s => "ReplayAcrossForksOrL2s",
+            VulnerabilityPattern::ERC4626SharePriceMismatch => "ERC4626SharePriceMismatch",
+            VulnerabilityPattern::FeeAccountingDrift => "FeeAccountingDrift",
         }
     }
 }
@@ -721,6 +746,8 @@ impl<'de> Deserialize<'de> for VulnerabilityPattern {
             "standardviolation" => Ok(VulnerabilityPattern::StandardViolation),
             "allowancerace" => Ok(VulnerabilityPattern::AllowanceRace),
             "permitmisuse" => Ok(VulnerabilityPattern::PermitMisuse),
+            "unboundedloops" => Ok(VulnerabilityPattern::UnboundedLoops),
+
             "upgradeauthbypass" => Ok(VulnerabilityPattern::UpgradeAuthBypass),
             "initorderorunintialized" => Ok(VulnerabilityPattern::InitOrderOrUnintialized),
             "storagecollisionorselectorclash" => {
@@ -743,6 +770,18 @@ impl<'de> Deserialize<'de> for VulnerabilityPattern {
             "finalityorreplayacrossdomains" => {
                 Ok(VulnerabilityPattern::FinalityOrReplayAcrossDomains)
             }
+            "nonstandarderc20behavior" => Ok(VulnerabilityPattern::NonStandardERC20Behavior),
+            "erc20decimalsmismatch" => Ok(VulnerabilityPattern::ERC20DecimalsMismatch),
+            "erc777hookreentrancy" => Ok(VulnerabilityPattern::ERC777HookReentrancy),
+            "staleoracleacceptance" => Ok(VulnerabilityPattern::StaleOracleAcceptance),
+            "sandwichableoracle" => Ok(VulnerabilityPattern::SandwichableOracle),
+            "permitfrontrun" => Ok(VulnerabilityPattern::PermitFrontRun),
+            "unprotectedpauseorstop" => Ok(VulnerabilityPattern::UnprotectedPauseOrStop),
+            "untrusteddelegatecall" => Ok(VulnerabilityPattern::UntrustedDelegateCall),
+            "replayacrossforksorl2s" => Ok(VulnerabilityPattern::ReplayAcrossForksOrL2s),
+            "erc4626sharepricemismatch" => Ok(VulnerabilityPattern::ERC4626SharePriceMismatch),
+            "feeaccountingdrift" => Ok(VulnerabilityPattern::FeeAccountingDrift),
+
             "uncheckedlowlevelcallresults" => {
                 Ok(VulnerabilityPattern::UncheckedLowLevelCallResults)
             }
