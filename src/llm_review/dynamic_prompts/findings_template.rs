@@ -4,8 +4,10 @@ use crate::llm_review::{
         Severity,
     },
     findings::PrivilegeLevel,
+    prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
 };
 
+/// TODO - add C4 severity rubric
 pub fn generate_findings_prompt<T: EnumData + EnumString>(
     issue_title: &str,
     issue_definition: &str,
@@ -72,6 +74,9 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
         - severity: "High|Medium" (choose **one**)
         - mitigation: Concrete code-level change; include a short diff or snippet.
 
+        ## Rubric to Follow to Classify Severity (ignore finding if below Medium)
+        {rubric}
+
         *Please respond with ONLY valid JSON in the following exact format:*
 
         {json}
@@ -93,6 +98,7 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
 
         "#,
         title = issue_title,
+        rubric = CODE4RENA_SEVERITY_RUBRIC,
         pattern_name = issue_type.as_str(),
         pattern_def = issue_definition,
         exploit_bullets = exploit_bullets,

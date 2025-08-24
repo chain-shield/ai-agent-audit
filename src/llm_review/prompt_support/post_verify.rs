@@ -12,7 +12,7 @@ pub const POST_VERIFY: &str = r#"
 
 {
     "is_legit_vulnerability": true|false, 
-    "why_its_not_legit": " in 40 words less explain why NOT legit (OMIT if legit)"
+    "why_its_not_legit": "in 40 words less explain why NOT legit (OMIT if legit)"
 }
 
 **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 

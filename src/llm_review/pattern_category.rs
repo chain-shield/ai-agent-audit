@@ -22,87 +22,101 @@ pub enum PatternCategory {
     Randomness,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PatternTier {
     Tier1,
     Tier2,
+    #[default]
     Tier3,
     Tier4,
 }
 
+#[derive(Debug, Clone)]
 pub struct PatternCategorySpec {
     pub category: PatternCategory,
     pub title: &'static str,
     pub issues: &'static [VulnerabilityPattern],
     pub tier: PatternTier,
+    pub runs: usize,
 }
 
 pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
     PatternCategorySpec {
         category: PatternCategory::EconomicHit,
-        title: "Economic, Market, & Oracle Vulnerabilities",
+        title: "Economic, Market, & Oracle",
         issues: ECONOMIC_HIT,
         tier: PatternTier::Tier1,
+        runs: 2,
     },
     PatternCategorySpec {
         category: PatternCategory::CallOrder,
-        title: "Call Order and Reentrancy Vulnerabilities",
+        title: "Call Order and Reentrancy",
         issues: CALL_ORDER,
         tier: PatternTier::Tier1,
+        runs: 2,
     },
     PatternCategorySpec {
         category: PatternCategory::AuthByPass,
         title: "Access Control and Authorization Bypass",
         issues: AUTH_BYPASS,
         tier: PatternTier::Tier1,
+        runs: 2,
     },
     PatternCategorySpec {
         category: PatternCategory::AccountingMess,
-        title: "Accounting and Precision Vulnerabilities",
+        title: "Accounting and Precision",
         issues: ACCOUNTING_MISS,
         tier: PatternTier::Tier2,
+        runs: 1,
     },
     PatternCategorySpec {
         category: PatternCategory::TokenHit,
-        title: "Token Standard and Allowance Vulnerabilities",
+        title: "Token Standard and Allowance",
         issues: TOKEN_HIT,
         tier: PatternTier::Tier2,
+        runs: 1,
     },
     PatternCategorySpec {
         category: PatternCategory::PermitExpired,
-        title: "Permit and Signature Vulnerabilities",
+        title: "Permit and Signature",
         issues: PERMIT_EXPIRED,
         tier: PatternTier::Tier2,
+        runs: 1,
     },
     PatternCategorySpec {
         category: PatternCategory::Gasy,
         title: "Gas Consumption and DoS Vectors",
         issues: GASY,
         tier: PatternTier::Tier3,
+        runs: 0,
     },
     PatternCategorySpec {
         category: PatternCategory::BrokenMachine,
         title: "State Machine and Epoch Monotonicity",
         issues: BROKEN_MACHINE,
         tier: PatternTier::Tier3,
+        runs: 0,
     },
     PatternCategorySpec {
         category: PatternCategory::UpgradeFlop,
         title: "Upgrade and Proxy Misconfiguration",
         issues: UPGRADE_FLOP,
         tier: PatternTier::Tier3,
+        runs: 0,
     },
     PatternCategorySpec {
         category: PatternCategory::Evm,
         title: "EVM-Level and Low-level Call Risks",
         issues: EVM,
         tier: PatternTier::Tier4,
+        runs: 0,
     },
     PatternCategorySpec {
         category: PatternCategory::Randomness,
         title: "Randomness and Timestamp Manipulation",
         issues: RANDOMNESS,
         tier: PatternTier::Tier4,
+        runs: 0,
     },
 ];
 

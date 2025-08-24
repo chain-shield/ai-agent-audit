@@ -3,10 +3,10 @@ use crate::llm_review::{
     findings::PrivilegeLevel,
 };
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use strum_macros::EnumIter;
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct Patterns {
     pub patterns: Vec<Pattern>,
 }

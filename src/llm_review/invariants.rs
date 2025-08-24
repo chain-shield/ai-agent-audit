@@ -1,7 +1,27 @@
-use super::enums::{InvariantStatus, InvariantType, VulnerabilityType};
-use crate::llm_review::{enums::EnumData, patterns::ImpactHint};
+use super::enums::VulnerabilityType;
+use crate::llm_review::{enums::EnumData, pattern_category::PatternTier, patterns::ImpactHint};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use strum_macros::EnumIter;
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter, Default, strum_macros::Display,
+)]
+pub enum InvariantType {
+    #[default]
+    Arithmetic,
+    Balance,
+    Permission,
+    Temporal,
+    Referential,
+    StateMachine,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter, strum_macros::Display)]
+pub enum InvariantStatus {
+    Holds,
+    PossibleViolation,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct InvariantFinding {
@@ -39,6 +59,7 @@ pub struct InvariantSpec {
     pub impact_hint: ImpactHint,
     /// Downstream vuln categories commonly produced when this invariant is violated.
     pub maps_to: &'static [VulnerabilityType],
+    pub tier: PatternTier,
 }
 
 // 2) Your function can now just return these same statics (still DRY)
@@ -79,6 +100,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::HighMedium,
         maps_to: INVARIANT_ARITH_TYPES,
+        tier:PatternTier::Tier2,
     },
     InvariantSpec {
         key: InvariantType::Balance,
@@ -94,6 +116,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::HighMedium,
         maps_to: INVARIANT_BAL_TYPES,
+        tier:PatternTier::Tier1,
     },
     InvariantSpec {
         key: InvariantType::Permission,
@@ -109,6 +132,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::High,
         maps_to: INVARIANT_PERM_TYPES,
+        tier:PatternTier::Tier1,
     },
     InvariantSpec {
         key: InvariantType::Temporal,
@@ -124,6 +148,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::HighMedium,
         maps_to: INVARIANT_TEMP_TYPES,
+        tier:PatternTier::Tier3,
     },
     InvariantSpec {
         key: InvariantType::Referential,
@@ -139,6 +164,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::Medium,
         maps_to: INVARIANT_REF_TYPES,
+        tier:PatternTier::Tier3,
     },
     InvariantSpec {
         key: InvariantType::StateMachine,
@@ -154,6 +180,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::HighMedium,
         maps_to: INVARIANT_SM_TYPES,
+        tier:PatternTier::Tier2,
     },
 ];
 
