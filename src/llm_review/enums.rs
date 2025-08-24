@@ -1,3 +1,4 @@
+use crate::llm_review::invariants::{InvariantStatus, InvariantType};
 use log::info;
 /// AI agent and vulnerability type enumerations.
 ///
@@ -5,12 +6,12 @@ use log::info;
 /// categorization, providing unified interfaces for different AI providers
 /// and systematic vulnerability detection across 19+ security categories.
 use schemars::JsonSchema;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     invariant_prompts::{
         arithmetic::ARITHMETIC, balance::BALANCE, permission::PERMISSION, referential::REFERENTIAL,
         state_machine::STATE_MACHINE, temporal::TEMPORAL,
@@ -86,23 +87,6 @@ pub enum Severity {
     Medium,
     Low,
     Info,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter, Default)]
-pub enum InvariantType {
-    #[default]
-    Arithmetic,
-    Balance,
-    Permission,
-    Temporal,
-    Referential,
-    StateMachine,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
-pub enum InvariantStatus {
-    Holds,
-    PossibleViolation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]

@@ -75,6 +75,7 @@ pub mod llm_review {
     pub mod analysis_db;
     /// Main security review orchestration
     pub mod code_review;
+    pub mod code_review_v2;
     /// Global context management
     pub mod context_state;
     pub mod contract_file_map;
@@ -83,6 +84,7 @@ pub mod llm_review {
     /// LLM configuration and models
     pub mod findings;
     pub mod invariants;
+    pub mod issues;
     pub mod pattern_category;
     pub mod patterns;
     pub mod semaphore;
@@ -105,6 +107,12 @@ pub mod llm_review {
         pub mod scope_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_findings;
+    }
+    pub mod pattern_phases {
+        /// Phase 2: Parallel vulnerability detection across multiple AI agents
+        pub mod generate_patterns;
+        /// Phase 3: Deduplication and verification of discovered security findings
+        pub mod verify_patterns;
     }
     /// Utility functions for LLM review
     pub mod utils {
