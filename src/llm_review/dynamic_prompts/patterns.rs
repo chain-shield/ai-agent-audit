@@ -115,7 +115,7 @@ pub fn generate_pattern_verify_prompt(pattern: &Pattern) -> String {
 
         ## OUTPUT REQUIREMENTS 
 
-        1. **is_pattern_legit**: true|false 
+        1. **is_legit_pattern**: true|false 
         • `true`   → pattern is legit
         • `false`  → pattern is NOT legit
         *NOTE* : this is boolean value, NO "" around it

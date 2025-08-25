@@ -3,8 +3,8 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    config::{AUDIT_TYPE, AuditType},
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
+    config::{AuditType, AUDIT_TYPE},
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         context_state::get_metadata_context,
@@ -110,8 +110,7 @@ pub async fn execute(
                 );
 
                 // add to cost
-                add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::OpenaiO3Input)
-                    .await;
+                add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::Openai5Input).await;
                 info!("verifying finding #{}", i + 1);
                 let is_legit_struct: LegitVulnerability =
                     arc_agent.extract_with_retry(&instruction_prompt).await?;

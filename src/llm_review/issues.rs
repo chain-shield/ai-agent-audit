@@ -68,11 +68,10 @@ pub trait IssueTrait: Send + Sync {
 impl IssueTrait for InvariantFinding {
     fn hash(&self) -> String {
         format!(
-            "{}-{}-{}-{}",
+            "{}-{}-{}",
             self.inv_type.as_str(),
             self.contract,
             self.function,
-            self.status.as_str()
         )
     }
     async fn is_duplicate_issue<M: CompletionModel + Send + Sync>(
@@ -190,7 +189,7 @@ where
 
     // Build a lightweight OpenAI agent just for deduping comparisons
     let openai_client = openai::Client::from_env();
-    let openai_agent = Arc::new(openai_client.agent("gpt-4o").build());
+    let openai_agent = Arc::new(openai_client.agent("gpt-5").build());
 
     let mut findings_hash: HashMap<String, Vec<T::Spec>> = HashMap::new();
 
@@ -301,11 +300,11 @@ where
         .replace("{report_b}", &issue.get_issue_report());
 
     log::info!("checking if is {} duplication", pattern.title_str());
-    add_to_inference_cost_by_type(&prompt, LlmCostType::Openai4oInput).await;
+    add_to_inference_cost_by_type(&prompt, LlmCostType::Openai5Input).await;
 
     let response = ai_agent.prompt(&prompt).await?;
 
-    add_to_inference_cost_by_type(&response, LlmCostType::Openai4oOutput).await;
+    add_to_inference_cost_by_type(&response, LlmCostType::Openai5Output).await;
 
     Ok(response.trim().eq_ignore_ascii_case("YES"))
 }

@@ -8,7 +8,9 @@ use crate::{
     llm_review::{
         context_state::get_metadata_context,
         enums::AIAgent,
+        invariants::ContractInvariants,
         issues::{IssueStructTrait, IssueTrait},
+        patterns::{Pattern, Patterns},
         semaphore::VERIFY_SEM,
     },
     prepare_code::git_clone::RepoPaths,
@@ -50,6 +52,32 @@ impl IsLegit for LegitInvariant {
     }
 }
 
+impl IsLegit for LegitPattern {
+    fn is_legit(&self) -> bool {
+        self.is_legit_pattern
+    }
+    fn why_not_legit(&self) -> String {
+        self.why_its_not_legit.clone().unwrap_or_default()
+    }
+}
+
+pub async fn verify_patterns(
+    patterns: Patterns,
+    code: &str,
+    agent: &Arc<AIAgent>,
+    repo: &RepoPaths,
+) -> Result<Patterns> {
+    execute::<Patterns, LegitPattern>(patterns, code, agent, repo).await
+}
+
+pub async fn verify_invariants(
+    patterns: ContractInvariants,
+    code: &str,
+    agent: &Arc<AIAgent>,
+    repo: &RepoPaths,
+) -> Result<ContractInvariants> {
+    execute::<ContractInvariants, LegitInvariant>(patterns, code, agent, repo).await
+}
 /// Executes the verification phase
 ///
 /// Deduplicates findings and verifies each one using AI analysis to ensure
@@ -65,7 +93,10 @@ where
     <T as IssueStructTrait>::Spec: Send + Sync + Clone + DeserializeOwned + IssueTrait + 'static,
     M: Clone + DeserializeOwned + JsonSchema + IsLegit + Send + Sync,
 {
-    info!("🔍 Phase 3: Deduplicating and verifying findings...");
+    info!(
+        "🔍 Phase 2: Deduplicating and verifying {}...",
+        patterns.issue_title()
+    );
 
     let mut handles = vec![];
     let deduped_patterns: Arc<T> = Arc::new(patterns.dedup().await?);
@@ -98,13 +129,13 @@ where
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async {
                 let instruction_prompt = arc_patterns.issues()[i].generate_verify_prompt();
+                info!("prompt instructions:\n\n {}", instruction_prompt);
 
                 let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
 
                 // add to cost
-                add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::OpenaiO3Input)
-                    .await;
-                info!("verifying finding #{}", i + 1);
+                add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::Openai5Input).await;
+                info!("verifying {} #{}", arc_patterns.issue_title(), i + 1);
                 let is_legit_struct: M = arc_agent.extract_with_retry(&full_prompt).await?;
 
                 let is_finding_legit = is_legit_struct.is_legit();
@@ -143,8 +174,9 @@ where
         .collect();
 
     info!(
-        "✅ Phase 3 complete: {} Verified Findings!",
-        verified_patterns.len()
+        "✅ Phase 2 complete: {} Verified {}!",
+        verified_patterns.len(),
+        deduped_patterns.issue_title()
     );
 
     Ok(T::new(verified_patterns))

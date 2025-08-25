@@ -84,7 +84,7 @@ pub fn generate_invariant_verify_prompt(inv: &InvariantFinding) -> String {
 
         ## OUTPUT REQUIREMENTS 
 
-        1. **is_invariant_legit**: true|false 
+        1. **is_legit_invariant**: true|false 
         • `true`   → invariant is legit
         • `false`  → invariant is NOT legit
         *NOTE* : this is boolean value, NO "" around it
