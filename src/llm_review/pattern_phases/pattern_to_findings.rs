@@ -1,0 +1,145 @@
+/// Phase 3: Deduplication and verification of discovered security findings
+///
+/// This phase removes duplicate findings and verifies the legitimacy of each
+/// discovered vulnerability using AI-powered analysis.
+use crate::{
+    config::DISCOVERY_RUNS,
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    error::Result,
+    llm_review::{
+        context_state::get_metadata_context, enums::AIAgent, findings::Findings,
+        issues::IssueTrait, semaphore::VERIFY_SEM,
+    },
+    prepare_code::git_clone::RepoPaths,
+};
+use log::info;
+
+use serde::{de::DeserializeOwned, Deserializer};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Executes the verification phase
+///
+/// Deduplicates findings and verifies each one using AI analysis to ensure
+/// only legitimate vulnerabilities are retained.
+pub async fn execute<T>(
+    pattern: T,
+    code: &str,
+    agent: &Arc<AIAgent>,
+    repo: &RepoPaths,
+) -> Result<Findings>
+where
+    T: 'static + IssueTrait + Send + Sync + Default + Clone + DeserializeOwned,
+{
+    info!(
+        "🔍 Phase 3: Mining Findings from given {}...",
+        pattern.title_str()
+    );
+
+    let all_findings = Arc::new(Mutex::new(Findings {
+        findings: Vec::new(),
+    }));
+
+    let mut handles = vec![];
+    let context = get_metadata_context(repo)
+        .await
+        .expect("could not extract context");
+    let code_and_context = generate_content_plus_context_block(code, &context);
+    let arc_code_context = Arc::new(code_and_context);
+    let arc_pattern: Arc<T> = Arc::new(pattern);
+
+    for i in 0..DISCOVERY_RUNS {
+        let codeblock_plus_context = Arc::clone(&arc_code_context);
+        let arc_agent = Arc::clone(&agent);
+        let pattern_clone = Arc::clone(&arc_pattern);
+        let sem = Arc::clone(&VERIFY_SEM);
+        let shared_findings = Arc::clone(&all_findings);
+
+        handles.push(tokio::spawn(async move {
+            // ── acquire permit ────────────────────────
+            let _permit = sem.acquire_owned().await.expect("semaphore closed");
+            let result: Result<()> = async {
+                info!(
+                    "Round {} of mining findings from {}",
+                    i + 1,
+                    pattern_clone.title_str()
+                );
+                let instruction_prompt = pattern_clone.pattern_to_findings_prompt();
+
+                let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
+
+                // add to cost
+                add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::Openai5Input).await;
+                let findings: Findings = arc_agent.extract_with_retry(&full_prompt).await?;
+
+                let issues_found = findings.findings.len();
+                info!("{} issues found!", issues_found);
+
+                // 3. Merge results (if any) into the shared accumulator
+                if issues_found > 0 {
+                    let mut guard = shared_findings.lock().await;
+                    guard.findings.extend(findings.findings);
+                }
+
+                Ok(())
+            }
+            .await;
+
+            if let Err(e) = result {
+                log::error!("Error extracting findings from pattern: {}", e);
+            }
+        }));
+    }
+
+    // Wait for all verification tasks to complete
+    for h in handles {
+        let _ = h.await;
+    }
+
+    let findings = all_findings.lock().await;
+
+    if !findings.findings.is_empty() {
+        info!(
+            "✅ Phase 2 complete: {} findings BEFORE deduping",
+            findings.findings.len()
+        );
+    }
+    Ok(findings.clone())
+}
+
+/// Generates the combined content and context block for verification analysis
+///
+/// Combines the contract code with additional context information
+/// in a structured format for optimal verification processing.
+pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str) -> String {
+    let mut code_plus_context = String::new();
+
+    code_plus_context.push_str("\n\n# SOLIDITY CONTRACT + STORAGE TO CODE REVIEW\n\n");
+    code_plus_context.push_str(codeblock);
+
+    code_plus_context
+        .push_str("\n\n ## ADDITIONAL CONTEXT TO ASSIST WITH SECURITY REVIEW OF ABOVE CODE \n\n");
+    code_plus_context.push_str(&added_context);
+    code_plus_context.push_str("\n\n");
+
+    code_plus_context
+}
+
+/// Helper function to deserialize boolean from string or boolean
+pub fn deserialize_bool_from_str_or_bool<'de, D>(
+    deserializer: D,
+) -> std::result::Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let val: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+    match val {
+        serde_json::Value::Bool(b) => Ok(b),
+        serde_json::Value::String(s) => match s.to_lowercase().as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(serde::de::Error::custom("expected boolean or string")),
+        },
+        _ => Err(serde::de::Error::custom("expected boolean or string")),
+    }
+}

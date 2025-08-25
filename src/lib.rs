@@ -111,6 +111,7 @@ pub mod llm_review {
     pub mod pattern_phases {
         /// Phase 2: Parallel vulnerability detection across multiple AI agents
         pub mod generate_patterns;
+        pub mod pattern_to_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_patterns;
     }
