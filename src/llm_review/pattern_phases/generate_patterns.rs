@@ -33,14 +33,14 @@ pub async fn execute<T>(
 where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
 {
-    match issue_prompt {
-        IssuePrompt::Pattern(_) => {
-            info!("🔍 Phase 1: Generating vulnerability patterns from contract codebase...")
-        }
-        IssuePrompt::Invariant(_) => {
-            info!("🔍 Phase 1: Generating invariants from contract codebase...")
-        }
-    }
+    let issue_title = match issue_prompt {
+        IssuePrompt::Pattern(_) => "vulnerability patterns",
+        IssuePrompt::Invariant(_) => "invariants",
+    };
+    info!(
+        "🔍 Phase 1: Generating {} from contract codebase...",
+        issue_title
+    );
 
     let mut handles = vec![];
     let all_patterns = Arc::new(Mutex::new(T::default()));
@@ -98,7 +98,8 @@ where
 
     if !findings.issues().is_empty() {
         info!(
-            "✅ Phase 2 complete: {} findings BEFORE deduping",
+            "✅ Phase 1 complete: {} {} BEFORE deduping",
+            issue_title,
             findings.issues().len()
         );
     }
@@ -122,6 +123,7 @@ where
 {
     let prompt_body = generate_content_plus_context_block(code.as_str(), added_context.as_str());
     let full_prompt = format!("{instructions}{prompt_body}");
+    info!("prompt instructions:\n\n {}", instructions);
 
     // add to cost
     add_to_inference_cost_by_type(&full_prompt, LlmCostType::Openai5Input).await;

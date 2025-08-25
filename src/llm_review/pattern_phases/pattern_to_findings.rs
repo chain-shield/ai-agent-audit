@@ -65,6 +65,7 @@ where
                     pattern_clone.title_str()
                 );
                 let instruction_prompt = pattern_clone.pattern_to_findings_prompt();
+                info!("prompt instructions:\n\n {}", instruction_prompt);
 
                 let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
 
@@ -100,7 +101,7 @@ where
 
     if !findings.findings.is_empty() {
         info!(
-            "✅ Phase 2 complete: {} findings BEFORE deduping",
+            "✅ Phase 3 complete: {} findings BEFORE deduping",
             findings.findings.len()
         );
     }
