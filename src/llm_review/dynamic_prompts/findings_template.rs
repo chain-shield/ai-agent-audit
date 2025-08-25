@@ -37,7 +37,7 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
         - Reproducibility: **Foundry asserts on balances/totals, not logs**.
 
         ## ATTACKER MODEL & SCOPE (MANDATORY)
-        - Attacker: an **unprivileged EOA** (or arbitrary contract) with **no roles** (prefer this over privileged role attacks).
+        - Attacker: an **unprivileged EOA** (or arbitrary contract) with **no roles** is preferred over privileged role attacks.
         - Untrusted Roles: do check vectors from **untrusted roles** if defined in scope — but always attempt an **unprivileged** path first.
         - Time: **present-state only** (the deployed/fixture state for this contest).
         - Focus: ONLY report attacks and exploits **stemming from** the {title} below.
@@ -48,12 +48,17 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
         - Assert profit/state break with `assertGt`, `assertEq`, etc. **No logs-only**.
         - Keep imports complete; test must compile with standard `forge` setup.
 
-        ## {title}
+        ## {title} Overview
         - Type: **{pattern_name}**
         - Definition: {pattern_def}
         - The {pattern_name} commonly maps to:
+
         ### Exploits
         {exploit_bullets}
+
+        ## {title_all_caps} TO ANALYZE - FIND TOP EXPLOITS/ATTACKS FOR BELOW
+        {full_spec}
+
 
         ## QUALITY BAR (reject if not met)
         - Exploit/Attack MUST be tied to the {title} above.
@@ -92,9 +97,6 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
         **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
         **Please double-check opening and closing brackets: `}}` and `]`, make sure 
         they match up correctly.
-
-        ## {title_all_caps} TO ANALYZE - FIND TOP EXPLOITS/ATTACKS FOR BELOW
-        {full_spec}
 
         "#,
         title = issue_title,

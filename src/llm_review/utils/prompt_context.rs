@@ -33,11 +33,15 @@ pub fn generate_prompt_for_issue_check(
 pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> String {
     let mut invariant_finding = String::new();
 
-    invariant_finding.push_str("\n\n ### Invariant Type\n");
-    invariant_finding.push_str(&invariant.inv_type.as_str());
+    invariant_finding.push_str(&format!(
+        "\n\n ### Invariant Type: {}\n",
+        &invariant.inv_type.as_str()
+    ));
 
-    invariant_finding.push_str("\n ### Relevant Function/Location \n");
-    invariant_finding.push_str(&format!("{}.{}", invariant.contract, invariant.function));
+    invariant_finding.push_str(&format!(
+        "\n ### Relevant Function/Location: {}.{}\n",
+        invariant.contract, invariant.function
+    ));
 
     invariant_finding.push_str("\n ### Description/Code Snippet\n");
     invariant_finding.push_str(&invariant.desc.as_str());
@@ -45,8 +49,7 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
     invariant_finding.push_str("\n ### Checks\n");
     invariant_finding.push_str(&invariant.checks.join(", "));
 
-    invariant_finding.push_str("\n ### Status\n");
-    invariant_finding.push_str(&invariant.status.as_str());
+    invariant_finding.push_str(&format!("\n ### Status: {}\n", &invariant.status.as_str()));
 
     invariant_finding.push_str("\n ### Pre-State\n");
     invariant_finding.push_str(&invariant.pre_state.clone().unwrap_or_default());
@@ -63,11 +66,15 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
 pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
     let mut pattern_list = String::new();
 
-    pattern_list.push_str("\n\n ### Issue Type\n");
-    pattern_list.push_str(&pattern.issue_type.as_str());
+    pattern_list.push_str(&format!(
+        "\n\n ### Issue Type: {}\n",
+        &pattern.issue_type.as_str()
+    ));
 
-    pattern_list.push_str("\n ### Relevant Function/Location \n");
-    pattern_list.push_str(&format!("{}.{}", pattern.contract, pattern.function));
+    pattern_list.push_str(&format!(
+        "\n ### Relevant Function/Location: {}.{}\n",
+        pattern.contract, pattern.function
+    ));
 
     pattern_list.push_str("\n ### Description/Code Snippet\n");
     pattern_list.push_str(&pattern.description.as_str());
@@ -78,11 +85,15 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
     pattern_list.push_str("\n ### Assets at Risk\n");
     pattern_list.push_str(&pattern.assets_at_risk.join(", "));
 
-    pattern_list.push_str("\n ### Minimum Privilege Required to Exploit Vulnerability\n");
-    pattern_list.push_str(&pattern.privilege.as_str());
+    pattern_list.push_str(&format!(
+        "\n ### Minimum Privilege Required to Exploit Vulnerability: {}\n",
+        &pattern.privilege.as_str()
+    ));
 
-    pattern_list.push_str("\n ### Impact\n");
-    pattern_list.push_str(&pattern.impact.unwrap_or(ImpactHint::Low).as_str());
+    pattern_list.push_str(&format!(
+        "\n ### Impact: {}\n",
+        &pattern.impact.unwrap_or(ImpactHint::Low).as_str()
+    ));
 
     pattern_list
 }
