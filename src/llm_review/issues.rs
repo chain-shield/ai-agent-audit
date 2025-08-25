@@ -4,7 +4,10 @@ use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     llm_review::{
         dynamic_prompts::{
-            invariants::generate_invariant_verify_prompt, patterns::generate_pattern_verify_prompt,
+            inv_findings::generate_invariant_to_findings,
+            invariants::generate_invariant_verify_prompt,
+            pattern_findings::generate_pattern_to_findings_prompt,
+            patterns::generate_pattern_verify_prompt,
         },
         enums::EnumString,
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
@@ -58,6 +61,7 @@ pub trait IssueTrait: Send + Sync {
     fn get_issue_report(&self) -> String;
     fn title_str(&self) -> String;
     fn generate_verify_prompt(&self) -> String;
+    fn pattern_to_findings_prompt(&self) -> String;
 }
 
 #[async_trait]
@@ -92,6 +96,9 @@ impl IssueTrait for InvariantFinding {
     fn generate_verify_prompt(&self) -> String {
         generate_invariant_verify_prompt(&self)
     }
+    fn pattern_to_findings_prompt(&self) -> String {
+        generate_invariant_to_findings(self)
+    }
 }
 
 #[async_trait]
@@ -125,6 +132,9 @@ impl IssueTrait for Pattern {
     }
     fn generate_verify_prompt(&self) -> String {
         generate_pattern_verify_prompt(&self)
+    }
+    fn pattern_to_findings_prompt(&self) -> String {
+        generate_pattern_to_findings_prompt(self)
     }
 }
 
