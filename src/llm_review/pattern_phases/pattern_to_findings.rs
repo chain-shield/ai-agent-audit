@@ -7,8 +7,11 @@ use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
-        context_state::get_metadata_context, enums::AIAgent, findings::Findings,
-        issues::IssueTrait, semaphore::VERIFY_SEM,
+        context_state::get_metadata_context,
+        enums::AIAgent,
+        findings::Findings,
+        issues::{IssueStructTrait, IssueTrait},
+        semaphore::VERIFY_SEM,
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -23,17 +26,18 @@ use tokio::sync::Mutex;
 /// Deduplicates findings and verifies each one using AI analysis to ensure
 /// only legitimate vulnerabilities are retained.
 pub async fn execute<T>(
-    pattern: T,
+    patterns: T,
     code: &str,
     agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings>
 where
-    T: 'static + IssueTrait + Send + Sync + Default + Clone + DeserializeOwned,
+    T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
+    <T as IssueStructTrait>::Spec: Send + Sync + Clone + DeserializeOwned + IssueTrait + 'static,
 {
     info!(
-        "🔍 Phase 3: Mining Findings from given {}...",
-        pattern.title_str()
+        "🔍 Phase 3: Mining Findings from each {}...",
+        patterns.issue_title()
     );
 
     let all_findings = Arc::new(Mutex::new(Findings {
@@ -46,50 +50,54 @@ where
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
     let arc_code_context = Arc::new(code_and_context);
-    let arc_pattern: Arc<T> = Arc::new(pattern);
+    let pattern_count = patterns.issues().len();
 
-    for i in 0..DISCOVERY_RUNS {
-        let codeblock_plus_context = Arc::clone(&arc_code_context);
-        let arc_agent = Arc::clone(&agent);
-        let pattern_clone = Arc::clone(&arc_pattern);
-        let sem = Arc::clone(&VERIFY_SEM);
-        let shared_findings = Arc::clone(&all_findings);
+    for j in 0..pattern_count {
+        let arc_pattern = Arc::new(patterns.issues()[j].clone());
+        for i in 0..DISCOVERY_RUNS {
+            let codeblock_plus_context = Arc::clone(&arc_code_context);
+            let arc_agent = Arc::clone(&agent);
+            let pattern_clone = Arc::clone(&arc_pattern);
+            let sem = Arc::clone(&VERIFY_SEM);
+            let shared_findings = Arc::clone(&all_findings);
 
-        handles.push(tokio::spawn(async move {
-            // ── acquire permit ────────────────────────
-            let _permit = sem.acquire_owned().await.expect("semaphore closed");
-            let result: Result<()> = async {
-                info!(
-                    "Round {} of mining findings from {}",
-                    i + 1,
-                    pattern_clone.title_str()
-                );
-                let instruction_prompt = pattern_clone.pattern_to_findings_prompt();
-                info!("prompt instructions:\n\n {}", instruction_prompt);
+            handles.push(tokio::spawn(async move {
+                // ── acquire permit ────────────────────────
+                let _permit = sem.acquire_owned().await.expect("semaphore closed");
+                let result: Result<()> = async {
+                    info!(
+                        "Round {} of mining findings from {}",
+                        i + 1,
+                        pattern_clone.title_str()
+                    );
+                    let instruction_prompt = pattern_clone.pattern_to_findings_prompt();
+                    // info!("prompt instructions:\n\n {}", instruction_prompt);
 
-                let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
+                    let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
 
-                // add to cost
-                add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::Openai5Input).await;
-                let findings: Findings = arc_agent.extract_with_retry(&full_prompt).await?;
+                    // add to cost
+                    add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::Openai5Input)
+                        .await;
+                    let findings: Findings = arc_agent.extract_with_retry(&full_prompt).await?;
 
-                let issues_found = findings.findings.len();
-                info!("{} issues found!", issues_found);
+                    let issues_found = findings.findings.len();
+                    info!("{} issues found!", issues_found);
 
-                // 3. Merge results (if any) into the shared accumulator
-                if issues_found > 0 {
-                    let mut guard = shared_findings.lock().await;
-                    guard.findings.extend(findings.findings);
+                    // 3. Merge results (if any) into the shared accumulator
+                    if issues_found > 0 {
+                        let mut guard = shared_findings.lock().await;
+                        guard.findings.extend(findings.findings);
+                    }
+
+                    Ok(())
                 }
+                .await;
 
-                Ok(())
-            }
-            .await;
-
-            if let Err(e) = result {
-                log::error!("Error extracting findings from pattern: {}", e);
-            }
-        }));
+                if let Err(e) = result {
+                    log::error!("Error extracting findings from pattern: {}", e);
+                }
+            }));
+        }
     }
 
     // Wait for all verification tasks to complete

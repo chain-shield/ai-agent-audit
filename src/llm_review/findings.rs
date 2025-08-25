@@ -32,6 +32,7 @@ pub struct Finding {
     // [Severity-issue number] - List Issue (Reentrancy, Denial of Service, etc) and
     // <Contract>::<Function> its localed in
     pub derived_from: String,
+    pub title: String,
     pub exploit_type: VulnerabilityType,
     pub privilege: PrivilegeLevel,   // permissionless vs role-gated
     pub contract: String,            // exact constract name where issue appears
@@ -45,7 +46,7 @@ pub struct Finding {
     pub mitigation: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct Findings {
     pub findings: Vec<Finding>,
 }

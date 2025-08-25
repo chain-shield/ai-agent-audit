@@ -6,12 +6,12 @@ use log::info;
 /// categorization, providing unified interfaces for different AI providers
 /// and systematic vulnerability detection across 19+ security categories.
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 use crate::{
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     invariant_prompts::{
         arithmetic::ARITHMETIC, balance::BALANCE, permission::PERMISSION, referential::REFERENTIAL,
         state_machine::STATE_MACHINE, temporal::TEMPORAL,
@@ -315,7 +315,7 @@ impl AIAgent {
             .await?),
             AIAgent::Openai(model) => {
                 Ok(
-                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::OpenaiO3Output)
+                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::Openai5Output)
                         .await?,
                 )
             }

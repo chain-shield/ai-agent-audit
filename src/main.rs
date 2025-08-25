@@ -8,7 +8,7 @@ use ai_agent_audit::{
     error::Result,
     llm_review::{
         agent_factory::init_llm_clients,
-        code_review,
+        code_review_v2,
         context_state::{self},
     },
     prepare_code::{self},
@@ -109,8 +109,8 @@ async fn main() -> Result<()> {
     // 5. AI Security Analysis
     // ────────────────────────────────
     // Run multi-LLM security analysis across vulnerability categories
-    let (security_issues, _) =
-        code_review::review_codebase_for_security_issues(&codeblocks_db, &repo).await?;
+    let security_issues =
+        code_review_v2::review_codebase_for_security_issues_v2(&codeblocks_db, &repo).await?;
 
     // ────────────────────────────────
     // 6. Report Generation
@@ -119,16 +119,11 @@ async fn main() -> Result<()> {
     let audit_report =
         audit::generated_audit_report(&security_issues, &repo, ReportType::Paid).await?;
 
-    // Generate limited audit report (free version)
-    let free_audit_report =
-        audit::generated_audit_report(&security_issues, &repo, ReportType::Free).await?;
-
     // ────────────────────────────────
     // 7. File Export & Cleanup
     // ────────────────────────────────
     // Save all reports and analysis data to markdown files
     save_file::save_audit_report(&audit_report, &repo, ReportType::Paid)?;
-    save_file::save_audit_report(&free_audit_report, &repo, ReportType::Free)?;
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
     contract_data::save_metadata(&repo).await?;
 
