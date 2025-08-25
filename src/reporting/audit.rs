@@ -116,6 +116,11 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
                 finding.title()
             ));
 
+            //privilege
+            findings_report.push_str("## Minimim Privilege Required\n");
+            findings_report.push_str(&finding.privilege.as_str());
+            findings_report.push_str("\n\n");
+
             //description
             findings_report.push_str("## Description\n");
             findings_report.push_str(&finding.description.clone().unwrap_or_default());
