@@ -32,7 +32,7 @@ pub struct Finding {
     // [Severity-issue number] - List Issue (Reentrancy, Denial of Service, etc) and
     // <Contract>::<Function> its localed in
     pub derived_from: String,
-    pub issue_type: VulnerabilityType,
+    pub exploit_type: VulnerabilityType,
     pub privilege: PrivilegeLevel,   // permissionless vs role-gated
     pub contract: String,            // exact constract name where issue appears
     pub function: String, // exact function name where issue appears, if not applicable set to 'NA'
@@ -77,7 +77,7 @@ impl Finding {
         let fn_name = self.get_fn_name();
         format!(
             "{} issue in {}::{}",
-            self.issue_type.as_fancy_str(),
+            self.exploit_type.as_fancy_str(),
             self.contract,
             fn_name
         )
@@ -90,13 +90,13 @@ impl Finding {
         {
             format!(
                 "{} issue found with {} severity",
-                self.issue_type.as_fancy_str(),
+                self.exploit_type.as_fancy_str(),
                 self.severity.as_str()
             )
         } else {
             format!(
                 "{} issue in {}::{}",
-                self.issue_type.as_fancy_str(),
+                self.exploit_type.as_fancy_str(),
                 self.contract,
                 self.function
             )
@@ -107,7 +107,12 @@ impl Finding {
         // extract name 'func_name' from func_name(...)
         let fn_name = self.get_fn_name();
 
-        format!("{}-{}-{}", self.issue_type.as_str(), self.contract, fn_name)
+        format!(
+            "{}-{}-{}",
+            self.exploit_type.as_str(),
+            self.contract,
+            fn_name
+        )
     }
 
     // extract name 'func_name' from func_name(...)
@@ -142,7 +147,7 @@ impl Finding {
         let prompt = DEDUP_PROMPT
             .replace("{contract}", &self.contract)
             .replace("{function}", &self.function)
-            .replace("{issue_type}", self.issue_type.as_str())
+            .replace("{issue_type}", self.exploit_type.as_str())
             .replace(
                 "{description_a}",
                 &self.description.clone().unwrap_or_default(),

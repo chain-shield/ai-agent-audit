@@ -1,10 +1,13 @@
-use crate::llm_review::{
-    enums::{
-        all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData, EnumString,
-        Severity,
+use crate::{
+    config::{AuditType, AUDIT_TYPE},
+    llm_review::{
+        enums::{
+            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
+            EnumString, Severity,
+        },
+        findings::PrivilegeLevel,
+        prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
     },
-    findings::PrivilegeLevel,
-    prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
 };
 
 /// TODO - add C4 severity rubric
@@ -69,7 +72,7 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
 
         ## OUTPUT REQUIREMENTS (for each finding)
         - description: Detailed explanation + exact vulnerable snippet.
-        - issue_type: {exploit_types} (choose **one**)
+        - exploit_type: {exploit_types} (choose **one**)
         - privilege: least privilege that can trigger vulnerability: {privileges}
         - contract: Exact contract name.
         - function: Exact function name (or "multiple" if truly necessary).
@@ -117,7 +120,10 @@ where
 {
     let issue_list = generate_enum_list(pattern.to_types());
     let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
-    let severity_list = generate_enum_list(all_enum_variants::<Severity>().as_slice());
+    let severity_list = match AUDIT_TYPE {
+        AuditType::Code4rena => "High|Medium|Low|Info".to_string(),
+        _ => generate_enum_list(all_enum_variants::<Severity>().as_slice()),
+    };
 
     format!(
         r#"{{
@@ -125,7 +131,7 @@ where
             {{
             "derived_from": "{pattern_enum}",
             "description": "Detailed explanation if vulnerability including vulnerable code snippet",
-            "issue_type": "{issues}",
+            "exploit_type": "{issues}",
             "privilege": "{privileges}",
             "contract": "{{contract_name}}", 
             "function": "{{function_name}}", 
