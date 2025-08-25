@@ -25,7 +25,7 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
 
         {json} 
 
-        You are a top C4 Security Warden specializing in finding {title} vulnerability.
+        You are a top C4 Security Warden specializing in finding {title} vulnerabilities.
 
         Please Analyse the *entire* Solidity source below for 
         *each* {title} security vulnerability patterns listed below:
@@ -142,14 +142,14 @@ pub fn get_pattern_json(patterns: &[VulnerabilityPattern]) -> String {
     format!(
         r#"{{
         "patterns": [
-            {{  
+            {{
             "description": "Detailed explanation of vulnerability including vulnerable code snippet",
             "issue_type": "{issues}",
-            "contract": "{{contract_name}}", 
-            "function": "{{function_name}}", 
-            "static_signals": ["amountOutMin=0","no onlyOwner",...],
-            "assets_at_risk": ["treasury", "rewards", ...],
-            "privilege": {privileges}
+            "contract": "{{contract_name}}",
+            "function": "{{function_name}}",
+            "static_signals": ["amountOutMin=0","no onlyOwner","..."],
+            "assets_at_risk": ["treasury", "rewards", "..."],
+            "privilege": "{privileges}"
             }}
          ]
         }}
