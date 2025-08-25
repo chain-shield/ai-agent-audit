@@ -1,6 +1,11 @@
-use crate::config::audit_config;
 use crate::error::Result;
-use crate::llm_review::invariants::ContractInvariants;
+use crate::llm_review::invariants::{
+    ContractInvariants, InvariantFinding, InvariantStatus, InvariantType,
+};
+use crate::llm_review::issues::{IssuePrompt, IssueStructTrait};
+use crate::llm_review::pattern_category::PatternCategory;
+use crate::llm_review::pattern_phases;
+use crate::llm_review::patterns::Patterns;
 use crate::llm_review::{
     analysis_db::FindingsDb, context_state::generate_audit_scope, findings::CLAUDE_4_0_SONNET,
 };
@@ -13,8 +18,8 @@ use crate::{
     },
 };
 use log::info;
-use rig::providers::openai::O3;
 use std::{path::PathBuf, sync::Arc};
+use strum::IntoEnumIterator;
 use tokio::fs;
 
 use super::contract_file_map::get_file_from_contract;
@@ -35,7 +40,6 @@ use super::{enums::AIAgent, phases};
 ///
 /// # Returns
 /// * `HashMap<String, Findings>` - Security findings organized by contract
-/// * `Vec<ContractInvariants>` - Protocol invariant analysis results
 pub async fn review_codebase_for_security_issues_v2(
     codeblocks_path: &PathBuf,
     repo: &RepoPaths,
@@ -50,22 +54,111 @@ pub async fn review_codebase_for_security_issues_v2(
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     let audit_scope = generate_audit_scope(repo).await?;
 
-    let (ai_verify_agent, _, ai_discovery_agents) = generate_ai_agents(repo).await?;
-
-    let invariant_findings = Vec::<ContractInvariants>::new();
+    let (ai_verify_agent, _, ai_discovery_agent) = generate_ai_agents(repo).await?;
 
     let findings_db = FindingsDb::open()?;
 
     for (contract, codeblock) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
 
-        // Phase 1 generated enhanced codeblock
+        // generated enhanced codeblock
         let codeblock = enhance_codeblock(&contract, &codeblock, repo).await?;
 
-        // // Phase 2: Generate findings using parallel AI agents
-        let raw_findings =
-            phases::generate_findings::execute(&contract, &codeblock, &ai_discovery_agents, repo)
-                .await?;
+        // define scope of patterns and invariants to investigate
+        let pattern_prompt = IssuePrompt::Pattern(PatternCategory::iter().collect());
+        let invariant_prompt = IssuePrompt::Invariant(InvariantType::iter().collect());
+
+        // Phase 1: Generate patterns and invariants
+        info!("PHASE 1: GENERATE PATTERNS");
+        let raw_patterns: Patterns = pattern_phases::generate_patterns::execute(
+            pattern_prompt,
+            &codeblock,
+            &ai_discovery_agent,
+            repo,
+        )
+        .await?;
+
+        let mut raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
+            invariant_prompt,
+            &codeblock,
+            &ai_discovery_agent,
+            repo,
+        )
+        .await?;
+
+        // grab all invariant violations
+        let violations: Vec<InvariantFinding> = raw_invariants
+            .issues()
+            .iter()
+            .filter(|inv| inv.status == InvariantStatus::Holds)
+            .map(|inv| inv.to_owned())
+            .collect();
+
+        raw_invariants = ContractInvariants {
+            invariants: violations,
+        };
+
+        // Phase 2: Verify patterns and invariants
+        info!("PHASE 2: VERIFY PATTERNS");
+
+        let verified_patterns = if !raw_patterns.issues().is_empty() {
+            pattern_phases::verify_patterns::verify_patterns(
+                raw_patterns,
+                &codeblock,
+                &ai_verify_agent,
+                repo,
+            )
+            .await?
+        } else {
+            Patterns::default()
+        };
+
+        info!("patterns => {:#?}", verified_patterns);
+
+        let verified_invariants = if !raw_invariants.issues().is_empty() {
+            pattern_phases::verify_patterns::verify_invariants(
+                raw_invariants,
+                &codeblock,
+                &ai_verify_agent,
+                repo,
+            )
+            .await?
+        } else {
+            ContractInvariants::default()
+        };
+
+        info!("invariants => {:#?}", verified_invariants);
+
+        info!("PHASE 3: GENERATE FINDINGS FROM PATTERNS");
+        let mut raw_findings = Findings::default();
+
+        if !verified_patterns.issues().is_empty() {
+            let findings_from_patterns = pattern_phases::pattern_to_findings::execute(
+                verified_patterns,
+                &codeblock,
+                &ai_discovery_agent,
+                repo,
+            )
+            .await?;
+
+            raw_findings
+                .findings
+                .extend(findings_from_patterns.findings);
+        }
+
+        if !verified_invariants.issues().is_empty() {
+            let findings_from_invariants = pattern_phases::pattern_to_findings::execute(
+                verified_invariants,
+                &codeblock,
+                &ai_discovery_agent,
+                repo,
+            )
+            .await?;
+
+            raw_findings
+                .findings
+                .extend(findings_from_invariants.findings);
+        }
 
         if !raw_findings.findings.is_empty() {
             // Phase 3: Verify findings and remove false positives
@@ -144,7 +237,7 @@ pub async fn enhance_codeblock(
 }
 pub async fn generate_ai_agents(
     repo: &RepoPaths,
-) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Vec<Arc<AIAgent>>)> {
+) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Arc<AIAgent>)> {
     info!("setting up AI agents...");
 
     // Enhanced preamble for verification agent
@@ -172,7 +265,7 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     // Create verification agent using OpenAI O3
     let verify_config = AgentConfig::new(repo.clone())
         .with_temperature(1.0)
-        .with_model(O3)
+        .with_model("gpt-5")
         .with_preamble(verify_preamble)
         .with_file_picker(false); // Disabled to avoid rate limits
 
@@ -191,9 +284,6 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     // Enhanced preamble for discovery agents
     let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases.";
 
-    // Create discovery agents using Gemini models
-    let mut ai_discovery_agents = Vec::new();
-
     let _gemini_config = AgentConfig::new(repo.clone())
         .with_temperature(1.0)
         .with_model("gemini-2.5-pro")
@@ -210,13 +300,10 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_dynamic_context(false);
     //
-    for _ in 0..audit_config().runs {
-        let agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
-        ai_discovery_agents.push(agent);
-    }
+    let ai_discovery_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 
     // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
     // info!("Created {} discovery agents", ai_discovery_agents.len());
 
-    Ok((ai_verify_agent, second_ai_verify_agent, ai_discovery_agents))
+    Ok((ai_verify_agent, second_ai_verify_agent, ai_discovery_agent))
 }

@@ -64,7 +64,7 @@ pub async fn execute(
     agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
-    info!("🔍 Phase 3: Deduplicating and verifying findings...");
+    info!("🔍 Phase 4: Deduplicating and verifying findings...");
 
     let mut handles = vec![];
     let deduped_findings = Arc::new(findings.dedup().await?);
@@ -152,7 +152,7 @@ pub async fn execute(
         .collect();
 
     info!(
-        "✅ Phase 3 complete: {} Verified Findings!",
+        "✅ Phase 4 complete: {} Verified Findings!",
         verified_findings.len()
     );
 

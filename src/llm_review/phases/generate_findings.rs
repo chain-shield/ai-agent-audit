@@ -3,13 +3,13 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::{AUDIT_TYPE, AuditType},
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
+    config::{AuditType, AUDIT_TYPE, DISCOVERY_RUNS},
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         context_state::{generate_audit_scope, get_metadata_context},
         enums::AIAgent,
-        findings::{Findings, generated_llm_prompt},
+        findings::{generated_llm_prompt, Findings},
         prompt_support::{post_prompt::generate_post_prompt, pre_prompt::generate_pre_prompt},
     },
     master_prompts::{code4rena::CODE4RENA_PROMPT, prompt_2x_aa::PROMPT_2X_AA},
@@ -26,7 +26,8 @@ use tokio::sync::Mutex;
 pub async fn execute(
     contract: &str,
     code: &str,
-    agents: &Vec<Arc<AIAgent>>,
+    // agents: &Vec<Arc<AIAgent>>,
+    arc_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
     info!("🔍 Phase 1: Generating findings from contract codebase...");
@@ -52,7 +53,8 @@ pub async fn execute(
         _ => PROMPT_2X_AA,
     };
 
-    for (run, arc_agent) in agents.iter().enumerate() {
+    // for (run, arc_agent) in agents.iter().enumerate() {
+    for run in 0..DISCOVERY_RUNS {
         // PAUSED FOR COMPETITIVE AUDIT, only focused on critical issues in code
         // for (i, prompt) in [PROMPT_2X_AA, PROMPT_2X_BB].into_iter().enumerate() {
         for (i, prompt) in [llm_instructions].into_iter().enumerate() {

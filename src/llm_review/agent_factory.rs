@@ -269,35 +269,6 @@ fn deepseek_client() -> Result<&'static deepseek::Client> {
     })
 }
 
-// /// Helper function to create vector store for dynamic context
-// fn create_vector_store(repo: &RepoPaths) -> Result<QdrantVectorStore<openai::EmbeddingModel>> {
-//     let qdrant = Qdrant::from_url(&std::env::var("QDRANT_URL").map_err(|_| {
-//         AuditError::configuration("qdrant_url", "QDRANT_URL environment variable not set")
-//     })?)
-//     .build()
-//     .map_err(|e| {
-//         AuditError::configuration(
-//             "qdrant_connection",
-//             &format!("Failed to connect to Qdrant: {}", e),
-//         )
-//     })?;
-
-//     let openai = openai::Client::new(&std::env::var("OPENAI_API_KEY").map_err(|_| {
-//         AuditError::configuration(
-//             "openai_api_key",
-//             "OPENAI_API_KEY environment variable not set",
-//         )
-//     })?);
-//     let model = openai.embedding_model(TEXT_EMBEDDING_3_SMALL);
-
-//     let collection_name = format!("{}-contract_chunks", repo.unique_repo_hash());
-//     let qp = QueryPointsBuilder::new(&collection_name)
-//         .with_payload(true)
-//         .build();
-
-//     Ok(QdrantVectorStore::new(qdrant, model, qp))
-// }
-
 /// Helper function to create file retrieval tool
 fn create_file_retrieval_tool(repo: &RepoPaths) -> Result<FileRetrievalTool> {
     let qdrant_url = std::env::var("QDRANT_URL").map_err(|_| {

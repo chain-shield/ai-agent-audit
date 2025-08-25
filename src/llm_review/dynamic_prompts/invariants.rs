@@ -119,7 +119,7 @@ pub fn get_invariant_json(inv: &[InvariantType]) -> String {
             "desc": "string (include short code snippet if relevant)",
             "checks": ["after deposit","after withdraw","after harvest"],
             "status": "{status}",
- lksdjfskljj           "pre_state": "string (omit if Holds)",
+            "pre_state": "string (omit if Holds)",
             "post_state": "string (omit if Holds)",
             "impact": "string (omit if Holds)"
             }}

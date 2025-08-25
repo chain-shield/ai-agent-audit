@@ -1,24 +1,13 @@
-use crate::config::audit_config;
 use crate::error::Result;
+use crate::llm_review::code_review_v2::{enhance_codeblock, generate_ai_agents};
 use crate::llm_review::invariants::ContractInvariants;
-use crate::llm_review::{
-    analysis_db::FindingsDb, context_state::generate_audit_scope, findings::CLAUDE_4_0_SONNET,
-};
+use crate::llm_review::{analysis_db::FindingsDb, context_state::generate_audit_scope};
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::{
-    enumerator::codeblock_db::CodeBlocksDb,
-    llm_review::{
-        agent_factory::{AgentConfig, AgentFactory},
-        findings::Findings,
-    },
-};
+use crate::{enumerator::codeblock_db::CodeBlocksDb, llm_review::findings::Findings};
 use log::info;
-use rig::providers::openai::O3;
-use std::{path::PathBuf, sync::Arc};
-use tokio::fs;
+use std::path::PathBuf;
 
-use super::contract_file_map::get_file_from_contract;
-use super::{enums::AIAgent, phases};
+use super::phases;
 
 /// Multi-LLM security analysis orchestration.
 ///
@@ -139,106 +128,4 @@ pub async fn review_codebase_for_security_issues(
     let deduped_security_bugs = all_security_issues.dedup().await?;
 
     Ok((deduped_security_bugs, invariant_findings))
-}
-
-// combine codeblock with original file context (that codeblock came from)
-// this contains natspec and additional context
-pub async fn enhance_codeblock(
-    contract: &str,
-    codeblock: &str,
-    repo: &RepoPaths,
-) -> anyhow::Result<String> {
-    let file = get_file_from_contract(contract, repo).await?;
-
-    let file_content = fs::read_to_string(&file).await?;
-
-    let filename = file.strip_prefix(&repo.root)?;
-    info!("{} contains contract {}", filename.display(), contract);
-
-    let enhanced_block = format!(
-        "{} \n\n {}: \n\n {}",
-        codeblock,
-        filename.display(),
-        file_content
-    );
-
-    Ok(enhanced_block)
-}
-pub async fn generate_ai_agents(
-    repo: &RepoPaths,
-) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Vec<Arc<AIAgent>>)> {
-    info!("setting up AI agents...");
-
-    // Enhanced preamble for verification agent
-    let verify_preamble = "
-
-You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
-*confirming* reported issues.";
-
-    // You have access to retrieve_file_content tool that can search through different types of code files:
-    // - 'source': Main application code and smart contracts
-    // - 'test': Test files and test cases
-    // - 'script': Deployment and build scripts
-    // - 'library': Library and utility code
-    //
-    // Use them to:
-    // 1. Check that a reported vulnerability exists in the *current* source code.
-    // 2. Check if vulnerability is accurately reported
-    // 3. Cross-reference with tests to understand intended behaviour.
-    // 4. Inspect deployment scripts for mis-configurations.
-    // 5. Verify library or inherited-contract logic.
-    //
-    // When formulating queries for the retrieve_file_content, keep them concise and focused (**under 1000 words**) to avoid exceeding embedding model context limits.
-    // ";
-
-    // Create verification agent using OpenAI O3
-    let verify_config = AgentConfig::new(repo.clone())
-        .with_temperature(1.0)
-        .with_model(O3)
-        .with_preamble(verify_preamble)
-        .with_file_picker(false); // Disabled to avoid rate limits
-
-    let second_verify_config = AgentConfig::new(repo.clone())
-        .with_temperature(1.0)
-        .with_model(CLAUDE_4_0_SONNET)
-        .with_max_tokens(64_000)
-        .with_preamble(verify_preamble)
-        .with_file_picker(false) // Disabled to avoid rate limits
-        .with_file_retrieval(false);
-
-    let ai_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
-    let second_ai_verify_agent =
-        Arc::new(AgentFactory::create_anthropic_agent(&second_verify_config)?);
-
-    // Enhanced preamble for discovery agents
-    let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases.";
-
-    // Create discovery agents using Gemini models
-    let mut ai_discovery_agents = Vec::new();
-
-    let _gemini_config = AgentConfig::new(repo.clone())
-        .with_temperature(1.0)
-        .with_model("gemini-2.5-pro")
-        .with_preamble(solidity_auditor_preamble)
-        .with_file_retrieval(false)
-        .with_file_picker(false);
-
-    let openai_config = AgentConfig::new(repo.clone())
-        .with_temperature(1.0)
-        .with_model("gpt-5")
-        .with_preamble(solidity_auditor_preamble)
-        .with_file_retrieval(false)
-        .with_file_picker(false);
-    //     .with_file_picker(false) // Disabled to avoid rate limits
-    //     .with_dynamic_context(false);
-    //
-    for _ in 0..audit_config().runs {
-        let agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
-        ai_discovery_agents.push(agent);
-    }
-
-    // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
-    // info!("Created {} discovery agents", ai_discovery_agents.len());
-
-    Ok((ai_verify_agent, second_ai_verify_agent, ai_discovery_agents))
 }

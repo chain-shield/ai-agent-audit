@@ -3,7 +3,7 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         context_state::{generate_audit_scope, get_metadata_context},
@@ -45,7 +45,7 @@ pub async fn execute(
     agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
-    info!("🔍 Phase 3: Deduplicating and verifying findings...");
+    info!("🔍 Phase 4: Checking if findings are in Scope...");
     let audit_scope = generate_audit_scope(repo).await?;
 
     // sanity check

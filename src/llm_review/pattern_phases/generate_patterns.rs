@@ -25,9 +25,9 @@ use tokio::sync::Mutex;
 /// Runs parallel security analysis across multiple AI agents to discover
 /// potential vulnerabilities in the provided smart contract code.
 pub async fn execute<T>(
-    code: &str,
     issue_prompt: IssuePrompt,
-    arc_agent: Arc<AIAgent>,
+    code: &str,
+    arc_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<T>
 where
@@ -55,7 +55,7 @@ where
 
     // Simple local closure to DRY out spawn logic without extra generics
     let mut spawn_run = |prompt: Arc<String>, run_index: usize| {
-        let agent = Arc::clone(&arc_agent);
+        let agent = Arc::clone(arc_agent);
         let combined = Arc::clone(&all_patterns);
         let code = Arc::clone(&codeblock);
         let ctx = Arc::clone(&added_content_from_brain);
@@ -123,7 +123,7 @@ where
 {
     let prompt_body = generate_content_plus_context_block(code.as_str(), added_context.as_str());
     let full_prompt = format!("{instructions}{prompt_body}");
-    info!("prompt instructions:\n\n {}", instructions);
+    // info!("prompt instructions:\n\n {}", instructions);
 
     // add to cost
     add_to_inference_cost_by_type(&full_prompt, LlmCostType::Openai5Input).await;

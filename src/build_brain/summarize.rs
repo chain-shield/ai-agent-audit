@@ -274,7 +274,7 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
                    in markdown for easy reading. Respond only with valid JSON matching the schema!";
 
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>(O3)
+        .extractor::<FileSummary>("gpt-5")
         .preamble(preamble)
         .build();
 
@@ -283,12 +283,12 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
 
     add_to_inference_cost_by_type(
         &format!("{}{}", preamble, context),
-        LlmCostType::OpenaiO3Input,
+        LlmCostType::Openai5Input,
     )
     .await;
 
     let summary =
-        extractor_with_retry(&ai_summary_agent, &context, LlmCostType::OpenaiO3Output).await?;
+        extractor_with_retry(&ai_summary_agent, &context, LlmCostType::Openai5Output).await?;
 
     log::info!("protocol summary => {:#?}", summary);
 
