@@ -6,7 +6,7 @@ use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
-        context_state::get_metadata_context,
+        context_state::{get_metadata_context, ContextType},
         enums::AIAgent,
         invariants::ContractInvariants,
         issues::{IssueStructTrait, IssueTrait},
@@ -100,7 +100,7 @@ where
 
     let mut handles = vec![];
     let deduped_patterns: Arc<T> = Arc::new(patterns.dedup().await?);
-    let context = get_metadata_context(repo)
+    let context = get_metadata_context(repo, &ContextType::Abridged)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);

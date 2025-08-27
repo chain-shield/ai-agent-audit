@@ -7,7 +7,7 @@ use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
-        context_state::get_metadata_context,
+        context_state::{get_metadata_context, ContextType},
         dynamic_prompts::{self, invariants::generate_invariant_prompt},
         enums::AIAgent,
         issues::{IssuePrompt, IssueStructTrait},
@@ -45,7 +45,7 @@ where
     let mut handles = vec![];
     let all_patterns = Arc::new(Mutex::new(T::default()));
 
-    let context = get_metadata_context(repo)
+    let context = get_metadata_context(repo, &ContextType::Full)
         .await
         .expect("could not extract context");
 

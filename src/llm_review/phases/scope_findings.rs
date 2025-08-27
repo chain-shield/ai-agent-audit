@@ -3,10 +3,10 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context},
+        context_state::{generate_audit_scope, get_metadata_context, ContextType},
         enums::AIAgent,
         findings::{Finding, Findings},
         phases::verify_findings::{
@@ -56,7 +56,7 @@ pub async fn execute(
     }
 
     let mut handles = vec![];
-    let context = get_metadata_context(repo)
+    let context = get_metadata_context(repo, &ContextType::Abridged)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);

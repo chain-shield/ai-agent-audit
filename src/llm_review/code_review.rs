@@ -39,7 +39,7 @@ pub async fn review_codebase_for_security_issues(
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     let audit_scope = generate_audit_scope(repo).await?;
 
-    let (ai_verify_agent, _, ai_discovery_agents) = generate_ai_agents(repo).await?;
+    let (ai_verify_agent, ai_discovery_agents) = generate_ai_agents(repo).await?;
 
     let invariant_findings = Vec::<ContractInvariants>::new();
 

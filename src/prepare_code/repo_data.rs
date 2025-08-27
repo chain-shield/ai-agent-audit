@@ -4,12 +4,12 @@
 /// complete repository information including paths, file lists, documentation,
 /// and generated context data from RepoPaths and metadata analysis.
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 
 use crate::{
     config::{CHAINSHIELD_DB_FOLDER, REPO_DATA_DB},
-    llm_review::context_state::get_metadata_context,
+    llm_review::context_state::{get_metadata_context, ContextType},
     prepare_code::git_clone::RepoPaths,
 };
 
@@ -49,7 +49,9 @@ pub async fn save_repo_data_to_db(repo: &RepoPaths) -> anyhow::Result<()> {
         "{}/{}",
         CHAINSHIELD_DB_FOLDER, REPO_DATA_DB
     )))?;
-    let context = get_metadata_context(repo).await.expect("no context found!");
+    let context = get_metadata_context(repo, &ContextType::Full)
+        .await
+        .expect("no context found!");
 
     repodata_db.insert_repo_data(repo, &context)?;
 
