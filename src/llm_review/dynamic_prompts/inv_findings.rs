@@ -15,5 +15,6 @@ pub fn generate_invariant_to_findings(invariant: &InvariantFinding) -> String {
         &pattern_data.definition,
         &pattern_full_spec,
         &invariant.inv_type,
+        &invariant.predicate,
     )
 }

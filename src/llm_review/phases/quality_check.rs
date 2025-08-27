@@ -67,7 +67,7 @@ pub async fn execute(
     info!("🔍 Phase 5: Quality checking findings...");
 
     let mut handles = vec![];
-    let findings = Arc::new(findings.dedup().await?);
+    let findings = Arc::new(findings);
     let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
@@ -109,7 +109,7 @@ pub async fn execute(
                 if !quality_check_passed {
                     info!(
                         "{} did not pass quality check ",
-                        arc_findings.findings[i].title(),
+                        arc_findings.findings[i].title,
                     );
                     let updated_finding = Finding {
                         impact: Some(qualify_checked_finding.impact.clone().unwrap_or(

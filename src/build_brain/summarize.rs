@@ -8,7 +8,7 @@ use log::info;
 use once_cell::sync::Lazy;
 use rig::{
     client::CompletionClient,
-    providers::openai::{self, GPT_4O, O3},
+    providers::openai::{self},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
+use crate::{cost::cost_data::LlmCostType, llm_review::context_state};
 use crate::{
     cost::cost_data::add_to_inference_cost_by_type,
     prepare_code::git_clone::RepoPaths,
@@ -27,7 +28,6 @@ use crate::{
         extract_retry::extractor_with_retry,
     },
 };
-use crate::{cost::cost_data::LlmCostType, llm_review::context_state};
 
 use super::slither_ffi::cache_key;
 
@@ -82,13 +82,13 @@ pub async fn summarize_docs(
         context for an llm to do a security scan of protocol code.  So its important there is NO duplicate information between DOCUMENTATION 
         and CURRENT SECURITY AUDIT CONTEXT ";
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>(O3)
+        .extractor::<FileSummary>("gpt-5")
         .preamble(preamble)
         .build();
 
     add_to_inference_cost_by_type(
         &format!("{}{}", preamble, documentation),
-        LlmCostType::OpenaiO3Input,
+        LlmCostType::Openai5Input,
     )
     .await;
 
@@ -97,7 +97,7 @@ pub async fn summarize_docs(
     let doc_summary = match extractor_with_retry(
         &ai_summary_agent,
         &docs_plus_context,
-        LlmCostType::OpenaiO3Output,
+        LlmCostType::Openai5Output,
     )
     .await
     {
@@ -147,7 +147,7 @@ pub async fn summarize_src_files(
                     please summarize each section of the docs with 150 words or less, max 500 words total for each doc file. 
                     Respond only with valid JSON matching the schema!";
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>(GPT_4O)
+        .extractor::<FileSummary>("gpt-5")
         .preamble(preamble)
         .context(&context)
         .build();
@@ -204,13 +204,13 @@ pub async fn summarize_src_files(
 
             add_to_inference_cost_by_type(
                 &format!("{}{}", preamble, content),
-                LlmCostType::Openai4oInput,
+                LlmCostType::Openai5Input,
             )
             .await;
 
             info!("summarizing {}", file.display());
 
-            match extractor_with_retry(&agent, &content, LlmCostType::Openai4oOutput).await {
+            match extractor_with_retry(&agent, &content, LlmCostType::Openai5Output).await {
                 Ok(res) => {
                     let filename = file
                         .strip_prefix(&repo_root)

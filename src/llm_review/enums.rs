@@ -37,7 +37,7 @@ use rig::{
     extractor::Extractor,
     providers::{
         anthropic, deepseek, gemini,
-        openai::{self, O3},
+        openai::{self},
     },
 };
 
@@ -151,6 +151,7 @@ pub trait EnumData {
     type Spec;
     fn to_types(&self) -> &'static [VulnerabilityType];
     fn get_spec(&self) -> Self::Spec;
+    // get predicate or defintion of patten
 }
 
 pub fn generate_enum_list<T: EnumString>(patterns: &[T]) -> String {
@@ -353,7 +354,7 @@ impl AIAgent {
             }
 
             AIAgent::Openai(model) => {
-                self.run_analysis_and_extract(model, prompt, repo, LlmCostType::OpenaiO3Output)
+                self.run_analysis_and_extract(model, prompt, repo, LlmCostType::Openai5Output)
                     .await
             }
             AIAgent::Gemini(model) => {
@@ -379,9 +380,11 @@ impl AIAgent {
         M: CompletionModel, // whatever trait `model.prompt()` uses
     {
         // 🆕 Create extractor agent
-        let extractor_config = AgentConfig::new(repo.clone()).with_model(O3).with_preamble(
-            "You are an expert at extracting data and converting it into strict JSON.",
-        );
+        let extractor_config = AgentConfig::new(repo.clone())
+            .with_model("gpt-5")
+            .with_preamble(
+                "You are an expert at extracting data and converting it into strict JSON.",
+            );
         let extractor_agent = AgentFactory::create_openai_agent(&extractor_config)?;
         let extractor = match extractor_agent {
             AIAgent::Openai(agent) => agent,
@@ -438,13 +441,13 @@ impl AIAgent {
         );
 
         // 📝 Track inference input
-        add_to_inference_cost_by_type(&extract_prompt, LlmCostType::OpenaiO3Input).await;
+        add_to_inference_cost_by_type(&extract_prompt, LlmCostType::Openai5Input).await;
 
         // 🧠 Run extractor with retry
         Ok(agent_extract_with_retry::<_, T>(
             &extractor,
             &extract_prompt,
-            LlmCostType::OpenaiO3Output,
+            LlmCostType::Openai5Output,
         )
         .await?)
     }

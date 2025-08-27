@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::path::Path;
 
@@ -101,7 +101,7 @@ impl FindingDb {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             project_id: repo.project_id.clone(),
-            title: finding.title(),
+            title: finding.title.clone(),
             description: finding.description.clone().unwrap_or_default(),
             impact: finding.impact.clone().unwrap_or_default(),
             proof_of_concept: finding.proof_of_concept.clone().unwrap_or_default(),

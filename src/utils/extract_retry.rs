@@ -1,10 +1,10 @@
-use crate::cost::cost_data::LlmCostType;
 /// LLM extraction with retry logic and cost tracking.
 ///
 /// This module provides robust LLM interaction utilities with automatic retry
 /// mechanisms for handling rate limits, network issues, and parsing errors,
 /// while tracking inference costs across different providers.
 use crate::cost::cost_data::add_to_inference_cost_by_type;
+use crate::cost::cost_data::LlmCostType;
 use crate::llm_review::findings::FromLLMJson;
 use reqwest::StatusCode;
 use rig::agent::Agent;
@@ -15,9 +15,9 @@ use rig::completion::PromptError;
 use rig::extractor::ExtractionError;
 use rig::extractor::Extractor;
 use schemars::JsonSchema;
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde::de::Error as _; // <- bring the trait’s methods into scope
+use serde::Deserialize;
 use serde_json::Error as JsonError;
 use std::{thread, time::Duration};
 
@@ -106,15 +106,34 @@ where
 // Helper function to determine if we should retry based on the original error
 fn should_retry_based_on_error(e: &str) -> bool {
     let error_msg = e.to_string().to_lowercase();
+    const ERR_SUBSTRINGS: &[&str] = &[
+        "server_error",
+        "server error",
+        "status 5", // any 5xx
+        "502 bad gateway",
+        "503 service unavailable",
+        "504 gateway timeout",
+        "too many requests", // 429
+        "rate limit",
+        "timeout",
+        "timed out",
+        "connection reset",
+        "connection refused",
+        "broken pipe",
+        "temporarily unavailable",
+        "upstream error",
+        "unexpected",
+        "invalid",
+        "syntax",
+        "parse",
+        "json",
+        "deserialize",
+    ];
 
-    // Retry on common parsing issues that might be fixed by the LLM on retry
-    error_msg.contains("unexpected")
-        || error_msg.contains("invalid")
-        || error_msg.contains("syntax")
-        || error_msg.contains("parse")
-        || error_msg.contains("json")
-        || error_msg.contains("deserialize")
-    // Add more conditions based on what errors you typically see
+    // if error message contains any of the ERR_SUBSTRINGS then retry
+    ERR_SUBSTRINGS
+        .iter()
+        .any(|needle| error_msg.contains(needle))
 }
 
 /*──────────────── helper ───────────────────────────────────────────────*/
