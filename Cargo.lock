@@ -75,6 +75,7 @@ dependencies = [
  "serde",
  "serde-sarif",
  "serde_json",
+ "strsim 0.11.1",
  "strum 0.27.2",
  "strum_macros 0.27.2",
  "tempfile",

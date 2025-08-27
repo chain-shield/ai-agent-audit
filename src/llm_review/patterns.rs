@@ -14,7 +14,8 @@ pub struct Patterns {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct Pattern {
     pub issue_type: VulnerabilityPattern,
-    pub contract: String,            // exact constract name where issue appears
+    pub title: String, // 50 char or less title capturing essence of vulnerability pattern
+    pub contract: String, // exact constract name where issue appears
     pub function: String, // exact function name where issue appears, if not applicable set to 'NA'
     pub description: String, // description of issue, include code snippet if relevant
     pub static_signals: Vec<String>, // e.g., "amountOutMin=0", "no onlyOwner"

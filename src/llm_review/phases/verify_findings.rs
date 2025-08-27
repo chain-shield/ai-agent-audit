@@ -118,8 +118,8 @@ pub async fn execute(
                 let is_finding_legit = is_legit_struct.is_legit_vulnerability;
                 if !is_finding_legit {
                     info!(
-                        "{} is NOT legit => {}",
-                        arc_findings.findings[i].title(),
+                        "{} is NOTh legit => {}",
+                        arc_findings.findings[i].title,
                         is_legit_struct.why_its_not_legit.unwrap_or_default()
                     );
                 }

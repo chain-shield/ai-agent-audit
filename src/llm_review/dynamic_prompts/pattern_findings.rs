@@ -8,12 +8,13 @@ use crate::llm_review::{
 pub fn generate_pattern_to_findings_prompt(pattern: &Pattern) -> String {
     let pattern_data: VulnerabilityPatternSpec = pattern.issue_type.get_spec();
     let pattern_full_spec = generate_formatted_pattern(pattern);
-    let pattern_title = "Security Vulnerability Pattern";
+    let pattern_type = "Security Vulnerability Pattern";
 
     generate_findings_prompt(
-        pattern_title,
+        pattern_type,
         &pattern_data.definition,
         &pattern_full_spec,
         &pattern.issue_type,
+        &pattern.title,
     )
 }

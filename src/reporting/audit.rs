@@ -1,7 +1,10 @@
 use crate::{
     build_brain::summarize,
-    llm_review::enums::EnumString,
-    llm_review::{enums::Severity, findings::Findings},
+    llm_review::{
+        enums::{EnumString, Severity},
+        findings::Findings,
+        utils::prompt_context,
+    },
     prepare_code::git_clone::RepoPaths,
 };
 /// Professional audit report generation with findings categorization.
@@ -72,7 +75,7 @@ pub async fn generated_audit_report(
 
     audit_report.push_str(&finding_count);
 
-    let findings_report = get_finding_report(&findings, report_type);
+    let findings_report = get_full_finding_report(&findings, report_type);
 
     audit_report.push_str(&findings_report);
 
@@ -83,7 +86,7 @@ pub async fn generated_audit_report(
     Ok(audit_report)
 }
 
-fn get_finding_report(findings: &Findings, report_type: ReportType) -> String {
+fn get_full_finding_report(findings: &Findings, report_type: ReportType) -> String {
     let mut findings_report = String::new();
 
     findings_report.push_str("\n");
@@ -108,43 +111,50 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
         findings_report.push_str(&format!("\n# {} Risk Findings\n\n", severity.as_str()));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
-            //title
-            findings_report.push_str(&format!(
-                "## [{}-{}]. {}\n\n",
-                severity.as_initial(),
-                i + 1,
-                finding.title()
-            ));
+            findings_report.push_str(&prompt_context::get_finding_report(finding, Some(i)));
 
-            //privilege
-            findings_report.push_str("## Minimim Privilege Required\n");
-            findings_report.push_str(&finding.privilege.as_str());
-            findings_report.push_str("\n\n");
-
-            //description
-            findings_report.push_str("## Description\n");
-            findings_report.push_str(&finding.description.clone().unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //impact
-            findings_report.push_str("## Impact\n");
-            findings_report.push_str(&finding.impact.clone().unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //POC
-            findings_report.push_str("## Proof of Concept\n");
-            findings_report.push_str(&finding.proof_of_concept.clone().unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //Proof of Code
-            findings_report.push_str("## Proof of Code\n");
-            findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //Suggested Fix
-            findings_report.push_str("## Suggested Mitigation\n");
-            findings_report.push_str(&finding.mitigation.clone().unwrap_or_default());
-            findings_report.push_str("\n\n");
+            ////title
+            //findings_report.push_str(&format!(
+            //    "## [{}-{}]. {}\n\n",
+            //    severity.as_initial(),
+            //    i + 1,
+            //    finding.title
+            //));
+            //
+            ////privilege
+            //findings_report.push_str("## Minimim Privilege Required\n");
+            //findings_report.push_str(&finding.privilege.as_str());
+            //findings_report.push_str("\n\n");
+            //
+            ////derived from
+            //findings_report.push_str("## Derived From Pattern/Invariant\n");
+            //findings_report.push_str(&finding.derived_from.clone().unwrap_or_default());
+            //findings_report.push_str("\n\n");
+            //
+            ////description
+            //findings_report.push_str("## Description\n");
+            //findings_report.push_str(&finding.description.clone().unwrap_or_default());
+            //findings_report.push_str("\n\n");
+            //
+            ////impact
+            //findings_report.push_str("## Impact\n");
+            //findings_report.push_str(&finding.impact.clone().unwrap_or_default());
+            //findings_report.push_str("\n\n");
+            //
+            ////POC
+            //findings_report.push_str("## Proof of Concept\n");
+            //findings_report.push_str(&finding.proof_of_concept.clone().unwrap_or_default());
+            //findings_report.push_str("\n\n");
+            //
+            ////Proof of Code
+            //findings_report.push_str("## Proof of Code\n");
+            //findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
+            //findings_report.push_str("\n\n");
+            //
+            ////Suggested Fix
+            //findings_report.push_str("## Suggested Mitigation\n");
+            //findings_report.push_str(&finding.mitigation.clone().unwrap_or_default());
+            //findings_report.push_str("\n\n");
         }
     } else {
         return String::new();
@@ -246,19 +256,20 @@ fn get_finding_summary_by_severity(
     let mut findings_summary = String::new();
 
     if !findings_by_severity.is_empty() {
-        findings_summary.push_str(&format!("## {} Risk Findings\n", severity.as_str()));
+        findings_summary.push_str(&format!("## {} Risk Findings\n\n", severity.as_str()));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
             let title = if report_type == ReportType::Paid {
-                finding.title()
+                finding.title.clone()
             } else {
                 finding.free_report_title()
             };
             findings_summary.push_str(&format!(
-                "[{}-{}]. {}\n",
+                "[{}-{}]. {}\n\n **Derived From** : {}\n\n",
                 severity.as_initial(),
                 i + 1,
-                title
+                title,
+                &finding.derived_from.clone().unwrap_or_default()
             ));
         }
     } else {

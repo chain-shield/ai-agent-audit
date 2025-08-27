@@ -5,16 +5,14 @@ use super::{
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     llm_review::enums::EnumString,
+    utils::semantic_compare,
 };
 use regex::Regex;
 use rig::{
     agent::Agent,
     client::{CompletionClient, ProviderClient},
     completion::{CompletionModel, Prompt},
-    providers::{
-        azure::GPT_4O,
-        openai::{self},
-    },
+    providers::openai::{self},
 };
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
@@ -31,7 +29,7 @@ pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
 pub struct Finding {
     // [Severity-issue number] - List Issue (Reentrancy, Denial of Service, etc) and
     // <Contract>::<Function> its localed in
-    pub derived_from: String,
+    pub derived_from: Option<String>,
     pub title: String,
     pub exploit_type: VulnerabilityType,
     pub privilege: PrivilegeLevel,   // permissionless vs role-gated
@@ -74,16 +72,6 @@ pub fn generated_llm_prompt(
 }
 
 impl Finding {
-    pub fn title(&self) -> String {
-        let fn_name = self.get_fn_name();
-        format!(
-            "{} issue in {}::{}",
-            self.exploit_type.as_fancy_str(),
-            self.contract,
-            fn_name
-        )
-    }
-
     pub fn free_report_title(&self) -> String {
         if self.severity == Severity::Critical
             || self.severity == Severity::High
@@ -107,13 +95,23 @@ impl Finding {
     pub fn hash(&self) -> String {
         // extract name 'func_name' from func_name(...)
         let fn_name = self.get_fn_name();
+        format!("{}-{}", self.contract, fn_name)
+    }
 
-        format!(
-            "{}-{}-{}",
-            self.exploit_type.as_str(),
-            self.contract,
-            fn_name
-        )
+    pub fn hash_derived(&self) -> String {
+        // extract name 'func_name' from func_name(...)
+        let fn_name = self.get_fn_name();
+
+        if let Some(derived) = self.derived_from.clone() {
+            format!("{}-{}-{}", derived.to_string(), self.contract, fn_name)
+        } else {
+            format!(
+                "{}-{}-{}",
+                self.exploit_type.as_str(),
+                self.contract,
+                fn_name
+            )
+        }
     }
 
     // extract name 'func_name' from func_name(...)
@@ -138,10 +136,21 @@ impl Finding {
     where
         M: CompletionModel,
     {
+        let title_similiarity_score = semantic_compare::similarity_score(&self.title, &issue.title);
+        let desc_similiarity_score = semantic_compare::similarity_score(
+            &self.description.clone().unwrap_or_default(),
+            &issue.description.clone().unwrap_or_default(),
+        );
         // contract, function and issue type MUST match
-        if issue.hash() != self.hash() {
+        if issue.hash() != self.hash() || title_similiarity_score <= 0.25 {
+            // log::info!(
+            //     "issue: {} \n self: {} \n ==> DIFFERENT",
+            //     issue.title,
+            //     self.title
+            // );
             return Ok(false);
-        } else if issue.description == self.description {
+        } else if desc_similiarity_score >= 0.65 || issue.description == self.description {
+            log::info!("issue: {} \n self: {} \n ==> SAME", issue.title, self.title);
             return Ok(true);
         }
 
@@ -158,12 +167,11 @@ impl Finding {
                 &issue.description.clone().unwrap_or_default(),
             );
 
-        log::info!("checking if {} is duplication", issue.title());
-        add_to_inference_cost_by_type(&prompt, LlmCostType::Openai4oInput).await;
+        add_to_inference_cost_by_type(&prompt, LlmCostType::Openai5Input).await;
 
         let response = ai_agent.prompt(prompt).await?;
 
-        add_to_inference_cost_by_type(&response, LlmCostType::Openai4oOutput).await;
+        add_to_inference_cost_by_type(&response, LlmCostType::Openai5Output).await;
 
         Ok(response.trim().eq_ignore_ascii_case("YES"))
     }
@@ -194,7 +202,7 @@ impl Findings {
         }
 
         let openai_client = openai::Client::from_env();
-        let openai_agent = Arc::new(openai_client.agent(GPT_4O).temperature(1.0).build());
+        let openai_agent = Arc::new(openai_client.agent("gpt-5").temperature(1.0).build());
 
         let mut findings_hash = HashMap::<String, Vec<Finding>>::new();
 
@@ -222,7 +230,7 @@ impl Findings {
                             deduped_findings_lock.extend(deduped);
                         }
                         Err(e) => {
-                            log::error!("❌ deduping findngs failed: {e}");
+                            log::error!("❌ deduping findings failed: {e}");
                         }
                     }
                 } else {

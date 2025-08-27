@@ -11,7 +11,7 @@ use crate::{
         dynamic_prompts::{self, invariants::generate_invariant_prompt},
         enums::AIAgent,
         issues::{IssuePrompt, IssueStructTrait},
-        pattern_category::get_category_spec,
+        pattern_category::get_category_library_spec,
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -71,7 +71,7 @@ where
         IssuePrompt::Pattern(pattern_category) => {
             for (i, category) in pattern_category.into_iter().enumerate() {
                 let category_spec =
-                    get_category_spec(&category).expect("could not extract category spec");
+                    get_category_library_spec(&category).expect("could not extract category spec");
                 let category_prompt = Arc::new(
                     dynamic_prompts::patterns::generate_pattern_category_prompt(&category),
                 );

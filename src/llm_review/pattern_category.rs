@@ -20,6 +20,8 @@ pub enum PatternCategory {
     UpgradeFlop,
     Evm,
     Randomness,
+    Top,
+    Frequent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -118,6 +120,20 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         tier: PatternTier::Tier4,
         runs: 0,
     },
+    PatternCategorySpec {
+        category: PatternCategory::Top,
+        title: "Top Code4rena",
+        issues: TOP_PAID_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: 5,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::Frequent,
+        title: "Most Frequent Code4rena",
+        issues: FREQUENT_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: 5,
+    },
 ];
 
 /// One-time initialized map from PatternCategory -> &'static PatternCategorySpec
@@ -145,7 +161,7 @@ pub fn pattern_category_map() -> &'static HashMap<PatternCategory, &'static Patt
 }
 
 /// Convenience accessor for a single category spec
-pub fn get_category_spec(cat: &PatternCategory) -> Option<&'static PatternCategorySpec> {
+pub fn get_category_library_spec(cat: &PatternCategory) -> Option<&'static PatternCategorySpec> {
     pattern_category_map().get(cat).copied()
 }
 

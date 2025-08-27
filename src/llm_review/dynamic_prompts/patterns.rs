@@ -1,7 +1,7 @@
 use crate::llm_review::{
     enums::{all_enum_variants, generate_enum_list, EnumString},
     findings::PrivilegeLevel,
-    pattern_category::{get_category_spec, PatternCategory},
+    pattern_category::{get_category_library_spec, PatternCategory},
     patterns::{
         Pattern, VulnerabilityPattern, VulnerabilityPatternSpec, VULNERABILITY_PATTERN_LIBRARY,
     },
@@ -9,7 +9,7 @@ use crate::llm_review::{
 };
 
 pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
-    let category_spec = get_category_spec(&category).expect("could not find category");
+    let category_spec = get_category_library_spec(&category).expect("could not find category");
     let pattern_categories = generate_formated_list_from_pattern_data(&category_spec.issues);
     let issue_enum_list = generate_enum_list(&category_spec.issues);
     let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
@@ -64,6 +64,7 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
         ### OUTPUT REQUIREMENTS 
 
         **For Every VIOLATION** return:
+        1. **Title**: 100 chars or less audit report friendly title
         1. **Description**: Detailed explanation including vulnerable code snippet 
         2. **Issue Type**: {enums}
         3. **Contract**: The exact contract name where vulnerability is found 
@@ -143,6 +144,7 @@ pub fn get_pattern_json(patterns: &[VulnerabilityPattern]) -> String {
         r#"{{
         "patterns": [
             {{
+            "title": "100 chars or less audit report friendly title",
             "description": "Detailed explanation of vulnerability including vulnerable code snippet",
             "issue_type": "{issues}",
             "contract": "{{contract_name}}",

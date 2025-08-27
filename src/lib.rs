@@ -265,6 +265,7 @@ pub mod utils {
     pub mod logging;
     /// Text sanitization utilities
     pub mod sanitize;
+    pub mod semantic_compare;
     /// Vector database connection utilities
     pub mod vec_db_connect;
 }

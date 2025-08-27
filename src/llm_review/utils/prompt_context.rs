@@ -18,7 +18,7 @@ pub fn generate_prompt_for_issue_check(
     prompt.push_str("## REPORT FOR SECURITY ISSUE");
     prompt.push_str("\n\n");
 
-    let report = get_finding_report(finding);
+    let report = get_finding_report(finding, None);
     prompt.push_str(&report);
     prompt.push_str("\n\n");
 
@@ -76,6 +76,9 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
         pattern.contract, pattern.function
     ));
 
+    pattern_list.push_str("\n ### Title\n");
+    pattern_list.push_str(&pattern.description.as_str());
+
     pattern_list.push_str("\n ### Description/Code Snippet\n");
     pattern_list.push_str(&pattern.description.as_str());
 
@@ -98,14 +101,43 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
     pattern_list
 }
 
-fn get_finding_report(finding: &Finding) -> String {
+pub fn get_finding_report(finding: &Finding, index: Option<usize>) -> String {
     let mut findings_report = String::new();
-    //title
-    findings_report.push_str(&format!(
-        "## [Severity-{}]. {}\n\n",
-        finding.severity.as_str(),
-        finding.title()
-    ));
+
+    if let Some(inx) = index {
+        // title with index
+        findings_report.push_str(&format!(
+            "## [{}-{}]. {}\n\n",
+            finding.severity.as_initial(),
+            inx + 1,
+            finding.title
+        ));
+    } else {
+        //title without index
+        findings_report.push_str(&format!(
+            "## [Severity-{}]. {}\n\n",
+            finding.severity.as_str(),
+            finding.title
+        ));
+    }
+    //derived from
+    findings_report.push_str("## Derived From Pattern/Invariant\n");
+    findings_report.push_str(&finding.derived_from.clone().unwrap_or_default());
+    findings_report.push_str("\n\n");
+    //type
+    findings_report.push_str("## Exploit Type\n");
+    findings_report.push_str(&finding.exploit_type.as_str());
+    findings_report.push_str("\n\n");
+
+    //location
+    findings_report.push_str("## Location\n");
+    findings_report.push_str(&format!("{}.{}", finding.contract, finding.function));
+    findings_report.push_str("\n\n");
+
+    //privilege
+    findings_report.push_str("## Minimim Privilege Required\n");
+    findings_report.push_str(&finding.privilege.as_str());
+    findings_report.push_str("\n\n");
 
     //description
     findings_report.push_str("## Description\n");

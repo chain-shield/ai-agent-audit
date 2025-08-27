@@ -13,6 +13,7 @@ use crate::{
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
         utils::prompt_context::{generate_formatted_invariant_finding, generate_formatted_pattern},
     },
+    utils::semantic_compare,
 };
 use rig::completion::Prompt;
 use rig::{
@@ -60,6 +61,7 @@ pub trait IssueTrait: Send + Sync {
     ) -> anyhow::Result<bool>;
     fn get_issue_report(&self) -> String;
     fn title_str(&self) -> String;
+    fn description(&self) -> String;
     fn generate_verify_prompt(&self) -> String;
     fn pattern_to_findings_prompt(&self) -> String;
 }
@@ -84,6 +86,9 @@ impl IssueTrait for InvariantFinding {
     fn get_issue_report(&self) -> String {
         generate_formatted_invariant_finding(&self)
     }
+    fn description(&self) -> String {
+        self.desc.clone()
+    }
     fn title_str(&self) -> String {
         format!(
             "{} - {}.{}",
@@ -104,11 +109,10 @@ impl IssueTrait for InvariantFinding {
 impl IssueTrait for Pattern {
     fn hash(&self) -> String {
         format!(
-            "{}-{}-{}-{}",
+            "{}-{}-{}",
             self.issue_type.as_str(),
             self.contract,
             self.function,
-            self.privilege.as_str()
         )
     }
     async fn is_duplicate_issue<M: CompletionModel + Send + Sync>(
@@ -131,6 +135,9 @@ impl IssueTrait for Pattern {
     }
     fn generate_verify_prompt(&self) -> String {
         generate_pattern_verify_prompt(&self)
+    }
+    fn description(&self) -> String {
+        self.description.clone()
     }
     fn pattern_to_findings_prompt(&self) -> String {
         generate_pattern_to_findings_prompt(self)
@@ -290,9 +297,24 @@ where
     T: IssueTrait,
     M: CompletionModel,
 {
+    let similiarity_score =
+        semantic_compare::similarity_score(&pattern.description(), &issue.description());
     // contract, function and issue type MUST match
-    if issue.hash() != pattern.hash() {
+    if issue.hash() != pattern.hash() || similiarity_score <= 0.25 {
+        // log::info!(
+        //     "issue: {} \n pattern: {} \n ==> DIFFERENT",
+        //     issue.description(),
+        //     pattern.description()
+        // );
         return Ok(false);
+    } else if similiarity_score >= 0.65 || issue.description() == pattern.description() {
+        // log::info!(
+        //     "issue: {} \n pattern: {} \n ==> SAME",
+        //     issue.description(),
+        //     pattern.description()
+        // );
+
+        return Ok(true);
     }
 
     let prompt = DEDUP_PROMPT_PATTERN

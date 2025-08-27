@@ -15,7 +15,7 @@ use rig::{
         anthropic::{self, CLAUDE_3_7_SONNET},
         deepseek::{self, DEEPSEEK_CHAT},
         gemini::{self},
-        openai::{self, O3},
+        openai::{self},
     },
 };
 // use rig_qdrant::QdrantVectorStore;  // Temporarily disabled due to version conflicts
@@ -301,7 +301,7 @@ impl AgentFactory {
     pub fn create_openai_agent(config: &AgentConfig) -> Result<AIAgent> {
         let client = openai_client()?;
         let model = if config.model == "default" {
-            O3
+            "gpt-5"
         } else {
             &config.model
         };

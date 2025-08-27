@@ -1,22 +1,18 @@
+use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::Result;
-use crate::llm_review::invariants::{
-    ContractInvariants, InvariantFinding, InvariantStatus, InvariantType,
-};
-use crate::llm_review::issues::{IssuePrompt, IssueStructTrait};
-use crate::llm_review::pattern_category::PatternCategory;
-use crate::llm_review::pattern_phases;
-use crate::llm_review::patterns::Patterns;
 use crate::llm_review::{
-    analysis_db::FindingsDb, context_state::generate_audit_scope, findings::CLAUDE_4_0_SONNET,
+    agent_factory::{AgentConfig, AgentFactory},
+    analysis_db::FindingsDb,
+    context_state::generate_audit_scope,
+    findings::Findings,
+    findings::CLAUDE_4_0_SONNET,
+    invariants::{ContractInvariants, InvariantFinding, InvariantStatus, InvariantType},
+    issues::{IssuePrompt, IssueStructTrait},
+    pattern_category::PatternCategory,
+    pattern_phases,
+    patterns::Patterns,
 };
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::{
-    enumerator::codeblock_db::CodeBlocksDb,
-    llm_review::{
-        agent_factory::{AgentConfig, AgentFactory},
-        findings::Findings,
-    },
-};
 use log::info;
 use std::{path::PathBuf, sync::Arc};
 use strum::IntoEnumIterator;
@@ -64,8 +60,14 @@ pub async fn review_codebase_for_security_issues_v2(
         // generated enhanced codeblock
         let codeblock = enhance_codeblock(&contract, &codeblock, repo).await?;
 
+        let pattern_category_c4: Vec<PatternCategory> = PatternCategory::iter()
+            .filter(|p| *p == PatternCategory::Top || *p == PatternCategory::Frequent)
+            .collect();
+        let _pattern_category_standard: Vec<PatternCategory> = PatternCategory::iter()
+            .filter(|p| *p != PatternCategory::Top && *p != PatternCategory::Frequent)
+            .collect();
         // define scope of patterns and invariants to investigate
-        let pattern_prompt = IssuePrompt::Pattern(PatternCategory::iter().collect());
+        let pattern_prompt = IssuePrompt::Pattern(pattern_category_c4);
         let invariant_prompt = IssuePrompt::Invariant(InvariantType::iter().collect());
 
         // Phase 1: Generate patterns and invariants
@@ -86,6 +88,10 @@ pub async fn review_codebase_for_security_issues_v2(
         )
         .await?;
 
+        info!(
+            "total of {} invariant found!",
+            raw_invariants.invariants.len()
+        );
         // grab all invariant violations
         let violations: Vec<InvariantFinding> = raw_invariants
             .issues()
@@ -97,6 +103,11 @@ pub async fn review_codebase_for_security_issues_v2(
         raw_invariants = ContractInvariants {
             invariants: violations,
         };
+
+        info!(
+            "{} invariant violations found!",
+            raw_invariants.invariants.len()
+        );
 
         // Phase 2: Verify patterns and invariants
         info!("PHASE 2: VERIFY PATTERNS");
@@ -113,7 +124,7 @@ pub async fn review_codebase_for_security_issues_v2(
             Patterns::default()
         };
 
-        info!("patterns => {:#?}", verified_patterns);
+        // info!("patterns => {:#?}", verified_patterns);
 
         let verified_invariants = if !raw_invariants.issues().is_empty() {
             pattern_phases::verify_patterns::verify_invariants(
@@ -127,7 +138,7 @@ pub async fn review_codebase_for_security_issues_v2(
             ContractInvariants::default()
         };
 
-        info!("invariants => {:#?}", verified_invariants);
+        // info!("invariants => {:#?}", verified_invariants);
 
         info!("PHASE 3: GENERATE FINDINGS FROM PATTERNS");
         let mut raw_findings = Findings::default();
