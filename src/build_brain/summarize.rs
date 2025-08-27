@@ -18,7 +18,6 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
-use crate::{cost::cost_data::LlmCostType, llm_review::context_state};
 use crate::{
     cost::cost_data::add_to_inference_cost_by_type,
     prepare_code::git_clone::RepoPaths,
@@ -28,6 +27,7 @@ use crate::{
         extract_retry::extractor_with_retry,
     },
 };
+use crate::{cost::cost_data::LlmCostType, llm_review::context_state};
 
 use super::slither_ffi::cache_key;
 
@@ -217,6 +217,8 @@ pub async fn summarize_src_files(
                         .unwrap_or(&file)
                         .to_string_lossy()
                         .to_string();
+
+                    add_to_inference_cost_by_type(&res.summary, LlmCostType::Openai5Output).await;
                     Some(SrcFileSummary {
                         filename,
                         summary: res.summary,

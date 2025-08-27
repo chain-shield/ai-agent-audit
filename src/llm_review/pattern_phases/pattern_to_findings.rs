@@ -76,8 +76,7 @@ where
                     let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
 
                     // add to cost
-                    add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::Openai5Input)
-                        .await;
+                    add_to_inference_cost_by_type(&full_prompt, LlmCostType::Openai5Input).await;
                     let findings: Findings = arc_agent.extract_with_retry(&full_prompt).await?;
 
                     let issues_found = findings.findings.len();

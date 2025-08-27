@@ -56,7 +56,7 @@ impl LlmCostType {
             LlmCostType::Openai5Input => 1.25,
             LlmCostType::Openai5Output => 10.00,
             LlmCostType::OpenaiO3Input => 2.00,
-            LlmCostType::OpenaiO3Output => 10.00, // real cost is 8.00, bump it to 10 so it covers both gpt-5 and o3
+            LlmCostType::OpenaiO3Output => 8.00,
             LlmCostType::AnthropicClaudeInput => 3.00,
             LlmCostType::AnthropicClaudeOutput => 15.00,
             LlmCostType::GeminiInput => 1.25,

@@ -134,7 +134,7 @@ where
                 let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
 
                 // add to cost
-                add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::Openai5Input).await;
+                add_to_inference_cost_by_type(&full_prompt, LlmCostType::Openai5Input).await;
                 info!("verifying {} #{}", arc_patterns.issue_title(), i + 1);
                 let is_legit_struct: M = arc_agent.extract_with_retry(&full_prompt).await?;
 
