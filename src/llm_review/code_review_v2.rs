@@ -50,7 +50,7 @@ pub async fn review_codebase_for_security_issues_v2(
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     let audit_scope = generate_audit_scope(repo).await?;
 
-    let (ai_verify_agent, _, ai_discovery_agent) = generate_ai_agents(repo).await?;
+    let (ai_verify_agent, ai_discovery_agent) = generate_ai_agents(repo).await?;
 
     let findings_db = FindingsDb::open()?;
 
@@ -246,9 +246,7 @@ pub async fn enhance_codeblock(
 
     Ok(enhanced_block)
 }
-pub async fn generate_ai_agents(
-    repo: &RepoPaths,
-) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Arc<AIAgent>)> {
+pub async fn generate_ai_agents(repo: &RepoPaths) -> Result<(Arc<AIAgent>, Arc<AIAgent>)> {
     info!("setting up AI agents...");
 
     // Enhanced preamble for verification agent
@@ -280,7 +278,7 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         .with_preamble(verify_preamble)
         .with_file_picker(false); // Disabled to avoid rate limits
 
-    let second_verify_config = AgentConfig::new(repo.clone())
+    let _ = AgentConfig::new(repo.clone())
         .with_temperature(1.0)
         .with_model(CLAUDE_4_0_SONNET)
         .with_max_tokens(64_000)
@@ -289,8 +287,6 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         .with_file_retrieval(false);
 
     let ai_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
-    let second_ai_verify_agent =
-        Arc::new(AgentFactory::create_anthropic_agent(&second_verify_config)?);
 
     // Enhanced preamble for discovery agents
     let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases.";
@@ -316,5 +312,5 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
     // info!("Created {} discovery agents", ai_discovery_agents.len());
 
-    Ok((ai_verify_agent, second_ai_verify_agent, ai_discovery_agent))
+    Ok((ai_verify_agent, ai_discovery_agent))
 }

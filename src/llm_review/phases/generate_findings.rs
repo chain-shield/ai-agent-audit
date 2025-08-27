@@ -7,7 +7,7 @@ use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context},
+        context_state::{generate_audit_scope, get_metadata_context, ContextType},
         enums::AIAgent,
         findings::{generated_llm_prompt, Findings},
         prompt_support::{post_prompt::generate_post_prompt, pre_prompt::generate_pre_prompt},
@@ -37,7 +37,7 @@ pub async fn execute(
         findings: Vec::new(),
     }));
 
-    let context = get_metadata_context(repo)
+    let context = get_metadata_context(repo, &ContextType::Full)
         .await
         .expect("could not extract context");
 
