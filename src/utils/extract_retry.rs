@@ -41,12 +41,12 @@ where
 
     for attempt in 1..=MAX_ATTEMPTS {
         // add to cost
-        add_to_inference_cost_by_type(input, llm_cost_type).await;
 
         match extractor.extract(input).await {
             Ok(data) => return Ok(data), // ✅ parsed JSON
             Err(ExtractionError::NoData) if attempt < MAX_ATTEMPTS => {
                 eprintln!("No data extracted – (attempt {attempt}/{MAX_ATTEMPTS})");
+                add_to_inference_cost_by_type(input, llm_cost_type).await;
                 thread::sleep(delay);
             }
             Err(e) => return Err(e), // network / OpenAI errors → bubble up
