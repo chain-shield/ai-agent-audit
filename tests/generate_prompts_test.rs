@@ -125,14 +125,19 @@ fn print_findings_template_prompts() {
     let issue_full_spec =
         ai_agent_audit::llm_review::utils::prompt_context::generate_formatted_pattern(&pattern);
 
-    let templated =
-        ft::generate_findings_prompt(issue_title, issue_definition, &issue_full_spec, &issue_type);
+    let templated = ft::generate_findings_prompt(
+        issue_title,
+        issue_definition,
+        &issue_full_spec,
+        &issue_type,
+        issue_definition,
+    );
     println!(
         "\n===== Findings Template with VulnerabilityPattern =====\n{}\n",
         templated
     );
 
-    let findings_json = ft::get_findings_json(&issue_type);
+    let findings_json = ft::get_findings_json(&issue_type, issue_definition);
     println!(
         "\n===== Findings JSON (from VulnerabilityPattern) =====\n{}\n",
         findings_json

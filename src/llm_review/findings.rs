@@ -150,7 +150,7 @@ impl Finding {
             // );
             return Ok(false);
         } else if desc_similiarity_score >= 0.65 || issue.description == self.description {
-            log::info!("issue: {} \n self: {} \n ==> SAME", issue.title, self.title);
+            // log::info!("issue: {} \n self: {} \n ==> SAME", issue.title, self.title);
             return Ok(true);
         }
 

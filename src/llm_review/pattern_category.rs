@@ -125,14 +125,14 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         title: "Top Code4rena",
         issues: TOP_PAID_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: 5,
+        runs: 1,
     },
     PatternCategorySpec {
         category: PatternCategory::Frequent,
         title: "Most Frequent Code4rena",
         issues: FREQUENT_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: 5,
+        runs: 1,
     },
 ];
 
