@@ -3,217 +3,186 @@
 
 # Puppy Raffle Protocol
 
-PuppyRaffle is an on-chain ERC721 raffle: users pay a fixed entrance fee to join rounds for a chance to win both a puppy NFT and most of the pot.
+- Overview
+  - Puppy Raffle is an ERC721-based on-chain raffle that mints a “Puppy” NFT to the winner. Players enter by paying a fixed entrance fee per slot.
 
-## How it works
-- Enter: Call `enterRaffle(address[] participants)` and send `msg.value == entranceFee * participants.length`. You can include yourself multiple times or batch friends. Duplicate addresses revert.
-- Refunds: Any entrant may self-refund by index, receiving `entranceFee` back. The player slot is set to `address(0)` (array not compacted).
-- Winner selection: After `raffleDuration` and with ≥4 players, anyone can call `selectWinner`. A pseudo-random index is chosen; the winner gets 80% of contract funds, and a Puppy NFT is minted to them with Common/Rare/Legendary rarity and base64 on-chain metadata. 20% is accrued as protocol fees. The round resets for the next raffle.
-- Fees: Fees accumulate to `feeAddress` and can be withdrawn only when no active player funds remain. Owner can update `feeAddress`.
+- How it works
+  - enterRaffle(address[] participants): pay entranceFee × participants.length; duplicate addresses are rejected.
+  - Players can self-refund by index, reclaiming their entrance fee and freeing their slot.
+  - After raffleDuration elapses and at least four entries exist, anyone can call selectWinner:
+    - 80% of the pot goes to the winner; 20% accrues as protocol fees for feeAddress.
+    - The winner is minted one NFT with on-chain Base64 metadata; previousWinner is updated and the round resets.
+  - Fees are withdrawn by feeAddress via withdrawFees; the owner can change feeAddress.
 
-## Deployment/Tests
-- Deploy script uses 1 ETH entrance fee, 1-day duration, and sets `feeAddress` to the deployer. Comprehensive Foundry tests verify entries, refunds, timing, payouts, NFT minting/URI, and fee withdrawal.
+- Deployment
+  - A Foundry script deploys PuppyRaffle with parameters (entranceFee, feeAddress = deployer, duration = 1 day).
+
+- Caveats
+  - RNG uses block data and msg.sender (manipulable under certain conditions).
+  - Duplicate checks and accounting rely on players.length and include refunded “holes,” which can cause gas blowups, misaccounting, or blocked fee withdrawals.
+  - tokenURI JSON has minor formatting quirks; ensure consumer robustness.
 
 
 ## SUMMARY OF FILE: 4-puppy-raffle-audit/test/PuppyRaffleTest.t.sol
-# Docs: Main List of Files in Project
-- script/DeployPuppyRaffle.sol: Deployment script for the PuppyRaffle contract, likely wiring constructor params (entrance fee, fee recipient, raffle duration) and broadcasting the deployment via Foundry scripts.
-- src/PuppyRaffle.sol: Core raffle/NFT contract implementing player entry, refund, winner selection, fee withdrawal, and NFT minting/tokenURI.
-- test/PuppyRaffleTest.t.sol: Comprehensive Foundry test suite covering entry rules, refunds, indexing, winner selection timing and minimum players, payouts, NFT minting/metadata, and fee withdrawals.
+# Project Overview (Docs)
+- script/DeployPuppyRaffle.sol: Deployment script for PuppyRaffle, likely wiring constructor params (entranceFee, feeAddress, duration) and broadcasting a deploy transaction.
+- src/PuppyRaffle.sol: Core raffle/NFT contract the tests target. Manages player entries, refunds, winner selection, fee withdrawal, and NFT minting with a fixed tokenURI.
+- test/PuppyRaffleTest.t.sol: Foundry test suite validating all critical flows: entering, refunds, indexing, winner selection timing and constraints, payout split, NFT minting/URI, and fee withdrawals.
 
----
+# Contract: PuppyRaffleTest (contract PuppyRaffleTest is Test)
+A Foundry test contract that stands up a PuppyRaffle instance and rigorously verifies behavior. It configures constants like entranceFee (1 ETH), a fee recipient, and raffle duration (1 day). Tests cover: correct payment gating for single/multi-entry, duplicate prevention, player self-refund mechanics, player indexing, winner selection timing and minimum participant constraints, deterministic winner expectation (playerFour given test seeding), payout split (80% to winner, 20% to fees), ERC721 minting to winner with a specific base64 tokenURI, and fee withdrawal only after the raffle round resolves. Uses cheatcodes (vm.prank, vm.expectRevert, vm.warp, vm.roll) to simulate users, time, and block changes.
 
-## Contract: PuppyRaffleTest (tests)
-Contract definition: contract PuppyRaffleTest is Test
+Storage Variables
+- PuppyRaffle puppyRaffle; Instance under test deployed in setUp to run all scenarios.
+- uint256 entranceFee = 1e18; Fixed ticket price (1 ETH) used in payment assertions.
+- address playerOne/Two/Three/Four; Mock participant addresses entering and interacting.
+- address feeAddress = address(99); Recipient of 20% fee upon fee withdrawal.
+- uint256 duration = 1 days; Raffle round length used to gate selectWinner timing.
 
-Summary (≤200 words):
-PuppyRaffleTest is a Foundry test contract validating the behavior of PuppyRaffle. It deploys a fresh instance with a fixed entrance fee, fee recipient, and raffle duration. Tests cover single and multiple entries with exact payment, rejection of underpayment and duplicate players, refund mechanics (self-only, correct amount, array hole), player indexing, and winner selection constraints (time-bound, minimum 4 players). It simulates time/blocks with vm.warp/roll, then asserts deterministic winner selection (playerFour), payout splitting (80% to winner, 20% fees), NFT minting to the winner, tokenURI correctness, and fee withdrawals only when no active players remain. Modifiers set up common preconditions.
+Functions and Modifiers
+- function setUp() public
+  Deploys PuppyRaffle with entranceFee, feeAddress, and duration, preparing test state. Interface: setUp().
 
-Storage variables (≤50 words each):
-- PuppyRaffle public puppyRaffle: The contract under test; deployed in setUp and used across tests.
-- uint256 public entranceFee = 1e18: Fixed per-player cost to enter the raffle (1 ETH in tests).
-- address public playerOne = address(1): Test participant address #1.
-- address public playerTwo = address(2): Test participant address #2.
-- address public playerThree = address(3): Test participant address #3.
-- address public playerFour = address(4): Test participant address #4.
-- address public feeAddress = address(99): Recipient of protocol fee upon withdrawal.
-- uint256 public duration = 1 days: Raffle duration; used to gate winner selection timing.
+- function testCanEnterRaffle() public
+  Verifies single-player entry succeeds when exact fee sent and player is recorded at index 0. Interface: testCanEnterRaffle().
 
-Functions (≤100 words each):
-- function setUp() public: Deploys a new PuppyRaffle with entranceFee, feeAddress, and duration for isolated testing.
-- function testCanEnterRaffle() public: Enters one player by paying entranceFee; asserts players(0) equals playerOne.
-- function testCantEnterWithoutPaying() public: Expects revert when calling enterRaffle without sufficient msg.value.
-- function testCanEnterRaffleMany() public: Enters two players with exact aggregate payment; verifies order in players array.
-- function testCantEnterWithoutPayingMultiple() public: Expects revert when underpaying for multiple players.
-- function testCantEnterWithDuplicatePlayers() public: Expects revert when the same address appears twice in a single entry batch.
-- function testCantEnterWithDuplicatePlayersMany() public: Expects revert when a batch contains any duplicates among three addresses.
-- modifier playerEntered(): Pre-loads the raffle with playerOne by paying entranceFee; used by refund tests.
-- function testCanGetRefund() public playerEntered: As playerOne, refunds by index; asserts ETH balance increased by entranceFee.
-- function testGettingRefundRemovesThemFromArray() public playerEntered: After refund, verifies players(0) is zeroed (address(0)).
-- function testOnlyPlayerCanRefundThemself() public playerEntered: As a different address, refund reverts with permission error.
-- function testGetActivePlayerIndexManyPlayers() public: After two entries, validates getActivePlayerIndex returns correct indices.
-- modifier playersEntered(): Enters four distinct players with exact total payment; used in winner/fees tests.
-- function testCantSelectWinnerBeforeRaffleEnds() public playersEntered: Selecting winner before duration elapses reverts.
-- function testCantSelectWinnerWithFewerThanFourPlayers() public: With only three players and elapsed time, selectWinner reverts.
-- function testSelectWinner() public playersEntered: After time/block advance, selectWinner executes; asserts previousWinner() == playerFour.
-- function testSelectWinnerGetsPaid() public playersEntered: Validates winner receives 80% of pot in ETH post selection.
-- function testSelectWinnerGetsAPuppy() public playersEntered: Asserts the winner receives one NFT (balanceOf == 1).
-- function testPuppyUriIsRight() public playersEntered: Asserts tokenURI(0) matches the expected base64 JSON data URI.
-- function testCantWithdrawFeesIfPlayersActive() public playersEntered: With active players, withdrawFees reverts.
-- function testWithdrawFees() public playersEntered: After winner selection, withdraws protocol fees; asserts feeAddress balance equals 20% of pot.
+- function testCantEnterWithoutPaying() public
+  Ensures enterRaffle reverts without sufficient ETH with message “Must send enough to enter raffle.” Interface: testCantEnterWithoutPaying().
 
-Function interfaces:
-- function setUp() public;
-- function testCanEnterRaffle() public;
-- function testCantEnterWithoutPaying() public;
-- function testCanEnterRaffleMany() public;
-- function testCantEnterWithoutPayingMultiple() public;
-- function testCantEnterWithDuplicatePlayers() public;
-- function testCantEnterWithDuplicatePlayersMany() public;
-- modifier playerEntered();
-- function testCanGetRefund() public;
-- function testGettingRefundRemovesThemFromArray() public;
-- function testOnlyPlayerCanRefundThemself() public;
-- function testGetActivePlayerIndexManyPlayers() public;
-- modifier playersEntered();
-- function testCantSelectWinnerBeforeRaffleEnds() public;
-- function testCantSelectWinnerWithFewerThanFourPlayers() public;
-- function testSelectWinner() public;
-- function testSelectWinnerGetsPaid() public;
-- function testSelectWinnerGetsAPuppy() public;
-- function testPuppyUriIsRight() public;
-- function testCantWithdrawFeesIfPlayersActive() public;
-- function testWithdrawFees() public;
+- function testCanEnterRaffleMany() public
+  Checks multi-entry for two players succeeds when paying 2x fee and both are stored in order. Interface: testCanEnterRaffleMany().
+
+- function testCantEnterWithoutPayingMultiple() public
+  Validates underpayment for multiple players reverts with the same insufficient funds error. Interface: testCantEnterWithoutPayingMultiple().
+
+- function testCantEnterWithDuplicatePlayers() public
+  Asserts duplicate addresses in a batch revert with “Duplicate player.” Interface: testCantEnterWithDuplicatePlayers().
+
+- function testCantEnterWithDuplicatePlayersMany() public
+  Extends duplicate-checking to larger batches; any duplicate causes revert. Interface: testCantEnterWithDuplicatePlayersMany().
+
+- modifier playerEntered()
+  Helper that enrolls playerOne with exact fee, then runs the test body. Interface: playerEntered().
+
+- function testCanGetRefund() public playerEntered
+  Confirms a player can self-refund by index, increasing their balance by entranceFee. Interface: testCanGetRefund().
+
+- function testGettingRefundRemovesThemFromArray() public playerEntered
+  Ensures refund zeroes the player slot (sets address(0)) to mark removal. Interface: testGettingRefundRemovesThemFromArray().
+
+- function testOnlyPlayerCanRefundThemself() public playerEntered
+  Verifies only the indexed player can call refund; others revert with corresponding message. Interface: testOnlyPlayerCanRefundThemself().
+
+- function testGetActivePlayerIndexManyPlayers() public
+  Validates getActivePlayerIndex returns correct indices after multi-entry. Interface: testGetActivePlayerIndexManyPlayers().
+
+- modifier playersEntered()
+  Enrolls four players for tests that require full quorum, then proceeds. Interface: playersEntered().
+
+- function testCantSelectWinnerBeforeRaffleEnds() public playersEntered
+  Asserts selecting a winner before duration elapses reverts with “Raffle not over.” Interface: testCantSelectWinnerBeforeRaffleEnds().
+
+- function testCantSelectWinnerWithFewerThanFourPlayers() public
+  Ensures winner selection requires at least 4 players; reverts otherwise even after time passes. Interface: testCantSelectWinnerWithFewerThanFourPlayers().
+
+- function testSelectWinner() public playersEntered
+  After time/roll advance, calls selectWinner and expects previousWinner == playerFour (determinism under test seed). Interface: testSelectWinner().
+
+- function testSelectWinnerGetsPaid() public playersEntered
+  Confirms winner receives 80% of pot (4 * fee * 80/100). Interface: testSelectWinnerGetsPaid().
+
+- function testSelectWinnerGetsAPuppy() public playersEntered
+  Verifies ERC721 mint: winner’s balance increases to 1. Interface: testSelectWinnerGetsAPuppy().
+
+- function testPuppyUriIsRight() public playersEntered
+  Checks tokenURI(0) equals a specific base64-encoded JSON URI. Interface: testPuppyUriIsRight().
+
+- function testCantWithdrawFeesIfPlayersActive() public playersEntered
+  Prevents fee withdrawal while players remain active; reverts appropriately. Interface: testCantWithdrawFeesIfPlayersActive().
+
+- function testWithdrawFees() public playersEntered
+  After winner selection, allows withdrawFees to send 20% of pot to feeAddress. Interface: testWithdrawFees().
 
 
 ## SUMMARY OF FILE: 4-puppy-raffle-audit/script/DeployPuppyRaffle.sol
-# Docs Summary
-- File index: The project contains three main files — `script/DeployPuppyRaffle.sol` (deployment script), `src/PuppyRaffle.sol` (core raffle contract), and `test/PuppyRaffleTest.t.sol` (tests). This layout follows standard Foundry structure: source in `src`, deployment logic in `script`, and tests in `test`.
+Docs Summary: Main List of Files in Project
+- script/DeployPuppyRaffle.sol: Foundry deploy script that broadcasts a transaction and deploys the PuppyRaffle contract with preset parameters (1 ETH entrance fee, deployer as feeAddress, 1-day duration).
+- src/PuppyRaffle.sol: Core raffle contract (not shown here).
+- test/PuppyRaffleTest.t.sol: Foundry tests for PuppyRaffle (not shown here).
 
-# Contract: DeployPuppyRaffle (deploy script)
+Contract: DeployPuppyRaffle (deploy script)
 - Definition: `contract DeployPuppyRaffle is Script`
-- Summary (≤200 words): A Foundry deploy script that broadcasts a transaction to deploy the `PuppyRaffle` contract. It sets `feeAddress` to the script caller (`msg.sender`), then calls `vm.broadcast()` to start broadcasting, and deploys `PuppyRaffle` with parameters: entrance fee `1e18` (1 ETH in wei), the `feeAddress`, and a raffle `duration` of `1 days`. It predefines `entranceFee` and `duration` as script state variables; however, the deployment currently hardcodes `1e18` rather than using the `entranceFee` variable, which could be unified for consistency. Intended usage: run with `forge script` to deploy on a selected network. No access control or environment variable reading is present; parameters are static aside from `feeAddress` derived from the caller.
+- Summary (≤200 words): A Foundry Script used to deploy the PuppyRaffle contract on-chain. It sets the fee recipient to the script caller, then uses Foundry’s `vm.broadcast()` cheatcode to send a transaction that deploys `PuppyRaffle` with hard-coded parameters. The script configures an entrance fee of 1 ETH and a raffle duration of one day. This script encapsulates deployment logic for reproducibility across environments, ensuring the deployer address becomes the fee collection address. It relies on Solidity 0.7.6 and imports `forge-std/Script.sol` for scripting utilities and `PuppyRaffle.sol` for the target contract type. No access control, validation, or environment branching is included; configuration is simple and inline.
 
-## Functions
+Storage Variables (≤50 words each)
+- `uint256 entranceFee = 1e18;` Fixed entrance fee of 1 ETH used during deployment when constructing PuppyRaffle. Not modified after initialization in this script.
+- `address feeAddress;` Fee recipient set to the script caller (`msg.sender`) at runtime in `run()`. Passed to the PuppyRaffle constructor.
+- `uint256 duration = 1 days;` Fixed raffle duration of 1 day used for deployment. Provided to the PuppyRaffle constructor.
+
+Functions (≤100 words each)
 - Interface: `function run() public`
-  - Summary (≤100 words): Initializes `feeAddress = msg.sender`, starts transaction broadcasting via Foundry’s `vm.broadcast()`, and deploys a new `PuppyRaffle(1e18, feeAddress, duration)`. Returns nothing and does not store the deployed address. Assumes the caller’s EOA should receive fees. To customize, modify `entranceFee`/`duration` or pass via env/CLI; currently `1e18` is inlined.
-
-## Storage Variables
-- Definition: `uint256 entranceFee = 1e18;`
-  - Explanation (≤50 words): Default entrance fee for the raffle, set to 1 ETH. Not actually used in the deployment call (literal `1e18` is passed instead).
-
-- Definition: `address feeAddress;`
-  - Explanation (≤50 words): Destination address for collected fees. Set to `msg.sender` at runtime in `run()`.
-
-- Definition: `uint256 duration = 1 days;`
-  - Explanation (≤50 words): Raffle duration parameter forwarded to the `PuppyRaffle` constructor, set to one day by default.
+  Summary: Sets `feeAddress` to `msg.sender`, invokes `vm.broadcast()` to begin sending subsequent operations as a real transaction, and deploys a new `PuppyRaffle(1e18, feeAddress, duration)`. This produces an on-chain deployment with the configured parameters, using the deployer as the fee recipient. No return value, minimal configuration.
 
 
 ## SUMMARY OF FILE: 4-puppy-raffle-audit/src/PuppyRaffle.sol
-# Project Docs
+Docs: Main List of Files in Project
+- Overview: The project contains a deployment script (script/DeployPuppyRaffle.sol), the core ERC721 raffle contract (src/PuppyRaffle.sol), and Foundry tests (test/PuppyRaffleTest.t.sol). The script likely deploys and wires initial parameters, while tests validate raffle entry, refunding, winner selection, fees, and metadata.
 
-## Main List of Files in Project
-- script/DeployPuppyRaffle.sol: Deployment script that likely broadcasts and configures constructor params (not provided here).
-- src/PuppyRaffle.sol: Core ERC721 raffle NFT contract implementing entry, refunds, winner selection, fee handling, and on-chain metadata.
-- test/PuppyRaffleTest.t.sol: Foundry tests validating raffle flows, fees, NFTs, and edge cases (not provided here).
+Contract: PuppyRaffle (ERC721, Ownable)
+- Definition: contract PuppyRaffle is ERC721, Ownable
+- Summary (<=200 words): ERC721 raffle where users pay an entrance fee to enter via batched addresses; duplicate entrants are disallowed. Participants can refund to vacate their slot (leaving holes). After a duration, anyone can select a winner: 80% of funds go to the winner and 20% to a fee address; an NFT puppy is minted with rarity-based metadata. Critical issues: O(n^2) duplicate check across all historical players causing gas blowups and potential permanent reverts when multiple refunded (address(0)) entries exist. RNG uses block timestamp/difficulty and msg.sender, making it manipulable. Accounting uses players.length (including refunded zeros) to compute prize/fee, which can exceed contract balance, burn prizes to address(0), and desync totalFees vs balance blocking withdrawals. getActivePlayerIndex returns 0 for “not found,” colliding with real index 0. tokenURI JSON omits quotes around rarity value. Off-by-one rarity distribution (71/25/4 instead of 70/25/5). Uses ERC721.totalSupply without inheriting Enumerable, likely a compile error.
 
----
+Storage Variables (<=50 words each)
+- uint256 public immutable entranceFee: Fixed cost per entry in wei, set at construction; used for payment, refunds, and accounting.
+- address[] public players: Current raffle participants; refunds set entries to address(0), leaving holes and affecting accounting and winner selection.
+- uint256 public raffleDuration: Seconds each raffle round must run before selecting a winner.
+- uint256 public raffleStartTime: Timestamp when current round started; used to enforce duration before selecting winner.
+- address public previousWinner: Stores last round’s winner address for reference/UX.
+- address public feeAddress: Recipient of protocol fee; can be changed by owner.
+- uint64 public totalFees = 0: Accumulated fees pending withdrawal; compared to contract balance to gate withdrawals.
+- mapping(uint256 => uint256) public tokenIdToRarity: TokenID to rarity tier (keys: 70, 25, 5) for metadata.
+- mapping(uint256 => string) public rarityToUri: Rarity tier to image URI; initialized in constructor.
+- mapping(uint256 => string) public rarityToName: Rarity tier to human-readable name string; initialized in constructor.
+- string private commonImageUri: IPFS image for common puppy; used to seed rarityToUri.
+- uint256 public constant COMMON_RARITY = 70: Target percent weight for common tier; also used as key in maps.
+- string private constant COMMON = "common": Name label for common tier; stored in rarityToName.
+- string private rareImageUri: IPFS image for rare puppy; used in maps.
+- uint256 public constant RARE_RARITY = 25: Weight/key for rare tier.
+- string private constant RARE = "rare": Name label for rare tier.
+- string private legendaryImageUri: IPFS image for legendary puppy; used in maps.
+- uint256 public constant LEGENDARY_RARITY = 5: Weight/key for legendary tier.
+- string private constant LEGENDARY = "legendary": Name label for legendary tier.
 
-# src/PuppyRaffle.sol
-
-Contract: `PuppyRaffle is ERC721, Ownable`
-
-Summary (≤200 words):
-PuppyRaffle is an ERC721 raffle where users pay an entrance fee to join. Players are stored in an array; duplicates are checked via an O(n^2) pass. Entrants can refund, leaving a blank slot. After a time duration and with ≥4 players, anyone can call selectWinner, which pseudo-randomly selects a winner, mints an NFT with rarity-based metadata, sends 80% of funds to the winner, and accrues 20% fees to feeAddress. Fees are withdrawable only when no active players are present. Metadata is Base64-encoded JSON using rarity mappings. Notable risks/bugs: insecure RNG, reentrancy in refund, potential winner = address(0) due to refunded slots, ambiguous getActivePlayerIndex return value, tokenURI JSON likely malformed (missing quotes around rarity value), uses totalSupply() which isn’t defined in OZ ERC721 without Enumerable, fee math relies on players.length not active count, block.difficulty entropy is manipulable.
-
-Functions (interface + ≤100 words each):
-- constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration)
-  Initializes entrance fee, fee recipient, duration, start time, and rarity URI/name maps. Mints nothing. No validation on _feeAddress. Sets ERC721 name/symbol.
+Functions (<=100 words each, with interface)
+- constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration) ERC721("Puppy Raffle", "PR")
+  Initializes entrance fee, fee address, raffle duration, and start time. Seeds rarity-to-URI and rarity-to-name lookups. No validation on feeAddress (could be zero). Sets immutable entranceFee. Note: relies on ERC721 implementation providing name(), _exists, etc. Potential missing Enumerable for totalSupply later.
 
 - function enterRaffle(address[] memory newPlayers) public payable
-  Requires exact fee per address. Appends all addresses, then checks for duplicates with nested loops (gas-heavy). Emits RaffleEnter. No validation for zero addresses; duplicates revert. Refund-created blanks increase cost of duplicate scan.
+  Requires exact payment for number of addresses. Appends all provided addresses to players, then performs O(n^2) global duplicate check across entire array, reverting on any repeated address (including address(0)). After multiple refunds create two zeros, all future entries can revert. Emits RaffleEnter.
 
 - function refund(uint256 playerIndex) public
-  Only the indexed player can refund; sends back entranceFee and sets slot to address(0). Emits RaffleRefunded. Vulnerable to reentrancy because state is updated after sending Ether; attacker contract can reenter and double-refund.
+  Only the indexed player can refund; pays back entranceFee and sets their slot to address(0). Leaves holes in players, enabling zero-address “participants,” affecting length-based accounting/winner selection. Emits RaffleRefunded. No reentrancy guard; uses Address.sendValue.
 
 - function getActivePlayerIndex(address player) external view returns (uint256)
-  Linear search returning matching index, else 0. Ambiguity: genuine index 0 indistinguishable from “not found.” Consider returning (found,bool) or sentinel like type(uint256).max.
+  Linear search returning the first index of player, else 0. Ambiguous: a real participant at index 0 is indistinguishable from “not found.” Holes persist; function doesn’t skip zeros. Purely a helper for finding refund indices.
 
 - function selectWinner() external
-  Requires duration elapsed and ≥4 players. Chooses winnerIndex via hash of caller, timestamp, difficulty; may select address(0) if refunded, causing mint revert. Calculates prize/fess from players.length (not active count), risking insufficient balance and revert. Uses totalSupply() for tokenId (likely missing). Rarity via weak RNG. Resets players, sends prize, mints NFT, updates previousWinner.
+  Requires duration elapsed and at least 4 entries by array length (includes zeros). Picks winnerIndex via insecure RNG (timestamp/difficulty/msg.sender), so manipulable; winner can be address(0). Computes prize/fee from players.length (overcounts due to refunds), potentially exceeding balance and desyncing totalFees. Off-by-one rarity distribution. Resets players, records previousWinner, sends prize via call, mints tokenId = totalSupply() (likely missing Enumerable).
 
 - function withdrawFees() external
-  Withdraws accumulated fees to feeAddress. Requires contract balance equals totalFees, implying no active player funds remain. Resets totalFees to 0 before transfer. Will revert if anyone sends stray ETH to contract.
+  Allows fee withdrawal only if contract balance equals totalFees (assumes no active players). Due to misaccounting (length includes zeros), totalFees can exceed balance, permanently blocking withdrawals or causing earlier revert. Resets totalFees to 0 after transfer.
 
 - function changeFeeAddress(address newFeeAddress) external onlyOwner
-  Updates feeAddress and emits event. No zero-address check.
+  Updates feeAddress and emits event. No validation on zero address. Owner-only.
 
 - function _isActivePlayer() internal view returns (bool)
-  Linear check if msg.sender is in players. Not used elsewhere. O(n) gas.
+  Linear scan to check if msg.sender exists in players. Unused in the contract; potential helper for future guards.
 
 - function _baseURI() internal pure returns (string memory)
-  Returns Base64 JSON data URI prefix. Not overriding OZ’s virtual view _baseURI signature; used as an internal helper.
+  Returns the base prefix for on-chain Base64 metadata: "data:application/json;base64,". Not marked override; may or may not override depending on OZ version.
 
-- function tokenURI(uint256 tokenId) public view override returns (string memory)
-  Builds Base64-encoded JSON using rarity mappings. Reverts for nonexistent tokens. Likely malformed JSON: rarity value inserted without quotes. Returns on-chain metadata with image IPFS URIs.
-
-Storage (definition + ≤50 words each):
-- uint256 public immutable entranceFee
-  Fixed wei cost per entry set at construction.
-
-- address[] public players
-  Dynamic list of entrants; refunds set slots to address(0), leaving blanks.
-
-- uint256 public raffleDuration
-  Duration in seconds between winner selections.
-
-- uint256 public raffleStartTime
-  Timestamp when current raffle started; reset on winner selection.
-
-- address public previousWinner
-  Address of last raffle winner.
-
-- address public feeAddress
-  Recipient of protocol fees; changeable by owner.
-
-- uint64 public totalFees = 0
-  Accumulated fees from raffles. Potential overflow in extreme cases; narrow type.
-
-- mapping(uint256 => uint256) public tokenIdToRarity
-  TokenId to rarity bucket (COMMON_RARITY, RARE_RARITY, LEGENDARY_RARITY).
-
-- mapping(uint256 => string) public rarityToUri
-  Rarity bucket to IPFS image URI.
-
-- mapping(uint256 => string) public rarityToName
-  Rarity bucket to rarity name string.
-
-- string private commonImageUri
-  IPFS image for common puppy.
-
-- uint256 public constant COMMON_RARITY = 70
-  Probability weight threshold for common.
-
-- string private constant COMMON
-  Name label for common rarity.
-
-- string private rareImageUri
-  IPFS image for rare puppy.
-
-- uint256 public constant RARE_RARITY = 25
-  Probability weight threshold for rare.
-
-- string private constant RARE
-  Name label for rare rarity.
-
-- string private legendaryImageUri
-  IPFS image for legendary puppy.
-
-- uint256 public constant LEGENDARY_RARITY = 5
-  Probability weight threshold for legendary.
-
-- string private constant LEGENDARY
-  Name label for legendary rarity.
+- function tokenURI(uint256 tokenId) public view virtual override returns (string memory)
+  Requires token exists, builds Base64-encoded JSON using rarity lookups for name/image. JSON bug: rarity value lacks quotes (invalid JSON). Depends on tokenIdToRarity set in selectWinner. Uses name() from ERC721. Relies on _baseURI prefix.
 
 
 ## Main List of Files in Project

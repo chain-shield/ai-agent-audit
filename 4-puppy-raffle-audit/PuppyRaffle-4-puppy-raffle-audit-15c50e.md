@@ -316,7 +316,7 @@ TMP_11182(None) = SOLIDITY_CALL require(bool,string)(TMP_11181,Ownable: caller i
 ```
 #### PuppyRaffle.tokenURI(uint256) [PUBLIC]
 ```slithir
-tokenIdToRarity_5(mapping(uint256 => uint256)) := phi(['tokenIdToRarity_1', 'tokenIdToRarity_0', 'tokenIdToRarity_6', 'tokenIdToRarity_4'])
+tokenIdToRarity_5(mapping(uint256 => uint256)) := phi(['tokenIdToRarity_1', 'tokenIdToRarity_0', 'tokenIdToRarity_4', 'tokenIdToRarity_6'])
 rarityToUri_4(mapping(uint256 => string)) := phi(['rarityToUri_3', 'rarityToUri_0', 'rarityToUri_5'])
 rarityToName_4(mapping(uint256 => string)) := phi(['rarityToName_0', 'rarityToName_3', 'rarityToName_5'])
  require(bool,string)(_exists(tokenId),PuppyRaffle: URI query for nonexistent token)

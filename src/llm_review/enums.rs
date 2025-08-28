@@ -6,12 +6,12 @@ use log::info;
 /// categorization, providing unified interfaces for different AI providers
 /// and systematic vulnerability detection across 19+ security categories.
 use schemars::JsonSchema;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     invariant_prompts::{
         arithmetic::ARITHMETIC, balance::BALANCE, permission::PERMISSION, referential::REFERENTIAL,
         state_machine::STATE_MACHINE, temporal::TEMPORAL,
@@ -303,6 +303,30 @@ impl InvariantType {
 }
 
 impl AIAgent {
+    /// Simple prompt method for text generation
+    pub async fn prompt(&self, prompt: &str) -> anyhow::Result<String> {
+        use rig::completion::Prompt;
+
+        match self {
+            AIAgent::Anthropic(model) => {
+                let response = model.prompt(prompt).await?;
+                Ok(response)
+            }
+            AIAgent::Openai(model) => {
+                let response = model.prompt(prompt).await?;
+                Ok(response)
+            }
+            AIAgent::Gemini(model) => {
+                let response = model.prompt(prompt).await?;
+                Ok(response)
+            }
+            AIAgent::Deepseek(model) => {
+                let response = model.prompt(prompt).await?;
+                Ok(response)
+            }
+        }
+    }
+
     pub async fn extract_with_retry<T>(&self, prompt: &str) -> anyhow::Result<T>
     where
         T: DeserializeOwned,
@@ -394,6 +418,9 @@ impl AIAgent {
         // 🚀 Run the model
         info!("submitting for analysis...");
         log::debug!("Prompt length: {} characters", prompt.len());
+
+        // 📝 Track inference INPUT cost (MISSING!)
+        add_to_inference_cost_by_type(prompt, LlmCostType::Openai5Input).await;
 
         let analysis = match model.prompt(prompt).await {
             Ok(result) => result,

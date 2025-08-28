@@ -31,7 +31,7 @@ const MAX_ATTEMPTS: usize = 3;
 pub async fn extractor_with_retry<M, T>(
     extractor: &Extractor<M, T>,
     input: &str,
-    llm_cost_type: LlmCostType,
+    _llm_cost_type: LlmCostType,
 ) -> Result<T, ExtractionError>
 where
     M: CompletionModel,
@@ -40,13 +40,16 @@ where
     let delay = Duration::from_millis(500);
 
     for attempt in 1..=MAX_ATTEMPTS {
-        // add to cost
+        // NOTE: Input cost is tracked by caller before calling this function
+        // Do NOT track input cost here to avoid double-counting
 
         match extractor.extract(input).await {
-            Ok(data) => return Ok(data), // ✅ parsed JSON
+            Ok(data) => {
+                // Output cost is tracked inside extractor.extract() by the underlying model
+                return Ok(data);
+            }
             Err(ExtractionError::NoData) if attempt < MAX_ATTEMPTS => {
                 eprintln!("No data extracted – (attempt {attempt}/{MAX_ATTEMPTS})");
-                add_to_inference_cost_by_type(input, llm_cost_type).await;
                 thread::sleep(delay);
             }
             Err(e) => return Err(e), // network / OpenAI errors → bubble up
@@ -67,6 +70,9 @@ where
 {
     for attempt in 1..=MAX_ATTEMPTS {
         /* ────── 1. ask the model ───────────────────────────────────────── */
+        // NOTE: Input cost is tracked by caller before calling this function
+        // Do NOT track input cost here to avoid double-counting
+
         let raw = match agent.prompt(input).await {
             Ok(txt) => txt,
             // Convert prompt error to JsonError
@@ -113,7 +119,8 @@ fn should_retry_based_on_error(e: &str) -> bool {
         "502 bad gateway",
         "503 service unavailable",
         "504 gateway timeout",
-        "too many requests", // 429
+        "429 resource unavailable",
+        "too many requests",
         "rate limit",
         "timeout",
         "timed out",
@@ -133,7 +140,7 @@ fn should_retry_based_on_error(e: &str) -> bool {
     // if error message contains any of the ERR_SUBSTRINGS then retry
     ERR_SUBSTRINGS
         .iter()
-        .any(|needle| error_msg.contains(needle))
+        .any(|needle| error_msg.to_ascii_lowercase().contains(needle))
 }
 
 /*──────────────── helper ───────────────────────────────────────────────*/
