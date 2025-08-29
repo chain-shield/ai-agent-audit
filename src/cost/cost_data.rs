@@ -54,7 +54,7 @@ impl LlmCostType {
             LlmCostType::Openai4oInput => 2.50,
             LlmCostType::Openai4oOutput => 10.00,
             LlmCostType::Openai5Input => 1.25,
-            LlmCostType::Openai5Output => 30.00, // triple book cost to account for reasoning tokens
+            LlmCostType::Openai5Output => 10.00, // triple book cost to account for reasoning tokens
             LlmCostType::OpenaiO3Input => 2.00,
             LlmCostType::OpenaiO3Output => 8.00,
             LlmCostType::AnthropicClaudeInput => 3.00,
