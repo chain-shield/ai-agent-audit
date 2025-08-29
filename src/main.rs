@@ -13,7 +13,7 @@ use ai_agent_audit::{
     },
     prepare_code::{self},
     reporting::{
-        audit::{self, ReportType},
+        audit::{self},
         contract_data, save_file,
     },
 };
@@ -117,13 +117,13 @@ async fn main() -> Result<()> {
     // ────────────────────────────────
     // Generate comprehensive audit report (paid version)
     let audit_report =
-        audit::generated_audit_report(&security_issues, &repo, ReportType::Paid).await?;
+        audit::generated_audit_report(&security_issues, &repo, audit::ReportType::Pattern).await?;
 
     // ────────────────────────────────
     // 7. File Export & Cleanup
     // ────────────────────────────────
     // Save all reports and analysis data to markdown files
-    save_file::save_audit_report(&audit_report, &repo, ReportType::Paid)?;
+    save_file::save_audit_report(&audit_report, &repo)?;
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
     contract_data::save_metadata(&repo).await?;
 

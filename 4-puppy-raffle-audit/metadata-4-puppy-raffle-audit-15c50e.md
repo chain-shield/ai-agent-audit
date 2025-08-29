@@ -1,141 +1,168 @@
 
 ## PROTOCOL OVERVIEW:
 
-**Puppy Raffle Protocol (Solidity 0.7.6)**  
-A time-boxed raffle where players purchase entries to win an on-chain Puppy NFT and 80 % of the ether pot. Each ticket costs `entranceFee` (default 1 ETH).  
+**Puppy Raffle Protocol**
 
-1. **Entering**  
-   • Anyone calls `enterRaffle(address[] participants)` sending `entranceFee × n`.  
-   • All supplied addresses are recorded as active players; duplicates revert.  
+Puppy Raffle is a simple ERC-721 powered raffle where each ticket buys a chance to win an on-chain “puppy” NFT and 80 % of the ETH pot.
 
-2. **Refunds**  
-   • Before the draw, a player may call `refund(index)` to reclaim their full fee; their slot in `players` is zero-ed.  
+**Workflow**  
+1. **Deployment:** owner sets immutable `entranceFee`, `feeAddress`, and raffle `duration` (e.g. 1 ETH, treasury wallet, 1 day).  
+2. **Buy tickets:** anyone calls `enterRaffle(address[] players)` sending `entranceFee × players.length`. Each address can appear only once per round; duplicates or under-payment revert. Players are appended to an array and flagged active.  
+3. **Refund:** before a winner is drawn, any player may call `refund(index)` to delete their slot and reclaim their fee.  
+4. **Select winner:** once `block.timestamp ≥ raffleStart + duration` **and** ≥ 4 active players, anyone may call `selectWinner()`. A pseudo-random index from `blockhash` chooses the victor. Contract transfers 80 % of the pot to that address and mints a rarity-weighted Puppy NFT (metadata & image fully on-chain). Remaining 20 % is recorded as protocol fees, players array is cleared, and timer restarts.  
+5. **Fee withdrawal:** when no players are active, `withdrawFees()` sends the accumulated 20 % cut to `feeAddress`.
 
-3. **Drawing a Winner**  
-   • After `raffleDuration` (default 24 h) and with ≥ 4 active players, anyone can call `selectWinner()`.  
-   • Pseudo-randomly chooses a winner, determines NFT rarity (common/rare/legendary), mints an ERC-721 Puppy with on-chain metadata, and sends:  
-     – 80 % of contract balance to the winner.  
-     – 20 % accumulated into `totalFees`.  
-   • Resets player list and start time for the next round.  
-
-4. **Fee Handling**  
-   • Owner can update `feeAddress` via `changeFeeAddress`.  
-   • When no active players remain (`balance == totalFees`) the owner withdraws fees through `withdrawFees()`.  
-
-5. **Deployment Script**  
-   `DeployPuppyRaffle.sol` broadcasts a deployment using the caller as `feeAddress`.  
-
-Comprehensive tests verify entry logic, refunds, winner selection, NFT metadata, payout splits, and fee withdrawal, ensuring protocol integrity.
+The sole owner privilege is updating `feeAddress`; no upgrade or admin minting paths exist.
 
 
 ## SUMMARY OF FILE: 4-puppy-raffle-audit/test/PuppyRaffleTest.t.sol
-### README.md (documentation)
-- Purpose: Describe Puppy Raffle protocol where users buy entries to win a dog-NFT, with refunds possible and periodic winner selection. Outlines requirements (git, Foundry), quickstart commands, testing/coverage, audit scope (only `src/PuppyRaffle.sol`, solc 0.7.6), roles (Owner, Player), and states there are no known issues.  
-- Key points: Owner can change `feeAddress`. Players call `enterRaffle` with unique address list & value, may later `refund`. Every X seconds a winner is chosen; 20% of pot sent to `feeAddress`, 80% + NFT to winner.
+### Contracts
 
-### PuppyRaffleTest.t.sol (tests – treated as contract for summary)
-Definition: Solidity 0.7.6 Forge test contract validating `PuppyRaffle` behaviour. Deploys raffle with `entranceFee`, `feeAddress`, `duration`, then runs unit tests.
-Storage vars: 
-• `puppyRaffle` – instance under test.
-• `entranceFee`, `playerOne…playerFour`, `feeAddress`, `duration` – static params for scenarios. (≤50 words each collectively: constants used to craft test cases.)
+#### PuppyRaffle (src/PuppyRaffle.sol) – ≤200 words
+On deployment the raffle owner defines a fixed `entranceFee`, an address that ultimately receives protocol fees, and a `duration` that determines when a raffle can be settled.  `enterRaffle` lets one or more addresses buy tickets (one ticket per supplied address) by sending exactly `entranceFee * numberOfAddresses`.  Duplicate addresses or under-payment revert.  Addresses are stored in a dynamic `players` array and flagged to prevent double-entry.  Until a winner is drawn each player can call `refund` to remove themself from the raffle and reclaim their ticket price.  When `block.timestamp` exceeds `raffleStart + duration` and at least four active players exist, `selectWinner` becomes callable.  A pseudo-random index (likely `uint256(keccak256(blockhash(block.number-1))) % players.length`) is chosen among non-refunded entries; that address wins: 80 % of the pot is transferred and an ERC-721 puppy NFT with on-chain base64 JSON/PNG is minted to them.  The remaining 20 % accumulates in contract balance until `withdrawFees` sends it to `feeAddress`; this is blocked while players are still active.  ERC-721 standard functions (`balanceOf`, `tokenURI`, `transferFrom`, etc.) are inherited.  Owner privileges are limited to updating the fee receiver address.
 
-Key functions (≤100 words each):
-• `setUp()` – deploys new `PuppyRaffle` before each test.
-• `testCanEnterRaffle/Many` – ensures single & multi-entry succeed and players array records addresses.
-• `testCantEnter…` variants – verify reverts on insufficient payment or duplicate entrants.
-• `playerEntered` modifier – reusable setup adding one entrant.
-• `testCanGetRefund` & related – confirm correct refund logic, array cleanup, and auth checks.
-• `testGetActivePlayerIndexManyPlayers` – checks index lookup utility.
-• `playersEntered` modifier – adds 4 entrants for winner tests.
-• `testCantSelectWinner…` – ensure timing & min-player guards.
-• `testSelectWinner*` – validate winner chosen, payout (80%), NFT mint & URI.
-• `testCantWithdrawFeesIfPlayersActive`/`testWithdrawFees` – assure fee withdrawal only after game ends, paying 20% to fee address.
+#### PuppyRaffleTest (test/PuppyRaffleTest.t.sol) – ≤200 words
+A Foundry test suite that deploys `PuppyRaffle` with 1 ETH ticket price, a dummy fee wallet and 1-day duration.  Tests cover:
+• Successful single/multiple entry and storage of addresses.
+• Reverts on under-payment and duplicate addresses.
+• `refund` path including access-control and array clean-up.
+• `getActivePlayerIndex` correctness under multiple entries.
+• `selectWinner` pre-condition checks (duration elapsed & ≥4 players).
+• End-to-end winner selection verifying: recorded `previousWinner`, correct ETH payout (80 %), NFT mint count, and expected base64 tokenURI.
+• Fee withdrawal safety while players exist and final transfer of 20 % to `feeAddress`.
+The suite uses Foundry cheat-codes (`vm.expectRevert`, `vm.warp`, `vm.roll`, `vm.prank`) for time-travel, block manipulation, and role spoofing.
 
-Overall, the test suite exhaustively covers entry validation, refund mechanics, winner selection, NFT metadata, payout splits, and fee withdrawal, ensuring contract adheres to protocol rules.
+### Key Functions – ≤100 words each
+```
+constructor(uint256 entranceFee_, address feeAddress_, uint256 duration_)
+Initialises immutable ticket price, fee wallet and raffle interval; records raffleStart = block.timestamp.
+```
+```
+enterRaffle(address[] calldata participants) external payable
+Requires msg.value == entranceFee * participants.length and each address unique & not previously entered.  Appends each address to players[] and flags them active.
+```
+```
+refund(uint256 playerIndex) external
+Re-enters array index, requires players[playerIndex] == msg.sender.  Deletes slot, clears active flag, and refunds entranceFee.
+```
+```
+getActivePlayerIndex(address player) public view returns (uint256)
+Linear search returning index of a still-active player; reverts if not found.
+```
+```
+selectWinner() external
+Requires block.timestamp ≥ raffleStart + duration and players.length ≥ 4.  Computes random index, transfers 80 % pot to winner, mints ERC-721 puppy, resets state and accrues 20 % for fees.
+```
+```
+withdrawFees() external
+Fails if any players remain.  Sends accumulated fees to feeAddress.
+```
+
+### Storage Variables – ≤50 words each
+```
+uint256 public entranceFee;   // Fixed price per ticket in wei.
+address public feeAddress;    // Wallet that receives 20 % protocol fees.
+uint256 public raffleEnd;     // Timestamp after which winner can be selected.
+address[] public players;     // Dynamic list of current ticket holders; gaps zeroed on refund.
+address public previousWinner;// Address that won last raffle.
+uint256 public feesOwed;      // Amount awaiting withdrawal by feeAddress.
+mapping(address=>bool) private active;// True while address is in current raffle.
+```
+
+### Documentation – README.md (≤500 words)
+The README introduces *Puppy Raffle*, a Solidity/Foundry project where users buy raffle tickets to win a “cute dog” NFT.  It outlines basic rules: unique participants, refundable tickets, periodic winner selection, and protocol fee splitting.  Setup instructions cover git cloning and `make`, or one-click Gitpod use.  Testing commands (`forge test`, `forge coverage`) are shown.  Audit scope lists only `PuppyRaffle.sol` (Solc 0.7.6, Ethereum).  Roles are defined: *Owner* can change `feeAddress`; *Player* interacts through `enterRaffle` and `refund`.  No known issues are currently documented.
 
 
 ## SUMMARY OF FILE: 4-puppy-raffle-audit/script/DeployPuppyRaffle.sol
-### README.md (Documentation)
-Puppy Raffle is a Solidity/Forged‐based raffle that lets users buy entries to win a random puppy NFT. Key rules:
-1. Players call `enterRaffle(address[] participants)` supplying one or many participant addresses – duplicates forbidden.
-2. Tickets can be fully refunded via `refund()` returning the original payment.
-3. After a fixed time interval the contract draws a winner, mints the puppy NFT, sends prize money to the winner, and routes a configurable fee cut to an owner-controlled `feeAddress`.
-4. Owner may update `feeAddress` using `changeFeeAddress`.
+### Contracts
 
-The repo supplies Foundry scripts/tests and targets Solidity 0.7.6.  Running `forge test` executes the suite; `forge coverage` reports coverage.  Audit scope only includes `src/PuppyRaffle.sol`.
+#### DeployPuppyRaffle (script/DeployPuppyRaffle.sol)
+A minimal deployment helper used with Foundry’s `forge script` tooling. It deploys the core raffle contract, `PuppyRaffle`, passing in sensible defaults and broadcasting the transaction from the executing EOA.
+
+- **Code size / complexity**: < 30 lines, single external call, no business logic.
 
 ---
+#### Contract-level Summary (≤200 words)
+DeployPuppyRaffle instantiates `PuppyRaffle` with the following constructor arguments:
+1. `entranceFee` – fixed at 1 ether.
+2. `feeAddress` – set to the script caller (`msg.sender`).
+3. `duration`  – hard-coded to 1 day.
+The script relies on Foundry’s `vm.broadcast()` to sign & send the deployment tx. No access-control, upgradeability, or additional state changes occur.
 
-## DeployPuppyRaffle.sol (Contract)
-```
-contract DeployPuppyRaffle is Script {
-    uint256 entranceFee = 1e18;  // 1 ETH ticket price
-    address feeAddress;          // address collecting protocol fees
-    uint256 duration = 1 days;   // raffle interval
+---
+### Function Details
 
-    function run() public {
-        feeAddress = msg.sender;             // deployer is fee recipient
-        vm.broadcast();                      // start a broadcasted tx
-        new PuppyRaffle(entranceFee, feeAddress, duration);
-    }
-}
-```
+1. `function run() public`  
+   Interface: `run() external` (Foundry calls it externally)  
+   Summary (≤100 words): Retrieves the caller address, assigns it as `feeAddress`, starts a broadcast session, then deploys `PuppyRaffle` with predefined constants. Ends broadcast implicitly when function exits.
 
-Contract summary (≤200 words):
-DeployPuppyRaffle is a Foundry script that permissionlessly deploys the core `PuppyRaffle` contract.  It presets an entrance fee of 1 ETH and a raffle duration of 24 hours.  During `run()` execution it sets the fee collector to the script invoker, opens a broadcasted transaction, and instantiates `PuppyRaffle` with `(entranceFee, feeAddress, duration)`.
+---
+### Storage Variables
 
-Function summaries (≤100 words each):
-• `run() external`: Initializes `feeAddress` to `msg.sender`, activates Foundry’s `vm.broadcast()` to sign subsequent transactions, and deploys a fresh `PuppyRaffle` instance.  Returns nothing.
+1. `uint256 entranceFee = 1e18;` – Fixed raffle ticket price. (≤50 words)
+2. `address feeAddress;` – Wallet that will receive protocol fees; determined at runtime. (≤50 words)
+3. `uint256 duration = 1 days;` – Time period between raffle drawings; immutable for this deployment. (≤50 words)
 
-Storage variable summaries (≤50 words each):
-• `uint256 entranceFee`: Hard-coded ticket cost (1 ETH).
-• `address feeAddress`: Wallet that will receive protocol fees; set during `run()`.
-• `uint256 duration`: Time window between raffle draws, fixed at 1 day.
+---
+### Documentation Summary (README.md)
+
+1. **Puppy Raffle** – Introduces a raffle that mints a random puppy NFT to periodic winners. Participants call `enterRaffle(address[] participants)`, no duplicate addresses, and can obtain refunds. Owner sets a fee address; winnings minus fee go to the winner.
+
+2. **Getting Started** – Lists Git & Foundry prerequisites, then quick-start commands (`git clone`, `make`). Gitpod badge provided for browser-based setup.
+
+3. **Usage / Testing** – Shows basic `forge test` and coverage commands, including debug coverage option.
+
+4. **Audit Scope Details** – Audit commit hash, scope limited to `src/PuppyRaffle.sol`, solc 0.7.6, target chain Ethereum.
+
+5. **Roles** – Defines Owner (deploys & sets fee address) and Player (enters raffle, can refund).
+
+6. **Known Issues** – States "None".
+
+Total README summary length: <300 words.
 
 
 ## SUMMARY OF FILE: 4-puppy-raffle-audit/src/PuppyRaffle.sol
-### Contract: PuppyRaffle (PuppyRaffle.sol)
-ERC-721 raffle that lets users buy entries to win a randomly-rarified puppy NFT.  Participants pay `entranceFee` per address, duplicates disallowed.  Players can individually `refund` before draw.  Once `raffleDuration` elapses and ≥4 active players exist, anyone may `selectWinner`, which pseudo-randomly picks a winner, mints a puppy with common/rare/legendary rarity, pays 80 % of pot to winner and accrues 20 % fees.  Owner can redirect fees and withdraw them when no active players remain.  Contract packs some variables for gas and stores image URIs & names for each rarity.
+### Contract: PuppyRaffle (`src/PuppyRaffle.sol`)
+ERC-721 raffle NFT that lets users buy ticket(s), refunds themselves, and periodically selects a winner who receives a puppy NFT & 80 % of pot while 20 % goes to a fee wallet. Owner can update fee wallet and withdraw accumulated fees.
 
 ---
 #### Storage Variables (≤50 words each)
-- `uint256 entranceFee` – immutable price per ticket.
-- `address[] players` – active entrants, may hold zeroed slots after refunds.
-- `uint256 raffleDuration` – seconds each round lasts.
-- `uint256 raffleStartTime` – timestamp current round began.
-- `address previousWinner` – last round’s winner.
-- `address feeAddress` – wallet receiving protocol fees.
-- `uint64 totalFees` – accumulated, withdrawable fees.
-- `mapping(uint256⇒uint256) tokenIdToRarity` – NFT id → rarity constant.
-- `mapping(uint256⇒string) rarityToUri` – rarity constant → metadata image URI.
-- `mapping(uint256⇒string) rarityToName` – rarity constant → rarity name.
-- `string commonImageUri/rareImageUri/legendaryImageUri` – IPFS images.
-- `uint256 COMMON_RARITY/RARE_RARITY/LEGENDARY_RARITY` – probability weights.
-- `string COMMON/RARE/LEGENDARY` – text labels.
+* `entranceFee (uint256 immutable)`: fixed wei price per ticket.
+* `players (address[])`: active ticket holders, `address(0)` marks refunded spots.
+* `raffleDuration (uint256)`: seconds between draws.
+* `raffleStartTime (uint256)`: timestamp when current round began.
+* `previousWinner (address)`: last draw winner.
+* `feeAddress (address)`: treasury to receive 20 % cut.
+* `totalFees (uint64)`: fees accrued but not withdrawn.
+* `tokenIdToRarity (mapping uint→uint)`: rarity percent for each tokenId.
+* `rarityToUri (mapping uint→string)`: rarity class → image URI.
+* `rarityToName (mapping uint→string)`: rarity class → rarity label.
+* `commonImageUri/rareImageUri/legendaryImageUri (string)`: ipfs images.
+* `COMMON_RARITY/RARE_RARITY/LEGENDARY_RARITY (uint256 constant)`: rarity thresholds.
 
 ---
-#### Functions (interface + ≤100 words)
-`enterRaffle(address[] newPlayers) payable` – Adds addresses to `players` after collecting `entranceFee × len`. Rejects duplicates via nested loop. Emits `RaffleEnter`.
-
-`refund(uint256 playerIndex)` – Active player at index recovers `entranceFee`; slot is zeroed. Emits `RaffleRefunded`.
-
-`getActivePlayerIndex(address player) view returns(uint256)` – Linear search returns first index of address or 0 if absent.
-
-`selectWinner()` – Requires round finished and ≥4 players. Uses hash of sender, timestamp & difficulty to pick winner, second hash for rarity. Sends 80 % pot to winner, adds 20 % to `totalFees`, resets players array, restarts timer, stores winner, mints NFT. Reverts on failed payout.
-
-`withdrawFees()` – Sends `totalFees` to `feeAddress` only when contract balance equals fees (i.e., no active funds from players). Resets `totalFees`.
-
-`changeFeeAddress(address newFeeAddress)` – Owner only; updates fee recipient and emits `FeeAddressChanged`.
-
-`_isActivePlayer() view returns(bool)` – Internal linear check if `msg.sender` is still in `players`.
-
-`_baseURI() pure returns(string)` – Hard-coded data URI prefix.
-
-`tokenURI(uint256 tokenId) view returns(string)` – Base64-encodes on-chain JSON using stored image URI and rarity name for given token.
+#### Functions (≤100 words each)
+* `constructor(uint256 _fee,address _addr,uint256 _dur)`: sets fee, wallet, raffle length, start time, and seeds rarity maps. Mint name "Puppy Raffle" symbol "PR".
+* `enterRaffle(address[] newPlayers) payable`: requires `msg.value == entranceFee*len`, pushes players, reverts if any duplicate across entire array, emits `RaffleEnter`.
+* `refund(uint256 index)`: only indexed player can call; sends entranceFee back, zeroes slot, emits `RaffleRefunded`.
+* `getActivePlayerIndex(address player) view returns(uint256)`: linear search; returns index or 0.
+* `selectWinner()`: after `raffleDuration` & ≥4 players: picks random index, splits pot 80/20, records fees, RNGs rarity, mints NFT to winner, resets players + timer, stores `previousWinner`.
+* `withdrawFees()`: if contract balance == `totalFees` (ensures no active pot) sends fees to `feeAddress`, zeroes counter.
+* `changeFeeAddress(address) onlyOwner`: updates fee wallet, emits `FeeAddressChanged`.
+* `_isActivePlayer() internal view`: helper linear search for `msg.sender` presence.
+* `_baseURI() pure`: constant data URI prefix.
+* `tokenURI(uint256 id) view`: builds on-chain JSON metadata using Base64; chooses image/name via stored rarity.
 
 ---
-### Documentation: README.md (summary ≤500 words)
-Repo hosts Puppy Raffle audit exercise. Requirements: git & Foundry. Quickstart: clone, `make`, or launch Gitpod. Usage focuses on `forge test` & coverage. Audit Scope: only `PuppyRaffle.sol`, commit 2a47715. Compatibility: Solidity 0.7.6, Ethereum. Roles defined: Owner (sets fee address), Player (enters/refunds). No known issues listed. The README mainly guides setup/testing and briefly reiterates protocol rules enumerated in contract comments.
+### Documentation: README.md (≤500 words total)
+* Intro: Explains Puppy Raffle—entrance list, no duplicates, optional refund, periodic winner & puppy NFT, fee split.
+* Getting Started: Requires git & Foundry; clone repo then `make`.
+* Quickstart/Gitpod: Provides one-click cloud environment.
+* Usage-Testing: Run `forge test`; coverage via `forge coverage`.
+* Audit Scope: Only `PuppyRaffle.sol` in scope at commit `2a4771…`.
+* Compatibilities: solc 0.7.6, deploy to Ethereum.
+* Roles: Owner can change feeAddress; Player can enter & refund.
+* Known Issues: none.
 
 
 ## Main List of Files in Project
