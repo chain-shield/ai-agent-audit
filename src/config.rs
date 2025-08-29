@@ -221,6 +221,48 @@ impl AuditConfig {
             ));
         }
 
+        // Stronger API key validation: reject placeholders and obviously invalid keys
+        use crate::utils::env_security::is_placeholder_api_key;
+        if let Some(k) = &self.openai_api_key {
+            if is_placeholder_api_key(k) {
+                return Err(AuditError::configuration(
+                    "OPENAI_API_KEY",
+                    "Appears to be a placeholder key (e.g., 'your-key-here'). Provide a real API key.",
+                ));
+            }
+            // Basic OpenAI format check
+            if !k.starts_with("sk-") {
+                return Err(AuditError::configuration(
+                    "OPENAI_API_KEY",
+                    "OpenAI key should start with 'sk-'. Provide a real API key.",
+                ));
+            }
+        }
+        if let Some(k) = &self.anthropic_api_key {
+            if is_placeholder_api_key(k) {
+                return Err(AuditError::configuration(
+                    "ANTHROPIC_API_KEY",
+                    "Appears to be a placeholder key",
+                ));
+            }
+        }
+        if let Some(k) = &self.gemini_ai_api_key {
+            if is_placeholder_api_key(k) {
+                return Err(AuditError::configuration(
+                    "GEMINI_API_KEY",
+                    "Appears to be a placeholder key",
+                ));
+            }
+        }
+        if let Some(k) = &self.deepseek_api_key {
+            if is_placeholder_api_key(k) {
+                return Err(AuditError::configuration(
+                    "DEEPSEEK_API_KEY",
+                    "Appears to be a placeholder key",
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -293,6 +335,10 @@ static CONFIG: OnceLock<AuditConfig> = OnceLock::new();
 
 /// Initializes the global configuration from environment variables.
 pub fn init_config() -> Result<()> {
+    // Ensure .env is loaded even if the caller forgot; safe to call multiple times
+    // Load .env and override any existing env vars to ensure repo-root .env wins in app runs
+    dotenvy::dotenv_override().ok();
+
     let config = AuditConfig::from_env()?;
     config.validate()?;
 
@@ -336,8 +382,8 @@ mod tests {
     fn test_config_validation() {
         let mut config = AuditConfig::default();
 
-        // Set an API key to make validation pass
-        config.openai_api_key = Some("test-key".to_string());
+        // Set a realistic OpenAI-style key to make validation pass
+        config.openai_api_key = Some("sk-valid-12345".to_string());
         assert!(config.validate().is_ok());
 
         // Test invalid URL
@@ -366,7 +412,7 @@ mod tests {
     fn test_from_env() {
         unsafe {
             env::set_var("QDRANT_URL", "http://test:6334");
-            env::set_var("OPENAI_API_KEY", "test-key");
+            env::set_var("OPENAI_API_KEY", "sk-valid-12345");
         }
 
         let config = AuditConfig::from_env().unwrap();

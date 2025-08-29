@@ -4,7 +4,7 @@
 use once_cell::sync::OnceCell;
 use qdrant_client::{Qdrant, qdrant::QueryPointsBuilder};
 use rig::{
-    client::EmbeddingsClient,
+    client::{EmbeddingsClient, ProviderClient},
     providers::openai::{Client, TEXT_EMBEDDING_3_SMALL},
     vector_store::VectorStoreIndexDyn,
 };
@@ -23,7 +23,7 @@ pub fn vector_index() -> anyhow::Result<Arc<dyn VectorStoreIndexDyn>> {
             .build()
             .map_err(anyhow::Error::from)?;
 
-        let openai = Client::new(&std::env::var("OPENAI_API_KEY")?);
+        let openai = Client::from_env();
         let model = openai.embedding_model(TEXT_EMBEDDING_3_SMALL);
 
         // 2 ── Build the query-params object

@@ -1,4 +1,4 @@
-use crate::llm_review::enums::AIAgent;
+use crate::llm_review::enums::{AIAgent, AgentMetadata};
 /// Cost tracking and calculation for LLM inference across multiple providers.
 ///
 /// This module provides real-time cost tracking for AI agent operations,
@@ -54,7 +54,7 @@ impl LlmCostType {
             LlmCostType::Openai4oInput => 2.50,
             LlmCostType::Openai4oOutput => 10.00,
             LlmCostType::Openai5Input => 1.25,
-            LlmCostType::Openai5Output => 10.00,
+            LlmCostType::Openai5Output => 30.00, // triple book cost to account for reasoning tokens
             LlmCostType::OpenaiO3Input => 2.00,
             LlmCostType::OpenaiO3Output => 8.00,
             LlmCostType::AnthropicClaudeInput => 3.00,
@@ -67,35 +67,114 @@ impl LlmCostType {
     }
 }
 
+pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) -> f64 {
+    match token_type {
+        TokenType::Input => match model {
+            // OpenAI models
+            "gpt-4o" => 2.50,
+            "gpt-5" => 1.25,
+            "o3" => 2.00,
+
+            // Anthropic models
+            "claude-3.5-sonnet" | "claude-3-5-sonnet" => 3.00,
+            "claude-3.7-sonnet" | "claude-3-7-sonnet" => 3.00,
+            "claude-4.0-sonnet" | "claude-4-0-sonnet" => 3.00,
+            "claude-4" => 3.00,
+
+            // Gemini models
+            "gemini-2.5-pro" | "gemini-2-5-pro" => 1.25,
+            "gemini-pro" => 1.25,
+
+            // DeepSeek models
+            "deepseek-chat" => 0.07,
+            "deepseek-coder" => 0.07,
+
+            // Default fallback for unknown models
+            _ => {
+                log::warn!(
+                    "Unknown model '{}' for input tokens, using default rate",
+                    model
+                );
+                1.25 // Default to GPT-5 input rate
+            }
+        },
+        TokenType::Output => match model {
+            // OpenAI models
+            "gpt-4o" => 10.00,
+            "gpt-5" => 30.00, // set to 3X actual value to account for reasoning tokens
+            "o3" => 8.00,
+
+            // Anthropic models
+            "claude-3.5-sonnet" | "claude-3-5-sonnet" => 15.00,
+            "claude-3.7-sonnet" | "claude-3-7-sonnet" => 15.00,
+            "claude-4.0-sonnet" | "claude-4-0-sonnet" => 15.00,
+            "claude-4" => 15.00,
+
+            // Gemini models
+            "gemini-2.5-pro" | "gemini-2-5-pro" => 10.00,
+            "gemini-pro" => 10.00,
+
+            // DeepSeek models
+            "deepseek-chat" => 1.10,
+            "deepseek-coder" => 1.10,
+
+            // Default fallback for unknown models
+            _ => {
+                log::warn!(
+                    "Unknown model '{}' for output tokens, using default rate",
+                    model
+                );
+                10.00 // Default to GPT-5 output rate
+            }
+        },
+    }
+}
+
 impl AIAgent {
     pub fn get_cost_per_million_tokens(&self, token_type: TokenType) -> f64 {
         match self {
             // Use correct GPT-5 rates: $1.25 input, $10.00 output
-            AIAgent::Openai(_) if token_type == TokenType::Input => 1.25,
-            AIAgent::Openai(_) => 10.00,
-            AIAgent::Anthropic(_) if token_type == TokenType::Input => 3.00,
-            AIAgent::Anthropic(_) => 15.00,
-            AIAgent::Gemini(_) if token_type == TokenType::Input => 1.25,
-            AIAgent::Gemini(_) => 10.00,
-            AIAgent::Deepseek(_) if token_type == TokenType::Input => 0.07,
-            AIAgent::Deepseek(_) => 1.10,
+            AIAgent::Openai { .. } if token_type == TokenType::Input => 1.25,
+            AIAgent::Openai { .. } => 10.00,
+            AIAgent::Anthropic { .. } if token_type == TokenType::Input => 3.00,
+            AIAgent::Anthropic { .. } => 15.00,
+            AIAgent::Gemini { .. } if token_type == TokenType::Input => 1.25,
+            AIAgent::Gemini { .. } => 10.00,
+            AIAgent::Deepseek { .. } if token_type == TokenType::Input => 0.07,
+            AIAgent::Deepseek { .. } => 1.10,
         }
     }
 }
 static INFERENCE_COST_DATA: Lazy<Arc<Mutex<f64>>> = Lazy::new(|| Arc::new(Mutex::new(0.0)));
 
-pub async fn add_to_inference_cost_by_type(content: &str, cost_type: LlmCostType) {
+// main method to update cost
+pub async fn add_to_inference_cost_by_type(
+    content: &str,
+    metadata: &AgentMetadata,
+    token_type: TokenType,
+) {
     let cost_data = Arc::clone(&INFERENCE_COST_DATA);
     let mut inference_cost = cost_data.lock().await;
 
     // Use improved token counting for input tokens
-    let tokens = match cost_type {
-        LlmCostType::Openai5Input => estimate_chat_completion_tokens(content),
-        _ => get_token_count(content),
+    let tokens = if metadata.model == "gpt-5" {
+        estimate_chat_completion_tokens(content)
+    } else {
+        get_token_count(content)
     };
 
     // Convert tokens to cost: (tokens * cost_per_million) / 1M for better precision
-    let cost = (tokens as f64 * cost_type.get_cost_per_million_tokens()) / 1_000_000.0;
+    let cost_per_million = get_cost_per_million_tokens_by_model(&metadata.model, token_type);
+    let mut cost = (tokens as f64 * cost_per_million) / 1_000_000.0;
+
+    // reduce cost if flex mode
+    cost = if metadata.service_tier.as_deref().unwrap_or("default") == "flex" {
+        cost / 2.0
+    } else {
+        cost
+    };
+
+    // cost update
     *inference_cost = *inference_cost + cost;
 }
 
@@ -109,7 +188,7 @@ pub async fn add_to_inference_cost_by_agent(
 
     // Use improved token counting for input tokens
     let tokens = match (agent.as_ref(), token_type) {
-        (AIAgent::Openai(_), TokenType::Input) => estimate_chat_completion_tokens(content),
+        (AIAgent::Openai { .. }, TokenType::Input) => estimate_chat_completion_tokens(content),
         _ => get_token_count(content),
     };
 
@@ -180,8 +259,19 @@ mod tests {
         // Test with a known string
         let test_text = "Hello world, this is a test prompt for GPT-5 cost calculation.";
 
+        // Create test metadata for GPT-5
+        let test_metadata = AgentMetadata {
+            model: "gpt-5".to_string(),
+            temperature: 0.7,
+            service_tier: None,
+            reasoning_effort: None,
+            file_picker_enabled: false,
+            file_retrieval_enabled: false,
+            dynamic_context_enabled: false,
+        };
+
         // Add input cost
-        add_to_inference_cost_by_type(test_text, LlmCostType::Openai5Input).await;
+        add_to_inference_cost_by_type(test_text, &test_metadata, TokenType::Input).await;
 
         // Get token count and verify calculation
         let tokens = estimate_chat_completion_tokens(test_text); // Use improved counting
@@ -207,7 +297,7 @@ mod tests {
     #[tokio::test]
     async fn test_cost_calculation_vs_openai_api() {
         use reqwest::Client;
-        use serde_json::{Value, json};
+        use serde_json::{json, Value};
 
         // Skip test if no API key
         let api_key = match std::env::var("OPENAI_API_KEY") {
@@ -227,8 +317,19 @@ mod tests {
 
         let test_prompt = "Hello, this is a test prompt to verify cost calculation accuracy.";
 
+        // Create test metadata for GPT-5
+        let test_metadata = AgentMetadata {
+            model: "gpt-5".to_string(),
+            temperature: 0.7,
+            service_tier: None,
+            reasoning_effort: None,
+            file_picker_enabled: false,
+            file_retrieval_enabled: false,
+            dynamic_context_enabled: false,
+        };
+
         // Track input cost with our system
-        add_to_inference_cost_by_type(test_prompt, LlmCostType::Openai5Input).await;
+        add_to_inference_cost_by_type(test_prompt, &test_metadata, TokenType::Input).await;
 
         // Make direct OpenAI API call
         let client = Client::new();
@@ -291,7 +392,9 @@ mod tests {
         let response_text = response_json["choices"][0]["message"]["content"]
             .as_str()
             .expect("Missing response content");
-        add_to_inference_cost_by_type(response_text, LlmCostType::Openai5Output).await;
+
+        // Use the same test metadata as for input
+        add_to_inference_cost_by_type(response_text, &test_metadata, TokenType::Output).await;
 
         // Calculate expected cost using OpenAI's token counts and service tier
         let (input_rate, output_rate) = match service_tier {

@@ -4,7 +4,6 @@
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
     config::DISCOVERY_RUNS,
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         context_state::{get_metadata_context, ContextType},
@@ -35,10 +34,8 @@ where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
     <T as IssueStructTrait>::Spec: Send + Sync + Clone + DeserializeOwned + IssueTrait + 'static,
 {
-    info!(
-        "🔍 Phase 3: Mining Findings from each {}...",
-        patterns.issue_title()
-    );
+    let issue_title = patterns.issue_title();
+    info!("🔍 Phase 3: Mining Findings from each {}...", issue_title);
 
     let all_findings = Arc::new(Mutex::new(Findings {
         findings: Vec::new(),
@@ -60,14 +57,16 @@ where
             let pattern_clone = Arc::clone(&arc_pattern);
             let sem = Arc::clone(&VERIFY_SEM);
             let shared_findings = Arc::clone(&all_findings);
+            let title = issue_title.clone();
 
             handles.push(tokio::spawn(async move {
                 // ── acquire permit ────────────────────────
                 let _permit = sem.acquire_owned().await.expect("semaphore closed");
                 let result: Result<()> = async {
                     info!(
-                        "Round {} of mining findings from {}",
+                        "Round {} of mining {} to generate findings from {}",
                         i + 1,
+                        title,
                         pattern_clone.title_str()
                     );
                     let instruction_prompt = pattern_clone.pattern_to_findings_prompt();
@@ -75,12 +74,14 @@ where
 
                     let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
 
-                    // add to cost
-                    add_to_inference_cost_by_type(&full_prompt, LlmCostType::Openai5Input).await;
                     let findings: Findings = arc_agent.extract_with_retry(&full_prompt).await?;
 
                     let issues_found = findings.findings.len();
-                    info!("{} issues found!", issues_found);
+                    info!(
+                        "{} findings found from {}!",
+                        issues_found,
+                        pattern_clone.title_str()
+                    );
 
                     // 3. Merge results (if any) into the shared accumulator
                     if issues_found > 0 {

@@ -29,16 +29,34 @@ pub fn get_api_key(env_var: &str) -> Result<String> {
     }
 
     // Check for obvious placeholder values
-    let placeholder_values = ["your_api_key", "placeholder", "changeme", "test", "demo"];
-    let key_lower = key.to_lowercase();
-    if placeholder_values
-        .iter()
-        .any(|&placeholder| key_lower.contains(placeholder))
-    {
+    if is_placeholder_api_key(&key) {
         anyhow::bail!("API key {} appears to be a placeholder value", env_var);
     }
 
     Ok(key)
+}
+
+/// Returns true if the provided API key string looks like a placeholder.
+/// This catches common patterns like "your-key-here", "your_api_key", "changeme", etc.
+pub fn is_placeholder_api_key(key: &str) -> bool {
+    let k = key.to_lowercase();
+    let placeholders = [
+        "your-key",
+        "your_api_key",
+        "your-api",
+        "your key",
+        "your api key",
+        "your-key-here",
+        "your-api-here",
+        "placeholder",
+        "changeme",
+        "insert",
+        "paste",
+        "demo",
+        "example",
+        "test",
+    ];
+    placeholders.iter().any(|p| k.contains(p))
 }
 
 /// Securely retrieves a URL from environment variables with validation.

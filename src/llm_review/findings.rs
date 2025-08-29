@@ -1,19 +1,14 @@
 use super::{
+    agent_factory::{AgentConfig, AgentFactory},
     enums::{Severity, VulnerabilityType},
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::enums::EnumString,
     utils::semantic_compare,
 };
 use regex::Regex;
-use rig::{
-    agent::Agent,
-    client::{CompletionClient, ProviderClient},
-    completion::{CompletionModel, Prompt},
-    providers::openai::{self},
-};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -128,14 +123,11 @@ impl Finding {
     }
 
     // resonse "YES" or "NO"
-    pub async fn is_duplicate_issue<M>(
+    pub async fn is_duplicate_issue(
         &self,
         issue: &Finding,
-        ai_agent: &Agent<M>,
-    ) -> anyhow::Result<bool>
-    where
-        M: CompletionModel,
-    {
+        ai_agent: &crate::llm_review::enums::AIAgent,
+    ) -> anyhow::Result<bool> {
         let title_similiarity_score = semantic_compare::similarity_score(&self.title, &issue.title);
         let desc_similiarity_score = semantic_compare::similarity_score(
             &self.description.clone().unwrap_or_default(),
@@ -167,11 +159,11 @@ impl Finding {
                 &issue.description.clone().unwrap_or_default(),
             );
 
-        add_to_inference_cost_by_type(&prompt, LlmCostType::Openai5Input).await;
+        add_to_inference_cost_by_type(&prompt, ai_agent.get_metadata(), TokenType::Input).await;
 
-        let response = ai_agent.prompt(prompt).await?;
+        let response = ai_agent.prompt(&prompt).await?;
 
-        add_to_inference_cost_by_type(&response, LlmCostType::Openai5Output).await;
+        add_to_inference_cost_by_type(&response, ai_agent.get_metadata(), TokenType::Output).await;
 
         Ok(response.trim().eq_ignore_ascii_case("YES"))
     }
@@ -201,8 +193,12 @@ impl Findings {
             });
         }
 
-        let openai_client = openai::Client::from_env();
-        let openai_agent = Arc::new(openai_client.agent("gpt-5").temperature(1.0).build());
+        // Create O3 agent with flex tier for cost optimization
+        let openai_config = AgentConfig::new(None)
+            .with_model("o3")
+            .with_openai_service_tier("flex");
+
+        let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 
         let mut findings_hash = HashMap::<String, Vec<Finding>>::new();
 
@@ -280,13 +276,10 @@ impl Findings {
     }
 }
 
-async fn get_deduped_finding_vec<T>(
+async fn get_deduped_finding_vec(
     findings: &Arc<Vec<Finding>>,
-    agent: &Arc<Agent<T>>,
-) -> anyhow::Result<Vec<Finding>>
-where
-    T: CompletionModel,
-{
+    agent: &Arc<crate::llm_review::enums::AIAgent>,
+) -> anyhow::Result<Vec<Finding>> {
     // assigns bool to each finding index, is dup or not? assume not for initializing
     let size = findings.len();
     let mut is_dup_vec: Vec<bool> = vec![false; size];
