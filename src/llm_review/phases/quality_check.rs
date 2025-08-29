@@ -8,10 +8,7 @@ use crate::{
         context_state::{get_metadata_context, ContextType},
         enums::{AIAgent, Severity},
         findings::{Finding, Findings},
-        prompt_support::{
-            post_qualify::generate_post_qualify, pre_qualify::PRE_QUALIFY,
-            qualify_prompt::QUALIFY_PROMPT,
-        },
+        prompt_support::{post_qualify::generate_post_qualify, qualify_prompt::QUALIFY_PROMPT},
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
     },
@@ -95,7 +92,6 @@ pub async fn execute(
                 let prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
                     &arc_findings.findings[i],
-                    PRE_QUALIFY,
                     QUALIFY_PROMPT,
                     &post_qualify,
                 );

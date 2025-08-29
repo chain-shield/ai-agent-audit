@@ -127,7 +127,8 @@ where
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async {
                 let instruction_prompt = arc_patterns.issues()[i].generate_verify_prompt();
-                // info!("prompt instructions:\n\n {}", instruction_prompt);
+
+                // info!("verify instruction prompt => {}", instruction_prompt);
 
                 let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
 

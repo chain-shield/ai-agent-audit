@@ -12,8 +12,7 @@ use crate::{
             deserialize_bool_from_str_or_bool, generate_content_plus_context_block,
         },
         prompt_support::{
-            post_verify::POST_IN_SCOPE_VERIFY, pre_verify::PRE_IN_SCOPE_VERIFY,
-            verify_prompt::VERIFY_IN_SCOPE_PROMPT,
+            post_verify::POST_IN_SCOPE_VERIFY, verify_prompt::VERIFY_IN_SCOPE_PROMPT,
         },
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
@@ -90,7 +89,6 @@ pub async fn execute(
                 let instruction_prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
                     &arc_findings[i],
-                    PRE_IN_SCOPE_VERIFY,
                     &verify_prompt_and_scope,
                     POST_IN_SCOPE_VERIFY,
                 );

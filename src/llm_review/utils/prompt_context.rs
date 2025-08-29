@@ -8,11 +8,10 @@ use crate::llm_review::{
 pub fn generate_prompt_for_issue_check(
     code: &str,
     finding: &Finding,
-    pre_instructions: &str,
     instructions: &str,
     post_instructions: &str,
 ) -> String {
-    let mut prompt = format!("{}{}{}", pre_instructions, instructions, post_instructions);
+    let mut prompt = format!("{}{}", instructions, post_instructions);
 
     prompt.push_str("\n\n");
     prompt.push_str("## REPORT FOR SECURITY ISSUE");

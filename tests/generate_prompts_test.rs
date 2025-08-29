@@ -95,7 +95,7 @@ fn print_pattern_prompts() {
         VulnerabilityPattern::Reentrancy,
         VulnerabilityPattern::ExternalCallAfterStateChange,
     ];
-    let schema = pat_prompts::get_pattern_json(&issues);
+    let schema = pat_prompts::get_pattern_json_requirement(&issues);
     println!("\n===== Pattern JSON Schema =====\n{}\n", schema);
 
     let verify_schema = pat_prompts::get_pattern_verify_json();
@@ -137,7 +137,7 @@ fn print_findings_template_prompts() {
         templated
     );
 
-    let findings_json = ft::get_findings_json(&issue_type, issue_definition);
+    let findings_json = ft::get_findings_json_requirement(&issue_type, issue_definition);
     println!(
         "\n===== Findings JSON (from VulnerabilityPattern) =====\n{}\n",
         findings_json

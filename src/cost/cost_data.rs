@@ -101,7 +101,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
         TokenType::Output => match model {
             // OpenAI models
             "gpt-4o" => 10.00,
-            "gpt-5" => 30.00, // set to 3X actual value to account for reasoning tokens
+            "gpt-5" => 10.00, // set to 3X actual value to account for reasoning tokens
             "o3" => 8.00,
 
             // Anthropic models

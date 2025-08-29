@@ -5,6 +5,7 @@ use crate::{
     llm_review::{
         agent_factory::{AgentConfig, AgentFactory},
         dynamic_prompts::{
+            findings_template::get_findings_json_requirement,
             inv_findings::generate_invariant_to_findings,
             invariants::generate_invariant_verify_prompt,
             pattern_findings::generate_pattern_to_findings_prompt,
@@ -54,6 +55,7 @@ pub trait IssueTrait: Send + Sync {
     fn description(&self) -> String;
     fn generate_verify_prompt(&self) -> String;
     fn pattern_to_findings_prompt(&self) -> String;
+    fn findings_json_required_prompt(&self) -> String;
 }
 
 #[async_trait]
@@ -90,6 +92,9 @@ impl IssueTrait for InvariantFinding {
     fn pattern_to_findings_prompt(&self) -> String {
         generate_invariant_to_findings(self)
     }
+    fn findings_json_required_prompt(&self) -> String {
+        get_findings_json_requirement(&self.inv_type, &self.predicate)
+    }
 }
 
 #[async_trait]
@@ -124,6 +129,9 @@ impl IssueTrait for Pattern {
     }
     fn pattern_to_findings_prompt(&self) -> String {
         generate_pattern_to_findings_prompt(self)
+    }
+    fn findings_json_required_prompt(&self) -> String {
+        get_findings_json_requirement(&self.issue_type, &self.title)
     }
 }
 

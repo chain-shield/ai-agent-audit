@@ -2,12 +2,6 @@ pub const POST_VERIFY: &str = r#"
 
 ### OUTPUT REQUIREMENTS 
 
-1. **is_legit_vulnerability**: true|false 
-   • `true`   → issue is real
-   • `false`  → issue is clearly harmless, irrelevant, or deliberate with no risk or confusion
-   *NOTE* : this is boolean value, NO "" around it
-2. **why_its_not_legit**: IF above is false (OMIT this field if above true), provide brief explanation why issue is NOT real 
-
 *Please respond with ONLY valid JSON in the following exact format:*
 
 {
@@ -21,12 +15,6 @@ pub const POST_VERIFY: &str = r#"
 
 pub const POST_IN_SCOPE_VERIFY: &str = r#"
 ### OUTPUT REQUIREMENTS 
-
-1. **is_vulnerability_in_scope**: true|false 
-   • `true`   → issue is in scope
-   • `false`  → issue is out of scope 
-   *NOTE* : this is boolean value, NO "" around it
-2. **why_its_not_in_scope**: IF above is false (OMIT this field if above true), provide brief explanation why issue is NOT in scope.
 
 *Please respond with ONLY valid JSON in the following exact format:*
 

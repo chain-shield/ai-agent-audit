@@ -11,18 +11,9 @@ use crate::llm_review::{
 pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
     let category_spec = get_category_library_spec(&category).expect("could not find category");
     let pattern_categories = generate_formated_list_from_pattern_data(&category_spec.issues);
-    let pattern_json = get_pattern_json(&category_spec.issues);
 
     format!(
         r#"
-        Before instructions are provided on the task please note required output format:
-
-        ## JSON Output Requirement
-
-        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
-
-        {json} 
-
         You are a top C4 Security Warden specializing in finding {title} vulnerabilities.
 
         Please Analyse the *entire* Solidity source below for 
@@ -34,28 +25,10 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
         ## Rules
         - **ONLY LOOK FOR {title_all_caps} VULNERABILITY** - disregard everything else
         - **Scope** - if scope is provided below, then only report vulnerability that are in scope
-
-        ## OUTPUT REQUIREMENTS 
-
-        *Please respond with ONLY valid JSON in the following exact format:*
-
-        {json}
-        
-        - **privilege** -> least privilege to trigger vulnerability
-        - If no vulnerabilities are found, return: 
-
-        {{
-        "patterns": []
-        }}
-
-        **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
-        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
-        they match up correctly.
     "#,
         title = category_spec.title,
         title_all_caps = category_spec.title.to_uppercase(),
         categories = pattern_categories,
-        json = pattern_json
     )
 }
 pub fn generate_pattern_verify_prompt(pattern: &Pattern) -> String {
@@ -63,14 +36,7 @@ pub fn generate_pattern_verify_prompt(pattern: &Pattern) -> String {
     let pattern_finding_report = generate_formatted_pattern(pattern);
 
     format!(
-        r#"Before instructions are provided on the task please note required output format:
-
-        ## JSON Output Requirement
-
-        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
-
-        {json}
-
+        r#"
         ## Your task: decide if the reported Security Vulnerability Pattern is legit.
         
         You should return `"true"` if security vulnerability pattern is legit and contract/fuction, description, static_signals, assets_at_risk,
@@ -78,12 +44,6 @@ pub fn generate_pattern_verify_prompt(pattern: &Pattern) -> String {
         Otherwise return `"false"`.
 
         ## OUTPUT REQUIREMENTS 
-
-        1. **is_legit_pattern**: true|false 
-        • `true`   → pattern is legit
-        • `false`  → pattern is NOT legit
-        *NOTE* : this is boolean value, NO "" around it
-        2. **why_its_not_legit**: IF above is false (OMIT this field if above true), provide brief explanation why pattern is not legit
 
         *Please respond with ONLY valid JSON in the following exact format:*
 
@@ -99,12 +59,18 @@ pub fn generate_pattern_verify_prompt(pattern: &Pattern) -> String {
     )
 }
 
-pub fn get_pattern_json(patterns: &[VulnerabilityPattern]) -> String {
+pub fn get_pattern_json_requirement(patterns: &[VulnerabilityPattern]) -> String {
     let issue_list = generate_enum_list(patterns);
     let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
 
     format!(
-        r#"{{
+        r#"
+
+        ## OUTPUT REQUIREMENTS 
+
+        *Please respond with ONLY valid JSON in the following exact format:*
+
+        {{
         "patterns": [
             {{
             "title": "100 chars or less audit report friendly title",
@@ -118,6 +84,17 @@ pub fn get_pattern_json(patterns: &[VulnerabilityPattern]) -> String {
             }}
          ]
         }}
+
+        - **privilege** -> least privilege to trigger vulnerability
+        - If no vulnerabilities are found, return: 
+
+        {{
+        "patterns": []
+        }}
+
+        **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
+        they match up correctly.
     "#,
         issues = issue_list,
         privileges = privilege_enum_list

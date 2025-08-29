@@ -7,18 +7,10 @@ use crate::llm_review::{
 };
 
 pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
-    let invariant_json = get_invariant_json(inv);
     let invariant_categories = generate_formated_list_from_invariant_data(inv);
 
     format!(
-        r#"Before instructions are provided on the task please note required output format:
-
-        ## JSON Output Requirement
-
-        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
-
-        {json}
-
+        r#"
         You are a senior smart-contract security auditor. Your task is to propose AND evaluate high-value,
         machine-checkable invariants for ONE target contract.
 
@@ -28,22 +20,7 @@ pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
         ## Invariant Types to Focus On
         {invariants}
 
-        ## OUTPUT REQUIREMENTS
-        STRICT JSON ONLY (no markdown, no comments):
-
-        {json}
-
-        - If no vulnerabilities are found, return: 
-
-        {{
-        "invariants": []
-        }}
-
-        **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
-        **Please double-check opening and closing brakets: `}}` and `]`, make sure 
-        they match up correctly.
     "#,
-        json = invariant_json,
         invariants = invariant_categories
     )
 }
@@ -53,47 +30,40 @@ pub fn generate_invariant_verify_prompt(inv: &InvariantFinding) -> String {
     let inv_finding_report = generate_formatted_invariant_finding(inv);
 
     format!(
-        r#"Before instructions are provided on the task please note required output format:
-
-        ## JSON Output Requirement
-
-        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
-
-        {json}
-
-        ## Your task: decide if the reported Invariant is legit.
+        r#"
+        ## Your task: decide if the reported Invariant is legit or not.
         
         You should return `"true"` if invariant is legit and description, predicate, and status all check out.
         Otherwise return `"false"`.
 
-        ## OUTPUT REQUIREMENTS 
+        ## INVARIANT TO VERIFY
+        {report} 
 
-        1. **is_legit_invariant**: true|false 
-        • `true`   → invariant is legit
-        • `false`  → invariant is NOT legit
-        *NOTE* : this is boolean value, NO "" around it
-        2. **why_its_not_legit**: IF above is false (OMIT this field if above true), provide brief explanation why invariant is not legit
+        ## OUTPUT REQUIREMENTS 
 
         *Please respond with ONLY valid JSON in the following exact format:*
 
         {json}
 
         **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
-
-        ## INVARIANT TO VERIFY
-        {report} 
         "#,
         json = verify_json,
         report = inv_finding_report
     )
 }
+
 pub fn get_invariant_json(inv: &[InvariantType]) -> String {
     let status_enum_list = generate_enum_list(all_enum_variants::<InvariantStatus>().as_slice());
     let invariant_type_list = generate_enum_list(inv);
 
     format!(
-        r#"{{
+        r#"
+
+        ## OUTPUT REQUIREMENTS
         
+        - STRICT JSON ONLY (no markdown, no comments):
+
+        {{
         "invariants": [
             {{
             "inv_type": "{types}",
@@ -109,6 +79,16 @@ pub fn get_invariant_json(inv: &[InvariantType]) -> String {
             }}
         ]
         }}
+
+        - If no vulnerabilities are found, return: 
+
+        {{
+        "invariants": []
+        }}
+
+        **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
+        **Please double-check opening and closing brakets: `}}` and `]`, make sure 
+        they match up correctly.
     "#,
         types = invariant_type_list,
         status = status_enum_list

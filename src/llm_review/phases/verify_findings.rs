@@ -11,7 +11,6 @@ use crate::{
         findings::{Finding, Findings},
         prompt_support::{
             post_verify::POST_VERIFY,
-            pre_verify::PRE_VERIFY,
             verify_prompt::{VERIFY_C4_PROMPT, VERIFY_PROMPT, VERIFY_SHERLOCK_PROMPT},
         },
         semaphore::VERIFY_SEM,
@@ -103,7 +102,6 @@ pub async fn execute(
                 let instruction_prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
                     &arc_findings.findings[i],
-                    PRE_VERIFY,
                     &verify_prompt_and_scope,
                     POST_VERIFY,
                 );

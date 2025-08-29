@@ -179,7 +179,7 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
 
     // Initialize the cache once with insertion-order grouping based on the incoming findings
     // ************************************************************************************
-    let grouped = FINDINGS_BY_PATTERN_CACHE.get_or_init(|| {
+    let grouped_findings = FINDINGS_BY_PATTERN_CACHE.get_or_init(|| {
         let mut map: HashMap<String, Vec<Finding>> = HashMap::new();
         let mut order: Vec<String> = Vec::new();
 
@@ -205,19 +205,19 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
     });
     // ************************************************************************************
 
-    if grouped.is_empty() {
+    if grouped_findings.is_empty() {
         return String::new();
     }
 
     findings_summary.push_str("##Findings by Pattern\n");
 
     let mut num = 1;
-    for (pattern, findings_vec) in grouped.iter() {
+    for (pattern, findings_vec) in grouped_findings.iter() {
         findings_summary.push_str(&format!("\n\n **Derived From** : {}\n\n", pattern));
         for f in findings_vec {
             match report_type {
                 ReportDataType::Summary => findings_summary.push_str(&format!(
-                    "[{}-{}]. {}\n\n?",
+                    "[{}-{}]. {}\n",
                     f.severity.as_initial(),
                     num,
                     f.title
@@ -228,6 +228,7 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
             }
             num += 1;
         }
+        findings_summary.push_str("\n");
     }
 
     findings_summary
