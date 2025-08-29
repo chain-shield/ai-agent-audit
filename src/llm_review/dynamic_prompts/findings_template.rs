@@ -15,23 +15,15 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
     issue_definition: &str,
     issue_full_spec: &str,
     issue_enum: &T,
-    issue_desc: &str,
 ) -> String {
     let exploit_enums = issue_enum.to_types();
     let exploit_bullets = generate_enum_bulleted_list(exploit_enums); // "- Oracle\n- Reentrancy\n..."
-    let json = get_findings_json(issue_enum, issue_desc);
+
     format!(
-        r#"Before we begin, note the required output format:
-
-        ## JSON Output Requirement
-        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
-
-        {json}
-
-        You are a top Code4rena security warden. Your job: analyze the target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
+        r#"You are a top Code4rena security warden. Your job: analyze the target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
 
         ## Rules
-        - Only report exploits tied to {pattern_type}.
+        - Only report exploits tied to the below {pattern_name} {pattern_type}.
         - Prefer **unprivileged EOAs**; consider untrusted roles if in audit scope.
         - Present-state only (fixture state). No deployment/upgrade-only windows unless reopenable permissionlessly.
         - Valid exploit: High/Medium severity, reproducible Foundry test, clear profit or state break. No log-only PoCs.
@@ -55,25 +47,6 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
 
         ## {title_all_caps} TO ANALYZE
         {full_spec}
-
-        ## OUTPUT REQUIREMENTS 
-
-        *Please respond with ONLY valid JSON in the following exact format:*
-
-        {json}
-
-        - Keep "derived_from" exactly as shown
-        - *privilege* -> least privilege to trigger vulnerability
-        - If no vulnerabilities are found, return: 
-
-        {{
-        "findings": []
-        }}
-
-        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
-        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
-        they match up correctly.
-
         "#,
         pattern_type = issue_type,
         rubric = CODE4RENA_SEVERITY_RUBRIC,
@@ -85,7 +58,7 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
     )
 }
 
-pub fn get_findings_json<T>(pattern: &T, pattern_description: &str) -> String
+pub fn get_findings_json_requirement<T>(pattern: &T, pattern_description: &str) -> String
 where
     T: EnumString + EnumData,
 {
@@ -97,7 +70,13 @@ where
     };
 
     format!(
-        r#"{{
+        r#"
+
+        ## OUTPUT REQUIREMENTS 
+
+        *Please respond with ONLY valid JSON in the following exact format:*
+
+        {{
         "findings": [
             {{
             "derived_from": "{pattern_description}",
@@ -115,6 +94,18 @@ where
             }}
         ]
         }}
+
+        - Keep "derived_from" exactly as shown
+        - *privilege* -> least privilege to trigger vulnerability
+        - If no vulnerabilities are found, return: 
+
+        {{
+        "findings": []
+        }}
+
+        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
+        they match up correctly.
        "#,
         issues = issue_list,
         privileges = privilege_enum_list,

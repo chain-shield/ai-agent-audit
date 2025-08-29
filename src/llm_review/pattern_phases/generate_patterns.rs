@@ -7,7 +7,10 @@ use crate::{
     error::Result,
     llm_review::{
         context_state::{get_metadata_context, ContextType},
-        dynamic_prompts::{self, invariants::generate_invariant_prompt},
+        dynamic_prompts::{
+            self,
+            invariants::{generate_invariant_prompt, get_invariant_json},
+        },
         enums::AIAgent,
         issues::{IssuePrompt, IssueStructTrait},
         pattern_category::get_category_library_spec,
@@ -51,18 +54,17 @@ where
     let codeblock = Arc::new(code.to_string());
 
     let added_content_from_brain = Arc::new(context.to_string());
+    let code_plus_context =
+        generate_content_plus_context_block(&codeblock, &added_content_from_brain);
 
     // Simple local closure to DRY out spawn logic without extra generics
     let mut spawn_run = |prompt: Arc<String>, run_index: usize| {
         let agent = Arc::clone(arc_agent);
-        let combined = Arc::clone(&all_patterns);
-        let code = Arc::clone(&codeblock);
-        let ctx = Arc::clone(&added_content_from_brain);
+        let shared_patterns = Arc::clone(&all_patterns);
 
         handles.push(tokio::spawn(async move {
             if let Err(e) =
-                run_security_prompt(agent, code, issue_title, ctx, prompt, run_index, combined)
-                    .await
+                run_security_prompt(agent, issue_title, prompt, run_index, shared_patterns).await
             {
                 log::error!("Prompt task failed: {e:#}");
             }
@@ -74,19 +76,32 @@ where
             for (i, category) in pattern_category.into_iter().enumerate() {
                 let category_spec =
                     get_category_library_spec(&category).expect("could not extract category spec");
-                let category_prompt = Arc::new(
-                    dynamic_prompts::patterns::generate_pattern_category_prompt(&category),
-                );
+
+                // construct promopt
+                let instruction_prompt =
+                    dynamic_prompts::patterns::generate_pattern_category_prompt(&category);
+                let json_requirement_prompt =
+                    dynamic_prompts::patterns::get_pattern_json_requirement(&category_spec.issues);
+                let prompt = Arc::new(format!(
+                    "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
+                ));
+
+                // info!("pattern prompt => {}", prompt);
 
                 for run in 0..category_spec.runs {
-                    spawn_run(Arc::clone(&category_prompt), (run + 1) * (i + 1));
+                    spawn_run(Arc::clone(&prompt), (run + 1) * (i + 1));
                 }
             }
         }
         IssuePrompt::Invariant(invariants) => {
             let inv_prompt = Arc::new(generate_invariant_prompt(&invariants));
+            let json_requirement_prompt = Arc::new(get_invariant_json(&invariants));
+            let prompt = Arc::new(format!(
+                "{inv_prompt}{code_plus_context}{json_requirement_prompt}"
+            ));
+            // info!("invariant prompt => {}", prompt);
             for run in 0..INVARIANT_RUNS {
-                spawn_run(Arc::clone(&inv_prompt), run + 1);
+                spawn_run(Arc::clone(&prompt), run + 1);
             }
         }
     }
@@ -114,26 +129,20 @@ where
 /// LLM interaction, and result aggregation.
 pub async fn run_security_prompt<T>(
     agent: Arc<AIAgent>,
-    code: Arc<String>,
     title: &str,
-    added_context: Arc<String>,
-    instructions: Arc<String>,
+    prompt: Arc<String>,
     idx_of_review_round: usize,
     shared_patterns: Arc<Mutex<T>>,
 ) -> Result<()>
 where
     T: 'static + IssueStructTrait + Send + Sync + Default + Clone + DeserializeOwned,
 {
-    let prompt_body = generate_content_plus_context_block(code.as_str(), added_context.as_str());
-    let full_prompt = format!("{instructions}{prompt_body}");
-    // info!("prompt instructions:\n\n {}", instructions);
-
     // 2. Send to the right provider
     info!(
         "---- #{} LLM analysis Round for Finding {}----",
         idx_of_review_round, title
     );
-    let patterns: T = agent.extract_with_retry(&full_prompt).await?;
+    let patterns: T = agent.extract_with_retry(&prompt).await?;
 
     let issues_found = patterns.issues().len();
     info!("{} {}s found!", issues_found, title);

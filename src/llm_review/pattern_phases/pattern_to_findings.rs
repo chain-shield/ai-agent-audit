@@ -70,9 +70,13 @@ where
                         pattern_clone.title_str()
                     );
                     let instruction_prompt = pattern_clone.pattern_to_findings_prompt();
-                    // info!("prompt instructions:\n\n {}", instruction_prompt);
+                    let json_requirement_prompt = pattern_clone.findings_json_required_prompt();
+                    let full_prompt = format!(
+                        "{}{}{}",
+                        instruction_prompt, codeblock_plus_context, json_requirement_prompt
+                    );
 
-                    let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
+                    // info!("full_prompt => {}", full_prompt);
 
                     let findings: Findings = arc_agent.extract_with_retry(&full_prompt).await?;
 
