@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use crate::{
     build_brain::summarize,
     llm_review::{
         enums::{EnumString, Severity},
-        findings::Findings,
+        findings::{Finding, Findings},
         utils::prompt_context,
     },
     prepare_code::git_clone::RepoPaths,
@@ -264,6 +266,37 @@ fn get_finding_summary_by_severity(
             } else {
                 finding.free_report_title()
             };
+            findings_summary.push_str(&format!(
+                "[{}-{}]. {}\n\n **Derived From** : {}\n\n",
+                severity.as_initial(),
+                i + 1,
+                title,
+                &finding.derived_from.clone().unwrap_or_default()
+            ));
+        }
+    } else {
+        return String::new();
+    }
+    findings_summary
+}
+
+fn get_finding_summary_by_pattern(findings: &Findings, severity: Severity) -> String {
+    let findings_by_severity = findings.filter_by_severity(severity);
+    let mut findings_summary = String::new();
+    let mut finding_hash = HashMap::<String, Finding>::new();
+
+    findings.findings.iter().for_each(|f| {
+        finding_hash.insert(
+            f.derived_from.clone().unwrap_or("Unknown".to_string()),
+            f.to_owned(),
+        );
+    });
+
+    if !finding_hash.is_empty() {
+        findings_summary.push_str(&format!("## {} Risk Findings\n\n", severity.as_str()));
+
+        for (i, finding) in findings_by_severity.iter().enumerate() {
+            let title = finding.title.clone();
             findings_summary.push_str(&format!(
                 "[{}-{}]. {}\n\n **Derived From** : {}\n\n",
                 severity.as_initial(),

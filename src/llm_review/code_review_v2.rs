@@ -200,7 +200,7 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     // Create verification agent using OpenAI O3
     let verify_config = AgentConfig::new(Some(repo.clone()))
         .with_model(O3)
-        .with_openai_service_tier("flex")
+        // .with_openai_service_tier("flex")
         .with_preamble(verify_preamble)
         .with_file_picker(false); // Disabled to avoid rate limits
 
@@ -228,7 +228,7 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         .with_model("gpt-5")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
-        .with_openai_service_tier("flex")
+        // .with_openai_service_tier("flex")
         .with_openai_reasoning_effort("high")
         .with_file_picker(false);
     //     .with_file_picker(false) // Disabled to avoid rate limits
