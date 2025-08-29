@@ -60,10 +60,11 @@ pub trait IssueTrait: Send + Sync {
 impl IssueTrait for InvariantFinding {
     fn hash(&self) -> String {
         format!(
-            "{}-{}-{}",
+            "{}-{}-{}-{}",
             self.inv_type.as_str(),
             self.contract,
             self.function,
+            self.status.as_str()
         )
     }
     async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
