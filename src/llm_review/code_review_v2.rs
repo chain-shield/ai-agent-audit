@@ -14,6 +14,7 @@ use crate::llm_review::{
 };
 use crate::prepare_code::git_clone::RepoPaths;
 use log::info;
+use rig::providers::openai::O3;
 use std::{path::PathBuf, sync::Arc};
 use strum::IntoEnumIterator;
 use tokio::fs;
@@ -197,13 +198,13 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     // ";
 
     // Create verification agent using OpenAI O3
-    let verify_config = AgentConfig::new(repo.clone())
-        .with_temperature(1.0)
-        .with_model("gpt-5")
+    let verify_config = AgentConfig::new(Some(repo.clone()))
+        .with_model(O3)
+        .with_openai_service_tier("flex")
         .with_preamble(verify_preamble)
         .with_file_picker(false); // Disabled to avoid rate limits
 
-    let _ = AgentConfig::new(repo.clone())
+    let _ = AgentConfig::new(Some(repo.clone()))
         .with_temperature(1.0)
         .with_model(CLAUDE_4_0_SONNET)
         .with_max_tokens(64_000)
@@ -216,18 +217,19 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     // Enhanced preamble for discovery agents
     let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases.";
 
-    let _gemini_config = AgentConfig::new(repo.clone())
+    let _gemini_config = AgentConfig::new(Some(repo.clone()))
         .with_temperature(1.0)
         .with_model("gemini-2.5-pro")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
         .with_file_picker(false);
 
-    let openai_config = AgentConfig::new(repo.clone())
-        .with_temperature(1.0)
+    let openai_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
+        .with_openai_service_tier("flex")
+        .with_openai_reasoning_effort("high")
         .with_file_picker(false);
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_dynamic_context(false);

@@ -3,7 +3,6 @@
 /// This phase performs final quality checks on verified findings and enhances
 /// them with improved details, impact analysis, and mitigation strategies.
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         context_state::{get_metadata_context, ContextType},
@@ -100,7 +99,6 @@ pub async fn execute(
                     QUALIFY_PROMPT,
                     &post_qualify,
                 );
-                add_to_inference_cost_by_type(&prompt, LlmCostType::Openai5Input).await;
                 info!("quality checking finding #{}", i + 1);
                 let qualify_checked_finding: VulnerabilityQualityCheck =
                     arc_agent.extract_with_retry(&prompt).await?;

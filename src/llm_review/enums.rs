@@ -6,12 +6,12 @@ use log::info;
 /// categorization, providing unified interfaces for different AI providers
 /// and systematic vulnerability detection across 19+ security categories.
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 use crate::{
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     invariant_prompts::{
         arithmetic::ARITHMETIC, balance::BALANCE, permission::PERMISSION, referential::REFERENTIAL,
         state_machine::STATE_MACHINE, temporal::TEMPORAL,
@@ -48,19 +48,44 @@ use super::{
     prompt_support::{extractor_prompt::EXTRACTOR_AGENT, pre_prompt::PRE_PROMPT},
 };
 
+/// Configuration metadata for AI agents.
+/// Stores the original configuration used to create the agent for pricing calculations.
+#[derive(Debug, Clone)]
+pub struct AgentMetadata {
+    pub model: String,
+    pub temperature: f64,
+    pub service_tier: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub file_picker_enabled: bool,
+    pub file_retrieval_enabled: bool,
+    pub dynamic_context_enabled: bool,
+}
+
 /// Unified AI agent enum supporting multiple LLM providers.
 ///
 /// Provides a common interface for different AI providers while maintaining
 /// provider-specific optimizations and cost tracking capabilities.
 pub enum AIAgent {
     /// Anthropic Claude models (3.7 Sonnet, 4.0 Sonnet)
-    Anthropic(Agent<anthropic::completion::CompletionModel>),
+    Anthropic {
+        agent: Agent<anthropic::completion::CompletionModel>,
+        metadata: AgentMetadata,
+    },
     /// OpenAI models (GPT-4o, O3)
-    Openai(Agent<openai::responses_api::ResponsesCompletionModel>),
+    Openai {
+        agent: Agent<openai::responses_api::ResponsesCompletionModel>,
+        metadata: AgentMetadata,
+    },
     /// Google Gemini models
-    Gemini(Agent<gemini::completion::CompletionModel>),
+    Gemini {
+        agent: Agent<gemini::completion::CompletionModel>,
+        metadata: AgentMetadata,
+    },
     /// DeepSeek models (cost-effective option)
-    Deepseek(Agent<deepseek::CompletionModel>),
+    Deepseek {
+        agent: Agent<deepseek::CompletionModel>,
+        metadata: AgentMetadata,
+    },
 }
 
 /// Unified AI extractor enum for structured data extraction.
@@ -307,24 +332,13 @@ impl AIAgent {
     pub async fn prompt(&self, prompt: &str) -> anyhow::Result<String> {
         use rig::completion::Prompt;
 
-        match self {
-            AIAgent::Anthropic(model) => {
-                let response = model.prompt(prompt).await?;
-                Ok(response)
-            }
-            AIAgent::Openai(model) => {
-                let response = model.prompt(prompt).await?;
-                Ok(response)
-            }
-            AIAgent::Gemini(model) => {
-                let response = model.prompt(prompt).await?;
-                Ok(response)
-            }
-            AIAgent::Deepseek(model) => {
-                let response = model.prompt(prompt).await?;
-                Ok(response)
-            }
-        }
+        let out = match self {
+            AIAgent::Anthropic { agent, .. } => agent.prompt(prompt).await?,
+            AIAgent::Openai { agent, .. } => agent.prompt(prompt).await?,
+            AIAgent::Gemini { agent, .. } => agent.prompt(prompt).await?,
+            AIAgent::Deepseek { agent, .. } => agent.prompt(prompt).await?,
+        };
+        Ok(out)
     }
 
     pub async fn extract_with_retry<T>(&self, prompt: &str) -> anyhow::Result<T>
@@ -332,29 +346,17 @@ impl AIAgent {
         T: DeserializeOwned,
     {
         match self {
-            AIAgent::Anthropic(model) => Ok(agent_extract_with_retry::<_, T>(
-                model,
-                prompt,
-                LlmCostType::AnthropicClaudeOutput,
-            )
-            .await?),
-            AIAgent::Openai(model) => {
-                Ok(
-                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::Openai5Output)
-                        .await?,
-                )
+            AIAgent::Anthropic { agent, metadata } => {
+                Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
             }
-            AIAgent::Gemini(model) => {
-                Ok(
-                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::GeminiOutput)
-                        .await?,
-                )
+            AIAgent::Openai { agent, metadata } => {
+                Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
             }
-            AIAgent::Deepseek(model) => {
-                Ok(
-                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::DeepseekOutput)
-                        .await?,
-                )
+            AIAgent::Gemini { agent, metadata } => {
+                Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
+            }
+            AIAgent::Deepseek { agent, metadata } => {
+                Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
             }
         }
     }
@@ -367,27 +369,18 @@ impl AIAgent {
         T: DeserializeOwned,
     {
         match self {
-            AIAgent::Anthropic(model) => {
-                self.run_analysis_and_extract(
-                    model,
-                    prompt,
-                    repo,
-                    LlmCostType::AnthropicClaudeOutput,
-                )
-                .await
+            AIAgent::Anthropic { agent, .. } => {
+                self.run_analysis_and_extract(agent, prompt, repo).await
             }
 
-            AIAgent::Openai(model) => {
-                self.run_analysis_and_extract(model, prompt, repo, LlmCostType::Openai5Output)
-                    .await
+            AIAgent::Openai { agent, .. } => {
+                self.run_analysis_and_extract(agent, prompt, repo).await
             }
-            AIAgent::Gemini(model) => {
-                self.run_analysis_and_extract(model, prompt, repo, LlmCostType::GeminiOutput)
-                    .await
+            AIAgent::Gemini { agent, .. } => {
+                self.run_analysis_and_extract(agent, prompt, repo).await
             }
-            AIAgent::Deepseek(model) => {
-                self.run_analysis_and_extract(model, prompt, repo, LlmCostType::DeepseekOutput)
-                    .await
+            AIAgent::Deepseek { agent, .. } => {
+                self.run_analysis_and_extract(agent, prompt, repo).await
             }
         }
     }
@@ -397,21 +390,20 @@ impl AIAgent {
         model: &Agent<M>,
         prompt: &str,
         repo: &RepoPaths,
-        output_cost_type: LlmCostType,
     ) -> anyhow::Result<T>
     where
         T: DeserializeOwned,
         M: CompletionModel, // whatever trait `model.prompt()` uses
     {
         // 🆕 Create extractor agent
-        let extractor_config = AgentConfig::new(repo.clone())
+        let extractor_config = AgentConfig::new(Some(repo.clone()))
             .with_model("gpt-5")
             .with_preamble(
                 "You are an expert at extracting data and converting it into strict JSON.",
             );
         let extractor_agent = AgentFactory::create_openai_agent(&extractor_config)?;
         let extractor = match extractor_agent {
-            AIAgent::Openai(agent) => agent,
+            AIAgent::Openai { agent, .. } => agent,
             _ => anyhow::bail!("Unexpected agent type — expected OpenAI"),
         };
 
@@ -420,7 +412,13 @@ impl AIAgent {
         log::debug!("Prompt length: {} characters", prompt.len());
 
         // 📝 Track inference INPUT cost (MISSING!)
-        add_to_inference_cost_by_type(prompt, LlmCostType::Openai5Input).await;
+        let metadata = match self {
+            AIAgent::Anthropic { metadata, .. } => metadata,
+            AIAgent::Openai { metadata, .. } => metadata,
+            AIAgent::Gemini { metadata, .. } => metadata,
+            AIAgent::Deepseek { metadata, .. } => metadata,
+        };
+        add_to_inference_cost_by_type(prompt, metadata, TokenType::Input).await;
 
         let analysis = match model.prompt(prompt).await {
             Ok(result) => result,
@@ -459,7 +457,13 @@ impl AIAgent {
         };
 
         // 📝 Track inference output
-        add_to_inference_cost_by_type(&analysis, output_cost_type).await;
+        let metadata = match self {
+            AIAgent::Anthropic { metadata, .. } => metadata,
+            AIAgent::Openai { metadata, .. } => metadata,
+            AIAgent::Gemini { metadata, .. } => metadata,
+            AIAgent::Deepseek { metadata, .. } => metadata,
+        };
+        add_to_inference_cost_by_type(&analysis, metadata, TokenType::Output).await;
 
         // 📝 Build extractor prompt
         let extract_prompt = format!(
@@ -468,15 +472,118 @@ impl AIAgent {
         );
 
         // 📝 Track inference input
-        add_to_inference_cost_by_type(&extract_prompt, LlmCostType::Openai5Input).await;
+        // Create metadata for extractor agent (OpenAI GPT-5)
+        let extractor_metadata = AgentMetadata {
+            model: "gpt-5".to_string(),
+            temperature: 0.3,
+            service_tier: None,     // Default service tier for extractor
+            reasoning_effort: None, // Default reasoning effort for extractor
+            file_picker_enabled: false,
+            file_retrieval_enabled: false,
+            dynamic_context_enabled: false,
+        };
+        add_to_inference_cost_by_type(&extract_prompt, &extractor_metadata, TokenType::Input).await;
 
         // 🧠 Run extractor with retry
-        Ok(agent_extract_with_retry::<_, T>(
-            &extractor,
-            &extract_prompt,
-            LlmCostType::Openai5Output,
+        Ok(
+            agent_extract_with_retry::<_, T>(&extractor, &extract_prompt, &extractor_metadata)
+                .await?,
         )
-        .await?)
+    }
+
+    // Getter methods for pricing calculations and configuration inspection
+
+    /// Gets the model name.
+    pub fn get_model(&self) -> &str {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => &metadata.model,
+            AIAgent::Openai { metadata, .. } => &metadata.model,
+            AIAgent::Gemini { metadata, .. } => &metadata.model,
+            AIAgent::Deepseek { metadata, .. } => &metadata.model,
+        }
+    }
+
+    /// Gets the OpenAI service tier.
+    /// Returns "default" if not explicitly set or not applicable.
+    pub fn get_service_tier(&self) -> &str {
+        match self {
+            AIAgent::Openai { metadata, .. } => {
+                metadata.service_tier.as_deref().unwrap_or("default")
+            }
+            _ => "default", // Non-OpenAI providers don't have service tiers
+        }
+    }
+
+    /// Gets the OpenAI reasoning effort level.
+    /// Returns "medium" if not explicitly set or not applicable.
+    pub fn get_reasoning_effort(&self) -> &str {
+        match self {
+            AIAgent::Openai { metadata, .. } => {
+                metadata.reasoning_effort.as_deref().unwrap_or("medium")
+            }
+            _ => "medium", // Non-OpenAI providers don't have reasoning effort
+        }
+    }
+
+    /// Gets the temperature setting.
+    pub fn get_temperature(&self) -> f64 {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => metadata.temperature,
+            AIAgent::Openai { metadata, .. } => metadata.temperature,
+            AIAgent::Gemini { metadata, .. } => metadata.temperature,
+            AIAgent::Deepseek { metadata, .. } => metadata.temperature,
+        }
+    }
+
+    /// Checks if file picker is enabled.
+    pub fn is_file_picker_enabled(&self) -> bool {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => metadata.file_picker_enabled,
+            AIAgent::Openai { metadata, .. } => metadata.file_picker_enabled,
+            AIAgent::Gemini { metadata, .. } => metadata.file_picker_enabled,
+            AIAgent::Deepseek { metadata, .. } => metadata.file_picker_enabled,
+        }
+    }
+
+    /// Checks if file retrieval is enabled.
+    pub fn is_file_retrieval_enabled(&self) -> bool {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => metadata.file_retrieval_enabled,
+            AIAgent::Openai { metadata, .. } => metadata.file_retrieval_enabled,
+            AIAgent::Gemini { metadata, .. } => metadata.file_retrieval_enabled,
+            AIAgent::Deepseek { metadata, .. } => metadata.file_retrieval_enabled,
+        }
+    }
+
+    /// Checks if dynamic context is enabled.
+    pub fn is_dynamic_context_enabled(&self) -> bool {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => metadata.dynamic_context_enabled,
+            AIAgent::Openai { metadata, .. } => metadata.dynamic_context_enabled,
+            AIAgent::Gemini { metadata, .. } => metadata.dynamic_context_enabled,
+            AIAgent::Deepseek { metadata, .. } => metadata.dynamic_context_enabled,
+        }
+    }
+
+    /// Gets the provider name.
+    pub fn get_provider(&self) -> &'static str {
+        match self {
+            AIAgent::Anthropic { .. } => "anthropic",
+            AIAgent::Openai { .. } => "openai",
+            AIAgent::Gemini { .. } => "gemini",
+            AIAgent::Deepseek { .. } => "deepseek",
+        }
+    }
+
+    /// Gets the complete metadata for pricing calculations and configuration inspection.
+    /// This is the easiest way to get metadata for cost tracking functions.
+    pub fn get_metadata(&self) -> &AgentMetadata {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => metadata,
+            AIAgent::Openai { metadata, .. } => metadata,
+            AIAgent::Gemini { metadata, .. } => metadata,
+            AIAgent::Deepseek { metadata, .. } => metadata,
+        }
     }
 }
 

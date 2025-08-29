@@ -3,7 +3,6 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         context_state::{generate_audit_scope, get_metadata_context, ContextType},
@@ -97,7 +96,6 @@ pub async fn execute(
                 );
 
                 // add to cost
-                add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::Openai5Input).await;
                 info!("scope checking finding #{}", i + 1);
                 let is_in_scope_struct: InScope =
                     arc_agent.extract_with_retry(&instruction_prompt).await?;

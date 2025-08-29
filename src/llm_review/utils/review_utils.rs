@@ -10,7 +10,7 @@ use rig::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::llm_review::enums::{AIAgent, AIExtractor};
+use crate::llm_review::enums::{AIAgent, AIExtractor, AgentMetadata};
 
 pub fn build_anthropic_agent(
     client: &anthropic::Client,
@@ -29,7 +29,18 @@ pub fn build_anthropic_agent(
         .temperature(temperature)
         .build();
 
-    AIAgent::Anthropic(agent)
+    // Create metadata for pricing calculations
+    let metadata = AgentMetadata {
+        model: model.to_string(),
+        temperature,
+        service_tier: None,     // Anthropic doesn't have service tiers
+        reasoning_effort: None, // Anthropic doesn't have reasoning effort
+        file_picker_enabled: false,
+        file_retrieval_enabled: false,
+        dynamic_context_enabled: false,
+    };
+
+    AIAgent::Anthropic { agent, metadata }
 }
 
 pub fn build_openai_extractor<T>(
@@ -61,9 +72,26 @@ pub fn build_openai_agent(
         .preamble(preamble)
         .temperature(temperature);
 
+    // Create metadata for pricing calculations
+    let metadata = AgentMetadata {
+        model: model.to_string(),
+        temperature,
+        service_tier: None,     // Default service tier for legacy functions
+        reasoning_effort: None, // Default reasoning effort for legacy functions
+        file_picker_enabled: false,
+        file_retrieval_enabled: false,
+        dynamic_context_enabled: false,
+    };
+
     match context {
-        Some(added_context) => AIAgent::Openai(builder.context(added_context).build()),
-        None => AIAgent::Openai(builder.build()),
+        Some(added_context) => AIAgent::Openai {
+            agent: builder.context(added_context).build(),
+            metadata,
+        },
+        None => AIAgent::Openai {
+            agent: builder.build(),
+            metadata,
+        },
     }
 }
 
@@ -82,9 +110,26 @@ pub fn build_gemini_agent(
         )
         .temperature(temperature);
 
+    // Create metadata for pricing calculations
+    let metadata = AgentMetadata {
+        model: model.to_string(),
+        temperature,
+        service_tier: None,     // Gemini doesn't have service tiers
+        reasoning_effort: None, // Gemini doesn't have reasoning effort
+        file_picker_enabled: false,
+        file_retrieval_enabled: false,
+        dynamic_context_enabled: false,
+    };
+
     match context {
-        Some(added_context) => AIAgent::Gemini(builder.context(added_context).build()),
-        None => AIAgent::Gemini(builder.build()),
+        Some(added_context) => AIAgent::Gemini {
+            agent: builder.context(added_context).build(),
+            metadata,
+        },
+        None => AIAgent::Gemini {
+            agent: builder.build(),
+            metadata,
+        },
     }
 }
 
@@ -103,8 +148,25 @@ pub fn build_deepseek_agent(
         )
         .temperature(temperature);
 
+    // Create metadata for pricing calculations
+    let metadata = AgentMetadata {
+        model: model.to_string(),
+        temperature,
+        service_tier: None,     // DeepSeek doesn't have service tiers
+        reasoning_effort: None, // DeepSeek doesn't have reasoning effort
+        file_picker_enabled: false,
+        file_retrieval_enabled: false,
+        dynamic_context_enabled: false,
+    };
+
     match context {
-        Some(added_context) => AIAgent::Deepseek(builder.context(added_context).build()),
-        None => AIAgent::Deepseek(builder.build()),
+        Some(added_context) => AIAgent::Deepseek {
+            agent: builder.context(added_context).build(),
+            metadata,
+        },
+        None => AIAgent::Deepseek {
+            agent: builder.build(),
+            metadata,
+        },
     }
 }

@@ -3,7 +3,6 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         context_state::{get_metadata_context, ContextType},
@@ -93,10 +92,8 @@ where
     <T as IssueStructTrait>::Spec: Send + Sync + Clone + DeserializeOwned + IssueTrait + 'static,
     M: Clone + DeserializeOwned + JsonSchema + IsLegit + Send + Sync,
 {
-    info!(
-        "🔍 Phase 2: Deduplicating and verifying {}...",
-        patterns.issue_title()
-    );
+    let issue_title = patterns.issue_title();
+    info!("🔍 Phase 2: Deduplicating and verifying {}...", issue_title);
 
     let mut handles = vec![];
     let deduped_patterns: Arc<T> = Arc::new(patterns.dedup().await?);
@@ -123,6 +120,7 @@ where
         let arc_agent = Arc::clone(&agent);
         let arc_legit_patterns_vec = Arc::clone(&is_legit_pattern_vec);
         let sem = Arc::clone(&VERIFY_SEM);
+        let title = issue_title.clone();
 
         handles.push(tokio::spawn(async move {
             // ── acquire permit ────────────────────────
@@ -134,8 +132,7 @@ where
                 let full_prompt = format!("{}{}", instruction_prompt, codeblock_plus_context);
 
                 // add to cost
-                add_to_inference_cost_by_type(&full_prompt, LlmCostType::Openai5Input).await;
-                info!("verifying {} #{}", arc_patterns.issue_title(), i + 1);
+                info!("verifying {} #{}", title, i + 1);
                 let is_legit_struct: M = arc_agent.extract_with_retry(&full_prompt).await?;
 
                 let is_finding_legit = is_legit_struct.is_legit();
@@ -154,7 +151,7 @@ where
             .await;
 
             if let Err(e) = result {
-                log::error!("Error verifying finding {}: {:?}", i, e);
+                log::error!("Error verifying {} {}: {:?}", title, i, e);
             }
         }));
     }

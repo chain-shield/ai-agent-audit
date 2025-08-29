@@ -4,7 +4,6 @@
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
     config::INVARIANT_RUNS,
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         context_state::{get_metadata_context, ContextType},
@@ -59,8 +58,11 @@ where
         let combined = Arc::clone(&all_patterns);
         let code = Arc::clone(&codeblock);
         let ctx = Arc::clone(&added_content_from_brain);
+
         handles.push(tokio::spawn(async move {
-            if let Err(e) = run_security_prompt(agent, code, ctx, prompt, run_index, combined).await
+            if let Err(e) =
+                run_security_prompt(agent, code, issue_title, ctx, prompt, run_index, combined)
+                    .await
             {
                 log::error!("Prompt task failed: {e:#}");
             }
@@ -113,6 +115,7 @@ where
 pub async fn run_security_prompt<T>(
     agent: Arc<AIAgent>,
     code: Arc<String>,
+    title: &str,
     added_context: Arc<String>,
     instructions: Arc<String>,
     idx_of_review_round: usize,
@@ -125,15 +128,15 @@ where
     let full_prompt = format!("{instructions}{prompt_body}");
     // info!("prompt instructions:\n\n {}", instructions);
 
-    // add to cost
-    add_to_inference_cost_by_type(&full_prompt, LlmCostType::Openai5Input).await;
-
     // 2. Send to the right provider
-    info!("----LLM analysis Round #{}----", idx_of_review_round);
+    info!(
+        "---- #{} LLM analysis Round for Finding {}----",
+        idx_of_review_round, title
+    );
     let patterns: T = agent.extract_with_retry(&full_prompt).await?;
 
     let issues_found = patterns.issues().len();
-    info!("{} issues found!", issues_found);
+    info!("{} {}s found!", issues_found, title);
 
     // 3. Merge results (if any) into the shared accumulator
     if issues_found > 0 {

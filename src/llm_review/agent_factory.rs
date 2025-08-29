@@ -1,4 +1,4 @@
-use super::enums::AIAgent;
+use super::enums::{AIAgent, AgentMetadata};
 use crate::ai_bot::file_picker::FilePickerTool;
 /// AI Agent Factory for centralized agent creation across LLM providers.
 ///
@@ -31,10 +31,11 @@ const DEFAULT_OPENAI_MODEL: &str = "gpt-5";
 /// - "default": Standard rates and speed
 /// - "flex": Half the cost, slower responses
 /// Note: "priority" tier requires special account approval
+// rig-core 0.17.0 supports only: auto, default, flex
 const VALID_SERVICE_TIERS: &[&str] = &["auto", "default", "flex"];
 
 /// Valid OpenAI reasoning effort levels
-const VALID_REASONING_EFFORTS: &[&str] = &["minimal", "low", "medium", "high"];
+const VALID_REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
 
 /// Supported LLM providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,7 +160,7 @@ pub struct AgentConfig {
     /// System preamble/prompt for the agent
     pub preamble: String,
     /// Repository paths for file retrieval tool and dynamic context (required)
-    pub repo_paths: RepoPaths,
+    pub repo_paths: Option<RepoPaths>,
     /// Enable dynamic context with vector search
     pub enable_dynamic_context: bool,
     /// Number of dynamic context chunks to retrieve (default: 5)
@@ -174,7 +175,7 @@ pub struct AgentConfig {
 
 impl AgentConfig {
     /// Creates a new agent configuration with required repository paths.
-    pub fn new(repo_paths: RepoPaths) -> Self {
+    pub fn new(repo_paths: Option<RepoPaths>) -> Self {
         Self {
             temperature: audit_config().default_temperature,
             model: "default".to_string(),
@@ -279,7 +280,7 @@ impl AgentConfig {
 
     /// Creates an agent configuration for security auditing with advanced tools enabled.
     pub fn for_security_audit(repo_paths: RepoPaths) -> Self {
-        Self::new(repo_paths)
+        Self::new(Some(repo_paths))
             .with_file_picker(true)
             .with_file_retrieval(true)
             .with_dynamic_context(true)
@@ -299,10 +300,12 @@ static DEEPSEEK_CLIENT: OnceLock<deepseek::Client> = OnceLock::new();
 pub fn init_llm_clients() -> Result<()> {
     // Initialize OpenAI client if API key is available
     if audit_config().has_openai_key() {
+        log::info!("Initializing OpenAI client...");
         let client = openai::Client::from_env();
         OPENAI_CLIENT.set(client).map_err(|_| {
             AuditError::configuration("openai_client", "OpenAI client already initialized")
         })?;
+        log::info!("OpenAI client initialized successfully");
     }
 
     // Initialize Anthropic client if API key is available
@@ -464,17 +467,35 @@ impl AgentFactory {
 
         // Add file retrieval tool if enabled
         if config.enable_file_retrieval {
-            let file_tool = create_file_retrieval_tool(&config.repo_paths)?;
-            builder = builder.tool(file_tool);
+            if let Some(repo_paths) = &config.repo_paths {
+                let file_tool = create_file_retrieval_tool(repo_paths)?;
+                builder = builder.tool(file_tool);
+            }
         }
 
         // Add file picker tool if enabled
         if config.enable_file_picker {
-            let file_picker = create_file_picker_tool(&config.repo_paths);
-            builder = builder.tool(file_picker);
+            if let Some(repo_paths) = &config.repo_paths {
+                let file_picker = create_file_picker_tool(repo_paths);
+                builder = builder.tool(file_picker);
+            }
         }
 
-        Ok(AIAgent::Openai(builder.build()))
+        // Create metadata for pricing calculations
+        let metadata = AgentMetadata {
+            model: config.model.clone(),
+            temperature: config.temperature,
+            service_tier: config.openai_config.service_tier.clone(),
+            reasoning_effort: config.openai_config.reasoning_effort.clone(),
+            file_picker_enabled: config.enable_file_picker,
+            file_retrieval_enabled: config.enable_file_retrieval,
+            dynamic_context_enabled: config.enable_dynamic_context,
+        };
+
+        Ok(AIAgent::Openai {
+            agent: builder.build(),
+            metadata,
+        })
     }
 
     /// Creates an Anthropic agent with the specified configuration.
@@ -504,17 +525,35 @@ impl AgentFactory {
 
         // Add file retrieval tool if enabled
         if config.enable_file_retrieval {
-            let file_tool = create_file_retrieval_tool(&config.repo_paths)?;
-            builder = builder.tool(file_tool);
+            if let Some(repo_paths) = &config.repo_paths {
+                let file_tool = create_file_retrieval_tool(repo_paths)?;
+                builder = builder.tool(file_tool);
+            }
         }
 
         // Add file picker tool if enabled
         if config.enable_file_picker {
-            let file_picker = create_file_picker_tool(&config.repo_paths);
-            builder = builder.tool(file_picker);
+            if let Some(repo_paths) = &config.repo_paths {
+                let file_picker = create_file_picker_tool(repo_paths);
+                builder = builder.tool(file_picker);
+            }
         }
 
-        Ok(AIAgent::Anthropic(builder.build()))
+        // Create metadata for pricing calculations
+        let metadata = AgentMetadata {
+            model: config.model.clone(),
+            temperature: config.temperature,
+            service_tier: None,     // Anthropic doesn't have service tiers
+            reasoning_effort: None, // Anthropic doesn't have reasoning effort
+            file_picker_enabled: config.enable_file_picker,
+            file_retrieval_enabled: config.enable_file_retrieval,
+            dynamic_context_enabled: config.enable_dynamic_context,
+        };
+
+        Ok(AIAgent::Anthropic {
+            agent: builder.build(),
+            metadata,
+        })
     }
 
     /// Creates a Gemini agent with the specified configuration.
@@ -544,17 +583,35 @@ impl AgentFactory {
 
         // Add file retrieval tool if enabled
         if config.enable_file_retrieval {
-            let file_tool = create_file_retrieval_tool(&config.repo_paths)?;
-            builder = builder.tool(file_tool);
+            if let Some(repo_paths) = &config.repo_paths {
+                let file_tool = create_file_retrieval_tool(repo_paths)?;
+                builder = builder.tool(file_tool);
+            }
         }
 
         // Add file picker tool if enabled
         if config.enable_file_picker {
-            let file_picker = create_file_picker_tool(&config.repo_paths);
-            builder = builder.tool(file_picker);
+            if let Some(repo_paths) = &config.repo_paths {
+                let file_picker = create_file_picker_tool(repo_paths);
+                builder = builder.tool(file_picker);
+            }
         }
 
-        Ok(AIAgent::Gemini(builder.build()))
+        // Create metadata for pricing calculations
+        let metadata = AgentMetadata {
+            model: config.model.clone(),
+            temperature: config.temperature,
+            service_tier: None,     // Gemini doesn't have service tiers
+            reasoning_effort: None, // Gemini doesn't have reasoning effort
+            file_picker_enabled: config.enable_file_picker,
+            file_retrieval_enabled: config.enable_file_retrieval,
+            dynamic_context_enabled: config.enable_dynamic_context,
+        };
+
+        Ok(AIAgent::Gemini {
+            agent: builder.build(),
+            metadata,
+        })
     }
 
     /// Creates a DeepSeek agent with the specified configuration.
@@ -584,17 +641,35 @@ impl AgentFactory {
 
         // Add file retrieval tool if enabled
         if config.enable_file_retrieval {
-            let file_tool = create_file_retrieval_tool(&config.repo_paths)?;
-            builder = builder.tool(file_tool);
+            if let Some(repo_paths) = &config.repo_paths {
+                let file_tool = create_file_retrieval_tool(repo_paths)?;
+                builder = builder.tool(file_tool);
+            }
         }
 
         // Add file picker tool if enabled
         if config.enable_file_picker {
-            let file_picker = create_file_picker_tool(&config.repo_paths);
-            builder = builder.tool(file_picker);
+            if let Some(repo_paths) = &config.repo_paths {
+                let file_picker = create_file_picker_tool(repo_paths);
+                builder = builder.tool(file_picker);
+            }
         }
 
-        Ok(AIAgent::Deepseek(builder.build()))
+        // Create metadata for pricing calculations
+        let metadata = AgentMetadata {
+            model: config.model.clone(),
+            temperature: config.temperature,
+            service_tier: None,     // DeepSeek doesn't have service tiers
+            reasoning_effort: None, // DeepSeek doesn't have reasoning effort
+            file_picker_enabled: config.enable_file_picker,
+            file_retrieval_enabled: config.enable_file_retrieval,
+            dynamic_context_enabled: config.enable_dynamic_context,
+        };
+
+        Ok(AIAgent::Deepseek {
+            agent: builder.build(),
+            metadata,
+        })
     }
 
     /// Creates an agent from the specified provider type.
@@ -699,13 +774,13 @@ mod tests {
         // Test valid service tiers
         assert!(OpenAIConfig::validate_service_tier("default").is_ok());
         assert!(OpenAIConfig::validate_service_tier("flex").is_ok());
-        assert!(OpenAIConfig::validate_service_tier("priority").is_ok());
+        // 'priority' service tier is not supported by rig-core 0.17.0
 
         // Test invalid service tier
         assert!(OpenAIConfig::validate_service_tier("invalid").is_err());
 
         // Test valid reasoning efforts
-        assert!(OpenAIConfig::validate_reasoning_effort("minimal").is_ok());
+        // 'minimal' is not supported by rig-core 0.17.0; valid efforts: low, medium, high
         assert!(OpenAIConfig::validate_reasoning_effort("low").is_ok());
         assert!(OpenAIConfig::validate_reasoning_effort("medium").is_ok());
         assert!(OpenAIConfig::validate_reasoning_effort("high").is_ok());
@@ -761,7 +836,7 @@ mod tests {
             commit_hash: "abc123".to_string(),
         };
 
-        let config = AgentConfig::new(repo_paths)
+        let config = AgentConfig::new(Some(repo_paths))
             .with_model("gpt-5")
             .with_openai_service_tier("default")
             .with_openai_reasoning_effort("low")
@@ -817,7 +892,7 @@ mod tests {
 
         // Test 1: Default tier with low reasoning effort
         println!("\n=== Test 1: Default tier + Low reasoning ===");
-        let config1 = AgentConfig::new(repo_paths.clone())
+        let config1 = AgentConfig::new(Some(repo_paths.clone()))
             .with_model("gpt-5")
             .with_openai_service_tier("default")
             .with_openai_reasoning_effort("low")
@@ -843,11 +918,11 @@ mod tests {
         }
 
         // Test 2: Flex tier (cheaper, slower) with minimal reasoning
-        println!("\n=== Test 2: Flex tier + Minimal reasoning ===");
-        let config2 = AgentConfig::new(repo_paths.clone())
+        println!("\n=== Test 2: Flex tier + Low reasoning ===");
+        let config2 = AgentConfig::new(Some(repo_paths.clone()))
             .with_model("gpt-5")
             .with_openai_service_tier("flex")
-            .with_openai_reasoning_effort("minimal")
+            .with_openai_reasoning_effort("low")
             .with_temperature(0.7);
 
         match AgentFactory::create_openai_agent(&config2) {
@@ -870,10 +945,10 @@ mod tests {
         }
 
         // Test 3: Priority tier (expensive, fast) with high reasoning
-        println!("\n=== Test 3: Priority tier + High reasoning ===");
-        let config3 = AgentConfig::new(repo_paths)
+        println!("\n=== Test 3: Default tier + High reasoning ===");
+        let config3 = AgentConfig::new(Some(repo_paths))
             .with_model("gpt-5")
-            .with_openai_service_tier("priority")
+            .with_openai_service_tier("default")
             .with_openai_reasoning_effort("high")
             .with_temperature(0.7);
 
@@ -954,6 +1029,129 @@ mod tests {
         println!("💡 The agent factory will only send non-default values to optimize API calls");
     }
 
+    #[test]
+    fn test_ai_agent_getters() {
+        use crate::llm_review::enums::AgentMetadata;
+        use rig::providers::openai;
+
+        println!("🧪 Testing AIAgent getter methods...");
+
+        // Create test metadata
+        let metadata = AgentMetadata {
+            model: "gpt-5".to_string(),
+            temperature: 0.8,
+            service_tier: Some("flex".to_string()),
+            reasoning_effort: Some("high".to_string()),
+            file_picker_enabled: true,
+            file_retrieval_enabled: false,
+            dynamic_context_enabled: true,
+        };
+
+        // Create a mock OpenAI client (this will fail but we can test the metadata)
+        let client = openai::Client::new("test-key");
+        let mock_agent = client.agent("gpt-5").build();
+
+        // Create AIAgent with metadata
+        let ai_agent = AIAgent::Openai {
+            agent: mock_agent,
+            metadata,
+        };
+
+        println!("✅ Testing getter methods:");
+        println!("   Model: '{}'", ai_agent.get_model());
+        println!("   Provider: '{}'", ai_agent.get_provider());
+        println!("   Service Tier: '{}'", ai_agent.get_service_tier());
+        println!("   Reasoning Effort: '{}'", ai_agent.get_reasoning_effort());
+        println!("   Temperature: {}", ai_agent.get_temperature());
+        println!("   File Picker: {}", ai_agent.is_file_picker_enabled());
+        println!(
+            "   File Retrieval: {}",
+            ai_agent.is_file_retrieval_enabled()
+        );
+        println!(
+            "   Dynamic Context: {}",
+            ai_agent.is_dynamic_context_enabled()
+        );
+
+        // Test all getter methods
+        assert_eq!(ai_agent.get_model(), "gpt-5");
+        assert_eq!(ai_agent.get_provider(), "openai");
+        assert_eq!(ai_agent.get_service_tier(), "flex");
+        assert_eq!(ai_agent.get_reasoning_effort(), "high");
+        assert_eq!(ai_agent.get_temperature(), 0.8);
+        assert!(ai_agent.is_file_picker_enabled());
+        assert!(!ai_agent.is_file_retrieval_enabled());
+        assert!(ai_agent.is_dynamic_context_enabled());
+
+        // Test non-OpenAI agent (should return defaults for OpenAI-specific features)
+        let anthropic_metadata = AgentMetadata {
+            model: "claude-4".to_string(),
+            temperature: 0.5,
+            service_tier: None,     // Anthropic doesn't have service tiers
+            reasoning_effort: None, // Anthropic doesn't have reasoning effort
+            file_picker_enabled: false,
+            file_retrieval_enabled: true,
+            dynamic_context_enabled: false,
+        };
+
+        let anthropic_client = rig::providers::anthropic::Client::new("test-key");
+        let mock_anthropic_agent = anthropic_client.agent("claude-4").build();
+
+        let anthropic_ai_agent = AIAgent::Anthropic {
+            agent: mock_anthropic_agent,
+            metadata: anthropic_metadata,
+        };
+
+        println!("\n✅ Testing Anthropic agent (non-OpenAI):");
+        println!("   Model: '{}'", anthropic_ai_agent.get_model());
+        println!("   Provider: '{}'", anthropic_ai_agent.get_provider());
+        println!(
+            "   Service Tier: '{}'",
+            anthropic_ai_agent.get_service_tier()
+        );
+        println!(
+            "   Reasoning Effort: '{}'",
+            anthropic_ai_agent.get_reasoning_effort()
+        );
+
+        assert_eq!(anthropic_ai_agent.get_model(), "claude-4");
+        assert_eq!(anthropic_ai_agent.get_provider(), "anthropic");
+        assert_eq!(anthropic_ai_agent.get_service_tier(), "default"); // Default for non-OpenAI
+        assert_eq!(anthropic_ai_agent.get_reasoning_effort(), "medium"); // Default for non-OpenAI
+
+        println!("\n💡 Usage examples:");
+        println!("   let model = ai_discovery_agent.get_model();");
+        println!("   let tier = ai_discovery_agent.get_service_tier();");
+        println!("   let effort = ai_discovery_agent.get_reasoning_effort();");
+        println!("   let provider = ai_discovery_agent.get_provider();");
+        println!("   let metadata = ai_discovery_agent.get_metadata();");
+        println!("   // Use these values for pricing calculations and monitoring");
+
+        // Test the new get_metadata() method
+        println!("\n✅ Testing get_metadata() method:");
+        let test_metadata = ai_agent.get_metadata();
+        println!("   Metadata model: '{}'", test_metadata.model);
+        println!("   Metadata service_tier: {:?}", test_metadata.service_tier);
+        println!(
+            "   Metadata reasoning_effort: {:?}",
+            test_metadata.reasoning_effort
+        );
+
+        assert_eq!(test_metadata.model, "gpt-5");
+        assert_eq!(test_metadata.service_tier, Some("flex".to_string()));
+        assert_eq!(test_metadata.reasoning_effort, Some("high".to_string()));
+
+        println!("\n💡 Easy cost tracking usage:");
+        println!("   // OLD way (complex):");
+        println!("   let metadata = match &ai_agent {{ ... }};");
+        println!("   add_to_inference_cost_by_type(&prompt, metadata, TokenType::Input).await;");
+        println!("   ");
+        println!("   // NEW way (simple):");
+        println!(
+            "   add_to_inference_cost_by_type(&prompt, ai_agent.get_metadata(), TokenType::Input).await;"
+        );
+    }
+
     #[tokio::test]
     async fn test_openai_api_with_custom_params() {
         // Skip if no OpenAI API key
@@ -991,7 +1189,7 @@ mod tests {
         println!("📤 Sending: {{\"service_tier\": \"flex\"}}");
         println!("💰 Expected: 50% cheaper, slower responses");
 
-        let config1 = AgentConfig::new(repo_paths.clone())
+        let config1 = AgentConfig::new(Some(repo_paths.clone()))
             .with_model("gpt-5")
             .with_openai_service_tier("flex")
             .with_openai_reasoning_effort("medium"); // Keep constant, no temperature for reasoning models
@@ -1022,7 +1220,7 @@ mod tests {
         println!("📤 Sending: {{}} (no additional params - both are defaults)");
         println!("💰 Expected: Standard cost and speed");
 
-        let config2 = AgentConfig::new(repo_paths.clone())
+        let config2 = AgentConfig::new(Some(repo_paths.clone()))
             .with_model("gpt-5")
             .with_openai_service_tier("default")
             .with_openai_reasoning_effort("medium"); // Keep constant, no temperature for reasoning models

@@ -4,7 +4,6 @@
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
     config::{AuditType, AUDIT_TYPE, DISCOVERY_RUNS},
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
         context_state::{generate_audit_scope, get_metadata_context, ContextType},
@@ -130,11 +129,11 @@ pub async fn run_security_prompt(
     let prompt_body = generate_content_plus_context_block(&code, &added_context);
     let full_prompt = format!("{prompt_header}{prompt_body}");
 
-    // add to cost
-    add_to_inference_cost_by_type(&full_prompt, LlmCostType::Openai5Input).await;
-
     // 2. Send to the right provider
-    info!("----LLM analysis Round #{}----", idx_of_review_round);
+    info!(
+        "----{} contract LLM analysis Round #{}----",
+        contract_name, idx_of_review_round
+    );
     let findings: Findings = agent.extract_with_retry(&full_prompt).await?;
 
     let issues_found = findings.findings.len();
