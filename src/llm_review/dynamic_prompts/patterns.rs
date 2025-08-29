@@ -11,8 +11,6 @@ use crate::llm_review::{
 pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
     let category_spec = get_category_library_spec(&category).expect("could not find category");
     let pattern_categories = generate_formated_list_from_pattern_data(&category_spec.issues);
-    let issue_enum_list = generate_enum_list(&category_spec.issues);
-    let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
     let pattern_json = get_pattern_json(&category_spec.issues);
 
     format!(
@@ -30,53 +28,20 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
         Please Analyse the *entire* Solidity source below for 
         *each* {title} security vulnerability patterns listed below:
 
-        {title_all_caps} VULNERABILITY PATTERNS TO LOOK FOR
+        ## {title_all_caps} VULNERABILITY PATTERNS TO LOOK FOR
         {categories}
 
-        ## 🔍 ANALYSIS REQUIREMENTS
-
-        ### DEPTH OF ANALYSIS
-        - **Read every line** of the contract code - pay extra attention to external/public functions
-        - **Consider edge cases** for each vulnerability pattern
-        - **Look for subtle vulnerabilities** that may not be immediately obvious
-        - **Consider interactions** between different parts of the contract
-
-        ### CLASSIFICATION CRITERIA
-        For **each vulnerability pattern** decide one of:
-        • VIOLATION – bug exists in this contract
-        • SAFE      – relevant but properly handled
-        • N/A       – pattern not applicable to this code
-
-        ### REASONING PROCESS
-        Before providing your final JSON output, you must:
-        1. **Silently analyze each vulnerability pattern** in order 
-        2. **Consider all relevant code sections** for each pattern
-        3. **Make evidence-based classifications** 
-        4. **Double-check** that no vulnerability pattern was skipped
-
-        ## ⚠️ CRITICAL REMINDERS
+        ## Rules
         - **ONLY LOOK FOR {title_all_caps} VULNERABILITY** - disregard everything else
-        - **Be thorough** - Don't rush through list of vulnerability patterns
-        - **Be precise** - Use exact classification criteria
         - **Scope** - if scope is provided below, then only report vulnerability that are in scope
-        - **Provide only the JSON** - No additional commentary in final output
 
-        ### OUTPUT REQUIREMENTS 
-
-        **For Every VIOLATION** return:
-        1. **Title**: 100 chars or less audit report friendly title
-        1. **Description**: Detailed explanation including vulnerable code snippet 
-        2. **Issue Type**: {enums}
-        3. **Contract**: The exact contract name where vulnerability is found 
-        4. **Function**: The exact function name where vulnerability is found, if not applicable return "NA"
-        6. **Static Signals**: evidence of vulnerability as array of strings, i.e. ["missing onlyOwner","state update after external call","amountOutMin=0",...] 
-        7. **Assets at Risk**: list assets at risk as array of strings i.e. ["treasury", "rewards",...]
-        8. **Privilege Level Required**: what is least privilege that can trigger vulnerability: {privileges}
+        ## OUTPUT REQUIREMENTS 
 
         *Please respond with ONLY valid JSON in the following exact format:*
 
         {json}
-
+        
+        - **privilege** -> least privilege to trigger vulnerability
         - If no vulnerabilities are found, return: 
 
         {{
@@ -90,8 +55,6 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
         title = category_spec.title,
         title_all_caps = category_spec.title.to_uppercase(),
         categories = pattern_categories,
-        enums = issue_enum_list,
-        privileges = privilege_enum_list,
         json = pattern_json
     )
 }
@@ -145,13 +108,13 @@ pub fn get_pattern_json(patterns: &[VulnerabilityPattern]) -> String {
         "patterns": [
             {{
             "title": "100 chars or less audit report friendly title",
-            "description": "Detailed explanation of vulnerability including vulnerable code snippet",
+            "description": "Detailed explanation + vulnerable code snippet",
             "issue_type": "{issues}",
             "contract": "{{contract_name}}",
             "function": "{{function_name}}",
             "static_signals": ["amountOutMin=0","no onlyOwner","..."],
             "assets_at_risk": ["treasury", "rewards", "..."],
-            "privilege": "{privileges}"
+            "privilege": "{privileges}" 
             }}
          ]
         }}

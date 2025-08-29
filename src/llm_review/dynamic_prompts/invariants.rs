@@ -7,7 +7,6 @@ use crate::llm_review::{
 };
 
 pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
-    let invariant_type_list = generate_enum_list(inv);
     let invariant_json = get_invariant_json(inv);
     let invariant_categories = generate_formated_list_from_invariant_data(inv);
 
@@ -23,27 +22,13 @@ pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
         You are a senior smart-contract security auditor. Your task is to propose AND evaluate high-value,
         machine-checkable invariants for ONE target contract.
 
-        ## Preparation
-        Carefully review the target contract plus docs/scope/summaries to understand how the protocol operates.
+        ## Task
+        - Propose 3–7 invariants
 
-        ## STEPS
-        1) Summarize the intended behaviour of THIS contract (bullet list; max 6 bullets).
-
-        2) Propose at least 3, ideally 3 to 7 invariants. For each include:
-        - "inv_type": "{types}"
-        - "contract": exact contract name where the invariant applies
-        - "function": exact function name most relevant to the invariant; use "NA" if not applicable
-        - "predicate": one-line predicate over real symbols (e.g., "totalSupply() == sum(balances[*])")
-        - "desc": short description; include a short code snippet (3–8 lines) if relevant
-        - "checks": array of where to assert (e.g., ["after deposit","after withdraw","after claim"])
-
-        3) Evaluate each invariant using IR/call-flow reasoning:
-        - "status": "Holds" if the invariant is demonstrably enforced in all paths; otherwise "PossibleViolation"
-        - For "PossibleViolation", include "pre_state" (minimal setup), "post_state" (state/value change), and "impact".
-
-        ## INVARIANT TYPES TO FOCUS ON
+        ## Invariant Types to Focus On
         {invariants}
 
+        ## OUTPUT REQUIREMENTS
         STRICT JSON ONLY (no markdown, no comments):
 
         {json}
@@ -58,7 +43,6 @@ pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
         **Please double-check opening and closing brakets: `}}` and `]`, make sure 
         they match up correctly.
     "#,
-        types = invariant_type_list,
         json = invariant_json,
         invariants = invariant_categories
     )
@@ -113,11 +97,11 @@ pub fn get_invariant_json(inv: &[InvariantType]) -> String {
         "invariants": [
             {{
             "inv_type": "{types}",
-            "contract": "string",
-            "function": "string",
+            "contract": "{{contract_name}}",
+            "function": "{{function_name}}",
             "predicate": "vault.totalAssets() == asset.balanceOf(address(vault)) + strategyDebt",
-            "desc": "string (include short code snippet if relevant)",
-            "checks": ["after deposit","after withdraw","after harvest"],
+            "desc": "description + code snippet if relevant",
+            "checks": ["after deposit","after withdraw","after harvest","..."],
             "status": "{status}",
             "pre_state": "string (omit if Holds)",
             "post_state": "string (omit if Holds)",

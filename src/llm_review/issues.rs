@@ -1,26 +1,20 @@
 // represents abstraction of Findings and ContractInvariants
 
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::{
+        agent_factory::{AgentConfig, AgentFactory},
         dynamic_prompts::{
             inv_findings::generate_invariant_to_findings,
             invariants::generate_invariant_verify_prompt,
             pattern_findings::generate_pattern_to_findings_prompt,
             patterns::generate_pattern_verify_prompt,
         },
-        enums::EnumString,
+        enums::{AIAgent, EnumString},
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
         utils::prompt_context::{generate_formatted_invariant_finding, generate_formatted_pattern},
     },
     utils::semantic_compare,
-};
-use rig::completion::Prompt;
-use rig::{
-    agent::Agent,
-    client::{CompletionClient, ProviderClient},
-    completion::CompletionModel,
-    providers::openai,
 };
 
 use serde::de::DeserializeOwned;
@@ -54,11 +48,7 @@ pub trait IssueStructTrait: Send + Sync + Sized + 'static {
 #[async_trait]
 pub trait IssueTrait: Send + Sync {
     fn hash(&self) -> String;
-    async fn is_duplicate_issue<M: CompletionModel + Send + Sync>(
-        &self,
-        issue: &Self,
-        ai_agent: &Agent<M>,
-    ) -> anyhow::Result<bool>;
+    async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool>;
     fn get_issue_report(&self) -> String;
     fn title_str(&self) -> String;
     fn description(&self) -> String;
@@ -76,11 +66,7 @@ impl IssueTrait for InvariantFinding {
             self.function,
         )
     }
-    async fn is_duplicate_issue<M: CompletionModel + Send + Sync>(
-        &self,
-        issue: &Self,
-        ai_agent: &Agent<M>,
-    ) -> anyhow::Result<bool> {
+    async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
         is_duplicate_pattern(self, issue, ai_agent).await
     }
     fn get_issue_report(&self) -> String {
@@ -115,11 +101,7 @@ impl IssueTrait for Pattern {
             self.function,
         )
     }
-    async fn is_duplicate_issue<M: CompletionModel + Send + Sync>(
-        &self,
-        issue: &Self,
-        ai_agent: &Agent<M>,
-    ) -> anyhow::Result<bool> {
+    async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
         is_duplicate_pattern(self, issue, ai_agent).await
     }
     fn get_issue_report(&self) -> String {
@@ -194,9 +176,15 @@ where
         return Ok(T::new(Vec::new()));
     }
 
-    // Build a lightweight OpenAI agent just for deduping comparisons
-    let openai_client = openai::Client::from_env();
-    let openai_agent = Arc::new(openai_client.agent("gpt-5").build());
+    // // Build a lightweight OpenAI agent just for deduping comparisons
+    // let openai_client = openai::Client::from_env();
+    // let openai_agent = Arc::new(openai_client.agent("gpt-5").build());
+    // Create O3 agent with flex tier for cost optimization
+    let openai_config = AgentConfig::new(None)
+        .with_model("o3")
+        .with_openai_service_tier("flex");
+
+    let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 
     let mut findings_hash: HashMap<String, Vec<T::Spec>> = HashMap::new();
 
@@ -249,13 +237,12 @@ where
     Ok(T::new(deduped_findings))
 }
 
-async fn get_deduped_patterns_vec<TSpec, M>(
+async fn get_deduped_patterns_vec<TSpec>(
     patterns: &Arc<Vec<TSpec>>,
-    agent: &Arc<Agent<M>>,
+    agent: &Arc<AIAgent>,
 ) -> anyhow::Result<Vec<TSpec>>
 where
     TSpec: 'static + Send + Sync + Clone + IssueTrait + DeserializeOwned,
-    M: CompletionModel,
 {
     // assigns bool to each finding index, is dup or not? assume not for initializing
     let size = patterns.len();
@@ -288,14 +275,13 @@ where
     Ok(findings)
 }
 
-async fn is_duplicate_pattern<T, M>(
+async fn is_duplicate_pattern<T>(
     pattern: &T,
     issue: &T,
-    ai_agent: &Agent<M>,
+    ai_agent: &crate::llm_review::enums::AIAgent,
 ) -> anyhow::Result<bool>
 where
     T: IssueTrait,
-    M: CompletionModel,
 {
     let similiarity_score =
         semantic_compare::similarity_score(&pattern.description(), &issue.description());
@@ -322,11 +308,11 @@ where
         .replace("{report_b}", &issue.get_issue_report());
 
     log::info!("checking if is {} duplication", pattern.title_str());
-    add_to_inference_cost_by_type(&prompt, LlmCostType::Openai5Input).await;
+    add_to_inference_cost_by_type(&prompt, &ai_agent.get_metadata(), TokenType::Input).await;
 
     let response = ai_agent.prompt(&prompt).await?;
 
-    add_to_inference_cost_by_type(&response, LlmCostType::Openai5Output).await;
+    add_to_inference_cost_by_type(&response, &ai_agent.get_metadata(), TokenType::Output).await;
 
     Ok(response.trim().eq_ignore_ascii_case("YES"))
 }

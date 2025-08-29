@@ -8,7 +8,7 @@ use log::info;
 use once_cell::sync::Lazy;
 use rig::{
     client::CompletionClient,
-    providers::openai::{self},
+    providers::openai::{self, O3},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,10 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
+use crate::llm_review::context_state;
 use crate::{
-    cost::cost_data::add_to_inference_cost_by_type,
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    llm_review::enums::AgentMetadata,
     prepare_code::git_clone::RepoPaths,
     utils::{
         check_folder_name::{is_script_file, is_test_file},
@@ -27,7 +29,6 @@ use crate::{
         extract_retry::extractor_with_retry,
     },
 };
-use crate::{cost::cost_data::LlmCostType, llm_review::context_state};
 
 use super::slither_ffi::cache_key;
 
@@ -82,37 +83,30 @@ pub async fn summarize_docs(
         context for an llm to do a security scan of protocol code.  So its important there is NO duplicate information between DOCUMENTATION 
         and CURRENT SECURITY AUDIT CONTEXT ";
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>("gpt-5")
+        .extractor::<FileSummary>(O3)
         .preamble(preamble)
         .build();
 
-    add_to_inference_cost_by_type(
-        &format!("{}{}", preamble, documentation),
-        LlmCostType::Openai5Input,
-    )
-    .await;
-
     info!("summarizing documentation");
 
-    let doc_summary = match extractor_with_retry(
-        &ai_summary_agent,
-        &docs_plus_context,
-        LlmCostType::Openai5Output,
-    )
-    .await
-    {
-        Ok(res) => SrcFileSummary {
-            filename: "readme.md".to_string(),
-            summary: res.summary,
-        },
-        Err(e) => {
-            log::error!("❌ summarizing readme.md failed: {e}");
-            SrcFileSummary {
-                filename: "readme.md".to_string(),
-                summary: String::new(),
-            }
-        }
+    let metadata = AgentMetadata {
+        model: O3.to_string(),
+        ..Default::default()
     };
+    let doc_summary =
+        match extractor_with_retry(&ai_summary_agent, &docs_plus_context, &metadata).await {
+            Ok(res) => SrcFileSummary {
+                filename: "readme.md".to_string(),
+                summary: res.summary,
+            },
+            Err(e) => {
+                log::error!("❌ summarizing readme.md failed: {e}");
+                SrcFileSummary {
+                    filename: "readme.md".to_string(),
+                    summary: String::new(),
+                }
+            }
+        };
 
     log::info!("readme.md summary => {:#?}", doc_summary);
     doc_summaries.push(doc_summary);
@@ -136,8 +130,13 @@ pub async fn summarize_src_files(
 
     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
-    let context =
+    let mut context =
         context_state::generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
+
+    // add docs to context
+    let documentation = repo.extract_content_from_docs()?;
+    context.push_str("\n ## DOCUMENTATION: \n\n ");
+    context.push_str(&documentation);
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
@@ -147,7 +146,7 @@ pub async fn summarize_src_files(
                     please summarize each section of the docs with 150 words or less, max 500 words total for each doc file. 
                     Respond only with valid JSON matching the schema!";
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>("gpt-5")
+        .extractor::<FileSummary>(O3)
         .preamble(preamble)
         .context(&context)
         .build();
@@ -188,7 +187,7 @@ pub async fn summarize_src_files(
         work_items.push((file.to_owned(), content));
     }
 
-    let max_parallel = 20;
+    let max_parallel = 30;
     let sem = Arc::new(Semaphore::new(max_parallel));
     let agent = Arc::new(ai_summary_agent); // the OpenAI client
     let mut handles = Vec::new();
@@ -202,15 +201,14 @@ pub async fn summarize_src_files(
             // acquire permit – blocks if `max_parallel` already in-flight
             let _permit = sem.acquire_owned().await.unwrap();
 
-            add_to_inference_cost_by_type(
-                &format!("{}{}", preamble, content),
-                LlmCostType::Openai5Input,
-            )
-            .await;
+            let metadata = AgentMetadata {
+                model: O3.to_string(),
+                ..Default::default()
+            };
 
             info!("summarizing {}", file.display());
 
-            match extractor_with_retry(&agent, &content, LlmCostType::Openai5Output).await {
+            match extractor_with_retry(&agent, &content, &metadata).await {
                 Ok(res) => {
                     let filename = file
                         .strip_prefix(&repo_root)
@@ -218,7 +216,7 @@ pub async fn summarize_src_files(
                         .to_string_lossy()
                         .to_string();
 
-                    add_to_inference_cost_by_type(&res.summary, LlmCostType::Openai5Output).await;
+                    add_to_inference_cost_by_type(&res.summary, &metadata, TokenType::Output).await;
                     Some(SrcFileSummary {
                         filename,
                         summary: res.summary,
@@ -276,24 +274,23 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
                    in markdown for easy reading. Respond only with valid JSON matching the schema!";
 
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>("gpt-5")
+        .extractor::<FileSummary>(O3)
         .preamble(preamble)
         .build();
 
     log::info!("extracting protocol summary");
     // rerun if NoDataExtracted Error
 
-    add_to_inference_cost_by_type(
-        &format!("{}{}", preamble, context),
-        LlmCostType::Openai5Input,
-    )
-    .await;
+    let metadata = AgentMetadata {
+        model: O3.to_string(),
+        ..Default::default()
+    };
 
-    let summary =
-        extractor_with_retry(&ai_summary_agent, &context, LlmCostType::Openai5Output).await?;
+    let summary = extractor_with_retry(&ai_summary_agent, &context, &metadata).await?;
 
     log::info!("protocol summary => {:#?}", summary);
 
+    add_to_inference_cost_by_type(&summary.summary, &metadata, TokenType::Output).await;
     summaries.push(SrcFileSummary {
         filename: "protocol-summary".to_string(),
         summary: summary.summary.clone(),

@@ -50,7 +50,7 @@ use super::{
 
 /// Configuration metadata for AI agents.
 /// Stores the original configuration used to create the agent for pricing calculations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AgentMetadata {
     pub model: String,
     pub temperature: f64,
