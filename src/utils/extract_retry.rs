@@ -67,20 +67,19 @@ where
     M: CompletionModel,
     T: DeserializeOwned,
 {
-    // add cost calc
-    add_to_inference_cost_by_type(input, metadata, TokenType::Output).await;
     for attempt in 1..=MAX_ATTEMPTS {
         /* ────── 1. ask the model ───────────────────────────────────────── */
         // NOTE: Input cost is tracked by caller before calling this function
         // Do NOT track input cost here to avoid double-counting
 
+        // add cost calc
+        add_to_inference_cost_by_type(input, metadata, TokenType::Input).await;
         let raw = match agent.prompt(input).await {
             Ok(txt) => txt,
             // Convert prompt error to JsonError
             Err(e) if should_retry_prompt_err(&e) && attempt < MAX_ATTEMPTS => {
                 eprintln!("LLM backend busy ({e}) – retry {attempt}/{MAX_ATTEMPTS}");
                 // add to cost (input tokens)
-                add_to_inference_cost_by_type(input, metadata, TokenType::Output).await;
                 continue;
             }
             Err(e) => return Err(JsonError::custom(format!("prompt failed: {e}"))),

@@ -226,9 +226,11 @@ pub fn get_token_count(text: &str) -> usize {
         return 0;
     }
 
+    // NOTE testing different count
     // Use the actual BPE tokenizer for accurate token counting
     let bpe = crate::utils::bpe::get_bpe();
     bpe.encode_with_special_tokens(text).len()
+    // text.chars().count() / 4
 }
 
 /// Estimates input tokens for chat completion format

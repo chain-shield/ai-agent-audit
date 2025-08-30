@@ -95,10 +95,13 @@ pub async fn summarize_docs(
     };
     let doc_summary =
         match extractor_with_retry(&ai_summary_agent, &docs_plus_context, &metadata).await {
-            Ok(res) => SrcFileSummary {
-                filename: "readme.md".to_string(),
-                summary: res.summary,
-            },
+            Ok(res) => {
+                add_to_inference_cost_by_type(&res.summary, &metadata, TokenType::Output).await;
+                SrcFileSummary {
+                    filename: "readme.md".to_string(),
+                    summary: res.summary,
+                }
+            }
             Err(e) => {
                 log::error!("❌ summarizing readme.md failed: {e}");
                 SrcFileSummary {
@@ -140,11 +143,7 @@ pub async fn summarize_src_files(
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
-    let preamble ="You are a senior solidity dev. Please summarize below content (source code, tests, or deploy scripts). Format in markdown for easy reading. 
-                    Please write 200 word or less summary for each contract plus contract definition, 100 words or less summary 
-                    of each function + function interface, and 50 word or less explanation of each storage variable + variable defintion. If docs 
-                    please summarize each section of the docs with 150 words or less, max 500 words total for each doc file. 
-                    Respond only with valid JSON matching the schema!";
+    let preamble ="You are a senior solidity dev. Please summarize below content (source code, tests, or deploy scripts). Format in markdown for easy reading. Please write 100 word or less summary for each contract: purpose trust model (user funds? admin?), also major entrypoints. list storage vars plus optional 40 max chars description ONLY IF not obvious what storage var is for. For each external/public function provide interface, should include visibility, modifiers, and mutability. Add 100 chars max natspec for each function. No NOT list internal functions. Respond only with valid JSON matching the schema!";
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(O3)
         .preamble(preamble)
@@ -239,7 +238,10 @@ pub async fn summarize_src_files(
         }
     }
 
-    log::info!("summaries => {:#?}", summaries);
+    for summary in &summaries {
+        info!("filename: {}", summary.filename);
+        info!("summary: {}", summary.summary);
+    }
 
     summaries_cache.insert(key, summaries.clone());
     Ok(summaries)
