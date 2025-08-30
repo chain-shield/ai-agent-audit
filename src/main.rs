@@ -1,6 +1,6 @@
 use ai_agent_audit::{
     // test_rig,
-    build_brain::{enrichment, vector_db},
+    build_brain::{enrichment, summarize::summarize_src_files, vector_db},
     cli_args::parse,
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
@@ -64,14 +64,6 @@ async fn main() -> Result<()> {
     info!("repo config files => {:?}", &repo.config_files);
     info!("repo docs => {:?}", &repo.docs);
     info!("excluded folders => {:?}", &repo.excluded_folders);
-
-    // let contracts = contracts_in_source_folder(&repo).await?;
-    //
-    // info!("contracts count => {}", contracts.len());
-    // for c in contracts {
-    //     let file = get_file_from_contract(&c, &repo).await?;
-    //     info!("file {} from contract {}", file.display(), c);
-    // }
 
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
