@@ -18,7 +18,6 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
-use crate::llm_review::context_state;
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::enums::AgentMetadata,
@@ -29,6 +28,7 @@ use crate::{
         extract_retry::extractor_with_retry,
     },
 };
+use crate::{llm_review::context_state, utils::logging::print_first_four_lines};
 
 use super::slither_ffi::cache_key;
 
@@ -240,7 +240,7 @@ pub async fn summarize_src_files(
 
     for summary in &summaries {
         info!("filename: {}", summary.filename);
-        info!("summary: {}", summary.summary);
+        print_first_four_lines(&summary.summary);
     }
 
     summaries_cache.insert(key, summaries.clone());

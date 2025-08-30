@@ -1,5 +1,6 @@
 use crate::enumerator::codeblock_db::CodeBlocksDb;
-use crate::error::Result;
+use crate::error::{AuditError, Result};
+use crate::llm_review::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::{
     agent_factory::{AgentConfig, AgentFactory},
     analysis_db::FindingsDb,
@@ -18,6 +19,7 @@ use rig::providers::openai::O3;
 use std::{path::PathBuf, sync::Arc};
 use strum::IntoEnumIterator;
 use tokio::fs;
+use tokio::sync::Mutex;
 
 use super::contract_file_map::get_file_from_contract;
 use super::{enums::AIAgent, phases};
@@ -41,112 +43,132 @@ pub async fn review_codebase_for_security_issues_v2(
     codeblocks_path: &PathBuf,
     repo: &RepoPaths,
 ) -> Result<Findings> {
-    let mut all_security_issues = Findings {
+    let all_security_issues = Arc::new(Mutex::new(Findings {
         findings: Vec::new(),
-    };
+    }));
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
 
     // grab all solidity contracts from database
     info!("grabbing contracts from db...");
     let contracts = codeblocks_db.get_all_contracts(repo)?;
-    let audit_scope = generate_audit_scope(repo).await?;
+    let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     let (ai_verify_agent, ai_discovery_agent) = generate_ai_agents(repo).await?;
 
-    let findings_db = FindingsDb::open()?;
+    let findings_db = Arc::new(Mutex::new(FindingsDb::open()?));
+
+    let mut contract_handles = Vec::new();
 
     for (contract, codeblock) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
 
-        // generated enhanced codeblock
-        let codeblock = enhance_codeblock(&contract, &codeblock, repo).await?;
-        let mut raw_findings = Findings::default();
+        // Clone shared state for the spawned task
+        let verify_agent = Arc::clone(&ai_verify_agent);
+        let discovery_agent = Arc::clone(&ai_discovery_agent);
+        let scope = Arc::clone(&audit_scope);
+        let results_db = Arc::clone(&findings_db);
+        let all_issues = Arc::clone(&all_security_issues);
+        let repo_clone = repo.clone();
+        let contract_clone = contract.clone();
+        let codeblock_clone = codeblock.clone();
 
-        // Run pattern and invariant analysis in parallel
-        let mut handles = Vec::new();
+        // semaphore
+        let sem = Arc::clone(&CONTRACT_REVEW_SEM);
 
-        // Spawn pattern analysis thread
-        let pattern_handle = {
-            let codeblock = codeblock.clone();
-            let ai_discovery_agent = ai_discovery_agent.clone();
-            let ai_verify_agent = ai_verify_agent.clone();
-            let repo = repo.clone();
+        contract_handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire_owned().await.expect("semaphore closed");
+            let result: Result<()> = async move {
+                // Generate enhanced codeblock (includes file context)
+                let codeblock = enhance_codeblock(&contract_clone, &codeblock_clone, &repo_clone)
+                    .await
+                    .map_err(|e| {
+                        use std::io::{Error as IoError, ErrorKind};
+                        AuditError::file_system(
+                            "enhance_codeblock",
+                            format!("could not generate codeblock: {e}"),
+                            IoError::new(ErrorKind::Other, e.to_string()),
+                        )
+                    })?;
 
-            tokio::spawn(async move {
-                process_patterns(&codeblock, &ai_discovery_agent, &ai_verify_agent, &repo).await
-            })
-        };
-        handles.push(pattern_handle);
+                // Run pattern and invariant analysis concurrently within this task
+                let (patterns_res, invariants_res) = tokio::join!(
+                    process_patterns(&codeblock, &discovery_agent, &verify_agent, &repo_clone),
+                    process_invariants(&codeblock, &discovery_agent, &verify_agent, &repo_clone)
+                );
 
-        // Spawn invariant analysis thread
-        let invariant_handle = {
-            let codeblock = codeblock.clone();
-            let ai_discovery_agent = ai_discovery_agent.clone();
-            let ai_verify_agent = ai_verify_agent.clone();
-            let repo = repo.clone();
+                let mut raw_findings = Findings::default();
+                if let Ok(pats) = patterns_res {
+                    raw_findings.findings.extend(pats.findings);
+                } else if let Err(e) = patterns_res {
+                    log::error!("pattern analysis failed: {:#}", e);
+                }
+                if let Ok(invs) = invariants_res {
+                    raw_findings.findings.extend(invs.findings);
+                } else if let Err(e) = invariants_res {
+                    log::error!("invariant analysis failed: {:#}", e);
+                }
 
-            tokio::spawn(async move {
-                process_invariants(&codeblock, &ai_discovery_agent, &ai_verify_agent, &repo).await
-            })
-        };
-        handles.push(invariant_handle);
+                if !raw_findings.findings.is_empty() {
+                    // Phase 3: Verify findings and remove false positives
+                    let mut verify_findings = phases::verify_findings::execute(
+                        raw_findings,
+                        &codeblock,
+                        &verify_agent,
+                        &repo_clone,
+                    )
+                    .await?;
 
-        // Wait for both threads to complete
-        for handle in handles {
-            let thread_findings = handle.await??;
-            raw_findings.findings.extend(thread_findings.findings);
-        }
+                    // Phase 3a: Scope findings (only if scope provided)
+                    if !scope.is_empty() {
+                        verify_findings = phases::scope_findings::execute(
+                            verify_findings,
+                            &codeblock,
+                            &verify_agent,
+                            &repo_clone,
+                        )
+                        .await?;
+                    }
 
-        if !raw_findings.findings.is_empty() {
-            // Phase 3: Verify findings and remove false positives
-            let mut verify_findings = raw_findings;
-            // for j in 1..=VERIFY_RUNS { //  TOO STRICT?
-            // info!("verify findings round {j}....................\n\n");
-            verify_findings = phases::verify_findings::execute(
-                verify_findings,
-                &codeblock,
-                &ai_verify_agent,
-                repo,
-            )
-            .await?;
-            // }
+                    // Phase 4: Quality check and enhance findings
+                    let final_findings = phases::quality_check::execute(
+                        verify_findings,
+                        &codeblock,
+                        &verify_agent,
+                        &repo_clone,
+                    )
+                    .await?;
 
-            let mut in_scope_findings = verify_findings;
-            // if no scope provided - all findings in scope !
-            // DO NOT use claude for scoping! too many false negatives
-            if !audit_scope.is_empty() {
-                // Phase 3a: Scope findings and remove out of scope ones
-                in_scope_findings = phases::scope_findings::execute(
-                    in_scope_findings,
-                    &codeblock,
-                    &ai_verify_agent,
-                    repo,
-                )
-                .await?;
+                    // Save findings to database before extending
+                    let db = results_db.lock().await;
+                    if let Err(e) = db.insert_findings(&final_findings, &repo_clone) {
+                        log::warn!("Failed to save findings to database: {}", e);
+                    }
+
+                    // Extend the aggregate findings
+                    let mut all_findings = all_issues.lock().await;
+                    all_findings.findings.extend(final_findings.findings);
+                }
+                Ok(())
             }
+            .await;
 
-            // Phase 4: Quality check and enhance findings
-            let final_findings = phases::quality_check::execute(
-                in_scope_findings,
-                &codeblock,
-                &ai_verify_agent,
-                repo,
-            )
-            .await?;
-
-            // Save findings to database before extending
-            if let Err(e) = findings_db.insert_findings(&final_findings, repo) {
-                log::warn!("Failed to save findings to database: {}", e);
+            if let Err(e) = result {
+                log::error!("Error processing contract reviews: {:#}", e);
             }
+            Ok::<_, AuditError>(())
+        }));
+    }
 
-            all_security_issues.findings.extend(final_findings.findings);
-        }
+    for handle in contract_handles {
+        let _ = handle.await?;
     }
 
     // dedup combined findings
-    let deduped_security_bugs = all_security_issues.dedup().await?;
+    let security_issues = all_security_issues.lock().await;
+    let deduped = security_issues.clone().dedup().await?;
+    drop(security_issues);
 
-    Ok(deduped_security_bugs)
+    Ok(deduped)
 }
 
 // combine codeblock with original file context (that codeblock came from)

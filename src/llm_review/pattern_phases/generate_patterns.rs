@@ -145,7 +145,7 @@ where
     let patterns: T = agent.extract_with_retry(&prompt).await?;
 
     let issues_found = patterns.issues().len();
-    info!("{} {}s found!", issues_found, title);
+    info!("{} {} found!", issues_found, title);
 
     // 3. Merge results (if any) into the shared accumulator
     if issues_found > 0 {

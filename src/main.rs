@@ -1,6 +1,6 @@
 use ai_agent_audit::{
     // test_rig,
-    build_brain::{enrichment, summarize::summarize_src_files, vector_db},
+    build_brain::{enrichment, vector_db},
     cli_args::parse,
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
