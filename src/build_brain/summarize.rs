@@ -154,14 +154,18 @@ pub async fn summarize_src_files(
     // 1.  PREP – collect the  files we want to summarize first
     // ---------------------------------------------
     let mut work_items = Vec::new();
+    let scoped_files = repo.extract_scoped_files()?;
 
-    let protocol_root = repo.get_protocol_root();
+    let summary_files = if scoped_files.is_empty() {
+        &repo.sol_files
+    } else {
+        &scoped_files
+    };
+
     // Walk through the repository and collect relevant files
-    for file in &repo.sol_files {
-        let is_file_we_want_summary_of = (file.extension().map_or(false, |ext| ext == "sol")
-            && file.starts_with(&repo.source_code_folder))
-            || is_test_file(file, protocol_root.as_path())
-            || is_script_file(file, protocol_root.as_path());
+    for file in summary_files {
+        let is_file_we_want_summary_of = file.extension().map_or(false, |ext| ext == "sol")
+            && file.starts_with(&repo.source_code_folder);
 
         if !is_file_we_want_summary_of {
             continue;
@@ -240,7 +244,7 @@ pub async fn summarize_src_files(
 
     for summary in &summaries {
         info!("filename: {}", summary.filename);
-        print_first_four_lines(&summary.summary);
+        info!("summary size: {}", summary.summary.len())
     }
 
     summaries_cache.insert(key, summaries.clone());
