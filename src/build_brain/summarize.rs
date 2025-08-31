@@ -18,17 +18,13 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
+use crate::llm_review::context_state;
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::enums::AgentMetadata,
     prepare_code::git_clone::RepoPaths,
-    utils::{
-        check_folder_name::{is_script_file, is_test_file},
-        contract_name_check::has_non_mock_contract,
-        extract_retry::extractor_with_retry,
-    },
+    utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
-use crate::{llm_review::context_state, utils::logging::print_first_four_lines};
 
 use super::slither_ffi::cache_key;
 
