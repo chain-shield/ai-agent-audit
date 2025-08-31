@@ -63,13 +63,21 @@ pub struct StorageVar {
     pub r#type: String,
 }
 /// Return “context file list” as LF-separated string.
-pub fn get_all_files_src(repo: &RepoPaths) -> String {
+pub fn get_all_files_src(repo: &RepoPaths) -> Result<String> {
     //   e.g.,   contracts/plume/
     let code_root = repo.root.join(&repo.repo_name);
 
     let mut files = Vec::<String>::new();
 
-    for path in &repo.sol_files {
+    let scoped_files = repo.extract_scoped_files()?;
+
+    let main_files = if scoped_files.is_empty() {
+        &repo.sol_files
+    } else {
+        &scoped_files
+    };
+
+    for path in main_files {
         // fast skip: must be under protocol root and not a symlink
         if !path.starts_with(&code_root) {
             continue;
@@ -77,8 +85,14 @@ pub fn get_all_files_src(repo: &RepoPaths) -> String {
 
         // ADD LIB exclusion
         let lib_folder = code_root.join("lib");
+        let test_folder = code_root.join("test");
+        let script_folder = code_root.join("script");
         let node_modules_folder = code_root.join("node_modules");
-        if path.starts_with(lib_folder) || path.starts_with(node_modules_folder) {
+        if path.starts_with(lib_folder)
+            || path.starts_with(node_modules_folder)
+            || path.starts_with(test_folder)
+            || path.starts_with(script_folder)
+        {
             continue;
         }
 
@@ -102,7 +116,7 @@ pub fn get_all_files_src(repo: &RepoPaths) -> String {
 
     // stable ordering helps diffing prompts
     files.sort();
-    files.join("\n")
+    Ok(files.join("\n"))
 }
 
 fn should_skip(rel: &str) -> bool {
@@ -462,7 +476,7 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
     let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
     let contract_summary = run_printer(repo, "contract-summary").await?;
     let contract_summary_vec = parse_slithir_contract_summary(&contract_summary);
-    let src_file_list = get_all_files_src(repo);
+    let src_file_list = get_all_files_src(repo)?;
     let summaries = summarize_src_files(repo, &semantics_path).await?;
 
     // 2 . serialise each artefact → one text file
