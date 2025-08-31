@@ -189,7 +189,7 @@ pub async fn generate_slither_metadata_prompt_context(
     // let callgraph = callgraph::get_enriched_funcs_and_edges(repo_root, &semantics_path).await?;
     // let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
     // let contract_summary = run_printer(repo, "contract-summary").await?;
-    let src_file_list = get_all_files_src(repo);
+    let src_file_list = get_all_files_src(repo)?;
     log::info!("src file list => {}", src_file_list);
 
     let mut prompt_context = String::new();
