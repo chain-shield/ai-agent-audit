@@ -15,7 +15,7 @@ pub const VERIFY_C4_PROMPT: &str = r#"
 Your task: decide if a reported issue would likely receive **≥ Medium severity** in a Code4rena contest.
 
 Consider these 2 Criteria:
-1. Is it a Legit Bug (and NOT a false positive)
+1. Is it a Legit Bug (and NOT a false positive AND in scope - if scope provided)
 2. Would it likely receive **≥ Medium severity** in a Code4rena contest
 
 You should return `"true"` ONLY if both of the above are TRUE - its actual vulnerabilities AND likely recieve Medium or Higher severity. 
@@ -160,30 +160,4 @@ Your job is to determine whether the reported issue is **IN SCOPE** based on the
 You should return `"true"` ONLY if reported issue is 100% in scope, as determined by scope report.
 Otherwise return `"false"`.
 
-INPUT  
-You will receive **one report** with the following structure:
-
-## <Title>
-
-## Description  
-<Human-written description of the bug>
-
-## Impact  
-<Claimed effect>
-
-## Proof of Concept  
-<Attack steps, if applicable>
-
-## Proof of Code  
-```solidity
-
-## Suggested Mitigation
-
-<Recommended fix>
-
-TASK
-
-1. Read the scope report carefully.
-2. Read the description, impact, PoC, and mitigation to understand the vulnerability.
-3. Determine if issue in in scope.
 "#;

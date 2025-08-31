@@ -6,7 +6,7 @@ use crate::{
     config::DISCOVERY_RUNS,
     error::Result,
     llm_review::{
-        context_state::{get_metadata_context, ContextType},
+        context_state::{generate_audit_scope, get_metadata_context, ContextType},
         enums::AIAgent,
         findings::Findings,
         issues::{IssueStructTrait, IssueTrait},
@@ -48,6 +48,7 @@ where
     let code_and_context = generate_content_plus_context_block(code, &context);
     let arc_code_context = Arc::new(code_and_context);
     let pattern_count = patterns.issues().len();
+    let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     for j in 0..pattern_count {
         let arc_pattern = Arc::new(patterns.issues()[j].clone());
@@ -58,6 +59,7 @@ where
             let sem = Arc::clone(&VERIFY_SEM);
             let shared_findings = Arc::clone(&all_findings);
             let title = issue_title.clone();
+            let scope = Arc::clone(&audit_scope);
 
             handles.push(tokio::spawn(async move {
                 // ── acquire permit ────────────────────────
@@ -69,7 +71,20 @@ where
                         title,
                         pattern_clone.title_str()
                     );
-                    let instruction_prompt = pattern_clone.pattern_to_findings_prompt();
+                    let core_instructions = pattern_clone.pattern_to_findings_prompt();
+                    info!("core_instructions size: {}", core_instructions.len());
+                    let instruction_prompt = if scope.is_empty() {
+                        core_instructions
+                    } else {
+                        format!(
+                    "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY REPORT FINDINGS WITHIN SCOPE \n\n{}",
+                    &core_instructions, &scope)
+                    };
+                    info!(
+                        "core_instructions + scope size: {}",
+                        instruction_prompt.len()
+                    );
+
                     let json_requirement_prompt = pattern_clone.findings_json_required_prompt();
                     let full_prompt = format!(
                         "{}{}{}",

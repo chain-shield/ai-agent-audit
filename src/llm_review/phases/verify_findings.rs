@@ -6,7 +6,7 @@ use crate::{
     config::{AuditType, AUDIT_TYPE},
     error::Result,
     llm_review::{
-        context_state::{get_metadata_context, ContextType},
+        context_state::{generate_audit_scope, get_metadata_context, ContextType},
         enums::AIAgent,
         findings::{Finding, Findings},
         prompt_support::{
@@ -79,12 +79,22 @@ pub async fn execute(
     info!("# of findings AFTER deduping => {}", dedup_finding_count);
     info!("now verifying each finding...");
 
+    let audit_scope = generate_audit_scope(repo).await?;
+
     let verify_prompt = match AUDIT_TYPE {
         AuditType::Client => Arc::new(VERIFY_PROMPT.to_string()),
         AuditType::Code4rena => Arc::new(VERIFY_C4_PROMPT.to_string()),
         AuditType::Sherlock => Arc::new(VERIFY_SHERLOCK_PROMPT.to_string()),
     };
 
+    let updated_verify_prompt = if audit_scope.is_empty() {
+        Arc::new(verify_prompt.to_string())
+    } else {
+        Arc::new(format!(
+            "{}\n\n ## SCOPE FOR SECURITY AUDIT \n\n{}",
+            &verify_prompt, &audit_scope
+        ))
+    };
     // info!("verify prompt + scope => {}", verify_prompt_plus_scope);
 
     for i in 0..dedup_finding_count {
@@ -92,7 +102,7 @@ pub async fn execute(
         let arc_findings = Arc::clone(&deduped_findings);
         let arc_agent = Arc::clone(&agent);
         let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
-        let verify_prompt_and_scope = Arc::clone(&verify_prompt);
+        let verify_prompt_and_scope = Arc::clone(&updated_verify_prompt);
         let sem = Arc::clone(&VERIFY_SEM);
 
         handles.push(tokio::spawn(async move {
