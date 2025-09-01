@@ -31,8 +31,8 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 
  **Derived From** : reserves[token].quoteReserve_post * reserves[token].baseReserve_post >= reserves[token].quoteReserve_pre * reserves[token].baseReserve_pre
 
-[H-2]. Split-buys exploit: 0-quote micro buys + single sell drains Launchpad via integer rounding in SimpleBondingCurve.sell/buy - INVALID exploit off internal function that is guarded when called
-[H-3]. Free-buy due to floor rounding lets attacker acquire base for 0 quote; later sells extract quote (rounding asymmetry in constant-product) - INVALID exploit off internal function that is guarded when called
+[H-2]. Split-buys exploit: 0-quote micro buys + single sell drains Launchpad via integer rounding in SimpleBondingCurve.sell/buy - INVALID exploit off internal function that is guarded when called **INVALID**
+[H-3]. Free-buy due to floor rounding lets attacker acquire base for 0 quote; later sells extract quote (rounding asymmetry in constant-product) - INVALID exploit off internal function that is guarded when called **INVALID**
 
 *NOTE* - have the app only look at exploits from external/public entry points? And provide any callers?
 
@@ -52,7 +52,7 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 
  **Derived From** : FOT/rebasing quote breaks slippage guarantee in sell(); user underpaid
 
-[M-6]. Launchpad.sell assumes 1:1 ERC20 transfer; FOT/rebasing quote token causes user to receive less than minAmountOutQuote
+[M-6]. Launchpad.sell assumes 1:1 ERC20 transfer; FOT/rebasing quote token causes user to receive less than minAmountOutQuote -- **INFORMATIONAL**
 
 
 
@@ -88,7 +88,7 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 
  **Derived From** : Owner/roles never initialized in LiquidatorPanel (OwnableRoles)
 
-[H-12]. Uninitialized owner/roles in LiquidatorPanel bricks all liquidation/deleverage entrypoints, risking system solvency
+[H-12]. Uninitialized owner/roles in LiquidatorPanel bricks all liquidation/deleverage entrypoints, risking system solvency -- **INVALID - owner initialized in other contract llm could not see** 
 
 
 
@@ -100,13 +100,13 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 
  **Derived From** : (balance0 * 1000 - amount0In * 3) * (balance1 * 1000 - amount1In * 3) >= uint256(_reserve0) * uint256(_reserve1) * 1000**2
 
-[H-14]. Zero-input theft of accrued launchpad fees by exploiting reserves–balances desync in GTELaunchpadV2Pair.swap
+[H-14]. Zero-input theft of accrued launchpad fees by exploiting reserves–balances desync in GTELaunchpadV2Pair.swap - **LEGIT**
 
 
 
  **Derived From** : freeCollateral_after(account) + margin_after(account,subaccount) == freeCollateral_before(account) + margin_before(account,subaccount) - fundingPayment_before
 
-[H-15]. removeMargin re-realizes the same funding indefinitely due to setPositions gating, enabling infinite balance inflation and USDC drain
+[H-15]. removeMargin re-realizes the same funding indefinitely due to setPositions gating, enabling infinite balance inflation and USDC drain -- **INVALID**
 
 
 
@@ -124,9 +124,65 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 
  **Derived From** : processWithdrawals slices full queue (O(N)) causing gas-based DoS
 
-[H-18]. GTL.processWithdrawals does O(N) copy of withdrawal queue tail; attackers can bloat queue to brick withdrawals (gas DoS)
+[H-18]. GTL.processWithdrawals does O(N) copy of withdrawal queue tail; attackers can bloat queue to brick withdrawals (gas DoS) -- **DUP**
 
+**COMBINED RESPONSE** - H-8, H-10, and H-18 
 
+************************************************************************
+## Short answer
+
+## Yes — submit as one consolidated bug
+
+- Combine H-8, H-10, and H-18 into a single High-severity report. They share the same root cause and impact (withdrawal queue gas DoS), just manifested in different functions.
+
+## Suggested report structure
+
+- Title
+  - GTL withdrawal queue: unbounded growth + O(N) array rebuilds in cancelWithdrawal and processWithdrawals enable gas-based DoS that permanently freezes withdrawals
+
+- Scope
+  - In-scope file: contracts/perps/GTL.sol (perps/interfaces are excluded, but GTL is not)
+  - Not related to index/mark price manipulation; not on the “known issues” list
+
+- Root cause
+  - Unbounded, user-appendable _withdrawalQueue
+  - O(N) full-array storage→memory→storage rewrites when removing entries:
+    - cancelWithdrawal → _dequeue(id) rebuilds the entire array
+    - processWithdrawals → _dequeueBatch(num) slices and rewrites the tail
+  - Per-tx gas limits make these operations revert once the queue is large
+
+- Affected functions
+  - queueWithdrawal (unbounded growth)
+  - cancelWithdrawal → _dequeue (O(N) rebuild)
+  - processWithdrawals → _dequeueBatch (O(N) tail slice)
+
+- Impact
+  - Permissionless, permanent denial of withdrawals once the queue is big enough (admin cannot process or shrink the queue on-chain)
+  - High severity under the rubric: “Permanent freezing/bricking of funds (withdrawals impossible)”
+
+- Exploitability on L2
+  - Still a DoS: cheaper gas doesn’t increase the per-tx gas limit; O(N) copies exceed limits at sufficiently large N
+
+- Proof of Concept
+  - One test that:
+    - Deposits → queues many small withdrawals (e.g., 10k–20k entries)
+    - Shows processWithdrawals(1) reverts due to gas (H-18 manifestation)
+    - Optionally also show cancelWithdrawal(id) reverts for any id (H-10 manifestation)
+
+- Mitigations
+  - Data structure: ring buffer or mapping-based queue with head/tail indices (O(1) enqueue/dequeue)
+  - Minimal-change: add a _queueHead pointer; read via _withdrawalQueue[_queueHead + i]; advance head by num in O(1); add occasional gas-bounded compaction
+  - Add caps and aggregation:
+    - Global queue length cap and/or per-account outstanding cap
+    - Aggregate multiple requests from the same account and enforce a minimum shares per request
+
+- Submission tips
+  - Clearly state it’s a consolidated report covering prior subfindings (H-8/H-10/H-18)
+  - Include concrete gas thresholds (e.g., approximate N where calls revert at 30M gas) and that both functions are affected
+  - Emphasize permissionless nature and irreversibility without an upgrade/migration
+
+This approach avoids duplicates and strengthens your case with a single, comprehensive High-severity submission.
+************************************************************************
 
  **Derived From** : For any shares <= totalSupply(): _convertToAssets(shares, allocatedAssets) <= usdc.balanceOf(address(this)) + allocatedAssets
 
@@ -136,7 +192,8 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 
  **Derived From** : For rs.quoteAsset = q: baseAmount <= pre.totalPendingRewards[launchAsset] && quoteAmount <= pre.totalPendingRewards[q]
 
-[H-20]. Overflow in rewards accrual math bricks Distributor.claimRewards (pendingRewards * PRECISION overflows uint128)
+[H-20]. Overflow in rewards accrual math bricks Distributor.claimRewards (pendingRewards * PRECISION overflows uint128) -- **MEDIUM AT BEST NEED HUGE AMOUNT TO TRIGGER**
+
 [M-21]. Fee-on-transfer/rebasing tokens desync totalPendingRewards vs actual balance, causing claimRewards to revert (DoS)
 
 
@@ -179,7 +236,7 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 
  **Derived From** : Payouts assume exact transfer; users shorted on taxed tokens
 
-[H-28]. Distributor._distributeAssets silently short-pays claimants when reward token is fee-on-transfer; accounting decremented by full amount
+[H-28]. Distributor._distributeAssets silently short-pays claimants when reward token is fee-on-transfer; accounting decremented by full amount -- **LOW/INFORMATIONAL**
 
 
 ### Number of Findings
