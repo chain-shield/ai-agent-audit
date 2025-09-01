@@ -72,7 +72,7 @@ where
                         pattern_clone.title_str()
                     );
                     let core_instructions = pattern_clone.pattern_to_findings_prompt();
-                    info!("core_instructions size: {}", core_instructions.len());
+                    // info!("core_instructions size: {}", core_instructions.len());
                     let instruction_prompt = if scope.is_empty() {
                         core_instructions
                     } else {
@@ -80,10 +80,10 @@ where
                     "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY REPORT FINDINGS WITHIN SCOPE \n\n{}",
                     &core_instructions, &scope)
                     };
-                    info!(
-                        "core_instructions + scope size: {}",
-                        instruction_prompt.len()
-                    );
+                    // info!(
+                    //     "core_instructions + scope size: {}",
+                    //     instruction_prompt.len()
+                    // );
 
                     let json_requirement_prompt = pattern_clone.findings_json_required_prompt();
                     let full_prompt = format!(

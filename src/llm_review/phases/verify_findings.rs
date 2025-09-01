@@ -66,7 +66,7 @@ pub async fn execute(
 
     let mut handles = vec![];
     let deduped_findings = Arc::new(findings.dedup().await?);
-    let context = get_metadata_context(repo, &ContextType::Abridged)
+    let context = get_metadata_context(repo, &ContextType::Full)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
@@ -124,7 +124,7 @@ pub async fn execute(
                 let is_finding_legit = is_legit_struct.is_legit_vulnerability;
                 if !is_finding_legit {
                     info!(
-                        "{} is NOTh legit => {}",
+                        "{} is NOT legit => {}",
                         arc_findings.findings[i].title,
                         is_legit_struct.why_its_not_legit.unwrap_or_default()
                     );
