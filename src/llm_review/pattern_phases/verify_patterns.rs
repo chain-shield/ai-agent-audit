@@ -97,7 +97,7 @@ where
 
     let mut handles = vec![];
     let deduped_patterns: Arc<T> = Arc::new(patterns.dedup().await?);
-    let context = get_metadata_context(repo, &ContextType::Abridged)
+    let context = get_metadata_context(repo, &ContextType::Full)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
