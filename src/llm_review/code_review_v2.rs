@@ -1,6 +1,7 @@
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
 use crate::llm_review::semaphore::CONTRACT_REVEW_SEM;
+use crate::llm_review::utils::contract_in_scope::is_contract_in_scope;
 use crate::llm_review::{
     agent_factory::{AgentConfig, AgentFactory},
     analysis_db::FindingsDb,
@@ -15,7 +16,6 @@ use crate::llm_review::{
 };
 use crate::prepare_code::git_clone::RepoPaths;
 use log::info;
-use rig::providers::openai::O3;
 use std::{path::PathBuf, sync::Arc};
 use strum::IntoEnumIterator;
 use tokio::fs;
@@ -62,6 +62,13 @@ pub async fn review_codebase_for_security_issues_v2(
 
     for (contract, codeblock) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
+
+        // check contract in inscope!
+        if !is_contract_in_scope(&contract, repo).await? {
+            info!("contract {}  is NOT in scope", contract);
+            continue;
+        }
+        info!("contract {}  is in scope", contract);
 
         // Clone shared state for the spawned task
         let verify_agent = Arc::clone(&ai_verify_agent);
@@ -179,7 +186,9 @@ pub async fn enhance_codeblock(
     codeblock: &str,
     repo: &RepoPaths,
 ) -> anyhow::Result<String> {
-    let file = get_file_from_contract(contract, repo).await?;
+    let file = get_file_from_contract(contract, repo)
+        .await
+        .expect("cound not find file contract is from, contract not in scope");
 
     let file_content = fs::read_to_string(&file).await?;
 

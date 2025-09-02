@@ -22,23 +22,21 @@ pub async fn insert_contract_to_file_mapping(
     let map = Arc::clone(&CONTRACT_TO_FILE);
     let mut contract_file_map = map.lock().await;
 
-    let key = format!("{}{}", repo.repo_name, contract);
+    let key = format!("{}_{}", repo.project_id, contract);
 
     contract_file_map.insert(key, file.to_owned());
 
     Ok(())
 }
 
-pub async fn get_file_from_contract(contract: &str, repo: &RepoPaths) -> anyhow::Result<PathBuf> {
+pub async fn get_file_from_contract(contract: &str, repo: &RepoPaths) -> Option<PathBuf> {
     let map = Arc::clone(&CONTRACT_TO_FILE);
     let contract_file_map = map.lock().await;
 
-    let key = format!("{}{}", repo.repo_name, contract);
+    let key = format!("{}_{}", repo.project_id, contract);
 
     // log::info!("getting file for contract {}", contract);
-    let file = contract_file_map
-        .get(&key)
-        .expect("no filename found for contract");
+    let file = contract_file_map.get(&key).cloned();
 
-    Ok(file.to_owned())
+    file
 }
