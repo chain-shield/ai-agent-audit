@@ -97,7 +97,7 @@ pub async fn get_hashmap_of_contract_to_functions(
     // find all main contracts for app (ones in /src)
     info!("grabbing all contracts...");
 
-    let contracts = contracts_in_source_folder(repo).await?;
+    let contracts = contracts_in_source_folder(repo, &ContractScope::All).await?;
 
     if contracts.is_empty() {
         // Either return empty map or error — your call
@@ -267,9 +267,10 @@ pub async fn contracts_in_source_folder(
                 .iter()
                 .filter(|f| f.starts_with(&repo.source_code_folder))
                 .filter(|f| {
-                    !excluded_folders
-                        .iter()
-                        .any(|excluded| f.starts_with(excluded))
+                    *scope == ContractScope::All
+                        || !excluded_folders
+                            .iter()
+                            .any(|excluded| f.starts_with(excluded))
                 })
                 .map(|f| f.to_owned())
                 .collect()

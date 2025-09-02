@@ -117,6 +117,7 @@ pub mod llm_review {
     }
     /// Utility functions for LLM review
     pub mod utils {
+        pub mod contract_in_scope;
         /// Dynamic prompt generation and context management
         pub mod prompt_context;
         /// AI agent builders and utilities

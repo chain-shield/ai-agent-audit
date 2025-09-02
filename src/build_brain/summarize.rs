@@ -18,13 +18,13 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
-use crate::llm_review::context_state;
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::enums::AgentMetadata,
     prepare_code::git_clone::RepoPaths,
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
+use crate::{llm_review::context_state, utils::check_folder_name::is_script_file};
 
 use super::slither_ffi::cache_key;
 
@@ -150,18 +150,12 @@ pub async fn summarize_src_files(
     // 1.  PREP – collect the  files we want to summarize first
     // ---------------------------------------------
     let mut work_items = Vec::new();
-    let scoped_files = repo.extract_scoped_files()?;
 
-    let summary_files = if scoped_files.is_empty() {
-        &repo.sol_files
-    } else {
-        &scoped_files
-    };
-
+    let protocol_root = repo.get_protocol_root();
     // Walk through the repository and collect relevant files
-    for file in summary_files {
+    for file in &repo.sol_files {
         let is_file_we_want_summary_of = file.extension().map_or(false, |ext| ext == "sol")
-            && file.starts_with(&repo.source_code_folder);
+            && (file.starts_with(&repo.source_code_folder) || is_script_file(file, &protocol_root));
 
         if !is_file_we_want_summary_of {
             continue;
@@ -186,7 +180,7 @@ pub async fn summarize_src_files(
         work_items.push((file.to_owned(), content));
     }
 
-    let max_parallel = 30;
+    let max_parallel = 50;
     let sem = Arc::new(Semaphore::new(max_parallel));
     let agent = Arc::new(ai_summary_agent); // the OpenAI client
     let mut handles = Vec::new();
