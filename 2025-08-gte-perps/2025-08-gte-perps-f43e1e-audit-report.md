@@ -39,7 +39,7 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 
  **Derived From** : Free collateral credited using requested amount, ignores fee-on-transfer delta
 
-[M-4]. depositFreeCollateral over-credits freeCollateral for fee-on-transfer/rebasing USDC, breaking solvency and causing withdrawals to revert
+[M-4]. depositFreeCollateral over-credits freeCollateral for fee-on-transfer/rebasing USDC, breaking solvency and causing withdrawals to revert - **INVALID** FOT issues are informational
 
 
 
@@ -70,7 +70,7 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 
  **Derived From** : Floor rounding undercharges quote on buy(); missing ceil enables penny‑shaving
 
-[L-9]. Penny-shaving on buys: floor rounding in SimpleBondingCurve._getQuoteAmount undercharges quote; micro-buys yield profit
+[L-9]. Penny-shaving on buys: floor rounding in SimpleBondingCurve._getQuoteAmount undercharges quote; micro-buys yield profit -- **LOW/INFORMATIONAL**
 
 
 
@@ -186,7 +186,7 @@ This approach avoids duplicates and strengthens your case with a single, compreh
 
  **Derived From** : For any shares <= totalSupply(): _convertToAssets(shares, allocatedAssets) <= usdc.balanceOf(address(this)) + allocatedAssets
 
-[M-19]. processWithdrawals DoS: _convertToAssets uses off-vault allocatedAssets causing assets > on-chain USDC and revert
+[M-19]. processWithdrawals DoS: _convertToAssets uses off-vault allocatedAssets causing assets > on-chain USDC and revert -- **LEGIT**
 
 
 
@@ -194,7 +194,7 @@ This approach avoids duplicates and strengthens your case with a single, compreh
 
 [H-20]. Overflow in rewards accrual math bricks Distributor.claimRewards (pendingRewards * PRECISION overflows uint128) -- **MEDIUM AT BEST NEED HUGE AMOUNT TO TRIGGER**
 
-[M-21]. Fee-on-transfer/rebasing tokens desync totalPendingRewards vs actual balance, causing claimRewards to revert (DoS)
+[M-21]. Fee-on-transfer/rebasing tokens desync totalPendingRewards vs actual balance, causing claimRewards to revert (DoS) -- **LOW/INFORMATIONAL**
 
 
 
@@ -206,19 +206,19 @@ This approach avoids duplicates and strengthens your case with a single, compreh
 
  **Derived From** : _swapRemaining assumes exact token amounts; FOT tokens cause refund/DoS mismatch
 
-[M-23]. Fee-on-transfer quote breaks refund in Launchpad._swapRemaining, causing buy() DoS during graduation
+[M-23]. Fee-on-transfer quote breaks refund in Launchpad._swapRemaining, causing buy() DoS during graduation -- **LOW/INFORMATIONAL**
 
 
 
  **Derived From** : addRewards over-credits pending on fee-on-transfer tokens
 
-[M-24]. Distributor.addRewards credits rewards before pulling tokens; fee-on-transfer/rebasing tokens brick claims (DoS)
+[M-24]. Distributor.addRewards credits rewards before pulling tokens; fee-on-transfer/rebasing tokens brick claims (DoS) -- **LOW/INFORMATIONAL**
 
 
 
  **Derived From** : addRewards accepts arbitrary quote token, desyncing pool vs payout token
 
-[M-25]. Distributor.addRewards accepts arbitrary quote token, corrupts totalPending mapping and DoS’s reward claims
+[M-25]. Distributor.addRewards accepts arbitrary quote token, corrupts totalPending mapping and DoS’s reward claims **LEGIT**
 
 
 
@@ -1603,7 +1603,7 @@ If the contract is meant to be deployed directly (no proxy), call `_initializeOw
 
  **Derived From** : Permissionless createPair lets anyone block Launchpad parameters
 
-## [M-13]. Front‑running createPair cements zeroed launchpad params and prevents legitimate pair, permanently breaking fee routing
+## [M-13]. Front‑running createPair cements zeroed launchpad params and prevents legitimate pair, permanently breaking fee routing -- **LEGIT**
 
 ## Derived From Pattern/Invariant
 Permissionless createPair lets anyone block Launchpad parameters
@@ -2972,7 +2972,7 @@ Apply same pattern to both launchAsset and quoteAsset branches.
 
  **Derived From** : addRewards accepts arbitrary quote token, desyncing pool vs payout token
 
-## [M-25]. Distributor.addRewards accepts arbitrary quote token, corrupts totalPending mapping and DoS’s reward claims
+## [M-25]. Distributor.addRewards accepts arbitrary quote token, corrupts totalPending mapping and DoS’s reward claims -- **LEGIT**
 
 ## Derived From Pattern/Invariant
 addRewards accepts arbitrary quote token, desyncing pool vs payout token
@@ -3202,7 +3202,7 @@ contract LaunchToken_AccountingInvariantViolationTest is Test {
 
  **Derived From** : unlocked => totalFeeShare_post <= totalFeeShare_pre and bondingShare[to]_post == bondingShare[to]_pre
 
-## [M-27]. Rewards closure DoS: endRewards is permanently unreachable after unlock even when totalFeeShare drains to zero
+## [M-27]. Rewards closure DoS: endRewards is permanently unreachable after unlock even when totalFeeShare drains to zero -- **LEGIT**
 
 ## Derived From Pattern/Invariant
 unlocked => totalFeeShare_post <= totalFeeShare_pre and bondingShare[to]_post == bondingShare[to]_pre

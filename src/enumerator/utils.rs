@@ -96,6 +96,7 @@ pub async fn get_hashmap_of_contract_to_functions(
 ) -> anyhow::Result<HashMap<String, Vec<SmartContractFunction>>> {
     // find all main contracts for app (ones in /src)
     info!("grabbing all contracts...");
+
     let contracts = contracts_in_source_folder(repo).await?;
 
     if contracts.is_empty() {
@@ -232,9 +233,17 @@ async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec
     Ok(storage_map)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ContractScope {
+    All,
+    InScope,
+}
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
-pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>> {
+pub async fn contracts_in_source_folder(
+    repo: &RepoPaths,
+    scope: &ContractScope,
+) -> Result<Vec<String>> {
     if !repo.source_code_folder.exists() {
         anyhow::bail!(
             "no src/ folder found at {},",
@@ -249,21 +258,22 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
     let re = Regex::new(r"(?m)^\s*contract\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     let mut contracts = Vec::<String>::new();
 
-    let in_scope_files: &Vec<PathBuf> = if !scoped_files.is_empty() {
-        &scoped_files
-    } else {
-        &repo
-            .sol_files
-            .iter()
-            .filter(|f| f.starts_with(&repo.source_code_folder))
-            .filter(|f| {
-                !excluded_folders
-                    .iter()
-                    .any(|excluded| f.starts_with(excluded))
-            })
-            .map(|f| f.to_owned())
-            .collect()
-    };
+    let in_scope_files: &Vec<PathBuf> =
+        if !scoped_files.is_empty() && *scope == ContractScope::InScope {
+            &scoped_files
+        } else {
+            &repo
+                .sol_files
+                .iter()
+                .filter(|f| f.starts_with(&repo.source_code_folder))
+                .filter(|f| {
+                    !excluded_folders
+                        .iter()
+                        .any(|excluded| f.starts_with(excluded))
+                })
+                .map(|f| f.to_owned())
+                .collect()
+        };
 
     for file in in_scope_files {
         // ✅ is in src ?

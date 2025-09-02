@@ -2,6 +2,8 @@
 
 **NOTE**: ALL PRIVILEGED ROLES ARE TRUSTED, ONLY FOCUS ON PERMISSIONLESS EXPLOITS
 
+FOT (Fee on transfer) issue are considered Low/informational; do NOT Report.
+
 Any vulnerabilities stemming from manipulation of the Index Price that is yielded by Oracles and other off-chain resources will be **considered INVALID** for the purposes of the contest; for all intents and purposes, the Index Price is considered valid and secure. 
 
 Tampering of these resources as well as organic market manipulation of the Index Price are also considered out-of-scope. 
