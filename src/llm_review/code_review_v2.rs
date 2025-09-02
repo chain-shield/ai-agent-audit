@@ -50,6 +50,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
     // grab all solidity contracts from database
     info!("grabbing contracts from db...");
+    // TODO _ filter by whats in scope
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
