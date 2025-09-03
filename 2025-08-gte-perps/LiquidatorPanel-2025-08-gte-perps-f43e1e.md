@@ -402,16 +402,16 @@ cache_4(LiquidatorPanel.__DelistCache__) := phi(['cache_2', 'cache_3'])
 ```
 #### LiquidatorPanel._emitLiquidationEvent(bytes32,address,uint256,Side,uint256,uint256,int256,int256,int256,LiquidatorPanel.LiquidationType) [INTERNAL]
 ```slithir
-asset_1(bytes32) := phi(['asset_1', 'asset_1', 'asset_1', 'REF_3345'])
-account_1(address) := phi(['account_1', 'REF_3346', 'REF_3207', 'account_1'])
-subaccount_1(uint256) := phi(['subaccount_1', 'REF_3347', 'subaccount_1', 'REF_3208'])
-side_1(Side) := phi(['side_3', 'REF_3118', 'REF_3209', 'REF_3075'])
-quoteTraded_1(uint256) := phi(['REF_3348', 'REF_3210', 'REF_3077', 'REF_3120'])
-baseTraded_1(uint256) := phi(['REF_3211', 'REF_3122', 'REF_3349', 'REF_3079'])
+asset_1(bytes32) := phi(['REF_3345', 'asset_1', 'asset_1', 'asset_1'])
+account_1(address) := phi(['REF_3346', 'REF_3207', 'account_1', 'account_1'])
+subaccount_1(uint256) := phi(['subaccount_1', 'REF_3208', 'subaccount_1', 'REF_3347'])
+side_1(Side) := phi(['REF_3209', 'REF_3075', 'side_3', 'REF_3118'])
+quoteTraded_1(uint256) := phi(['REF_3120', 'REF_3348', 'REF_3210', 'REF_3077'])
+baseTraded_1(uint256) := phi(['REF_3349', 'REF_3211', 'REF_3122', 'REF_3079'])
 rpnl_1(int256) := phi(['REF_3350', 'REF_3213', 'REF_3124', 'REF_3081'])
-margin_1(int256) := phi(['REF_3351', 'REF_3214', 'REF_3125', 'REF_3082'])
-fee_1(int256) := phi(['REF_3215', 'fee_3', 'fee_5', 'TMP_7564'])
-liquidationType_1(LiquidatorPanel.LiquidationType) := phi(['REF_3126', 'REF_3083', 'REF_3353', 'REF_3216'])
+margin_1(int256) := phi(['REF_3125', 'REF_3082', 'REF_3351', 'REF_3214'])
+fee_1(int256) := phi(['fee_5', 'TMP_7564', 'REF_3215', 'fee_3'])
+liquidationType_1(LiquidatorPanel.LiquidationType) := phi(['REF_3353', 'REF_3216', 'REF_3126', 'REF_3083'])
  Liquidation({asset:asset,account:account,subaccount:subaccount,baseDelta:baseDelta,quoteDelta:quoteDelta,rpnl:rpnl,margin:margin,fee:fee,liquidationType:liquidationType,nonce:StorageLib.incNonce()})
 TMP_7631(uint256) = LIBRARY_CALL, dest:StorageLib, function:StorageLib.incNonce(), arguments:[] 
 Emit Liquidation(asset_1,account_1,subaccount_1,baseDelta_3,quoteDelta_3,rpnl_1,margin_1,fee_1,liquidationType_1,TMP_7631)
@@ -493,24 +493,24 @@ RETURN bankruptcyPrice_1
 ```
 #### LiquidatorPanel._liquidate(ClearingHouse,bytes32,address,uint256,BookType) [INTERNAL]
 ```slithir
-clearingHouse_1 (-> ['TMP_7479', 'TMP_7451'])(ClearingHouse) := phi(["clearingHouse_1 (-> ['TMP_7479'])", "clearingHouse_1 (-> ['TMP_7451'])"])
+clearingHouse_1 (-> ['TMP_7451', 'TMP_7479'])(ClearingHouse) := phi(["clearingHouse_1 (-> ['TMP_7451'])", "clearingHouse_1 (-> ['TMP_7479'])"])
 asset_1(bytes32) := phi(['asset_1', 'asset_1'])
 account_1(address) := phi(['account_1', 'account_1'])
 subaccount_1(uint256) := phi(['subaccount_1', 'subaccount_1'])
-bookType_1(BookType) := phi(['REF_3104', 'REF_3037'])
+bookType_1(BookType) := phi(['REF_3037', 'REF_3104'])
  (cache.assets,cache.positions,cache.margin,cache.positionIdx) = _setupAccountAndValidateLiquidation({clearingHouse:clearingHouse,account:account,subaccount:subaccount,asset:asset,bookType:bookType})
 REF_3414(DynamicArrayLib.DynamicArray) -> cache_0.assets
 REF_3415(Position[]) -> cache_0.positions
 REF_3416(int256) -> cache_0.margin
 REF_3417(uint256) -> cache_0.positionIdx
-TUPLE_67(DynamicArrayLib.DynamicArray,Position[],int256,uint256) = INTERNAL_CALL, LiquidatorPanel._setupAccountAndValidateLiquidation(ClearingHouse,address,uint256,bytes32,BookType)(clearingHouse_1 (-> ['TMP_7479', 'TMP_7451']),account_1,subaccount_1,asset_1,bookType_1)
+TUPLE_67(DynamicArrayLib.DynamicArray,Position[],int256,uint256) = INTERNAL_CALL, LiquidatorPanel._setupAccountAndValidateLiquidation(ClearingHouse,address,uint256,bytes32,BookType)(clearingHouse_1 (-> ['TMP_7451', 'TMP_7479']),account_1,subaccount_1,asset_1,bookType_1)
 REF_3414(DynamicArrayLib.DynamicArray)= UNPACK TUPLE_67 index: 0 
 REF_3415(Position[])= UNPACK TUPLE_67 index: 1 
 REF_3416(int256)= UNPACK TUPLE_67 index: 2 
 REF_3417(uint256)= UNPACK TUPLE_67 index: 3 
  cache.fillResult = clearingHouse.market[asset].liquidate({account:account,subaccount:subaccount,side:cache.side,amount:cache.positions[cache.positionIdx].amount,bookType:bookType})
 REF_3418(PlaceOrderResult) -> cache_3.fillResult
-REF_3419(mapping(bytes32 => Market)) -> clearingHouse_1 (-> ['TMP_7479', 'TMP_7451']).market
+REF_3419(mapping(bytes32 => Market)) -> clearingHouse_1 (-> ['TMP_7451', 'TMP_7479']).market
 REF_3420(Market) -> REF_3419[asset_1]
 REF_3422(Side) -> cache_3.side
 REF_3423(Position[]) -> cache_3.positions
@@ -528,7 +528,7 @@ CONDITION TMP_7606
 REF_3429(DynamicArrayLib.DynamicArray) -> cache_4.assets
 REF_3430(Position[]) -> cache_4.positions
 REF_3431(int256) -> cache_4.margin
-TMP_7607(int256) = LIBRARY_CALL, dest:ClearingHouseLib, function:ClearingHouseLib.getProratedMargin(ClearingHouse,DynamicArrayLib.DynamicArray,Position[],bytes32,int256), arguments:["clearingHouse_1 (-> ['TMP_7479', 'TMP_7451'])", 'REF_3429', 'REF_3430', 'asset_1', 'REF_3431'] 
+TMP_7607(int256) = LIBRARY_CALL, dest:ClearingHouseLib, function:ClearingHouseLib.getProratedMargin(ClearingHouse,DynamicArrayLib.DynamicArray,Position[],bytes32,int256), arguments:["clearingHouse_1 (-> ['TMP_7451', 'TMP_7479'])", 'REF_3429', 'REF_3430', 'asset_1', 'REF_3431'] 
 proratedMargin_1(int256) := TMP_7607(int256)
  cache.maintenanceOrProratedMargin > 0 && cache.positions[cache.positionIdx].amount > cache.fillResult.baseTraded
 REF_3432(uint256) -> cache_7.maintenanceOrProratedMargin
@@ -557,7 +557,7 @@ REF_3439(uint256) (->cache_8) := TMP_7611(uint256)
 cache_9(LiquidatorPanel.__InternalLiquidateCache__) := phi(['cache_4', 'cache_8'])
  cache.maintenanceOrProratedMargin = clearingHouse.market[asset].getMaintenanceMargin(cache.positions[cache.positionIdx].amount)
 REF_3448(uint256) -> cache_4.maintenanceOrProratedMargin
-REF_3449(mapping(bytes32 => Market)) -> clearingHouse_1 (-> ['TMP_7479', 'TMP_7451']).market
+REF_3449(mapping(bytes32 => Market)) -> clearingHouse_1 (-> ['TMP_7451', 'TMP_7479']).market
 REF_3450(Market) -> REF_3449[asset_1]
 REF_3452(Position[]) -> cache_4.positions
 REF_3453(uint256) -> cache_4.positionIdx
@@ -694,7 +694,7 @@ RETURN liquidationFee_1
 ```
 #### LiquidatorPanel._setupAccountAndValidateLiquidation(ClearingHouse,address,uint256,bytes32,BookType) [INTERNAL]
 ```slithir
-clearingHouse_1 (-> [])(ClearingHouse) := phi(["clearingHouse_1 (-> ['TMP_7479', 'TMP_7451'])"])
+clearingHouse_1 (-> [])(ClearingHouse) := phi(["clearingHouse_1 (-> ['TMP_7451', 'TMP_7479'])"])
 account_1(address) := phi(['account_1'])
 subaccount_1(uint256) := phi(['subaccount_1'])
 asset_1(bytes32) := phi(['asset_1'])
@@ -1268,7 +1268,7 @@ RETURN TMP_9031
 #### ClearingHouseLib.realizeFundingPayment(DynamicArrayLib.DynamicArray,Position[]) [INTERNAL]
 ```slithir
 assets_1(DynamicArrayLib.DynamicArray) := phi(['REF_4702', 'REF_4444'])
-positions_1(Position[]) := phi(['REF_4703', 'REF_4445'])
+positions_1(Position[]) := phi(['REF_4445', 'REF_4703'])
  length = assets.length()
 TMP_9032(uint256) = LIBRARY_CALL, dest:DynamicArrayLib, function:DynamicArrayLib.length(DynamicArrayLib.DynamicArray), arguments:['assets_1'] 
 length_1(uint256) := TMP_9032(uint256)
@@ -1297,9 +1297,9 @@ RETURN TMP_12427
 ```
 #### FixedPointMathLib.fullMulDiv(uint256,uint256,uint256) [INTERNAL]
 ```slithir
-x_1(uint256) := phi(['TMP_13961', 'TMP_13966', 'TMP_13980', 'TMP_13990', 'x_1'])
-y_1(uint256) := phi(['y_1', 'TMP_13967', 'TMP_13962', 'TMP_13982', 'TMP_13992'])
-d_1(uint256) := phi(['TMP_13984', 'TMP_13994', 'TMP_13968', 'TMP_13963', 'd_1'])
+x_1(uint256) := phi(['x_1', 'TMP_13961', 'TMP_13966', 'TMP_13980', 'TMP_13990'])
+y_1(uint256) := phi(['TMP_13982', 'TMP_13992', 'y_1', 'TMP_13967', 'TMP_13962'])
+d_1(uint256) := phi(['d_1', 'TMP_13984', 'TMP_13994', 'TMP_13968', 'TMP_13963'])
  z = x * y
 TMP_13384(uint256) = x_1 * y_1
 z_1(uint256) := TMP_13384(uint256)
@@ -1969,10 +1969,10 @@ RETURN result_11
 ```
 #### PositionLib._open(Position,Side,uint256,uint256) [PRIVATE]
 ```slithir
-self_1(Position) := phi(['self_1', 'self_3'])
+self_1(Position) := phi(['self_3', 'self_1'])
 side_1(Side) := phi(['side_1', 'side_1'])
 quoteTraded_1(uint256) := phi(['quoteTraded_2', 'quoteTraded_1'])
-baseTraded_1(uint256) := phi(['baseTraded_2', 'baseTraded_1'])
+baseTraded_1(uint256) := phi(['baseTraded_1', 'baseTraded_2'])
  self.leverage == 0
 REF_5336(uint256) -> self_1.leverage
 TMP_9557(bool) = REF_5336 == 0
@@ -2554,9 +2554,9 @@ REF_4837(-> self_2 (-> [])) = REF_4837 (c)- amount_1
 #### ClearingHouseLib._getPositions(ClearingHouse,DynamicArrayLib.DynamicArray,address,uint256,bool) [INTERNAL]
 ```slithir
 self_1 (-> [])(ClearingHouse) := phi(['self_1 (-> [])', 'self_1 (-> [])', 'self_1 (-> [])'])
-assets_1(DynamicArrayLib.DynamicArray) := phi(['REF_4698', 'assets_1', 'REF_4439'])
-account_1(address) := phi(['REF_4699', 'account_1', 'REF_4440'])
-subaccount_1(uint256) := phi(['subaccount_1', 'REF_4441', 'REF_4700'])
+assets_1(DynamicArrayLib.DynamicArray) := phi(['assets_1', 'REF_4439', 'REF_4698'])
+account_1(address) := phi(['REF_4440', 'REF_4699', 'account_1'])
+subaccount_1(uint256) := phi(['subaccount_1', 'REF_4700', 'REF_4441'])
 newPosition_1(bool) := phi(['REF_4442', 'isNewPosition_1'])
  length = assets.length()
 TMP_9109(uint256) = LIBRARY_CALL, dest:DynamicArrayLib, function:DynamicArrayLib.length(DynamicArrayLib.DynamicArray), arguments:['assets_1'] 
@@ -2793,8 +2793,8 @@ Emit OrderProcessed(REF_4380,account_1,REF_4381,REF_4382,REF_4383,REF_4384,REF_4
 ```
 #### CLOBLib._getStorage(bytes32,BookType) [INTERNAL]
 ```slithir
-asset_1(bytes32) := phi(['REF_4000', 'asset_1', 'asset_1', 'REF_4024'])
-bookType_1(BookType) := phi(['bookType_1', 'REF_3992', 'bookType_1', 'REF_3975', 'bookType_1'])
+asset_1(bytes32) := phi(['asset_1', 'REF_4024', 'REF_4000', 'asset_1'])
+bookType_1(BookType) := phi(['REF_3975', 'bookType_1', 'bookType_1', 'bookType_1', 'REF_3992'])
  StorageLib.loadBook(asset,bookType)
 TMP_8924(Book) = LIBRARY_CALL, dest:StorageLib, function:StorageLib.loadBook(bytes32,BookType), arguments:['asset_1', 'bookType_1'] 
 RETURN TMP_8924
@@ -2867,10 +2867,10 @@ RETURN result_3
 ```
 #### CLOBLib._updateOrderbookNotional(bytes32,address,uint256,int256) [PRIVATE]
 ```slithir
-asset_1(bytes32) := phi(['REF_4018', 'REF_4038', 'asset_1', 'asset_1', 'REF_4230'])
-account_1(address) := phi(['account_1', 'account_1', 'owner_1', 'matchedOwner_1', 'account_1'])
+asset_1(bytes32) := phi(['asset_1', 'asset_1', 'REF_4230', 'REF_4018', 'REF_4038'])
+account_1(address) := phi(['matchedOwner_1', 'account_1', 'account_1', 'account_1', 'owner_1'])
 subaccount_1(uint256) := phi(['REF_4231', 'REF_4019', 'subaccount_1', 'REF_4039', 'subaccount_1'])
-amount_1(int256) := phi(['TMP_8693', 'TMP_8846', 'TMP_8776', 'TMP_8829', 'notionalDelta_1'])
+amount_1(int256) := phi(['TMP_8829', 'notionalDelta_1', 'TMP_8693', 'TMP_8846', 'TMP_8776'])
  StorageLib.loadMarket(asset).updateOrderbookNotional(account,subaccount,amount)
 TMP_8911(Market) = LIBRARY_CALL, dest:StorageLib, function:StorageLib.loadMarket(bytes32), arguments:['asset_1'] 
 LIBRARY_CALL, dest:MarketLib, function:MarketLib.updateOrderbookNotional(Market,address,uint256,int256), arguments:['TMP_8911', 'account_1', 'subaccount_1', 'amount_1']
@@ -2980,8 +2980,8 @@ RETURN upnl_1,minMargin_1
 ```
 #### MarketLib._calcUpnl(bool,uint256,uint256) [PRIVATE]
 ```slithir
-isLong_1(bool) := phi(['REF_5043', 'REF_5049', 'REF_5072', 'REF_5079'])
-openNotional_1(uint256) := phi(['REF_5044', 'REF_5050', 'REF_5073', 'REF_5080'])
+isLong_1(bool) := phi(['REF_5072', 'REF_5079', 'REF_5043', 'REF_5049'])
+openNotional_1(uint256) := phi(['REF_5080', 'REF_5044', 'REF_5050', 'REF_5073'])
 currentNotional_1(uint256) := phi(['currentNotional_1', 'currentNotional_1', 'currentNotional_1', 'currentNotional_1'])
  isLong
 CONDITION isLong_1

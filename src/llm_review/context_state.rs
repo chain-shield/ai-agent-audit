@@ -120,12 +120,6 @@ pub async fn generate_context_for_code_review(
 
     // let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
     let documentation = repo.extract_content_from_docs()?;
-    // let mut doc_summaries = String::new();
-    // for doc_summary in &docs {
-    //     doc_summaries.push_str("\n\n");
-    //     doc_summaries.push_str(&doc_summary.summary);
-    //     doc_summaries.push_str("\n\n");
-    // }
     // adding FULL DOCS not doc_summaries
     full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
     full_prompt_context.push_str(&documentation);

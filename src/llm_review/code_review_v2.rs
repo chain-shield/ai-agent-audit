@@ -5,7 +5,6 @@ use crate::llm_review::utils::contract_in_scope::is_contract_in_scope;
 use crate::llm_review::{
     agent_factory::{AgentConfig, AgentFactory},
     analysis_db::FindingsDb,
-    context_state::generate_audit_scope,
     findings::Findings,
     findings::CLAUDE_4_0_SONNET,
     invariants::{ContractInvariants, InvariantFinding, InvariantStatus, InvariantType},
@@ -52,7 +51,7 @@ pub async fn review_codebase_for_security_issues_v2(
     info!("grabbing contracts from db...");
     // TODO _ filter by whats in scope
     let contracts = codeblocks_db.get_all_contracts(repo)?;
-    let audit_scope = Arc::new(generate_audit_scope(repo).await?);
+    // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     let (ai_verify_agent, ai_discovery_agent) = generate_ai_agents(repo).await?;
 
@@ -73,7 +72,7 @@ pub async fn review_codebase_for_security_issues_v2(
         // Clone shared state for the spawned task
         let verify_agent = Arc::clone(&ai_verify_agent);
         let discovery_agent = Arc::clone(&ai_discovery_agent);
-        let scope = Arc::clone(&audit_scope);
+        // let scope = Arc::clone(&audit_scope);
         let results_db = Arc::clone(&findings_db);
         let all_issues = Arc::clone(&all_security_issues);
         let repo_clone = repo.clone();
@@ -118,7 +117,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
                 if !raw_findings.findings.is_empty() {
                     // Phase 3: Verify findings and remove false positives
-                    let mut verify_findings = phases::verify_findings::execute(
+                    let verify_findings = phases::verify_findings::execute(
                         raw_findings,
                         &codeblock,
                         &verify_agent,
@@ -126,16 +125,16 @@ pub async fn review_codebase_for_security_issues_v2(
                     )
                     .await?;
 
-                    // Phase 3a: Scope findings (only if scope provided)
-                    if !scope.is_empty() {
-                        verify_findings = phases::scope_findings::execute(
-                            verify_findings,
-                            &codeblock,
-                            &verify_agent,
-                            &repo_clone,
-                        )
-                        .await?;
-                    }
+                    // // Phase 3a: Scope findings (only if scope provided)
+                    // if !scope.is_empty() {
+                    //     verify_findings = phases::scope_findings::execute(
+                    //         verify_findings,
+                    //         &codeblock,
+                    //         &verify_agent,
+                    //         &repo_clone,
+                    //     )
+                    //     .await?;
+                    // }
 
                     // Phase 4: Quality check and enhance findings
                     let final_findings = phases::quality_check::execute(
@@ -260,7 +259,6 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         .with_model("gpt-5")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
-        // .with_openai_service_tier("flex")
         .with_openai_reasoning_effort("high")
         .with_file_picker(false);
     //     .with_file_picker(false) // Disabled to avoid rate limits

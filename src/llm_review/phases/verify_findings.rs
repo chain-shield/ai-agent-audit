@@ -91,7 +91,7 @@ pub async fn execute(
         Arc::new(verify_prompt.to_string())
     } else {
         Arc::new(format!(
-            "{}\n\n ## SCOPE FOR SECURITY AUDIT \n\n{}",
+            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
             &verify_prompt, &audit_scope
         ))
     };

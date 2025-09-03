@@ -16,8 +16,8 @@ _queuedShares mapping(address => uint256)
 
 #### GTL._afterTokenTransfer(address,address,uint256) [INTERNAL]
 ```slithir
-from_1(address) := phi(['from_1', 'from_1', 'TMP_4495', 'from_1', 'msg.sender'])
-_queuedShares_15(mapping(address => uint256)) := phi(['_queuedShares_14', '_queuedShares_0', '_queuedShares_10', '_queuedShares_3', '_queuedShares_16', '_queuedShares_5'])
+from_1(address) := phi(['msg.sender', 'from_1', 'from_1', 'TMP_4495', 'from_1'])
+_queuedShares_15(mapping(address => uint256)) := phi(['_queuedShares_5', '_queuedShares_14', '_queuedShares_0', '_queuedShares_10', '_queuedShares_3', '_queuedShares_16'])
  balanceOf(from) < _queuedShares[from]
 TMP_4682(uint256) = INTERNAL_CALL, ERC20.balanceOf(address)(from_1)
 REF_1473(uint256) -> _queuedShares_16[from_1]
@@ -28,7 +28,7 @@ TMP_4684(None) = SOLIDITY_CALL revert InsufficientBalance()()
 ```
 #### GTL._assertAdmin() [INTERNAL]
 ```slithir
-ADMIN_ROLE_12(uint256) := phi(['ADMIN_ROLE_3', 'ADMIN_ROLE_9', 'ADMIN_ROLE_6', 'ADMIN_ROLE_0', 'ADMIN_ROLE_14', 'ADMIN_ROLE_11'])
+ADMIN_ROLE_12(uint256) := phi(['ADMIN_ROLE_0', 'ADMIN_ROLE_11', 'ADMIN_ROLE_14', 'ADMIN_ROLE_3', 'ADMIN_ROLE_9', 'ADMIN_ROLE_6'])
  ! hasAllRoles(msg.sender,ADMIN_ROLE) && msg.sender != owner()
 TMP_4699(bool) = INTERNAL_CALL, OwnableRoles.hasAllRoles(address,uint256)(msg.sender,ADMIN_ROLE_12)
 TMP_4700 = UnaryType.BANG TMP_4699 
@@ -43,7 +43,7 @@ TMP_4704(None) = SOLIDITY_CALL revert NotAdmin()()
 ```slithir
 shares_1(uint256) := phi(['REF_1442'])
 allocatedAssets_1(uint256) := phi(['allocatedAssets_1'])
-usdc_16(address) := phi(['usdc_17', 'usdc_0', 'usdc_15', 'usdc_9', 'usdc_1', 'usdc_3'])
+usdc_16(address) := phi(['usdc_15', 'usdc_9', 'usdc_1', 'usdc_3', 'usdc_17', 'usdc_0'])
  shares.fullMulDiv(usdc.balanceOf(address(this)) + allocatedAssets + 1,totalSupply() + 1)
 TMP_4692 = CONVERT this to address
 TMP_4693(uint256) = LIBRARY_CALL, dest:SafeTransferLib, function:SafeTransferLib.balanceOf(address,address), arguments:['usdc_16', 'TMP_4692'] 
@@ -58,7 +58,7 @@ RETURN TMP_4698
 #### GTL._dequeue(uint256) [INTERNAL]
 ```slithir
 id_1(uint256) := phi(['id_1'])
-_withdrawalQueue_13(uint256[]) := phi(['_withdrawalQueue_4', '_withdrawalQueue_14', '_withdrawalQueue_16', '_withdrawalQueue_0', '_withdrawalQueue_9'])
+_withdrawalQueue_13(uint256[]) := phi(['_withdrawalQueue_0', '_withdrawalQueue_9', '_withdrawalQueue_14', '_withdrawalQueue_4', '_withdrawalQueue_16'])
  withdrawalQueue = _withdrawalQueue
 withdrawalQueue_1(uint256[]) := _withdrawalQueue_13(uint256[])
  length = withdrawalQueue.length
@@ -92,7 +92,7 @@ _withdrawalQueue_14(uint256[]) := newQueue_1(uint256[])
 #### GTL._dequeueBatch(uint256) [INTERNAL]
 ```slithir
 num_1(uint256) := phi(['num_1'])
-_withdrawalQueue_15(uint256[]) := phi(['_withdrawalQueue_4', '_withdrawalQueue_14', '_withdrawalQueue_16', '_withdrawalQueue_0', '_withdrawalQueue_9'])
+_withdrawalQueue_15(uint256[]) := phi(['_withdrawalQueue_0', '_withdrawalQueue_9', '_withdrawalQueue_14', '_withdrawalQueue_4', '_withdrawalQueue_16'])
  withdrawalQueue = _withdrawalQueue
 withdrawalQueue_1(uint256[]) := _withdrawalQueue_15(uint256[])
  _withdrawalQueue = withdrawalQueue.slice(num,withdrawalQueue.length)
@@ -102,7 +102,7 @@ _withdrawalQueue_16(uint256[]) = ['TMP_4691(uint256[])']
 ```
 #### GTL.addSubaccount(uint256) [EXTERNAL]
 ```slithir
-_subaccounts_1(EnumerableSetLib.Uint256Set) := phi(['_subaccounts_0', '_subaccounts_4', '_subaccounts_2'])
+_subaccounts_1(EnumerableSetLib.Uint256Set) := phi(['_subaccounts_4', '_subaccounts_2', '_subaccounts_0'])
  _subaccounts.add(subaccount)
 TMP_4653(bool) = LIBRARY_CALL, dest:EnumerableSetLib, function:EnumerableSetLib.add(EnumerableSetLib.Uint256Set,uint256), arguments:['_subaccounts_2', 'subaccount_1'] 
  onlyPerpManager()
@@ -110,8 +110,8 @@ MODIFIER_CALL, GTL.onlyPerpManager()()
 ```
 #### GTL.approveOperator(address) [EXTERNAL][OWNER]
 ```slithir
-perpManager_4(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_3', 'perpManager_7', 'perpManager_12', 'perpManager_0', 'perpManager_10', 'perpManager_16'])
-ADMIN_ROLE_7(uint256) := phi(['ADMIN_ROLE_3', 'ADMIN_ROLE_9', 'ADMIN_ROLE_6', 'ADMIN_ROLE_0', 'ADMIN_ROLE_14', 'ADMIN_ROLE_11'])
+perpManager_4(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_0'])
+ADMIN_ROLE_7(uint256) := phi(['ADMIN_ROLE_0', 'ADMIN_ROLE_11', 'ADMIN_ROLE_14', 'ADMIN_ROLE_3', 'ADMIN_ROLE_9', 'ADMIN_ROLE_6'])
  ! hasAllRoles(operator,ADMIN_ROLE)
 TMP_4638(bool) = INTERNAL_CALL, OwnableRoles.hasAllRoles(address,uint256)(operator_1,ADMIN_ROLE_8)
 TMP_4639 = UnaryType.BANG TMP_4638 
@@ -125,20 +125,20 @@ REF_1454(PerpsOperatorRoles) -> PerpsOperatorRoles.ADMIN
 TMP_4643 = CONVERT REF_1454 to uint256
 TMP_4644(uint256) = 1 << TMP_4643
 HIGH_LEVEL_CALL, dest:TMP_4641(IOperatorPanel), function:approveOperator, arguments:['TMP_4642', 'operator_1', 'TMP_4644']  
-perpManager_7(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_6', 'perpManager_10', 'perpManager_16'])
+perpManager_7(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_6', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_12', 'perpManager_3'])
  onlyOwner()
 MODIFIER_CALL, Ownable.onlyOwner()()
 ```
 #### GTL.asset() [PUBLIC]
 ```slithir
-usdc_4(address) := phi(['usdc_17', 'usdc_0', 'usdc_15', 'usdc_9', 'usdc_1', 'usdc_3'])
+usdc_4(address) := phi(['usdc_15', 'usdc_9', 'usdc_1', 'usdc_3', 'usdc_17', 'usdc_0'])
  usdc
 RETURN usdc_4
 ```
 #### GTL.cancelWithdrawal(uint256) [EXTERNAL]
 ```slithir
 _queuedWithdrawal_2(mapping(uint256 => GTL.Withdrawal)) := phi(['_queuedWithdrawal_0', '_queuedWithdrawal_8', '_queuedWithdrawal_1', '_queuedWithdrawal_12', '_queuedWithdrawal_3'])
-_queuedShares_4(mapping(address => uint256)) := phi(['_queuedShares_14', '_queuedShares_0', '_queuedShares_10', '_queuedShares_3', '_queuedShares_16', '_queuedShares_5'])
+_queuedShares_4(mapping(address => uint256)) := phi(['_queuedShares_5', '_queuedShares_14', '_queuedShares_0', '_queuedShares_10', '_queuedShares_3', '_queuedShares_16'])
  _queuedWithdrawal[id].account != msg.sender
 REF_1433(GTL.Withdrawal) -> _queuedWithdrawal_2[id_1]
 REF_1434(address) -> REF_1433.account
@@ -171,7 +171,7 @@ INTERNAL_CALL, Initializable._disableInitializers()()
 ```
 #### GTL.disapproveOperator(address) [EXTERNAL][OWNER]
 ```slithir
-perpManager_8(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_3', 'perpManager_7', 'perpManager_12', 'perpManager_0', 'perpManager_10', 'perpManager_16'])
+perpManager_8(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_0'])
  IOperatorPanel(perpManager).disapproveOperator({account:address(this),operator:operator,roles:1 << uint256(PerpsOperatorRoles.ADMIN)})
 TMP_4647 = CONVERT perpManager_9 to IOperatorPanel
 TMP_4648 = CONVERT this to address
@@ -179,23 +179,23 @@ REF_1456(PerpsOperatorRoles) -> PerpsOperatorRoles.ADMIN
 TMP_4649 = CONVERT REF_1456 to uint256
 TMP_4650(uint256) = 1 << TMP_4649
 HIGH_LEVEL_CALL, dest:TMP_4647(IOperatorPanel), function:disapproveOperator, arguments:['TMP_4648', 'operator_1', 'TMP_4650']  
-perpManager_10(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_9', 'perpManager_10', 'perpManager_16'])
+perpManager_10(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_12', 'perpManager_3', 'perpManager_9'])
  onlyOwner()
 MODIFIER_CALL, Ownable.onlyOwner()()
 ```
 #### GTL.freeCollateralBalance() [PUBLIC]
 ```slithir
-perpManager_15(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_3', 'perpManager_7', 'perpManager_12', 'perpManager_0', 'perpManager_10', 'perpManager_16'])
+perpManager_15(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_0'])
  IViewPort(perpManager).getFreeCollateralBalance(address(this))
 TMP_4677 = CONVERT perpManager_15 to IViewPort
 TMP_4678 = CONVERT this to address
 TMP_4679(uint256) = HIGH_LEVEL_CALL, dest:TMP_4677(IViewPort), function:getFreeCollateralBalance, arguments:['TMP_4678']  
-perpManager_16(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_15', 'perpManager_10', 'perpManager_16'])
+perpManager_16(address) := phi(['perpManager_15', 'perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_12', 'perpManager_3'])
 RETURN TMP_4679
 ```
 #### GTL.getQueuedShares(address) [EXTERNAL]
 ```slithir
-_queuedShares_14(mapping(address => uint256)) := phi(['_queuedShares_14', '_queuedShares_0', '_queuedShares_10', '_queuedShares_3', '_queuedShares_16', '_queuedShares_5'])
+_queuedShares_14(mapping(address => uint256)) := phi(['_queuedShares_5', '_queuedShares_14', '_queuedShares_0', '_queuedShares_10', '_queuedShares_3', '_queuedShares_16'])
  _queuedShares[account]
 REF_1472(uint256) -> _queuedShares_14[account_1]
 RETURN REF_1472
@@ -209,20 +209,20 @@ RETURN REF_1471
 ```
 #### GTL.getSubaccounts() [EXTERNAL]
 ```slithir
-_subaccounts_7(EnumerableSetLib.Uint256Set) := phi(['_subaccounts_0', '_subaccounts_4', '_subaccounts_2'])
+_subaccounts_7(EnumerableSetLib.Uint256Set) := phi(['_subaccounts_4', '_subaccounts_2', '_subaccounts_0'])
  _subaccounts.values()
 TMP_4680(uint256[]) = LIBRARY_CALL, dest:EnumerableSetLib, function:EnumerableSetLib.values(EnumerableSetLib.Uint256Set), arguments:['_subaccounts_7'] 
 RETURN TMP_4680
 ```
 #### GTL.getWithdrawalQueue() [EXTERNAL]
 ```slithir
-_withdrawalQueue_12(uint256[]) := phi(['_withdrawalQueue_4', '_withdrawalQueue_14', '_withdrawalQueue_16', '_withdrawalQueue_0', '_withdrawalQueue_9'])
+_withdrawalQueue_12(uint256[]) := phi(['_withdrawalQueue_0', '_withdrawalQueue_9', '_withdrawalQueue_14', '_withdrawalQueue_4', '_withdrawalQueue_16'])
  _withdrawalQueue
 RETURN _withdrawalQueue_12
 ```
 #### GTL.grantAdminRole(address) [EXTERNAL][OWNER]
 ```slithir
-ADMIN_ROLE_1(uint256) := phi(['ADMIN_ROLE_3', 'ADMIN_ROLE_9', 'ADMIN_ROLE_6', 'ADMIN_ROLE_0', 'ADMIN_ROLE_14', 'ADMIN_ROLE_11'])
+ADMIN_ROLE_1(uint256) := phi(['ADMIN_ROLE_0', 'ADMIN_ROLE_11', 'ADMIN_ROLE_14', 'ADMIN_ROLE_3', 'ADMIN_ROLE_9', 'ADMIN_ROLE_6'])
  _grantRoles(account,ADMIN_ROLE)
 INTERNAL_CALL, OwnableRoles._grantRoles(address,uint256)(account_1,ADMIN_ROLE_2)
  AdminRoleGranted(account)
@@ -232,15 +232,15 @@ MODIFIER_CALL, Ownable.onlyOwner()()
 ```
 #### GTL.hasAdminRole(address) [EXTERNAL]
 ```slithir
-ADMIN_ROLE_10(uint256) := phi(['ADMIN_ROLE_3', 'ADMIN_ROLE_9', 'ADMIN_ROLE_6', 'ADMIN_ROLE_0', 'ADMIN_ROLE_14', 'ADMIN_ROLE_11'])
+ADMIN_ROLE_10(uint256) := phi(['ADMIN_ROLE_0', 'ADMIN_ROLE_11', 'ADMIN_ROLE_14', 'ADMIN_ROLE_3', 'ADMIN_ROLE_9', 'ADMIN_ROLE_6'])
  hasAllRoles(account,ADMIN_ROLE)
 TMP_4681(bool) = INTERNAL_CALL, OwnableRoles.hasAllRoles(address,uint256)(account_1,ADMIN_ROLE_10)
 RETURN TMP_4681
 ```
 #### GTL.initialize(address) [EXTERNAL]
 ```slithir
-usdc_2(address) := phi(['usdc_17', 'usdc_0', 'usdc_15', 'usdc_9', 'usdc_1', 'usdc_3'])
-perpManager_2(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_3', 'perpManager_7', 'perpManager_12', 'perpManager_0', 'perpManager_10', 'perpManager_16'])
+usdc_2(address) := phi(['usdc_15', 'usdc_9', 'usdc_1', 'usdc_3', 'usdc_17', 'usdc_0'])
+perpManager_2(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_0'])
  usdc.safeApprove(perpManager,type()(uint256).max)
 TMP_4599(uint256) := 115792089237316195423570985008687907853269984665640564039457584007913129639935(uint256)
 LIBRARY_CALL, dest:SafeTransferLib, function:SafeTransferLib.safeApprove(address,address,uint256), arguments:['usdc_3', 'perpManager_3', 'TMP_4599'] 
@@ -266,8 +266,8 @@ RETURN GTE Liquidity Pool
 ```
 #### GTL.orderbookCollateral() [PUBLIC]
 ```slithir
-perpManager_13(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_3', 'perpManager_7', 'perpManager_12', 'perpManager_0', 'perpManager_10', 'perpManager_16'])
-_subaccounts_6(EnumerableSetLib.Uint256Set) := phi(['_subaccounts_0', '_subaccounts_4', '_subaccounts_2'])
+perpManager_13(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_0'])
+_subaccounts_6(EnumerableSetLib.Uint256Set) := phi(['_subaccounts_4', '_subaccounts_2', '_subaccounts_0'])
  subaccounts = _subaccounts.values()
 TMP_4672(uint256[]) = LIBRARY_CALL, dest:EnumerableSetLib, function:EnumerableSetLib.values(EnumerableSetLib.Uint256Set), arguments:['_subaccounts_6'] 
 subaccounts_1(uint256[]) = ['TMP_4672(uint256[])']
@@ -282,7 +282,7 @@ TMP_4674 = CONVERT perpManager_13 to IViewPort
 TMP_4675 = CONVERT this to address
 REF_1468(uint256) -> subaccounts_1[i_1]
 TMP_4676(uint256) = HIGH_LEVEL_CALL, dest:TMP_4674(IViewPort), function:getOrderbookCollateral, arguments:['TMP_4675', 'REF_1468']  
-perpManager_14(address) := phi(['perpManager_14', 'perpManager_13', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_10', 'perpManager_16'])
+perpManager_14(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_13', 'perpManager_1', 'perpManager_7', 'perpManager_12', 'perpManager_3'])
 collateral_2(uint256) = collateral_1 (c)+ TMP_4676
  ++ i
 i_2(uint256) = i_1 (c)+ 1
@@ -297,10 +297,10 @@ RETURN 0
 ```
 #### GTL.processWithdrawals(uint256) [EXTERNAL]
 ```slithir
-usdc_5(address) := phi(['usdc_17', 'usdc_0', 'usdc_15', 'usdc_9', 'usdc_1', 'usdc_3'])
-_withdrawalQueue_5(uint256[]) := phi(['_withdrawalQueue_4', '_withdrawalQueue_14', '_withdrawalQueue_16', '_withdrawalQueue_0', '_withdrawalQueue_9'])
+usdc_5(address) := phi(['usdc_15', 'usdc_9', 'usdc_1', 'usdc_3', 'usdc_17', 'usdc_0'])
+_withdrawalQueue_5(uint256[]) := phi(['_withdrawalQueue_0', '_withdrawalQueue_9', '_withdrawalQueue_14', '_withdrawalQueue_4', '_withdrawalQueue_16'])
 _queuedWithdrawal_4(mapping(uint256 => GTL.Withdrawal)) := phi(['_queuedWithdrawal_0', '_queuedWithdrawal_8', '_queuedWithdrawal_1', '_queuedWithdrawal_12', '_queuedWithdrawal_3'])
-_queuedShares_6(mapping(address => uint256)) := phi(['_queuedShares_14', '_queuedShares_0', '_queuedShares_10', '_queuedShares_3', '_queuedShares_16', '_queuedShares_5'])
+_queuedShares_6(mapping(address => uint256)) := phi(['_queuedShares_5', '_queuedShares_14', '_queuedShares_0', '_queuedShares_10', '_queuedShares_3', '_queuedShares_16'])
  num > _withdrawalQueue.length
 REF_1439 -> LENGTH _withdrawalQueue_6
 TMP_4618(bool) = num_1 > REF_1439
@@ -358,9 +358,9 @@ MODIFIER_CALL, GTL.onlyAdmin()()
 ```
 #### GTL.queueWithdrawal(uint256) [EXTERNAL]
 ```slithir
-_withdrawalQueue_1(uint256[]) := phi(['_withdrawalQueue_4', '_withdrawalQueue_14', '_withdrawalQueue_16', '_withdrawalQueue_0', '_withdrawalQueue_9'])
+_withdrawalQueue_1(uint256[]) := phi(['_withdrawalQueue_0', '_withdrawalQueue_9', '_withdrawalQueue_14', '_withdrawalQueue_4', '_withdrawalQueue_16'])
 _withdrawalCounter_1(uint256) := phi(['_withdrawalCounter_0', '_withdrawalCounter_3'])
-_queuedShares_1(mapping(address => uint256)) := phi(['_queuedShares_14', '_queuedShares_0', '_queuedShares_10', '_queuedShares_3', '_queuedShares_16', '_queuedShares_5'])
+_queuedShares_1(mapping(address => uint256)) := phi(['_queuedShares_5', '_queuedShares_14', '_queuedShares_0', '_queuedShares_10', '_queuedShares_3', '_queuedShares_16'])
  shares == 0
 TMP_4603(bool) = shares_1 == 0
 CONDITION TMP_4603
@@ -402,7 +402,7 @@ RETURN id_1
 ```
 #### GTL.removeSubaccount(uint256) [EXTERNAL]
 ```slithir
-_subaccounts_3(EnumerableSetLib.Uint256Set) := phi(['_subaccounts_0', '_subaccounts_4', '_subaccounts_2'])
+_subaccounts_3(EnumerableSetLib.Uint256Set) := phi(['_subaccounts_4', '_subaccounts_2', '_subaccounts_0'])
  _subaccounts.remove(subaccount)
 TMP_4655(bool) = LIBRARY_CALL, dest:EnumerableSetLib, function:EnumerableSetLib.remove(EnumerableSetLib.Uint256Set,uint256), arguments:['_subaccounts_4', 'subaccount_1'] 
  onlyPerpManager()
@@ -410,7 +410,7 @@ MODIFIER_CALL, GTL.onlyPerpManager()()
 ```
 #### GTL.revokeAdminRole(address) [EXTERNAL][OWNER]
 ```slithir
-ADMIN_ROLE_4(uint256) := phi(['ADMIN_ROLE_3', 'ADMIN_ROLE_9', 'ADMIN_ROLE_6', 'ADMIN_ROLE_0', 'ADMIN_ROLE_14', 'ADMIN_ROLE_11'])
+ADMIN_ROLE_4(uint256) := phi(['ADMIN_ROLE_0', 'ADMIN_ROLE_11', 'ADMIN_ROLE_14', 'ADMIN_ROLE_3', 'ADMIN_ROLE_9', 'ADMIN_ROLE_6'])
  _removeRoles(account,ADMIN_ROLE)
 INTERNAL_CALL, OwnableRoles._removeRoles(address,uint256)(account_1,ADMIN_ROLE_5)
  AdminRoleRevoked(account)
@@ -426,8 +426,8 @@ RETURN GTL
 ```
 #### GTL.totalAccountValue() [PUBLIC]
 ```slithir
-perpManager_11(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_3', 'perpManager_7', 'perpManager_12', 'perpManager_0', 'perpManager_10', 'perpManager_16'])
-_subaccounts_5(EnumerableSetLib.Uint256Set) := phi(['_subaccounts_0', '_subaccounts_4', '_subaccounts_2'])
+perpManager_11(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_0'])
+_subaccounts_5(EnumerableSetLib.Uint256Set) := phi(['_subaccounts_4', '_subaccounts_2', '_subaccounts_0'])
  subaccounts = _subaccounts.values()
 TMP_4665(uint256[]) = LIBRARY_CALL, dest:EnumerableSetLib, function:EnumerableSetLib.values(EnumerableSetLib.Uint256Set), arguments:['_subaccounts_5'] 
 subaccounts_1(uint256[]) = ['TMP_4665(uint256[])']
@@ -441,7 +441,7 @@ TMP_4667 = CONVERT perpManager_11 to IViewPort
 TMP_4668 = CONVERT this to address
 REF_1463(uint256) -> subaccounts_1[i_1]
 TMP_4669(int256) = HIGH_LEVEL_CALL, dest:TMP_4667(IViewPort), function:getAccountValue, arguments:['TMP_4668', 'REF_1463']  
-perpManager_12(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_11', 'perpManager_10', 'perpManager_16'])
+perpManager_12(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_12', 'perpManager_3', 'perpManager_11'])
 subaccountValue_1(int256) := TMP_4669(int256)
  subaccountValue > 0
 TMP_4670(bool) = subaccountValue_1 > 0
@@ -457,7 +457,7 @@ RETURN accountValue_0
 ```
 #### GTL.totalAssets() [PUBLIC]
 ```slithir
-usdc_12(address) := phi(['usdc_17', 'usdc_0', 'usdc_15', 'usdc_9', 'usdc_1', 'usdc_3'])
+usdc_12(address) := phi(['usdc_15', 'usdc_9', 'usdc_1', 'usdc_3', 'usdc_17', 'usdc_0'])
  usdc.balanceOf(address(this)) + orderbookCollateral() + freeCollateralBalance() + totalAccountValue()
 TMP_4657 = CONVERT this to address
 TMP_4658(uint256) = LIBRARY_CALL, dest:SafeTransferLib, function:SafeTransferLib.balanceOf(address,address), arguments:['usdc_12', 'TMP_4657'] 
@@ -471,9 +471,9 @@ RETURN TMP_4664
 ```
 #### FixedPointMathLib.fullMulDiv(uint256,uint256,uint256) [INTERNAL]
 ```slithir
-x_1(uint256) := phi(['TMP_13961', 'TMP_13966', 'TMP_13980', 'TMP_13990', 'x_1'])
-y_1(uint256) := phi(['y_1', 'TMP_13967', 'TMP_13962', 'TMP_13982', 'TMP_13992'])
-d_1(uint256) := phi(['TMP_13984', 'TMP_13994', 'TMP_13968', 'TMP_13963', 'd_1'])
+x_1(uint256) := phi(['x_1', 'TMP_13961', 'TMP_13966', 'TMP_13980', 'TMP_13990'])
+y_1(uint256) := phi(['TMP_13982', 'TMP_13992', 'y_1', 'TMP_13967', 'TMP_13962'])
+d_1(uint256) := phi(['d_1', 'TMP_13984', 'TMP_13994', 'TMP_13968', 'TMP_13963'])
  z = x * y
 TMP_13384(uint256) = x_1 * y_1
 z_1(uint256) := TMP_13384(uint256)

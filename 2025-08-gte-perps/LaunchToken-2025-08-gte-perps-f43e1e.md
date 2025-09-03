@@ -1,3 +1,4 @@
+
 ### Storage layout (LaunchToken) 
 
 ```text
@@ -10,10 +11,9 @@ totalFeeShare uint256
 bondingShare mapping(address => uint256)
 
 ```
-
 #### LaunchToken._beforeTokenTransfer(address,address,uint256) [INTERNAL]
 ```slithir
-from_1(address) := phi(['from_1', 'TMP_2889', 'msg.sender', 'from_1', 'from_1'])
+from_1(address) := phi(['from_1', 'msg.sender', 'TMP_2889', 'from_1', 'from_1'])
 to_1(address) := phi(['to_1', 'to_1', 'TMP_2908', 'to_1', 'to_1'])
 amount_1(uint256) := phi(['amount_1', 'amount_1', 'amount_1', 'amount_1', 'amount_1'])
 launchpad_5(address) := phi(['launchpad_6', 'launchpad_0', 'launchpad_13', 'launchpad_1', 'launchpad_15', 'launchpad_4', 'launchpad_9'])
@@ -101,7 +101,7 @@ launchpad_12(address) := phi(['launchpad_15'])
 TMP_3037 = CONVERT launchpad_12 to ILaunchpad
 TMP_3038 = CONVERT amount_4 to uint96
 HIGH_LEVEL_CALL, dest:TMP_3037(ILaunchpad), function:decreaseStake, arguments:['account_1', 'TMP_3038']  
-launchpad_13(address) := phi(['launchpad_6', 'launchpad_13', 'launchpad_12', 'launchpad_1', 'launchpad_15', 'launchpad_4', 'launchpad_9'])
+launchpad_13(address) := phi(['launchpad_6', 'launchpad_12', 'launchpad_1', 'launchpad_15', 'launchpad_9', 'launchpad_4', 'launchpad_13'])
  amount > share
 TMP_3040(bool) = amount_1 > share_1
 CONDITION TMP_3040
@@ -117,7 +117,7 @@ launchpad_14(address) := phi(['launchpad_6', 'launchpad_0', 'launchpad_13', 'lau
  ILaunchpad(launchpad).endRewards()
 TMP_3041 = CONVERT launchpad_14 to ILaunchpad
 HIGH_LEVEL_CALL, dest:TMP_3041(ILaunchpad), function:endRewards, arguments:[]  
-launchpad_15(address) := phi(['launchpad_6', 'launchpad_13', 'launchpad_14', 'launchpad_1', 'launchpad_15', 'launchpad_4', 'launchpad_9'])
+launchpad_15(address) := phi(['launchpad_6', 'launchpad_14', 'launchpad_1', 'launchpad_15', 'launchpad_9', 'launchpad_4', 'launchpad_13'])
  FeeShareConcluded(block.timestamp,_incEventNonce())
 TMP_3043(uint256) = INTERNAL_CALL, LaunchToken._incEventNonce()()
 Emit FeeShareConcluded(block.timestamp,TMP_3043)
@@ -159,7 +159,7 @@ REF_1073(-> bondingShare_3) = REF_1073 + amount_1
 TMP_3024 = CONVERT launchpad_8 to ILaunchpad
 TMP_3025 = CONVERT amount_1 to uint96
 HIGH_LEVEL_CALL, dest:TMP_3024(ILaunchpad), function:increaseStake, arguments:['account_1', 'TMP_3025']  
-launchpad_9(address) := phi(['launchpad_6', 'launchpad_13', 'launchpad_1', 'launchpad_15', 'launchpad_8', 'launchpad_4', 'launchpad_9'])
+launchpad_9(address) := phi(['launchpad_6', 'launchpad_8', 'launchpad_1', 'launchpad_15', 'launchpad_9', 'launchpad_4', 'launchpad_13'])
 ```
 #### LaunchToken.constructor(string,string,string,address) [PUBLIC]
 ```slithir

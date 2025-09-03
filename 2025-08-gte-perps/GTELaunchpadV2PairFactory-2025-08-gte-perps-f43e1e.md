@@ -1,4 +1,3 @@
-
 ### Storage layout (GTELaunchpadV2PairFactory) 
 
 ```text
@@ -8,9 +7,10 @@ getPair mapping(address => mapping(address => address))
 allPairs address[]
 
 ```
+
 #### GTELaunchpadV2PairFactory.allPairsLength() [EXTERNAL]
 ```slithir
-allPairs_1(address[]) := phi(['allPairs_1', 'allPairs_0', 'allPairs_5'])
+allPairs_1(address[]) := phi(['allPairs_5', 'allPairs_1', 'allPairs_0'])
  allPairs.length
 REF_1397 -> LENGTH allPairs_1
 RETURN REF_1397
@@ -31,8 +31,8 @@ launchpadFeeDistributor_1(address) := _launchpadFeeDistributor_1(address)
 launchpad_2(address) := phi(['launchpad_1', 'launchpad_0'])
 launchpadLp_2(address) := phi(['launchpadLp_1', 'launchpadLp_0'])
 launchpadFeeDistributor_2(address) := phi(['launchpadFeeDistributor_0', 'launchpadFeeDistributor_1'])
-getPair_1(mapping(address => mapping(address => address))) := phi(['getPair_3', 'getPair_0'])
-allPairs_2(address[]) := phi(['allPairs_1', 'allPairs_0', 'allPairs_5'])
+getPair_1(mapping(address => mapping(address => address))) := phi(['getPair_0', 'getPair_3'])
+allPairs_2(address[]) := phi(['allPairs_5', 'allPairs_1', 'allPairs_0'])
  tokenA == tokenB
 TMP_3875(bool) = tokenA_1 == tokenB_1
 CONDITION TMP_3875
@@ -68,7 +68,7 @@ pair_1(address) := TMP_3888(uint256)
  IUniswapV2Pair(pair).initialize(token0,token1,_launchpadLp,_launchpadFeeDistributor)
 TMP_3889 = CONVERT pair_1 to IUniswapV2Pair
 HIGH_LEVEL_CALL, dest:TMP_3889(IUniswapV2Pair), function:initialize, arguments:['token0_3', 'token1_3', '_launchpadLp_3', '_launchpadFeeDistributor_3']  
-allPairs_3(address[]) := phi(['allPairs_1', 'allPairs_5', 'allPairs_2'])
+allPairs_3(address[]) := phi(['allPairs_5', 'allPairs_2', 'allPairs_1'])
  getPair[token0][token1] = pair
 REF_1403(mapping(address => address)) -> getPair_1[token0_3]
 REF_1404(address) -> REF_1403[token1_3]
@@ -120,7 +120,7 @@ RETURN pair_1
 ```
 #### GTELaunchpadV2PairFactory.setFeeTo(address) [EXTERNAL]
 ```slithir
-feeToSetter_2(address) := phi(['feeToSetter_1', 'feeToSetter_4', 'feeToSetter_0'])
+feeToSetter_2(address) := phi(['feeToSetter_4', 'feeToSetter_0', 'feeToSetter_1'])
  msg.sender != feeToSetter
 TMP_3899(bool) = msg.sender != feeToSetter_2
 CONDITION TMP_3899

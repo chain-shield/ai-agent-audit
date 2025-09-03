@@ -34,7 +34,7 @@ quoteReserveAfter_3(uint256) := phi(['quoteReserveAfter_1', 'quoteReserveAfter_2
 token_1(address) := phi(['token_1', 'token_1'])
 quoteReserve_1(uint256) := phi(['quoteReserve_1', 'VIRTUAL_QUOTE_2'])
 baseReserve_1(uint256) := phi(['TMP_2098', 'baseReserve_1'])
-reserves_14(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_9', 'reserves_8', 'reserves_4', 'reserves_11'])
+reserves_14(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_8', 'reserves_9', 'reserves_4', 'reserves_11'])
  r = reserves[token]
 REF_1022(SimpleBondingCurve.Reserves) -> reserves_14[token_1]
 r_1 (-> ['reserves'])(SimpleBondingCurve.Reserves) := REF_1022(SimpleBondingCurve.Reserves)
@@ -95,7 +95,7 @@ Emit VirtualReservesSet(virtualBase_1,virtualQuote_1)
 #### SimpleBondingCurve.baseSoldFromCurve(address) [EXTERNAL]
 ```slithir
 VIRTUAL_BASE_5(uint256) := phi(['VIRTUAL_BASE_4', 'VIRTUAL_BASE_6', 'VIRTUAL_BASE_0'])
-reserves_9(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_9', 'reserves_8', 'reserves_4', 'reserves_11'])
+reserves_9(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_8', 'reserves_9', 'reserves_4', 'reserves_11'])
 supply_3(mapping(address => SimpleBondingCurve.Supply)) := phi(['supply_0', 'supply_6', 'supply_3', 'supply_2', 'supply_1'])
  (supply[token].bondingSupply + VIRTUAL_BASE) - reserves[token].baseReserve
 REF_1005(SimpleBondingCurve.Supply) -> supply_3[token_1]
@@ -116,7 +116,7 @@ RETURN REF_1002
 ```
 #### SimpleBondingCurve.buy(address,uint256) [EXTERNAL]
 ```slithir
-reserves_1(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_9', 'reserves_8', 'reserves_4', 'reserves_11'])
+reserves_1(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_8', 'reserves_9', 'reserves_4', 'reserves_11'])
  r = reserves[token]
 REF_991(SimpleBondingCurve.Reserves) -> reserves_2[token_1]
 r_1 (-> ['reserves'])(SimpleBondingCurve.Reserves) := REF_991(SimpleBondingCurve.Reserves)
@@ -147,7 +147,7 @@ launchpad_1(address) := launchpad__1(address)
 ```
 #### SimpleBondingCurve.getReserves(address) [EXTERNAL]
 ```slithir
-reserves_11(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_9', 'reserves_8', 'reserves_4', 'reserves_11'])
+reserves_11(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_8', 'reserves_9', 'reserves_4', 'reserves_11'])
  r = reserves[token]
 REF_1011(SimpleBondingCurve.Reserves) -> reserves_11[token_1]
 r_1 (-> ['reserves'])(SimpleBondingCurve.Reserves) := REF_1011(SimpleBondingCurve.Reserves)
@@ -187,7 +187,7 @@ MODIFIER_CALL, SimpleBondingCurve.onlyLaunchpad()()
 ```
 #### SimpleBondingCurve.quoteBaseForQuote(address,uint256,bool) [EXTERNAL]
 ```slithir
-reserves_12(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_9', 'reserves_8', 'reserves_4', 'reserves_11'])
+reserves_12(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_8', 'reserves_9', 'reserves_4', 'reserves_11'])
  r = reserves[token]
 REF_1014(SimpleBondingCurve.Reserves) -> reserves_12[token_1]
 r_1 (-> ['reserves'])(SimpleBondingCurve.Reserves) := REF_1014(SimpleBondingCurve.Reserves)
@@ -202,7 +202,7 @@ RETURN baseAmount_1
 #### SimpleBondingCurve.quoteBoughtByCurve(address) [EXTERNAL]
 ```slithir
 VIRTUAL_QUOTE_5(uint256) := phi(['VIRTUAL_QUOTE_0', 'VIRTUAL_QUOTE_4', 'VIRTUAL_QUOTE_6'])
-reserves_10(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_9', 'reserves_8', 'reserves_4', 'reserves_11'])
+reserves_10(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_8', 'reserves_9', 'reserves_4', 'reserves_11'])
  reserves[token].quoteReserve - VIRTUAL_QUOTE
 REF_1009(SimpleBondingCurve.Reserves) -> reserves_10[token_1]
 REF_1010(uint256) -> REF_1009.quoteReserve
@@ -211,7 +211,7 @@ RETURN TMP_2117
 ```
 #### SimpleBondingCurve.quoteQuoteForBase(address,uint256,bool) [EXTERNAL]
 ```slithir
-reserves_13(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_9', 'reserves_8', 'reserves_4', 'reserves_11'])
+reserves_13(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_8', 'reserves_9', 'reserves_4', 'reserves_11'])
  r = reserves[token]
 REF_1017(SimpleBondingCurve.Reserves) -> reserves_13[token_1]
 r_1 (-> ['reserves'])(SimpleBondingCurve.Reserves) := REF_1017(SimpleBondingCurve.Reserves)
@@ -225,7 +225,7 @@ RETURN quoteAmount_1
 ```
 #### SimpleBondingCurve.sell(address,uint256) [EXTERNAL]
 ```slithir
-reserves_5(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_9', 'reserves_8', 'reserves_4', 'reserves_11'])
+reserves_5(mapping(address => SimpleBondingCurve.Reserves)) := phi(['reserves_0', 'reserves_16', 'reserves_10', 'reserves_12', 'reserves_13', 'reserves_8', 'reserves_9', 'reserves_4', 'reserves_11'])
  r = reserves[token]
 REF_996(SimpleBondingCurve.Reserves) -> reserves_6[token_1]
 r_1 (-> ['reserves'])(SimpleBondingCurve.Reserves) := REF_996(SimpleBondingCurve.Reserves)

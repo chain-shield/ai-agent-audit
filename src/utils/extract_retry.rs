@@ -119,6 +119,7 @@ fn should_retry_based_on_error(e: &str) -> bool {
         "server error",
         "status 5", // any 5xx
         "502 bad gateway",
+        "error occurred while processing your request",
         "503 service unavailable",
         "504 gateway timeout",
         "429 resource unavailable",

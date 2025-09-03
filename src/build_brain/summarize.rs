@@ -139,7 +139,7 @@ pub async fn summarize_src_files(
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
-    let preamble ="You are a senior solidity dev. Please summarize below content (source code, tests, or deploy scripts). Format in markdown for easy reading. Please write 250 word or less summary for each contract: purpose trust model (user funds? admin?), also major entrypoints. list storage vars plus optional 50 max chars description. For each function provide interface, should include visibility, modifiers, and mutability. Add 50 word max natspec for each function. No NOT list internal functions. Respond only with valid JSON matching the schema!";
+    let preamble ="You are a senior solidity dev. Please summarize below content (source code, or deploy scripts). Format in markdown for easy reading. Please write 250 word or less summary for each contract: purpose trust model (user funds? admin?), also major entrypoints. List storage vars plus optional 50 max chars description. For each function provide interface, should include visibility, modifiers, and mutability. Add 50 word max natspec for each function. Respond only with valid JSON matching the schema!";
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(O3)
         .preamble(preamble)
@@ -266,7 +266,7 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
 
     log::info!("generate context for code review");
     let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, 
-                   please create a max 200 word summary of this protocol explaining what it is, and how it works.  Format 
+                   please create a max 1000 word summary of this protocol explaining what it is, and how it works.  Format 
                    in markdown for easy reading. Respond only with valid JSON matching the schema!";
 
     let ai_summary_agent = openai_client
