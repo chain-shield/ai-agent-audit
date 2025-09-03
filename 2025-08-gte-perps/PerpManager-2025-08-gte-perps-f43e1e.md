@@ -210,10 +210,10 @@ MODIFIER_CALL, PerpManager.onlySenderOrOperator(address,PerpsOperatorRoles)(acco
 ```
 #### PerpManager.depositFromSpot(address,uint256) [EXTERNAL]
 ```slithir
-accountManager_2(IAccountManager) := phi(['accountManager_1', 'accountManager_4', 'accountManager_0'])
+accountManager_2(IAccountManager) := phi(['accountManager_4', 'accountManager_0', 'accountManager_1'])
  accountManager.withdrawToPerps(account,amount)
 HIGH_LEVEL_CALL, dest:accountManager_3(IAccountManager), function:withdrawToPerps, arguments:['account_1', 'amount_1']  
-accountManager_4(IAccountManager) := phi(['accountManager_3', 'accountManager_1', 'accountManager_4'])
+accountManager_4(IAccountManager) := phi(['accountManager_4', 'accountManager_3', 'accountManager_1'])
  StorageLib.loadCollateralManager().depositFromSpot(account,amount)
 TMP_5941(CollateralManager) = LIBRARY_CALL, dest:StorageLib, function:StorageLib.loadCollateralManager(), arguments:[] 
 LIBRARY_CALL, dest:CollateralManagerLib, function:CollateralManagerLib.depositFromSpot(CollateralManager,address,uint256), arguments:['TMP_5941', 'account_1', 'amount_1'] 
@@ -712,7 +712,7 @@ INTERNAL_CALL, OwnableRoles._checkOwnerOrRoles(uint256)(roles_1)
 INTERNAL_CALL, OwnableRoles._checkRolesOrOwner(uint256)(roles_1)
  _checkOwner()
 INTERNAL_CALL, Ownable._checkOwner()()
-_INTIALIZED_EVENT_SIGNATURE_3(bytes32) := phi(['_INTIALIZED_EVENT_SIGNATURE_2', '_INTIALIZED_EVENT_SIGNATURE_0', '_INTIALIZED_EVENT_SIGNATURE_4', '_INTIALIZED_EVENT_SIGNATURE_6'])
+_INTIALIZED_EVENT_SIGNATURE_3(bytes32) := phi(['_INTIALIZED_EVENT_SIGNATURE_0', '_INTIALIZED_EVENT_SIGNATURE_4', '_INTIALIZED_EVENT_SIGNATURE_2', '_INTIALIZED_EVENT_SIGNATURE_6'])
  s = _initializableSlot()
 TMP_4965(bytes32) = INTERNAL_CALL, Initializable._initializableSlot()()
 s_1(bytes32) := TMP_4965(bytes32)
@@ -748,7 +748,7 @@ TMP_4977(None) = SOLIDITY_CALL sstore(uint256,uint256)(s_3,2)
 TMP_4978(None) = SOLIDITY_CALL mstore(uint256,uint256)(32,1)
  log1(uint256,uint256,uint256)(0x20,0x20,_INTIALIZED_EVENT_SIGNATURE)
 TMP_4979(None) = SOLIDITY_CALL log1(uint256,uint256,uint256)(32,32,_INTIALIZED_EVENT_SIGNATURE_4)
-_INTIALIZED_EVENT_SIGNATURE_5(bytes32) := phi(['_INTIALIZED_EVENT_SIGNATURE_2', '_INTIALIZED_EVENT_SIGNATURE_0', '_INTIALIZED_EVENT_SIGNATURE_4', '_INTIALIZED_EVENT_SIGNATURE_6'])
+_INTIALIZED_EVENT_SIGNATURE_5(bytes32) := phi(['_INTIALIZED_EVENT_SIGNATURE_0', '_INTIALIZED_EVENT_SIGNATURE_4', '_INTIALIZED_EVENT_SIGNATURE_2', '_INTIALIZED_EVENT_SIGNATURE_6'])
  s = _initializableSlot()
 TMP_4980(bytes32) = INTERNAL_CALL, Initializable._initializableSlot()()
 s_1(bytes32) := TMP_4980(bytes32)
@@ -782,7 +782,7 @@ TMP_4995(None) = SOLIDITY_CALL mstore(uint256,uint256)(32,version_2)
 TMP_4996(None) = SOLIDITY_CALL log1(uint256,uint256,uint256)(32,32,_INTIALIZED_EVENT_SIGNATURE_6)
  _checkInitializing()
 INTERNAL_CALL, Initializable._checkInitializing()()
-perpManager_17(address) := phi(['perpManager_14', 'perpManager_1', 'perpManager_3', 'perpManager_7', 'perpManager_12', 'perpManager_0', 'perpManager_10', 'perpManager_16'])
+perpManager_17(address) := phi(['perpManager_10', 'perpManager_16', 'perpManager_14', 'perpManager_1', 'perpManager_7', 'perpManager_3', 'perpManager_12', 'perpManager_0'])
  msg.sender != perpManager
 TMP_4998(bool) = msg.sender != perpManager_17
 CONDITION TMP_4998
@@ -802,7 +802,7 @@ MODIFIER_CALL, PerpManager.onlySenderOrOperator(address,PerpsOperatorRoles)(acco
 ```
 #### PerpManager.withdrawToSpot(address,uint256) [EXTERNAL]
 ```slithir
-accountManager_5(IAccountManager) := phi(['accountManager_1', 'accountManager_4', 'accountManager_0'])
+accountManager_5(IAccountManager) := phi(['accountManager_4', 'accountManager_0', 'accountManager_1'])
  msg.sender != address(accountManager)
 TMP_5944 = CONVERT accountManager_5 to address
 TMP_5945(bool) = msg.sender != TMP_5944
@@ -816,9 +816,9 @@ LIBRARY_CALL, dest:CollateralManagerLib, function:CollateralManagerLib.withdrawT
 ```
 #### FixedPointMathLib.fullMulDiv(uint256,uint256,uint256) [INTERNAL]
 ```slithir
-x_1(uint256) := phi(['TMP_13961', 'TMP_13966', 'TMP_13980', 'TMP_13990', 'x_1'])
-y_1(uint256) := phi(['y_1', 'TMP_13967', 'TMP_13962', 'TMP_13982', 'TMP_13992'])
-d_1(uint256) := phi(['TMP_13984', 'TMP_13994', 'TMP_13968', 'TMP_13963', 'd_1'])
+x_1(uint256) := phi(['x_1', 'TMP_13961', 'TMP_13966', 'TMP_13980', 'TMP_13990'])
+y_1(uint256) := phi(['TMP_13982', 'TMP_13992', 'y_1', 'TMP_13967', 'TMP_13962'])
+d_1(uint256) := phi(['d_1', 'TMP_13984', 'TMP_13994', 'TMP_13968', 'TMP_13963'])
  z = x * y
 TMP_13384(uint256) = x_1 * y_1
 z_1(uint256) := TMP_13384(uint256)
@@ -939,7 +939,7 @@ RETURN assets_1,positions_1
 #### ClearingHouseLib.realizeFundingPayment(DynamicArrayLib.DynamicArray,Position[]) [INTERNAL]
 ```slithir
 assets_1(DynamicArrayLib.DynamicArray) := phi(['REF_4702', 'REF_4444'])
-positions_1(Position[]) := phi(['REF_4703', 'REF_4445'])
+positions_1(Position[]) := phi(['REF_4445', 'REF_4703'])
  length = assets.length()
 TMP_9032(uint256) = LIBRARY_CALL, dest:DynamicArrayLib, function:DynamicArrayLib.length(DynamicArrayLib.DynamicArray), arguments:['assets_1'] 
 length_1(uint256) := TMP_9032(uint256)
@@ -1362,9 +1362,9 @@ RETURN TMP_9054
 #### ClearingHouseLib._getPositions(ClearingHouse,DynamicArrayLib.DynamicArray,address,uint256,bool) [INTERNAL]
 ```slithir
 self_1 (-> [])(ClearingHouse) := phi(['self_1 (-> [])', 'self_1 (-> [])', 'self_1 (-> [])'])
-assets_1(DynamicArrayLib.DynamicArray) := phi(['REF_4698', 'assets_1', 'REF_4439'])
-account_1(address) := phi(['REF_4699', 'account_1', 'REF_4440'])
-subaccount_1(uint256) := phi(['subaccount_1', 'REF_4441', 'REF_4700'])
+assets_1(DynamicArrayLib.DynamicArray) := phi(['assets_1', 'REF_4439', 'REF_4698'])
+account_1(address) := phi(['REF_4440', 'REF_4699', 'account_1'])
+subaccount_1(uint256) := phi(['subaccount_1', 'REF_4700', 'REF_4441'])
 newPosition_1(bool) := phi(['REF_4442', 'isNewPosition_1'])
  length = assets.length()
 TMP_9109(uint256) = LIBRARY_CALL, dest:DynamicArrayLib, function:DynamicArrayLib.length(DynamicArrayLib.DynamicArray), arguments:['assets_1'] 
@@ -1614,9 +1614,9 @@ RETURN collateralDelta_1
 ```slithir
 self_1 (-> [])(Market) := phi(['self_1 (-> [])', 'self_1 (-> [])'])
 account_1(address) := phi(['account_1', 'account_1'])
-subaccount_1(uint256) := phi(['REF_4957', 'REF_4964'])
-orderAmount_1(uint256) := phi(['REF_4958', 'REF_4965'])
-side_1(Side) := phi(['REF_4966', 'REF_4959'])
+subaccount_1(uint256) := phi(['REF_4964', 'REF_4957'])
+orderAmount_1(uint256) := phi(['REF_4965', 'REF_4958'])
+side_1(Side) := phi(['REF_4959', 'REF_4966'])
 baseDenominated_1(bool) := phi(['REF_4960'])
  ! baseDenominated
 TMP_9433 = UnaryType.BANG baseDenominated_1 
@@ -1732,8 +1732,8 @@ RETURN totalCollateralRefunded_0
 ```
 #### CLOBLib._getStorage(bytes32,BookType) [INTERNAL]
 ```slithir
-asset_1(bytes32) := phi(['REF_4000', 'asset_1', 'asset_1', 'REF_4024'])
-bookType_1(BookType) := phi(['bookType_1', 'REF_3992', 'bookType_1', 'REF_3975', 'bookType_1'])
+asset_1(bytes32) := phi(['asset_1', 'REF_4024', 'REF_4000', 'asset_1'])
+bookType_1(BookType) := phi(['REF_3975', 'bookType_1', 'bookType_1', 'bookType_1', 'REF_3992'])
  StorageLib.loadBook(asset,bookType)
 TMP_8924(Book) = LIBRARY_CALL, dest:StorageLib, function:StorageLib.loadBook(bytes32,BookType), arguments:['asset_1', 'bookType_1'] 
 RETURN TMP_8924
@@ -2366,10 +2366,10 @@ RETURN notionalDelta_0,collateralDelta_0
 ```
 #### CLOBLib._updateOrderbookNotional(bytes32,address,uint256,int256) [PRIVATE]
 ```slithir
-asset_1(bytes32) := phi(['REF_4018', 'REF_4038', 'asset_1', 'asset_1', 'REF_4230'])
-account_1(address) := phi(['account_1', 'account_1', 'owner_1', 'matchedOwner_1', 'account_1'])
+asset_1(bytes32) := phi(['asset_1', 'asset_1', 'REF_4230', 'REF_4018', 'REF_4038'])
+account_1(address) := phi(['matchedOwner_1', 'account_1', 'account_1', 'account_1', 'owner_1'])
 subaccount_1(uint256) := phi(['REF_4231', 'REF_4019', 'subaccount_1', 'REF_4039', 'subaccount_1'])
-amount_1(int256) := phi(['TMP_8693', 'TMP_8846', 'TMP_8776', 'TMP_8829', 'notionalDelta_1'])
+amount_1(int256) := phi(['TMP_8829', 'notionalDelta_1', 'TMP_8693', 'TMP_8846', 'TMP_8776'])
  StorageLib.loadMarket(asset).updateOrderbookNotional(account,subaccount,amount)
 TMP_8911(Market) = LIBRARY_CALL, dest:StorageLib, function:StorageLib.loadMarket(bytes32), arguments:['asset_1'] 
 LIBRARY_CALL, dest:MarketLib, function:MarketLib.updateOrderbookNotional(Market,address,uint256,int256), arguments:['TMP_8911', 'account_1', 'subaccount_1', 'amount_1']
@@ -2410,9 +2410,9 @@ INTERNAL_CALL, BookLib._updateBookRemoveOrder(Book,Order)(self_1 (-> []),order_1
 ```
 #### CLOBLib._getLeverage(bytes32,address,uint256) [INTERNAL]
 ```slithir
-asset_1(bytes32) := phi(['REF_4317', 'REF_4290', 'asset_1', 'asset_1'])
-account_1(address) := phi(['account_1', 'REF_4291', 'owner_1', 'REF_4318'])
-subaccount_1(uint256) := phi(['subaccount_1', 'REF_4292', 'subaccount_1', 'REF_4319'])
+asset_1(bytes32) := phi(['asset_1', 'REF_4290', 'asset_1', 'REF_4317'])
+account_1(address) := phi(['account_1', 'owner_1', 'REF_4318', 'REF_4291'])
+subaccount_1(uint256) := phi(['REF_4319', 'subaccount_1', 'REF_4292', 'subaccount_1'])
  StorageLib.loadMarket(asset).getPositionLeverage(account,subaccount)
 TMP_8913(Market) = LIBRARY_CALL, dest:StorageLib, function:StorageLib.loadMarket(bytes32), arguments:['asset_1'] 
 TMP_8914(uint256) = LIBRARY_CALL, dest:MarketLib, function:MarketLib.getPositionLeverage(Market,address,uint256), arguments:['TMP_8913', 'account_1', 'subaccount_1'] 
@@ -2452,8 +2452,8 @@ RETURN ds_1 (-> ['slot'])
 ```
 #### ClearingHouseLib._assetCanBeAddedToAccount(DynamicArrayLib.DynamicArray,bytes32) [PRIVATE]
 ```slithir
-assets_1(DynamicArrayLib.DynamicArray) := phi(['REF_4692', 'REF_4433'])
-asset_1(bytes32) := phi(['REF_4434', 'REF_4693'])
+assets_1(DynamicArrayLib.DynamicArray) := phi(['REF_4433', 'REF_4692'])
+asset_1(bytes32) := phi(['REF_4693', 'REF_4434'])
  numPositions = assets.length()
 TMP_9125(uint256) = LIBRARY_CALL, dest:DynamicArrayLib, function:DynamicArrayLib.length(DynamicArrayLib.DynamicArray), arguments:['assets_1'] 
 numPositions_1(uint256) := TMP_9125(uint256)

@@ -18,7 +18,7 @@ Consider these 2 Criteria:
 1. Is it a Legit Bug (and NOT a false positive AND in scope - if scope provided)
 2. Would it likely receive **≥ Medium severity** in a Code4rena contest
 
-You should return `"true"` ONLY if both of the above are TRUE - its actual vulnerabilities AND likely recieve Medium or Higher severity. 
+You should return `"true"` ONLY if both of the above are TRUE - its a legit in scope vulnerability AND High or Medium severity. 
 Otherwise return `"false"`.
 
 ## Code4rena Guidelines

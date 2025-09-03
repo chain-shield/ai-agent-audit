@@ -14,7 +14,7 @@ totalPendingRewards mapping(address => uint256)
 ```slithir
 asset_1(address) := phi(['base_1', 'quote_1'])
 amount_1(uint256) := phi(['quoteAmount_1', 'baseAmount_1'])
-totalPendingRewards_5(mapping(address => uint256)) := phi(['totalPendingRewards_2', 'totalPendingRewards_4', 'totalPendingRewards_6', 'totalPendingRewards_0'])
+totalPendingRewards_5(mapping(address => uint256)) := phi(['totalPendingRewards_2', 'totalPendingRewards_6', 'totalPendingRewards_4', 'totalPendingRewards_0'])
  currTotal = totalPendingRewards[asset]
 REF_1071(uint256) -> totalPendingRewards_5[asset_1]
 currTotal_1(uint256) := REF_1071(uint256)
@@ -55,7 +55,7 @@ LIBRARY_CALL, dest:SafeTransferLib, function:SafeTransferLib.safeTransfer(addres
 ```slithir
 asset_1(address) := phi(['quoteAsset_3', 'launchAsset_3'])
 amount_1(uint256) := phi(['launchAssetAmount_3', 'quoteAssetAmount_3'])
-totalPendingRewards_3(mapping(address => uint256)) := phi(['totalPendingRewards_2', 'totalPendingRewards_4', 'totalPendingRewards_6', 'totalPendingRewards_0'])
+totalPendingRewards_3(mapping(address => uint256)) := phi(['totalPendingRewards_2', 'totalPendingRewards_6', 'totalPendingRewards_4', 'totalPendingRewards_0'])
  totalPendingRewards[asset] += amount
 REF_1070(uint256) -> totalPendingRewards_3[asset_1]
 totalPendingRewards_4(mapping(address => uint256)) := phi(['totalPendingRewards_3'])
@@ -284,7 +284,7 @@ MODIFIER_CALL, Ownable.onlyOwner()()
 #### Distributor.skimExcessRewards(address,uint256) [EXTERNAL]
 ```slithir
 ADMIN_ROLE_1(uint256) := phi(['ADMIN_ROLE_2', 'ADMIN_ROLE_0'])
-totalPendingRewards_1(mapping(address => uint256)) := phi(['totalPendingRewards_2', 'totalPendingRewards_4', 'totalPendingRewards_6', 'totalPendingRewards_0'])
+totalPendingRewards_1(mapping(address => uint256)) := phi(['totalPendingRewards_2', 'totalPendingRewards_6', 'totalPendingRewards_4', 'totalPendingRewards_0'])
  amount > asset.balanceOf(address(this)) - totalPendingRewards[asset]
 TMP_2318 = CONVERT this to address
 TMP_2319(uint256) = LIBRARY_CALL, dest:SafeTransferLib, function:SafeTransferLib.balanceOf(address,address), arguments:['asset_1', 'TMP_2318'] 
@@ -670,8 +670,8 @@ RETURN TMP_3549
 ```
 #### RewardsTrackerLib.totalAccRewards(uint256,uint256) [INTERNAL]
 ```slithir
-shares_1(uint256) := phi(['existingShares_1', 'existingShares_1', 'TMP_3510', 'TMP_3495', 'TMP_3513', 'shares_1', 'shares_1', 'TMP_3498'])
-accRewardsPerShare_1(uint256) := phi(['accBaseRewardsPerShare_1', 'accQuoteRewardsPerShare_1', 'accBaseRewardsPerShare_1', 'accQuoteRewardsPerShare_1', 'accBaseRewardsPerShare_1', 'accBaseRewardsPerShare_1', 'accQuoteRewardsPerShare_1', 'accQuoteRewardsPerShare_1'])
+shares_1(uint256) := phi(['shares_1', 'existingShares_1', 'TMP_3498', 'existingShares_1', 'TMP_3510', 'TMP_3495', 'TMP_3513', 'shares_1'])
+accRewardsPerShare_1(uint256) := phi(['accQuoteRewardsPerShare_1', 'accBaseRewardsPerShare_1', 'accBaseRewardsPerShare_1', 'accQuoteRewardsPerShare_1', 'accQuoteRewardsPerShare_1', 'accBaseRewardsPerShare_1', 'accQuoteRewardsPerShare_1', 'accBaseRewardsPerShare_1'])
 PRECISION_FACTOR_1(uint128) := phi(['PRECISION_FACTOR_0'])
  (shares * accRewardsPerShare) / PRECISION_FACTOR
 TMP_3535(uint256) = shares_1 (c)* accRewardsPerShare_1

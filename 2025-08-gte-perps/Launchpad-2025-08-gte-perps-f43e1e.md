@@ -1,3 +1,6 @@
+
+
+
 ### Storage layout (Launchpad) 
 
 ```text
@@ -26,15 +29,12 @@ totalFeeShare uint256
 bondingShare mapping(address => uint256)
 
 ```
-
-
-
 #### Launchpad._assertValidRecipient(address,address) [INTERNAL]
 ```slithir
 recipient_1(address) := phi(['REF_1104'])
 baseToken_1(address) := phi(['REF_1105'])
-uniV2Factory_7(IUniswapV2FactoryMinimal) := phi(['uniV2Factory_6', 'uniV2Factory_8', 'uniV2Factory_1', 'uniV2Factory_4', 'uniV2Factory_0'])
-_launches_27(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+uniV2Factory_7(IUniswapV2FactoryMinimal) := phi(['uniV2Factory_1', 'uniV2Factory_4', 'uniV2Factory_6', 'uniV2Factory_8', 'uniV2Factory_0'])
+_launches_27(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  pair = pairFor(address(uniV2Factory),baseToken,_launches[baseToken].quote)
 TMP_3319 = CONVERT uniV2Factory_7 to address
 REF_1206(ILaunchpad.LaunchData) -> _launches_27[baseToken_1]
@@ -86,15 +86,15 @@ data_1(ILaunchpad.LaunchData) := phi(['data_1'])
 remainingBase_1(uint256) := phi(['TMP_3220'])
 remainingQuote_1(uint256) := phi(['TMP_3221'])
 recipient_1(address) := phi(['REF_1139'])
-uniV2Router_8(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_0', 'uniV2Router_15'])
-uniV2Factory_5(IUniswapV2FactoryMinimal) := phi(['uniV2Factory_6', 'uniV2Factory_8', 'uniV2Factory_1', 'uniV2Factory_4', 'uniV2Factory_0'])
-launchpadLPVault_3(LaunchpadLPVault) := phi(['launchpadLPVault_10', 'launchpadLPVault_1', 'launchpadLPVault_2', 'launchpadLPVault_0'])
+uniV2Router_8(IUniswapV2RouterMinimal) := phi(['uniV2Router_15', 'uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_0'])
+uniV2Factory_5(IUniswapV2FactoryMinimal) := phi(['uniV2Factory_1', 'uniV2Factory_4', 'uniV2Factory_6', 'uniV2Factory_8', 'uniV2Factory_0'])
+launchpadLPVault_3(LaunchpadLPVault) := phi(['launchpadLPVault_2', 'launchpadLPVault_10', 'launchpadLPVault_1', 'launchpadLPVault_0'])
  p = uniV2Factory.createPair(token,data.quote)
 REF_1170(address) -> data_1.quote
 TMP_3288(address) = HIGH_LEVEL_CALL, dest:uniV2Factory_5(IUniswapV2FactoryMinimal), function:createPair, arguments:['token_1', 'REF_1170']  
-uniV2Router_9(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_8', 'uniV2Router_15'])
-uniV2Factory_6(IUniswapV2FactoryMinimal) := phi(['uniV2Factory_5', 'uniV2Factory_6', 'uniV2Factory_8', 'uniV2Factory_1', 'uniV2Factory_4'])
-launchpadLPVault_4(LaunchpadLPVault) := phi(['launchpadLPVault_10', 'launchpadLPVault_1', 'launchpadLPVault_3', 'launchpadLPVault_2'])
+uniV2Router_9(IUniswapV2RouterMinimal) := phi(['uniV2Router_8', 'uniV2Router_15', 'uniV2Router_16', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7'])
+uniV2Factory_6(IUniswapV2FactoryMinimal) := phi(['uniV2Factory_1', 'uniV2Factory_4', 'uniV2Factory_5', 'uniV2Factory_6', 'uniV2Factory_8'])
+launchpadLPVault_4(LaunchpadLPVault) := phi(['launchpadLPVault_3', 'launchpadLPVault_2', 'launchpadLPVault_10', 'launchpadLPVault_1'])
 p_1(address) := TMP_3288(address)
  pair = IUniswapV2Pair(p)
 TMP_3289 = CONVERT p_1 to IUniswapV2Pair
@@ -103,24 +103,24 @@ pair_3(IUniswapV2Pair) := TMP_3289(IUniswapV2Pair)
 pair_2(IUniswapV2Pair) := phi(['pair_1', 'pair_3'])
 TMP_3290(address) = INTERNAL_CALL, Ownable.owner()()
 HIGH_LEVEL_CALL, dest:pair_2(IUniswapV2Pair), function:skim, arguments:['TMP_3290']  
-uniV2Router_11(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_10', 'uniV2Router_15'])
-launchpadLPVault_6(LaunchpadLPVault) := phi(['launchpadLPVault_10', 'launchpadLPVault_1', 'launchpadLPVault_2', 'launchpadLPVault_5'])
+uniV2Router_11(IUniswapV2RouterMinimal) := phi(['uniV2Router_15', 'uniV2Router_10', 'uniV2Router_16', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7'])
+launchpadLPVault_6(LaunchpadLPVault) := phi(['launchpadLPVault_2', 'launchpadLPVault_5', 'launchpadLPVault_10', 'launchpadLPVault_1'])
  tokensToLock = data.curve.totalSupply(token) - data.curve.bondingSupply(token)
 REF_1172(IBondingCurveMinimal) -> data_1.curve
 TMP_3292(uint256) = HIGH_LEVEL_CALL, dest:REF_1172(IBondingCurveMinimal), function:totalSupply, arguments:['token_1']  
-uniV2Router_12(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_11', 'uniV2Router_15'])
-launchpadLPVault_7(LaunchpadLPVault) := phi(['launchpadLPVault_6', 'launchpadLPVault_10', 'launchpadLPVault_1', 'launchpadLPVault_2'])
+uniV2Router_12(IUniswapV2RouterMinimal) := phi(['uniV2Router_11', 'uniV2Router_15', 'uniV2Router_16', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7'])
+launchpadLPVault_7(LaunchpadLPVault) := phi(['launchpadLPVault_2', 'launchpadLPVault_6', 'launchpadLPVault_10', 'launchpadLPVault_1'])
 REF_1174(IBondingCurveMinimal) -> data_1.curve
 TMP_3293(uint256) = HIGH_LEVEL_CALL, dest:REF_1174(IBondingCurveMinimal), function:bondingSupply, arguments:['token_1']  
-uniV2Router_13(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_12', 'uniV2Router_15'])
-launchpadLPVault_8(LaunchpadLPVault) := phi(['launchpadLPVault_10', 'launchpadLPVault_1', 'launchpadLPVault_7', 'launchpadLPVault_2'])
+uniV2Router_13(IUniswapV2RouterMinimal) := phi(['uniV2Router_12', 'uniV2Router_15', 'uniV2Router_16', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7'])
+launchpadLPVault_8(LaunchpadLPVault) := phi(['launchpadLPVault_2', 'launchpadLPVault_10', 'launchpadLPVault_1', 'launchpadLPVault_7'])
 TMP_3294(uint256) = TMP_3292 (c)- TMP_3293
 tokensToLock_1(uint256) := TMP_3294(uint256)
  quoteToLock = data.curve.quoteBoughtByCurve(token)
 REF_1176(IBondingCurveMinimal) -> data_1.curve
 TMP_3295(uint256) = HIGH_LEVEL_CALL, dest:REF_1176(IBondingCurveMinimal), function:quoteBoughtByCurve, arguments:['token_1']  
-uniV2Router_14(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_13', 'uniV2Router_15'])
-launchpadLPVault_9(LaunchpadLPVault) := phi(['launchpadLPVault_10', 'launchpadLPVault_1', 'launchpadLPVault_8', 'launchpadLPVault_2'])
+uniV2Router_14(IUniswapV2RouterMinimal) := phi(['uniV2Router_15', 'uniV2Router_16', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7', 'uniV2Router_13'])
+launchpadLPVault_9(LaunchpadLPVault) := phi(['launchpadLPVault_2', 'launchpadLPVault_10', 'launchpadLPVault_1', 'launchpadLPVault_8'])
 quoteToLock_1(uint256) := TMP_3295(uint256)
  token.safeApprove(address(uniV2Router),tokensToLock)
 TMP_3296 = CONVERT uniV2Router_14 to address
@@ -134,8 +134,8 @@ REF_1182(address) -> data_1.quote
 TMP_3300 = CONVERT REF_1182 to address
 TMP_3301 = CONVERT launchpadLPVault_9 to address
 TUPLE_25(uint256,uint256,uint256) = HIGH_LEVEL_CALL, dest:uniV2Router_14(IUniswapV2RouterMinimal), function:addLiquidity, arguments:['token_1', 'TMP_3300', 'tokensToLock_1', 'quoteToLock_1', '0', '0', 'TMP_3301', 'block.timestamp']  
-uniV2Router_15(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_14', 'uniV2Router_15'])
-launchpadLPVault_10(LaunchpadLPVault) := phi(['launchpadLPVault_10', 'launchpadLPVault_1', 'launchpadLPVault_2', 'launchpadLPVault_9'])
+uniV2Router_15(IUniswapV2RouterMinimal) := phi(['uniV2Router_14', 'uniV2Router_15', 'uniV2Router_16', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7'])
+launchpadLPVault_10(LaunchpadLPVault) := phi(['launchpadLPVault_2', 'launchpadLPVault_9', 'launchpadLPVault_10', 'launchpadLPVault_1'])
  remainingBase > 0 && remainingQuote > 0
 TMP_3302(bool) = remainingBase_1 > 0
 TMP_3303(bool) = remainingQuote_1 > 0
@@ -143,7 +143,7 @@ TMP_3304(bool) = TMP_3302 && TMP_3303
 CONDITION TMP_3304
  quoteNeeded = uniV2Router.getAmountIn({amountOut:remainingBase,reserveIn:quoteToLock,reserveOut:tokensToLock})
 TMP_3305(uint256) = HIGH_LEVEL_CALL, dest:uniV2Router_15(IUniswapV2RouterMinimal), function:getAmountIn, arguments:['remainingBase_1', 'quoteToLock_1', 'tokensToLock_1']  
-uniV2Router_16(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_15'])
+uniV2Router_16(IUniswapV2RouterMinimal) := phi(['uniV2Router_15', 'uniV2Router_16', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7'])
 quoteNeeded_1(uint256) := TMP_3305(uint256)
  remainingQuote >= quoteNeeded
 TMP_3306(bool) = remainingQuote_1 >= quoteNeeded_1
@@ -164,9 +164,9 @@ RETURN 0
 #### Launchpad._emitSwapEvent(address,address,uint256,uint256,bool,IBondingCurveMinimal) [INTERNAL]
 ```slithir
 account_1(address) := phi(['REF_1122', 'account_1'])
-token_1(address) := phi(['REF_1123', 'token_1'])
-baseAmount_1(uint256) := phi(['amountInBase_1', 'amountOutBaseActual_1'])
-quoteAmount_1(uint256) := phi(['amountOutQuote_1', 'amountInQuote_1'])
+token_1(address) := phi(['token_1', 'REF_1123'])
+baseAmount_1(uint256) := phi(['amountOutBaseActual_1', 'amountInBase_1'])
+quoteAmount_1(uint256) := phi(['amountInQuote_1', 'amountOutQuote_1'])
 curve_1(IBondingCurveMinimal) := phi(['REF_1124', 'REF_1146'])
  Swap({buyer:account,token:token,baseDelta:baseDelta,quoteDelta:quoteDelta,nextAmountSold:curve.baseSoldFromCurve(token),newPrice:curve.quoteBoughtByCurve(token),eventNonce:EventNonceLib.inc()})
 TMP_3332(uint256) = HIGH_LEVEL_CALL, dest:curve_1(IBondingCurveMinimal), function:baseSoldFromCurve, arguments:['token_1']  
@@ -201,12 +201,12 @@ pair_1(IUniswapV2Pair) := phi(['pair_1'])
 data_1(ILaunchpad.LaunchData) := phi(['data_1'])
 amountOutBaseActual_1(uint256) := phi(['amountOutBaseActual_1'])
 amountInQuote_1(uint256) := phi(['amountInQuote_1'])
-_launches_16(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_16(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  LaunchToken(buyData.token).unlock()
 REF_1129(address) -> buyData_1.token
 TMP_3216 = CONVERT REF_1129 to LaunchToken
 HIGH_LEVEL_CALL, dest:TMP_3216(LaunchToken), function:unlock, arguments:[]  
-_launches_17(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_16', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_17(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_15', '_launches_9', '_launches_24', '_launches_3', '_launches_26', '_launches_16', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  _launches[buyData.token].active = false
 REF_1131(address) -> buyData_1.token
 REF_1132(ILaunchpad.LaunchData) -> _launches_17[REF_1131]
@@ -244,7 +244,7 @@ RETURN finalAmountOutBaseActual_3,finalAmountInQuote_1
 #### Launchpad._swapRemaining(Launchpad.SwapRemainingData) [INTERNAL]
 ```slithir
 data_1(Launchpad.SwapRemainingData) := phi(['d_1'])
-uniV2Router_17(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_0', 'uniV2Router_15'])
+uniV2Router_17(IUniswapV2RouterMinimal) := phi(['uniV2Router_15', 'uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_0'])
  data.quote.safeTransferFrom(msg.sender,address(this),data.quoteAmount)
 REF_1185(address) -> data_1.quote
 TMP_3308 = CONVERT this to address
@@ -274,7 +274,7 @@ REF_1197(uint256) -> data_1.quoteAmount
 REF_1198(address) -> data_1.recipient
 TMP_3314(uint256) = block.timestamp (c)+ 1
 TMP_3315(uint256[]) = HIGH_LEVEL_CALL, dest:uniV2Router_17(IUniswapV2RouterMinimal), function:swapTokensForExactTokens, arguments:['REF_1196', 'REF_1197', 'path_3', 'REF_1198', 'TMP_3314']  
-uniV2Router_18(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_17', 'uniV2Router_15'])
+uniV2Router_18(IUniswapV2RouterMinimal) := phi(['uniV2Router_15', 'uniV2Router_16', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7', 'uniV2Router_17'])
  (data.baseAmount,data.quoteAmount)
 REF_1199(uint256) -> data_1.baseAmount
 REF_1200(uint256) -> data_1.quoteAmount
@@ -292,17 +292,17 @@ RETURN 0,0
 ```
 #### Launchpad.baseSoldFromCurve(address) [PUBLIC]
 ```slithir
-_launches_2(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_2(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  _launches[token].curve.baseSoldFromCurve(token)
 REF_1086(ILaunchpad.LaunchData) -> _launches_2[token_1]
 REF_1087(IBondingCurveMinimal) -> REF_1086.curve
 TMP_3174(uint256) = HIGH_LEVEL_CALL, dest:REF_1087(IBondingCurveMinimal), function:baseSoldFromCurve, arguments:['token_1']  
-_launches_3(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_2', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_3(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_15', '_launches_9', '_launches_24', '_launches_3', '_launches_2', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
 RETURN TMP_3174
 ```
 #### Launchpad.buy(ILaunchpad.BuyData) [EXTERNAL]
 ```slithir
-_launches_11(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_11(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  pair = _assertValidRecipient(buyData.recipient,buyData.token)
 REF_1104(address) -> buyData_1.recipient
 REF_1105(address) -> buyData_1.token
@@ -388,7 +388,7 @@ TMP_3150 = CONVERT operator__1 to IOperatorPanel
 operator_1(IOperatorPanel) := TMP_3150(IOperatorPanel)
  uniV2Factory = IUniswapV2FactoryMinimal(uniV2Router.factory())
 TMP_3151(address) = HIGH_LEVEL_CALL, dest:uniV2Router_1(IUniswapV2RouterMinimal), function:factory, arguments:[]  
-uniV2Router_2(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_1', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_15'])
+uniV2Router_2(IUniswapV2RouterMinimal) := phi(['uniV2Router_15', 'uniV2Router_16', 'uniV2Router_1', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7'])
 TMP_3152 = CONVERT TMP_3151 to IUniswapV2FactoryMinimal
 uniV2Factory_1(IUniswapV2FactoryMinimal) := TMP_3152(IUniswapV2FactoryMinimal)
  distributor = IDistributor(distributor_)
@@ -399,18 +399,18 @@ INTERNAL_CALL, Initializable._disableInitializers()()
 ```
 #### Launchpad.decreaseStake(address,uint96) [EXTERNAL]
 ```slithir
-distributor_9(IDistributor) := phi(['distributor_1', 'distributor_8', 'distributor_0', 'distributor_15', 'distributor_5', 'distributor_11'])
+distributor_9(IDistributor) := phi(['distributor_15', 'distributor_5', 'distributor_11', 'distributor_1', 'distributor_0', 'distributor_8'])
  distributor.decreaseStake(msg.sender,account,shares)
 TUPLE_24(uint256,uint256) = HIGH_LEVEL_CALL, dest:distributor_10(IDistributor), function:decreaseStake, arguments:['msg.sender', 'account_1', 'shares_1']  
-distributor_11(IDistributor) := phi(['distributor_1', 'distributor_10', 'distributor_8', 'distributor_15', 'distributor_5', 'distributor_11'])
+distributor_11(IDistributor) := phi(['distributor_15', 'distributor_5', 'distributor_11', 'distributor_1', 'distributor_10', 'distributor_8'])
  onlyLaunchAsset()
 MODIFIER_CALL, Launchpad.onlyLaunchAsset()()
 ```
 #### Launchpad.endRewards() [EXTERNAL]
 ```slithir
-distributor_12(IDistributor) := phi(['distributor_1', 'distributor_8', 'distributor_0', 'distributor_15', 'distributor_5', 'distributor_11'])
-uniV2Factory_2(IUniswapV2FactoryMinimal) := phi(['uniV2Factory_6', 'uniV2Factory_8', 'uniV2Factory_1', 'uniV2Factory_4', 'uniV2Factory_0'])
-_launches_25(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+distributor_12(IDistributor) := phi(['distributor_15', 'distributor_5', 'distributor_11', 'distributor_1', 'distributor_0', 'distributor_8'])
+uniV2Factory_2(IUniswapV2FactoryMinimal) := phi(['uniV2Factory_1', 'uniV2Factory_4', 'uniV2Factory_6', 'uniV2Factory_8', 'uniV2Factory_0'])
+_launches_25(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  quote = _launches[msg.sender].quote
 REF_1162(ILaunchpad.LaunchData) -> _launches_26[msg.sender]
 REF_1163(address) -> REF_1162.quote
@@ -423,7 +423,7 @@ TMP_3280 = CONVERT TMP_3279 to IGTELaunchpadV2Pair
 pair_1(IGTELaunchpadV2Pair) := TMP_3280(IGTELaunchpadV2Pair)
  distributor.endRewards(pair)
 HIGH_LEVEL_CALL, dest:distributor_14(IDistributor), function:endRewards, arguments:['pair_1']  
-distributor_15(IDistributor) := phi(['distributor_1', 'distributor_8', 'distributor_14', 'distributor_15', 'distributor_5', 'distributor_11'])
+distributor_15(IDistributor) := phi(['distributor_15', 'distributor_5', 'distributor_11', 'distributor_1', 'distributor_8', 'distributor_14'])
  onlyLaunchAsset()
 MODIFIER_CALL, Launchpad.onlyLaunchAsset()()
 _launches_26(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_29'])
@@ -436,16 +436,16 @@ RETURN TMP_3178
 ```
 #### Launchpad.increaseStake(address,uint96) [EXTERNAL]
 ```slithir
-distributor_6(IDistributor) := phi(['distributor_1', 'distributor_8', 'distributor_0', 'distributor_15', 'distributor_5', 'distributor_11'])
+distributor_6(IDistributor) := phi(['distributor_15', 'distributor_5', 'distributor_11', 'distributor_1', 'distributor_0', 'distributor_8'])
  distributor.increaseStake(msg.sender,account,shares)
 TUPLE_23(uint256,uint256) = HIGH_LEVEL_CALL, dest:distributor_7(IDistributor), function:increaseStake, arguments:['msg.sender', 'account_1', 'shares_1']  
-distributor_8(IDistributor) := phi(['distributor_7', 'distributor_1', 'distributor_8', 'distributor_15', 'distributor_5', 'distributor_11'])
+distributor_8(IDistributor) := phi(['distributor_15', 'distributor_5', 'distributor_11', 'distributor_7', 'distributor_1', 'distributor_8'])
  onlyLaunchAsset()
 MODIFIER_CALL, Launchpad.onlyLaunchAsset()()
 ```
 #### Launchpad.initialize(address,address,address,address,bytes) [EXTERNAL]
 ```slithir
-uniV2Router_3(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_0', 'uniV2Router_15'])
+uniV2Router_3(IUniswapV2RouterMinimal) := phi(['uniV2Router_15', 'uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_0'])
  _initializeOwner(owner_)
 INTERNAL_CALL, Ownable._initializeOwner(address)(owner__1)
  quoteAsset_ == address(0)
@@ -466,7 +466,7 @@ TMP_3162(None) = SOLIDITY_CALL revert InvalidCurve()()
 TMP_3163 = CONVERT quoteAsset__1 to LaunchToken
 TMP_3164 = CONVERT this to address
 TMP_3165(bool) = HIGH_LEVEL_CALL, dest:TMP_3163(LaunchToken), function:approve, arguments:['TMP_3164', '0']  
-uniV2Router_6(IUniswapV2RouterMinimal) := phi(['uniV2Router_5', 'uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_15'])
+uniV2Router_6(IUniswapV2RouterMinimal) := phi(['uniV2Router_15', 'uniV2Router_5', 'uniV2Router_16', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7'])
  currentBondingCurve = IBondingCurveMinimal(bondingCurve_)
 TMP_3166 = CONVERT bondingCurve__1 to IBondingCurveMinimal
 currentBondingCurve_1(IBondingCurveMinimal) := TMP_3166(IBondingCurveMinimal)
@@ -478,8 +478,8 @@ TMP_3168 = CONVERT launchpadLPVault__1 to LaunchpadLPVault
 launchpadLPVault_1(LaunchpadLPVault) := TMP_3168(LaunchpadLPVault)
  currentBondingCurve.init(bondingCurveInitData)
 HIGH_LEVEL_CALL, dest:currentBondingCurve_1(IBondingCurveMinimal), function:init, arguments:['bondingCurveInitData_1']  
-uniV2Router_7(IUniswapV2RouterMinimal) := phi(['uniV2Router_16', 'uniV2Router_2', 'uniV2Router_18', 'uniV2Router_7', 'uniV2Router_6', 'uniV2Router_15'])
-currentBondingCurve_2(IBondingCurveMinimal) := phi(['currentBondingCurve_2', 'currentBondingCurve_1', 'currentBondingCurve_4', 'currentBondingCurve_7'])
+uniV2Router_7(IUniswapV2RouterMinimal) := phi(['uniV2Router_15', 'uniV2Router_16', 'uniV2Router_18', 'uniV2Router_2', 'uniV2Router_7', 'uniV2Router_6'])
+currentBondingCurve_2(IBondingCurveMinimal) := phi(['currentBondingCurve_1', 'currentBondingCurve_4', 'currentBondingCurve_7', 'currentBondingCurve_2'])
  LaunchpadDeployed(quoteAsset_,bondingCurve_,address(uniV2Router),EventNonceLib.inc())
 TMP_3170 = CONVERT uniV2Router_7 to address
 TMP_3171(uint256) = LIBRARY_CALL, dest:EventNonceLib, function:EventNonceLib.inc(), arguments:[] 
@@ -489,13 +489,13 @@ MODIFIER_CALL, Initializable.initializer()()
 ```
 #### Launchpad.launch(string,string,string) [EXTERNAL]
 ```slithir
-TOTAL_SUPPLY_1(uint256) := phi(['TOTAL_SUPPLY_0', 'TOTAL_SUPPLY_5'])
+TOTAL_SUPPLY_1(uint256) := phi(['TOTAL_SUPPLY_5', 'TOTAL_SUPPLY_0'])
 BONDING_SUPPLY_1(uint256) := phi(['BONDING_SUPPLY_3', 'BONDING_SUPPLY_0'])
-gteRouter_2(address) := phi(['gteRouter_0', 'gteRouter_3', 'gteRouter_1'])
-distributor_2(IDistributor) := phi(['distributor_1', 'distributor_8', 'distributor_0', 'distributor_15', 'distributor_5', 'distributor_11'])
-currentQuoteAsset_2(LaunchToken) := phi(['currentQuoteAsset_0', 'currentQuoteAsset_1', 'currentQuoteAsset_8', 'currentQuoteAsset_3'])
-currentBondingCurve_3(IBondingCurveMinimal) := phi(['currentBondingCurve_7', 'currentBondingCurve_2', 'currentBondingCurve_0', 'currentBondingCurve_4'])
-launchFee_1(uint256) := phi(['launchFee_3', 'launchFee_0', 'launchFee_2'])
+gteRouter_2(address) := phi(['gteRouter_0', 'gteRouter_1', 'gteRouter_3'])
+distributor_2(IDistributor) := phi(['distributor_15', 'distributor_5', 'distributor_11', 'distributor_1', 'distributor_0', 'distributor_8'])
+currentQuoteAsset_2(LaunchToken) := phi(['currentQuoteAsset_8', 'currentQuoteAsset_0', 'currentQuoteAsset_3', 'currentQuoteAsset_1'])
+currentBondingCurve_3(IBondingCurveMinimal) := phi(['currentBondingCurve_4', 'currentBondingCurve_2', 'currentBondingCurve_7', 'currentBondingCurve_0'])
+launchFee_1(uint256) := phi(['launchFee_0', 'launchFee_3', 'launchFee_2'])
  msg.value != launchFee
 TMP_3179(bool) = msg.value != launchFee_2
 CONDITION TMP_3179
@@ -526,12 +526,12 @@ token_1(address) := TMP_3191(address)
  curve.initializeCurve(token,TOTAL_SUPPLY,BONDING_SUPPLY)
 HIGH_LEVEL_CALL, dest:curve_1(IBondingCurveMinimal), function:initializeCurve, arguments:['token_1', 'TOTAL_SUPPLY_2', 'BONDING_SUPPLY_2']  
 TOTAL_SUPPLY_3(uint256) := phi(['TOTAL_SUPPLY_5', 'TOTAL_SUPPLY_2'])
-BONDING_SUPPLY_3(uint256) := phi(['BONDING_SUPPLY_3', 'BONDING_SUPPLY_2'])
-distributor_4(IDistributor) := phi(['distributor_1', 'distributor_8', 'distributor_15', 'distributor_3', 'distributor_5', 'distributor_11'])
+BONDING_SUPPLY_3(uint256) := phi(['BONDING_SUPPLY_2', 'BONDING_SUPPLY_3'])
+distributor_4(IDistributor) := phi(['distributor_15', 'distributor_3', 'distributor_5', 'distributor_11', 'distributor_1', 'distributor_8'])
  distributor.createRewardsPair(token,quote)
 HIGH_LEVEL_CALL, dest:distributor_4(IDistributor), function:createRewardsPair, arguments:['token_1', 'quote_1']  
 TOTAL_SUPPLY_4(uint256) := phi(['TOTAL_SUPPLY_5', 'TOTAL_SUPPLY_3'])
-distributor_5(IDistributor) := phi(['distributor_1', 'distributor_4', 'distributor_8', 'distributor_15', 'distributor_5', 'distributor_11'])
+distributor_5(IDistributor) := phi(['distributor_15', 'distributor_5', 'distributor_11', 'distributor_1', 'distributor_4', 'distributor_8'])
  _launches[token] = LaunchData({active:true,curve:curve,quote:quote})
 REF_1101(ILaunchpad.LaunchData) -> _launches_9[token_1]
 TMP_3194(ILaunchpad.LaunchData) = new LaunchData(True,quote_1,curve_1)
@@ -551,17 +551,17 @@ RETURN token_1
 ```
 #### Launchpad.launches(address) [PUBLIC]
 ```slithir
-_launches_1(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_1(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  _launches[launchToken]
 REF_1085(ILaunchpad.LaunchData) -> _launches_1[launchToken_1]
 RETURN REF_1085
 ```
 #### Launchpad.pairFor(address,address,address) [INTERNAL]
 ```slithir
-factory_1(address) := phi(['TMP_3319', 'TMP_3277'])
-tokenA_1(address) := phi(['baseToken_1', 'msg.sender'])
-tokenB_1(address) := phi(['quote_1', 'REF_1207'])
-uniV2InitCodeHash_2(bytes) := phi(['uniV2InitCodeHash_1', 'uniV2InitCodeHash_3', 'uniV2InitCodeHash_0'])
+factory_1(address) := phi(['TMP_3277', 'TMP_3319'])
+tokenA_1(address) := phi(['msg.sender', 'baseToken_1'])
+tokenB_1(address) := phi(['REF_1207', 'quote_1'])
+uniV2InitCodeHash_2(bytes) := phi(['uniV2InitCodeHash_1', 'uniV2InitCodeHash_0', 'uniV2InitCodeHash_3'])
  (token0,token1) = sortTokens(tokenA,tokenB)
 TUPLE_27(address,address) = INTERNAL_CALL, Launchpad.sortTokens(address,address)(tokenA_1,tokenB_1)
 token0_1(address)= UNPACK TUPLE_27 index: 0 
@@ -597,39 +597,39 @@ MODIFIER_CALL, Ownable.onlyOwner()()
 ```
 #### Launchpad.quoteBaseForQuote(address,uint256,bool) [PUBLIC]
 ```slithir
-_launches_6(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_6(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  _launches[token].curve.quoteBaseForQuote(token,quoteAmount,isBuy)
 REF_1092(ILaunchpad.LaunchData) -> _launches_6[token_1]
 REF_1093(IBondingCurveMinimal) -> REF_1092.curve
 TMP_3176(uint256) = HIGH_LEVEL_CALL, dest:REF_1093(IBondingCurveMinimal), function:quoteBaseForQuote, arguments:['token_1', 'quoteAmount_1', 'isBuy_1']  
-_launches_7(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_6', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_7(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_15', '_launches_9', '_launches_24', '_launches_3', '_launches_26', '_launches_6', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
 RETURN TMP_3176
  baseAmount
 ```
 #### Launchpad.quoteBoughtByCurve(address) [PUBLIC]
 ```slithir
-_launches_4(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_4(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  _launches[token].curve.quoteBoughtByCurve(token)
 REF_1089(ILaunchpad.LaunchData) -> _launches_4[token_1]
 REF_1090(IBondingCurveMinimal) -> REF_1089.curve
 TMP_3175(uint256) = HIGH_LEVEL_CALL, dest:REF_1090(IBondingCurveMinimal), function:quoteBoughtByCurve, arguments:['token_1']  
-_launches_5(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_4', '_launches_7', '_launches_1', '_launches_9'])
+_launches_5(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_4', '_launches_7', '_launches_1', '_launches_15', '_launches_9', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
 RETURN TMP_3175
 ```
 #### Launchpad.quoteQuoteForBase(address,uint256,bool) [PUBLIC]
 ```slithir
-_launches_8(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_8(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  _launches[token].curve.quoteQuoteForBase(token,baseAmount,isBuy)
 REF_1095(ILaunchpad.LaunchData) -> _launches_8[token_1]
 REF_1096(IBondingCurveMinimal) -> REF_1095.curve
 TMP_3177(uint256) = HIGH_LEVEL_CALL, dest:REF_1096(IBondingCurveMinimal), function:quoteQuoteForBase, arguments:['token_1', 'baseAmount_1', 'isBuy_1']  
-_launches_9(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_8', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_9(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_15', '_launches_9', '_launches_8', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
 RETURN TMP_3177
  quoteAmount
 ```
 #### Launchpad.sell(address,address,address,uint256,uint256) [EXTERNAL]
 ```slithir
-_launches_19(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_19(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  data = _launches[token]
 REF_1141(ILaunchpad.LaunchData) -> _launches_22[token_1]
 data_1(ILaunchpad.LaunchData) := REF_1141(ILaunchpad.LaunchData)
@@ -719,7 +719,7 @@ RETURN token0_3,token1_3
 ```
 #### Launchpad.updateBondingCurve(address) [EXTERNAL][OWNER]
 ```slithir
-currentBondingCurve_5(IBondingCurveMinimal) := phi(['currentBondingCurve_7', 'currentBondingCurve_2', 'currentBondingCurve_0', 'currentBondingCurve_4'])
+currentBondingCurve_5(IBondingCurveMinimal) := phi(['currentBondingCurve_4', 'currentBondingCurve_2', 'currentBondingCurve_7', 'currentBondingCurve_0'])
  ! ERC165Checker.supportsInterface(newBondingCurve,type()(IBondingCurveMinimal).interfaceId)
 TMP_3240(type(IBondingCurveMinimal)) = SOLIDITY_CALL type()(IBondingCurveMinimal)
 REF_1152(bytes4) (->None) := 1992782646(bytes4)
@@ -762,8 +762,8 @@ MODIFIER_CALL, Ownable.onlyOwner()()
 ```
 #### Launchpad.updateQuoteAsset(address) [EXTERNAL][OWNER]
 ```slithir
-currentQuoteAsset_4(LaunchToken) := phi(['currentQuoteAsset_0', 'currentQuoteAsset_1', 'currentQuoteAsset_8', 'currentQuoteAsset_3'])
-_launches_23(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+currentQuoteAsset_4(LaunchToken) := phi(['currentQuoteAsset_8', 'currentQuoteAsset_0', 'currentQuoteAsset_3', 'currentQuoteAsset_1'])
+_launches_23(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  newQuoteAsset == address(0) || _launches[newQuoteAsset].quote != address(0)
 TMP_3249 = CONVERT 0 to address
 TMP_3250(bool) = newQuoteAsset_1 == TMP_3249
@@ -779,12 +779,12 @@ TMP_3254(None) = SOLIDITY_CALL revert InvalidQuoteAsset()()
 TMP_3255 = CONVERT newQuoteAsset_1 to LaunchToken
 TMP_3256 = CONVERT this to address
 TMP_3257(bool) = HIGH_LEVEL_CALL, dest:TMP_3255(LaunchToken), function:approve, arguments:['TMP_3256', '0']  
-currentQuoteAsset_6(LaunchToken) := phi(['currentQuoteAsset_1', 'currentQuoteAsset_5', 'currentQuoteAsset_8', 'currentQuoteAsset_3'])
+currentQuoteAsset_6(LaunchToken) := phi(['currentQuoteAsset_8', 'currentQuoteAsset_5', 'currentQuoteAsset_3', 'currentQuoteAsset_1'])
  QuoteAssetUpdated(address(currentQuoteAsset),newQuoteAsset,LaunchToken(newQuoteAsset).decimals(),EventNonceLib.inc())
 TMP_3258 = CONVERT currentQuoteAsset_6 to address
 TMP_3259 = CONVERT newQuoteAsset_1 to LaunchToken
 TMP_3260(uint8) = HIGH_LEVEL_CALL, dest:TMP_3259(LaunchToken), function:decimals, arguments:[]  
-currentQuoteAsset_7(LaunchToken) := phi(['currentQuoteAsset_6', 'currentQuoteAsset_1', 'currentQuoteAsset_8', 'currentQuoteAsset_3'])
+currentQuoteAsset_7(LaunchToken) := phi(['currentQuoteAsset_8', 'currentQuoteAsset_3', 'currentQuoteAsset_6', 'currentQuoteAsset_1'])
 TMP_3261(uint256) = LIBRARY_CALL, dest:EventNonceLib, function:EventNonceLib.inc(), arguments:[] 
 Emit QuoteAssetUpdated(TMP_3258,newQuoteAsset_1,TMP_3260,TMP_3261)
  currentQuoteAsset = LaunchToken(newQuoteAsset)
@@ -1065,7 +1065,7 @@ RETURN TMP_10063
 #### ERC165Checker.supportsERC165InterfaceUnchecked(address,bytes4) [INTERNAL]
 ```slithir
 account_1(address) := phi(['account_1', 'account_1', 'account_1', 'account_1'])
-interfaceId_1(bytes4) := phi(['INTERFACE_ID_INVALID_2', 'interfaceId_1', 'REF_5659', 'REF_5657', 'REF_5653'])
+interfaceId_1(bytes4) := phi(['REF_5653', 'INTERFACE_ID_INVALID_2', 'interfaceId_1', 'REF_5659', 'REF_5657'])
  encodedParams = abi.encodeCall(IERC165.supportsInterface,(interfaceId))
 REF_5661(supportsInterface) -> IERC165.supportsInterface
 TMP_10079(bytes) = SOLIDITY_CALL abi.encodeCall()(REF_5661,interfaceId_1)

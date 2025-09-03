@@ -1,5 +1,3 @@
-
-
 ### Storage layout (GTELaunchpadV2Pair) 
 
 ```text
@@ -24,13 +22,15 @@ unlocked uint256
 
 
 
+
+
 #### GTELaunchpadV2Pair._distributeLaunchpadFees(uint112,uint112) [INTERNAL]
 ```slithir
 fee0_1(uint112) := phi(['totalLaunchpadFee0_1'])
 fee1_1(uint112) := phi(['totalLaunchpadFee1_1'])
-launchpadFeeDistributor_12(address) := phi(['launchpadFeeDistributor_1', 'launchpadFeeDistributor_11', 'launchpadFeeDistributor_0'])
-token0_16(address) := phi(['token0_23', 'token0_15', 'token0_18', 'token0_0', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_17(address) := phi(['token1_16', 'token1_24', 'token1_10', 'token1_0', 'token1_13', 'token1_19', 'token1_1', 'token1_5'])
+launchpadFeeDistributor_12(address) := phi(['launchpadFeeDistributor_11', 'launchpadFeeDistributor_0', 'launchpadFeeDistributor_1'])
+token0_16(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_18', 'token0_0', 'token0_12'])
+token1_17(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_5', 'token1_16', 'token1_24', 'token1_10', 'token1_0'])
  (fee0 | fee1) > 0
 TMP_3830(uint112) = fee0_1 | fee1_1
 TMP_3831(bool) = TMP_3830 > 0
@@ -66,19 +66,19 @@ Emit LaunchpadFeesCollected(fee0_1,fee1_1)
 amount0In_1(uint256) := phi(['amount0In_3'])
 amount1In_1(uint256) := phi(['amount1In_3'])
 REWARDS_FEE_SHARE_1(uint256) := phi(['REWARDS_FEE_SHARE_3', 'REWARDS_FEE_SHARE_0'])
-MINIMUM_LIQUIDITY_8(uint256) := phi(['MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_0', 'MINIMUM_LIQUIDITY_7', 'MINIMUM_LIQUIDITY_10'])
-launchpadLp_2(address) := phi(['launchpadLp_1', 'launchpadLp_0', 'launchpadLp_4'])
+MINIMUM_LIQUIDITY_8(uint256) := phi(['MINIMUM_LIQUIDITY_7', 'MINIMUM_LIQUIDITY_10', 'MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_0'])
+launchpadLp_2(address) := phi(['launchpadLp_0', 'launchpadLp_4', 'launchpadLp_1'])
  totalLpBal = this.totalSupply()
 TMP_3815(uint256) = HIGH_LEVEL_CALL, dest:this(address), function:totalSupply, arguments:[]  
 REWARDS_FEE_SHARE_2(uint256) := phi(['REWARDS_FEE_SHARE_3', 'REWARDS_FEE_SHARE_1'])
-MINIMUM_LIQUIDITY_9(uint256) := phi(['MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_7', 'MINIMUM_LIQUIDITY_8', 'MINIMUM_LIQUIDITY_10'])
-launchpadLp_3(address) := phi(['launchpadLp_1', 'launchpadLp_4', 'launchpadLp_2'])
+MINIMUM_LIQUIDITY_9(uint256) := phi(['MINIMUM_LIQUIDITY_8', 'MINIMUM_LIQUIDITY_10', 'MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_7'])
+launchpadLp_3(address) := phi(['launchpadLp_4', 'launchpadLp_2', 'launchpadLp_1'])
 totalLpBal_1(uint256) := TMP_3815(uint256)
  launchpadLpBal = this.balanceOf(launchpadLp) + MINIMUM_LIQUIDITY
 TMP_3816(uint256) = HIGH_LEVEL_CALL, dest:this(address), function:balanceOf, arguments:['launchpadLp_3']  
 REWARDS_FEE_SHARE_3(uint256) := phi(['REWARDS_FEE_SHARE_3', 'REWARDS_FEE_SHARE_2'])
-MINIMUM_LIQUIDITY_10(uint256) := phi(['MINIMUM_LIQUIDITY_9', 'MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_7', 'MINIMUM_LIQUIDITY_10'])
-launchpadLp_4(address) := phi(['launchpadLp_1', 'launchpadLp_3', 'launchpadLp_4'])
+MINIMUM_LIQUIDITY_10(uint256) := phi(['MINIMUM_LIQUIDITY_10', 'MINIMUM_LIQUIDITY_9', 'MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_7'])
+launchpadLp_4(address) := phi(['launchpadLp_4', 'launchpadLp_1', 'launchpadLp_3'])
 TMP_3817(uint256) = TMP_3816 (c)+ MINIMUM_LIQUIDITY_10
 launchpadLpBal_1(uint256) := TMP_3817(uint256)
  amount0In > 0
@@ -111,15 +111,15 @@ RETURN fee0_2,fee1_2
 ```slithir
 _reserve0_1(uint112) := phi(['_reserve0_1', '_reserve0_1'])
 _reserve1_1(uint112) := phi(['_reserve1_1', '_reserve1_1'])
-totalSupply_5(uint256) := phi(['totalSupply_4', 'totalSupply_0', 'totalSupply_6', 'totalSupply_2', 'totalSupply_12', 'totalSupply_18'])
-factory_3(address) := phi(['factory_4', 'factory_0', 'factory_1'])
-kLast_1(uint256) := phi(['kLast_0', 'kLast_4', 'kLast_5', 'kLast_2', 'kLast_3'])
+totalSupply_5(uint256) := phi(['totalSupply_12', 'totalSupply_18', 'totalSupply_4', 'totalSupply_0', 'totalSupply_6', 'totalSupply_2'])
+factory_3(address) := phi(['factory_1', 'factory_4', 'factory_0'])
+kLast_1(uint256) := phi(['kLast_4', 'kLast_5', 'kLast_2', 'kLast_3', 'kLast_0'])
  feeTo = IUniswapV2Factory(factory).feeTo()
 TMP_3675 = CONVERT factory_3 to IUniswapV2Factory
 TMP_3676(address) = HIGH_LEVEL_CALL, dest:TMP_3675(IUniswapV2Factory), function:feeTo, arguments:[]  
-totalSupply_6(uint256) := phi(['totalSupply_4', 'totalSupply_6', 'totalSupply_2', 'totalSupply_12', 'totalSupply_18', 'totalSupply_5'])
-factory_4(address) := phi(['factory_4', 'factory_3', 'factory_1'])
-kLast_2(uint256) := phi(['kLast_1', 'kLast_4', 'kLast_5', 'kLast_2', 'kLast_3'])
+totalSupply_6(uint256) := phi(['totalSupply_5', 'totalSupply_12', 'totalSupply_6', 'totalSupply_4', 'totalSupply_18', 'totalSupply_2'])
+factory_4(address) := phi(['factory_1', 'factory_4', 'factory_3'])
+kLast_2(uint256) := phi(['kLast_4', 'kLast_5', 'kLast_2', 'kLast_3', 'kLast_1'])
 feeTo_1(address) := TMP_3676(address)
  feeOn = feeTo != address(0)
 TMP_3677 = CONVERT 0 to address
@@ -169,14 +169,14 @@ RETURN feeOn_1
 ```
 #### GTELaunchpadV2Pair._safeApprove(address,address,uint256) [PRIVATE]
 ```slithir
-token_1(address) := phi(['_token1_1', '_token0_1'])
+token_1(address) := phi(['_token0_1', '_token1_1'])
 to_1(address) := phi(['distributor_1'])
-value_1(uint256) := phi(['TMP_3836', 'TMP_3833'])
-APPROVE_SELECTOR_1(bytes4) := phi(['APPROVE_SELECTOR_0', 'APPROVE_SELECTOR_2'])
+value_1(uint256) := phi(['TMP_3833', 'TMP_3836'])
+APPROVE_SELECTOR_1(bytes4) := phi(['APPROVE_SELECTOR_2', 'APPROVE_SELECTOR_0'])
  (success,data) = token.call(abi.encodeWithSelector(APPROVE_SELECTOR,to,value))
 TMP_3610(bytes) = SOLIDITY_CALL abi.encodeWithSelector()(APPROVE_SELECTOR_1,to_1,value_1)
 TUPLE_34(bool,bytes) = LOW_LEVEL_CALL, dest:token_1, function:call, arguments:['TMP_3610']  
-APPROVE_SELECTOR_2(bytes4) := phi(['APPROVE_SELECTOR_1', 'APPROVE_SELECTOR_2'])
+APPROVE_SELECTOR_2(bytes4) := phi(['APPROVE_SELECTOR_2', 'APPROVE_SELECTOR_1'])
 success_1(bool)= UNPACK TUPLE_34 index: 0 
 data_1(bytes)= UNPACK TUPLE_34 index: 1 
  ! success || ! (data.length == 0 || abi.decode(data,(bool)))
@@ -193,9 +193,9 @@ TMP_3617(None) = SOLIDITY_CALL revert(string)(UniswapV2: APPROVAL_FAILED)
 ```
 #### GTELaunchpadV2Pair._safeTransfer(address,address,uint256) [PRIVATE]
 ```slithir
-token_1(address) := phi(['_token1_1', '_token1_1', '_token1_1', '_token0_1', '_token0_1', '_token0_1'])
+token_1(address) := phi(['_token0_1', '_token0_1', '_token0_1', '_token1_1', '_token1_1', '_token1_1'])
 to_1(address) := phi(['to_1', 'to_1', 'to_1'])
-value_1(uint256) := phi(['TMP_3853', 'amount0_1', 'amount0Out_1', 'amount1_1', 'TMP_3847', 'amount1Out_1'])
+value_1(uint256) := phi(['amount1_1', 'TMP_3847', 'amount1Out_1', 'TMP_3853', 'amount0_1', 'amount0Out_1'])
 TRANSFER_SELECTOR_1(bytes4) := phi(['TRANSFER_SELECTOR_0', 'TRANSFER_SELECTOR_2'])
  (success,data) = token.call(abi.encodeWithSelector(TRANSFER_SELECTOR,to,value))
 TMP_3602(bytes) = SOLIDITY_CALL abi.encodeWithSelector()(TRANSFER_SELECTOR_1,to_1,value_1)
@@ -217,17 +217,17 @@ TMP_3609(None) = SOLIDITY_CALL revert(string)(UniswapV2: TRANSFER_FAILED)
 ```
 #### GTELaunchpadV2Pair._update(uint256,uint256,uint112,uint112,uint112,uint112) [PRIVATE]
 ```slithir
-balance0_1(uint256) := phi(['TMP_3624', 'balance0_1', 'TMP_3858', 'balance0_2', 'balance0_1'])
-balance1_1(uint256) := phi(['balance1_1', 'TMP_3627', 'TMP_3861', 'balance1_2', 'balance1_1'])
-_reserve0_1(uint112) := phi(['_reserve0_1', 'reserve0_35', '_reserve0_1', '_reserve0_1', 'reserve0_4'])
+balance0_1(uint256) := phi(['balance0_1', 'TMP_3624', 'balance0_1', 'TMP_3858', 'balance0_2'])
+balance1_1(uint256) := phi(['TMP_3861', 'balance1_2', 'balance1_1', 'balance1_1', 'TMP_3627'])
+_reserve0_1(uint112) := phi(['reserve0_4', '_reserve0_1', 'reserve0_35', '_reserve0_1', '_reserve0_1'])
 _reserve1_1(uint112) := phi(['reserve1_4', '_reserve1_1', 'reserve1_37', '_reserve1_1', '_reserve1_1'])
-newLaunchpadFee0_1(uint112) := phi(['TMP_3749', 'TMP_3628', 'launchpadFee0_3', 'TMP_3862', 'TMP_3716'])
-newLaunchpadFee1_1(uint112) := phi(['TMP_3717', 'TMP_3750', 'TMP_3629', 'launchpadFee1_3', 'TMP_3863'])
-launchpadFeeDistributor_3(address) := phi(['launchpadFeeDistributor_1', 'launchpadFeeDistributor_11', 'launchpadFeeDistributor_0'])
+newLaunchpadFee0_1(uint112) := phi(['TMP_3716', 'TMP_3749', 'TMP_3628', 'launchpadFee0_3', 'TMP_3862'])
+newLaunchpadFee1_1(uint112) := phi(['TMP_3863', 'TMP_3717', 'TMP_3750', 'TMP_3629', 'launchpadFee1_3'])
+launchpadFeeDistributor_3(address) := phi(['launchpadFeeDistributor_11', 'launchpadFeeDistributor_0', 'launchpadFeeDistributor_1'])
 blockTimestampLast_3(uint32) := phi(['blockTimestampLast_4', 'blockTimestampLast_0'])
-price0CumulativeLast_1(uint256) := phi(['price0CumulativeLast_2', 'price0CumulativeLast_0'])
-price1CumulativeLast_1(uint256) := phi(['price1CumulativeLast_2', 'price1CumulativeLast_0'])
-accruedLaunchpadFee0_4(uint112) := phi(['accruedLaunchpadFee0_0', 'accruedLaunchpadFee0_10', 'accruedLaunchpadFee0_3', 'accruedLaunchpadFee0_6', 'accruedLaunchpadFee0_5'])
+price0CumulativeLast_1(uint256) := phi(['price0CumulativeLast_0', 'price0CumulativeLast_2'])
+price1CumulativeLast_1(uint256) := phi(['price1CumulativeLast_0', 'price1CumulativeLast_2'])
+accruedLaunchpadFee0_4(uint112) := phi(['accruedLaunchpadFee0_3', 'accruedLaunchpadFee0_6', 'accruedLaunchpadFee0_5', 'accruedLaunchpadFee0_0', 'accruedLaunchpadFee0_10'])
 accruedLaunchpadFee1_4(uint112) := phi(['accruedLaunchpadFee1_3', 'accruedLaunchpadFee1_6', 'accruedLaunchpadFee1_0', 'accruedLaunchpadFee1_5', 'accruedLaunchpadFee1_12'])
  balance0 > type()(uint112).max || balance1 > type()(uint112).max
 TMP_3633(uint112) := 5192296858534827628530496329220095(uint112)
@@ -315,12 +315,12 @@ Emit Sync(_reserve0_2,_reserve1_2)
 ```
 #### GTELaunchpadV2Pair.burn(address) [EXTERNAL]
 ```slithir
-totalSupply_13(uint256) := phi(['totalSupply_4', 'totalSupply_0', 'totalSupply_6', 'totalSupply_2', 'totalSupply_12', 'totalSupply_18'])
-balanceOf_8(mapping(address => uint256)) := phi(['balanceOf_7', 'balanceOf_0', 'balanceOf_2', 'balanceOf_12', 'balanceOf_4'])
-token0_10(address) := phi(['token0_23', 'token0_15', 'token0_18', 'token0_0', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_11(address) := phi(['token1_16', 'token1_24', 'token1_10', 'token1_0', 'token1_13', 'token1_19', 'token1_1', 'token1_5'])
+totalSupply_13(uint256) := phi(['totalSupply_12', 'totalSupply_18', 'totalSupply_4', 'totalSupply_0', 'totalSupply_6', 'totalSupply_2'])
+balanceOf_8(mapping(address => uint256)) := phi(['balanceOf_4', 'balanceOf_7', 'balanceOf_0', 'balanceOf_2', 'balanceOf_12'])
+token0_10(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_18', 'token0_0', 'token0_12'])
+token1_11(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_5', 'token1_16', 'token1_24', 'token1_10', 'token1_0'])
 reserve0_16(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_0'])
-reserve1_16(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27', 'reserve1_0'])
+reserve1_16(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_0', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
  (_reserve0,_reserve1,None) = getReserves()
 TUPLE_36(uint112,uint112,uint32) = INTERNAL_CALL, GTELaunchpadV2Pair.getReserves()()
 _reserve0_1(uint112)= UNPACK TUPLE_36 index: 0 
@@ -333,19 +333,19 @@ _token1_1(address) := token1_13(address)
 TMP_3723 = CONVERT _token0_1 to IERC20
 TMP_3724 = CONVERT this to address
 TMP_3725(uint256) = HIGH_LEVEL_CALL, dest:TMP_3723(IERC20), function:balanceOf, arguments:['TMP_3724']  
-totalSupply_16(uint256) := phi(['totalSupply_15', 'totalSupply_4', 'totalSupply_6', 'totalSupply_2', 'totalSupply_12', 'totalSupply_18'])
-balanceOf_11(mapping(address => uint256)) := phi(['balanceOf_10', 'balanceOf_7', 'balanceOf_2', 'balanceOf_12', 'balanceOf_4'])
-reserve0_19(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_18'])
-reserve1_19(uint112) := phi(['reserve1_18', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27'])
+totalSupply_16(uint256) := phi(['totalSupply_12', 'totalSupply_15', 'totalSupply_6', 'totalSupply_4', 'totalSupply_18', 'totalSupply_2'])
+balanceOf_11(mapping(address => uint256)) := phi(['balanceOf_4', 'balanceOf_10', 'balanceOf_7', 'balanceOf_2', 'balanceOf_12'])
+reserve0_19(uint112) := phi(['reserve0_18', 'reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27'])
+reserve1_19(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_18', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
 balance0_1(uint256) := TMP_3725(uint256)
  balance1 = IERC20(_token1).balanceOf(address(this))
 TMP_3726 = CONVERT _token1_1 to IERC20
 TMP_3727 = CONVERT this to address
 TMP_3728(uint256) = HIGH_LEVEL_CALL, dest:TMP_3726(IERC20), function:balanceOf, arguments:['TMP_3727']  
-totalSupply_17(uint256) := phi(['totalSupply_4', 'totalSupply_6', 'totalSupply_2', 'totalSupply_12', 'totalSupply_18', 'totalSupply_16'])
-balanceOf_12(mapping(address => uint256)) := phi(['balanceOf_7', 'balanceOf_2', 'balanceOf_12', 'balanceOf_4', 'balanceOf_11'])
+totalSupply_17(uint256) := phi(['totalSupply_16', 'totalSupply_12', 'totalSupply_6', 'totalSupply_4', 'totalSupply_18', 'totalSupply_2'])
+balanceOf_12(mapping(address => uint256)) := phi(['balanceOf_4', 'balanceOf_11', 'balanceOf_7', 'balanceOf_2', 'balanceOf_12'])
 reserve0_20(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_19', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27'])
-reserve1_20(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_19', 'reserve1_15', 'reserve1_38', 'reserve1_27'])
+reserve1_20(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_19', 'reserve1_15'])
 balance1_1(uint256) := TMP_3728(uint256)
  liquidity = balanceOf[address(this)]
 TMP_3729 = CONVERT this to address
@@ -384,14 +384,14 @@ TMP_3743 = CONVERT _token0_1 to IERC20
 TMP_3744 = CONVERT this to address
 TMP_3745(uint256) = HIGH_LEVEL_CALL, dest:TMP_3743(IERC20), function:balanceOf, arguments:['TMP_3744']  
 reserve0_25(uint112) := phi(['reserve0_31', 'reserve0_24', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27'])
-reserve1_25(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_24', 'reserve1_15', 'reserve1_38', 'reserve1_27'])
+reserve1_25(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_24', 'reserve1_15'])
 balance0_2(uint256) := TMP_3745(uint256)
  balance1 = IERC20(_token1).balanceOf(address(this))
 TMP_3746 = CONVERT _token1_1 to IERC20
 TMP_3747 = CONVERT this to address
 TMP_3748(uint256) = HIGH_LEVEL_CALL, dest:TMP_3746(IERC20), function:balanceOf, arguments:['TMP_3747']  
 reserve0_26(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_25', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27'])
-reserve1_26(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_25', 'reserve1_15', 'reserve1_38', 'reserve1_27'])
+reserve1_26(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_25', 'reserve1_15'])
 balance1_2(uint256) := TMP_3748(uint256)
  _update(balance0,balance1,_reserve0,_reserve1,uint112(0),uint112(0))
 TMP_3749 = CONVERT 0 to uint112
@@ -419,14 +419,14 @@ factory_1(address) := msg.sender(address)
 ```
 #### GTELaunchpadV2Pair.endRewardsAccrual() [EXTERNAL]
 ```slithir
-launchpadFeeDistributor_2(address) := phi(['launchpadFeeDistributor_1', 'launchpadFeeDistributor_11', 'launchpadFeeDistributor_0'])
-token0_2(address) := phi(['token0_23', 'token0_15', 'token0_18', 'token0_0', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_2(address) := phi(['token1_16', 'token1_24', 'token1_10', 'token1_0', 'token1_13', 'token1_19', 'token1_1', 'token1_5'])
+launchpadFeeDistributor_2(address) := phi(['launchpadFeeDistributor_11', 'launchpadFeeDistributor_0', 'launchpadFeeDistributor_1'])
+token0_2(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_18', 'token0_0', 'token0_12'])
+token1_2(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_5', 'token1_16', 'token1_24', 'token1_10', 'token1_0'])
 reserve0_2(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_0'])
-reserve1_2(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27', 'reserve1_0'])
-accruedLaunchpadFee0_2(uint112) := phi(['accruedLaunchpadFee0_0', 'accruedLaunchpadFee0_10', 'accruedLaunchpadFee0_3', 'accruedLaunchpadFee0_6', 'accruedLaunchpadFee0_5'])
+reserve1_2(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_0', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
+accruedLaunchpadFee0_2(uint112) := phi(['accruedLaunchpadFee0_3', 'accruedLaunchpadFee0_6', 'accruedLaunchpadFee0_5', 'accruedLaunchpadFee0_0', 'accruedLaunchpadFee0_10'])
 accruedLaunchpadFee1_2(uint112) := phi(['accruedLaunchpadFee1_3', 'accruedLaunchpadFee1_6', 'accruedLaunchpadFee1_0', 'accruedLaunchpadFee1_5', 'accruedLaunchpadFee1_12'])
-rewardsPoolActive_2(uint256) := phi(['rewardsPoolActive_1', 'rewardsPoolActive_0', 'rewardsPoolActive_11', 'rewardsPoolActive_3'])
+rewardsPoolActive_2(uint256) := phi(['rewardsPoolActive_11', 'rewardsPoolActive_3', 'rewardsPoolActive_1', 'rewardsPoolActive_0'])
  msg.sender != launchpadFeeDistributor
 TMP_3620(bool) = msg.sender != launchpadFeeDistributor_2
 CONDITION TMP_3620
@@ -442,17 +442,17 @@ rewardsPoolActive_3 = delete rewardsPoolActive_2
 TMP_3622 = CONVERT token0_2 to IERC20
 TMP_3623 = CONVERT this to address
 TMP_3624(uint256) = HIGH_LEVEL_CALL, dest:TMP_3622(IERC20), function:balanceOf, arguments:['TMP_3623']  
-token0_3(address) := phi(['token0_2', 'token0_23', 'token0_15', 'token0_18', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_3(address) := phi(['token1_24', 'token1_10', 'token1_13', 'token1_19', 'token1_1', 'token1_2', 'token1_16', 'token1_5'])
+token0_3(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_2', 'token0_18', 'token0_12'])
+token1_3(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_2', 'token1_5', 'token1_16', 'token1_24', 'token1_10'])
 reserve0_3(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_2', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27'])
-reserve1_3(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27', 'reserve1_2'])
+reserve1_3(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_2', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
 TMP_3625 = CONVERT token1_3 to IERC20
 TMP_3626 = CONVERT this to address
 TMP_3627(uint256) = HIGH_LEVEL_CALL, dest:TMP_3625(IERC20), function:balanceOf, arguments:['TMP_3626']  
-token0_4(address) := phi(['token0_23', 'token0_15', 'token0_3', 'token0_18', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_4(address) := phi(['token1_24', 'token1_10', 'token1_3', 'token1_13', 'token1_19', 'token1_1', 'token1_16', 'token1_5'])
+token0_4(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_3', 'token0_18', 'token0_12'])
+token1_4(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_3', 'token1_5', 'token1_16', 'token1_24', 'token1_10'])
 reserve0_4(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_3'])
-reserve1_4(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27', 'reserve1_3'])
+reserve1_4(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_3', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
 TMP_3628 = CONVERT 0 to uint112
 TMP_3629 = CONVERT 0 to uint112
 INTERNAL_CALL, GTELaunchpadV2Pair._update(uint256,uint256,uint112,uint112,uint112,uint112)(TMP_3624,TMP_3627,reserve0_4,reserve1_4,TMP_3628,TMP_3629)
@@ -464,7 +464,7 @@ Emit RewardsPoolDeactivated()
 #### GTELaunchpadV2Pair.getAccruedLaunchpadFees() [PUBLIC]
 ```slithir
 blockTimestampLast_2(uint32) := phi(['blockTimestampLast_4', 'blockTimestampLast_0'])
-accruedLaunchpadFee0_1(uint112) := phi(['accruedLaunchpadFee0_0', 'accruedLaunchpadFee0_10', 'accruedLaunchpadFee0_3', 'accruedLaunchpadFee0_6', 'accruedLaunchpadFee0_5'])
+accruedLaunchpadFee0_1(uint112) := phi(['accruedLaunchpadFee0_3', 'accruedLaunchpadFee0_6', 'accruedLaunchpadFee0_5', 'accruedLaunchpadFee0_0', 'accruedLaunchpadFee0_10'])
 accruedLaunchpadFee1_1(uint112) := phi(['accruedLaunchpadFee1_3', 'accruedLaunchpadFee1_6', 'accruedLaunchpadFee1_0', 'accruedLaunchpadFee1_5', 'accruedLaunchpadFee1_12'])
  (accruedLaunchpadFee0,accruedLaunchpadFee1,blockTimestampLast)
 RETURN accruedLaunchpadFee0_1,accruedLaunchpadFee1_1,blockTimestampLast_2
@@ -472,7 +472,7 @@ RETURN accruedLaunchpadFee0_1,accruedLaunchpadFee1_1,blockTimestampLast_2
 #### GTELaunchpadV2Pair.getReserves() [PUBLIC]
 ```slithir
 reserve0_1(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_0'])
-reserve1_1(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27', 'reserve1_0'])
+reserve1_1(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_0', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
 blockTimestampLast_1(uint32) := phi(['blockTimestampLast_4', 'blockTimestampLast_0'])
  _reserve0 = reserve0
 _reserve0_1(uint112) := reserve0_1(uint112)
@@ -485,7 +485,7 @@ RETURN _reserve0_1,_reserve1_1,_blockTimestampLast_1
 ```
 #### GTELaunchpadV2Pair.initialize(address,address,address,address) [EXTERNAL]
 ```slithir
-factory_2(address) := phi(['factory_4', 'factory_0', 'factory_1'])
+factory_2(address) := phi(['factory_1', 'factory_4', 'factory_0'])
  msg.sender != factory
 TMP_3618(bool) = msg.sender != factory_2
 CONDITION TMP_3618
@@ -504,12 +504,12 @@ rewardsPoolActive_1(uint256) := 1(uint256)
 ```
 #### GTELaunchpadV2Pair.mint(address) [EXTERNAL]
 ```slithir
-totalSupply_7(uint256) := phi(['totalSupply_4', 'totalSupply_0', 'totalSupply_6', 'totalSupply_2', 'totalSupply_12', 'totalSupply_18'])
-MINIMUM_LIQUIDITY_1(uint256) := phi(['MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_0', 'MINIMUM_LIQUIDITY_7', 'MINIMUM_LIQUIDITY_10'])
-token0_6(address) := phi(['token0_23', 'token0_15', 'token0_18', 'token0_0', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_6(address) := phi(['token1_16', 'token1_24', 'token1_10', 'token1_0', 'token1_13', 'token1_19', 'token1_1', 'token1_5'])
+totalSupply_7(uint256) := phi(['totalSupply_12', 'totalSupply_18', 'totalSupply_4', 'totalSupply_0', 'totalSupply_6', 'totalSupply_2'])
+MINIMUM_LIQUIDITY_1(uint256) := phi(['MINIMUM_LIQUIDITY_7', 'MINIMUM_LIQUIDITY_10', 'MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_0'])
+token0_6(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_18', 'token0_0', 'token0_12'])
+token1_6(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_5', 'token1_16', 'token1_24', 'token1_10', 'token1_0'])
 reserve0_7(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_0'])
-reserve1_7(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27', 'reserve1_0'])
+reserve1_7(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_0', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
  (_reserve0,_reserve1,None) = getReserves()
 TUPLE_35(uint112,uint112,uint32) = INTERNAL_CALL, GTELaunchpadV2Pair.getReserves()()
 _reserve0_1(uint112)= UNPACK TUPLE_35 index: 0 
@@ -518,22 +518,22 @@ _reserve1_1(uint112)= UNPACK TUPLE_35 index: 1
 TMP_3693 = CONVERT token0_8 to IERC20
 TMP_3694 = CONVERT this to address
 TMP_3695(uint256) = HIGH_LEVEL_CALL, dest:TMP_3693(IERC20), function:balanceOf, arguments:['TMP_3694']  
-totalSupply_10(uint256) := phi(['totalSupply_4', 'totalSupply_6', 'totalSupply_2', 'totalSupply_12', 'totalSupply_18', 'totalSupply_9'])
-MINIMUM_LIQUIDITY_4(uint256) := phi(['MINIMUM_LIQUIDITY_3', 'MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_7', 'MINIMUM_LIQUIDITY_10'])
-token0_9(address) := phi(['token0_23', 'token0_15', 'token0_8', 'token0_18', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_9(address) := phi(['token1_24', 'token1_10', 'token1_8', 'token1_13', 'token1_19', 'token1_1', 'token1_16', 'token1_5'])
-reserve0_10(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_9'])
-reserve1_10(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27', 'reserve1_9'])
+totalSupply_10(uint256) := phi(['totalSupply_12', 'totalSupply_9', 'totalSupply_6', 'totalSupply_4', 'totalSupply_18', 'totalSupply_2'])
+MINIMUM_LIQUIDITY_4(uint256) := phi(['MINIMUM_LIQUIDITY_10', 'MINIMUM_LIQUIDITY_3', 'MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_7'])
+token0_9(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_8', 'token0_18', 'token0_12'])
+token1_9(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_5', 'token1_16', 'token1_24', 'token1_10', 'token1_8'])
+reserve0_10(uint112) := phi(['reserve0_9', 'reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27'])
+reserve1_10(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_9', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
 balance0_1(uint256) := TMP_3695(uint256)
  balance1 = IERC20(token1).balanceOf(address(this))
 TMP_3696 = CONVERT token1_9 to IERC20
 TMP_3697 = CONVERT this to address
 TMP_3698(uint256) = HIGH_LEVEL_CALL, dest:TMP_3696(IERC20), function:balanceOf, arguments:['TMP_3697']  
-totalSupply_11(uint256) := phi(['totalSupply_10', 'totalSupply_4', 'totalSupply_6', 'totalSupply_2', 'totalSupply_12', 'totalSupply_18'])
-MINIMUM_LIQUIDITY_5(uint256) := phi(['MINIMUM_LIQUIDITY_4', 'MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_7', 'MINIMUM_LIQUIDITY_10'])
-token1_10(address) := phi(['token1_24', 'token1_10', 'token1_13', 'token1_19', 'token1_9', 'token1_1', 'token1_16', 'token1_5'])
-reserve0_11(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_10'])
-reserve1_11(uint112) := phi(['reserve1_10', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27'])
+totalSupply_11(uint256) := phi(['totalSupply_12', 'totalSupply_10', 'totalSupply_6', 'totalSupply_4', 'totalSupply_18', 'totalSupply_2'])
+MINIMUM_LIQUIDITY_5(uint256) := phi(['MINIMUM_LIQUIDITY_10', 'MINIMUM_LIQUIDITY_4', 'MINIMUM_LIQUIDITY_6', 'MINIMUM_LIQUIDITY_7'])
+token1_10(address) := phi(['token1_13', 'token1_19', 'token1_9', 'token1_1', 'token1_5', 'token1_16', 'token1_24', 'token1_10'])
+reserve0_11(uint112) := phi(['reserve0_10', 'reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27'])
+reserve1_11(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_10', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
 balance1_1(uint256) := TMP_3698(uint256)
  amount0 = balance0.sub(_reserve0)
 TMP_3699(uint256) = LIBRARY_CALL, dest:SafeMath, function:SafeMath.sub(uint256,uint256), arguments:['balance0_1', '_reserve0_1'] 
@@ -594,11 +594,11 @@ RETURN liquidity_3
 ```
 #### GTELaunchpadV2Pair.skim(address) [EXTERNAL]
 ```slithir
-token0_17(address) := phi(['token0_23', 'token0_15', 'token0_18', 'token0_0', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_18(address) := phi(['token1_16', 'token1_24', 'token1_10', 'token1_0', 'token1_13', 'token1_19', 'token1_1', 'token1_5'])
+token0_17(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_18', 'token0_0', 'token0_12'])
+token1_18(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_5', 'token1_16', 'token1_24', 'token1_10', 'token1_0'])
 reserve0_28(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_0'])
-reserve1_28(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27', 'reserve1_0'])
-accruedLaunchpadFee0_7(uint112) := phi(['accruedLaunchpadFee0_0', 'accruedLaunchpadFee0_10', 'accruedLaunchpadFee0_3', 'accruedLaunchpadFee0_6', 'accruedLaunchpadFee0_5'])
+reserve1_28(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_0', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
+accruedLaunchpadFee0_7(uint112) := phi(['accruedLaunchpadFee0_3', 'accruedLaunchpadFee0_6', 'accruedLaunchpadFee0_5', 'accruedLaunchpadFee0_0', 'accruedLaunchpadFee0_10'])
 accruedLaunchpadFee1_7(uint112) := phi(['accruedLaunchpadFee1_3', 'accruedLaunchpadFee1_6', 'accruedLaunchpadFee1_0', 'accruedLaunchpadFee1_5', 'accruedLaunchpadFee1_12'])
  _token0 = token0
 _token0_1(address) := token0_18(address)
@@ -608,9 +608,9 @@ _token1_1(address) := token1_19(address)
 TMP_3843 = CONVERT _token0_1 to IERC20
 TMP_3844 = CONVERT this to address
 TMP_3845(uint256) = HIGH_LEVEL_CALL, dest:TMP_3843(IERC20), function:balanceOf, arguments:['TMP_3844']  
-reserve0_30(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_29'])
-reserve1_30(uint112) := phi(['reserve1_29', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27'])
-accruedLaunchpadFee0_9(uint112) := phi(['accruedLaunchpadFee0_8', 'accruedLaunchpadFee0_10', 'accruedLaunchpadFee0_3', 'accruedLaunchpadFee0_6', 'accruedLaunchpadFee0_5'])
+reserve0_30(uint112) := phi(['reserve0_29', 'reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27'])
+reserve1_30(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_29', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
+accruedLaunchpadFee0_9(uint112) := phi(['accruedLaunchpadFee0_3', 'accruedLaunchpadFee0_6', 'accruedLaunchpadFee0_5', 'accruedLaunchpadFee0_8', 'accruedLaunchpadFee0_10'])
 accruedLaunchpadFee1_9(uint112) := phi(['accruedLaunchpadFee1_3', 'accruedLaunchpadFee1_6', 'accruedLaunchpadFee1_5', 'accruedLaunchpadFee1_8', 'accruedLaunchpadFee1_12'])
 TMP_3846(uint112) = reserve0_30 (c)+ accruedLaunchpadFee0_9
 TMP_3847(uint256) = LIBRARY_CALL, dest:SafeMath, function:SafeMath.sub(uint256,uint256), arguments:['TMP_3845', 'TMP_3846'] 
@@ -619,7 +619,7 @@ INTERNAL_CALL, GTELaunchpadV2Pair._safeTransfer(address,address,uint256)(_token0
 TMP_3849 = CONVERT _token1_1 to IERC20
 TMP_3850 = CONVERT this to address
 TMP_3851(uint256) = HIGH_LEVEL_CALL, dest:TMP_3849(IERC20), function:balanceOf, arguments:['TMP_3850']  
-reserve1_32(uint112) := phi(['reserve1_6', 'reserve1_31', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27'])
+reserve1_32(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_6', 'reserve1_31', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
 accruedLaunchpadFee1_11(uint112) := phi(['accruedLaunchpadFee1_3', 'accruedLaunchpadFee1_6', 'accruedLaunchpadFee1_5', 'accruedLaunchpadFee1_12', 'accruedLaunchpadFee1_10'])
 TMP_3852(uint112) = reserve1_32 (c)+ accruedLaunchpadFee1_11
 TMP_3853(uint256) = LIBRARY_CALL, dest:SafeMath, function:SafeMath.sub(uint256,uint256), arguments:['TMP_3851', 'TMP_3852'] 
@@ -638,10 +638,10 @@ MODIFIER_CALL, GTELaunchpadV2Pair.lock()()
 ```
 #### GTELaunchpadV2Pair.swap(uint256,uint256,address,bytes) [EXTERNAL]
 ```slithir
-launchpadFeeDistributor_4(address) := phi(['launchpadFeeDistributor_1', 'launchpadFeeDistributor_11', 'launchpadFeeDistributor_0'])
-token0_13(address) := phi(['token0_23', 'token0_15', 'token0_18', 'token0_0', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_14(address) := phi(['token1_16', 'token1_24', 'token1_10', 'token1_0', 'token1_13', 'token1_19', 'token1_1', 'token1_5'])
-rewardsPoolActive_4(uint256) := phi(['rewardsPoolActive_1', 'rewardsPoolActive_0', 'rewardsPoolActive_11', 'rewardsPoolActive_3'])
+launchpadFeeDistributor_4(address) := phi(['launchpadFeeDistributor_11', 'launchpadFeeDistributor_0', 'launchpadFeeDistributor_1'])
+token0_13(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_18', 'token0_0', 'token0_12'])
+token1_14(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_5', 'token1_16', 'token1_24', 'token1_10', 'token1_0'])
+rewardsPoolActive_4(uint256) := phi(['rewardsPoolActive_11', 'rewardsPoolActive_3', 'rewardsPoolActive_1', 'rewardsPoolActive_0'])
  amount0Out == 0 && amount1Out == 0
 TMP_3756(bool) = amount0Out_1 == 0
 TMP_3757(bool) = amount1Out_1 == 0
@@ -688,21 +688,21 @@ CONDITION TMP_3772
  IUniswapV2Callee(to).uniswapV2Call(msg.sender,amount0Out,amount1Out,data)
 TMP_3773 = CONVERT to_1 to IUniswapV2Callee
 HIGH_LEVEL_CALL, dest:TMP_3773(IUniswapV2Callee), function:uniswapV2Call, arguments:['msg.sender', 'amount0Out_1', 'amount1Out_1', 'data_1']  
-launchpadFeeDistributor_9(address) := phi(['launchpadFeeDistributor_1', 'launchpadFeeDistributor_8', 'launchpadFeeDistributor_11'])
-rewardsPoolActive_9(uint256) := phi(['rewardsPoolActive_1', 'rewardsPoolActive_8', 'rewardsPoolActive_11', 'rewardsPoolActive_3'])
+launchpadFeeDistributor_9(address) := phi(['launchpadFeeDistributor_8', 'launchpadFeeDistributor_11', 'launchpadFeeDistributor_1'])
+rewardsPoolActive_9(uint256) := phi(['rewardsPoolActive_11', 'rewardsPoolActive_3', 'rewardsPoolActive_1', 'rewardsPoolActive_8'])
  balance0 = IERC20(_token0).balanceOf(address(this))
 TMP_3775 = CONVERT _token0_1 to IERC20
 TMP_3776 = CONVERT this to address
 TMP_3777(uint256) = HIGH_LEVEL_CALL, dest:TMP_3775(IERC20), function:balanceOf, arguments:['TMP_3776']  
-launchpadFeeDistributor_10(address) := phi(['launchpadFeeDistributor_1', 'launchpadFeeDistributor_9', 'launchpadFeeDistributor_11'])
-rewardsPoolActive_10(uint256) := phi(['rewardsPoolActive_1', 'rewardsPoolActive_9', 'rewardsPoolActive_11', 'rewardsPoolActive_3'])
+launchpadFeeDistributor_10(address) := phi(['launchpadFeeDistributor_9', 'launchpadFeeDistributor_11', 'launchpadFeeDistributor_1'])
+rewardsPoolActive_10(uint256) := phi(['rewardsPoolActive_11', 'rewardsPoolActive_3', 'rewardsPoolActive_1', 'rewardsPoolActive_9'])
 balance0_1(uint256) := TMP_3777(uint256)
  balance1 = IERC20(_token1).balanceOf(address(this))
 TMP_3778 = CONVERT _token1_1 to IERC20
 TMP_3779 = CONVERT this to address
 TMP_3780(uint256) = HIGH_LEVEL_CALL, dest:TMP_3778(IERC20), function:balanceOf, arguments:['TMP_3779']  
-launchpadFeeDistributor_11(address) := phi(['launchpadFeeDistributor_10', 'launchpadFeeDistributor_1', 'launchpadFeeDistributor_11'])
-rewardsPoolActive_11(uint256) := phi(['rewardsPoolActive_1', 'rewardsPoolActive_11', 'rewardsPoolActive_10', 'rewardsPoolActive_3'])
+launchpadFeeDistributor_11(address) := phi(['launchpadFeeDistributor_11', 'launchpadFeeDistributor_10', 'launchpadFeeDistributor_1'])
+rewardsPoolActive_11(uint256) := phi(['rewardsPoolActive_11', 'rewardsPoolActive_10', 'rewardsPoolActive_3', 'rewardsPoolActive_1'])
 balance1_1(uint256) := TMP_3780(uint256)
  amount0In == 0 && amount1In == 0
 TMP_3781(bool) = amount0In_3 == 0
@@ -779,25 +779,25 @@ launchpadFee1_3(uint112) := phi(['launchpadFee1_1', 'launchpadFee1_2'])
 ```
 #### GTELaunchpadV2Pair.sync() [EXTERNAL]
 ```slithir
-token0_19(address) := phi(['token0_23', 'token0_15', 'token0_18', 'token0_0', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_20(address) := phi(['token1_16', 'token1_24', 'token1_10', 'token1_0', 'token1_13', 'token1_19', 'token1_1', 'token1_5'])
+token0_19(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_18', 'token0_0', 'token0_12'])
+token1_20(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_5', 'token1_16', 'token1_24', 'token1_10', 'token1_0'])
 reserve0_32(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_0'])
-reserve1_34(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27', 'reserve1_0'])
+reserve1_34(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_0', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
  _update(IERC20(token0).balanceOf(address(this)),IERC20(token1).balanceOf(address(this)),reserve0,reserve1,uint112(0),uint112(0))
 TMP_3856 = CONVERT token0_20 to IERC20
 TMP_3857 = CONVERT this to address
 TMP_3858(uint256) = HIGH_LEVEL_CALL, dest:TMP_3856(IERC20), function:balanceOf, arguments:['TMP_3857']  
-token0_21(address) := phi(['token0_23', 'token0_20', 'token0_15', 'token0_18', 'token0_9', 'token0_12', 'token0_1', 'token0_5'])
-token1_22(address) := phi(['token1_24', 'token1_21', 'token1_10', 'token1_13', 'token1_19', 'token1_1', 'token1_16', 'token1_5'])
+token0_21(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_20', 'token0_18', 'token0_12'])
+token1_22(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_5', 'token1_16', 'token1_24', 'token1_21', 'token1_10'])
 reserve0_34(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_33'])
-reserve1_36(uint112) := phi(['reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27', 'reserve1_35'])
+reserve1_36(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_35', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
 TMP_3859 = CONVERT token1_22 to IERC20
 TMP_3860 = CONVERT this to address
 TMP_3861(uint256) = HIGH_LEVEL_CALL, dest:TMP_3859(IERC20), function:balanceOf, arguments:['TMP_3860']  
-token0_22(address) := phi(['token0_23', 'token0_15', 'token0_18', 'token0_9', 'token0_12', 'token0_1', 'token0_21', 'token0_5'])
-token1_23(address) := phi(['token1_24', 'token1_10', 'token1_22', 'token1_13', 'token1_19', 'token1_1', 'token1_16', 'token1_5'])
-reserve0_35(uint112) := phi(['reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27', 'reserve0_34'])
-reserve1_37(uint112) := phi(['reserve1_36', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15', 'reserve1_38', 'reserve1_27'])
+token0_22(address) := phi(['token0_1', 'token0_5', 'token0_15', 'token0_9', 'token0_23', 'token0_18', 'token0_12', 'token0_21'])
+token1_23(address) := phi(['token1_13', 'token1_19', 'token1_1', 'token1_22', 'token1_5', 'token1_16', 'token1_24', 'token1_10'])
+reserve0_35(uint112) := phi(['reserve0_34', 'reserve0_31', 'reserve0_5', 'reserve0_6', 'reserve0_15', 'reserve0_36', 'reserve0_27'])
+reserve1_37(uint112) := phi(['reserve1_38', 'reserve1_27', 'reserve1_36', 'reserve1_6', 'reserve1_33', 'reserve1_5', 'reserve1_15'])
 TMP_3862 = CONVERT 0 to uint112
 TMP_3863 = CONVERT 0 to uint112
 INTERNAL_CALL, GTELaunchpadV2Pair._update(uint256,uint256,uint112,uint112,uint112,uint112)(TMP_3858,TMP_3861,reserve0_35,reserve1_37,TMP_3862,TMP_3863)

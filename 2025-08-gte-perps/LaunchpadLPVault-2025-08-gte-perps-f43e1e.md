@@ -57,7 +57,7 @@ TMP_3359(None) = SOLIDITY_CALL mstore(uint256,uint256)(0,2870230022)
 TMP_3360(None) = SOLIDITY_CALL revert(uint256,uint256)(28,4)
  _checkOwner()
 INTERNAL_CALL, Ownable._checkOwner()()
-_INTIALIZED_EVENT_SIGNATURE_3(bytes32) := phi(['_INTIALIZED_EVENT_SIGNATURE_0', '_INTIALIZED_EVENT_SIGNATURE_6', '_INTIALIZED_EVENT_SIGNATURE_2', '_INTIALIZED_EVENT_SIGNATURE_4'])
+_INTIALIZED_EVENT_SIGNATURE_3(bytes32) := phi(['_INTIALIZED_EVENT_SIGNATURE_0', '_INTIALIZED_EVENT_SIGNATURE_4', '_INTIALIZED_EVENT_SIGNATURE_2', '_INTIALIZED_EVENT_SIGNATURE_6'])
  s = _initializableSlot()
 TMP_3362(bytes32) = INTERNAL_CALL, Initializable._initializableSlot()()
 s_1(bytes32) := TMP_3362(bytes32)
@@ -93,7 +93,7 @@ TMP_3374(None) = SOLIDITY_CALL sstore(uint256,uint256)(s_3,2)
 TMP_3375(None) = SOLIDITY_CALL mstore(uint256,uint256)(32,1)
  log1(uint256,uint256,uint256)(0x20,0x20,_INTIALIZED_EVENT_SIGNATURE)
 TMP_3376(None) = SOLIDITY_CALL log1(uint256,uint256,uint256)(32,32,_INTIALIZED_EVENT_SIGNATURE_4)
-_INTIALIZED_EVENT_SIGNATURE_5(bytes32) := phi(['_INTIALIZED_EVENT_SIGNATURE_0', '_INTIALIZED_EVENT_SIGNATURE_6', '_INTIALIZED_EVENT_SIGNATURE_2', '_INTIALIZED_EVENT_SIGNATURE_4'])
+_INTIALIZED_EVENT_SIGNATURE_5(bytes32) := phi(['_INTIALIZED_EVENT_SIGNATURE_0', '_INTIALIZED_EVENT_SIGNATURE_4', '_INTIALIZED_EVENT_SIGNATURE_2', '_INTIALIZED_EVENT_SIGNATURE_6'])
  s = _initializableSlot()
 TMP_3377(bytes32) = INTERNAL_CALL, Initializable._initializableSlot()()
 s_1(bytes32) := TMP_3377(bytes32)
@@ -127,7 +127,7 @@ TMP_3392(None) = SOLIDITY_CALL mstore(uint256,uint256)(32,version_2)
 TMP_3393(None) = SOLIDITY_CALL log1(uint256,uint256,uint256)(32,32,_INTIALIZED_EVENT_SIGNATURE_6)
  _checkInitializing()
 INTERNAL_CALL, Initializable._checkInitializing()()
-_launches_29(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+_launches_29(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  _launches[msg.sender].quote == address(0)
 REF_1214(ILaunchpad.LaunchData) -> _launches_29[msg.sender]
 REF_1215(address) -> REF_1214.quote
@@ -136,8 +136,8 @@ TMP_3396(bool) = REF_1215 == TMP_3395
 CONDITION TMP_3396
  revert OnlyLaunchAsset()()
 TMP_3397(None) = SOLIDITY_CALL revert OnlyLaunchAsset()()
-token_1(address) := phi(['REF_1126', 'token_1'])
-_launches_30(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_24', '_launches_3', '_launches_26', '_launches_0', '_launches_29', '_launches_22', '_launches_30', '_launches_18', '_launches_15', '_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_1', '_launches_9'])
+token_1(address) := phi(['token_1', 'REF_1126'])
+_launches_30(mapping(address => ILaunchpad.LaunchData)) := phi(['_launches_5', '_launches_28', '_launches_10', '_launches_7', '_launches_0', '_launches_1', '_launches_9', '_launches_15', '_launches_24', '_launches_3', '_launches_26', '_launches_29', '_launches_22', '_launches_30', '_launches_18'])
  ! _launches[token].active
 REF_1216(ILaunchpad.LaunchData) -> _launches_30[token_1]
 REF_1217(bool) -> REF_1216.active
@@ -147,8 +147,8 @@ CONDITION TMP_3398
 TMP_3399(None) = SOLIDITY_CALL revert BondingInactive()()
 account_1(address) := phi(['REF_1127', 'account_1'])
 requiredRole_1(SpotOperatorRoles) := phi(['REF_1150', 'REF_1128'])
-gteRouter_4(address) := phi(['gteRouter_0', 'gteRouter_3', 'gteRouter_1'])
-operator_2(IOperatorPanel) := phi(['operator_0', 'operator_1'])
+gteRouter_4(address) := phi(['gteRouter_0', 'gteRouter_1', 'gteRouter_3'])
+operator_2(IOperatorPanel) := phi(['operator_1', 'operator_0'])
  msg.sender != gteRouter
 TMP_3400(bool) = msg.sender != gteRouter_4
 CONDITION TMP_3400
