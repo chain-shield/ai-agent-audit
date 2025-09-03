@@ -139,7 +139,7 @@ pub async fn summarize_src_files(
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
-    let preamble ="You are a senior solidity dev. Please summarize below content (source code, or deploy scripts). Format in markdown for easy reading. Please write 250 word or less summary for each contract: purpose trust model (user funds? admin?), also major entrypoints. List storage vars plus optional 50 max chars description. For each function provide interface, should include visibility, modifiers, and mutability. Add 50 word max natspec for each function. Respond only with valid JSON matching the schema!";
+    let preamble ="You are a senior solidity dev. Please summarize below content (source code, or deploy scripts). Format in markdown for easy reading. Please write 300 word or less summary for each contract: purpose trust model (user funds? admin?), also major entrypoints. List storage vars plus optional 50 max chars description. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add 100 word max natspec for EACH function. Respond only with valid JSON matching the schema!";
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(O3)
         .preamble(preamble)

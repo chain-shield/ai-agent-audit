@@ -23,25 +23,6 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
    • No contract can arbitrary seize user balances; all funds move through explicit, role-checked paths.##Findings by Pattern
 
 
- **Derived From** : Stake reward payouts sent to msg.sender (Launchpad) instead of the user
-
-[M-1]. Distributor.increaseStake diverts user rewards to Launchpad via msg.sender, breaking pending rewards accounting - OUT OF SCOPE
-
-
-
- **Derived From** : reserves[token].quoteReserve_post * reserves[token].baseReserve_post >= reserves[token].quoteReserve_pre * reserves[token].baseReserve_pre
-
-[H-2]. Split-buys exploit: 0-quote micro buys + single sell drains Launchpad via integer rounding in SimpleBondingCurve.sell/buy - INVALID exploit off internal function that is guarded when called **INVALID**
-[H-3]. Free-buy due to floor rounding lets attacker acquire base for 0 quote; later sells extract quote (rounding asymmetry in constant-product) - INVALID exploit off internal function that is guarded when called **INVALID**
-
-*NOTE* - have the app only look at exploits from external/public entry points? And provide any callers?
-
-
- **Derived From** : Free collateral credited using requested amount, ignores fee-on-transfer delta
-
-[M-4]. depositFreeCollateral over-credits freeCollateral for fee-on-transfer/rebasing USDC, breaking solvency and causing withdrawals to revert - **INVALID** FOT issues are informational
-
-
 
 ********************************************************************************
  **Derived From** : IERC20(token0).balanceOf(address(this)) == uint256(reserve0) + uint256(accruedLaunchpadFee0) && IERC20(token1).balanceOf(address(this)) == uint256(reserve1) + uint256(accruedLaunchpadFee1)
@@ -49,29 +30,9 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 [H-5]. LP burn can siphon pending launchpad fees before distribution, draining pool on next _update  - **LEGIT**
 ********************************************************************************
 
-
- **Derived From** : FOT/rebasing quote breaks slippage guarantee in sell(); user underpaid
-
-[M-6]. Launchpad.sell assumes 1:1 ERC20 transfer; FOT/rebasing quote token causes user to receive less than minAmountOutQuote -- **INFORMATIONAL**
-
-
-
- **Derived From** : Accrued fees zeroed before external call lets anyone skim undistributed fees
-
-[H-7]. Skimmable rewards: GTELaunchpadV2Pair._update zeroes accrued fees before distributor pull, making fees permanently stealable via skim() -- **INVALID - could not see AddRewards IR, because file was not in scope , need to fix!**
-
-
-
  **Derived From** : Unbounded withdrawal queue growth leads to storage/gas bloat and liveness risk
 
 [H-8]. Unbounded _withdrawalQueue enables permissionless gas-DoS; O(N) array rewrites in cancelWithdrawal/processWithdrawals brick withdrawals -- **LEGIT**
-
-
-
- **Derived From** : Floor rounding undercharges quote on buy(); missing ceil enables penny‑shaving
-
-[L-9]. Penny-shaving on buys: floor rounding in SimpleBondingCurve._getQuoteAmount undercharges quote; micro-buys yield profit -- **LOW/INFORMATIONAL**
-
 
 
  **Derived From** : cancelWithdrawal rebuilds queue with O(N) copy per call
@@ -79,47 +40,15 @@ GTE unifies token launches, AMM liquidity, and a central-limit order-book (CLOB)
 [H-10]. Unbounded O(N) array rebuild in GTL.cancelWithdrawal enables gas-based DoS on cancels -- **LEGIT**
 
 
-
- **Derived From** : Distributor callback can revert and DoS swaps/mints (no fallback accrual path)
-
-[H-11]. Pool-wide DoS: unguarded rewards callback in GTELaunchpadV2Pair._distributeLaunchpadFees bricks swap/mint/burn -- **INVALID REQUIRES TRUSTED ROLE - LOW/INFORMATIONAL**
-
-
-
- **Derived From** : Owner/roles never initialized in LiquidatorPanel (OwnableRoles)
-
-[H-12]. Uninitialized owner/roles in LiquidatorPanel bricks all liquidation/deleverage entrypoints, risking system solvency -- **INVALID - owner initialized in other contract llm could not see** 
-
-
-
  **Derived From** : Permissionless createPair lets anyone block Launchpad parameters
 
-[M-13]. Front‑running createPair cements zeroed launchpad params and prevents legitimate pair, permanently breaking fee routing
+[M-13]. Front‑running createPair cements zeroed launchpad params and prevents legitimate pair, permanently breaking fee routing -- **LEGIT** combine with M-4 (r2) and M-19
 
 
 
  **Derived From** : (balance0 * 1000 - amount0In * 3) * (balance1 * 1000 - amount1In * 3) >= uint256(_reserve0) * uint256(_reserve1) * 1000**2
 
 [H-14]. Zero-input theft of accrued launchpad fees by exploiting reserves–balances desync in GTELaunchpadV2Pair.swap - **LEGIT**
-
-
-
- **Derived From** : freeCollateral_after(account) + margin_after(account,subaccount) == freeCollateral_before(account) + margin_before(account,subaccount) - fundingPayment_before
-
-[H-15]. removeMargin re-realizes the same funding indefinitely due to setPositions gating, enabling infinite balance inflation and USDC drain -- **INVALID**
-
-
-
- **Derived From** : Rounding dust in backstop fee allocation leaks value over time
-
-[M-16]. Backstop fee split floors per-recipient, leaving unassigned remainder that breaks accounting invariants -> OUT OF SCOPE
-
-
-
- **Derived From** : Division-by-zero in backstop fee split when totals are zero
-
-[M-17]. Backstop liquidation DoS: division-by-zero in LiquidatorPanel._settleBackstopLiquidation when totalPoints or totalVolume is zero -> OUT OF SCOPE
-
 
 
  **Derived From** : processWithdrawals slices full queue (O(N)) causing gas-based DoS
@@ -186,57 +115,17 @@ This approach avoids duplicates and strengthens your case with a single, compreh
 
  **Derived From** : For any shares <= totalSupply(): _convertToAssets(shares, allocatedAssets) <= usdc.balanceOf(address(this)) + allocatedAssets
 
-[M-19]. processWithdrawals DoS: _convertToAssets uses off-vault allocatedAssets causing assets > on-chain USDC and revert -- **LEGIT**
-
-
-
- **Derived From** : For rs.quoteAsset = q: baseAmount <= pre.totalPendingRewards[launchAsset] && quoteAmount <= pre.totalPendingRewards[q]
-
-[H-20]. Overflow in rewards accrual math bricks Distributor.claimRewards (pendingRewards * PRECISION overflows uint128) -- **MEDIUM AT BEST NEED HUGE AMOUNT TO TRIGGER**
-
-[M-21]. Fee-on-transfer/rebasing tokens desync totalPendingRewards vs actual balance, causing claimRewards to revert (DoS) -- **LOW/INFORMATIONAL**
-
-
-
- **Derived From** : Operator funds debited due to msg.sender/account mismatch in graduation swap
-
-[H-22]. Graduation exact-out swap charges operator/gteRouter (msg.sender) instead of user in Launchpad._swapRemaining-> OUT OF SCOPE
-
-
-
- **Derived From** : _swapRemaining assumes exact token amounts; FOT tokens cause refund/DoS mismatch
-
-[M-23]. Fee-on-transfer quote breaks refund in Launchpad._swapRemaining, causing buy() DoS during graduation -- **LOW/INFORMATIONAL**
-
-
-
- **Derived From** : addRewards over-credits pending on fee-on-transfer tokens
-
-[M-24]. Distributor.addRewards credits rewards before pulling tokens; fee-on-transfer/rebasing tokens brick claims (DoS) -- **LOW/INFORMATIONAL**
-
+[M-19]. processWithdrawals DoS: _convertToAssets uses off-vault allocatedAssets causing assets > on-chain USDC and revert -- **LEGIT** combine with M-4 (r2) and M-13
 
 
  **Derived From** : addRewards accepts arbitrary quote token, desyncing pool vs payout token
 
-[M-25]. Distributor.addRewards accepts arbitrary quote token, corrupts totalPending mapping and DoS’s reward claims **LEGIT**
-
-
-
- **Derived From** : Router/Pair wrongly accrue bonding shares and rewards during lock
-
-[M-26]. Infrastructure addresses (router/pair) get staking credit during bonding, inflating totalFeeShare and diluting user rewards-> OUT OF SCOPE
-
+[M-25]. Distributor.addRewards accepts arbitrary quote token, corrupts totalPending mapping and DoS’s reward claims **LEGIT -- same as M-9 (r2)**
 
 
  **Derived From** : unlocked => totalFeeShare_post <= totalFeeShare_pre and bondingShare[to]_post == bondingShare[to]_pre
 
-[M-27]. Rewards closure DoS: endRewards is permanently unreachable after unlock even when totalFeeShare drains to zero
-
-
-
- **Derived From** : Payouts assume exact transfer; users shorted on taxed tokens
-
-[H-28]. Distributor._distributeAssets silently short-pays claimants when reward token is fee-on-transfer; accounting decremented by full amount -- **LOW/INFORMATIONAL**
+[M-27]. Rewards closure DoS: endRewards is permanently unreachable after unlock even when totalFeeShare drains to zero **LEGIT** same as M-11 (r2)
 
 
 ### Number of Findings

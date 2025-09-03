@@ -1,217 +1,68 @@
 # 2025 08 gte perps - Findings Report
 ## Commit hash: f43e1eedb65e7e0327cfaf4d7608a37d85d2fae7
 
-## Protocol Overview 
+## LEGIT ISSUES FOUND
 
-# GTE Protocol – High-Speed On-Chain Exchange Suite
-
-GTE is a family of Solidity contracts that together deliver a **full-stack, CEX-style trading venue on Ethereum-compatible chains**.  The system is split into three logical pillars—Launchpad, Spot Exchange and Perpetual Futures—tied together by shared utilities (router, operator hub, vaults).
-
----
-
-## 1. Launchpad & Token Bootstrap
-
-### Goal
-Enable anyone to create a new ERC-20 and *fair-launch* it without trusted seed rounds.
-
-### Flow
-1. **Launch** – `Launchpad.launch()` deploys a `LaunchToken` (1 B supply).
-2. **Bonding Curve Sale** – `SimpleBondingCurve` sells 80 % of supply against an existing quote asset; pricing is automated via `x*y=k` math + configurable virtual reserves.
-3. **Auto-LP Mint** – Once bonding supply sells out, the contract:
-   * Creates a Uniswap-V2 pair through `GTELaunchpadV2PairFactory`.
-   * Seeds it with the remaining 20 % of tokens plus the collected quote asset.
-   * Sends resulting LP tokens to `LaunchpadLPVault` for custody.
-4. **Rewards** – `Distributor` streams incentive tokens to stakers during the bonding phase; share accounting happens inside `LaunchToken`.
-5. **User Interactions** – All buy/sell/claim operations can go through `GTERouter` for UX simplicity;
-   Launchpad never holds user funds longer than the current tx.
-
-**Security/Trust** – No upgrade paths inside core launch contracts; owner can only tweak fees & config, never seize tokens.  LP custody is immutably limited to the Launchpad/Vault pair.
-
----
-
-## 2. Spot Exchange (CLOB)
-
-### Components
-* `CLOBManager` – deploys & admin-configures individual order books (tick size, lot, etc.).
-* `CLOB` – price-time-priority limit-order book; matches orders but never escrows assets.
-* `AccountManager` – central ERC-20 ledger that actually holds user balances, settles fills, and manages fee tiers.
-
-### Order Lifecycle
-1. Trader deposits collateral via `AccountManager.deposit()` (or router helper).
-2. Trader (or an approved operator) calls `CLOB.placeOrder()` to create bid/ask.
-3. Matching logic inside the book sends settlement hooks to `AccountManager.settleIncomingOrder()`, which moves balances and invoices maker/taker fees.
-4. Withdrawals are initiated via `AccountManager.withdraw()`.
-
-**Admin Scope** – Managers can tune market parameters and sweep protocol fees, but cannot move user balances directly.
-
----
-
-## 3. Perpetual Futures
-
-### Architecture
-* **Collateral** – Same USDC sits inside `CollateralManager` (part of a shared storage library).
-* **PerpManager** – user-facing façade for collateral moves, margin, leverage updates and order placement.  Relies on external matching engine modules.
-* **LiquidatorPanel** – executes forced closures when accounts breach maintenance margin.
-* **AdminPanel / ViewPort et al.** – pause protocol, tweak risk params, expose read-only data.
-* **GTL Vault** – ERC-4626 vault pooling USDC so liquidity providers can earn funding fees. Withdrawals are queued and later processed by Admins.
-
-### Interaction Example
-1. User deposits USDC into `PerpManager.deposit()` (or bridges from spot with `depositFromSpot`).
-2. Opens a position by posting orders; `PerpManager.placeOrder()` validates role and forwards to matching engine.
-3. Funding payments, PnL and liquidation flows interact exclusively with the shared storage library—PerpManager itself stays stateless apart from immutable pointers.
-
-**Risk Controls** – Liquidations, ADL and delist actions are gated behind dedicated roles (`LIQUIDATOR`, `BACKSTOP_LIQUIDATOR`).  Insurance fund accounting is handled in libraries, not the panels.
-
----
-
-## 4. Shared Utilities
-
-### OperatorHub
-Aggregates role-granting for both spot (`AccountManager`) and perps (`PerpManager`).  Users call `approveOperator…()` to delegate fine-grained bit-mapped roles; no owner functions exist.
-
-### GTERouter
-UX front end that chains deposits, CLOB actions, bonding-curve swaps and AMM trades in a single tx.  Holds no persistent state; core addresses are immutable constructor params.
-
-### Uniswap-V2 Fork
-`GTELaunchpadV2Pair` adds a **0.1 % launchpad fee siphon** that streams to `launchpadLp` until `launchpadFeeDistributor` turns it off.
-
----
-
-## 5. Contract Relationships (Bird’s-Eye)
-```
-User ─┐
-      │  (1) Router / direct → AccountManager ↔ Spot CLOBs
-      │
-      │  (2) Router / direct → Launchpad → BondingCurve → Uniswap Pair
-      │                                         │
-      │                                         └→ LaunchpadLPVault (LP custody)
-      │
-      │  (3) Router / direct → PerpManager ↔ LiquidatorPanel, etc.
-      │                               │
-      │                               └→ GTL (liquidity pool vault)
-      │
-OperatorHub  ⟷  AccountManager & PerpManager (role delegation)
-```
-
----
-
-## 6. Security & Trust Assumptions
-1. **No implicit custodianship** – All user funds reside in three vaults only: `AccountManager`, `CollateralManager` and `GTL`.  Other contracts merely forward calls.
-2. **Role-Based Access** – Every state change checks `msg.sender` against bit-mapped roles.  `OperatorHub` lets users self-manage delegation.
-3. **Immutable Critical Pointers** – Factories, routers and managers store module addresses as `immutable` to prevent rug pulls.
-4. **Upgradeable Market Implementations** – Individual CLOB markets live behind a Beacon; the beacon itself is owned by protocol governance, not the manager contract.
-5. **Withdrawal Safety** – GTL withdrawals are two-step (queue + admin process) to prevent bank-run style drains during volatile periods.
-
----
-
-## 7. Key Invariants for Auditors
-* `AccountManager` token balances + protocol fees == actual ERC-20 balance of the contract.
-* Perp system invariant (see docs): sum(free + margin + insurance) ≤ USDC held by PerpManager collateral vault.
-* `totalPendingRewards` in `Distributor` ≤ contract token balance.
-* `GTL.totalAssets()` must include on-chain USDC + collateral posted to sub-accounts.
-
----
-
-## 8. Upgrade & Admin Summary
-* **Launchpad** – Owner can adjust launch fee, bonding curve address, LP vault, Factory `initCodeHash`, but never seize user tokens.
-* **Spot & Perps** – Owners can set fee tiers, risk params, pause, liquidate, or collect protocol fees; they cannot withdraw user balances.
-* **GTL** – Owner manages Admins and operator approvals; Admins execute queued withdrawals.
-
----
-
-## 9. Why It Matters
-GTE combines CEX-grade latency (via MegaETH L2) with DeFi composability.  By integrating permissionless token launches, spot trading and perpetual futures into one contract suite—with all balances custodial on-chain—it aims to deliver a *trust-minimized, high-performance alternative to centralized exchanges* while still enabling traditional market-maker workflows like rapid order cancel/replace.
-##Findings by Pattern
+#1 HIGH - H-2/H-3/H-16/M-7 - (H-14(r1) && H-5(r1) is dup)
+#3 HIGH - H-5
+#6 HIGH - H-8(r1)/ H-10(r1)/ H-18(r1) - H-15 is dup
+#2 MEDIUM - M-4/M-13(r1)/M-19(r1)
+#4 MEDIUM - M-9 (M-25 (r1) dup) - pick best to demo 
+#5 MEDIUM - M-11 (M-27 (r1) dup) - pick best to demo 
 
 
- **Derived From** : Token transfer hook makes untrusted external calls; launchpad can freeze transfers
+ **Derived From** : IERC20(token0).balanceOf(address/(this)) == uint256(reserve0) + uint256(accruedLaunchpadFee0) && IERC20(token1).balanceOf(address(this)) == uint256(reserve1) + uint256(accruedLaunchpadFee1)
 
-[M-1]. LaunchToken transfer hook makes unguarded external callbacks; downstream revert bricks transfers touching bondingShare
-
-
-
- **Derived From** : IERC20(token0).balanceOf(address(this)) == uint256(reserve0) + uint256(accruedLaunchpadFee0) && IERC20(token1).balanceOf(address(this)) == uint256(reserve1) + uint256(accruedLaunchpadFee1)
-
-[H-2]. LP share inflation: mint() credits depositor with unpaid launchpad fees included in balances, diluting LPs and stealing fee pot
-[H-3]. Swap mis-accounts accrued fees as fresh input; attacker drains rewards by swapping accrued fees into the other token
+ ## TODO - SUBMIT consolidated submission
+[H-2]. LP share inflation: mint() credits depositor with unpaid launchpad fees included in balances, diluting LPs and stealing fee pot - **LEGIT**
+[H-3]. Swap mis-accounts accrued fees as fresh input; attacker drains rewards by swapping accrued fees into the other token - **LEGIT** 
 
 
 
  **Derived From** : Anyone can front-run createPair to block Launchpad metadata and capture canonical pair
 
-[M-4]. Permissionless createPair lets any EOA permanently block Launchpad-initialized pair and disable 0.1% fee siphon
+# TODO 
+# This is the same root cause as your earlier M-13/M-19 factory front- run/metadata issues. Submit a single consolidated Medium covering:
+# Front-running createPair blocks launchpad metadata and fee siphon
+# Pairs initialized with zeroed addresses
+# getPair keyed only by tokens, not including metadata
+==>
+[M-4]. Permissionless createPair lets any EOA permanently block Launchpad-initialized pair and disable 0.1% fee siphon - **LEGIT**
 
 
 
  **Derived From** : Liquidations place IOC orders with limitPrice=0 (no slippage bound)
 
-[H-5]. Unbounded-price IOC fills during standard liquidation enable adversarial book to force extreme prices and induce bad debt
-
-
-
- **Derived From** : ERC4626 withdraw/redeem left enabled; queued withdrawals can be bypassed
-
-[M-6]. Queued-withdrawal model bypass: anyone with shares can call ERC4626 withdraw/redeem and redeem instantly
-
+[H-5]. Unbounded-price IOC fills during standard liquidation enable adversarial book to force extreme prices and induce bad debt -- **LEGIT**
 
 
  **Derived From** : price0CumulativeLast_post >= price0CumulativeLast_pre && price1CumulativeLast_post >= price1CumulativeLast_pre
 
-[M-7]. Same-timestamp burn siphons undistributed launchpad fees due to timeElapsed gate in _update (fee misallocation to attacker LP)
-
-
-
- **Derived From** : Zero-priced trades due to integer-flooring (no min-amount guard)
-
-[L-8]. Free base via zero-quote rounding in SimpleBondingCurve.buy drains bonding inventory
-
+[M-7]. Same-timestamp burn siphons undistributed launchpad fees due to timeElapsed gate in _update (fee misallocation to attacker LP)- **DUP** combine with H‑2/H‑3/H‑16.- **DUP** with H‑2/H‑3/H‑16.
 
 
  **Derived From** : On success: getRewardsPoolData(launchAsset).quoteAsset == quoteAsset and getRewardsPoolData(quoteAsset).quoteAsset == address(0); any subsequent createRewardsPair using either asset reverts
 
-[M-9]. Pool-aliasing via mismatched addRewards breaks state machine and DoS’s claims for a pair
-
-
-
- **Derived From** : Launchpad fee share manipulable by temporary LP mint/burn to reduce fees near-zero
-
-[L-10]. Launchpad fee siphon can be reduced to near-zero via same-tx temporary LP minting that inflates totalSupply in GTELaunchpadV2Pair._getLaunchpadFees
+[M-9]. Pool-aliasing via mismatched addRewards breaks state machine and DoS’s claims for a pair -- **LEGIT** same as M-25 (r1)**
 
 
 
  **Derived From** : once unlocked == true, it never returns to false
 
-[M-11]. Unlock makes endRewards() unreachable: rewards never terminate post-unlock enabling indefinite reward farming
-
-
-
- **Derived From** : Unstake path also pays rewards to msg.sender (Launchpad), not the user
-
-[H-12]. decreaseStake pays accrued rewards to Launchpad (msg.sender), zeroing user debt and permanently stealing user claimables
-
-
-
- **Derived From** : Launchpad initializer is permanently disabled by constructor
-
-[M-13]. Launchpad bricked: _disableInitializers() prevents initialize(), leaving owner and core pointers unset
-
-
-
- **Derived From** : freeColl_after(account) == freeColl_before(account) + amount, where freeColl(x) := StorageLib.loadCollateralManager().freeCollateral[x]
-
-[H-14]. removeMargin bypasses maintenance-margin checks due to _getPositions off-by-one; attacker drains margin to freeCollateral and withdraws USDC
+[M-11]. Unlock makes endRewards() unreachable: rewards never terminate post-unlock enabling indefinite reward farming **LEGIT** same as M-27 (r1)
 
 
 
  **Derived From** : cancelWithdrawal uses O(n) full-queue copy; gas DoS via large queue
 
-[H-15]. Unbounded O(n) copy in GTL.cancelWithdrawal lets any EOA gas-DoS cancels by inflating _withdrawalQueue
+[H-15]. Unbounded O(n) copy in GTL.cancelWithdrawal lets any EOA gas-DoS cancels by inflating _withdrawalQueue -- **LEGIT use r1 version**
 
 
 
  **Derived From** : If the tx emits LaunchpadFeesAccrued(f0,f1), then accruedLaunchpadFee0_post == accruedLaunchpadFee0_pre + f0 && accruedLaunchpadFee1_post == accruedLaunchpadFee1_pre + f1
 
-[H-16]. Same-block accrual shrinks stored reserves (k) enabling underpriced second swap to extract value
+# TODO - Do not submit H‑16 as a separate High. Fold it into the consolidated AMM fee‑accounting report with H‑2 and H‑3 (r1) and M-7 from (r2), presenting:
+[H-16]. Same-block accrual shrinks stored reserves (k) enabling underpriced second swap to extract value -- **LEGIT - combine wiht H-2/H-3**
 
 
 ### Number of Findings
@@ -226,7 +77,7 @@ GTE combines CEX-grade latency (via MegaETH L2) with DeFi composability.  By int
 
  **Derived From** : Token transfer hook makes untrusted external calls; launchpad can freeze transfers
 
-## [M-1]. LaunchToken transfer hook makes unguarded external callbacks; downstream revert bricks transfers touching bondingShare
+## [M-1]. LaunchToken transfer hook makes unguarded external callbacks; downstream revert bricks transfers touching bondingShare -- **LOW/INFORMATIONAL**
 
 ## Derived From Pattern/Invariant
 Token transfer hook makes untrusted external calls; launchpad can freeze transfers
@@ -654,7 +505,7 @@ Also ensure _getLaunchpadFees() is fed only the true swap inputs (amount{0,1}In 
 
  **Derived From** : Anyone can front-run createPair to block Launchpad metadata and capture canonical pair
 
-## [M-4]. Permissionless createPair lets any EOA permanently block Launchpad-initialized pair and disable 0.1% fee siphon
+## [M-4]. Permissionless createPair lets any EOA permanently block Launchpad-initialized pair and disable 0.1% fee siphon -- **LEGIT**
 
 ## Derived From Pattern/Invariant
 Anyone can front-run createPair to block Launchpad metadata and capture canonical pair
@@ -839,7 +690,7 @@ Do not submit liquidation IOC orders with unbounded price. In MarketLib.liquidat
 
  **Derived From** : ERC4626 withdraw/redeem left enabled; queued withdrawals can be bypassed
 
-## [M-6]. Queued-withdrawal model bypass: anyone with shares can call ERC4626 withdraw/redeem and redeem instantly
+## [M-6]. Queued-withdrawal model bypass: anyone with shares can call ERC4626 withdraw/redeem and redeem instantly 
 
 ## Derived From Pattern/Invariant
 ERC4626 withdraw/redeem left enabled; queued withdrawals can be bypassed
@@ -944,7 +795,7 @@ Explicitly override ERC4626 withdraw/redeem to enforce the queue/role policy. Ex
 
  **Derived From** : price0CumulativeLast_post >= price0CumulativeLast_pre && price1CumulativeLast_post >= price1CumulativeLast_pre
 
-## [M-7]. Same-timestamp burn siphons undistributed launchpad fees due to timeElapsed gate in _update (fee misallocation to attacker LP)
+## [M-7]. Same-timestamp burn siphons undistributed launchpad fees due to timeElapsed gate in _update (fee misallocation to attacker LP) 
 
 ## Derived From Pattern/Invariant
 price0CumulativeLast_post >= price0CumulativeLast_pre && price1CumulativeLast_post >= price1CumulativeLast_pre
@@ -1215,7 +1066,7 @@ Adopt one or more of the following: (a) Round required quote up on buys to avoid
 
  **Derived From** : On success: getRewardsPoolData(launchAsset).quoteAsset == quoteAsset and getRewardsPoolData(quoteAsset).quoteAsset == address(0); any subsequent createRewardsPair using either asset reverts
 
-## [M-9]. Pool-aliasing via mismatched addRewards breaks state machine and DoS’s claims for a pair
+## [M-9]. Pool-aliasing via mismatched addRewards breaks state machine and DoS’s claims for a pair 
 
 ## Derived From Pattern/Invariant
 On success: getRewardsPoolData(launchAsset).quoteAsset == quoteAsset and getRewardsPoolData(quoteAsset).quoteAsset == address(0); any subsequent createRewardsPair using either asset reverts
