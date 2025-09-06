@@ -477,6 +477,7 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
     let contract_summary = run_printer(repo, "contract-summary").await?;
     let contract_summary_vec = parse_slithir_contract_summary(&contract_summary);
     let src_file_list = get_all_files_src(repo)?;
+    // TODO - undo comment out
     let summaries = summarize_src_files(repo, &semantics_path).await?;
 
     // 2 . serialise each artefact → one text file

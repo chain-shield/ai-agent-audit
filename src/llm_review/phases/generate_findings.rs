@@ -123,7 +123,6 @@ pub async fn run_security_prompt(
     // 1. Build full prompt
     let post_prompt = generate_post_prompt(&contract_name);
     let pre_prompt = generate_pre_prompt(&contract_name);
-    // TODO - add conditional here if its code4rena run then different PRE and POST
     let prompt_header =
         generated_llm_prompt(&contract_name, &instructions, &pre_prompt, &post_prompt);
     let prompt_body = generate_content_plus_context_block(&code, &added_context);
