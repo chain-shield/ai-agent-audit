@@ -364,3 +364,37 @@ pub fn get_function_metadata_from_id(
 
     Ok(fn_metadata)
 }
+
+pub fn get_function_metadata_from_contract_plus_fn(
+    contract: &str,
+    fn_interface: &str,
+    semantic_db: &Connection,
+) -> Result<Option<SmartContractFunction>> {
+    let fn_metadata: Option<SmartContractFunction> = semantic_db
+                        .query_row(
+                            "SELECT func_id, project_id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE contract = ?1 AND name = ?2;",
+                            [contract,fn_interface],
+                            |row| {
+                                let modifier_str: String = row.get(6)?;
+                                let modifiers: Vec<String> = modifier_str
+                                    .split(',')
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+
+                                Ok(SmartContractFunction {
+                                    id: row.get(0)?,
+                                    project_id: row.get(1)?,
+                                    contract: row.get(2)?,
+                                    name: row.get(3)?,
+                                    ir: row.get(4)?,
+                                    visibility: row.get(5)?,
+                                    modifiers,
+                                    mutability: row.get(7)?,
+                                })
+                            },
+                        )
+                        .optional()?;
+
+    Ok(fn_metadata)
+}

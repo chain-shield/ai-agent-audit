@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{enumerator::utils::ContractScope, prepare_code::git_clone::RepoPaths};
+use crate::prepare_code::git_clone::RepoPaths;
 
 /// Represents a contextual markdown code block for AI analysis.
 ///
