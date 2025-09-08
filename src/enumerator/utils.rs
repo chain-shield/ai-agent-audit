@@ -286,13 +286,7 @@ pub async fn contracts_in_source_folder(
         if scoped_files.is_empty()
             && file.components().any(|comp| {
                 let part = comp.as_os_str().to_ascii_lowercase();
-                part == "lib"
-                    || part == "library"
-                    || part.to_string_lossy().to_ascii_lowercase().contains("mock")
-                    || part
-                        .to_string_lossy()
-                        .to_ascii_lowercase()
-                        .contains("helper")
+                part.to_string_lossy().to_ascii_lowercase().contains("mock")
             })
         {
             continue;

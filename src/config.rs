@@ -38,6 +38,7 @@ pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
 
 pub const CHAINSHIELD_DB_FOLDER: &str = "/Users/apmfree/chainshield_db";
 pub const REPO_DATA_DB: &str = "repo_data.db";
+pub const SUMMARY_DB: &str = "repo_data.db";
 pub const SEMANTIC_DB: &str = "semantic.db";
 pub const CODEBLOCK_DB: &str = "codeblock.db";
 pub const FINDINGS_DB: &str = "findings.db";
