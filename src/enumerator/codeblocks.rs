@@ -102,21 +102,21 @@ pub async fn generate_codeblock_from_codebase(
                     let callee_fn_option =
                         get_function_metadata_from_id(&callee, repo, semantic_db)?;
                     let Some(callee_fn) = callee_fn_option else { continue };
-                    // if callee_fn.ir.is_empty() && callee_fn.contract starts with I THEN see if
-                    // you can find without I
                     let updated_callee_fn = if callee_fn.ir.is_empty()
                         && string_starts_with_char(&callee_fn.contract, 'I')
                     {
                         // remove 'I' from contract name
                         let mut new_contract = callee_fn.contract.clone();
                         new_contract.remove(0);
-                        // extract real fn + ir not just interface
                         let new_callee_option = get_function_metadata_from_contract_plus_fn(
                             &new_contract,
                             &callee_fn.name,
                             semantic_db,
                         )?;
                         if let Some(new_callee) = new_callee_option {
+                            // if new_callee.ir.is_empty() {
+                            //     info!("new callee (no ir): {:#?}", new_callee);
+                            // };
                             new_callee
                         } else {
                             callee_fn.clone()

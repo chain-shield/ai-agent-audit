@@ -5,32 +5,28 @@
 /// for protocol overviews and contextual information for AI analysis.
 use anyhow::Result;
 use log::info;
-use once_cell::sync::Lazy;
 use rig::{
     client::CompletionClient,
     providers::openai::{self, O3},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::Semaphore;
 
 use crate::{
+    build_brain::summarize_db::{
+        get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
+        insert_file_summary_to_db,
+    },
     cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::enums::AgentMetadata,
     prepare_code::git_clone::RepoPaths,
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
 use crate::{llm_review::context_state, utils::check_folder_name::is_script_file};
-
-use super::slither_ffi::cache_key;
-
-/// Global cache for file summaries to avoid redundant LLM calls
-pub static FILE_SUMMARY_CACHE: Lazy<Arc<Mutex<HashMap<String, Vec<SrcFileSummary>>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 /// Represents a summary of a source file with metadata
 #[derive(Default, Debug, Clone)]
@@ -48,84 +44,78 @@ pub struct FileSummary {
     pub summary: String,
 }
 
-pub async fn summarize_docs(
-    repo: &RepoPaths,
-    current_context: &str,
-) -> Result<Vec<SrcFileSummary>> {
-    let key = cache_key(&repo.root, "docs-summary");
-    let cache = Arc::clone(&FILE_SUMMARY_CACHE);
-    let mut summaries_cache = cache.lock().await;
-
-    // Return cached output if exists
-    if let Some(cached) = summaries_cache.get(&key) {
-        return Ok(cached.clone());
-    }
-
-    let documentation = repo.extract_content_from_docs()?;
-    let mut doc_summaries = Vec::new();
-
-    let mut docs_plus_context = format!("\n ## DOCUMENTATION: \n\n {}\n\n", documentation);
-    docs_plus_context.push_str("\n ## CURRENT SECURITY AUDIT CONTEXT \n\n");
-    docs_plus_context.push_str(&format!("\n #### The Documentation Summary should NOT contain content that is already included below.\n\n {} \n\n", current_context));
-
-    let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
-
-    info!("generate summmary of all major files and docs in repo...");
-    let preamble =
-        "You are a senior solidity dev and expert solidity security researcher. Please provide detailed and comprehensive summary 
-        of below DOCUMENTATION. Should be up to 4000 words, but no longer.  Should cover **all relevant details** that a security researcher 
-        should know about this protocol to do a proper smart contract audit. ALSO, exclude any information from the summary that is already
-        included in below CURRENT SECURITY AUDIT CONTEXT, because both DOCUMENTATION and CURRENT SECURITY AUDIT CONTEXT will be provide as
-        context for an llm to do a security scan of protocol code.  So its important there is NO duplicate information between DOCUMENTATION 
-        and CURRENT SECURITY AUDIT CONTEXT ";
-    let ai_summary_agent = openai_client
-        .extractor::<FileSummary>(O3)
-        .preamble(preamble)
-        .build();
-
-    info!("summarizing documentation");
-
-    let metadata = AgentMetadata {
-        model: O3.to_string(),
-        ..Default::default()
-    };
-    let doc_summary =
-        match extractor_with_retry(&ai_summary_agent, &docs_plus_context, &metadata).await {
-            Ok(res) => {
-                add_to_inference_cost_by_type(&res.summary, &metadata, TokenType::Output).await;
-                SrcFileSummary {
-                    filename: "readme.md".to_string(),
-                    summary: res.summary,
-                }
-            }
-            Err(e) => {
-                log::error!("❌ summarizing readme.md failed: {e}");
-                SrcFileSummary {
-                    filename: "readme.md".to_string(),
-                    summary: String::new(),
-                }
-            }
-        };
-
-    log::info!("readme.md summary => {:#?}", doc_summary);
-    doc_summaries.push(doc_summary);
-
-    summaries_cache.insert(key, doc_summaries.clone());
-    Ok(doc_summaries)
-}
+// pub async fn summarize_docs(
+//     repo: &RepoPaths,
+//     current_context: &str,
+// ) -> Result<Vec<SrcFileSummary>> {
+//     let key = cache_key(&repo.root, "docs-summary");
+//     let cache = Arc::clone(&FILE_SUMMARY_CACHE);
+//     let mut summaries_cache = cache.lock().await;
+//
+//     // Return cached output if exists
+//     if let Some(cached) = summaries_cache.get(&key) {
+//         return Ok(cached.clone());
+//     }
+//
+//     let documentation = repo.extract_content_from_docs()?;
+//     let mut doc_summaries = Vec::new();
+//
+//     let mut docs_plus_context = format!("\n ## DOCUMENTATION: \n\n {}\n\n", documentation);
+//     docs_plus_context.push_str("\n ## CURRENT SECURITY AUDIT CONTEXT \n\n");
+//     docs_plus_context.push_str(&format!("\n #### The Documentation Summary should NOT contain content that is already included below.\n\n {} \n\n", current_context));
+//
+//     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
+//
+//     info!("generate summmary of all major files and docs in repo...");
+//     let preamble =
+//         "You are a senior solidity dev and expert solidity security researcher. Please provide detailed and comprehensive summary of below DOCUMENTATION. Should be up to 4000 words, but no longer.  Should cover **all relevant details** that a security researcher should know about this protocol to do a proper smart contract audit. ALSO, exclude any information from the summary that is already included in below CURRENT SECURITY AUDIT CONTEXT, because both DOCUMENTATION and CURRENT SECURITY AUDIT CONTEXT will be provide as context for an llm to do a security scan of protocol code.  So its important there is NO duplicate information between DOCUMENTATION and CURRENT SECURITY AUDIT CONTEXT ";
+//     let ai_summary_agent = openai_client
+//         .extractor::<FileSummary>(O3)
+//         .preamble(preamble)
+//         .build();
+//
+//     info!("summarizing documentation");
+//
+//     let metadata = AgentMetadata {
+//         model: O3.to_string(),
+//         ..Default::default()
+//     };
+//     let doc_summary =
+//         match extractor_with_retry(&ai_summary_agent, &docs_plus_context, &metadata).await {
+//             Ok(res) => {
+//                 add_to_inference_cost_by_type(&res.summary, &metadata, TokenType::Output).await;
+//                 SrcFileSummary {
+//                     filename: "readme.md".to_string(),
+//                     summary: res.summary,
+//                 }
+//             }
+//             Err(e) => {
+//                 log::error!("❌ summarizing readme.md failed: {e}");
+//                 SrcFileSummary {
+//                     filename: "readme.md".to_string(),
+//                     summary: String::new(),
+//                 }
+//             }
+//         };
+//
+//     log::info!("readme.md summary => {:#?}", doc_summary);
+//     doc_summaries.push(doc_summary);
+//
+//     summaries_cache.insert(key, doc_summaries.clone());
+//     Ok(doc_summaries)
+// }
 
 pub async fn summarize_src_files(
     repo: &RepoPaths,
     semantics_path: &Path,
 ) -> Result<Vec<SrcFileSummary>> {
-    let key = cache_key(&repo.root, "file_summaries");
-    let cache = Arc::clone(&FILE_SUMMARY_CACHE);
-    let mut summaries_cache = cache.lock().await;
-
-    // Return cached output if exists
-    if let Some(cached) = summaries_cache.get(&key) {
-        return Ok(cached.clone());
+    // pull summaries from db if avaliable
+    let summaries = get_summaries_from_db(repo)?;
+    if !summaries.is_empty() {
+        info!("retrived summaries from db");
+        return Ok(summaries);
     }
+    info!("generating file summaries...");
 
     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
@@ -139,9 +129,9 @@ pub async fn summarize_src_files(
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
-    let preamble ="You are a senior solidity dev. Please summarize below content (source code, or deploy scripts). Format in markdown for easy reading. Please write 300 word or less summary for each contract: purpose trust model (user funds? admin?), also major entrypoints. List storage vars plus optional 50 max chars description. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add 100 word max natspec for EACH function. Respond only with valid JSON matching the schema!";
+    let preamble ="You are a senior solidity dev. Please summarize below content (source code, or deploy scripts). Format in markdown for easy reading. Start with a 300 word or less summary of the contract, that includes  purpose trust model (user funds? admin?), also major entrypoints. Then list storage vars plus optional 50 max chars description for each. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add 100 word max natspec for EACH function. Respond only with valid JSON matching the schema!";
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>(O3)
+        .extractor::<FileSummary>("gpt-5")
         .preamble(preamble)
         .context(&context)
         .build();
@@ -232,42 +222,33 @@ pub async fn summarize_src_files(
         }
     }
 
+    // save files to db
+    insert_file_summaries_to_db(&summaries, repo)?;
+
     for summary in &summaries {
         info!("filename: {}", summary.filename);
         info!("summary size: {}", summary.summary.len())
     }
 
-    summaries_cache.insert(key, summaries.clone());
     Ok(summaries)
 }
 
 pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Result<String> {
-    let key = cache_key(&repo.root, "protocol-summary");
-    let cache = Arc::clone(&FILE_SUMMARY_CACHE);
-    let mut summaries_cache = cache.lock().await;
-
-    // Return cached output if exists
-    if let Some(cached) = summaries_cache.get(&key) {
-        let summary = cached
-            .first()
-            .unwrap_or(&SrcFileSummary::default())
-            .summary
-            .clone();
-        return Ok(summary);
+    // pull protocol-summary from db, if avaliable
+    let protocol_summary = get_file_summary_from_db("protocol-summary", repo)?;
+    if let Some(summary) = protocol_summary {
+        info!("retriving protocol from db");
+        return Ok(summary.summary);
     }
+    info!("generating protocol summary...");
 
     // if no cached context is required
     let context = context.expect("if summary of protocol is not cached must provide context");
 
-    // Initialize vectors to store file paths
-    let mut summaries = Vec::<SrcFileSummary>::new();
-
     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
     log::info!("generate context for code review");
-    let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, 
-                   please create a max 1000 word summary of this protocol explaining what it is, and how it works.  Format 
-                   in markdown for easy reading. Respond only with valid JSON matching the schema!";
+    let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, please create a max 4000 word detailed summary of this protocol explaining what it is, and how it works.  Summary should be tailored for getting a crypto security researcher up to speed on the code so they can do a proper security. Format in markdown for easy reading. Respond only with valid JSON matching the schema!";
 
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(O3)
@@ -284,14 +265,12 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
 
     let summary = extractor_with_retry(&ai_summary_agent, &context, &metadata).await?;
 
+    add_to_inference_cost_by_type(&summary.summary, &metadata, TokenType::Output).await;
+
+    // save to db
+    insert_file_summary_to_db("protocol-summary", &summary.summary, repo)?;
+
     log::info!("protocol summary => {:#?}", summary);
 
-    add_to_inference_cost_by_type(&summary.summary, &metadata, TokenType::Output).await;
-    summaries.push(SrcFileSummary {
-        filename: "protocol-summary".to_string(),
-        summary: summary.summary.clone(),
-    });
-
-    summaries_cache.insert(key, summaries.clone());
     Ok(summary.summary)
 }

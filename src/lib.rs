@@ -30,6 +30,7 @@ pub mod build_brain {
     pub mod slither_ffi;
     /// Protocol and file summarization
     pub mod summarize;
+    pub mod summarize_db;
     /// Qdrant vector database operations
     pub mod vector_db;
     /// High-level vector database service
