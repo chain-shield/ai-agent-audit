@@ -4,15 +4,13 @@
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
     config::{AuditType, AUDIT_TYPE},
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
-        config::{Finding, Findings},
-        context_state::get_metadata_context,
+        context_state::{generate_audit_scope, get_metadata_context, ContextType},
         enums::AIAgent,
+        findings::{Finding, Findings},
         prompt_support::{
             post_verify::POST_VERIFY,
-            pre_verify::PRE_VERIFY,
             verify_prompt::{VERIFY_C4_PROMPT, VERIFY_PROMPT, VERIFY_SHERLOCK_PROMPT},
         },
         semaphore::VERIFY_SEM,
@@ -64,11 +62,11 @@ pub async fn execute(
     agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
-    info!("🔍 Phase 3: Deduplicating and verifying findings...");
+    info!("🔍 Phase 4: Deduplicating and verifying findings...");
 
     let mut handles = vec![];
     let deduped_findings = Arc::new(findings.dedup().await?);
-    let context = get_metadata_context(repo)
+    let context = get_metadata_context(repo, &ContextType::Full)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
@@ -81,12 +79,22 @@ pub async fn execute(
     info!("# of findings AFTER deduping => {}", dedup_finding_count);
     info!("now verifying each finding...");
 
+    let audit_scope = generate_audit_scope(repo).await?;
+
     let verify_prompt = match AUDIT_TYPE {
         AuditType::Client => Arc::new(VERIFY_PROMPT.to_string()),
         AuditType::Code4rena => Arc::new(VERIFY_C4_PROMPT.to_string()),
         AuditType::Sherlock => Arc::new(VERIFY_SHERLOCK_PROMPT.to_string()),
     };
 
+    let updated_verify_prompt = if audit_scope.is_empty() {
+        Arc::new(verify_prompt.to_string())
+    } else {
+        Arc::new(format!(
+            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
+            &verify_prompt, &audit_scope
+        ))
+    };
     // info!("verify prompt + scope => {}", verify_prompt_plus_scope);
 
     for i in 0..dedup_finding_count {
@@ -94,7 +102,7 @@ pub async fn execute(
         let arc_findings = Arc::clone(&deduped_findings);
         let arc_agent = Arc::clone(&agent);
         let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
-        let verify_prompt_and_scope = Arc::clone(&verify_prompt);
+        let verify_prompt_and_scope = Arc::clone(&updated_verify_prompt);
         let sem = Arc::clone(&VERIFY_SEM);
 
         handles.push(tokio::spawn(async move {
@@ -104,14 +112,11 @@ pub async fn execute(
                 let instruction_prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
                     &arc_findings.findings[i],
-                    PRE_VERIFY,
                     &verify_prompt_and_scope,
                     POST_VERIFY,
                 );
 
                 // add to cost
-                add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::OpenaiO3Input)
-                    .await;
                 info!("verifying finding #{}", i + 1);
                 let is_legit_struct: LegitVulnerability =
                     arc_agent.extract_with_retry(&instruction_prompt).await?;
@@ -120,7 +125,7 @@ pub async fn execute(
                 if !is_finding_legit {
                     info!(
                         "{} is NOT legit => {}",
-                        arc_findings.findings[i].title(),
+                        arc_findings.findings[i].title,
                         is_legit_struct.why_its_not_legit.unwrap_or_default()
                     );
                 }
@@ -153,7 +158,7 @@ pub async fn execute(
         .collect();
 
     info!(
-        "✅ Phase 3 complete: {} Verified Findings!",
+        "✅ Phase 4 complete: {} Verified Findings!",
         verified_findings.len()
     );
 

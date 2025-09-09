@@ -1,11 +1,12 @@
+use crate::error::{AuditError, Result};
+use serde::{Deserialize, Serialize};
+use std::env;
+
 /// Configuration management for the AI Agent Audit application.
 ///
 /// This module provides centralized configuration handling, with constants
 /// for application settings and environment variables only for sensitive
 /// configuration like API keys and URLs.
-use crate::error::{AuditError, Result};
-use serde::{Deserialize, Serialize};
-use std::env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditType {
@@ -25,9 +26,8 @@ pub const MAX_DEPTH: usize = 3;
 pub const TOKEN_BUDGET: usize = 150_000;
 
 /// Number of discovery rounds per contract during analysis
-pub const DISCOVERY_RUNS: usize = 1;
-pub const VERIFY_RUNS: usize = 2;
-pub const SCOPE_CHECK_RUNS: usize = 2;
+pub const DISCOVERY_RUNS: usize = 2;
+pub const INVARIANT_RUNS: usize = 3;
 
 pub const MAX_FILE_RUNS: usize = 3;
 
@@ -38,6 +38,7 @@ pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
 
 pub const CHAINSHIELD_DB_FOLDER: &str = "/Users/apmfree/chainshield_db";
 pub const REPO_DATA_DB: &str = "repo_data.db";
+pub const SUMMARY_DB: &str = "repo_data.db";
 pub const SEMANTIC_DB: &str = "semantic.db";
 pub const CODEBLOCK_DB: &str = "codeblock.db";
 pub const FINDINGS_DB: &str = "findings.db";
@@ -221,6 +222,48 @@ impl AuditConfig {
             ));
         }
 
+        // Stronger API key validation: reject placeholders and obviously invalid keys
+        use crate::utils::env_security::is_placeholder_api_key;
+        if let Some(k) = &self.openai_api_key {
+            if is_placeholder_api_key(k) {
+                return Err(AuditError::configuration(
+                    "OPENAI_API_KEY",
+                    "Appears to be a placeholder key (e.g., 'your-key-here'). Provide a real API key.",
+                ));
+            }
+            // Basic OpenAI format check
+            if !k.starts_with("sk-") {
+                return Err(AuditError::configuration(
+                    "OPENAI_API_KEY",
+                    "OpenAI key should start with 'sk-'. Provide a real API key.",
+                ));
+            }
+        }
+        if let Some(k) = &self.anthropic_api_key {
+            if is_placeholder_api_key(k) {
+                return Err(AuditError::configuration(
+                    "ANTHROPIC_API_KEY",
+                    "Appears to be a placeholder key",
+                ));
+            }
+        }
+        if let Some(k) = &self.gemini_ai_api_key {
+            if is_placeholder_api_key(k) {
+                return Err(AuditError::configuration(
+                    "GEMINI_API_KEY",
+                    "Appears to be a placeholder key",
+                ));
+            }
+        }
+        if let Some(k) = &self.deepseek_api_key {
+            if is_placeholder_api_key(k) {
+                return Err(AuditError::configuration(
+                    "DEEPSEEK_API_KEY",
+                    "Appears to be a placeholder key",
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -293,6 +336,10 @@ static CONFIG: OnceLock<AuditConfig> = OnceLock::new();
 
 /// Initializes the global configuration from environment variables.
 pub fn init_config() -> Result<()> {
+    // Ensure .env is loaded even if the caller forgot; safe to call multiple times
+    // Load .env and override any existing env vars to ensure repo-root .env wins in app runs
+    dotenvy::dotenv_override().ok();
+
     let config = AuditConfig::from_env()?;
     config.validate()?;
 
@@ -336,8 +383,8 @@ mod tests {
     fn test_config_validation() {
         let mut config = AuditConfig::default();
 
-        // Set an API key to make validation pass
-        config.openai_api_key = Some("test-key".to_string());
+        // Set a realistic OpenAI-style key to make validation pass
+        config.openai_api_key = Some("sk-valid-12345".to_string());
         assert!(config.validate().is_ok());
 
         // Test invalid URL
@@ -366,7 +413,7 @@ mod tests {
     fn test_from_env() {
         unsafe {
             env::set_var("QDRANT_URL", "http://test:6334");
-            env::set_var("OPENAI_API_KEY", "test-key");
+            env::set_var("OPENAI_API_KEY", "sk-valid-12345");
         }
 
         let config = AuditConfig::from_env().unwrap();

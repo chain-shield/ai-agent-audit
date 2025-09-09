@@ -30,6 +30,7 @@ pub mod build_brain {
     pub mod slither_ffi;
     /// Protocol and file summarization
     pub mod summarize;
+    pub mod summarize_db;
     /// Qdrant vector database operations
     pub mod vector_db;
     /// High-level vector database service
@@ -75,29 +76,49 @@ pub mod llm_review {
     pub mod analysis_db;
     /// Main security review orchestration
     pub mod code_review;
-    /// LLM configuration and models
-    pub mod config;
+    pub mod code_review_v2;
     /// Global context management
     pub mod context_state;
     pub mod contract_file_map;
     /// AI agent and vulnerability type enums
     pub mod enums;
+    /// LLM configuration and models
+    pub mod findings;
+    pub mod invariants;
+    pub mod issues;
+    pub mod pattern_category;
+    pub mod patterns;
     pub mod semaphore;
     /// Security audit phases
+    pub mod dynamic_prompts {
+        pub mod findings_template;
+        pub mod inv_findings;
+        pub mod invariants;
+        pub mod pattern_findings;
+        pub mod patterns;
+    }
     pub mod phases {
         /// Phase 2: Parallel vulnerability detection across multiple AI agents
         pub mod generate_findings;
         /// Phase 1: AI-driven file selection and context prefetching
         pub mod prefetch_context;
-        /// Phase 4: Quality assurance and final finding refinement
+        /// Phase 5: Quality assurance and final finding refinement
         pub mod quality_check;
         /// Phase 3a: Check finding are in scope, if scope is provided
         pub mod scope_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_findings;
     }
+    pub mod pattern_phases {
+        /// Phase 2: Parallel vulnerability detection across multiple AI agents
+        pub mod generate_patterns;
+        pub mod pattern_to_findings;
+        /// Phase 3: Deduplication and verification of discovered security findings
+        pub mod verify_patterns;
+    }
     /// Utility functions for LLM review
     pub mod utils {
+        pub mod contract_in_scope;
         /// Dynamic prompt generation and context management
         pub mod prompt_context;
         /// AI agent builders and utilities
@@ -108,7 +129,6 @@ pub mod llm_review {
         /// Deduplication prompts
         pub mod dedup;
         pub mod extractor_prompt;
-        pub mod invariants;
         pub mod planner_prompt;
         pub mod post_file_select_prompt;
         /// Post-analysis prompts
@@ -247,6 +267,7 @@ pub mod utils {
     pub mod logging;
     /// Text sanitization utilities
     pub mod sanitize;
+    pub mod semantic_compare;
     /// Vector database connection utilities
     pub mod vec_db_connect;
 }

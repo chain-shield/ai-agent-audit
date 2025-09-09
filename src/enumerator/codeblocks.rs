@@ -8,10 +8,11 @@ use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cac
 use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::utils::{
     generate_code_slice_for_storage, generate_codeblock_for_function,
-    get_function_metadata_from_id, get_hashmap_of_contract_to_functions,
-    get_token_count_of_function_ir,
+    get_function_metadata_from_contract_plus_fn, get_function_metadata_from_id,
+    get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
 };
 use crate::prepare_code::git_clone::RepoPaths;
+use crate::utils::get_fn_name::string_starts_with_char;
 
 use anyhow::Result;
 use log::info;
@@ -98,10 +99,33 @@ pub async fn generate_codeblock_from_codebase(
                 let rows =
                     statement.query_map([&func.id, &repo.project_id], |r| r.get::<_, String>(0))?;
                 for callee in rows.flatten() {
-                    let callee_fn = get_function_metadata_from_id(&callee, repo, semantic_db)?;
-                    let Some(callee_fn) = callee_fn else { continue };
+                    let callee_fn_option =
+                        get_function_metadata_from_id(&callee, repo, semantic_db)?;
+                    let Some(callee_fn) = callee_fn_option else { continue };
+                    let updated_callee_fn = if callee_fn.ir.is_empty()
+                        && string_starts_with_char(&callee_fn.contract, 'I')
+                    {
+                        // remove 'I' from contract name
+                        let mut new_contract = callee_fn.contract.clone();
+                        new_contract.remove(0);
+                        let new_callee_option = get_function_metadata_from_contract_plus_fn(
+                            &new_contract,
+                            &callee_fn.name,
+                            semantic_db,
+                        )?;
+                        if let Some(new_callee) = new_callee_option {
+                            // if new_callee.ir.is_empty() {
+                            //     info!("new callee (no ir): {:#?}", new_callee);
+                            // };
+                            new_callee
+                        } else {
+                            callee_fn.clone()
+                        }
+                    } else {
+                        callee_fn.clone()
+                    };
 
-                    frontier.push_back((callee_fn, depth + 1));
+                    frontier.push_back((updated_callee_fn, depth + 1));
                 }
             }
         }
@@ -138,7 +162,10 @@ pub async fn generate_codeblock_from_codebase(
         // save to cache
         set_codeblock_cache(&contract, &codeblock).await;
 
-        // info!("codeblock => {:#?}", codeblock);
+        // if codeblock.contract.contains("LaunchpadV2Pair") {
+        //     info!("CONTRACT => {}", codeblock.contract);
+        //     info!("codeblock => {}", codeblock.content);
+        // }
     }
 
     Ok(())

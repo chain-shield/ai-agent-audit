@@ -16,6 +16,12 @@ use crate::{
     prepare_code::git_clone::RepoPaths,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextType {
+    Full,
+    Abridged,
+}
+
 /// Global metadata context shared across all AI agents
 
 pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
@@ -24,6 +30,12 @@ pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
 pub static METADATA_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
+pub fn get_context_key(repo: &RepoPaths, context_type: &ContextType) -> String {
+    match context_type {
+        ContextType::Full => cache_key(&repo.root, "prompt_context"),
+        ContextType::Abridged => cache_key(&repo.root, "abridged_prompt_context"),
+    }
+}
 /// Generates and caches protocol metadata context for AI analysis.
 ///
 /// This function creates comprehensive context information including protocol
@@ -37,21 +49,34 @@ pub async fn generate_and_save_metadata_context(
     repo: &RepoPaths,
     semantics_path: &Path,
 ) -> anyhow::Result<()> {
-    let metadata_context = Arc::clone(&METADATA_CONTEXT);
-    let mut metadata_cache = metadata_context.lock().await;
-
     let mut metadata = String::new();
-    let context = generate_context_for_code_review(repo, semantics_path).await?;
-    let protocol_summary = summarize_protocol(repo, Some(&context)).await?;
+
+    // full context
+    let full_context =
+        generate_context_for_code_review(repo, semantics_path, &ContextType::Full).await?;
+    let abridged_context =
+        generate_context_for_code_review(repo, semantics_path, &ContextType::Abridged).await?;
+    let protocol_summary = summarize_protocol(repo, Some(&full_context)).await?;
 
     metadata.push_str(&format!(
         "\n## PROTOCOL OVERVIEW:\n\n{}\n\n",
         protocol_summary
     ));
-    metadata.push_str(&context);
 
-    let key = cache_key(&repo.root, "metadata_context");
-    metadata_cache.insert(key, metadata);
+    let metadata_context = Arc::clone(&METADATA_CONTEXT);
+    let mut metadata_cache = metadata_context.lock().await;
+
+    // saving full context
+    metadata_cache.insert(
+        get_context_key(repo, &ContextType::Full),
+        format!("{}{}", metadata, full_context),
+    );
+
+    // saving abridge context
+    metadata_cache.insert(
+        get_context_key(repo, &ContextType::Abridged),
+        format!("{}{}", metadata, abridged_context),
+    );
     Ok(())
 }
 
@@ -62,11 +87,10 @@ pub async fn generate_and_save_metadata_context(
 ///
 /// # Returns
 /// * `String` - Cached protocol metadata context
-pub async fn get_metadata_context(repo: &RepoPaths) -> Option<String> {
+pub async fn get_metadata_context(repo: &RepoPaths, context_type: &ContextType) -> Option<String> {
+    let key = get_context_key(repo, context_type);
     let metadata_context = Arc::clone(&METADATA_CONTEXT);
     let metadata_cache = metadata_context.lock().await;
-    let key = cache_key(&repo.root, "metadata_context");
-
     // Return cached output if exists
     metadata_cache.get(&key).cloned()
 }
@@ -74,6 +98,7 @@ pub async fn get_metadata_context(repo: &RepoPaths) -> Option<String> {
 pub async fn generate_context_for_code_review(
     repo: &RepoPaths,
     semantics_path: &Path,
+    context_type: &ContextType,
 ) -> Result<String> {
     log::info!("generate slither metadata");
     let slither_metadata = generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
@@ -82,46 +107,52 @@ pub async fn generate_context_for_code_review(
     let mut full_prompt_context = String::new();
 
     let mut file_summaries = String::new();
-    let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
-    for summary in summaries {
-        file_summaries.push_str(&format!("\n## SUMMARY OF FILE: {}\n", summary.filename));
-        file_summaries.push_str(&summary.summary);
-        file_summaries.push_str("\n\n");
+    if *context_type == ContextType::Full {
+        let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
+        for summary in summaries {
+            file_summaries.push_str(&format!("\n## SUMMARY OF FILE: {}\n", summary.filename));
+            file_summaries.push_str(&summary.summary);
+            file_summaries.push_str("\n\n");
+        }
+        full_prompt_context.push_str(&file_summaries);
+        full_prompt_context.push_str(&slither_metadata);
     }
-    full_prompt_context.push_str(&file_summaries);
-    full_prompt_context.push_str(&slither_metadata);
 
     // let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
     let documentation = repo.extract_content_from_docs()?;
-    // let mut doc_summaries = String::new();
-    // for doc_summary in &docs {
-    //     doc_summaries.push_str("\n\n");
-    //     doc_summaries.push_str(&doc_summary.summary);
-    //     doc_summaries.push_str("\n\n");
-    // }
     // adding FULL DOCS not doc_summaries
     full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
     full_prompt_context.push_str(&documentation);
 
-    let config_files_content = repo.extract_content_from_config_files()?;
-    // adding config files: foundry.toml, package.json, etc
-    full_prompt_context.push_str("\n ## CONFIG FILES: \n\n ");
-    full_prompt_context.push_str(&config_files_content);
+    if *context_type == ContextType::Full {
+        let config_files_content = repo.extract_content_from_config_files()?;
+        // adding config files: foundry.toml, package.json, etc
+        full_prompt_context.push_str("\n ## CONFIG FILES: \n\n ");
+        full_prompt_context.push_str(&config_files_content);
+    }
 
     log::info!("documentation full size => {}", documentation.len());
-    log::info!("full prompt context SIZE => {}", full_prompt_context.len());
+    match context_type {
+        ContextType::Full => {
+            log::info!("full prompt context SIZE => {}", full_prompt_context.len());
+        }
+        ContextType::Abridged => {
+            log::info!(
+                "abridge prompt context SIZE => {}",
+                full_prompt_context.len()
+            );
+        }
+    }
 
     Ok(full_prompt_context)
 }
 
 pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
     let key = cache_key(&repo.root, "audit_scope");
-    let cache = Arc::clone(&METADATA_CONTEXT);
-    let mut context_cache = cache.lock().await;
 
     // Return cached output if exists
-    if let Some(cached) = context_cache.get(&key) {
-        return Ok(cached.clone());
+    if let Some(cached) = METADATA_CONTEXT.lock().await.get(&key).cloned() {
+        return Ok(cached);
     }
 
     let audit_scope = repo.extract_content_from_scope_file()?;
@@ -129,6 +160,9 @@ pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
     // 1 . gather IR + storage  (re-use existing function)
     log::info!("get audit scope from file...");
     log::info!("audit scope size => {}", audit_scope.len());
+
+    let cache = Arc::clone(&METADATA_CONTEXT);
+    let mut context_cache = cache.lock().await;
     context_cache.insert(key, audit_scope.clone());
     Ok(audit_scope)
 }
@@ -138,12 +172,10 @@ pub async fn generate_slither_metadata_prompt_context(
     _semantics_path: &Path,
 ) -> Result<String> {
     let key = cache_key(&repo.root, "prompt_context");
-    let cache = Arc::clone(&PROMPT_CONTEXT);
-    let mut context_cache = cache.lock().await;
-
     // Return cached output if exists
-    if let Some(cached) = context_cache.get(&key) {
-        return Ok(cached.clone());
+    // Return cached output if exists
+    if let Some(cached) = PROMPT_CONTEXT.lock().await.get(&key).cloned() {
+        return Ok(cached);
     }
 
     // 1 . gather IR + storage  (re-use existing function)
@@ -151,7 +183,7 @@ pub async fn generate_slither_metadata_prompt_context(
     // let callgraph = callgraph::get_enriched_funcs_and_edges(repo_root, &semantics_path).await?;
     // let inheritance = inheritance::generate_slither_inheritance(repo_root).await?;
     // let contract_summary = run_printer(repo, "contract-summary").await?;
-    let src_file_list = get_all_files_src(repo);
+    let src_file_list = get_all_files_src(repo)?;
     log::info!("src file list => {}", src_file_list);
 
     let mut prompt_context = String::new();
@@ -172,6 +204,9 @@ pub async fn generate_slither_metadata_prompt_context(
         "slither metadata prompt context size ==> {}",
         prompt_context.len()
     );
+
+    let cache = Arc::clone(&PROMPT_CONTEXT);
+    let mut context_cache = cache.lock().await;
     context_cache.insert(key, prompt_context.clone());
     Ok(prompt_context)
 }

@@ -1,3 +1,4 @@
+use crate::llm_review::invariants::{InvariantStatus, InvariantType};
 use log::info;
 /// AI agent and vulnerability type enumerations.
 ///
@@ -6,9 +7,11 @@ use log::info;
 /// and systematic vulnerability detection across 19+ security categories.
 use schemars::JsonSchema;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     invariant_prompts::{
         arithmetic::ARITHMETIC, balance::BALANCE, permission::PERMISSION, referential::REFERENTIAL,
         state_machine::STATE_MACHINE, temporal::TEMPORAL,
@@ -34,7 +37,7 @@ use rig::{
     extractor::Extractor,
     providers::{
         anthropic, deepseek, gemini,
-        openai::{self, O3},
+        openai::{self},
     },
 };
 
@@ -45,19 +48,44 @@ use super::{
     prompt_support::{extractor_prompt::EXTRACTOR_AGENT, pre_prompt::PRE_PROMPT},
 };
 
+/// Configuration metadata for AI agents.
+/// Stores the original configuration used to create the agent for pricing calculations.
+#[derive(Debug, Clone, Default)]
+pub struct AgentMetadata {
+    pub model: String,
+    pub temperature: f64,
+    pub service_tier: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub file_picker_enabled: bool,
+    pub file_retrieval_enabled: bool,
+    pub dynamic_context_enabled: bool,
+}
+
 /// Unified AI agent enum supporting multiple LLM providers.
 ///
 /// Provides a common interface for different AI providers while maintaining
 /// provider-specific optimizations and cost tracking capabilities.
 pub enum AIAgent {
     /// Anthropic Claude models (3.7 Sonnet, 4.0 Sonnet)
-    Anthropic(Agent<anthropic::completion::CompletionModel>),
+    Anthropic {
+        agent: Agent<anthropic::completion::CompletionModel>,
+        metadata: AgentMetadata,
+    },
     /// OpenAI models (GPT-4o, O3)
-    Openai(Agent<openai::responses_api::ResponsesCompletionModel>),
+    Openai {
+        agent: Agent<openai::responses_api::ResponsesCompletionModel>,
+        metadata: AgentMetadata,
+    },
     /// Google Gemini models
-    Gemini(Agent<gemini::completion::CompletionModel>),
+    Gemini {
+        agent: Agent<gemini::completion::CompletionModel>,
+        metadata: AgentMetadata,
+    },
     /// DeepSeek models (cost-effective option)
-    Deepseek(Agent<deepseek::CompletionModel>),
+    Deepseek {
+        agent: Agent<deepseek::CompletionModel>,
+        metadata: AgentMetadata,
+    },
 }
 
 /// Unified AI extractor enum for structured data extraction.
@@ -77,7 +105,7 @@ where
 /// ------------------------------------------------------------------
 /// 1.  Strict-typed severity enum
 /// ------------------------------------------------------------------
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
 pub enum Severity {
     Critical,
     High,
@@ -86,23 +114,7 @@ pub enum Severity {
     Info,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
-pub enum InvariantType {
-    Arithmetic,
-    Balance,
-    Permission,
-    Temporal,
-    Referential,
-    StateMachine,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
-pub enum InvariantStatus {
-    HOLDS,
-    VIOLATION,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
 pub enum VulnerabilityType {
     AccessControl,
     ArrayLimits,
@@ -145,17 +157,56 @@ pub enum VulnerabilityType {
     CrossChainMessageSpoofing,
     AccountingInvariantViolation,
     SlippageMissingOrInsufficient,
+    StandardViolation,     // ERC-20/721/1155 spec violations
+    AllowanceRace,         // approve/transferFrom race (ERC-20)
+    PermitDomainSeparator, // EIP-2612/EIP-712 domain mismatch
+    PermitNonceMisuse,     // nonces reused/not checked/incremented
+    PermitDeadlineBypass,  // missing/ignored deadline/expiry
+    ERC20DecimalsMismatch, // decimals/oracle/price math mismatches
+    ERC777HookReentrancy,  // reentrancy via ERC777 hooks
+    ERC4626SharePrice,     // vault exchange-rate/share-price bugs
     Custom,
 }
 
-impl Default for Severity {
-    fn default() -> Self {
-        Severity::Info
-    }
+pub trait EnumString {
+    fn as_str(&self) -> &'static str;
 }
 
-impl Severity {
-    pub fn as_str(self) -> &'static str {
+pub trait EnumData {
+    type Spec;
+    fn to_types(&self) -> &'static [VulnerabilityType];
+    fn get_spec(&self) -> Self::Spec;
+    // get predicate or defintion of patten
+}
+
+pub fn generate_enum_list<T: EnumString>(patterns: &[T]) -> String {
+    let mut enum_list = String::new();
+    let top_pattern_count = patterns.len();
+    for (i, pattern) in patterns.iter().enumerate() {
+        enum_list.push_str(pattern.as_str());
+        if i < top_pattern_count - 1 {
+            enum_list.push_str("|");
+        }
+    }
+    enum_list
+}
+
+pub fn generate_enum_bulleted_list<T: EnumString>(patterns: &[T]) -> String {
+    let mut enum_list = String::new();
+    enum_list.push_str("\n");
+    for pattern in patterns {
+        enum_list.push_str(&format!("- {}", pattern.as_str()));
+        enum_list.push_str("\n");
+    }
+    enum_list
+}
+
+pub fn all_enum_variants<T: IntoEnumIterator>() -> Vec<T> {
+    T::iter().collect()
+}
+
+impl EnumString for Severity {
+    fn as_str(&self) -> &'static str {
         match self {
             Severity::Critical => "Critical",
             Severity::High => "High",
@@ -164,20 +215,10 @@ impl Severity {
             Severity::Info => "Info",
         }
     }
-
-    pub fn as_initial(self) -> &'static str {
-        match self {
-            Severity::Critical => "C",
-            Severity::High => "H",
-            Severity::Medium => "M",
-            Severity::Low => "L",
-            Severity::Info => "I",
-        }
-    }
 }
 
-impl InvariantType {
-    pub fn as_str(self) -> &'static str {
+impl EnumString for InvariantType {
+    fn as_str(&self) -> &'static str {
         match self {
             InvariantType::Arithmetic => "Arithmetic",
             InvariantType::Balance => "Balance",
@@ -187,185 +228,19 @@ impl InvariantType {
             InvariantType::StateMachine => "StateMachine",
         }
     }
+}
 
-    pub fn get_prompt(self) -> &'static str {
+impl EnumString for InvariantStatus {
+    fn as_str(&self) -> &'static str {
         match self {
-            InvariantType::Arithmetic => ARITHMETIC,
-            InvariantType::Balance => BALANCE,
-            InvariantType::Permission => PERMISSION,
-            InvariantType::Temporal => TEMPORAL,
-            InvariantType::Referential => REFERENTIAL,
-            InvariantType::StateMachine => STATE_MACHINE,
+            InvariantStatus::Holds => "Holds",
+            InvariantStatus::PossibleViolation => "PossibleViolation",
         }
     }
 }
 
-impl InvariantStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            InvariantStatus::HOLDS => "Holds",
-            InvariantStatus::VIOLATION => "Violation",
-        }
-    }
-}
-
-impl AIAgent {
-    pub async fn extract_with_retry<T>(&self, prompt: &str) -> anyhow::Result<T>
-    where
-        T: DeserializeOwned,
-    {
-        match self {
-            AIAgent::Anthropic(model) => Ok(agent_extract_with_retry::<_, T>(
-                model,
-                prompt,
-                LlmCostType::AnthropicClaudeOutput,
-            )
-            .await?),
-            AIAgent::Openai(model) => {
-                Ok(
-                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::OpenaiO3Output)
-                        .await?,
-                )
-            }
-            AIAgent::Gemini(model) => {
-                Ok(
-                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::GeminiOutput)
-                        .await?,
-                )
-            }
-            AIAgent::Deepseek(model) => {
-                Ok(
-                    agent_extract_with_retry::<_, T>(model, prompt, LlmCostType::DeepseekOutput)
-                        .await?,
-                )
-            }
-        }
-    }
-    pub async fn get_prompt_then_extract_with_retry<T>(
-        &self,
-        prompt: &str,
-        repo: &RepoPaths,
-    ) -> anyhow::Result<T>
-    where
-        T: DeserializeOwned,
-    {
-        match self {
-            AIAgent::Anthropic(model) => {
-                self.run_analysis_and_extract(
-                    model,
-                    prompt,
-                    repo,
-                    LlmCostType::AnthropicClaudeOutput,
-                )
-                .await
-            }
-
-            AIAgent::Openai(model) => {
-                self.run_analysis_and_extract(model, prompt, repo, LlmCostType::OpenaiO3Output)
-                    .await
-            }
-            AIAgent::Gemini(model) => {
-                self.run_analysis_and_extract(model, prompt, repo, LlmCostType::GeminiOutput)
-                    .await
-            }
-            AIAgent::Deepseek(model) => {
-                self.run_analysis_and_extract(model, prompt, repo, LlmCostType::DeepseekOutput)
-                    .await
-            }
-        }
-    }
-
-    async fn run_analysis_and_extract<T, M>(
-        &self,
-        model: &Agent<M>,
-        prompt: &str,
-        repo: &RepoPaths,
-        output_cost_type: LlmCostType,
-    ) -> anyhow::Result<T>
-    where
-        T: DeserializeOwned,
-        M: CompletionModel, // whatever trait `model.prompt()` uses
-    {
-        // 🆕 Create extractor agent
-        let extractor_config = AgentConfig::new(repo.clone()).with_model(O3).with_preamble(
-            "You are an expert at extracting data and converting it into strict JSON.",
-        );
-        let extractor_agent = AgentFactory::create_openai_agent(&extractor_config)?;
-        let extractor = match extractor_agent {
-            AIAgent::Openai(agent) => agent,
-            _ => anyhow::bail!("Unexpected agent type — expected OpenAI"),
-        };
-
-        // 🚀 Run the model
-        info!("submitting for analysis...");
-        log::debug!("Prompt length: {} characters", prompt.len());
-
-        let analysis = match model.prompt(prompt).await {
-            Ok(result) => result,
-            Err(e) => {
-                // ✅ Print the full error details
-                log::error!("Model prompt failed: {:?}", e);
-
-                // Print the error chain to get more details
-                let mut current_error: &dyn std::error::Error = &e;
-                while let Some(source) = current_error.source() {
-                    log::error!("Caused by: {}", source);
-                    current_error = source;
-                }
-
-                // Log additional context for debugging
-                log::error!("Error occurred during model prompt execution");
-                log::error!("This might be caused by:");
-                log::error!("1. Tool call arguments containing invalid JSON characters");
-                log::error!("2. LLM response containing malformed JSON");
-                log::error!("3. Tool output being too large or containing special characters");
-                log::error!("4. Network/API issues");
-
-                // Check if this is a JSON parsing error specifically
-                let error_string = format!("{:?}", e);
-                if error_string.contains("expected value") || error_string.contains("Decode") {
-                    log::error!("🚨 This appears to be a JSON parsing error!");
-                    log::error!("💡 Possible solutions:");
-                    log::error!("   - Reduce tool query complexity");
-                    log::error!("   - Check for special characters in tool arguments");
-                    log::error!("   - Verify tool output sanitization");
-                }
-
-                // Return the error as-is
-                return Err(e.into());
-            }
-        };
-
-        // 📝 Track inference output
-        add_to_inference_cost_by_type(&analysis, output_cost_type).await;
-
-        // 📝 Build extractor prompt
-        let extract_prompt = format!(
-            "{}{}\n\n## SECURITY AUDIT FINDINGS TO CONVERT TO JSON\n\n{}",
-            PRE_PROMPT, EXTRACTOR_AGENT, analysis
-        );
-
-        // 📝 Track inference input
-        add_to_inference_cost_by_type(&extract_prompt, LlmCostType::OpenaiO3Input).await;
-
-        // 🧠 Run extractor with retry
-        Ok(agent_extract_with_retry::<_, T>(
-            &extractor,
-            &extract_prompt,
-            LlmCostType::OpenaiO3Output,
-        )
-        .await?)
-    }
-}
-
-impl Default for VulnerabilityType {
-    fn default() -> Self {
-        VulnerabilityType::Dos
-    }
-}
-
-impl VulnerabilityType {
-    pub fn as_str(self) -> &'static str {
+impl EnumString for VulnerabilityType {
+    fn as_str(&self) -> &'static str {
         match self {
             VulnerabilityType::Oracle => "Oracle",
             VulnerabilityType::AccessControl => "AccessControl",
@@ -409,9 +284,316 @@ impl VulnerabilityType {
             VulnerabilityType::AccountingInvariantViolation => "AccountingInvariantViolation",
             VulnerabilityType::SlippageMissingOrInsufficient => "SlippageMissingOrInsufficient",
             VulnerabilityType::Custom => "Custom",
+            VulnerabilityType::StandardViolation => "StandardViolation",
+            VulnerabilityType::AllowanceRace => "AllowanceRace",
+            VulnerabilityType::PermitDomainSeparator => "PermitDomainSeparator",
+            VulnerabilityType::PermitNonceMisuse => "PermitNonceMisuse",
+            VulnerabilityType::PermitDeadlineBypass => "PermitDeadlineBypass",
+            VulnerabilityType::ERC20DecimalsMismatch => "ERC20DecimalsMismatch",
+            VulnerabilityType::ERC777HookReentrancy => "ERC777HookReentrancy",
+            VulnerabilityType::ERC4626SharePrice => "ERC4626SharePrice",
+        }
+    }
+}
+
+impl Default for Severity {
+    fn default() -> Self {
+        Severity::Info
+    }
+}
+
+impl Severity {
+    pub fn as_initial(&self) -> &'static str {
+        match self {
+            Severity::Critical => "C",
+            Severity::High => "H",
+            Severity::Medium => "M",
+            Severity::Low => "L",
+            Severity::Info => "I",
+        }
+    }
+}
+
+impl InvariantType {
+    pub fn get_prompt(&self) -> &'static str {
+        match self {
+            InvariantType::Arithmetic => ARITHMETIC,
+            InvariantType::Balance => BALANCE,
+            InvariantType::Permission => PERMISSION,
+            InvariantType::Temporal => TEMPORAL,
+            InvariantType::Referential => REFERENTIAL,
+            InvariantType::StateMachine => STATE_MACHINE,
+        }
+    }
+}
+
+impl AIAgent {
+    /// Simple prompt method for text generation
+    pub async fn prompt(&self, prompt: &str) -> anyhow::Result<String> {
+        use rig::completion::Prompt;
+
+        let out = match self {
+            AIAgent::Anthropic { agent, .. } => agent.prompt(prompt).await?,
+            AIAgent::Openai { agent, .. } => agent.prompt(prompt).await?,
+            AIAgent::Gemini { agent, .. } => agent.prompt(prompt).await?,
+            AIAgent::Deepseek { agent, .. } => agent.prompt(prompt).await?,
+        };
+        Ok(out)
+    }
+
+    pub async fn extract_with_retry<T>(&self, prompt: &str) -> anyhow::Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        match self {
+            AIAgent::Anthropic { agent, metadata } => {
+                Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
+            }
+            AIAgent::Openai { agent, metadata } => {
+                Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
+            }
+            AIAgent::Gemini { agent, metadata } => {
+                Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
+            }
+            AIAgent::Deepseek { agent, metadata } => {
+                Ok(agent_extract_with_retry::<_, T>(agent, prompt, metadata).await?)
+            }
+        }
+    }
+    pub async fn get_prompt_then_extract_with_retry<T>(
+        &self,
+        prompt: &str,
+        repo: &RepoPaths,
+    ) -> anyhow::Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        match self {
+            AIAgent::Anthropic { agent, .. } => {
+                self.run_analysis_and_extract(agent, prompt, repo).await
+            }
+
+            AIAgent::Openai { agent, .. } => {
+                self.run_analysis_and_extract(agent, prompt, repo).await
+            }
+            AIAgent::Gemini { agent, .. } => {
+                self.run_analysis_and_extract(agent, prompt, repo).await
+            }
+            AIAgent::Deepseek { agent, .. } => {
+                self.run_analysis_and_extract(agent, prompt, repo).await
+            }
         }
     }
 
+    async fn run_analysis_and_extract<T, M>(
+        &self,
+        model: &Agent<M>,
+        prompt: &str,
+        repo: &RepoPaths,
+    ) -> anyhow::Result<T>
+    where
+        T: DeserializeOwned,
+        M: CompletionModel, // whatever trait `model.prompt()` uses
+    {
+        // 🆕 Create extractor agent
+        let extractor_config = AgentConfig::new(Some(repo.clone()))
+            .with_model("gpt-5")
+            .with_preamble(
+                "You are an expert at extracting data and converting it into strict JSON.",
+            );
+        let extractor_agent = AgentFactory::create_openai_agent(&extractor_config)?;
+        let extractor = match extractor_agent {
+            AIAgent::Openai { agent, .. } => agent,
+            _ => anyhow::bail!("Unexpected agent type — expected OpenAI"),
+        };
+
+        // 🚀 Run the model
+        info!("submitting for analysis...");
+        log::debug!("Prompt length: {} characters", prompt.len());
+
+        // 📝 Track inference INPUT cost (MISSING!)
+        let metadata = match self {
+            AIAgent::Anthropic { metadata, .. } => metadata,
+            AIAgent::Openai { metadata, .. } => metadata,
+            AIAgent::Gemini { metadata, .. } => metadata,
+            AIAgent::Deepseek { metadata, .. } => metadata,
+        };
+        add_to_inference_cost_by_type(prompt, metadata, TokenType::Input).await;
+
+        let analysis = match model.prompt(prompt).await {
+            Ok(result) => result,
+            Err(e) => {
+                // ✅ Print the full error details
+                log::error!("Model prompt failed: {:?}", e);
+
+                // Print the error chain to get more details
+                let mut current_error: &dyn std::error::Error = &e;
+                while let Some(source) = current_error.source() {
+                    log::error!("Caused by: {}", source);
+                    current_error = source;
+                }
+
+                // Log additional context for debugging
+                log::error!("Error occurred during model prompt execution");
+                log::error!("This might be caused by:");
+                log::error!("1. Tool call arguments containing invalid JSON characters");
+                log::error!("2. LLM response containing malformed JSON");
+                log::error!("3. Tool output being too large or containing special characters");
+                log::error!("4. Network/API issues");
+
+                // Check if this is a JSON parsing error specifically
+                let error_string = format!("{:?}", e);
+                if error_string.contains("expected value") || error_string.contains("Decode") {
+                    log::error!("🚨 This appears to be a JSON parsing error!");
+                    log::error!("💡 Possible solutions:");
+                    log::error!("   - Reduce tool query complexity");
+                    log::error!("   - Check for special characters in tool arguments");
+                    log::error!("   - Verify tool output sanitization");
+                }
+
+                // Return the error as-is
+                return Err(e.into());
+            }
+        };
+
+        // 📝 Track inference output
+        let metadata = match self {
+            AIAgent::Anthropic { metadata, .. } => metadata,
+            AIAgent::Openai { metadata, .. } => metadata,
+            AIAgent::Gemini { metadata, .. } => metadata,
+            AIAgent::Deepseek { metadata, .. } => metadata,
+        };
+        add_to_inference_cost_by_type(&analysis, metadata, TokenType::Output).await;
+
+        // 📝 Build extractor prompt
+        let extract_prompt = format!(
+            "{}{}\n\n## SECURITY AUDIT FINDINGS TO CONVERT TO JSON\n\n{}",
+            PRE_PROMPT, EXTRACTOR_AGENT, analysis
+        );
+
+        // 📝 Track inference input
+        // Create metadata for extractor agent (OpenAI GPT-5)
+        let extractor_metadata = AgentMetadata {
+            model: "gpt-5".to_string(),
+            temperature: 0.3,
+            service_tier: None,     // Default service tier for extractor
+            reasoning_effort: None, // Default reasoning effort for extractor
+            file_picker_enabled: false,
+            file_retrieval_enabled: false,
+            dynamic_context_enabled: false,
+        };
+        add_to_inference_cost_by_type(&extract_prompt, &extractor_metadata, TokenType::Input).await;
+
+        // 🧠 Run extractor with retry
+        Ok(
+            agent_extract_with_retry::<_, T>(&extractor, &extract_prompt, &extractor_metadata)
+                .await?,
+        )
+    }
+
+    // Getter methods for pricing calculations and configuration inspection
+
+    /// Gets the model name.
+    pub fn get_model(&self) -> &str {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => &metadata.model,
+            AIAgent::Openai { metadata, .. } => &metadata.model,
+            AIAgent::Gemini { metadata, .. } => &metadata.model,
+            AIAgent::Deepseek { metadata, .. } => &metadata.model,
+        }
+    }
+
+    /// Gets the OpenAI service tier.
+    /// Returns "default" if not explicitly set or not applicable.
+    pub fn get_service_tier(&self) -> &str {
+        match self {
+            AIAgent::Openai { metadata, .. } => {
+                metadata.service_tier.as_deref().unwrap_or("default")
+            }
+            _ => "default", // Non-OpenAI providers don't have service tiers
+        }
+    }
+
+    /// Gets the OpenAI reasoning effort level.
+    /// Returns "medium" if not explicitly set or not applicable.
+    pub fn get_reasoning_effort(&self) -> &str {
+        match self {
+            AIAgent::Openai { metadata, .. } => {
+                metadata.reasoning_effort.as_deref().unwrap_or("medium")
+            }
+            _ => "medium", // Non-OpenAI providers don't have reasoning effort
+        }
+    }
+
+    /// Gets the temperature setting.
+    pub fn get_temperature(&self) -> f64 {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => metadata.temperature,
+            AIAgent::Openai { metadata, .. } => metadata.temperature,
+            AIAgent::Gemini { metadata, .. } => metadata.temperature,
+            AIAgent::Deepseek { metadata, .. } => metadata.temperature,
+        }
+    }
+
+    /// Checks if file picker is enabled.
+    pub fn is_file_picker_enabled(&self) -> bool {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => metadata.file_picker_enabled,
+            AIAgent::Openai { metadata, .. } => metadata.file_picker_enabled,
+            AIAgent::Gemini { metadata, .. } => metadata.file_picker_enabled,
+            AIAgent::Deepseek { metadata, .. } => metadata.file_picker_enabled,
+        }
+    }
+
+    /// Checks if file retrieval is enabled.
+    pub fn is_file_retrieval_enabled(&self) -> bool {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => metadata.file_retrieval_enabled,
+            AIAgent::Openai { metadata, .. } => metadata.file_retrieval_enabled,
+            AIAgent::Gemini { metadata, .. } => metadata.file_retrieval_enabled,
+            AIAgent::Deepseek { metadata, .. } => metadata.file_retrieval_enabled,
+        }
+    }
+
+    /// Checks if dynamic context is enabled.
+    pub fn is_dynamic_context_enabled(&self) -> bool {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => metadata.dynamic_context_enabled,
+            AIAgent::Openai { metadata, .. } => metadata.dynamic_context_enabled,
+            AIAgent::Gemini { metadata, .. } => metadata.dynamic_context_enabled,
+            AIAgent::Deepseek { metadata, .. } => metadata.dynamic_context_enabled,
+        }
+    }
+
+    /// Gets the provider name.
+    pub fn get_provider(&self) -> &'static str {
+        match self {
+            AIAgent::Anthropic { .. } => "anthropic",
+            AIAgent::Openai { .. } => "openai",
+            AIAgent::Gemini { .. } => "gemini",
+            AIAgent::Deepseek { .. } => "deepseek",
+        }
+    }
+
+    /// Gets the complete metadata for pricing calculations and configuration inspection.
+    /// This is the easiest way to get metadata for cost tracking functions.
+    pub fn get_metadata(&self) -> &AgentMetadata {
+        match self {
+            AIAgent::Anthropic { metadata, .. } => metadata,
+            AIAgent::Openai { metadata, .. } => metadata,
+            AIAgent::Gemini { metadata, .. } => metadata,
+            AIAgent::Deepseek { metadata, .. } => metadata,
+        }
+    }
+}
+
+impl Default for VulnerabilityType {
+    fn default() -> Self {
+        VulnerabilityType::Dos
+    }
+}
+
+impl VulnerabilityType {
     pub fn as_fancy_str(self) -> &'static str {
         match self {
             VulnerabilityType::Oracle => "Oracle",
@@ -458,6 +640,14 @@ impl VulnerabilityType {
             VulnerabilityType::AccountingInvariantViolation => "Accounting Invariant Violation",
             VulnerabilityType::SlippageMissingOrInsufficient => "Slippage Missing Or Insufficient",
             VulnerabilityType::Custom => "Unique Custom Issue",
+            VulnerabilityType::StandardViolation => "Standard Violation",
+            VulnerabilityType::AllowanceRace => "Allowance Race",
+            VulnerabilityType::PermitDomainSeparator => "Permit Domain Separator",
+            VulnerabilityType::PermitNonceMisuse => "Permit Nonce Misuse",
+            VulnerabilityType::PermitDeadlineBypass => "Permit Deadline Bypass",
+            VulnerabilityType::ERC20DecimalsMismatch => "ERC20 Decimals Mismatch",
+            VulnerabilityType::ERC777HookReentrancy => "ERC777 Hook Reentrancy",
+            VulnerabilityType::ERC4626SharePrice => "ERC4626 Share Price",
         }
     }
 
@@ -545,11 +735,11 @@ impl<'de> Deserialize<'de> for InvariantStatus {
     {
         let s: String = Deserialize::deserialize(deserializer)?;
         match s.to_ascii_lowercase().as_str() {
-            "holds" => Ok(InvariantStatus::HOLDS),
-            "violation" => Ok(InvariantStatus::VIOLATION),
+            "holds" => Ok(InvariantStatus::Holds),
+            "possibleviolation" => Ok(InvariantStatus::PossibleViolation),
             other => Err(de::Error::unknown_variant(
                 other,
-                &["High", "Medium", "Low", "Info"],
+                &["holds", "possibleviolation"],
             )),
         }
     }
@@ -605,6 +795,14 @@ impl<'de> Deserialize<'de> for VulnerabilityType {
             "crosschainmessagespoofing" => Ok(VulnerabilityType::CrossChainMessageSpoofing),
             "accountinginvariantviolation" => Ok(VulnerabilityType::AccountingInvariantViolation),
             "slippagemissingorinsufficient" => Ok(VulnerabilityType::SlippageMissingOrInsufficient),
+            "standardviolation" => Ok(VulnerabilityType::StandardViolation),
+            "allowancerace" => Ok(VulnerabilityType::AllowanceRace),
+            "permitdomainseparator" => Ok(VulnerabilityType::PermitDomainSeparator),
+            "permitnoncemisuse" => Ok(VulnerabilityType::PermitNonceMisuse),
+            "permitdeadlinebypass" => Ok(VulnerabilityType::PermitDeadlineBypass),
+            "erc20decimalsmismatch" => Ok(VulnerabilityType::ERC20DecimalsMismatch),
+            "erc777hookreentrancy" => Ok(VulnerabilityType::ERC777HookReentrancy),
+            "erc4626shareprice" => Ok(VulnerabilityType::ERC4626SharePrice),
             "custom" => Ok(VulnerabilityType::Custom),
             other => Err(de::Error::unknown_variant(
                 other,
@@ -651,6 +849,14 @@ impl<'de> Deserialize<'de> for VulnerabilityType {
                     "accountinginvariantviolation",
                     "slippagemissingorinsufficient",
                     "custom",
+                    "standardviolation",
+                    "allowancerace",
+                    "permitdomainseparator",
+                    "permitnoncemisuse",
+                    "permitdeadlinebypass",
+                    "erc20decimalsmismatch",
+                    "erc777hookreentrancy",
+                    "erc4626shareprice",
                 ],
             )),
         }

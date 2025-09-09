@@ -57,6 +57,13 @@ pub struct Cli {
     #[arg(long, help = "Use forge --via-ir")]
     pub via_ir: bool,
 
+    /// Force re-clone and rebuild even if a cached workspace exists
+    #[arg(
+        long,
+        help = "Force re-clone and rebuild even if a cached workspace exists"
+    )]
+    pub force_rebuild: bool,
+
     /// Custom build command for `custom` builder
     #[arg(long)]
     pub build_cmd: Option<String>,

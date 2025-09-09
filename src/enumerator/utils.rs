@@ -96,7 +96,8 @@ pub async fn get_hashmap_of_contract_to_functions(
 ) -> anyhow::Result<HashMap<String, Vec<SmartContractFunction>>> {
     // find all main contracts for app (ones in /src)
     info!("grabbing all contracts...");
-    let contracts = contracts_in_source_folder(repo).await?;
+
+    let contracts = contracts_in_source_folder(repo, &ContractScope::All).await?;
 
     if contracts.is_empty() {
         // Either return empty map or error — your call
@@ -232,9 +233,17 @@ async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec
     Ok(storage_map)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ContractScope {
+    All,
+    InScope,
+}
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
-pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>> {
+pub async fn contracts_in_source_folder(
+    repo: &RepoPaths,
+    scope: &ContractScope,
+) -> Result<Vec<String>> {
     if !repo.source_code_folder.exists() {
         anyhow::bail!(
             "no src/ folder found at {},",
@@ -249,21 +258,23 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
     let re = Regex::new(r"(?m)^\s*contract\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     let mut contracts = Vec::<String>::new();
 
-    let in_scope_files: &Vec<PathBuf> = if !scoped_files.is_empty() {
-        &scoped_files
-    } else {
-        &repo
-            .sol_files
-            .iter()
-            .filter(|f| f.starts_with(&repo.source_code_folder))
-            .filter(|f| {
-                !excluded_folders
-                    .iter()
-                    .any(|excluded| f.starts_with(excluded))
-            })
-            .map(|f| f.to_owned())
-            .collect()
-    };
+    let in_scope_files: &Vec<PathBuf> =
+        if !scoped_files.is_empty() && *scope == ContractScope::InScope {
+            &scoped_files
+        } else {
+            &repo
+                .sol_files
+                .iter()
+                .filter(|f| f.starts_with(&repo.source_code_folder))
+                .filter(|f| {
+                    *scope == ContractScope::All
+                        || !excluded_folders
+                            .iter()
+                            .any(|excluded| f.starts_with(excluded))
+                })
+                .map(|f| f.to_owned())
+                .collect()
+        };
 
     for file in in_scope_files {
         // ✅ is in src ?
@@ -275,13 +286,7 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
         if scoped_files.is_empty()
             && file.components().any(|comp| {
                 let part = comp.as_os_str().to_ascii_lowercase();
-                part == "lib"
-                    || part == "library"
-                    || part.to_string_lossy().to_ascii_lowercase().contains("mock")
-                    || part
-                        .to_string_lossy()
-                        .to_ascii_lowercase()
-                        .contains("helper")
+                part.to_string_lossy().to_ascii_lowercase().contains("mock")
             })
         {
             continue;
@@ -329,6 +334,40 @@ pub fn get_function_metadata_from_id(
                         .query_row(
                             "SELECT func_id, project_id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE func_id = ?1 AND project_id = ?2;",
                             [func_id,&repo.project_id],
+                            |row| {
+                                let modifier_str: String = row.get(6)?;
+                                let modifiers: Vec<String> = modifier_str
+                                    .split(',')
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+
+                                Ok(SmartContractFunction {
+                                    id: row.get(0)?,
+                                    project_id: row.get(1)?,
+                                    contract: row.get(2)?,
+                                    name: row.get(3)?,
+                                    ir: row.get(4)?,
+                                    visibility: row.get(5)?,
+                                    modifiers,
+                                    mutability: row.get(7)?,
+                                })
+                            },
+                        )
+                        .optional()?;
+
+    Ok(fn_metadata)
+}
+
+pub fn get_function_metadata_from_contract_plus_fn(
+    contract: &str,
+    fn_interface: &str,
+    semantic_db: &Connection,
+) -> Result<Option<SmartContractFunction>> {
+    let fn_metadata: Option<SmartContractFunction> = semantic_db
+                        .query_row(
+                            "SELECT func_id, project_id, contract, name, ir, visibility, modifiers, mutability FROM functions WHERE contract = ?1 AND name = ?2;",
+                            [contract,fn_interface],
                             |row| {
                                 let modifier_str: String = row.get(6)?;
                                 let modifiers: Vec<String> = modifier_str

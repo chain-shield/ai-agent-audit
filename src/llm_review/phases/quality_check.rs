@@ -3,16 +3,12 @@
 /// This phase performs final quality checks on verified findings and enhances
 /// them with improved details, impact analysis, and mitigation strategies.
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, LlmCostType},
     error::Result,
     llm_review::{
-        config::{Finding, Findings},
-        context_state::get_metadata_context,
+        context_state::{get_metadata_context, ContextType},
         enums::{AIAgent, Severity},
-        prompt_support::{
-            post_qualify::generate_post_qualify, pre_qualify::PRE_QUALIFY,
-            qualify_prompt::QUALIFY_PROMPT,
-        },
+        findings::{Finding, Findings},
+        prompt_support::{post_qualify::generate_post_qualify, qualify_prompt::QUALIFY_PROMPT},
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
     },
@@ -64,11 +60,11 @@ pub async fn execute(
     agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
-    info!("🔍 Phase 4: Quality checking findings...");
+    info!("🔍 Phase 5: Quality checking findings...");
 
     let mut handles = vec![];
-    let findings = Arc::new(findings.dedup().await?);
-    let context = get_metadata_context(repo)
+    let findings = Arc::new(findings);
+    let context = get_metadata_context(repo, &ContextType::Full)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
@@ -96,11 +92,9 @@ pub async fn execute(
                 let prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
                     &arc_findings.findings[i],
-                    PRE_QUALIFY,
                     QUALIFY_PROMPT,
                     &post_qualify,
                 );
-                add_to_inference_cost_by_type(&prompt, LlmCostType::OpenaiO3Input).await;
                 info!("quality checking finding #{}", i + 1);
                 let qualify_checked_finding: VulnerabilityQualityCheck =
                     arc_agent.extract_with_retry(&prompt).await?;
@@ -109,7 +103,7 @@ pub async fn execute(
                 if !quality_check_passed {
                     info!(
                         "{} did not pass quality check ",
-                        arc_findings.findings[i].title(),
+                        arc_findings.findings[i].title,
                     );
                     let updated_finding = Finding {
                         impact: Some(qualify_checked_finding.impact.clone().unwrap_or(
@@ -189,7 +183,7 @@ pub async fn execute(
         .count();
 
     info!(
-        "✅ Phase 4 complete: {} Verified Findings with {} updated findings!",
+        "✅ Phase 5 complete: {} Verified Findings with {} updated findings!",
         qualified_findings.len(),
         num_findings_updated
     );
