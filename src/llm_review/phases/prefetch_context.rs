@@ -5,7 +5,7 @@
 use crate::{
     ai_bot::file_picker::{FilePickerArgs, FilePickerTool, MAX_FILES_PER_CALL},
     config::MAX_FILE_RUNS,
-    cost::cost_data::{add_to_inference_cost_by_agent, TokenType},
+    // cost::cost_data::{add_to_inference_cost_by_agent, TokenType},
     error::Result,
     llm_review::{
         enums::AIAgent,
@@ -87,9 +87,6 @@ pub async fn execute(code: &str, repo: &RepoPaths, agent: &Arc<AIAgent>) -> Resu
 
         handles.push(tokio::spawn(async move {
             let result: Result<()> = async {
-                add_to_inference_cost_by_agent(&file_picker_prompt, &ai_agent, TokenType::Input)
-                    .await;
-
                 let selected_files: SelectedFiles =
                     ai_agent.extract_with_retry(&file_picker_prompt).await?;
 

@@ -3,18 +3,16 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
     error::Result,
     llm_review::{
-        config::{Finding, Findings},
-        context_state::{generate_audit_scope, get_metadata_context},
+        context_state::{generate_audit_scope, get_metadata_context, ContextType},
         enums::AIAgent,
+        findings::{Finding, Findings},
         phases::verify_findings::{
             deserialize_bool_from_str_or_bool, generate_content_plus_context_block,
         },
         prompt_support::{
-            post_verify::POST_IN_SCOPE_VERIFY, pre_verify::PRE_IN_SCOPE_VERIFY,
-            verify_prompt::VERIFY_IN_SCOPE_PROMPT,
+            post_verify::POST_IN_SCOPE_VERIFY, verify_prompt::VERIFY_IN_SCOPE_PROMPT,
         },
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
@@ -45,7 +43,7 @@ pub async fn execute(
     agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
-    info!("🔍 Phase 3: Deduplicating and verifying findings...");
+    info!("🔍 Phase 4: Checking if findings are in Scope...");
     let audit_scope = generate_audit_scope(repo).await?;
 
     // sanity check
@@ -56,7 +54,7 @@ pub async fn execute(
     }
 
     let mut handles = vec![];
-    let context = get_metadata_context(repo)
+    let context = get_metadata_context(repo, &ContextType::Full)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
@@ -91,14 +89,11 @@ pub async fn execute(
                 let instruction_prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
                     &arc_findings[i],
-                    PRE_IN_SCOPE_VERIFY,
                     &verify_prompt_and_scope,
                     POST_IN_SCOPE_VERIFY,
                 );
 
                 // add to cost
-                add_to_inference_cost_by_type(&instruction_prompt, LlmCostType::OpenaiO3Input)
-                    .await;
                 info!("scope checking finding #{}", i + 1);
                 let is_in_scope_struct: InScope =
                     arc_agent.extract_with_retry(&instruction_prompt).await?;
@@ -107,7 +102,7 @@ pub async fn execute(
                 if !is_finding_in_scope {
                     info!(
                         "{} is NOT in scope => {}",
-                        arc_findings[i].title(),
+                        arc_findings[i].title,
                         is_in_scope_struct.why_its_not_in_scope.unwrap_or_default()
                     );
                 }

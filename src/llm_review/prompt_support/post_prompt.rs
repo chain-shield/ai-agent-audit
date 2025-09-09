@@ -1,7 +1,11 @@
 use crate::{
     config::{AuditType, AUDIT_TYPE},
-    llm_review::prompt_support::severity_rubics::{
-        CODE4RENA_SEVERITY_RUBRIC, DEFAULT_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
+    llm_review::{
+        enums::{all_enum_variants, generate_enum_list},
+        findings::PrivilegeLevel,
+        prompt_support::severity_rubics::{
+            CODE4RENA_SEVERITY_RUBRIC, DEFAULT_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
+        },
     },
 };
 
@@ -128,6 +132,7 @@ pub fn generate_post_prompt(contract_name: &str) -> String {
     let comp_audit_issue_type = "AccessControl | Reentrancy | Oracle | PricePrecision | RoundingError | FeeOnTransferAssumption | UncheckedERC20Return | Dos | SignatureReplay | AuthByPass | UntrustedDelegateCall | TimestampManipulation | CrossChainMessageSpoofing | AccountingInvariantViolation | SlippageMissingOrInsufficient | FlashLoanEconomicManipulation";
     let default_issue_type = "AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontrunMev|UpgradeabilityInitializerSafety|PausableEmergencyStop|TimestampDependentLogic|FlashLoanEconomicManipulation|DelegatecallLowLevelOps|SignatureMalleability|EventConsistency|GasGriefBlockLimit|IntegerOverflow";
 
+    let privileges = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
     let issue_type = match AUDIT_TYPE {
         AuditType::Code4rena | AuditType::Sherlock => comp_audit_issue_type,
         AuditType::Client => default_issue_type,
@@ -139,14 +144,16 @@ pub fn generate_post_prompt(contract_name: &str) -> String {
 ### OUTPUT REQUIREMENTS 
 
  **For Every VIOLATION** return:
-1. **Description**: Detailed explanation including vulnerable code snippet 
-2. **Issue Type**: {issue_type}
-3. **Contract**: The exact contract name where vulnerability is found 
-4. **Function**: The exact function name where vulnerability is found, if not applicable return "NA"
-5. **Impact**: Financial and security consequences 
-6. **Proof of Concept**: Step-by-step exploitation scenario 
-7. **Proof of Code**: Complete Foundry unit test demonstrating vulnerability
-8. **Severity**: High/Medium/Low/Info based on table below
+1. **Title**: 200 chars or less audit report friendly title  i.e. DOS due to unbounded loop in <contract_name>.<function_name> bricking withdrawals
+2. **Description**: Detailed explanation including vulnerable code snippet 
+3. **Exploit Type**: {issue_type}
+4. **Privilege**: least privilege that can trigger vulnerability: {privileges}
+4. **Contract**: The exact contract name where vulnerability is found 
+5. **Function**: The exact function name where vulnerability is found, if not applicable return "NA"
+6. **Impact**: Financial and security consequences 
+7. **Proof of Concept**: Step-by-step exploitation scenario 
+8. **Proof of Code**: Complete Foundry unit test demonstrating vulnerability
+9. **Severity**: High/Medium/Low/Info based on table below
 
 {security_rubric}
 
@@ -157,8 +164,10 @@ pub fn generate_post_prompt(contract_name: &str) -> String {
 {{ 
   "findings": [
     {{
+      "title": "200 chars or less audit report friendly title",
       "description": "Detailed explanation if vulnerability including vulnerable code snippet",
-      "issue_type": "{issue_type}",
+      "exploit_type": "{issue_type}",
+      "privilege": "{privileges}",
       "contract": "{contract_name}", 
       "function": "<Function>", 
       "impact": "Business and security consequences of the vulnerability",

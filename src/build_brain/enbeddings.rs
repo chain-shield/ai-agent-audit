@@ -6,10 +6,10 @@
 use anyhow::Result;
 use log::info;
 use rig::{
-    client::EmbeddingsClient,
+    Embed,
+    client::{EmbeddingsClient, ProviderClient},
     embeddings::EmbeddingsBuilder,
     providers::openai::{self, Client},
-    Embed,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
@@ -172,8 +172,7 @@ pub async fn embed_files(paths: &[impl AsRef<Path>]) -> Result<Vec<(SourceChunk,
     // ------------------------------------------------------------------
     // 2. Pick an embedding model once
     // ------------------------------------------------------------------
-    let api_key = std::env::var("OPENAI_API_KEY")?;
-    let openai = Client::new(&api_key);
+    let openai = Client::from_env();
 
     // 1536‑dim “storage‑optimised” v3 model
     let model = openai.embedding_model(openai::TEXT_EMBEDDING_3_SMALL);

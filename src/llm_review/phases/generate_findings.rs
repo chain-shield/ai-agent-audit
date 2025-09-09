@@ -3,13 +3,12 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::{AUDIT_TYPE, AuditType},
-    cost::cost_data::{LlmCostType, add_to_inference_cost_by_type},
+    config::{AuditType, AUDIT_TYPE, DISCOVERY_RUNS},
     error::Result,
     llm_review::{
-        config::{Findings, generated_llm_prompt},
-        context_state::{generate_audit_scope, get_metadata_context},
+        context_state::{generate_audit_scope, get_metadata_context, ContextType},
         enums::AIAgent,
+        findings::{generated_llm_prompt, Findings},
         prompt_support::{post_prompt::generate_post_prompt, pre_prompt::generate_pre_prompt},
     },
     master_prompts::{code4rena::CODE4RENA_PROMPT, prompt_2x_aa::PROMPT_2X_AA},
@@ -26,7 +25,8 @@ use tokio::sync::Mutex;
 pub async fn execute(
     contract: &str,
     code: &str,
-    agents: &Vec<Arc<AIAgent>>,
+    // agents: &Vec<Arc<AIAgent>>,
+    arc_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
     info!("🔍 Phase 1: Generating findings from contract codebase...");
@@ -36,7 +36,7 @@ pub async fn execute(
         findings: Vec::new(),
     }));
 
-    let context = get_metadata_context(repo)
+    let context = get_metadata_context(repo, &ContextType::Full)
         .await
         .expect("could not extract context");
 
@@ -52,7 +52,8 @@ pub async fn execute(
         _ => PROMPT_2X_AA,
     };
 
-    for (run, arc_agent) in agents.iter().enumerate() {
+    // for (run, arc_agent) in agents.iter().enumerate() {
+    for run in 0..DISCOVERY_RUNS {
         // PAUSED FOR COMPETITIVE AUDIT, only focused on critical issues in code
         // for (i, prompt) in [PROMPT_2X_AA, PROMPT_2X_BB].into_iter().enumerate() {
         for (i, prompt) in [llm_instructions].into_iter().enumerate() {
@@ -122,17 +123,16 @@ pub async fn run_security_prompt(
     // 1. Build full prompt
     let post_prompt = generate_post_prompt(&contract_name);
     let pre_prompt = generate_pre_prompt(&contract_name);
-    // TODO - add conditional here if its code4rena run then different PRE and POST
     let prompt_header =
         generated_llm_prompt(&contract_name, &instructions, &pre_prompt, &post_prompt);
     let prompt_body = generate_content_plus_context_block(&code, &added_context);
     let full_prompt = format!("{prompt_header}{prompt_body}");
 
-    // add to cost
-    add_to_inference_cost_by_type(&full_prompt, LlmCostType::Openai5Input).await;
-
     // 2. Send to the right provider
-    info!("----LLM analysis Round #{}----", idx_of_review_round);
+    info!(
+        "----{} contract LLM analysis Round #{}----",
+        contract_name, idx_of_review_round
+    );
     let findings: Findings = agent.extract_with_retry(&full_prompt).await?;
 
     let issues_found = findings.findings.len();

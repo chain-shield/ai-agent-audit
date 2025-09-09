@@ -9,3 +9,15 @@ pub fn get_function_name(function_interface: &str) -> String {
     }
     "".to_string()
 }
+
+pub fn string_starts_with_char(fn_name: &str, c: char) -> bool {
+    if let Some(first_char) = fn_name.chars().next() {
+        if first_char == c {
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}

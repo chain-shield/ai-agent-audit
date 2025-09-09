@@ -5,7 +5,8 @@ use std::path::Path;
 
 use crate::{
     config::{CHAINSHIELD_DB_FOLDER, FINDINGS_DB},
-    llm_review::config::{Finding, Findings},
+    llm_review::enums::EnumString,
+    llm_review::findings::{Finding, Findings},
     prepare_code::git_clone::RepoPaths,
 };
 
@@ -100,7 +101,7 @@ impl FindingDb {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             project_id: repo.project_id.clone(),
-            title: finding.title(),
+            title: finding.title.clone(),
             description: finding.description.clone().unwrap_or_default(),
             impact: finding.impact.clone().unwrap_or_default(),
             proof_of_concept: finding.proof_of_concept.clone().unwrap_or_default(),

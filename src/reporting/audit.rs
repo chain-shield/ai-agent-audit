@@ -1,6 +1,13 @@
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use crate::{
     build_brain::summarize,
-    llm_review::{config::Findings, enums::Severity},
+    llm_review::{
+        enums::{EnumString, Severity},
+        findings::{Finding, Findings},
+        utils::prompt_context,
+    },
     prepare_code::git_clone::RepoPaths,
 };
 /// Professional audit report generation with findings categorization.
@@ -18,15 +25,17 @@ const SEVERITIES: [Severity; 5] = [
     Severity::Info,
 ];
 
-/// Report type determines the level of detail included in the audit report
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReportType {
-    /// Limited report with basic findings (excludes high/medium severity details)
-    Free,
-    /// Comprehensive report with full vulnerability details and recommendations
-    Paid,
+#[derive(Debug)]
+pub enum ReportDataType {
+    Summary,
+    Full,
 }
 
+#[derive(Debug)]
+pub enum ReportType {
+    Severity,
+    Pattern,
+}
 /// Generates a comprehensive audit report with findings and protocol analysis.
 ///
 /// Creates a professional Markdown audit report including protocol overview,
@@ -63,7 +72,10 @@ pub async fn generated_audit_report(
 
     audit_report.push_str(&protocol_overview);
 
-    let summary = get_finding_summary(&findings, report_type);
+    let summary = match report_type {
+        ReportType::Severity => get_finding_summary(&findings),
+        ReportType::Pattern => get_finding_summary_by_pattern(&findings, ReportDataType::Summary),
+    };
 
     audit_report.push_str(&summary);
 
@@ -71,28 +83,23 @@ pub async fn generated_audit_report(
 
     audit_report.push_str(&finding_count);
 
-    let findings_report = get_finding_report(&findings, report_type);
+    let findings_report = match report_type {
+        ReportType::Severity => get_full_finding_report(&findings),
+        ReportType::Pattern => get_finding_summary_by_pattern(&findings, ReportDataType::Full),
+    };
 
     audit_report.push_str(&findings_report);
-
-    // let invariants_report = get_invariant_report(invariants);
-    //
-    // audit_report.push_str(&invariants_report);
 
     Ok(audit_report)
 }
 
-fn get_finding_report(findings: &Findings, report_type: ReportType) -> String {
+fn get_full_finding_report(findings: &Findings) -> String {
     let mut findings_report = String::new();
 
     findings_report.push_str("\n");
     for severity in SEVERITIES {
         let report_by_severity = get_finding_report_by_severity(findings, severity);
-        if report_type == ReportType::Paid
-            || (severity != Severity::High && severity != Severity::Medium)
-        {
-            findings_report.push_str(&report_by_severity);
-        }
+        findings_report.push_str(&report_by_severity);
     }
     findings_report.push_str("\n");
 
@@ -107,38 +114,7 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
         findings_report.push_str(&format!("\n# {} Risk Findings\n\n", severity.as_str()));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
-            //title
-            findings_report.push_str(&format!(
-                "## [{}-{}]. {}\n\n",
-                severity.as_initial(),
-                i + 1,
-                finding.title()
-            ));
-
-            //description
-            findings_report.push_str("## Description\n");
-            findings_report.push_str(&finding.description.clone().unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //impact
-            findings_report.push_str("## Impact\n");
-            findings_report.push_str(&finding.impact.clone().unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //POC
-            findings_report.push_str("## Proof of Concept\n");
-            findings_report.push_str(&finding.proof_of_concept.clone().unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //Proof of Code
-            findings_report.push_str("## Proof of Code\n");
-            findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
-            findings_report.push_str("\n\n");
-
-            //Suggested Fix
-            findings_report.push_str("## Suggested Mitigation\n");
-            findings_report.push_str(&finding.mitigation.clone().unwrap_or_default());
-            findings_report.push_str("\n\n");
+            findings_report.push_str(&prompt_context::get_finding_report(finding, Some(i)));
         }
     } else {
         return String::new();
@@ -147,70 +123,12 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
     findings_report
 }
 
-// fn get_invariant_report(invariants: &[ContractInvariants]) -> String {
-//     let mut findings_report = String::new();
-//
-//     let contract_invariants = combine_invariants_for_all_contracts(invariants);
-//
-//     let violations = contract_invariants.get_all_violations();
-//
-//     if !violations.is_empty() {
-//         findings_report.push_str(&format!(
-//             "\n# {} Invariant Violations\n\n",
-//             violations.len()
-//         ));
-//
-//         for (i, violation) in violations.into_iter().enumerate() {
-//             //title
-//             findings_report.push_str(&format!(
-//                 "## {}. {} Violation\n\n",
-//                 i + 1,
-//                 violation.inv_type.as_str(),
-//             ));
-//
-//             //description
-//             findings_report.push_str("## Description\n");
-//             findings_report.push_str(&violation.desc);
-//             findings_report.push_str("\n\n");
-//
-//             //impact
-//             findings_report.push_str("## Impact\n");
-//             findings_report.push_str(&violation.impact.unwrap_or_default());
-//             findings_report.push_str("\n\n");
-//
-//             //POC
-//             findings_report.push_str("## Proof of Concept\n");
-//             findings_report.push_str(&violation.poc.unwrap_or_default());
-//             findings_report.push_str("\n\n");
-//
-//             //Proof of Code
-//             findings_report.push_str("## Pre-State\n");
-//             findings_report.push_str(&violation.pre_state.unwrap_or_default());
-//             findings_report.push_str("\n\n");
-//
-//             //Proof of Code
-//             findings_report.push_str("## Post-State\n");
-//             findings_report.push_str(&violation.post_state.unwrap_or_default());
-//             findings_report.push_str("\n\n");
-//
-//             //Suggested Fix
-//             findings_report.push_str("## Suggested Mitigation\n");
-//             findings_report.push_str(&violation.mitigation.unwrap_or_default());
-//             findings_report.push_str("\n\n");
-//         }
-//     } else {
-//         return String::new();
-//     }
-//     findings_report.push_str("\n");
-//     findings_report
-// }
-//
-fn get_finding_summary(findings: &Findings, report_type: ReportType) -> String {
+fn get_finding_summary(findings: &Findings) -> String {
     let mut findings_summary = String::new();
 
     findings_summary.push_str("\n");
     for severity in SEVERITIES {
-        let summary_for_severity = get_finding_summary_by_severity(findings, severity, report_type);
+        let summary_for_severity = get_finding_summary_by_severity(findings, severity);
         findings_summary.push_str(&summary_for_severity);
     }
     findings_summary.push_str("\n");
@@ -231,32 +149,87 @@ fn get_list_of_issues_by_severity(findings: &Findings) -> String {
     list_severity_count
 }
 
-fn get_finding_summary_by_severity(
-    findings: &Findings,
-    severity: Severity,
-    report_type: ReportType,
-) -> String {
+fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> String {
     let findings_by_severity = findings.filter_by_severity(severity);
     let mut findings_summary = String::new();
 
     if !findings_by_severity.is_empty() {
-        findings_summary.push_str(&format!("## {} Risk Findings\n", severity.as_str()));
+        findings_summary.push_str(&format!("## {} Risk Findings\n\n", severity.as_str()));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
-            let title = if report_type == ReportType::Paid {
-                finding.title()
-            } else {
-                finding.free_report_title()
-            };
             findings_summary.push_str(&format!(
-                "[{}-{}]. {}\n",
+                "[{}-{}]. {}\n\n **Derived From** : {}\n\n",
                 severity.as_initial(),
                 i + 1,
-                title
+                finding.title,
+                &finding.derived_from.clone().unwrap_or_default()
             ));
         }
     } else {
         return String::new();
     }
+    findings_summary
+}
+
+// Cache grouped findings by pattern once to ensure stable ordering across multiple calls
+static FINDINGS_BY_PATTERN_CACHE: OnceLock<Vec<(String, Vec<Finding>)>> = OnceLock::new();
+
+fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataType) -> String {
+    let mut findings_summary = String::new();
+
+    // Initialize the cache once with insertion-order grouping based on the incoming findings
+    // ************************************************************************************
+    let grouped_findings = FINDINGS_BY_PATTERN_CACHE.get_or_init(|| {
+        let mut map: HashMap<String, Vec<Finding>> = HashMap::new();
+        let mut order: Vec<String> = Vec::new();
+
+        for f in findings.findings.iter() {
+            let key = f
+                .derived_from
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string());
+            if !map.contains_key(&key) {
+                order.push(key.clone());
+            }
+            map.entry(key).or_insert_with(Vec::new).push(f.clone());
+        }
+
+        // Rehydrate into a Vec following first-seen key order to keep output stable
+        let mut grouped: Vec<(String, Vec<Finding>)> = Vec::new();
+        for k in order {
+            if let Some(v) = map.remove(&k) {
+                grouped.push((k, v));
+            }
+        }
+        grouped
+    });
+    // ************************************************************************************
+
+    if grouped_findings.is_empty() {
+        return String::new();
+    }
+
+    findings_summary.push_str("##Findings by Pattern\n");
+
+    let mut num = 1;
+    for (pattern, findings_vec) in grouped_findings.iter() {
+        findings_summary.push_str(&format!("\n\n **Derived From** : {}\n\n", pattern));
+        for f in findings_vec {
+            match report_type {
+                ReportDataType::Summary => findings_summary.push_str(&format!(
+                    "[{}-{}]. {}\n",
+                    f.severity.as_initial(),
+                    num,
+                    f.title
+                )),
+                ReportDataType::Full => {
+                    findings_summary.push_str(&prompt_context::get_finding_report(f, Some(num - 1)))
+                }
+            }
+            num += 1;
+        }
+        findings_summary.push_str("\n");
+    }
+
     findings_summary
 }

@@ -22,3 +22,22 @@ Description : {description_b}
 Remember: root-cause means the exact same bug, not just similar wording.
 Answer:
 "#;
+
+pub const DEDUP_PROMPT_PATTERN: &str = r#"
+
+SYSTEM
+You are a Solidity-security triager.  
+Answer with exactly **YES** or **NO** (no punctuation, no prose).
+
+USER
+Are these two reports describing the *same vulnerability pattern or invariant*?
+
+---- REPORT A ----
+{report_a}
+
+---- REPORT B ----
+{report_b}
+
+
+Answer:
+"#;

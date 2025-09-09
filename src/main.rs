@@ -8,12 +8,12 @@ use ai_agent_audit::{
     error::Result,
     llm_review::{
         agent_factory::init_llm_clients,
-        code_review,
+        code_review_v2,
         context_state::{self},
     },
     prepare_code::{self},
     reporting::{
-        audit::{self, ReportType},
+        audit::{self},
         contract_data, save_file,
     },
 };
@@ -48,30 +48,18 @@ async fn main() -> Result<()> {
     // Cli struct contains all info we need to execute audit
     let cli = parse::Cli::parse();
 
-    // Exit early for testing
-    // println!("🔬 Test completed - exiting early for analysis");
-    // return Ok(());
-
-    info!("git cloning and extraction source code");
-
     // Clone repository in Docker container and build with Foundry/Hardhat
     let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli)?;
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
     info!("repo source folder => {:?}", &repo.source_code_folder);
     info!("repo tests => {:?}", &repo.test_files);
+    info!("repo scoped_files => {:?}", &repo.scoped_files);
+    info!("repo auidt scope => {:?}", &repo.audit_scope);
     info!("repo scripts => {:?}", &repo.script_files);
     info!("repo config files => {:?}", &repo.config_files);
     info!("repo docs => {:?}", &repo.docs);
     info!("excluded folders => {:?}", &repo.excluded_folders);
-
-    // let contracts = contracts_in_source_folder(&repo).await?;
-    //
-    // info!("contracts count => {}", contracts.len());
-    // for c in contracts {
-    //     let file = get_file_from_contract(&c, &repo).await?;
-    //     info!("file {} from contract {}", file.display(), c);
-    // }
 
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
@@ -109,26 +97,21 @@ async fn main() -> Result<()> {
     // 5. AI Security Analysis
     // ────────────────────────────────
     // Run multi-LLM security analysis across vulnerability categories
-    let (security_issues, _) =
-        code_review::review_codebase_for_security_issues(&codeblocks_db, &repo).await?;
+    let security_issues =
+        code_review_v2::review_codebase_for_security_issues_v2(&codeblocks_db, &repo).await?;
 
     // ────────────────────────────────
     // 6. Report Generation
     // ────────────────────────────────
     // Generate comprehensive audit report (paid version)
     let audit_report =
-        audit::generated_audit_report(&security_issues, &repo, ReportType::Paid).await?;
-
-    // Generate limited audit report (free version)
-    let free_audit_report =
-        audit::generated_audit_report(&security_issues, &repo, ReportType::Free).await?;
+        audit::generated_audit_report(&security_issues, &repo, audit::ReportType::Pattern).await?;
 
     // ────────────────────────────────
     // 7. File Export & Cleanup
     // ────────────────────────────────
     // Save all reports and analysis data to markdown files
-    save_file::save_audit_report(&audit_report, &repo, ReportType::Paid)?;
-    save_file::save_audit_report(&free_audit_report, &repo, ReportType::Free)?;
+    save_file::save_audit_report(&audit_report, &repo)?;
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
     contract_data::save_metadata(&repo).await?;
 
@@ -138,8 +121,6 @@ async fn main() -> Result<()> {
 
     // save all repoPaths and context to db
     prepare_code::repo_data::save_repo_data_to_db(&repo).await?;
-    // Clean up Docker volumes
-    // cleanup_repo_volume(&repo.root)?;
 
     Ok(())
 }

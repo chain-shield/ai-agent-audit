@@ -269,10 +269,31 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     let docker_volume = format!("{}/{}", audit_config().docker_volume, project_id);
     let docker_path = PathBuf::from(&docker_volume);
 
+    // Derived paths
+    let repo_root = repo_name.split('/').next().unwrap_or(repo_name);
+    let workspace_root = docker_path.join(repo_root);
+    let build_stamp = docker_path.join(".chainshield_build_ok");
+
+    // If we already have a valid workspace and not forcing rebuild, reuse it
+    if docker_path.exists()
+        && build_stamp.exists()
+        && workspace_root.exists()
+        && (workspace_root.join("out").exists() || workspace_root.join("artifacts").exists())
+        && !cli.force_rebuild
+    {
+        log::info!(
+            "Reusing existing workspace (stamp found): {}",
+            docker_path.display()
+        );
+        return Ok(PathBuf::from(docker_volume));
+    }
+
+    // Otherwise, ensure a clean workspace
     if docker_path.exists() {
         log::warn!(
-            "Docker volume {} already exists. Removing for clean build.",
-            docker_path.display()
+            "Rebuilding workspace at {} (force-rebuild={} or invalid stamp)",
+            docker_path.display(),
+            cli.force_rebuild
         );
         fs::remove_dir_all(&docker_path).with_context(|| {
             format!(
@@ -281,19 +302,12 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
             )
         })?;
     }
-    // create docker folder
     fs::create_dir_all(&docker_path)?;
-
-    // if github repo clones to multiple sub folders with different apps
-    // then repo_name will be something like contracts/plume
-    // git clone will clone to contracts (repo_root) and then we cd into plume
-    let repo_root = repo_name.split('/').next().unwrap_or(repo_name);
 
     // Shallow clone for speed and security
     log::info!("git cloning repo...");
 
     let build_command = cli.generate_build_command();
-    // info!("build command detected: {}", build_command);
     let repo_url = &cli.repo;
     let clone_and_build_command = format!(
         "git clone --depth=1 {repo_url} {repo_root} && \
@@ -321,9 +335,19 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
         .context("Failed to clone and build repository in Docker")?;
 
     if !status.success() {
-        // 🔐 Validate the constructed docker volume path
         anyhow::bail!("Clone and Build failed in Docker");
     }
+
+    // On success, stamp the workspace for reuse
+    fs::write(
+        &build_stamp,
+        format!(
+            "project_id={}\nrepo={}\ncommit={}\n",
+            project_id,
+            &cli.repo,
+            &get_commit_hash(&cli.repo)?[..6]
+        ),
+    )?;
 
     Ok(PathBuf::from(docker_volume))
 }

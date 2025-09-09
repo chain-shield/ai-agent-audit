@@ -4,8 +4,9 @@
 /// mechanisms for handling rate limits, network issues, and parsing errors,
 /// while tracking inference costs across different providers.
 use crate::cost::cost_data::add_to_inference_cost_by_type;
-use crate::cost::cost_data::LlmCostType;
-use crate::llm_review::config::FromLLMJson;
+use crate::cost::cost_data::TokenType;
+use crate::llm_review::enums::AgentMetadata;
+use crate::llm_review::findings::FromLLMJson;
 use reqwest::StatusCode;
 use rig::agent::Agent;
 use rig::completion::CompletionError;
@@ -31,7 +32,7 @@ const MAX_ATTEMPTS: usize = 3;
 pub async fn extractor_with_retry<M, T>(
     extractor: &Extractor<M, T>,
     input: &str,
-    llm_cost_type: LlmCostType,
+    metadata: &AgentMetadata,
 ) -> Result<T, ExtractionError>
 where
     M: CompletionModel,
@@ -40,11 +41,12 @@ where
     let delay = Duration::from_millis(500);
 
     for attempt in 1..=MAX_ATTEMPTS {
-        // add to cost
-        add_to_inference_cost_by_type(input, llm_cost_type).await;
+        // NOTE: Input cost is tracked by caller before calling this function
+        // Do NOT track input cost here to avoid double-counting
 
+        add_to_inference_cost_by_type(input, &metadata, TokenType::Input).await;
         match extractor.extract(input).await {
-            Ok(data) => return Ok(data), // ✅ parsed JSON
+            Ok(data) => return Ok(data),
             Err(ExtractionError::NoData) if attempt < MAX_ATTEMPTS => {
                 eprintln!("No data extracted – (attempt {attempt}/{MAX_ATTEMPTS})");
                 thread::sleep(delay);
@@ -59,7 +61,7 @@ where
 pub async fn agent_extract_with_retry<M, T>(
     agent: &Agent<M>,
     input: &str,
-    llm_cost_type: LlmCostType,
+    metadata: &AgentMetadata,
 ) -> Result<T, JsonError>
 where
     M: CompletionModel,
@@ -67,19 +69,25 @@ where
 {
     for attempt in 1..=MAX_ATTEMPTS {
         /* ────── 1. ask the model ───────────────────────────────────────── */
+        // NOTE: Input cost is tracked by caller before calling this function
+        // Do NOT track input cost here to avoid double-counting
+
+        // add cost calc
+        add_to_inference_cost_by_type(input, metadata, TokenType::Input).await;
         let raw = match agent.prompt(input).await {
             Ok(txt) => txt,
             // Convert prompt error to JsonError
             Err(e) if should_retry_prompt_err(&e) && attempt < MAX_ATTEMPTS => {
                 eprintln!("LLM backend busy ({e}) – retry {attempt}/{MAX_ATTEMPTS}");
+                // add to cost (input tokens)
                 continue;
             }
             Err(e) => return Err(JsonError::custom(format!("prompt failed: {e}"))),
         };
         // log::info!("json => {:#?}", raw);
 
-        // add to cost
-        add_to_inference_cost_by_type(&raw, llm_cost_type).await;
+        // add to cost (output tokens)
+        add_to_inference_cost_by_type(&raw, metadata, TokenType::Output).await;
 
         /* ────── 2. try to parse JSON ───────────────────────────────────── */
         match FromLLMJson::parse_from_llm_response(&raw) {
@@ -106,15 +114,36 @@ where
 // Helper function to determine if we should retry based on the original error
 fn should_retry_based_on_error(e: &str) -> bool {
     let error_msg = e.to_string().to_lowercase();
+    const ERR_SUBSTRINGS: &[&str] = &[
+        "server_error",
+        "server error",
+        "status 5", // any 5xx
+        "502 bad gateway",
+        "error occurred while processing your request",
+        "503 service unavailable",
+        "504 gateway timeout",
+        "429 resource unavailable",
+        "too many requests",
+        "rate limit",
+        "timeout",
+        "timed out",
+        "connection reset",
+        "connection refused",
+        "broken pipe",
+        "temporarily unavailable",
+        "upstream error",
+        "unexpected",
+        "invalid",
+        "syntax",
+        "parse",
+        "json",
+        "deserialize",
+    ];
 
-    // Retry on common parsing issues that might be fixed by the LLM on retry
-    error_msg.contains("unexpected")
-        || error_msg.contains("invalid")
-        || error_msg.contains("syntax")
-        || error_msg.contains("parse")
-        || error_msg.contains("json")
-        || error_msg.contains("deserialize")
-    // Add more conditions based on what errors you typically see
+    // if error message contains any of the ERR_SUBSTRINGS then retry
+    ERR_SUBSTRINGS
+        .iter()
+        .any(|needle| error_msg.to_ascii_lowercase().contains(needle))
 }
 
 /*──────────────── helper ───────────────────────────────────────────────*/
