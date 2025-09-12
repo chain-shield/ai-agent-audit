@@ -27,9 +27,9 @@ pub const TOKEN_BUDGET: usize = 120_000;
 
 /// Number of discovery rounds per contract during analysis
 pub const DISCOVERY_RUNS: usize = 2;
-pub const INVARIANT_RUNS: usize = 3;
+pub const INVARIANT_RUNS: usize = 5;
 
-pub const MAX_FILE_RUNS: usize = 3;
+pub const MAX_FILE_RUNS: usize = 5;
 
 pub const MAX_RAG_QUERY_CONTENT_LENGTH: usize = 8192; // 8192 token limit for embedding
 
