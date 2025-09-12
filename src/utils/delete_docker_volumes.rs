@@ -17,8 +17,11 @@ use std::path::Path;
 /// * `root` - Path to the repository root directory to clean up
 ///
 /// # Example
-/// ```
-/// cleanup_repo_volume(&Path::new("/tmp/audit-analysis/my-repo"));
+/// ```ignore
+/// // In application code:
+/// // use std::path::Path;
+/// // use ai_agent_audit::utils::delete_docker_volumes::cleanup_repo_volume;
+/// // cleanup_repo_volume(Path::new("/tmp/audit-analysis/my-repo")).unwrap();
 /// ```
 pub fn cleanup_repo_volume(root: &Path) -> Result<()> {
     if root.exists() {

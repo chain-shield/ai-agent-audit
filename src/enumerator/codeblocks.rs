@@ -51,8 +51,7 @@ pub async fn generate_codeblock_from_codebase(
     let contract_to_func_map = get_hashmap_of_contract_to_functions(repo, semantic_db).await?;
 
     for (contract, functions_of_contract) in contract_to_func_map {
-        // Check if codeblock already generated for this seed
-
+        // Check if codeblock already generated
         log::info!("contract => {:#?}", contract);
         log::info!("fn count of contract => {:#?}", functions_of_contract.len());
         if let Some(_) = get_cached_codeblock(&contract).await {
@@ -101,7 +100,9 @@ pub async fn generate_codeblock_from_codebase(
                 for callee in rows.flatten() {
                     let callee_fn_option =
                         get_function_metadata_from_id(&callee, repo, semantic_db)?;
-                    let Some(callee_fn) = callee_fn_option else { continue };
+                    let Some(callee_fn) = callee_fn_option else {
+                        continue;
+                    };
                     let updated_callee_fn = if callee_fn.ir.is_empty()
                         && string_starts_with_char(&callee_fn.contract, 'I')
                     {
@@ -114,9 +115,9 @@ pub async fn generate_codeblock_from_codebase(
                             semantic_db,
                         )?;
                         if let Some(new_callee) = new_callee_option {
-                            // if new_callee.ir.is_empty() {
-                            //     info!("new callee (no ir): {:#?}", new_callee);
-                            // };
+                            if new_callee.ir.is_empty() {
+                                info!("new callee (no ir): {:#?}", new_callee);
+                            };
                             new_callee
                         } else {
                             callee_fn.clone()
@@ -139,11 +140,45 @@ pub async fn generate_codeblock_from_codebase(
             markdown_codeblock_for_llm.push_str(&storage_var_ir);
             markdown_codeblock_for_llm.push('\n');
         }
+        // let mut library_calls = Vec::<LibCall>::new();
         for func in &all_funcs_connected_to_contract {
             let function_ir_code = generate_codeblock_for_function(func, repo).await?;
+            // check function IR for LIBRARY_CALL
+            // library_calls.extend(collect_library_calls(&function_ir_code));
             markdown_codeblock_for_llm.push_str(&function_ir_code);
             markdown_codeblock_for_llm.push('\n');
         }
+
+        // Deduplicate library calls (by library + canonical_sig)
+        // let total_occurrences = library_calls.len();
+        // let mut seen_pairs = _HashSet::new();
+        // library_calls.retain(|c| seen_pairs.insert((c.library.clone(), c.canonical_sig.clone())));
+        // info!(
+        //     "library calls found: occurrences={}, unique_functions={}",
+        //     total_occurrences,
+        //     library_calls.len()
+        // );
+
+        // // extract IR for library calls if any unique calls remain
+        // if !library_calls.is_empty() {
+        //     let code_for_library_calls = generate_library_funcs_markdown(&library_calls).await;
+        //     // Only append if we actually have emitted function bodies
+        //     if code_for_library_calls.contains("************ CODE FOR ") {
+        //         info!(
+        //             "adding {} library function code snippets to codeblock",
+        //             library_calls.len()
+        //         );
+        //         print_first_n_lines(50, &code_for_library_calls);
+        //         // visual separation before library section
+        //         markdown_codeblock_for_llm.push_str("\n\n---\n\n");
+        //         markdown_codeblock_for_llm.push_str(&code_for_library_calls);
+        //     } else {
+        //         info!("no library code available to append (no matches in mapping)");
+        //     }
+        // } else {
+        //     info!("no library calls detected in IR; skipping library section");
+        // }
+
         info!(
             "markdown codeblock size ==> {:#?}",
             markdown_codeblock_for_llm.len()
