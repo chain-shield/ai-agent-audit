@@ -1,5 +1,5 @@
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use log::info;
 use regex::Regex;
 use rusqlite::params_from_iter;
@@ -13,16 +13,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::enumerator::libraries::ParsedLibrary;
 use crate::enumerator::libraries::generate_library_to_code_mapping;
 use crate::enumerator::libraries::get_library_code_for_library_calls;
+use crate::enumerator::libraries::ParsedLibrary;
 use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
 use crate::utils::get_fn_name::get_function_name;
-use crate::utils::parse_library_file::LibCall;
 use crate::utils::parse_library_file::parse_library_text;
+use crate::utils::parse_library_file::LibCall;
 use crate::{
     build_brain::{
         self,
@@ -336,7 +336,7 @@ pub async fn contracts_in_source_folder(
         // print_first_n_lines(20, &content);
         // parse content for library
         if let Some(library_fn_calls) = parse_library_text(&content) {
-            info!("parsed : {}", library_fn_calls.name);
+            // info!("parsed : {}", library_fn_calls.name);
             libraries.push(library_fn_calls)
         }
 
@@ -434,7 +434,7 @@ mod tests {
     use super::*;
     use crate::enumerator::libraries::generate_library_to_code_mapping;
     use crate::test_support::solidity_mocks::{CONVERSION_SOL, TRANSFERS_SOL};
-    use crate::utils::parse_library_file::{LibCall, parse_library_text};
+    use crate::utils::parse_library_file::{parse_library_text, LibCall};
 
     #[tokio::test(flavor = "current_thread")]
     async fn generate_library_funcs_markdown_emits_expected_sections_deterministically() {

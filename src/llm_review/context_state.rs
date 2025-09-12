@@ -11,8 +11,9 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize::{self, summarize_protocol},
+        summarize,
     },
+    cost::cost_data::get_token_count,
     prepare_code::git_clone::RepoPaths,
 };
 
@@ -49,19 +50,21 @@ pub async fn generate_and_save_metadata_context(
     repo: &RepoPaths,
     semantics_path: &Path,
 ) -> anyhow::Result<()> {
-    let mut metadata = String::new();
+    let metadata = String::new();
 
     // full context
     let full_context =
         generate_context_for_code_review(repo, semantics_path, &ContextType::Full).await?;
     let abridged_context =
         generate_context_for_code_review(repo, semantics_path, &ContextType::Abridged).await?;
-    let protocol_summary = summarize_protocol(repo, Some(&full_context)).await?;
+    // let protocol_summary = summarize_protocol(repo, Some(&full_context)).await?;
 
-    metadata.push_str(&format!(
-        "\n## PROTOCOL OVERVIEW:\n\n{}\n\n",
-        protocol_summary
-    ));
+    // NOTE: excluding protocol summary from context since it dup content now that we are providng
+    // comprehensive docs
+    // metadata.push_str(&format!(
+    //     "\n## PROTOCOL OVERVIEW:\n\n{}\n\n",
+    //     protocol_summary
+    // ));
 
     let metadata_context = Arc::clone(&METADATA_CONTEXT);
     let mut metadata_cache = metadata_context.lock().await;
@@ -131,15 +134,21 @@ pub async fn generate_context_for_code_review(
         full_prompt_context.push_str(&config_files_content);
     }
 
-    log::info!("documentation full size => {}", documentation.len());
+    log::info!(
+        "documentation full token count => {}",
+        get_token_count(&documentation)
+    );
     match context_type {
         ContextType::Full => {
-            log::info!("full prompt context SIZE => {}", full_prompt_context.len());
+            log::info!(
+                "full prompt context token count => {}",
+                get_token_count(&full_prompt_context)
+            );
         }
         ContextType::Abridged => {
             log::info!(
-                "abridge prompt context SIZE => {}",
-                full_prompt_context.len()
+                "abridge prompt context token count => {}",
+                get_token_count(&full_prompt_context)
             );
         }
     }
@@ -159,7 +168,10 @@ pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
 
     // 1 . gather IR + storage  (re-use existing function)
     log::info!("get audit scope from file...");
-    log::info!("audit scope size => {}", audit_scope.len());
+    log::info!(
+        "audit scope token count => {}",
+        get_token_count(&audit_scope)
+    );
 
     let cache = Arc::clone(&METADATA_CONTEXT);
     let mut context_cache = cache.lock().await;
@@ -201,8 +213,8 @@ pub async fn generate_slither_metadata_prompt_context(
     // prompt_context.push_str(&slither_scan_results);
 
     log::info!(
-        "slither metadata prompt context size ==> {}",
-        prompt_context.len()
+        "file list context token count ==> {}",
+        get_token_count(&prompt_context)
     );
 
     let cache = Arc::clone(&PROMPT_CONTEXT);

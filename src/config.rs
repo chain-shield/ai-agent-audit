@@ -22,8 +22,8 @@ pub const AUDIT_TYPE: AuditType = AuditType::Code4rena;
 /// Maximum call graph traversal depth for code slice generation
 pub const MAX_DEPTH: usize = 3;
 
-/// Maximum token budget per code block to stay within LLM context limits
-pub const TOKEN_BUDGET: usize = 150_000;
+/// Maximum token budget per codeblock + context to stay within LLM context limits
+pub const TOKEN_BUDGET: usize = 120_000;
 
 /// Number of discovery rounds per contract during analysis
 pub const DISCOVERY_RUNS: usize = 2;

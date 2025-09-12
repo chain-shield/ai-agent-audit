@@ -1,4 +1,5 @@
 use crate::build_brain::graph_db::SmartContractFunction;
+use crate::cost::cost_data::get_token_count;
 /// Intelligent code slicing for focused AI analysis.
 ///
 /// This module generates contextual code blocks by traversing call graphs and
@@ -180,8 +181,8 @@ pub async fn generate_codeblock_from_codebase(
         // }
 
         info!(
-            "markdown codeblock size ==> {:#?}",
-            markdown_codeblock_for_llm.len()
+            "markdown codeblock token count ==> {:#?}",
+            get_token_count(&markdown_codeblock_for_llm)
         );
 
         let codeblock = MarkdownCodeblock {

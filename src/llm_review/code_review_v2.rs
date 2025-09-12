@@ -1,5 +1,8 @@
+use crate::config::TOKEN_BUDGET;
+use crate::cost::cost_data::get_token_count;
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
+use crate::llm_review::context_state::{get_metadata_context, ContextType};
 use crate::llm_review::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::utils::contract_in_scope::is_contract_in_scope;
 use crate::llm_review::{
@@ -193,12 +196,25 @@ pub async fn enhance_codeblock(
     let filename = file.strip_prefix(&repo.root)?;
     info!("{} contains contract {}", filename.display(), contract);
 
-    let enhanced_block = format!(
-        "{} \n\n {}: \n\n {}",
-        codeblock,
-        filename.display(),
-        file_content
-    );
+    // NOTE: calculate token count of full prompt to make sure does NOT exceed TOKEN_BUDGET
+    let context = get_metadata_context(repo, &ContextType::Full)
+        .await
+        .expect("context could not be retrieved");
+
+    let full_prompt_with_enhancement = format!("{}{}{}", codeblock, &file_content, context);
+    let full_prompt_size = get_token_count(&full_prompt_with_enhancement);
+
+    let enhanced_block = if full_prompt_size < TOKEN_BUDGET {
+        format!(
+            "{} \n\n {}: \n\n {}",
+            codeblock,
+            filename.display(),
+            file_content
+        )
+    } else {
+        info!("NOTE: token limit exceeded ({} tokens > {} limit) for contract {} prompt with enhancement, skipping enhancement",full_prompt_size,TOKEN_BUDGET,contract);
+        codeblock.to_string()
+    };
 
     Ok(enhanced_block)
 }
