@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 use crate::build_brain::inheritance;
 use crate::build_brain::parsers::parse_slithir_contract_summary;
 use crate::build_brain::summarize::summarize_src_files;
+use crate::cost::cost_data::get_token_count;
 use crate::prepare_code::git_clone::RepoPaths;
 
 use super::callgraph;
@@ -350,7 +351,10 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
         text = String::from_utf8_lossy(&out.stderr).into_owned();
     }
 
-    info!("slither analysis complete with size {}", text.len());
+    info!(
+        "slither analysis complete with token count: {}",
+        get_token_count(&text)
+    );
     // Save to cache and return
     printer_cache.insert(key, text.clone());
     Ok(text)
@@ -412,7 +416,11 @@ pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
         ));
     }
 
-    info!("{} printer complete with size {}", printer, text.len());
+    info!(
+        "{} printer complete with token count: {}",
+        printer,
+        get_token_count(&text)
+    );
     // Save to cache and return
     printer_cache.insert(key, text.clone());
     Ok(text)
@@ -438,7 +446,11 @@ pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String>
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
 
     // Save to cache and return
-    info!("{} print complete with size {}", printer, text.len());
+    info!(
+        "{} print complete with token count:  {}",
+        printer,
+        get_token_count(&text)
+    );
     printer_cache.insert(key, text.clone());
 
     Ok(text)
