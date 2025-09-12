@@ -322,6 +322,8 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
         .args([
             "run",
             "--rm",
+            "--user",
+            "root",
             "-v",
             &format!("{}:/workspace", docker_volume),
             "-w",

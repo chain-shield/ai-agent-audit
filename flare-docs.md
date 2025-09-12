@@ -1,8 +1,5 @@
 Title: FAssets | Flare Developer Hub
 
-URL Source: https://dev.flare.network/fassets/overview
-
-Markdown Content:
 FAssets is a trustless, over-collateralized bridge connecting non smart contract networks to Flare. It enables the creation of wrapped tokens (`FAssets`) for assets like BTC, DOGE and XRP. These tokens can participate in Flare's DeFi ecosystem or be redeemed for their original assets.
 
 FAssets are powered by Flare's enshrined data protocols:
@@ -112,9 +109,6 @@ On networks without smart contracts (e.g., XRP Ledger), the Core Vault is a **mu
 
 Title: Minting | Flare Developer Hub
 
-URL Source: https://dev.flare.network/fassets/minting
-
-Markdown Content:
 Minting FAssets is the process of wrapping underlying tokens from connected blockchains into FAssets to be used on the Flare blockchain. Any user can mint FAssets.
 
 Minting Process[​](https://dev.flare.network/fassets/minting#minting-process "Direct link to Minting Process")
@@ -344,9 +338,6 @@ Additionally, when agents create a vault, they can choose not to make it public,
 
 Title: Redemption | Flare Developer Hub
 
-URL Source: https://dev.flare.network/fassets/redemption
-
-Markdown Content:
 Any holder of FAssets can redeem their FAssets for the underlying original asset. To do so, these holders, known as redeemers, send FAssets to the Asset Manager smart contract, and the redeemed amount is paid with the underlying asset from an agent's address.
 
 Redemption Process[​](https://dev.flare.network/fassets/redemption#redemption-process "Direct link to Redemption Process")
@@ -462,9 +453,6 @@ The self-redeemed amount is not limited to a positive integer of lots and can be
 
 Title: Collateral | Flare Developer Hub
 
-URL Source: https://dev.flare.network/fassets/collateral
-
-Markdown Content:
 FAssets collateral is locked in contracts that ensure the minted FAssets can always be redeemed for the underlying assets they represent or compensated by collateral. Along with Flare's native token, FLR, any governance approved ERC-20 token on the Flare blockchain can be used as collateral.
 
 FAssets collateral ensures the security and redemption of minted FAssets by locking collateral in smart contracts. This guarantees that FAssets can either be redeemed for their underlying assets or compensated by collateral. Collateral can include Flare's native token (FLR) and any governance-approved ERC-20 tokens on the Flare blockchain.
@@ -663,9 +651,6 @@ To reduce the likelihood of liquidations because the pool collateral is too low,
 
 Title: Core Vault | Flare Developer Hub
 
-URL Source: https://dev.flare.network/fassets/core-vault
-
-Markdown Content:
 Overview[​](https://dev.flare.network/fassets/core-vault#overview "Direct link to Overview")
 --------------------------------------------------------------------------------------------
 
@@ -834,9 +819,6 @@ It is the key to making cross-chain assets on Flare both **secure** and **effici
 
 Title: Collateral | Flare Developer Hub
 
-URL Source: https://dev.flare.network/fassets/collateral
-
-Markdown Content:
 FAssets collateral is locked in contracts that ensure the minted FAssets can always be redeemed for the underlying assets they represent or compensated by collateral. Along with Flare's native token, FLR, any governance approved ERC-20 token on the Flare blockchain can be used as collateral.
 
 FAssets collateral ensures the security and redemption of minted FAssets by locking collateral in smart contracts. This guarantees that FAssets can either be redeemed for their underlying assets or compensated by collateral. Collateral can include Flare's native token (FLR) and any governance-approved ERC-20 tokens on the Flare blockchain.
@@ -1035,9 +1017,6 @@ To reduce the likelihood of liquidations because the pool collateral is too low,
 
 Title: Operational Parameters | Flare Developer Hub
 
-URL Source: https://dev.flare.network/fassets/operational-parameters
-
-Markdown Content:
 This page lists the current values for the most important parameters of the FAssets system on **Songbird Canary-Network** and **Songbird Testnet Coston**. These values are subject to change as the system is further developed and tested.
 
 Asset Manager Operational Parameters[​](https://dev.flare.network/fassets/operational-parameters#asset-manager-operational-parameters "Direct link to Asset Manager Operational Parameters")
@@ -1217,9 +1196,6 @@ To get the Core Vault settings you need to use the [`IAssetManager`](https://dev
 
 Title: FAssets on Songbird | Flare Developer Hub
 
-URL Source: https://dev.flare.network/fassets/songbird
-
-Markdown Content:
 FAssets on Songbird | Flare Developer Hub
 
 ===============

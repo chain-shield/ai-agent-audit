@@ -64,6 +64,7 @@ pub mod enumerator {
     pub mod codeblock_maker;
     /// Core code slicing functionality
     pub mod codeblocks;
+    pub mod libraries;
     /// Enumeration utilities
     pub mod utils;
 }
@@ -247,6 +248,11 @@ pub mod invariant_prompts {
     pub mod temporal;
 }
 
+#[cfg(test)]
+pub mod test_support {
+    pub mod solidity_mocks;
+}
+
 /// Shared utilities and helper functions
 pub mod utils {
     /// OpenAI tokenizer (BPE) for text chunking
@@ -265,6 +271,7 @@ pub mod utils {
     pub mod get_fn_name;
     /// Logging utilities
     pub mod logging;
+    pub mod parse_library_file;
     /// Text sanitization utilities
     pub mod sanitize;
     pub mod semantic_compare;

@@ -168,18 +168,21 @@ fn detect_project_type(repo: &RepoPaths) -> ProjectType {
 
     // Priority-based detection to handle overlapping configurations
 
-    // 1. Check for hybrid Foundry + Node.js package manager projects
-    if has_foundry && has_package_json && (has_yarn_lock || has_npm_lock || has_pnpm_lock) {
-        // This covers projects that use Foundry for Solidity compilation but npm/yarn for dependencies
-        return ProjectType::FoundryYarn;
-    }
-
-    // 2. Check for Hardhat projects (even if they also have Foundry config)
+    // 1. Prefer explicit Hardhat configuration even if Foundry is also present
     if has_hardhat_config && has_package_json {
         // Hardhat projects typically have package.json and hardhat config
-        // Note: Some projects might have both Hardhat and Foundry, but Hardhat takes precedence
-        // if there's an explicit Hardhat config
+        // Some repos include foundry.toml for tooling; Hardhat should take precedence here
         return ProjectType::Hardhat;
+    }
+
+    // 2. Check for hybrid Foundry + Node.js package manager projects (but not Hardhat)
+    if has_foundry
+        && has_package_json
+        && (has_yarn_lock || has_npm_lock || has_pnpm_lock)
+        && !has_hardhat_config
+    {
+        // Projects that use Foundry for Solidity compilation but npm/yarn for dependencies
+        return ProjectType::FoundryYarn;
     }
 
     // 3. Check for Truffle projects
@@ -206,7 +209,11 @@ fn detect_project_type(repo: &RepoPaths) -> ProjectType {
 }
 
 /// Builds Slither command arguments based on the detected project type.
-fn build_slither_args(repo: &RepoPaths, printer: Option<&str>, json_output: bool) -> Vec<String> {
+pub fn build_slither_args(
+    repo: &RepoPaths,
+    printer: Option<&str>,
+    json_output: bool,
+) -> Vec<String> {
     let project_type = detect_project_type(repo);
     let mut args = vec![
         "run".to_string(),
@@ -217,10 +224,9 @@ fn build_slither_args(repo: &RepoPaths, printer: Option<&str>, json_output: bool
         "/workspace".to_string(),
         "ghcr.io/trailofbits/eth-security-toolbox:nightly".to_string(),
         "slither".to_string(),
-        repo.repo_name.clone(),
     ];
 
-    // Add project-specific arguments
+    // Add project-specific arguments (collect flags first; add target last)
     match project_type {
         ProjectType::Foundry => {
             args.extend([
@@ -230,21 +236,31 @@ fn build_slither_args(repo: &RepoPaths, printer: Option<&str>, json_output: bool
             ]);
         }
         ProjectType::FoundryYarn => {
-            // For hybrid Foundry + Yarn projects, let Slither compile the contracts
-            // since the build artifacts might not be in the expected Foundry format
-            // or the project might need npm dependencies to compile properly
-            log::info!("FoundryYarn project detected - letting Slither handle compilation");
-            // Don't add any ignore-compile flags - let Slither compile from source
+            // Let Slither compile from source (no ignore flags)
         }
         ProjectType::Hardhat => {
-            // Hardhat projects typically compile to artifacts/contracts
-            if repo.root.join(&repo.repo_name).join("artifacts").exists() {
-                args.extend([
-                    "--hardhat-ignore-compile".to_string(),
-                    "--hardhat-artifacts-directory".to_string(),
-                    "artifacts".to_string(),
-                ]);
-            }
+            // Hardhat projects typically compile to artifacts
+            let repo_path = repo.root.join(&repo.repo_name);
+            let artifacts_dir = if repo_path.join("artifacts").exists() {
+                "artifacts"
+            } else if repo_path
+                .join("packages")
+                .join("hardhat")
+                .join("artifacts")
+                .exists()
+            {
+                // handle monorepos like packages/hardhat
+                "packages/hardhat/artifacts"
+            } else {
+                "artifacts"
+            };
+            args.extend([
+                "--compile-force-framework".to_string(),
+                "hardhat".to_string(),
+                "--hardhat-ignore-compile".to_string(),
+                "--hardhat-artifacts-directory".to_string(),
+                artifacts_dir.to_string(),
+            ]);
         }
         ProjectType::Truffle => {
             // Truffle projects typically compile to build/contracts
@@ -300,6 +316,9 @@ fn build_slither_args(repo: &RepoPaths, printer: Option<&str>, json_output: bool
     if json_output {
         args.extend(["--json".to_string(), "-".to_string()]);
     }
+
+    // Add the target (project directory) last; Slither CLI prefers positional at the end
+    args.push(repo.repo_name.clone());
 
     log::info!("Detected project type: {:?}", project_type);
 

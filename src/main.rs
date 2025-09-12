@@ -93,6 +93,10 @@ async fn main() -> Result<()> {
     vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
         .await?;
 
+    // save contract IR and metadata
+    contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
+    contract_data::save_metadata(&repo).await?;
+    return Ok(());
     // ────────────────────────────────
     // 5. AI Security Analysis
     // ────────────────────────────────
@@ -112,8 +116,6 @@ async fn main() -> Result<()> {
     // ────────────────────────────────
     // Save all reports and analysis data to markdown files
     save_file::save_audit_report(&audit_report, &repo)?;
-    contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
-    contract_data::save_metadata(&repo).await?;
 
     // Display total inference cost across all LLM providers
     let total_cost = get_total_inference_cost().await;
