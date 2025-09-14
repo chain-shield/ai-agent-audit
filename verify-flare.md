@@ -1,9 +1,13 @@
 
 ## Issue => Proof Steps
 
-Follow these steps, please
+For this security vulnerability posted above follow these steps, please
 
-1. is the bug IN SCOPE 
+1. is the bug IN SCOPE ?
+Privileged Roles are protected so exploit MUST be permissionless.  Files is scope are defined in scope.txt file, make sure the exploit occurs in one of these files.
+also note : 
+The FAssets system is able to support wrapped tokens for XRP, BTC and DOGE. However, the initial deployment will only have XRP (FXRP) enabled and that will be the sole scope of this audit competition. Any attacks related to FBTC, FDOGE, or UTXO-based logic in general, are out of scope.
+
 if its in scope then...
 2. honest assessment: is bug legit? does protocol have safeguards against it? is it realistic for an attacker to exploit?
 is 'Derived From' pattern/invariant assumption correct? 
@@ -44,25 +48,8 @@ ALSO, carefully consider how likely is this attack to happen? (if highly unlikel
 NEXT
 
 4. 
-ADD PoC test inside of test/c4-poc/PoCLaunchpad.t.sol or test/c4-poc/PoCPerps.t.sol depending on which is has mock assests and contracts we need to interact with for specific PoC test.
+ADD PoC test inside of test folder, COPY PoC-template.ts file, and insert PoC test inside of there utilizing the existing setup and mocks provided please.  Tests must be written in hardhat. 
 
-## Creating a PoC Guide
-
-The project is composed of two core systems; the perpetual CLOB system, and the Launchpad system. Within the codebase, we have introduced two test files (PoCPerps.t.sol & PoCLaunchpad.t.sol) under the test/c4-poc folder that sets up each system with mock implementations to allow PoCs to be constructed in a straightforward manner.
-
-Depending on where the vulnerability lies, Wardens should utilize the correct PoC file alongside the relevant storage entries (i.e. the launchpad in case a launchpad vulnerability is demonstrated etc.).
-
-For a submission to be considered valid, the test case should execute successfully via the following command:
-
-forge test --match-test submissionValidity
-PoCs meant to demonstrate a reverting transaction must utilize the special expect utility functions forge exposes. Failure to do so may result in an invalidation of the submission.
-
-NOTE: do NOT alter the TestBase files.  make all changes in either PoCLuanchpad.t.sol or PoCPerps.t.sol , PoC must be contained in submissionValidity function.
-
-**REQUIREMENTS**: PoC must use state and contracts deployed in Base setup() that are inherited.
-
-
-If PoC tests confirmes issue then...
 
 5. ->
 Please write up full Poc report following poc-proof/readme.md guidelines. 

@@ -1,139 +1,144 @@
 # 2025 08 flare - Findings Report
 ## Commit hash: b703ea27ee98e488d245083c63011cdbf43a74c4
 
+LEGIT HIGHS: H-15, H-17, H-32, H-14a
+LEGIT MEDIUMS: M-7, M-11, M-12, M-13, M-21, M-27, M-30, M-33
+
 ##Findings by Pattern
 
 
  **Derived From** : AssetManager diamond can be re-initialized by anyone (governance takeover)
 
 [H-1]. Unprotected AssetManagerInit.init lets any EOA reset governance/settings and seize diamond control
+- NOT LEGIT 
 
 
 
  **Derived From** : Flash-loanable CR check lets agent end liquidation and withdraw in same tx
 
-[M-2]. Agent can flash-boost CR via updateCollateral to exit liquidation and withdraw announced collateral in same tx
+[M-2]. Agent can flash-boost CR via updateCollateral to exit liquidation and withdraw announced collateral in same tx -- REQUIRES ROLE
 
 
 
  **Derived From** : Diamond initializer never runs due to inverted _init==0 check
 
 [H-3]. Permissionless governance takeover via externally callable init after diamondCut skips initializer
-
+-- NOT LEGIT
 
 
  **Derived From** : Redemption failed path calls finish with invalid status, permanently reverting
 
-[M-4]. Invalid FAILED status passed to Redemptions.finishRedemptionRequest bricks failed confirmations
+[M-4]. Invalid FAILED status passed to Redemptions.finishRedemptionRequest bricks failed confirmations -- NOT LEGIT
 
 
 
  **Derived From** : wNat.balanceOf(address(this)) == totalCollateral
 
-[M-5]. CollateralPool trusts reward/distribution claim return value, desyncing totalCollateral from actual WNat and DoSing exits/payouts
-[M-6]. Unexpected WNat donations desync totalCollateral and DoS upgradeWNatContract() migration
+[M-5]. CollateralPool trusts reward/distribution claim return value, desyncing totalCollateral from actual WNat and DoSing exits/payouts -- NOT LEGIT
+[M-6]. Unexpected WNat donations desync totalCollateral and DoS upgradeWNatContract() migration -- NOT LEGIT
 
 
 
  **Derived From** : FTSO price used without freshness/heartbeat checks for CR and pricing
 
-[M-7]. CollateralPool exits can bypass exit-CR using stale spot oracle via AssetManager.assetPriceNatWei (no max-age) enabling premature withdrawals
+[M-7]. CollateralPool exits can bypass exit-CR using stale spot oracle via AssetManager.assetPriceNatWei (no max-age) enabling premature withdrawals -- LEGIT
 
 
 
  **Derived From** : forall a in holders: debtLockedTokensOf(a) + debtFreeTokensOf(a) == ICollateralPoolToken(token).balanceOf(a)
 
-[H-8]. Overpaying fee debt makes totalFAssetFeeDebt negative, overflows total virtual fees and bricks CollateralPool.exit for everyone
+[H-8]. Overpaying fee debt makes totalFAssetFeeDebt negative, overflows total virtual fees and bricks CollateralPool.exit for everyone -- NOT LEGIT
 
 
 
  **Derived From** : Challenge proofs replayable: reward drains agent as liquidation never starts
 
-[H-9]. Replayable illegalPaymentChallenge lets anyone claim challenger reward repeatedly and drain agent vault
+[H-9]. Replayable illegalPaymentChallenge lets anyone claim challenger reward repeatedly and drain agent vault -- NOT LEGIT
 
 
 
  **Derived From** : on successful return: agent.status == Agent.Status.NORMAL && agent.liquidationStartedAt == 0 && agent.collateralsUnderwater == 0
 
-[H-10]. Full liquidation can be stopped permissionlessly via endLiquidation due to inverted condition in Liquidation.endLiquidationIfHealthy
+[H-10]. Full liquidation can be stopped permissionlessly via endLiquidation due to inverted condition in Liquidation.endLiquidationIfHealthy -- NOT LEGIT
 
 
 
  **Derived From** : (pre.totalCollateral - post.totalCollateral) == ret && (pre.wNatBalance - wNat.balanceOf(address(this))) == ret
 
-[M-11]. exitTo allows sending ETH to WNat, re-wrapping back to pool and desynchronizing accounting (ret != ΔwNat)
+[M-11]. exitTo allows sending ETH to WNat, re-wrapping back to pool and desynchronizing accounting (ret != ΔwNat) -- LEGIT
 
 
 
  **Derived From** : Oracle price used without staleness check to value challenger rewards
 
-[M-12]. Stale FTSO price (no heartbeat) inflates challenger payout via Conversion.currentAmgPriceInTokenWei
+[M-12]. Stale FTSO price (no heartbeat) inflates challenger payout via Conversion.currentAmgPriceInTokenWei -- LEGIT
 
 
 
  **Derived From** : USD5→token conversion skips decimals when no FTSO symbol (mispriced rewards)
 
-[M-13]. Underpaid USD-fixed rewards when vault token has no FTSO symbol: Conversion.convertFromUSD5 ignores token.decimals
+[M-13]. Underpaid USD-fixed rewards when vault token has no FTSO symbol: Conversion.convertFromUSD5 ignores token.decimals -- LEGIT
 
 
 
  **Derived From** : Collateral payout uses untrusted spot price without staleness checks
 
-[M-14]. redeemFromAgentInCollateral uses untrusted spot FTSO price without heartbeat, enabling stale/manipulated price to inflate or short-change collateral payouts
+[H-14a]. redeemFromAgentInCollateral uses untrusted spot FTSO price without heartbeat, enabling stale/manipulated price to inflate or short-change collateral payouts
 
 
 
  **Derived From** : if request.transferToCoreVault == false then (let ev = last RedemptionDefault(agentVault, redeemer, id, underlyingValueUBA, paidC1Wei, paidPoolWei)): (paidC1Wei + paidPoolWei) > 0 && ERC20(Agents.getVaultCollateral(Agent.get(request.agentVault)).token).balanceOf(request.redeemer)_post - _pre == paidC1Wei && IWNat(Globals.getWNat()).balanceOf(request.redeemer)_post - _pre == paidPoolWei; else (Core-Vault) last RedemptionDefault has paidC1Wei == 0 && paidPoolWei == 0
 
-[H-15]. Partial vault payout mis-accounted in redemptionPaymentDefault causes RedemptionDefault event/balance mismatch and underpayment
+** REDO Hs ONES ABOVE **
+[H-15]. Partial vault payout mis-accounted in redemptionPaymentDefault causes RedemptionDefault event/balance mismatch and underpayment -- LEGIT
 
 
 
  **Derived From** : On success: agent.getVaultCollateralToken() == _token && agent.withdrawalAnnouncement(Collateral.Kind.VAULT).allowedAt == 0 && AgentCollateral.collateralRatioBIPS(AgentCollateral.agentVaultCollateralData(agent), agent) >= agent.getVaultCollateral().minCollateralRatioBIPS
 
-[H-16]. switchVaultCollateral can be passed with zero-price feed (infinite CR), enabling unannounced drain of deprecated collateral
+[H-16]. switchVaultCollateral can be passed with zero-price feed (infinite CR), enabling unannounced drain of deprecated collateral -- ROLE REQUIRED
 
 
 
  **Derived From** : sum(execFeeWei for each RedemptionRequested event emitted in this tx) == msg.value - (msg.value % Conversion.GWEI)
 
-[H-17]. Executor fee gets stuck if redeem creates 0 requests (front-of-queue sub‑lot tickets + ticket cap) — fee conservation breaks
+[H-17]. Executor fee gets stuck if redeem creates 0 requests (front-of-queue sub‑lot tickets + ticket cap) — fee conservation breaks -- LEGIT
 
 
 
  **Derived From** : FAsset cleanup block setter lacks role check
 
-[M-18]. Anyone can set FAsset.cleanupBlockNumber, enabling forced checkpoint pruning and breaking snapshot-dependent flows
+[M-18]. Anyone can set FAsset.cleanupBlockNumber, enabling forced checkpoint pruning and breaking snapshot-dependent flows -- NOT LEGIT
 
 
 
  **Derived From** : call reverts if !Agents.isOwner(agent, msg.sender)
 
-[M-19]. Whitelist bypass: non‑whitelisted agent owners can pass selfMint gate due to AgentOwnerRegistry.isWhitelisted using msg.sender
+[M-19]. Whitelist bypass: non‑whitelisted agent owners can pass selfMint gate due to AgentOwnerRegistry.isWhitelisted using msg.sender -- REQUIRES ROLE
 
 
 
  **Derived From** : Let settings = Globals.getSettings(). If settings.mintingCapAMG > 0 then post(AssetManagerState.get().totalReservedCollateralAMG) + Conversion.convertUBAToAmg(IERC20(settings.fAsset).totalSupply()) <= settings.mintingCapAMG
 
-[M-20]. Global minting cap can be exceeded due to floor rounding of pool-fee AMG in reserveCollateral
+[M-20]. Global minting cap can be exceeded due to floor rounding of pool-fee AMG in reserveCollateral -- NOT LEGIT
 
 
 
  **Derived From** : post.totalCollateral == 0 && post.wNat.balanceOf(address(this)) == 0
 
-[M-21]. Permissionless pool entry DoS prevents CollateralPool.destroy from ever reaching zero-balance post-state
+[M-21]. Permissionless pool entry DoS prevents CollateralPool.destroy from ever reaching zero-balance post-state -- LEGIT
 
 
 
  **Derived From** : Non‑agent withdrawal confirmation can be DoS’d by reward payout revert
 
-[M-22]. confirmUnderlyingWithdrawal can be DoS’d when AgentPayout/IIAgentVault.payout reverts, blocking third‑party confirmations
+[M-22]. confirmUnderlyingWithdrawal can be DoS’d when AgentPayout/IIAgentVault.payout reverts, blocking third‑party confirmations -- LOW/INFORMATIONAL
 
 
 
  **Derived From** : address(this).balance == 0 && internalWithdrawal == false
 
-[M-23]. Forced native token (ETH/FLR) can brick CollateralPool operations by leaving nonzero balance via selfdestruct
+[M-23]. Forced native token (ETH/FLR) can brick CollateralPool operations by leaving nonzero balance via selfdestruct -- INVALID
 
 
 
@@ -152,66 +157,68 @@
  **Derived From** : On any successful challenge call, after _liquidateAndRewardChallenger returns: Agent.get(_agentVault).status == Agent.Status.FULL_LIQUIDATION && Agent.get(_agentVault).liquidationStartedAt > 0
 
 [H-26]. Full-liquidation start timestamp not set on challenge path enables instant max-premium liquidations
+-- NOT LEGIT
 
 
 
  **Derived From** : (post.totalCollateral == 0 || post.totalCollateral >= MIN_NAT_BALANCE_AFTER_EXIT) && (post.token.totalSupply() == 0 || post.token.totalSupply() >= MIN_TOKEN_SUPPLY_AFTER_EXIT)
 
-[M-27]. Exits can be permanently DoS’ed when pool NAT falls below MIN_NAT_BALANCE_AFTER_EXIT via protocol payout before user exit
+[M-27]. Exits can be permanently DoS’ed when pool NAT falls below MIN_NAT_BALANCE_AFTER_EXIT via protocol payout before user exit -- LEGIT
 
 
 
  **Derived From** : Duplicate-payment challenge can be replayed to drain agent reward
 
-[H-28]. Replayable doublePaymentChallenge pays the same proofs repeatedly due to missing consumption and broken full liquidation guard
+[H-28]. Replayable doublePaymentChallenge pays the same proofs repeatedly due to missing consumption and broken full liquidation guard -- INVALID
 
 
 
  **Derived From** : Full liquidation start time not set on challenge, breaking liquidation timing
 
-[M-29]. startFullLiquidation leaves liquidationStartedAt = 0 when triggered by ChallengesFacet, pushing liquidation premium to max immediately
+[M-29]. startFullLiquidation leaves liquidationStartedAt = 0 when triggered by ChallengesFacet, pushing liquidation premium to max immediately -- INVALID
 
 
 
  **Derived From** : Zero price => infinite CR; liquidation can be skipped/ended via price desync
 
-[M-30]. Zero-price path inflates CR to 1e10 and, via max(ratio,ratioTrusted), suppresses/ends liquidation
+[M-30]. Zero-price path inflates CR to 1e10 and, via max(ratio,ratioTrusted), suppresses/ends liquidation -- LEGIT
 
 
 
  **Derived From** : Whitelist check uses msg.sender instead of parameter, bypassing auth
 
-[M-31]. AgentOwnerRegistry.isWhitelisted uses msg.sender instead of _address, breaking agent onboarding gate
+[M-31]. AgentOwnerRegistry.isWhitelisted uses msg.sender instead of _address, breaking agent onboarding gate -- INVALID
 
 
 
  **Derived From** : totalCollateral == old(totalCollateral) + msg.value
 
 [H-32]. First-entrant share inflation in CollateralPool.enter drains pre-existing pool fees and collateral
-
+-- LEGIT
 
 
  **Derived From** : Emergency pause bypass in executeMinting allows minting while paused
 
-[M-33]. executeMinting lacks pause/attachment gating, allowing mint finalization during emergency pause
+[M-33]. executeMinting lacks pause/attachment gating, allowing mint finalization during emergency pause -- LEGIT
 
 
 
  **Derived From** : Executor can brick mint finalization by reverting on native payout
 
-[L-34]. MintingFacet.executeMinting can be bricked by a reverting executor fallback (griefable native payout DoS)
+[L-34]. MintingFacet.executeMinting can be bricked by a reverting executor fallback (griefable native payout DoS) -- INVALID
 
 
 
  **Derived From** : Anyone can set redemptionPaymentExtensionSeconds via facet init
 
-[M-35]. Permissionless initializer in RedemptionTimeExtensionFacet lets first caller set global redemptionPaymentExtensionSeconds causing system-wide redemption timing DoS
+[M-35]. Permissionless initializer in RedemptionTimeExtensionFacet lets first caller set global redemptionPaymentExtensionSeconds causing system-wide redemption timing DoS -- INVALID
 
 
 
  **Derived From** : Unprotected initializer lets anyone set CoreVault manager and parameters
 
 [M-36]. Permissionless one-time initializer in CoreVaultClientSettingsFacet allows arbitrary CoreVault manager and params to be set
+-- INVALID
 
 
 ### Number of Findings
@@ -601,7 +608,7 @@ Make liquidation exit sticky and multi-block-observed. Options:
 
  **Derived From** : Diamond initializer never runs due to inverted _init==0 check
 
-## [H-3]. Permissionless governance takeover via externally callable init after diamondCut skips initializer
+## [H-3]. Permissionless governance takeover via externally callable init after diamondCut skips initializer -- NOT LEGIT
 
 ## Derived From Pattern/Invariant
 Diamond initializer never runs due to inverted _init==0 check
@@ -1244,7 +1251,7 @@ These changes ensure exits cannot be greenlit by stale or low-quality oracle dat
 
  **Derived From** : forall a in holders: debtLockedTokensOf(a) + debtFreeTokensOf(a) == ICollateralPoolToken(token).balanceOf(a)
 
-## [H-8]. Overpaying fee debt makes totalFAssetFeeDebt negative, overflows total virtual fees and bricks CollateralPool.exit for everyone
+## [H-8]. Overpaying fee debt makes totalFAssetFeeDebt negative, overflows total virtual fees and bricks CollateralPool.exit for everyone -- NOT LEGIT
 
 ## Derived From Pattern/Invariant
 forall a in holders: debtLockedTokensOf(a) + debtFreeTokensOf(a) == ICollateralPoolToken(token).balanceOf(a)
@@ -2027,7 +2034,7 @@ Add unit tests for typical decimals (2, 6, 18).
 
  **Derived From** : Collateral payout uses untrusted spot price without staleness checks
 
-## [M-14]. redeemFromAgentInCollateral uses untrusted spot FTSO price without heartbeat, enabling stale/manipulated price to inflate or short-change collateral payouts
+## [H-14a]. redeemFromAgentInCollateral uses untrusted spot FTSO price without heartbeat, enabling stale/manipulated price to inflate or short-change collateral payouts
 
 ## Derived From Pattern/Invariant
 Collateral payout uses untrusted spot price without staleness checks
@@ -3991,7 +3998,7 @@ Never return a healthy sentinel for zero/invalid prices. In AgentCollateral.coll
 
  **Derived From** : Whitelist check uses msg.sender instead of parameter, bypassing auth
 
-## [M-31]. AgentOwnerRegistry.isWhitelisted uses msg.sender instead of _address, breaking agent onboarding gate
+## [M-31]. AgentOwnerRegistry.isWhitelisted uses msg.sender instead of _address, breaking agent onboarding gate -- INVALID
 
 ## Derived From Pattern/Invariant
 Whitelist check uses msg.sender instead of parameter, bypassing auth
@@ -4357,7 +4364,7 @@ Gate executeMinting consistently with other mint paths: add onlyAttached and not
 
  **Derived From** : Executor can brick mint finalization by reverting on native payout
 
-## [L-34]. MintingFacet.executeMinting can be bricked by a reverting executor fallback (griefable native payout DoS)
+## [L-34]. MintingFacet.executeMinting can be bricked by a reverting executor fallback (griefable native payout DoS) -- INVALID
 
 ## Derived From Pattern/Invariant
 Executor can brick mint finalization by reverting on native payout
