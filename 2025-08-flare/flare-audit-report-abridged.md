@@ -2,13 +2,17 @@
 ## Commit hash: b703ea27ee98e488d245083c63011cdbf43a74c4
 
 LEGIT HIGHS: H-15, H-17, H-32, H-14a
-LEGIT MEDIUMS: M-7, M-11, M-12, M-13, M-21, M-27, M-30, M-33
+LEGIT MEDIUMS: M-7, M-11 u, M-12, M-13 u, M-21, M-27, M-30 u, M-33 u
+
+DUP CHECKS: M-7, M-12 , H-14a
+DUP CHECK: H-15, H-17
+DUP CHECK: M-21,M-27,H-32
 
 ##Findings by Pattern
 
 
-
- **Derived From** : FTSO price used without freshness/heartbeat checks for CR and pricing
+ 
+ **Derived From** : FTSO price used without freshness/heartbeat checks for CR and pricing - ORACLE
 
 [M-7]. CollateralPool exits can bypass exit-CR using stale spot oracle via AssetManager.assetPriceNatWei (no max-age) enabling premature withdrawals -- LEGIT
 

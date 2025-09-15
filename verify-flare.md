@@ -47,6 +47,8 @@ ALSO, carefully consider how likely is this attack to happen? (if highly unlikel
 
 NEXT
 
+now create a PoC test in hardhat for this inside of  test/PoC-stale-prices.ts.  Please utltiize any mocks nad configurations this ts file has alerady provided (required by C4)
+
 4. 
 ADD PoC test inside of test folder, COPY PoC-template.ts file, and insert PoC test inside of there utilizing the existing setup and mocks provided please.  Tests must be written in hardhat. 
 
@@ -56,6 +58,16 @@ Please write up full Poc report following poc-proof/readme.md guidelines.
 Please include FULL runnable PoC we created in this step , as C4 judges will run it.
 Also include full OUTPUT for test 
 
+## WRITE REPORT
+please write up professional C4 submission ready report that includes: title, severity, github link to root cause (with line numbers) , Vulnerability details that incldue Finding description  and inpact, and Mitigation steps
+
+Since we are combining multiple findings this report will be for the root cause, obviously, finding description should explain root cause and subsequent exploits resulting from root cause.
+
+------------------------------------------------------------------
+## DEDUP
+
+Do the these findings have the same root cause? If not, do any 2 of the finding have same root cause?
+Should these be reported in same report for C4? (if have same root cause?)
 
 ------------------------------------------------------------------
 ## REPORT VERIFICATION
