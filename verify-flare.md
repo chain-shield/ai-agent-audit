@@ -47,21 +47,20 @@ ALSO, carefully consider how likely is this attack to happen? (if highly unlikel
 
 NEXT
 
-now create a PoC test in hardhat for this inside of  test/PoC-stale-prices.ts.  Please utltiize any mocks nad configurations this ts file has alerady provided (required by C4)
+now create a PoC test in hardhat for this inside of test/PoC-mint-during-pause.ts. Please utltiize any mocks nad configurations this ts file has alerady provided (required by C4)
 
 4. 
-ADD PoC test inside of test folder, COPY PoC-template.ts file, and insert PoC test inside of there utilizing the existing setup and mocks provided please.  Tests must be written in hardhat. 
 
+For this finding create a PoC test in hardhat for this inside of  test/PoC-zero-price-liquidation.ts.  Please utltiize any mocks and configurations this ts file has already provided (required by C4). . Tests must be written in hardhat.
+
+keep updating and rerunning test until is passes (while maintaining rigirous PoC for issue). use nvm to switch to node 20 to run
 
 5. ->
-Please write up full Poc report following poc-proof/readme.md guidelines. 
-Please include FULL runnable PoC we created in this step , as C4 judges will run it.
-Also include full OUTPUT for test 
-
 ## WRITE REPORT
-please write up professional C4 submission ready report that includes: title, severity, github link to root cause (with line numbers) , Vulnerability details that incldue Finding description  and inpact, and Mitigation steps
+please write up professional C4 submission ready report that includes: title, severity, github link to root cause (with line numbers) , Vulnerability details that include Finding description, proof of concept, impact, and Mitigation steps.
 
-Since we are combining multiple findings this report will be for the root cause, obviously, finding description should explain root cause and subsequent exploits resulting from root cause.
+In Vulnerability Details please add relevant code snippets to corroborate vulnerability. (make sure code snippets do NOT have <augment_code..> tag wrapping them.)
+
 
 ------------------------------------------------------------------
 ## DEDUP
