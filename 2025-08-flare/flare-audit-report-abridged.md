@@ -1,12 +1,12 @@
 # 2025 08 flare - Findings Report
 ## Commit hash: b703ea27ee98e488d245083c63011cdbf43a74c4
 
-LEGIT HIGHS: H-15, H-17, H-32, H-14a
-LEGIT MEDIUMS: M-7, M-11 u, M-12, M-13 u, M-21, M-27, M-30 u, M-33 u
+LEGIT HIGHS: H-15, H-17, H-32, H-14a (DONE)
+LEGIT MEDIUMS: M-7 (DONE), M-11 u, M-12 (DONE), M-13 u, M-21, M-27, M-30 u, M-33 u
 
-DUP CHECKS: M-7, M-12 , H-14a
-DUP CHECK: H-15, H-17
-DUP CHECK: M-21,M-27,H-32
+DUP CHECKS: M-7, M-12 , H-14a ==> report done
+DUP CHECK: H-15, H-17 ==> NOT DUP
+DUP CHECK: M-21,M-27,H-32 ==> NOT DUP
 
 ##Findings by Pattern
 
@@ -15,7 +15,7 @@ DUP CHECK: M-21,M-27,H-32
  **Derived From** : FTSO price used without freshness/heartbeat checks for CR and pricing - ORACLE
 
 [M-7]. CollateralPool exits can bypass exit-CR using stale spot oracle via AssetManager.assetPriceNatWei (no max-age) enabling premature withdrawals -- LEGIT
-
+REPORT DONE
 
 
  **Derived From** : (pre.totalCollateral - post.totalCollateral) == ret && (pre.wNatBalance - wNat.balanceOf(address(this))) == ret
@@ -27,7 +27,7 @@ DUP CHECK: M-21,M-27,H-32
  **Derived From** : Oracle price used without staleness check to value challenger rewards
 
 [M-12]. Stale FTSO price (no heartbeat) inflates challenger payout via Conversion.currentAmgPriceInTokenWei -- LEGIT
-
+REPORT DONE
 
 
  **Derived From** : USD5→token conversion skips decimals when no FTSO symbol (mispriced rewards)
@@ -39,6 +39,8 @@ DUP CHECK: M-21,M-27,H-32
  **Derived From** : Collateral payout uses untrusted spot price without staleness checks
 
 [H-14a]. redeemFromAgentInCollateral uses untrusted spot FTSO price without heartbeat, enabling stale/manipulated price to inflate or short-change collateral payouts  -- LEGIT
+
+REPORT DONE
 
 
 
