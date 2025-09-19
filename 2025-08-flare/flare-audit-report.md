@@ -1,8 +1,12 @@
 # 2025 08 flare - Findings Report
 ## Commit hash: b703ea27ee98e488d245083c63011cdbf43a74c4
 
-LEGIT HIGHS: H-15, H-17, H-32, H-14a
-LEGIT MEDIUMS: M-7, M-11, M-12, M-13, M-21, M-27, M-30, M-33
+LEGIT HIGHS: H-17(DONE), H-32(DONE), H-14a (DONE)
+LEGIT MEDIUMS: M-7 (DONE), M-11 (DONE), M-12 (DONE), M-13,  M-21(DONE), M-27(DONE), M-30(DONE), M-33 (DONE)
+
+DUP CHECKS: M-7, M-12 , H-14a ==> report done _SUBMITTED_
+DUP CHECK: H-15, H-17 ==> NOT DUP
+DUP CHECK: M-21,M-27,H-32 ==> NOT DUP
 
 ##Findings by Pattern
 
