@@ -3,7 +3,7 @@ use crate::config::{CHAINSHIELD_DB_FOLDER, SEMANTIC_DB};
 use crate::enumerator::utils::get_code_ir_map;
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::utils::get_fn_name::get_function_name;
+use crate::utils::get_fn_name::get_function_name_from_interface;
 
 use super::fn_summaries::get_function_summaries;
 use super::graph_db::GraphDb;
@@ -72,7 +72,12 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs, &repo_func)?;
             let func_index: HashMap<(String, String), DotFunc> = funcs_id
                 .into_iter()
-                .map(|node| ((node.contract.clone(), node.name.clone()), node))
+                .map(|node| {
+                    // if node.contract == "GovernedBase" || node.contract == "AssetManagerInit" {
+                    //     info!("node: {:#?} \n", node);
+                    // }
+                    ((node.contract.clone(), node.name.clone()), node)
+                })
                 .collect();
 
             // Get function summaries for metadata
@@ -83,12 +88,16 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             info!("{} function summaries", funcs.len());
             // Insert function metadata into database
             for f in &funcs {
-                let func_name = get_function_name(&f.name);
+                let func_name = get_function_name_from_interface(&f.name);
                 let slither_ir_fn = function_to_ir_map
                     .get(&(f.contract.clone(), func_name.clone()))
                     .cloned()
                     .unwrap_or_default();
                 if let Some(node) = func_index.get(&(f.contract.clone(), func_name)) {
+                    // if f.contract == "GovernedBase" || f.contract == "AssetManagerInit" {
+                    //     info!("node: {:#?} \n", node);
+                    //     info!("IR: {}", slither_ir_fn.ir);
+                    // }
                     rows.push((
                         node.full_id.clone(),
                         &repo_func.project_id,

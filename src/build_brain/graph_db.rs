@@ -8,7 +8,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 
 /// Represents a smart contract function with complete metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SmartContractFunction {
     /// Unique function identifier from Slither
     pub id: String,
