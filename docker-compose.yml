@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.14.0
+    container_name: qdrant
+    ports:
+      - "6333:6333"  # REST API
+      - "6334:6334"  # gRPC API
+    volumes:
+      - /tmp/audit-analysis:/workspace 
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  qdrant_data:
+  sqlite_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /Users/apmfree/chainshield_db
