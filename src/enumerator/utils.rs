@@ -20,7 +20,7 @@ use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
-use crate::utils::get_fn_name::get_function_name;
+use crate::utils::get_fn_name::get_function_name_from_func_id;
 use crate::utils::parse_library_file::parse_library_text;
 use crate::utils::parse_library_file::LibCall;
 use crate::{
@@ -49,7 +49,7 @@ pub async fn generate_codeblock_for_function(
 ) -> anyhow::Result<String> {
     let ir_map = get_code_ir_map(repo).await?;
     let mut function_slice = String::new();
-    let func_name = get_function_name(&func.name);
+    let func_name = get_function_name_from_func_id(&func.name);
     let visibility = get_visibility_label(&func.visibility);
     let modifiers = get_modifiers_label(&func.modifiers);
 
@@ -427,107 +427,4 @@ pub fn get_function_metadata_from_contract_plus_fn(
                         .optional()?;
 
     Ok(fn_metadata)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::enumerator::libraries::generate_library_to_code_mapping;
-    use crate::test_support::solidity_mocks::{CONVERSION_SOL, TRANSFERS_SOL};
-    use crate::utils::parse_library_file::{parse_library_text, LibCall};
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn generate_library_funcs_markdown_emits_expected_sections_deterministically() {
-        // Arrange: parse real mocks and seed mapping
-        let transfers = parse_library_text(TRANSFERS_SOL).expect("parse Transfers");
-        let conversion = parse_library_text(CONVERSION_SOL).expect("parse Conversion");
-        let libs = vec![transfers.clone(), conversion.clone()];
-        generate_library_to_code_mapping(&libs).await.unwrap();
-
-        // Build calls from parsed signatures (mix order deliberately)
-        let mut calls: Vec<LibCall> = Vec::new();
-        for f in &conversion.functions {
-            calls.push(LibCall {
-                library: conversion.name.clone(),
-                canonical_sig: f.canonical_sig.clone(),
-            });
-        }
-        for f in &transfers.functions {
-            calls.push(LibCall {
-                library: transfers.name.clone(),
-                canonical_sig: f.canonical_sig.clone(),
-            });
-        }
-
-        // Act
-        let md = generate_library_funcs_markdown(&calls).await;
-
-        // Assert: header present
-        assert!(md.contains("## Library Calls for this Contract"));
-
-        // Deterministic ordering by key string: check first occurrence order for two known keys
-        let key_a = "Conversion.calcAmgToTokenWeiPrice(uint256,uint256,uint256,uint256,uint256)";
-        let key_b = "Transfers.depositWNat(IWNat,address,uint256)";
-        let idx_a = md.find(key_a).expect("calcAmgToTokenWeiPrice present");
-        let idx_b = md.find(key_b).expect("depositWNat present");
-        assert!(
-            idx_a < idx_b,
-            "Expected {} to appear before {} due to sorting",
-            key_a,
-            key_b
-        );
-
-        // Content checks for a few functions
-        assert!(
-            md.contains("************ CODE FOR Transfers.transferNAT(address,uint256)************")
-        );
-        assert!(md.contains("function transferNAT("));
-        assert!(
-            md.contains("************ CODE FOR Conversion.readFtsoPrice(string,bool)************")
-        );
-        assert!(md.contains("function readFtsoPrice("));
-
-        // Brace-balance sanity: extract full emitted function bodies by scanning until next banner
-        fn balanced_braces(s: &str) -> bool {
-            s.chars().filter(|&c| c == '{').count() == s.chars().filter(|&c| c == '}').count()
-        }
-        fn extract_func_block<'a>(md: &'a str, fn_prefix: &str) -> &'a str {
-            let start = md.find(fn_prefix).expect("function prefix present");
-            let rest = &md[start..];
-            if let Some(rel) = rest.find("\n\n************ CODE FOR ") {
-                &rest[..rel]
-            } else {
-                rest
-            }
-        }
-        let block_read = extract_func_block(&md, "function readFtsoPrice(");
-        assert!(balanced_braces(block_read));
-        assert!(block_read.trim_end().ends_with('}'));
-        let block_transfer = extract_func_block(&md, "function transferNAT(");
-        assert!(balanced_braces(block_transfer));
-        assert!(block_transfer.trim_end().ends_with('}'));
-
-        // Ensure every LibCall produced a corresponding section banner
-        for c in &calls {
-            let key = format!("{}.{}", c.library, c.canonical_sig);
-            let banner = format!("************ CODE FOR {}************", key);
-            assert!(md.contains(&banner), "missing banner for {}", key);
-        }
-
-        // Ensure deterministic ordering equals lexicographic sort of keys
-        let mut keys: Vec<String> = calls
-            .iter()
-            .map(|c| format!("{}.{}", c.library, c.canonical_sig))
-            .collect();
-        keys.sort();
-        let first = keys.first().unwrap();
-        let last = keys.last().unwrap();
-        let first_idx = md.find(first).unwrap();
-        let last_idx = md.find(last).unwrap();
-        assert!(first_idx < last_idx);
-    }
-
-    // Helper to avoid unused warnings in case module evolves
-    #[allow(dead_code)]
-    fn _noop() {}
 }

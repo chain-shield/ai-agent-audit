@@ -44,12 +44,12 @@ pub struct FileSummary {
     pub summary: String,
 }
 
-// pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 300;
-// pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 50;
-// pub const MAX_CHARS_STORAGE_DESC: u16 = 50;
-pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 100;
-pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 20;
-pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
+pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 300;
+pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 50;
+pub const MAX_CHARS_STORAGE_DESC: u16 = 50;
+// pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 100;
+// pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 20;
+// pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
 
 // pub async fn summarize_docs(
 //     repo: &RepoPaths,
@@ -255,7 +255,7 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
     log::info!("generate context for code review");
-    let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, please create a max 4000 word detailed summary of this protocol explaining what it is, and how it works.  Summary should be tailored for getting a crypto security researcher up to speed on the code so they can do a proper security. Format in markdown for easy reading. Respond only with valid JSON matching the schema!";
+    let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, please create a max 4000 word detailed summary of this protocol explaining what it is, and how it works. Format in markdown for easy reading. Respond only with valid JSON matching the schema!";
 
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(O3)
