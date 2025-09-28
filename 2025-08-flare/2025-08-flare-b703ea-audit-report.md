@@ -1,4 +1,4 @@
-# 2025 08 flare - Findings Report
+# 2026 08 flare - Findings Report
 ## Commit hash: b703ea27ee98e488d245083c63011cdbf43a74c4
 
 LEGIT HIGHS: H-15, H-17, H-32, H-14a

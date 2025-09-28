@@ -51,7 +51,7 @@ now create a PoC test in hardhat for this inside of test/PoC-mint-during-pause.t
 
 4. 
 
-For this finding create a PoC test in hardhat for this inside of  test/PoC-zero-price-liquidation.ts.  Please utltiize any mocks and configurations this ts file has already provided (required by C4). . Tests must be written in hardhat.
+For this finding create a PoC test in hardhat for this inside of test/PoC-mint-during-pause.ts. Please utltiize any mocks and configurations this ts file has already provided (required by C4). . Tests must be written in hardhat.
 
 keep updating and rerunning test until is passes (while maintaining rigirous PoC for issue). use nvm to switch to node 20 to run
 

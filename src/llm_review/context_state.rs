@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize,
+        summarize::{self, summarize_protocol},
     },
     cost::cost_data::get_token_count,
     prepare_code::git_clone::RepoPaths,
@@ -50,21 +50,19 @@ pub async fn generate_and_save_metadata_context(
     repo: &RepoPaths,
     semantics_path: &Path,
 ) -> anyhow::Result<()> {
-    let metadata = String::new();
+    let mut metadata = String::new();
 
     // full context
     let full_context =
         generate_context_for_code_review(repo, semantics_path, &ContextType::Full).await?;
     let abridged_context =
         generate_context_for_code_review(repo, semantics_path, &ContextType::Abridged).await?;
-    // let protocol_summary = summarize_protocol(repo, Some(&full_context)).await?;
+    let protocol_summary = summarize_protocol(repo, Some(&full_context)).await?;
 
-    // NOTE: excluding protocol summary from context since it dup content now that we are providng
-    // comprehensive docs
-    // metadata.push_str(&format!(
-    //     "\n## PROTOCOL OVERVIEW:\n\n{}\n\n",
-    //     protocol_summary
-    // ));
+    metadata.push_str(&format!(
+        "\n## PROTOCOL OVERVIEW:\n\n{}\n\n",
+        protocol_summary
+    ));
 
     let metadata_context = Arc::clone(&METADATA_CONTEXT);
     let mut metadata_cache = metadata_context.lock().await;

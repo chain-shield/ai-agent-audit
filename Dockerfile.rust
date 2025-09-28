@@ -1,0 +1,109 @@
+FROM --platform=linux/amd64 rust:1-bookworm
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Base deps
+RUN apt-get update && apt-get install -y \
+  git curl unzip xz-utils ca-certificates \
+  build-essential pkg-config \
+  python3 python3-pip python3-venv \
+  nodejs npm \
+  clang clang-tools lldb lld llvm opt \
+  cmake ninja-build bear \
+  jq ripgrep fd-find file \
+  && rm -rf /var/lib/apt/lists/*
+
+# ---- Rust toolchains (stable already present) + nightly ----
+# Set PATH to include Cargo binaries and run commands
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup toolchain install nightly \
+  && rustup component add rustfmt clippy rust-src --toolchain stable \
+  && rustup component add rustfmt clippy rust-src --toolchain nightly \
+  && cargo install --locked ripgrep_all cargo-call-stack cargo-llvm-lines
+
+# ---- Robust rust-analyzer install: rustup component -> GitHub binary -> build from source ----
+RUN set -eux; \
+  # 1) Try rustup component (preferred)
+  if rustup component add rust-analyzer --toolchain stable; then \
+  RA_PATH="$(rustc --print sysroot)/libexec/rust-analyzer" || true; \
+  if [ -x "$RA_PATH" ]; then install -m 0755 "$RA_PATH" /usr/local/bin/rust-analyzer; fi; \
+  fi; \
+  # 2) If not present, fetch correct arch binary
+  if ! command -v rust-analyzer >/dev/null 2>&1; then \
+  ARCH="$(uname -m)"; \
+  case "$ARCH" in \
+  x86_64)  RA_FILE="rust-analyzer-x86_64-unknown-linux-gnu.gz" ;; \
+  aarch64) RA_FILE="rust-analyzer-aarch64-unknown-linux-gnu.gz" ;; \
+  *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  RA_URL="https://github.com/rust-lang/rust-analyzer/releases/latest/download/${RA_FILE}"; \
+  if curl -fL --retry 5 --retry-all-errors -o /tmp/ra.gz "$RA_URL"; then \
+  test -s /tmp/ra.gz; gunzip -f /tmp/ra.gz; install -m 0755 /tmp/ra /usr/local/bin/rust-analyzer; \
+  fi; \
+  fi; \
+  # 3) Fallback: build from source
+  if ! command -v rust-analyzer >/dev/null 2>&1; then \
+  git clone --depth 1 https://github.com/rust-lang/rust-analyzer /tmp/ra-src; \
+  cd /tmp/ra-src; cargo xtask install --server; \
+  install -m 0755 ~/.cargo/bin/rust-analyzer /usr/local/bin/rust-analyzer; \
+  fi; \
+  rust-analyzer --version || true
+
+# ---- Solana + Anchor ----
+ENV SOLANA_VERSION=1.18.17
+
+# Install Solana from GitHub release tarball (arch-aware; extract directly)
+RUN set -eux; \
+  apt-get update && apt-get install -y --no-install-recommends bzip2 && rm -rf /var/lib/apt/lists/*; \
+  ARCH="$(uname -m)"; \
+  case "$ARCH" in \
+  x86_64)  TRIPLE="x86_64-unknown-linux-gnu" ;; \
+  aarch64) TRIPLE="aarch64-unknown-linux-gnu" ;; \
+  *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  FILE="solana-release-${TRIPLE}.tar.bz2"; \
+  URL="https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/${FILE}"; \
+  curl -fL --retry 5 --retry-all-errors -o /tmp/solana.tar.bz2 "$URL"; \
+  test -s /tmp/solana.tar.bz2; \
+  mkdir -p /opt/solana; \
+  tar -C /opt/solana --strip-components=1 -xjf /tmp/solana.tar.bz2; \
+  rm -f /tmp/solana.tar.bz2; \
+  ln -sf /opt/solana/bin/* /usr/local/bin/; \
+  solana --version
+
+
+# Install Anchor CLI
+RUN npm install -g @coral-xyz/anchor-cli \
+  && anchor --version
+
+# Debug and verify installations
+RUN echo "PATH: $PATH" \
+  && which solana || echo "solana not found in PATH" \
+  && ls -la /usr/local/bin/solana* || echo "No solana symlinks" \
+  && /root/.local/share/solana/install/active_release/bin/solana --version || echo "Direct solana call failed" \
+  && anchor --version
+
+# ---- Go toolchain ----
+ENV GO_VERSION=1.22.5
+RUN curl -fL --retry 5 --retry-all-errors "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz \
+  && tar -C /usr/local -xzf /tmp/go.tgz && rm -f /tmp/go.tgz \
+  && /usr/local/go/bin/go version
+
+ENV PATH=/usr/local/go/bin:$PATH GOPATH=/opt/go
+RUN go install golang.org/x/tools/gopls@latest \
+  && go install honnef.co/go/tools/cmd/staticcheck@latest \
+  && go install github.com/ofabry/go-callvis@latest \
+  && go install golang.org/x/tools/cmd/guru@latest
+
+# ---- CodeQL (optional multi-language) ----
+RUN curl -fL --retry 5 --retry-all-errors \
+  https://github.com/github/codeql-cli-binaries/releases/latest/download/codeql-linux64.zip \
+  -o /tmp/codeql.zip \
+  && unzip /tmp/codeql.zip -d /opt && rm /tmp/codeql.zip
+
+ENV CODEQL=/opt/codeql/codeql
+ENV PATH=$CODEQL:$PATH
+
+# ---- tree-sitter CLI ----
+RUN npm install -g tree-sitter-cli
+
+WORKDIR /workspace

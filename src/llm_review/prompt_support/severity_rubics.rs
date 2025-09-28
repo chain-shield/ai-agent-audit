@@ -1,6 +1,92 @@
 pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 
-| Severity       | Typical Impact 
+# Severity Classifications
+
+## Estimating Risk
+
+**Assets** = funds, NFTs, data, authorization, or private/confidential information.
+
+* **High (3):** Assets can be directly or indirectly stolen, lost, or compromised (with a valid, realistic attack path).
+* **Medium (2):** Assets not directly at risk, but protocol function, availability, or value could be impacted. Requires assumptions or external conditions for exploitation.
+* **QA (Low):** Includes:
+
+  * Low-risk issues (no asset risk, state handling, spec mismatch, comments).
+  * Governance/Centralization risks (admin privileges, trust assumptions).
+  * Non-critical issues (style, clarity, syntax, versioning, monitoring/events).
+
+### Loss of Assets
+
+* **Dust amounts** (rounding errors, marginal fee variations) → QA/Low.
+* **Real amounts** → Severity depends on conditions and likelihood.
+
+### Loss of Yield
+
+* **Matured yield** loss = High (same as capital).
+* **Dust yield** loss = QA/Low.
+* **Unmatured yield/in-motion yield** = capped at Medium.
+
+## Centralization Risks
+
+* Assume assigned roles are trustworthy and act in the protocol’s best interest.
+* Reckless admin mistakes = invalid.
+* Direct misuse of privileges = QA.
+* Bugs only reachable via admin misuse = QA.
+* Privilege escalation = judged by likelihood and impact (up to Medium).
+* Vulnerabilities in privileged functions under reasonable use = up to Medium.
+
+## Unsupported / Non-Standard Tokens
+
+* Non-standard ERC-20 or fee-on-transfer tokens = **out of scope** unless explicitly supported in docs.
+* Exception: **USDT** (in-scope despite non-standard behavior).
+* Judges should invalidate non-compliant findings.
+* Definition of ERC-20 = [Ethereum docs](https://ethereum.org/en/developers/docs/standards/tokens/erc-20/).
+
+## View Functions
+
+* Findings about unused `view` functions = Low (QA) at best.
+
+## Out-of-Scope (OOS) Libraries
+
+* Root cause in OOS contract = OOS.
+* Incorrect use of OOS functionality in in-scope contract = valid, in-scope.
+* Judge discretion applies for edge cases.
+
+## User Mistakes
+
+* Issues requiring careless user input = QA at best, may be invalid.
+* Non-privileged users expected to preview transactions.
+* Phishing and bad user hygiene fall under this rule.
+
+## Speculation on Future Code
+
+* Issues not exploitable within current scope = speculative.
+* Only valid if root cause exists in current code.
+* Wardens may argue likelihood of future code changes making bug manifest.
+* Judges may assign severity based on likelihood and impact.
+* Integrations: assume competent third-party integrator with due diligence.
+
+## Event-Related Impacts
+
+* Faulty events assessed by broader functional impact:
+
+  * Used in bridging/proofs = severity based on function affected.
+  * Non-compliance with EIPs = based on impact.
+  * Cosmetic/readability issues = Low.
+* Front-end display/readability bugs = capped at Low.
+
+## Other Specific Rules
+
+* **Approve race condition:**
+
+  * Approve/safeApprove front-run = **not a valid vulnerability**.
+  * Approve/safeApprove = **not deprecated**.
+  * `increaseAllowance` / `decreaseAllowance` = deprecated, but usage is not a finding.
+
+"#;
+
+pub const CODE4RENA_SEVERITY_RUBRIC_OLD: &str = r#"
+
+ Severity       | Typical Impact 
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **High**       | **Direct, permissionless monetary or control loss**:  
 - Permanent theft/drain of funds (vault, pool, treasury)  
@@ -24,6 +110,7 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 - Edge-case DoS (requires attacker to burn gas, little systemic impact)  
 - Mild precision drift (rounding pennies, no extractable gain)  
 - Best-practice deviations (reentrancy guard missing but no impact, unchecked SafeERC20 return that only causes revert)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+- User mistake: avoidable self-loss with no attacker profit or protocol risk (e.g., sending ETH to non-productive path with no refund), mitigable via pre-checks or documented constraints.
 
 | **Gas / Info** | **Non-payable noise**:  
 - Gas optimizations  
