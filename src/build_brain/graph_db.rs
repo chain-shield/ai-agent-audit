@@ -4,7 +4,7 @@
 /// smart contract semantic data including functions, call relationships, and
 /// inheritance hierarchies extracted from Slither analysis.
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 
 /// Represents a smart contract function with complete metadata

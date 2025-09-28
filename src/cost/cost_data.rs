@@ -298,7 +298,7 @@ mod tests {
     #[tokio::test]
     async fn test_cost_calculation_vs_openai_api() {
         use reqwest::Client;
-        use serde_json::{json, Value};
+        use serde_json::{Value, json};
 
         // Skip test if no API key
         let api_key = match std::env::var("OPENAI_API_KEY") {

@@ -21,7 +21,7 @@ use crate::{
         get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
         insert_file_summary_to_db,
     },
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::enums::AgentMetadata,
     prepare_code::git_clone::RepoPaths,
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
@@ -136,7 +136,9 @@ pub async fn summarize_src_files(
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
-    let preamble = format!("You are a senior solidity dev. Please summarize below content (source code, or deploy scripts). Format in markdown for easy reading. Start with a {MAX_WORDS_CONTRACT_SUMMARY} word or less summary of the contract, that includes  purpose trust model (user funds? admin?), also major entrypoints. Then list storage vars plus optional {MAX_CHARS_STORAGE_DESC} max chars description for each. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add {MAX_WORDS_FUNCTION_SUMMARY} word max natspec for EACH function. Respond only with valid JSON matching the schema!");
+    let preamble = format!(
+        "You are a senior solidity dev. Please summarize below content (source code, or deploy scripts). Format in markdown for easy reading. Start with a {MAX_WORDS_CONTRACT_SUMMARY} word or less summary of the contract, that includes  purpose trust model (user funds? admin?), also major entrypoints. Then list storage vars plus optional {MAX_CHARS_STORAGE_DESC} max chars description for each. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add {MAX_WORDS_FUNCTION_SUMMARY} word max natspec for EACH function. Respond only with valid JSON matching the schema!"
+    );
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>("gpt-5")
         .preamble(&preamble)
@@ -255,7 +257,7 @@ pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Resu
     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
 
     log::info!("generate context for code review");
-    let preamble= "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, please create a max 4000 word detailed summary of this protocol explaining what it is, and how it works. Format in markdown for easy reading. Respond only with valid JSON matching the schema!";
+    let preamble = "You are a senior solidity dev. Given the context provided for solidity smart contract protocol, please create a max 4000 word detailed summary of this protocol explaining what it is, and how it works. Format in markdown for easy reading. Respond only with valid JSON matching the schema!";
 
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>(O3)

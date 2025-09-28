@@ -5,7 +5,7 @@
 use crate::{
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context, ContextType},
+        context_state::{ContextType, generate_audit_scope, get_metadata_context},
         enums::AIAgent,
         findings::{Finding, Findings},
         phases::verify_findings::{

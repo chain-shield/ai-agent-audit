@@ -3,8 +3,8 @@ use crate::{
     llm_review::{
         enums::{all_enum_variants, generate_enum_list},
         findings::PrivilegeLevel,
-        prompt_support::severity_rubics::{
-            CODE4RENA_SEVERITY_RUBRIC, DEFAULT_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
+        prompt_support::{
+            severity_rubics::DEFAULT_SEVERITY_RUBRIC, verify_prompt::generate_verify_c4_prompt,
         },
     },
 };
@@ -124,9 +124,8 @@ they match up correctly.
 
 pub fn generate_post_prompt(contract_name: &str) -> String {
     let security_rubric = match AUDIT_TYPE {
-        AuditType::Code4rena => CODE4RENA_SEVERITY_RUBRIC,
-        AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
-        AuditType::Client => DEFAULT_SEVERITY_RUBRIC,
+        AuditType::Code4rena | AuditType::Sherlock => generate_verify_c4_prompt(),
+        AuditType::Client => DEFAULT_SEVERITY_RUBRIC.to_string(),
     };
 
     let comp_audit_issue_type = "AccessControl | Reentrancy | Oracle | PricePrecision | RoundingError | FeeOnTransferAssumption | UncheckedERC20Return | Dos | SignatureReplay | AuthByPass | UntrustedDelegateCall | TimestampManipulation | CrossChainMessageSpoofing | AccountingInvariantViolation | SlippageMissingOrInsufficient | FlashLoanEconomicManipulation";

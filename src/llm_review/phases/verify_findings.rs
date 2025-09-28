@@ -3,15 +3,15 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    config::{AuditType, AUDIT_TYPE},
+    config::{AUDIT_TYPE, AuditType},
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context, ContextType},
+        context_state::{ContextType, generate_audit_scope, get_metadata_context},
         enums::AIAgent,
         findings::{Finding, Findings},
         prompt_support::{
             post_verify::POST_VERIFY,
-            verify_prompt::{VERIFY_C4_PROMPT, VERIFY_PROMPT, VERIFY_SHERLOCK_PROMPT},
+            verify_prompt::{VERIFY_PROMPT, generate_verify_c4_prompt},
         },
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
@@ -83,8 +83,7 @@ pub async fn execute(
 
     let verify_prompt = match AUDIT_TYPE {
         AuditType::Client => Arc::new(VERIFY_PROMPT.to_string()),
-        AuditType::Code4rena => Arc::new(VERIFY_C4_PROMPT.to_string()),
-        AuditType::Sherlock => Arc::new(VERIFY_SHERLOCK_PROMPT.to_string()),
+        AuditType::Code4rena | AuditType::Sherlock => Arc::new(generate_verify_c4_prompt()),
     };
 
     let updated_verify_prompt = if audit_scope.is_empty() {

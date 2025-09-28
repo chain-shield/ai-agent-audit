@@ -6,7 +6,7 @@ use crate::{
     config::INVARIANT_RUNS,
     error::Result,
     llm_review::{
-        context_state::{get_metadata_context, ContextType},
+        context_state::{ContextType, get_metadata_context},
         dynamic_prompts::{
             self,
             invariants::{generate_invariant_prompt, get_invariant_json},

@@ -22,11 +22,7 @@ pub fn get_function_name_from_interface(function_interface: &str) -> String {
 
 pub fn string_starts_with_char(fn_name: &str, c: char) -> bool {
     if let Some(first_char) = fn_name.chars().next() {
-        if first_char == c {
-            true
-        } else {
-            false
-        }
+        if first_char == c { true } else { false }
     } else {
         false
     }

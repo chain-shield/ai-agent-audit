@@ -100,7 +100,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::HighMedium,
         maps_to: INVARIANT_ARITH_TYPES,
-        tier:PatternTier::Tier2,
+        tier: PatternTier::Tier2,
     },
     InvariantSpec {
         key: InvariantType::Balance,
@@ -116,7 +116,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::HighMedium,
         maps_to: INVARIANT_BAL_TYPES,
-        tier:PatternTier::Tier1,
+        tier: PatternTier::Tier1,
     },
     InvariantSpec {
         key: InvariantType::Permission,
@@ -132,7 +132,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::High,
         maps_to: INVARIANT_PERM_TYPES,
-        tier:PatternTier::Tier1,
+        tier: PatternTier::Tier1,
     },
     InvariantSpec {
         key: InvariantType::Temporal,
@@ -148,7 +148,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::HighMedium,
         maps_to: INVARIANT_TEMP_TYPES,
-        tier:PatternTier::Tier3,
+        tier: PatternTier::Tier3,
     },
     InvariantSpec {
         key: InvariantType::Referential,
@@ -164,7 +164,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::Medium,
         maps_to: INVARIANT_REF_TYPES,
-        tier:PatternTier::Tier3,
+        tier: PatternTier::Tier3,
     },
     InvariantSpec {
         key: InvariantType::StateMachine,
@@ -180,7 +180,7 @@ pub static INVARIANT_LIBRARY: &[InvariantSpec] = &[
         ],
         impact_hint: ImpactHint::HighMedium,
         maps_to: INVARIANT_SM_TYPES,
-        tier:PatternTier::Tier2,
+        tier: PatternTier::Tier2,
     },
 ];
 

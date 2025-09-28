@@ -1,10 +1,10 @@
+use crate::cost::cost_data::TokenType;
 /// LLM extraction with retry logic and cost tracking.
 ///
 /// This module provides robust LLM interaction utilities with automatic retry
 /// mechanisms for handling rate limits, network issues, and parsing errors,
 /// while tracking inference costs across different providers.
 use crate::cost::cost_data::add_to_inference_cost_by_type;
-use crate::cost::cost_data::TokenType;
 use crate::llm_review::enums::AgentMetadata;
 use crate::llm_review::findings::FromLLMJson;
 use reqwest::StatusCode;
@@ -16,9 +16,9 @@ use rig::completion::PromptError;
 use rig::extractor::ExtractionError;
 use rig::extractor::Extractor;
 use schemars::JsonSchema;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde::de::Error as _; // <- bring the trait’s methods into scope
-use serde::Deserialize;
 use serde_json::Error as JsonError;
 use std::{thread, time::Duration};
 

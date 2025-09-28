@@ -4,7 +4,7 @@ use super::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::enums::EnumString,
     utils::semantic_compare,
 };
