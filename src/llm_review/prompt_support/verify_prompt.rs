@@ -1,3 +1,4 @@
+use super::severity_rubics::CODE4RENA_SEVERITY_RUBRIC;
 pub const VERIFY_PROMPT: &str = r#"
 
 Your job is to determine whether the reported issue is **valid and worth fixing**. This includes:
@@ -11,7 +12,9 @@ You should return `"true"` if the issue meets **any** of these criteria, otherwi
 
 "#;
 
-pub const VERIFY_C4_PROMPT: &str = r#"
+pub fn generate_verify_c4_prompt() -> String {
+    format!(
+        r#"
 Your task: decide if a reported issue would likely receive **≥ Medium severity** in a Code4rena contest.
 
 Consider these 2 Criteria:
@@ -24,89 +27,64 @@ Otherwise return `"false"`.
 ## Code4rena Guidelines
 # Code4rena Severity Rubric (What C4 Actually Pays For)
 
-| Severity       | Typical Impact (what C4 actually pays for)                                                                                                                                                                                                                   |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **High**       | **Direct, permissionless monetary or control loss**:  
-- Permanent theft/drain of funds (vault, pool, treasury)  
-- Inflation/mint exploits (share inflation, reward overclaim, unbounded mint)  
-- Permanent freezing/bricking of funds (withdrawals impossible)  
-- Oracle/price manipulation enabling profitable trades or draining reserves  
-- Arbitrary code execution / delegatecall takeover  
-- Governance capture or voting-power theft |
-    
-| **Medium**     | **Convincing, repeatable permissionless exploit that needs admin intervention to fix**:  
-- Temporary DoS of core user flows (deposits/withdrawals paused or blocked)  
-- Reward distortion (attacker extracts unearned share of yield/fees, other users underpaid)  
-- Oracle/math skew that misprices swaps, collateral, or rewards with $$ impact  
-- Accounting errors that cause balance mismatches, temporary fund lockups, or reversible asset misallocation  
-- Token assumption break (fee-on-transfer/rebase/decimals) causing funds stuck, withdrawals underpaid, or vault shares inflated  
-- Unbounded gas growth (looping through storage arrays/mappings) that blocks function execution until admin fixes state |
+{CODE4RENA_SEVERITY_RUBRIC}
+"#
+    )
+}
 
-| **Low**        | **Griefing / minor safety issues**:  
-- Edge-case DoS (requires attacker to burn gas, little systemic impact)  
-- Mild precision drift (rounding pennies, no extractable gain)  
-- Best-practice deviations (reentrancy guard missing but no impact, unchecked SafeERC20 return that only causes revert) |
-
-| **Gas / Info** | **Non-payable noise**:  
-- Gas optimizations  
-- NatSpec, comments, documentation errors  
-- Style/clarity issues |
-
-"#;
-
-pub const VERIFY_SHERLOCK_PROMPT: &str = r#"
-You are an expert triager for **Sherlock** smart‑contract audits.
-
-Your task: decide if a reported issue would likely receive **≥ Medium severity** in a Sherlock contest.
-
-Consider these 2 Criteria:
-1. Is it a Legit Bug (and NOT a false positive)
-2. Would it likely receive **≥ Medium severity** in a Sherlock contest
-
-You should return `"true"` ONLY if both of the above are TRUE - its actual vulnerabilities AND likely recieve Medium or Higher severity. 
-Otherwise return `"false"`.
-
-## INPUT  
-You will receive **one report** with the following structure:
-
-### <Title>
-
-### Description  
-<Human-written description of the bug>
-
-### Impact  
-<Claimed effect>
-
-### Proof of Concept  
-<Attack steps, if applicable>
-
-### Proof of Code  
-```solidity
-
-### Suggested Mitigation
-
-<Recommended fix>
-
-  ### Sherlock Severity Rubric
-| Severity  | Typical impact                                                                                          |
-|-----------|----------------------------------------------------------------------------------------------------------|
-| High      | Direct loss of funds exceeding 1% and $10 of principal, yield, or protocol fees; permanent governance takeover; straightforward exploitable attack path |
-| Medium    | Loss of funds exceeding 0.01% and $10 under specific conditions or constraints (e.g., requiring particular market conditions, user interactions, or protocol states; limited by time windows, admin actions, or partial exploitability); DoS locking funds over a week or disrupting time-sensitive functions; replayable attacks with escalating impact |
-| Low       | Negligible impact on funds or functionality; gas optimizations, style issues, documentation gaps, or invalid categories (e.g., zero-address checks, front-running without irreversible damage) |
-
-Guidelines
-----------
-• Judge by the *realistic worst-case* impact mapped to the table above.  
-• High exploit cost **does not** lower severity IF payoff ≥ cost (assume a well-funded attacker).  
-• Governance loss or sustained deposit / withdraw DoS ⇒ at least Medium even WITHOUT direct theft.  
-• Exclude pure gas, style, or documentation issues from Medium+.
-
-Evaluation (think silently; do **not** reveal reasoning)
--------------------------------------------------------
-1. Read Description, Impact, PoC, and code.  
-2. Verify reachability (modifiers, access control, upgradeability paths, reentrancy guards, ≥0.8 overflow checks).  
-3. Return `"true"` if the bug is genuine **and** maps to ≥ Medium per rubric; otherwise return `"false"`.
-"#;
+// pub const VERIFY_SHERLOCK_PROMPT: &str = r#"
+// You are an expert triager for **Sherlock** smart‑contract audits.
+//
+// Your task: decide if a reported issue would likely receive **≥ Medium severity** in a Sherlock contest.
+//
+// Consider these 2 Criteria:
+// 1. Is it a Legit Bug (and NOT a false positive)
+// 2. Would it likely receive **≥ Medium severity** in a Sherlock contest
+//
+// You should return `"true"` ONLY if both of the above are TRUE - its actual vulnerabilities AND likely recieve Medium or Higher severity.
+// Otherwise return `"false"`.
+//
+// ## INPUT
+// You will receive **one report** with the following structure:
+//
+// ### <Title>
+//
+// ### Description
+// <Human-written description of the bug>
+//
+// ### Impact
+// <Claimed effect>
+//
+// ### Proof of Concept
+// <Attack steps, if applicable>
+//
+// ### Proof of Code
+// ```solidity
+//
+// ### Suggested Mitigation
+//
+// <Recommended fix>
+//
+//   ### Sherlock Severity Rubric
+// | Severity  | Typical impact                                                                                          |
+// |-----------|----------------------------------------------------------------------------------------------------------|
+// | High      | Direct loss of funds exceeding 1% and $10 of principal, yield, or protocol fees; permanent governance takeover; straightforward exploitable attack path |
+// | Medium    | Loss of funds exceeding 0.01% and $10 under specific conditions or constraints (e.g., requiring particular market conditions, user interactions, or protocol states; limited by time windows, admin actions, or partial exploitability); DoS locking funds over a week or disrupting time-sensitive functions; replayable attacks with escalating impact |
+// | Low       | Negligible impact on funds or functionality; gas optimizations, style issues, documentation gaps, or invalid categories (e.g., zero-address checks, front-running without irreversible damage) |
+//
+// Guidelines
+// ----------
+// • Judge by the *realistic worst-case* impact mapped to the table above.
+// • High exploit cost **does not** lower severity IF payoff ≥ cost (assume a well-funded attacker).
+// • Governance loss or sustained deposit / withdraw DoS ⇒ at least Medium even WITHOUT direct theft.
+// • Exclude pure gas, style, or documentation issues from Medium+.
+//
+// Evaluation (think silently; do **not** reveal reasoning)
+// -------------------------------------------------------
+// 1. Read Description, Impact, PoC, and code.
+// 2. Verify reachability (modifiers, access control, upgradeability paths, reentrancy guards, ≥0.8 overflow checks).
+// 3. Return `"true"` if the bug is genuine **and** maps to ≥ Medium per rubric; otherwise return `"false"`.
+// "#;
 
 // USE THIS STRICTER PROMPT FOR BUG BOUNTIES
 pub const VERIFY_BUG_BOUNTY_PROMPT: &str = r#"

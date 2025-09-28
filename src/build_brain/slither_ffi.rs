@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};

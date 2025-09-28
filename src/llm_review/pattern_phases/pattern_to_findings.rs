@@ -6,7 +6,7 @@ use crate::{
     config::DISCOVERY_RUNS,
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context, ContextType},
+        context_state::{ContextType, generate_audit_scope, get_metadata_context},
         enums::AIAgent,
         findings::Findings,
         issues::{IssueStructTrait, IssueTrait},
@@ -16,7 +16,7 @@ use crate::{
 };
 use log::info;
 
-use serde::{de::DeserializeOwned, Deserializer};
+use serde::{Deserializer, de::DeserializeOwned};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

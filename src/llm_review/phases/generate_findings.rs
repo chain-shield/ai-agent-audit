@@ -3,12 +3,12 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::{AuditType, AUDIT_TYPE, DISCOVERY_RUNS},
+    config::{AUDIT_TYPE, AuditType, DISCOVERY_RUNS},
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context, ContextType},
+        context_state::{ContextType, generate_audit_scope, get_metadata_context},
         enums::AIAgent,
-        findings::{generated_llm_prompt, Findings},
+        findings::{Findings, generated_llm_prompt},
         prompt_support::{post_prompt::generate_post_prompt, pre_prompt::generate_pre_prompt},
     },
     master_prompts::{code4rena::CODE4RENA_PROMPT, prompt_2x_aa::PROMPT_2X_AA},

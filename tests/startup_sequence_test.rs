@@ -47,7 +47,10 @@ fn test_main_style_startup_double_init_llm_clients() {
 
     // Initialize LLM clients - second call should fail due to OnceLock already set
     let second = init_llm_clients();
-    assert!(second.is_err(), "second init_llm_clients() should return Err");
+    assert!(
+        second.is_err(),
+        "second init_llm_clients() should return Err"
+    );
 
     let err = second.err().unwrap();
     let msg = format!("{}", err);
@@ -59,4 +62,3 @@ fn test_main_style_startup_double_init_llm_clients() {
         msg
     );
 }
-

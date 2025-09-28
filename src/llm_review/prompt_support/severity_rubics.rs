@@ -118,16 +118,6 @@ pub const CODE4RENA_SEVERITY_RUBRIC_OLD: &str = r#"
 - Style/clarity issues                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 "#;
 
-pub const SHERLOCK_SEVERITY_RUBRIC: &str = r#"
-
-| Severity  | Typical impact                                                                                          |
-|-----------|----------------------------------------------------------------------------------------------------------|
-| High      | Direct loss of funds exceeding 1% and $10 of principal, yield, or protocol fees; permanent governance takeover; straightforward exploitable attack path |
-| Medium    | Loss of funds exceeding 0.01% and $10 under specific conditions or constraints (e.g., requiring particular market conditions, user interactions, or protocol states; limited by time windows, admin actions, or partial exploitability); DoS locking funds over a week or disrupting time-sensitive functions; replayable attacks with escalating impact |
-| Low       | Negligible impact on funds or functionality; gas optimizations, style issues, documentation gaps, or invalid categories (e.g., zero-address checks, front-running without irreversible damage) |
-
-"#;
-
 pub const DEFAULT_SEVERITY_RUBRIC: &str = r#"
 
 | Severity     | Typical impact examples                                                                                                                                                                                                            | What it signals to the team               |

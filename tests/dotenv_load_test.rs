@@ -17,8 +17,14 @@ fn test_dotenv_loads_real_openai_key() {
 
     // Case 1: Environment already has the key
     if let Ok(k) = env::var("OPENAI_API_KEY") {
-        assert!(!k.to_lowercase().contains("your-key"), "Env OPENAI_API_KEY looks like a placeholder; update your .env or env variable");
-        assert!(k.starts_with("sk-"), "Env OPENAI_API_KEY should start with 'sk-' (looks invalid)");
+        assert!(
+            !k.to_lowercase().contains("your-key"),
+            "Env OPENAI_API_KEY looks like a placeholder; update your .env or env variable"
+        );
+        assert!(
+            k.starts_with("sk-"),
+            "Env OPENAI_API_KEY should start with 'sk-' (looks invalid)"
+        );
         return; // already verified via env
     }
 
@@ -42,4 +48,3 @@ fn test_dotenv_loads_real_openai_key() {
         "OPENAI_API_KEY from .env should start with 'sk-' (looks invalid)"
     );
 }
-

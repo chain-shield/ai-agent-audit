@@ -2,14 +2,14 @@ use crate::config::TOKEN_BUDGET;
 use crate::cost::cost_data::get_token_count;
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
-use crate::llm_review::context_state::{get_metadata_context, ContextType};
+use crate::llm_review::context_state::{ContextType, get_metadata_context};
 use crate::llm_review::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::utils::contract_in_scope::is_contract_in_scope;
 use crate::llm_review::{
     agent_factory::{AgentConfig, AgentFactory},
     analysis_db::FindingsDb,
-    findings::Findings,
     findings::CLAUDE_4_0_SONNET,
+    findings::Findings,
     invariants::{ContractInvariants, InvariantFinding, InvariantStatus, InvariantType},
     issues::{IssuePrompt, IssueStructTrait},
     pattern_category::PatternCategory,
@@ -212,7 +212,10 @@ pub async fn enhance_codeblock(
             file_content
         )
     } else {
-        info!("NOTE: token limit exceeded ({} tokens > {} limit) for contract {} prompt with enhancement, skipping enhancement",full_prompt_size,TOKEN_BUDGET,contract);
+        info!(
+            "NOTE: token limit exceeded ({} tokens > {} limit) for contract {} prompt with enhancement, skipping enhancement",
+            full_prompt_size, TOKEN_BUDGET, contract
+        );
         codeblock.to_string()
     };
 

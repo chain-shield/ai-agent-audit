@@ -1,9 +1,9 @@
 use crate::{
-    config::{AuditType, AUDIT_TYPE},
+    config::{AUDIT_TYPE, AuditType},
     llm_review::{
         enums::{
-            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
-            EnumString, Severity,
+            EnumData, EnumString, Severity, all_enum_variants, generate_enum_bulleted_list,
+            generate_enum_list,
         },
         findings::PrivilegeLevel,
         prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,

@@ -1,6 +1,6 @@
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
-    llm_review::context_state::{get_metadata_context, ContextType},
+    llm_review::context_state::{ContextType, get_metadata_context},
     prepare_code::git_clone::RepoPaths,
     reporting::save_file::save_file_locally,
 };

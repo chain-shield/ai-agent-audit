@@ -5,7 +5,7 @@
 use crate::{
     error::Result,
     llm_review::{
-        context_state::{get_metadata_context, ContextType},
+        context_state::{ContextType, get_metadata_context},
         enums::{AIAgent, Severity},
         findings::{Finding, Findings},
         prompt_support::{post_qualify::generate_post_qualify, qualify_prompt::QUALIFY_PROMPT},

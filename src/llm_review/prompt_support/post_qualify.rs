@@ -1,7 +1,7 @@
 use crate::{
     config::{AuditType, AUDIT_TYPE},
-    llm_review::prompt_support::severity_rubics::{
-        CODE4RENA_SEVERITY_RUBRIC, DEFAULT_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
+    llm_review::prompt_support::{
+        severity_rubics::DEFAULT_SEVERITY_RUBRIC, verify_prompt::generate_verify_c4_prompt,
     },
 };
 
@@ -48,9 +48,8 @@ pub const POST_QUALIFY_STATIC: &str = r#"
 
 pub fn generate_post_qualify() -> String {
     let security_rubric = match AUDIT_TYPE {
-        AuditType::Code4rena => CODE4RENA_SEVERITY_RUBRIC,
-        AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
-        AuditType::Client => DEFAULT_SEVERITY_RUBRIC,
+        AuditType::Code4rena | AuditType::Sherlock => generate_verify_c4_prompt(),
+        AuditType::Client => DEFAULT_SEVERITY_RUBRIC.to_string(),
     };
 
     format!(

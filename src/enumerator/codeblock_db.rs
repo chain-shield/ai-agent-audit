@@ -4,7 +4,7 @@
 /// providing efficient storage and retrieval of contextual code slices for
 /// AI analysis with metadata and token counting.
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
