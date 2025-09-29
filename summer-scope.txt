@@ -1,0 +1,14 @@
+./packages/access-contracts/src/contracts/ProtocolAccessManaged.sol
+./packages/access-contracts/src/interfaces/IProtocolAccessManager.sol
+./packages/constants/src/Constants.sol
+./packages/core-contracts/src/contracts/ConfigurationManaged.sol
+./packages/gov-contracts/src/contracts/StakedSummerToken.sol
+./packages/gov-contracts/src/contracts/SummerGovernorV2.sol
+./packages/gov-contracts/src/contracts/SummerStaking.sol
+./packages/gov-contracts/src/contracts/SummerTimelockController.sol
+./packages/gov-contracts/src/contracts/SummerVestingWalletsEscrow.sol
+./packages/gov-contracts/src/contracts/WrappedStakingToken.sol
+./packages/gov-contracts/src/interfaces/ISummerGovernorV2.sol
+./packages/gov-contracts/src/interfaces/ISummerStaking.sol
+./packages/gov-contracts/src/interfaces/ISummerToken.sol
+./packages/rewards-contracts/src/contracts/StakingRewardsManagerBase.sol
