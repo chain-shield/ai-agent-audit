@@ -36,6 +36,11 @@ pub struct Cli {
     #[arg(long)]
     pub doc_folder: Option<String>,
 
+    /// Optional add if monorepo, text file that contains all folder of monorepo packages (list of
+    /// files)
+    #[arg(long)]
+    pub monorepo_folders: Option<String>,
+
     /// Optional custom doc to replace docs (md file) in /src folder, *should be md filename in current directory*
     #[arg(long)]
     pub custom_doc: Option<String>,

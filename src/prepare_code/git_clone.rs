@@ -55,6 +55,7 @@ pub struct RepoPaths {
     /// folder exclude from scope
     pub excluded_folders: Option<Vec<PathBuf>>,
     pub scoped_files: Option<PathBuf>,
+    pub monorepo_folders: Option<PathBuf>,
     /// full 40-char SHA, e.g. `"1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t"`
     pub commit_hash: String,
 }
@@ -247,6 +248,10 @@ pub fn clone_and_filter_git_repo(
         None => None,
     };
 
+    let monorepo_folders = match &cli.monorepo_folders {
+        Some(repos) => Some(Path::new(repos).to_path_buf()),
+        None => None,
+    };
     // Return the collected paths
     Ok(RepoPaths {
         project_id,
@@ -261,6 +266,7 @@ pub fn clone_and_filter_git_repo(
         audit_scope,
         excluded_folders,
         scoped_files,
+        monorepo_folders,
         commit_hash,
     })
 }
@@ -431,27 +437,22 @@ impl RepoPaths {
         }
     }
 
+    pub fn extract_monorepo_folders(&self) -> Result<Vec<PathBuf>> {
+        let Some(monorepos) = &self.monorepo_folders else {
+            return Ok(Vec::new());
+        };
+
+        let search_root = self.root.join(&self.repo_name);
+        extract_list_of_files(monorepos, &search_root)
+    }
+
     pub fn extract_scoped_files(&self) -> Result<Vec<PathBuf>> {
         let Some(scoped_files) = &self.scoped_files else {
             return Ok(Vec::new());
         };
 
-        let file = File::open(scoped_files)?;
-        let reader = io::BufReader::new(file);
         let search_root = self.root.join(&self.repo_name);
-
-        let paths: Vec<PathBuf> = reader
-            .lines()
-            .filter_map(|line| line.ok()) // drop I/O errors
-            .map(|line| line.trim().to_string())
-            .filter(|line| !line.is_empty()) // skip blank lines
-            .map(|p| {
-                let path = p.strip_prefix("./").unwrap_or(&p);
-                search_root.join(path)
-            }) // turn String into PathBuf
-            .collect();
-
-        Ok(paths)
+        extract_list_of_files(scoped_files, &search_root)
     }
 
     pub fn extract_content_from_docs(&self) -> Result<String> {
@@ -478,4 +479,24 @@ impl RepoPaths {
 
         Ok(source_code)
     }
+}
+
+// read a files that contains a list of files (with relative path) and return array with full
+// path for each file
+fn extract_list_of_files(files: &PathBuf, root_folder: &PathBuf) -> Result<Vec<PathBuf>> {
+    let file = File::open(files)?;
+    let reader = io::BufReader::new(file);
+
+    let paths: Vec<PathBuf> = reader
+        .lines()
+        .filter_map(|line| line.ok()) // drop I/O errors
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty()) // skip blank lines
+        .map(|p| {
+            let path = p.strip_prefix("./").unwrap_or(&p);
+            root_folder.join(path)
+        }) // turn String into PathBuf
+        .collect();
+
+    Ok(paths)
 }

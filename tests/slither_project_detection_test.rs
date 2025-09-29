@@ -22,6 +22,7 @@ fn make_repo_layout(root: &Path, repo_name: &str, files: &[&str], dirs: &[&str])
         project_id: format!("{}-TEST", repo_name),
         root: root.to_path_buf(),
         sol_files: vec![],
+        monorepo_folders: None,
         test_files: vec![],
         script_files: vec![],
         config_files: vec![],
