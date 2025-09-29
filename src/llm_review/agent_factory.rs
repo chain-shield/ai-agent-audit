@@ -827,6 +827,7 @@ mod tests {
             test_files: vec![],
             script_files: vec![],
             config_files: vec![],
+            monorepo_folders: None,
             source_code_folder: "/tmp/test/src".into(),
             docs: vec![],
             repo_name: "test-repo".to_string(),
@@ -877,6 +878,7 @@ mod tests {
         let repo_paths = RepoPaths {
             project_id: "test-project".to_string(),
             root: "/tmp/test".into(),
+            monorepo_folders: None,
             sol_files: vec![],
             test_files: vec![],
             script_files: vec![],
@@ -1172,6 +1174,7 @@ mod tests {
             project_id: "test-project".to_string(),
             root: "/tmp/test".into(),
             sol_files: vec![],
+            monorepo_folders: None,
             test_files: vec![],
             script_files: vec![],
             config_files: vec![],
