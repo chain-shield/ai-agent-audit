@@ -3,7 +3,7 @@ use crate::llm_review::{
     findings::PrivilegeLevel,
 };
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use strum_macros::EnumIter;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -383,15 +383,15 @@ impl<'de> Deserialize<'de> for VulnerabilityPatternSpec {
         use serde::de::{self, MapAccess, Visitor};
         use std::fmt;
 
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field {
-            Key,
-            Definition,
-            StaticSignals,
-            Examples,
-            ImpactHint,
-        }
+        // #[derive(Deserialize)]
+        // #[serde(field_identifier, rename_all = "snake_case")]
+        // enum Field {
+        //     Key,
+        //     Definition,
+        //     StaticSignals,
+        //     Examples,
+        //     ImpactHint,
+        // }
 
         struct VulnerabilityPatternSpecVisitor;
 

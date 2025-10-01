@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
         .await?;
 
     // save contract IR and metadata
-    contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo)?;
+    contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo).await?;
     contract_data::save_metadata(&repo).await?;
     return Ok(());
     // ────────────────────────────────

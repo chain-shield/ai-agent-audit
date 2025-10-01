@@ -1,6 +1,7 @@
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use log::info;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use rusqlite::params_from_iter;
 use rusqlite::{Connection, OptionalExtension};
@@ -12,17 +13,19 @@ use rusqlite::{Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
-use crate::enumerator::libraries::ParsedLibrary;
 use crate::enumerator::libraries::generate_library_to_code_mapping;
 use crate::enumerator::libraries::get_library_code_for_library_calls;
+use crate::enumerator::libraries::ParsedLibrary;
 use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
 use crate::utils::get_fn_name::get_function_name_from_func_id;
-use crate::utils::parse_library_file::LibCall;
+use crate::utils::get_fn_name::get_function_name_from_interface;
 use crate::utils::parse_library_file::parse_library_text;
+use crate::utils::parse_library_file::LibCall;
 use crate::{
     build_brain::{
         self,
@@ -31,6 +34,16 @@ use crate::{
     },
     utils::bpe::get_bpe,
 };
+
+/// Global cache for get_code_ir_map results.
+/// Key: project_id, Value: IR map for that project
+static CODE_IR_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<(String, String), SlithIRFn>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Global cache for get_storage_map results.
+/// Key: project_id, Value: Storage map for that project
+static STORAGE_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<String, Vec<StorageVar>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Generates a markdown code block for a specific function with IR representation.
 ///
@@ -49,7 +62,7 @@ pub async fn generate_codeblock_for_function(
 ) -> anyhow::Result<String> {
     let ir_map = get_code_ir_map(repo).await?;
     let mut function_slice = String::new();
-    let func_name = get_function_name_from_func_id(&func.name);
+    let func_name = get_function_name_from_interface(&func.name);
     let visibility = get_visibility_label(&func.visibility);
     let modifiers = get_modifiers_label(&func.modifiers);
 
@@ -211,6 +224,7 @@ pub async fn get_token_count_of_function_ir(
 }
 
 /// Retrieves a mapping of contract and function names to their SlithIR representations.
+/// Results are cached globally per project to avoid redundant Slither calls.
 ///
 /// Extracts the function name from the full function signature and creates a map
 /// keyed by (contract_name, function_name) tuples.
@@ -223,6 +237,20 @@ pub async fn get_token_count_of_function_ir(
 pub async fn get_code_ir_map(
     repo: &RepoPaths,
 ) -> anyhow::Result<HashMap<(String, String), SlithIRFn>> {
+    // Check cache first
+    {
+        let cache = CODE_IR_MAP_CACHE.lock().unwrap();
+        if let Some(cached_map) = cache.get(&repo.project_id) {
+            return Ok(cached_map.clone());
+        }
+    }
+
+    // Cache miss - compute the result
+    info!(
+        "Cache miss for get_code_ir_map - running Slither for project {}",
+        repo.project_id
+    );
+
     // Regex to extract function name from full signature (e.g., "Contract.function(args)")
     let extract_function_name = Regex::new(r#"[A-Za-z0-9$_]+\.([A-Za-z0-9$_]+)\([^)]*\)"#)?;
 
@@ -243,11 +271,35 @@ pub async fn get_code_ir_map(
         })
         .collect();
 
-    // info!("ir_map => {:#?}", ir_map);
+    // Store in cache
+    {
+        let mut cache = CODE_IR_MAP_CACHE.lock().unwrap();
+        cache.insert(repo.project_id.clone(), ir_map.clone());
+    }
+
+    info!(
+        "Cached IR map for project {} with {} entries",
+        repo.project_id,
+        ir_map.len()
+    );
     Ok(ir_map)
 }
 
 async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec<StorageVar>>> {
+    // Check cache first
+    {
+        let cache = STORAGE_MAP_CACHE.lock().unwrap();
+        if let Some(cached_map) = cache.get(&repo.project_id) {
+            return Ok(cached_map.clone());
+        }
+    }
+
+    // Cache miss - compute the result
+    info!(
+        "Cache miss for get_storage_map - running Slither for project {}",
+        repo.project_id
+    );
+
     let (_, storage_vec, _) = build_brain::slither_ffi::get_slither_ir_and_storage(repo).await?;
 
     let storage_map: HashMap<String, Vec<StorageVar>> = {
@@ -257,6 +309,18 @@ async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec
         }
         m
     };
+
+    // Store in cache
+    {
+        let mut cache = STORAGE_MAP_CACHE.lock().unwrap();
+        cache.insert(repo.project_id.clone(), storage_map.clone());
+    }
+
+    info!(
+        "Cached storage map for project {} with {} contracts",
+        repo.project_id,
+        storage_map.len()
+    );
     Ok(storage_map)
 }
 

@@ -66,6 +66,9 @@ ANTHROPIC_API_KEY=your_anthropic_api_key
 GOOGLE_AI_API_KEY=your_gemini_api_key
 DEEPSEEK_API_KEY=your_deepseek_api_key
 
+# Optional: For private GitHub repositories
+GITHUB_TOKEN=your_github_personal_access_token
+
 # Logging
 RUST_LOG=info
 ```
@@ -102,6 +105,44 @@ Run the application with a Git repository URL containing Solidity contracts:
 ```bash
 cargo run --release -- https://github.com/example/solidity-project.git
 ```
+
+### Private Repository Support
+
+To audit private GitHub repositories, set the `GITHUB_TOKEN` environment variable with a GitHub Personal Access Token (PAT):
+
+1. **Create a GitHub Personal Access Token**:
+   - Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
+   - Click "Generate new token (classic)"
+   - Select scopes: `repo` (for private repositories)
+   - Copy the generated token
+
+2. **Set the environment variable**:
+
+```bash
+# Option 1: Add to .env file
+echo "GITHUB_TOKEN=ghp_your_token_here" >> .env
+
+# Option 2: Export in your shell
+export GITHUB_TOKEN=ghp_your_token_here
+
+# Option 3: Inline with command
+GITHUB_TOKEN=ghp_your_token_here cargo run --release -- https://github.com/private-org/private-repo.git
+```
+
+3. **Run the audit**:
+
+```bash
+cargo run --release -- https://github.com/sherlock-audit/2025-09-summer-fi-governance-v2-chainshieldai.git \
+  --subfolder summer-earn-protocol \
+  --custom-doc summer-docs.md \
+  --code-folder packages \
+  --scoped-files summer-scope.txt \
+  --builder custom \
+  --build-cmd "pnpm install && pnpm build" \
+  --monorepo-folders summer-monorepos.txt
+```
+
+**Note**: The token is automatically injected into the git clone URL for authentication. It works for both `git ls-remote` (to get commit hash) and `git clone` operations.
 
 ### Complete Workflow
 

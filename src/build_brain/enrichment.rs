@@ -5,14 +5,14 @@ use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::get_fn_name::get_function_name_from_interface;
 
+use super::callgraph;
 use super::fn_summaries::get_function_summaries;
 use super::graph_db::GraphDb;
 /// Smart contract data enrichment using Slither static analysis.
 ///
 /// This module builds semantic databases containing call graphs, inheritance hierarchies,
 /// and function metadata extracted from Solidity contracts using Slither analysis.
-use super::slither_ffi::{self, SlithIRFn, StorageVar};
-use super::{callgraph, inheritance};
+use super::slither_ffi::{SlithIRFn, StorageVar};
 use log::info;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -65,19 +65,12 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
         let result: Result<()> = async move {
             // Extract call graph data from Slither
             info!("extracting DOT blobs");
-            let json = slither_ffi::run_printer_json(&repo_func, "call-graph").await?;
-            let blobs = callgraph::extract_dot_blobs(&json)?;
+            let (funcs_id, edges) = callgraph::get_dot_funcs_and_dot_edges(&repo_func).await?;
             let mut rows = Vec::new();
             let function_to_ir_map = get_code_ir_map(&repo_func).await?;
-            let (funcs_id, edges) = callgraph::parse_dot_blobs(&blobs, &repo_func)?;
             let func_index: HashMap<(String, String), DotFunc> = funcs_id
                 .into_iter()
-                .map(|node| {
-                    // if node.contract == "GovernedBase" || node.contract == "AssetManagerInit" {
-                    //     info!("node: {:#?} \n", node);
-                    // }
-                    ((node.contract.clone(), node.name.clone()), node)
-                })
+                .map(|node| ((node.contract.clone(), node.name.clone()), node))
                 .collect();
 
             // Get function summaries for metadata
@@ -146,9 +139,10 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
         let result: Result<()> = async move {
             // Extract inheritance hierarchy from Slither
             info!("generating inheritance json");
-            let inheritance_json =
-                slither_ffi::run_printer_json(&repo_inheritance, "inheritance").await?;
-            let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
+            // let inheritance_json =
+            //     slither_ffi::run_printer_json(&repo_inheritance, "inheritance", None).await?;
+            // let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
+            let inheritance_edges = callgraph::generate_inheritance_edges(&repo).await?;
             info!("{} inheritance edges", inheritance_edges.len());
 
             // Insert inheritance relationships into database

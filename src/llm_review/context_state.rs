@@ -33,8 +33,8 @@ pub static METADATA_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
 
 pub fn get_context_key(repo: &RepoPaths, context_type: &ContextType) -> String {
     match context_type {
-        ContextType::Full => cache_key(&repo.root, "prompt_context"),
-        ContextType::Abridged => cache_key(&repo.root, "abridged_prompt_context"),
+        ContextType::Full => cache_key(&repo.root, "prompt_context", None),
+        ContextType::Abridged => cache_key(&repo.root, "abridged_prompt_context", None),
     }
 }
 /// Generates and caches protocol metadata context for AI analysis.
@@ -155,7 +155,7 @@ pub async fn generate_context_for_code_review(
 }
 
 pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
-    let key = cache_key(&repo.root, "audit_scope");
+    let key = cache_key(&repo.root, "audit_scope", None);
 
     // Return cached output if exists
     if let Some(cached) = METADATA_CONTEXT.lock().await.get(&key).cloned() {
@@ -181,7 +181,7 @@ pub async fn generate_slither_metadata_prompt_context(
     repo: &RepoPaths,
     _semantics_path: &Path,
 ) -> Result<String> {
-    let key = cache_key(&repo.root, "prompt_context");
+    let key = cache_key(&repo.root, "prompt_context", None);
     // Return cached output if exists
     // Return cached output if exists
     if let Some(cached) = PROMPT_CONTEXT.lock().await.get(&key).cloned() {
