@@ -1,6 +1,9 @@
 use crate::{
     enumerator::codeblock_db::CodeBlocksDb,
-    llm_review::context_state::{ContextType, get_metadata_context},
+    llm_review::{
+        code_review_v2::enhance_codeblock,
+        context_state::{get_metadata_context, ContextType},
+    },
     prepare_code::git_clone::RepoPaths,
     reporting::save_file::save_file_locally,
 };
@@ -19,7 +22,10 @@ use std::path::{Path, PathBuf};
 /// # Arguments
 // * `codeblocks_path` - Path to the code blocks database
 /// * `repo` - Repository paths and metadata for naming
-pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> anyhow::Result<()> {
+pub async fn save_contract_and_fn_ir(
+    codeblocks_path: &PathBuf,
+    repo: &RepoPaths,
+) -> anyhow::Result<()> {
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
 
     // grab all solidity contracts from database
@@ -30,7 +36,8 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
     for (contract, codeblock) in contracts {
         let filename = format!("{}-{}.md", contract, repo.unique_repo_hash());
         let full_path = output_dir.join(filename);
-        save_file_locally(&codeblock, &full_path)?;
+        let enhanced_codeblock = enhance_codeblock(&contract, &codeblock, repo).await?;
+        save_file_locally(&enhanced_codeblock, &full_path)?;
     }
     Ok(())
 }

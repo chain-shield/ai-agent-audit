@@ -10,12 +10,16 @@ use serde::Deserialize;
 use std::{collections::HashMap, default::Default, path::Path};
 
 use crate::{
+    build_brain::{inheritance, slither_ffi},
     enumerator::utils::get_function_metadata_from_id,
     prepare_code::git_clone::RepoPaths,
-    utils::fn_labels::{get_modifiers_label, get_visibility_label},
+    utils::{
+        check_folder_name::contains_build_config,
+        fn_labels::{get_modifiers_label, get_visibility_label},
+    },
 };
 
-use super::{graph_db::SmartContractFunction, slither_ffi::run_printer_json};
+use super::graph_db::SmartContractFunction;
 
 /// Represents a function node in the call graph
 #[derive(Debug, Clone, Default)]
@@ -49,11 +53,56 @@ pub struct DotEdge {
 /// # Returns
 /// * `(Vec<DotFunc>, Vec<DotEdge>)` - Functions and their call relationships
 pub async fn get_dot_funcs_and_dot_edges(repo: &RepoPaths) -> Result<(Vec<DotFunc>, Vec<DotEdge>)> {
-    let json = run_printer_json(repo, "call-graph").await?;
-    let blobs = extract_dot_blobs(&json)?;
+    // let json = run_printer_json(repo, "call-graph", None).await?;
+    // let blobs = extract_dot_blobs(&json)?;
+    let blobs = generate_call_graph_blobs(&repo).await?;
     parse_dot_blobs(&blobs, repo)
 }
 
+pub async fn generate_call_graph_blobs(repo: &RepoPaths) -> Result<Vec<String>> {
+    let folders = repo.extract_monorepo_folders()?;
+
+    if folders.is_empty() {
+        let json = slither_ffi::run_printer_json(&repo, "call-graph", None).await?;
+        Ok(extract_dot_blobs(&json)?)
+    } else {
+        let mut total_output = Vec::<String>::new();
+        for folder in folders {
+            // TODO: handle edge where no build config (find sol files)
+            if contains_build_config(&folder) {
+                let json = slither_ffi::run_printer_json(&repo, "call-graph", Some(folder)).await?;
+                let blobs = extract_dot_blobs(&json)?;
+                if !blobs.is_empty() {
+                    total_output.extend(blobs);
+                }
+            }
+        }
+        Ok(total_output)
+    }
+}
+
+pub async fn generate_inheritance_edges(repo: &RepoPaths) -> Result<Vec<(String, String)>> {
+    let folders = repo.extract_monorepo_folders()?;
+
+    if folders.is_empty() {
+        let json = slither_ffi::run_printer_json(&repo, "inheritance", None).await?;
+        Ok(inheritance::parse_inheritance_json(&json)?)
+    } else {
+        let mut total_output = Vec::<(String, String)>::new();
+        for folder in folders {
+            // TODO: handle edge where no build config (find sol files)
+            if contains_build_config(&folder) {
+                let json =
+                    slither_ffi::run_printer_json(&repo, "inheritance", Some(folder)).await?;
+                let edges = inheritance::parse_inheritance_json(&json)?;
+                if !edges.is_empty() {
+                    total_output.extend(edges);
+                }
+            }
+        }
+        Ok(total_output)
+    }
+}
 /// Step 2: pull every DOT file’s `content` string
 pub fn extract_dot_blobs(json: &str) -> Result<Vec<String>> {
     #[derive(Deserialize)]
@@ -76,6 +125,7 @@ pub fn extract_dot_blobs(json: &str) -> Result<Vec<String>> {
     }
     #[derive(Deserialize)]
     struct Results {
+        #[serde(default)]
         printers: Vec<Printer>,
     }
 

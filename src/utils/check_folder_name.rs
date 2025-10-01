@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn path_has_any_segment(file: &Path, root: &Path, segments: &[&str]) -> bool {
     if file.is_dir() {
@@ -9,6 +9,16 @@ fn path_has_any_segment(file: &Path, root: &Path, segments: &[&str]) -> bool {
     } else {
         false
     }
+}
+
+// check if folder contains build config
+pub fn contains_build_config(dir: &PathBuf) -> bool {
+    let foundry = dir.join("foundry.toml");
+    let hardhat_js = dir.join("hardhat.config.js");
+    let hardhat_ts = dir.join("hardhat.config.ts");
+    let hardhat_cjs = dir.join("hardhat.config.cjs");
+
+    foundry.is_file() || hardhat_js.is_file() || hardhat_ts.is_file() || hardhat_cjs.is_file()
 }
 
 pub fn is_test_file(file: &Path, root: &Path) -> bool {

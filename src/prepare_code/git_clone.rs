@@ -271,6 +271,20 @@ pub fn clone_and_filter_git_repo(
     })
 }
 
+/// Adds GitHub authentication token to URL if GITHUB_TOKEN env var is set.
+/// This enables cloning private repositories.
+fn add_github_auth(repo_url: &str) -> String {
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        if repo_url.starts_with("https://github.com/") {
+            return repo_url.replace(
+                "https://github.com/",
+                &format!("https://{}@github.com/", token),
+            );
+        }
+    }
+    repo_url.to_string()
+}
+
 pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Result<PathBuf> {
     let docker_volume = format!("{}/{}", audit_config().docker_volume, project_id);
     let docker_path = PathBuf::from(&docker_volume);
@@ -284,7 +298,7 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     if docker_path.exists()
         && build_stamp.exists()
         && workspace_root.exists()
-        && (workspace_root.join("out").exists() || workspace_root.join("artifacts").exists())
+        // && (workspace_root.join("out").exists() || workspace_root.join("artifacts").exists())
         && !cli.force_rebuild
     {
         log::info!(
@@ -314,13 +328,24 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     log::info!("git cloning repo...");
 
     let build_command = cli.generate_build_command();
-    let repo_url = &cli.repo;
+    let repo_url = add_github_auth(&cli.repo);
+
+    // Install build tools if using custom builder (needed for native node modules)
+    let setup_build_tools = if matches!(cli.builder, crate::cli_args::parse::BuilderType::Custom) {
+        "apt-get update -qq && apt-get install -y -qq build-essential python3 > /dev/null 2>&1 && "
+    } else {
+        ""
+    };
+
     let clone_and_build_command = format!(
-        "git clone --depth=1 {repo_url} {repo_root} && \
+        "{setup_build_tools}\
+     git clone --depth=1 {repo_url} {repo_root} && \
      cd {repo_name} && \
      git config --global url.\"https://github.com/\".insteadOf \"ssh://git@github.com/\" && \
      git config --global url.\"https://github.com/\".insteadOf \"git@github.com:\" && \
      git config --global url.\"https://\".insteadOf \"ssh://\" && \
+     export PNPM_HOME=/workspace/.pnpm && \
+     export PATH=$PNPM_HOME:$PATH && \
      {build_command}"
     );
 
@@ -361,8 +386,10 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
 }
 
 fn get_commit_hash(repo_url: &str) -> Result<String> {
+    let auth_url = add_github_auth(repo_url);
+
     let output = Command::new("git")
-        .args(["ls-remote", repo_url, "HEAD"])
+        .args(["ls-remote", &auth_url, "HEAD"])
         .output()
         .context("Failed to run git ls-remote")?;
 

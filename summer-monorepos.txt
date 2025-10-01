@@ -8,3 +8,4 @@
 ./packages/match-utils/
 ./packages/percentage/
 ./packages/voting-decay/
+./packages/intent-system/

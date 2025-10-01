@@ -52,7 +52,7 @@ fn hardhat_repo_pref_over_foundry_yarn() {
         ],
         &[],
     );
-    let args = build_slither_args(&repo, Some("slithir-ssa"), false);
+    let args = build_slither_args(&repo, Some("slithir-ssa"), None, false);
     let joined = args.join(" ");
     assert!(joined.contains("--compile-force-framework hardhat"));
     assert!(joined.contains("--hardhat-ignore-compile"));
@@ -71,7 +71,7 @@ fn foundry_yarn_without_hardhat_config() {
         &["package.json", "yarn.lock", "foundry.toml"],
         &[],
     );
-    let args = build_slither_args(&repo, None, false);
+    let args = build_slither_args(&repo, None, None, false);
     let joined = args.join(" ");
     assert!(!joined.contains("--foundry-ignore-compile"));
     assert!(!joined.contains("--hardhat-ignore-compile"));
@@ -88,7 +88,7 @@ fn hardhat_monorepo_artifacts_dir() {
         &["package.json", "yarn.lock", "hardhat.config.ts"],
         &["packages/hardhat/artifacts"],
     );
-    let args = build_slither_args(&repo, Some("slithir-ssa"), false);
+    let args = build_slither_args(&repo, Some("slithir-ssa"), None, false);
     let joined = args.join(" ");
     assert!(joined.contains("--compile-force-framework hardhat"));
     assert!(joined.contains("--hardhat-ignore-compile"));

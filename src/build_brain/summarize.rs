@@ -21,7 +21,7 @@ use crate::{
         get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
         insert_file_summary_to_db,
     },
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::enums::AgentMetadata,
     prepare_code::git_clone::RepoPaths,
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
@@ -44,12 +44,12 @@ pub struct FileSummary {
     pub summary: String,
 }
 
-pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 300;
-pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 50;
-pub const MAX_CHARS_STORAGE_DESC: u16 = 50;
-// pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 100;
-// pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 20;
-// pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
+// pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 300;
+// pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 50;
+// pub const MAX_CHARS_STORAGE_DESC: u16 = 50;
+pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 100;
+pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 20;
+pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
 
 // pub async fn summarize_docs(
 //     repo: &RepoPaths,
@@ -150,10 +150,25 @@ pub async fn summarize_src_files(
     // ---------------------------------------------
     let mut work_items = Vec::new();
 
+    let monorepo_folders = repo.extract_monorepo_folders()?;
+
     let protocol_root = repo.get_protocol_root();
     // Walk through the repository and collect relevant files
     for file in &repo.sol_files {
+        // if protocol in monorepo make sure file to summarize is in the monorepo
+        if !monorepo_folders.is_empty() {
+            let is_in_monorepo = monorepo_folders.iter().any(|dir| file.starts_with(dir));
+
+            if !is_in_monorepo {
+                continue;
+            }
+        }
+
         let is_file_we_want_summary_of = file.extension().map_or(false, |ext| ext == "sol")
+            && !file
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map_or(false, |n| n.ends_with("t.sol"))
             && (file.starts_with(&repo.source_code_folder) || is_script_file(file, &protocol_root));
 
         if !is_file_we_want_summary_of {

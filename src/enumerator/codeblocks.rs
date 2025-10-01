@@ -18,6 +18,7 @@ use crate::utils::get_fn_name::{
 };
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::Mutex;
 
 use anyhow::Result;
 use log::info;
@@ -26,6 +27,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use uuid::Uuid;
 
 use super::codeblock_db::CodeBlocksDb;
+
+/// Global cache for internal_call_edge_map results.
+/// Key format: "ir_block_hash:contract_name"
+static INTERNAL_CALL_EDGE_CACHE: Lazy<Mutex<HashMap<String, HashMap<String, (String, String)>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Generates contextual code blocks for each contract using call graph traversal.
 ///
@@ -111,6 +117,8 @@ pub async fn generate_codeblock_from_codebase(
                         repo,
                     )? {
                         frontier.push_back((callee_fn, depth + 1));
+                    } else {
+                        info!("ALERT: could not find IR for {}", callee)
                     }
                 }
             }
@@ -126,6 +134,10 @@ pub async fn generate_codeblock_from_codebase(
             markdown_codeblock_for_llm.push('\n');
         }
         // let mut library_calls = Vec::<LibCall>::new();
+        // info!(
+        //     "ALL CONNECTED FUNCTIONS COUNT: {}",
+        //     all_funcs_connected_to_contract.len()
+        // );
         for func in &all_funcs_connected_to_contract {
             let function_ir_code = generate_codeblock_for_function(func, repo).await?;
             // check function IR for LIBRARY_CALL
@@ -213,19 +225,19 @@ pub fn robust_extract_fn_metadata_from_func_id(
             return Ok(None);
         }
 
-        info!(
-            "in INTERNAL_CALL found contract: {}, and fn sig {}",
-            new_contract, fn_sig
-        );
+        // info!(
+        //     "in INTERNAL_CALL found contract: {}, and fn sig {}",
+        //     new_contract, fn_sig
+        // );
 
         callee_fn =
             get_function_metadata_from_contract_plus_fn(&new_contract, &fn_sig, semantic_db)?
                 .unwrap_or_default();
 
-        info!(
-            "found IR for fn sig with token count: {}",
-            get_token_count(&callee_fn.ir)
-        );
+        // info!(
+        //     "found IR for fn sig with token count: {}",
+        //     get_token_count(&callee_fn.ir)
+        // );
 
         if callee_fn.id.is_empty() {
             return Ok(None);
@@ -383,11 +395,29 @@ pub fn parse_call_edge_line(line: &str) -> Option<CallEdge> {
 }
 
 /// Collect call edges from a whole IR block; supply `current_contract` to resolve unqualified INTERNAL_CALLs.
+/// Results are cached globally to avoid redundant parsing of the same IR blocks.
 pub fn internal_call_edge_map(
     ir_block: &str,
     current_contract: &str,
 ) -> HashMap<String, (String, String)> {
-    // Returns fn_name -> (callee_contract, fn_name). Libraries will use library name as "contract".
+    // Create a cache key from IR block hash and contract name
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    ir_block.hash(&mut hasher);
+    current_contract.hash(&mut hasher);
+    let cache_key = format!("{}:{}", hasher.finish(), current_contract);
+
+    // Check cache first
+    {
+        let cache = INTERNAL_CALL_EDGE_CACHE.lock().unwrap();
+        if let Some(cached_result) = cache.get(&cache_key) {
+            return cached_result.clone();
+        }
+    }
+
+    // Cache miss - compute the result
     let mut out = HashMap::new();
     for line in ir_block.lines() {
         if let Some(edge) = parse_call_edge_line(line) {
@@ -400,5 +430,12 @@ pub fn internal_call_edge_map(
             }
         }
     }
+
+    // Store in cache
+    {
+        let mut cache = INTERNAL_CALL_EDGE_CACHE.lock().unwrap();
+        cache.insert(cache_key, out.clone());
+    }
+
     out
 }
