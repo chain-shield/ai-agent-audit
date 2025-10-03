@@ -256,7 +256,7 @@ pub async fn summarize_src_files(
 
     Ok(summaries)
 }
-
+//
 pub async fn summarize_protocol(repo: &RepoPaths, context: Option<&str>) -> Result<String> {
     // pull protocol-summary from db, if avaliable
     let protocol_summary = get_file_summary_from_db("protocol-summary", repo)?;

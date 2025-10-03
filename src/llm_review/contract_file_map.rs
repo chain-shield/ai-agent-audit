@@ -40,3 +40,34 @@ pub async fn get_file_from_contract(contract: &str, repo: &RepoPaths) -> Option<
 
     file
 }
+
+/// Global metadata context shared across all AI agents
+static INTERFACE_TO_FILE: Lazy<Arc<Mutex<HashMap<String, PathBuf>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::<String, PathBuf>::new())));
+
+pub async fn insert_interface_to_file_mapping(
+    interface: &str,
+    file: &Path,
+    repo: &RepoPaths,
+) -> anyhow::Result<()> {
+    let map = Arc::clone(&INTERFACE_TO_FILE);
+    let mut interface_file_map = map.lock().await;
+
+    let key = format!("{}_{}", repo.project_id, interface);
+
+    interface_file_map.insert(key, file.to_owned());
+
+    Ok(())
+}
+
+pub async fn get_file_from_interface(interface: &str, repo: &RepoPaths) -> Option<PathBuf> {
+    let map = Arc::clone(&INTERFACE_TO_FILE);
+    let interface_file_map = map.lock().await;
+
+    let key = format!("{}_{}", repo.project_id, interface);
+
+    // log::info!("getting file for contract {}", contract);
+    let file = interface_file_map.get(&key).cloned();
+
+    file
+}

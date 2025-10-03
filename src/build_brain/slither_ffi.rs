@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 
 use crate::build_brain::parsers::parse_slithir_contract_summary;
 use crate::build_brain::summarize::summarize_src_files;
+// use crate::build_brain::summarize::summarize_src_files;
 use crate::cost::cost_data::get_token_count;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::check_folder_name::contains_build_config;
@@ -576,7 +577,7 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
     fs::write(&file_list, src_file_list)?;
     out_paths.push(file_list);
 
-    info!("convert file summaries to txt files");
+    // info!("convert file summaries to txt files");
     for sum in &summaries {
         let meta = format!("{}::file_summary", sum.filename);
         // info!("contract meta => {}", meta);

@@ -1,9 +1,9 @@
 use crate::llm_review::{
-    enums::{EnumString, all_enum_variants, generate_enum_list},
+    enums::{all_enum_variants, generate_enum_list, EnumString},
     findings::PrivilegeLevel,
-    pattern_category::{PatternCategory, get_category_library_spec},
+    pattern_category::{get_category_library_spec, PatternCategory},
     patterns::{
-        Pattern, VULNERABILITY_PATTERN_LIBRARY, VulnerabilityPattern, VulnerabilityPatternSpec,
+        Pattern, VulnerabilityPattern, VulnerabilityPatternSpec, VULNERABILITY_PATTERN_LIBRARY,
     },
     utils::prompt_context::generate_formatted_pattern,
 };
@@ -16,7 +16,7 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
         r#"
         You are a top C4 Security Warden specializing in finding {title} vulnerabilities.
 
-        Please Analyse the *entire* Solidity source below for 
+        Please Analyse the main target contract below for 
         *each* {title} security vulnerability patterns listed below:
 
         ## {title_all_caps} VULNERABILITY PATTERNS TO LOOK FOR

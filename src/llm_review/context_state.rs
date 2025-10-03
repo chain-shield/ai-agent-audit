@@ -125,12 +125,10 @@ pub async fn generate_context_for_code_review(
     full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
     full_prompt_context.push_str(&documentation);
 
-    if *context_type == ContextType::Full {
-        let config_files_content = repo.extract_content_from_config_files()?;
-        // adding config files: foundry.toml, package.json, etc
-        full_prompt_context.push_str("\n ## CONFIG FILES: \n\n ");
-        full_prompt_context.push_str(&config_files_content);
-    }
+    let config_files_content = repo.extract_content_from_config_files()?;
+    // adding config files: foundry.toml, package.json, etc
+    full_prompt_context.push_str("\n ## CONFIG FILES: \n\n ");
+    full_prompt_context.push_str(&config_files_content);
 
     log::info!(
         "documentation full token count => {}",

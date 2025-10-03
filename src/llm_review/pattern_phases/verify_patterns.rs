@@ -5,7 +5,7 @@
 use crate::{
     error::Result,
     llm_review::{
-        context_state::{ContextType, get_metadata_context},
+        context_state::{get_metadata_context, ContextType},
         enums::AIAgent,
         invariants::ContractInvariants,
         issues::{IssueStructTrait, IssueTrait},
@@ -17,7 +17,7 @@ use crate::{
 use log::info;
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -97,7 +97,7 @@ where
 
     let mut handles = vec![];
     let deduped_patterns: Arc<T> = Arc::new(patterns.dedup().await?);
-    let context = get_metadata_context(repo, &ContextType::Full)
+    let context = get_metadata_context(repo, &ContextType::Abridged)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
