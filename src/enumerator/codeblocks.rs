@@ -238,10 +238,6 @@ pub async fn generate_codeblock_from_codebase(
         markdown_codeblock_for_llm.push_str(supporting_header);
         current_token_count += get_token_count(supporting_header);
 
-        // Get scoped files for priority checking
-        let scoped_files = repo.extract_scoped_files()?;
-        let has_scoped_files = !scoped_files.is_empty();
-
         // Prioritize contracts by importance:
         // 1. HIGHEST: Scoped contracts (explicitly marked for audit)
         // 2. HIGH: Called contracts (user flow, attack surface)
@@ -249,39 +245,21 @@ pub async fn generate_codeblock_from_codebase(
         let mut prioritized_contracts = Vec::new();
         let parents_of_main = callgraph::get_parents(&main_contract, repo).await?;
 
-        // Priority 1: Add scoped contracts first (HIGHEST PRIORITY - explicitly in audit scope)
-        if has_scoped_files {
-            for contract in &contracts_with_parents {
-                if *contract != main_contract
-                    && is_in_scoped_files(contract, repo, &scoped_files).await
-                {
-                    prioritized_contracts.push((contract.clone(), "scoped"));
-                }
-            }
-        }
-
-        // Priority 2: Add called contracts (HIGH PRIORITY - user flow, attack surface)
+        // Priority 1: Add called contracts (HIGH PRIORITY - user flow, attack surface)
         for contract in &contracts {
-            if *contract != main_contract
-                && !parents_of_main.contains(contract)
-                && !is_in_scoped_files(contract, repo, &scoped_files).await
-            // Skip if already added as scoped
-            {
+            if *contract != main_contract && !parents_of_main.contains(contract) {
                 prioritized_contracts.push((contract.clone(), "called"));
             }
         }
 
-        // Priority 3: Add parents (MEDIUM PRIORITY - usually standard libraries)
+        // Priority 2: Add parents (MEDIUM PRIORITY - usually standard libraries)
         for parent in &contracts_with_parents {
-            if *parent != main_contract
-                && !is_in_scoped_files(parent, repo, &scoped_files).await
-                && !contracts.contains(parent)
-            {
+            if *parent != main_contract && !contracts.contains(parent) {
                 prioritized_contracts.push((parent.clone(), "parent"));
             }
         }
 
-        // Process contracts in priority order (scoped → called → parents)
+        // Process contracts in priority order (called → parents)
         // The prioritized_contracts vector is already ordered correctly from above
         let mut contracts_added = 0;
         let mut contracts_skipped = 0;
@@ -289,10 +267,10 @@ pub async fn generate_codeblock_from_codebase(
             let contract_code = get_contract_file_content(&contract, repo).await?;
             // Skip if no content (could not resolve file)
             if contract_code.trim().is_empty() {
-                info!(
-                    "⏭️ Skipping '{} contract: {}' - no file or empty content",
-                    contract_type, contract
-                );
+                // info!(
+                //     "⏭️ Skipping '{} contract: {}' - no file or empty content",
+                //     contract_type, contract
+                // );
                 contracts_skipped += 1;
                 continue;
             }
@@ -302,10 +280,10 @@ pub async fn generate_codeblock_from_codebase(
 
             // Enforce minimum section size to avoid 1-token noise
             if section_tokens < 5 {
-                info!(
-                    "⏭️ Skipping '{} contract: {}' ({} tokens) - below minimum (5 tokens)",
-                    contract_type, contract, section_tokens
-                );
+                // info!(
+                //     "⏭️ Skipping '{} contract: {}' ({} tokens) - below minimum (5 tokens)",
+                //     contract_type, contract, section_tokens
+                // );
                 contracts_skipped += 1;
                 continue;
             }
@@ -348,7 +326,7 @@ pub async fn generate_codeblock_from_codebase(
             if contract.starts_with('I') && interfaces_added.insert(contract.clone()) {
                 // Cheap check first: standard by name
                 if is_standard_interface_name(&contract) {
-                    info!("⏭️ Skipping standard interface: {}", contract);
+                    // info!("⏭️ Skipping standard interface: {}", contract);
                     interfaces_skipped_count += 1;
                     continue;
                 }
@@ -356,7 +334,7 @@ pub async fn generate_codeblock_from_codebase(
                 // Then check by known library path (requires a mapping lookup)
                 if let Some(iface_path) = get_file_from_interface(&contract, repo).await {
                     if path_is_standard_lib(&iface_path) {
-                        info!("⏭️ Skipping standard interface: {}", contract);
+                        // info!("⏭️ Skipping standard interface: {}", contract);
                         interfaces_skipped_count += 1;
                         continue;
                     }
@@ -369,10 +347,11 @@ pub async fn generate_codeblock_from_codebase(
 
                     // Minimum section size gate for interfaces
                     if section_tokens < 5 {
-                        info!(
-                            "⏭️ Skipping 'Interface: {}' ({} tokens) - below minimum (5 tokens)",
-                            contract, section_tokens
-                        );
+                        // info!(
+                        //     "⏭️ Skipping 'Interface: {}' ({} tokens) - below minimum (5 tokens)",
+                        //     contract,
+                        //     section_tokens
+                        // );
                         interfaces_skipped_count += 1;
                         continue;
                     }
@@ -404,56 +383,6 @@ pub async fn generate_codeblock_from_codebase(
             "📊 Interfaces: {} added, {} skipped due to budget",
             interfaces_added_count, interfaces_skipped_count
         );
-
-        // // list storage vars
-        // for contract in &contracts {
-        //     let storage_var_ir = generate_code_slice_for_storage(contract, repo).await?;
-        //     // loop through and add all functions of contract
-        //     markdown_codeblock_for_llm.push_str(&storage_var_ir);
-        //     markdown_codeblock_for_llm.push('\n');
-        // }
-        // // let mut library_calls = Vec::<LibCall>::new();
-        // // info!(
-        // //     "ALL CONNECTED FUNCTIONS COUNT: {}",
-        // //     all_funcs_connected_to_contract.len()
-        // // );
-        // for func in &all_funcs_connected_to_contract {
-        //     let function_ir_code = generate_codeblock_for_function(func, repo).await?;
-        //     // check function IR for LIBRARY_CALL
-        //     // library_calls.extend(collect_library_calls(&function_ir_code));
-        //     markdown_codeblock_for_llm.push_str(&function_ir_code);
-        //     markdown_codeblock_for_llm.push('\n');
-        // }
-        //
-        // Deduplicate library calls (by library + canonical_sig)
-        // let total_occurrences = library_calls.len();
-        // let mut seen_pairs = _HashSet::new();
-        // library_calls.retain(|c| seen_pairs.insert((c.library.clone(), c.canonical_sig.clone())));
-        // info!(
-        //     "library calls found: occurrences={}, unique_functions={}",
-        //     total_occurrences,
-        //     library_calls.len()
-        // );
-
-        // // extract IR for library calls if any unique calls remain
-        // if !library_calls.is_empty() {
-        //     let code_for_library_calls = generate_library_funcs_markdown(&library_calls).await;
-        //     // Only append if we actually have emitted function bodies
-        //     if code_for_library_calls.contains("************ CODE FOR ") {
-        //         info!(
-        //             "adding {} library function code snippets to codeblock",
-        //             library_calls.len()
-        //         );
-        //         print_first_n_lines(50, &code_for_library_calls);
-        //         // visual separation before library section
-        //         markdown_codeblock_for_llm.push_str("\n\n---\n\n");
-        //         markdown_codeblock_for_llm.push_str(&code_for_library_calls);
-        //     } else {
-        //         info!("no library code available to append (no matches in mapping)");
-        //     }
-        // } else {
-        //     info!("no library calls detected in IR; skipping library section");
-        // }
 
         // Final token count verification
         let final_token_count = get_token_count(&markdown_codeblock_for_llm);
@@ -561,21 +490,6 @@ fn strip_comments_and_strings(src: &str) -> String {
     out = RE_LINE.replace_all(&out, " ").into_owned();
 
     out
-}
-
-/// Check if a contract's source file is in the scoped files list
-async fn is_in_scoped_files(
-    contract: &str,
-    repo: &RepoPaths,
-    scoped_files: &Vec<std::path::PathBuf>,
-) -> bool {
-    if scoped_files.is_empty() {
-        return false;
-    }
-    match get_file_from_contract(contract, repo).await {
-        Some(file) => scoped_files.contains(&file),
-        None => false,
-    }
 }
 
 /// Detect contracts and interfaces referenced in source code.
