@@ -26,10 +26,10 @@ pub const MAX_DEPTH: usize = 3;
 pub const TOKEN_BUDGET: usize = 115_000;
 
 /// Number of discovery rounds per contract during analysis
-pub const DISCOVERY_RUNS: usize = 1;
-pub const INVARIANT_RUNS: usize = 1;
-pub const MAX_PATTERN_RUN_TOP: usize = 1;
-pub const MAX_PATTERN_RUN_FREQUENT: usize = 1;
+pub const DISCOVERY_RUNS: usize = 2;
+pub const INVARIANT_RUNS: usize = 5;
+pub const MAX_PATTERN_RUN_TOP: usize = 5;
+pub const MAX_PATTERN_RUN_FREQUENT: usize = 5;
 
 pub const MAX_FILE_RUNS: usize = 5;
 
