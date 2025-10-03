@@ -1,15 +1,13 @@
-use crate::config::TOKEN_BUDGET;
-use crate::cost::cost_data::get_token_count;
+use super::{enums::AIAgent, phases};
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
-use crate::llm_review::context_state::{ContextType, get_metadata_context};
 use crate::llm_review::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::utils::contract_in_scope::is_contract_in_scope;
 use crate::llm_review::{
     agent_factory::{AgentConfig, AgentFactory},
     analysis_db::FindingsDb,
-    findings::CLAUDE_4_0_SONNET,
     findings::Findings,
+    findings::CLAUDE_4_0_SONNET,
     invariants::{ContractInvariants, InvariantFinding, InvariantStatus, InvariantType},
     issues::{IssuePrompt, IssueStructTrait},
     pattern_category::PatternCategory,
@@ -20,11 +18,7 @@ use crate::prepare_code::git_clone::RepoPaths;
 use log::info;
 use std::{path::PathBuf, sync::Arc};
 use strum::IntoEnumIterator;
-use tokio::fs;
 use tokio::sync::Mutex;
-
-use super::contract_file_map::get_file_from_contract;
-use super::{enums::AIAgent, phases};
 
 /// Multi-LLM security analysis orchestration.
 ///
@@ -78,8 +72,8 @@ pub async fn review_codebase_for_security_issues_v2(
         let results_db = Arc::clone(&findings_db);
         let all_issues = Arc::clone(&all_security_issues);
         let repo_clone = repo.clone();
-        let contract_clone = contract.clone();
-        let codeblock_clone = codeblock.clone();
+        // let contract_clone = contract.clone();
+        // let codeblock_clone = codeblock.clone();
 
         // semaphore
         let sem = Arc::clone(&CONTRACT_REVEW_SEM);
@@ -88,16 +82,16 @@ pub async fn review_codebase_for_security_issues_v2(
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async move {
                 // Generate enhanced codeblock (includes file context)
-                let codeblock = enhance_codeblock(&contract_clone, &codeblock_clone, &repo_clone)
-                    .await
-                    .map_err(|e| {
-                        use std::io::{Error as IoError, ErrorKind};
-                        AuditError::file_system(
-                            "enhance_codeblock",
-                            format!("could not generate codeblock: {e}"),
-                            IoError::new(ErrorKind::Other, e.to_string()),
-                        )
-                    })?;
+                // let codeblock = enhance_codeblock(&contract_clone, &codeblock_clone, &repo_clone)
+                //     .await
+                //     .map_err(|e| {
+                //         use std::io::{Error as IoError, ErrorKind};
+                //         AuditError::file_system(
+                //             "enhance_codeblock",
+                //             format!("could not generate codeblock: {e}"),
+                //             IoError::new(ErrorKind::Other, e.to_string()),
+                //         )
+                //     })?;
 
                 // Run pattern and invariant analysis concurrently within this task
                 let (patterns_res, invariants_res) = tokio::join!(
@@ -182,45 +176,45 @@ pub async fn review_codebase_for_security_issues_v2(
 
 // combine codeblock with original file context (that codeblock came from)
 // this contains natspec and additional context
-pub async fn enhance_codeblock(
-    contract: &str,
-    codeblock: &str,
-    repo: &RepoPaths,
-) -> anyhow::Result<String> {
-    let file = get_file_from_contract(contract, repo)
-        .await
-        .expect("cound not find file contract is from, contract not in scope");
-
-    let file_content = fs::read_to_string(&file).await?;
-
-    let filename = file.strip_prefix(&repo.root)?;
-    info!("{} contains contract {}", filename.display(), contract);
-
-    // NOTE: calculate token count of full prompt to make sure does NOT exceed TOKEN_BUDGET
-    let context = get_metadata_context(repo, &ContextType::Full)
-        .await
-        .expect("context could not be retrieved");
-
-    let full_prompt_with_enhancement = format!("{}{}{}", codeblock, &file_content, context);
-    let full_prompt_size = get_token_count(&full_prompt_with_enhancement);
-
-    let enhanced_block = if full_prompt_size < TOKEN_BUDGET {
-        format!(
-            "{} \n\n {}: \n\n {}",
-            codeblock,
-            filename.display(),
-            file_content
-        )
-    } else {
-        info!(
-            "NOTE: token limit exceeded ({} tokens > {} limit) for contract {} prompt with enhancement, skipping enhancement",
-            full_prompt_size, TOKEN_BUDGET, contract
-        );
-        codeblock.to_string()
-    };
-
-    Ok(enhanced_block)
-}
+// pub async fn enhance_codeblock(
+//     contract: &str,
+//     codeblock: &str,
+//     repo: &RepoPaths,
+// ) -> anyhow::Result<String> {
+//     let file = get_file_from_contract(contract, repo)
+//         .await
+//         .expect("cound not find file contract is from, contract not in scope");
+//
+//     let file_content = fs::read_to_string(&file).await?;
+//
+//     let filename = file.strip_prefix(&repo.root)?;
+//     info!("{} contains contract {}", filename.display(), contract);
+//
+//     // NOTE: calculate token count of full prompt to make sure does NOT exceed TOKEN_BUDGET
+//     let context = get_metadata_context(repo, &ContextType::Full)
+//         .await
+//         .expect("context could not be retrieved");
+//
+//     let full_prompt_with_enhancement = format!("{}{}{}", codeblock, &file_content, context);
+//     let full_prompt_size = get_token_count(&full_prompt_with_enhancement);
+//
+//     let enhanced_block = if full_prompt_size < TOKEN_BUDGET {
+//         format!(
+//             "{} \n\n {}: \n\n {}",
+//             codeblock,
+//             filename.display(),
+//             file_content
+//         )
+//     } else {
+//         info!(
+//             "NOTE: token limit exceeded ({} tokens > {} limit) for contract {} prompt with enhancement, skipping enhancement",
+//             full_prompt_size, TOKEN_BUDGET, contract
+//         );
+//         codeblock.to_string()
+//     };
+//
+//     Ok(enhanced_block)
+// }
 pub async fn generate_ai_agents(repo: &RepoPaths) -> Result<(Arc<AIAgent>, Arc<AIAgent>)> {
     info!("setting up AI agents...");
 

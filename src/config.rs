@@ -16,18 +16,20 @@ pub enum AuditType {
 }
 
 // TYPE OF AUDIT
-pub const AUDIT_TYPE: AuditType = AuditType::Code4rena;
+pub const AUDIT_TYPE: AuditType = AuditType::Sherlock;
 
 // Application constants - these don't need to be configurable via environment
 /// Maximum call graph traversal depth for code slice generation
 pub const MAX_DEPTH: usize = 3;
 
 /// Maximum token budget per codeblock + context to stay within LLM context limits
-pub const TOKEN_BUDGET: usize = 140_000;
+pub const TOKEN_BUDGET: usize = 115_000;
 
 /// Number of discovery rounds per contract during analysis
-pub const DISCOVERY_RUNS: usize = 2;
-pub const INVARIANT_RUNS: usize = 5;
+pub const DISCOVERY_RUNS: usize = 1;
+pub const INVARIANT_RUNS: usize = 1;
+pub const MAX_PATTERN_RUN_TOP: usize = 1;
+pub const MAX_PATTERN_RUN_FREQUENT: usize = 1;
 
 pub const MAX_FILE_RUNS: usize = 5;
 

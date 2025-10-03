@@ -3,16 +3,13 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    config::{AUDIT_TYPE, AuditType},
+    config::AUDIT_TYPE,
     error::Result,
     llm_review::{
-        context_state::{ContextType, generate_audit_scope, get_metadata_context},
+        context_state::{generate_audit_scope, get_metadata_context, ContextType},
         enums::AIAgent,
         findings::{Finding, Findings},
-        prompt_support::{
-            post_verify::POST_VERIFY,
-            verify_prompt::{VERIFY_PROMPT, generate_verify_c4_prompt},
-        },
+        prompt_support::{post_verify::POST_VERIFY, verify_prompt::generate_verify_prompt},
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
     },
@@ -66,7 +63,7 @@ pub async fn execute(
 
     let mut handles = vec![];
     let deduped_findings = Arc::new(findings.dedup().await?);
-    let context = get_metadata_context(repo, &ContextType::Full)
+    let context = get_metadata_context(repo, &ContextType::Abridged)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
@@ -81,10 +78,7 @@ pub async fn execute(
 
     let audit_scope = generate_audit_scope(repo).await?;
 
-    let verify_prompt = match AUDIT_TYPE {
-        AuditType::Client => Arc::new(VERIFY_PROMPT.to_string()),
-        AuditType::Code4rena | AuditType::Sherlock => Arc::new(generate_verify_c4_prompt()),
-    };
+    let verify_prompt = generate_verify_prompt(AUDIT_TYPE);
 
     let updated_verify_prompt = if audit_scope.is_empty() {
         Arc::new(verify_prompt.to_string())

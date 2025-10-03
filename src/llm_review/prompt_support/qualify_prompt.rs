@@ -1,3 +1,4 @@
+// TODO: must include severity rubric
 pub const QUALIFY_PROMPT: &str = r#"
 
 **Inputs you will receive (per request)**  

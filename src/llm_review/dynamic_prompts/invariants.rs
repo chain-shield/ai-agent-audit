@@ -1,7 +1,7 @@
 use crate::llm_review::{
-    enums::{EnumString, all_enum_variants, generate_enum_list},
+    enums::{all_enum_variants, generate_enum_list, EnumString},
     invariants::{
-        INVARIANT_LIBRARY, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
+        InvariantFinding, InvariantSpec, InvariantStatus, InvariantType, INVARIANT_LIBRARY,
     },
     utils::prompt_context::generate_formatted_invariant_finding,
 };
@@ -12,7 +12,7 @@ pub fn generate_invariant_prompt(inv: &[InvariantType]) -> String {
     format!(
         r#"
         You are a senior smart-contract security auditor. Your task is to propose AND evaluate high-value,
-        machine-checkable invariants for ONE target contract.
+        machine-checkable invariants for main target contract.
 
         ## Task
         - Propose 3–7 invariants

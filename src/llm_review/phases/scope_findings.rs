@@ -5,7 +5,7 @@
 use crate::{
     error::Result,
     llm_review::{
-        context_state::{ContextType, generate_audit_scope, get_metadata_context},
+        context_state::{generate_audit_scope, get_metadata_context, ContextType},
         enums::AIAgent,
         findings::{Finding, Findings},
         phases::verify_findings::{
@@ -54,7 +54,7 @@ pub async fn execute(
     }
 
     let mut handles = vec![];
-    let context = get_metadata_context(repo, &ContextType::Full)
+    let context = get_metadata_context(repo, &ContextType::Abridged)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);

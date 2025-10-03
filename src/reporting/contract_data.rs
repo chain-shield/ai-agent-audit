@@ -1,9 +1,7 @@
 use crate::{
+    cost::cost_data::get_token_count,
     enumerator::codeblock_db::CodeBlocksDb,
-    llm_review::{
-        code_review_v2::enhance_codeblock,
-        context_state::{get_metadata_context, ContextType},
-    },
+    llm_review::context_state::{get_metadata_context, ContextType},
     prepare_code::git_clone::RepoPaths,
     reporting::save_file::save_file_locally,
 };
@@ -34,10 +32,10 @@ pub async fn save_contract_and_fn_ir(
     let output_dir = Path::new(&repo.repo_name);
 
     for (contract, codeblock) in contracts {
-        let filename = format!("{}-{}.md", contract, repo.unique_repo_hash());
+        let token_count = get_token_count(&codeblock);
+        let filename = format!("{}-token-count-{}.md", contract, token_count);
         let full_path = output_dir.join(filename);
-        let enhanced_codeblock = enhance_codeblock(&contract, &codeblock, repo).await?;
-        save_file_locally(&enhanced_codeblock, &full_path)?;
+        save_file_locally(&codeblock, &full_path)?;
     }
     Ok(())
 }
@@ -51,7 +49,7 @@ pub async fn save_contract_and_fn_ir(
 /// * `semantics_path` - Path to the semantic analysis database
 /// * `repo` - Repository paths and metadata for naming
 pub async fn save_metadata(repo: &RepoPaths) -> anyhow::Result<()> {
-    let metadata = get_metadata_context(repo, &ContextType::Full)
+    let metadata = get_metadata_context(repo, &ContextType::Abridged)
         .await
         .expect("cannot load metadata");
 

@@ -49,7 +49,7 @@ pub async fn save_repo_data_to_db(repo: &RepoPaths) -> anyhow::Result<()> {
         "{}/{}",
         CHAINSHIELD_DB_FOLDER, REPO_DATA_DB
     )))?;
-    let context = get_metadata_context(repo, &ContextType::Full)
+    let context = get_metadata_context(repo, &ContextType::Abridged)
         .await
         .expect("no context found!");
 

@@ -96,7 +96,6 @@ async fn main() -> Result<()> {
     // save contract IR and metadata
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo).await?;
     contract_data::save_metadata(&repo).await?;
-    return Ok(());
     // ────────────────────────────────
     // 5. AI Security Analysis
     // ────────────────────────────────

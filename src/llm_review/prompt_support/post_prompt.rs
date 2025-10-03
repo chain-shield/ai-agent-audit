@@ -4,7 +4,7 @@ use crate::{
         enums::{all_enum_variants, generate_enum_list},
         findings::PrivilegeLevel,
         prompt_support::{
-            severity_rubics::DEFAULT_SEVERITY_RUBRIC, verify_prompt::generate_verify_c4_prompt,
+            severity_rubics::DEFAULT_SEVERITY_RUBRIC, verify_prompt::generate_verify_prompt,
         },
     },
 };
@@ -123,10 +123,7 @@ they match up correctly.
 "#;
 
 pub fn generate_post_prompt(contract_name: &str) -> String {
-    let security_rubric = match AUDIT_TYPE {
-        AuditType::Code4rena | AuditType::Sherlock => generate_verify_c4_prompt(),
-        AuditType::Client => DEFAULT_SEVERITY_RUBRIC.to_string(),
-    };
+    let security_rubric = generate_verify_prompt(AUDIT_TYPE);
 
     let comp_audit_issue_type = "AccessControl | Reentrancy | Oracle | PricePrecision | RoundingError | FeeOnTransferAssumption | UncheckedERC20Return | Dos | SignatureReplay | AuthByPass | UntrustedDelegateCall | TimestampManipulation | CrossChainMessageSpoofing | AccountingInvariantViolation | SlippageMissingOrInsufficient | FlashLoanEconomicManipulation";
     let default_issue_type = "AccessControl|ArrayLimits|ConfidentialData|DefaultVisibility|Dos|Inheritance|IntegerMath|Oracle|Pragma|Randomness|Reentrancy|ReplayAttack|SelfDestruct|ShortAddress|StorageLayout|TxOrigin|UncheckedReturn|UnexpectedEth|ZeroCode|FrontrunMev|UpgradeabilityInitializerSafety|PausableEmergencyStop|TimestampDependentLogic|FlashLoanEconomicManipulation|DelegatecallLowLevelOps|SignatureMalleability|EventConsistency|GasGriefBlockLimit|IntegerOverflow";

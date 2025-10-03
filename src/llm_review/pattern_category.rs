@@ -1,4 +1,7 @@
-use crate::llm_review::patterns::VulnerabilityPattern;
+use crate::{
+    config::{MAX_PATTERN_RUN_FREQUENT, MAX_PATTERN_RUN_TOP},
+    llm_review::patterns::VulnerabilityPattern,
+};
 use std::{collections::HashMap, sync::OnceLock};
 /// Configuration management for the AI Agent Audit application.
 ///
@@ -125,14 +128,14 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         title: "Top Code4rena",
         issues: TOP_PAID_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: 5,
+        runs: MAX_PATTERN_RUN_TOP,
     },
     PatternCategorySpec {
         category: PatternCategory::Frequent,
         title: "Most Frequent Code4rena",
         issues: FREQUENT_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: 5,
+        runs: MAX_PATTERN_RUN_FREQUENT,
     },
 ];
 
