@@ -75,8 +75,6 @@ pub mod llm_review {
     pub mod agent_factory;
     /// Analysis results database
     pub mod analysis_db;
-    /// Main security review orchestration
-    pub mod code_review;
     pub mod code_review_v2;
     /// Global context management
     pub mod context_state;
@@ -99,8 +97,6 @@ pub mod llm_review {
         pub mod patterns;
     }
     pub mod phases {
-        /// Phase 2: Parallel vulnerability detection across multiple AI agents
-        pub mod generate_findings;
         /// Phase 1: AI-driven file selection and context prefetching
         pub mod prefetch_context;
         /// Phase 5: Quality assurance and final finding refinement
