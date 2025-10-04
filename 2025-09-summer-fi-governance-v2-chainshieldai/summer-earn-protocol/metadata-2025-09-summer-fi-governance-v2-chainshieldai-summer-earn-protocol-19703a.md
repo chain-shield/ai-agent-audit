@@ -1,3 +1,299 @@
+
+## PROTOCOL OVERVIEW:
+
+# Lazy Summer Protocol – Technical Overview
+
+*(max ≈ 3 900 words – Markdown formatted; suitable for senior Solidity engineers, auditors and integrators)*
+
+---
+
+## 1. Purpose & High-Level Architecture
+
+Lazy Summer is a modular yield-aggregation and governance stack designed to deploy user deposits across multiple yield strategies (ARKs), coordinate those strategies through a central Fleet Commander vault, reward participants, and control the whole system through an on-chain, cross-chain governance process.
+
+The repo is organised in four large verticals:
+
+1. **Core-contracts** – the “Earn” layer (Fleet Commander, ARKs, RAFT, TipJar, HarborCommand, Configuration).
+2. **Access-contracts** – shared role-based access control (ProtocolAccessManager) and helper mix-ins.
+3. **Gov-contracts** – token, staking, vesting, timelock and Governor V2.
+4. **Chain-bridge & Intent-system** – LayerZero / Stargate adapters, Cross-Chain registry, BridgeRouter and a solver-bond based Intent execution framework.
+5. **Dutch-auction & Rewards packages** – auxiliary subsystems used by Treasury and emissions.
+
+Each vertical is isolated and can be audited / upgraded independently while re-using the same access-control back-bone.
+
+![](./docs/architecture.svg) *(simplified component map – hub chain)*
+
+---
+
+## 2. Core “Earn” Layer
+
+### 2.1 Fleet Commander (packages/core-contracts/src/contracts/FleetCommander.sol)
+
+An ERC4626 vault that issues Fleet shares and delegates capital to a configurable set of **ARK** strategy adapters at the direction of a **Keeper**.  A mandatory **BufferARK** keeps a liquidity cushion for instant withdrawals.
+
+Key Flow
+
+1. **Deposit** – `deposit()` pulls `asset` from user, mints Fleet shares, pushes the tokens into the BufferARK.
+2. **Rebalance** – After `rebalanceCooldown` a Keeper may move funds between ARKs (`board`/`disembark`) or from Buffer to ARKs until caps & flow limits are respected.
+3. **Tip** – Every external-facing action mints `tipRate` Fleet shares for the TipJar (protocol revenue).
+4. **Withdraw / Redeem** – Tries Buffer first, then falls back to ARKs ordered by withdrawable liquidity.
+
+Important Config Parameters (inside `FleetConfig` struct)
+
+* `depositCap` – hard TVL limit.
+* `minimumBufferBalance` – min idle funds inside BufferARK.
+* `maxRebalanceOperations` – gas-guard, ≤ 50.
+* `tipRate` – Percentage (WAD-1e18) shares minted to TipJar.
+
+Roles (all resolved from ProtocolAccessManager)
+
+* **Governor** – permanent admin, can pause/unpause, force-rebalance, update tip-rate.
+* **Curator**  – per-Fleet role, can tune caps & rebalance-cooldown.
+* **Keeper**   – per-Fleet role, can `rebalance()` under cooldown.
+* **SuperKeeper** – global maintenance, bypasses per-Fleet role.
+
+### 2.2 ARK base class & concrete strategy ARKs
+
+An **ARK** is a thin adapter that receives capital from a single Fleet and executes a specific yield strategy.
+
+Common features (inherited from `Ark.sol` and `ArkAccessManaged.sol`)
+
+* Stateless governance – after deploy no new admin keys.
+* `board(amount)` / `disembark(amount)` – internal hooks executed by FleetCommander only.
+* `_withdrawableTotalAssets()` – conservative liquidity metric used for partial withdrawals.
+* `_harvest()` – forwards rewards to the protocol-level **RAFT** address.
+
+Implemented strategies (non-exhaustive list):
+
+* Lending: AaveV3Ark, SparkArk, CompoundV3Ark, MoonwellArk.
+* Vault wrappers: ERC4626Ark, SiloVaultArk(V1/V2), MetaMorphoArk.
+* Complex: PendlePTArk / PendleLPArk, StargateV2PoolArk, OriginETHArk (+Super-variant), FluidLiteArk, CrossChainArk (bridging), MorphoArk.
+* BufferArk – does nothing, just holds tokens.
+
+Every ARK must respect a per-ARK **depositCap**, **maxRebalanceInflow / Outflow** and (optionally) percentage-of-TVL caps, all configured through the Fleet’s `FleetCommanderConfigProvider`.
+
+### 2.3 RAFT, TipJar, ConfigurationManager & HarborCommand
+
+* **RAFT** – Single rewards sink (not shipped in repo) that converts protocol rewards → deposit asset and redistributes.
+* **TipJar** – Collects Fleet shares minted as tips and **shake()**s them periodically into Treasury + custom tip streams.
+* **ConfigurationManager** – One registry for RAFT, TipJar, Treasury, HarborCommand, FleetCommanderRewardsManagerFactory.  Governor-only writes.
+* **HarborCommand** – Whitelist of active Fleet Commanders so that front-ends & AdmiralsQuarters can validate addresses.
+
+### 2.4 AdmiralsQuarters (AAQ)
+
+A **multicall-only user helper** that bundles:
+
+* Deposit/withdraw underlying to/from itself (`depositTokens`, `withdrawTokens`).
+* Enter / exit any active Fleet (`enterFleet`, `exitFleet`).
+* Stake / unstake Fleet shares in the Fleet-specific rewards manager.
+* 1inch swap helper with min-out checks.
+* Import positions from Aave, Compound, generic ERC4626.
+
+Security:
+
+* All state-changing functions are `onlyMulticall` – enforced via EIP-4337 style pattern to force batching.
+* Owner (Governor) can `rescueTokens()` – the only admin power.
+
+---
+
+## 3. Access Layer – ProtocolAccessManager
+
+Single AccessControl contract that mints **global roles** (Governor, Guardian, SuperKeeper, DecayController, Foundation, AdmiralsQuarters) and **contract-scoped roles** (Keeper, Curator, Commander).  Contract scoped role ids are generated deterministically:
+
+```solidity
+bytes32 role = keccak256(abi.encodePacked(roleName, targetContract));
+```
+
+Guardianship is temporary: each guardian address has an expiry timestamp; SummerTimelockController enforces that only *active* guardians may cancel or pause.
+
+Modifier cheatsheet (from `ProtocolAccessManaged.sol` & `ArkAccessManaged.sol`):
+
+```
+onlyGovernor                 – global gov role
+onlyGuardian                 – guardian & not expired
+onlyGuardianOrGovernor       – either of the above
+onlyKeeper                   – Fleet-scoped KEEPER_ROLE **or** SUPER_KEEPER_ROLE
+onlyCurator(address fleet)   – Fleet-scoped CURATOR_ROLE
+onlyAuthorizedToBoard(commander) – Commander itself, the ARK’s RAFT, or an active Ark inside the caller Fleet
+```
+
+---
+
+## 4. Governance V2 Stack
+
+### 4.1 Tokens & Staking
+
+* **SUMR**  – omnichain LayerZero OFT, capped supply, transfers disabled until `enableTransfers()` after a cliff.
+* **xSUMR** – `StakedSummerToken`, non-transferable ERC20Votes.  Mint/Burn controlled by authorised **staking modules**.
+* **SummerStaking** – primary staking module with lock-ups:
+  * Lock-up 0 – NoLockup (index 0 aggregate)
+  * 2 weeks → 3 years split into six buckets, each with Governor-set cap.
+  * Weighted stake: `weighted = amount * (1+7e-16*t^2)` (quadratic, t in seconds) used for rewards (not voting).
+  * Early-unstake penalties routed to Treasury.
+* **WrappedStakingToken** – internal 1:1 wrapper (also used by GovernanceRewardsManager).
+* **SummerVestingWalletsEscrow** – temporary bridge to stake SUMR that sits inside vesting wallets (V1 & V2 factories) and mint same amount of xSUMR.  Tracks `released()` delta while staked.
+
+### 4.2 GovernorV2 + TimelockController
+
+* **Hub-and-Satellite topology** – Only one *hub* chain allows `propose() / castVote() / execute() / cancel()`.  Satellites are passive: they receive finalised proposals via LayerZero and queue them locally.
+* **Voting** – standard ERC20Votes (timestamp clock).  Proposal Threshold validated at deploy (1 000 ≤ threshold ≤ 100 000 SUMR).
+* **Guardians** – addresses with GUARDIAN_ROLE in ProtocolAccessManager can propose (threshold bypass) and cancel queued proposals *that are not guardian-expiry operations*.
+* **Timelock** – `SummerTimelockController` extends OZ with guardian expiry logic: ops that end guardianship (`setGuardianExpiration`) may only be cancelled by Governors.
+* **Cross-chain** – `sendProposalToTargetChain(dstEid, …)` encodes targets/values/data/descriptionHash and dispatches via LayerZero OApp; the satellite governor receives (`_lzReceive`) and queues.
+
+Voting flow:
+
+```mermaid
+graph TD;
+    Stake[Stake SUMR -> xSUMR];
+    Stake --> Propose;
+    Propose -->{Voting Delay};
+    {Voting Delay} --> Vote;
+    Vote -->{Voting Period};
+    {Voting Period} --> QueueTimelock;
+    QueueTimelock --> Execute;
+    Execute --> sendProposal; %% cross chain
+    sendProposal --> SatelliteQueue;
+    SatelliteQueue --> SatelliteExecute;
+```
+
+### 4.3 Rewards Layers
+
+* **GovernanceRewardsManager** – simple SUMR staking farm with EMA-smoothed decay factor (used for SUMR un-staked but wrapped supply).
+* **SummerRewardsRedeemer** – Merkle-tree distributor; Governor uploads roots, users claim.
+* **FleetCommanderRewardsManager** – one per Fleet (factory-deployed); handles Fleet share staking to earn protocol rewards.
+
+---
+
+## 5. Bridge & Cross-Chain Registry
+
+### 5.1 CrossChainRegistry
+
+Centralised mapping: `(source, relationshipType, targetChainId) → targetAddress`.  Supported types: `PEER_RELATIONSHIP`, `ARK_FLEET_RELATIONSHIP`, `EXECUTOR_RELATIONSHIP`.
+
+Governor may register/unregister; adapters and proxy contracts query it to verify peers.
+
+### 5.2 BridgeRouter & Adapters
+
+* **BridgeRouter** – Core orchestrator.  Executors call `executeTransferAssets / executeSendMessage / executeReadState`, Router chooses an adapter (explicit or cheapest), pays fees, tracks `operationId -> adapter` and hands over token custody.  Adapters callback `deliver()` with results.
+* **LayerZeroAdapter** – message + read-state adapter using LZ OAppRead.  Maintains read-channel, DVN config, and chain-to-EID mapping.
+* **StargateAdapter** – OFT + Stargate V2 “Taxi” mode bridge for ERC20 transfers; supports compose to call Router on arrival.  Handles failed compose via `manualRecovery()`.
+* **CrossChainArk** – ARK that bridges funds to a satellite FleetProxy via BridgeRouter and tracks remote balance + in-flight assets.
+* **FleetProxy** – satellite side; receives bridged asset, deposits into Fleet; can withdraw & bridge back on keeper request.
+
+All contracts derive `CrossChainReceiverBase` to guarantee only BridgeRouter may invoke the receive hooks.
+
+---
+
+## 6. Intent System (Solver Bonds)
+
+Experimental subsystem that allows Keepers to create **Intents** (yield commitments) that can be solved by **Solvers** who put up a SUMR bond and escrow yield tokens until the term expires.
+
+Flow
+
+1. Governor deploys **IntentBondFactory** and **IntentHandler**; registers IntentHandler as the only `intentHandler` in the factory.
+2. Keeper calls `createIntent(ark, requiredNotional, term, ...)` – stored in `intentStates`.
+3. Solver must first have a `SolverBond` (created by Keeper via `createBond(solver)`); then `solveIntent()` transferring `escrowedYield` into its dedicated **Escrow**.
+4. At/after expiry any account can `settleIntent()` – funds are withdrawn from Escrow and transferred to the Ark’s **BufferArk**, marking the intent `Settled`.
+5. Solver can `resignBySolver()` before expiry -> halves its bond.
+
+Security parameters:
+
+* Bond sufficiency checked via SUMR/USD oracle.
+* Escrow is per-solver; IntentHandler the single authority.
+* MAX_TERM = 365 days, MIN_TERM = 1 day.
+
+---
+
+## 7. Treasury & Auctions
+
+* **BuyAndBurn** – Dutch auction system that sells non-core tokens for SUMR, burns all SUMR raised.
+* **DutchAuctionManager** – permissionless Dutch auction engine (linear/exponential decay functions) usable by Treasury or external protocols.
+
+---
+
+## 8. Security & Audit Notes
+
+1. **Single access source of truth** – All contracts rely on `ProtocolAccessManager` (ERC-165 verified).  Changing AccessManager address is impossible after deployment.
+2. **Two-step pausing** – Guardian can pause immediately, Governor can unpause after minimum pause time (FleetCommander).
+3. **No storage collisions** – ARKs do **NOT** use proxy pattern; each is deployed as standalone implementation – easier auditing.
+4. **Upgradeable surface** – Only Governor-managed contracts may be redeployed; no proxy upgrades in this repo.
+5. **Cross-chain replay protection** – Adapters verify `operationId` uniqueness and peer validation via CrossChainRegistry.
+6. **Non-transferable governance token** – xSUMR can not be moved, reducing vote buy risk.
+7. **Reentrancy** – All external functions that move tokens are `nonReentrant` (OpenZeppelin guard).
+8. **Math** – Percentage utils use fixed-point WAD 1e18; edge cases around percentage subtraction considered in tests.
+9. **Slippage** – Strategy ARKs with swaps (Pendle, Stargate, Origin) accept min-out parameters or internally calc from oracles + `slippagePercentage`.
+10. **Caps** – Per-ARK deposit caps & per-Fleet TVL caps hard-limit exposure.
+
+---
+
+## 9. Typical User Journeys
+
+### 9.1 Deposit & Earn
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant AAQ as AdmiralsQuarters
+    participant Fleet as FleetCommander
+    participant Buffer as BufferArk
+    User->>AAQ: multicall([depositTokens, enterFleet])
+    AAQ->>Buffer: ERC20.transferFrom()
+    AAQ->>Fleet: enterFleet(assets)
+    Fleet->>Buffer: deposit assets (board)
+    Fleet-->>AAQ: shares
+    AAQ-->>User: Fleet shares
+```
+
+### 9.2 Keeper Rebalance
+
+```mermaid
+sequenceDiagram
+    Keeper->>Fleet: rebalance([...])
+    Fleet->>ArkA: disembark(amount)
+    Fleet->>ArkB: board(amount)
+    ArkB->>Protocol: deposit into external pool
+```
+
+### 9.3 Governance Proposal Execution (cross-chain)
+
+1. Hub: Proposal passes, executed via Timelock.
+2. Governor V2 calls `sendProposalToTargetChain(dstEid, …)`.
+3. LayerZero delivers to satellite Governor.
+4. Satellite queues operation in its local Timelock.
+5. Anyone calls `execute()` after delay.
+
+---
+
+## 10. Integration Checklist
+
+* Use **HarborCommand.getActiveFleetCommanders()** to list official Fleets.
+* Validate a FleetCommander before calling: `HarborCommand.activeFleetCommanders(fc)`.
+* Retrieve Fleet asset: `IFleetCommander.asset()`.
+* To stake Fleet shares: use `FleetCommander.stakingRewardsManager()` then `stakeOnBehalfOf()`.
+* For cross-chain deposits/withdrawals interact with **CrossChainArk ↔ FleetProxy** pair; Registry keys: `ARK_FLEET_RELATIONSHIP`.
+* To decode/encode 1inch swaps inside AdmiralsQuarters use `OneInchTestHelpers` (test-only) or replicate its helper logic.
+
+---
+
+## 11. Conclusion
+
+Lazy Summer is a composable, access-controlled yield & governance framework consisting of:
+
+* **Fleet layer** – ERC4626 vault with plug-and-play ARK strategies & automated tip stream.
+* **Governance layer** – xSUMR-based voting on the hub chain, LayerZero broadcasting, guardian safety net.
+* **Access layer** – Single source of truth roles preventing privilege drift.
+* **Bridge layer** – Modular adapters + registry for cross-chain asset and message flows.
+* **Extensibility hooks** – Rewards managers, solver-bond intents, Dutch auctions.
+
+The design favours **minimised trust**, **gas efficiency** (caching, enumerable sets) and **clear separation of duties** between long-lived managers and short-lived strategy contracts.
+
+
+
+ ## DOCUMENTATION: 
+
+ ### summer-docs.md
+
 # Lazy Summer Protocol
 
 ## Lazy Vaults
@@ -786,4 +1082,90 @@ if (_isRewardToken(rewardToken)) {
 * **Timelocks enforce delays; guardians can cancel per strict rules.**
 * **xSUMR is non-transferable; mint/burn strictly RBAC-gated.**
 * **Verify trusted remote config, payable guards, adapter gas, and that all satellite governance entrypoints besides queue/execute are dead-ended.**
+
+
+
+
+ ## CONFIG FILES: 
+
+ ### package.json
+
+{
+  "private": true,
+  "scripts": {
+    "postinstall": "git submodule update --init",
+    "typecheck:ark-rebalancer": "cd packages/ark-rebalancer && venv/bin/mypy ark_rebalancer.py",
+    "start:ark-rebalancer": "cd packages/ark-rebalancer && venv/bin/python ark_rebalancer.py",
+    "dev": "turbo run dev --concurrency=100",
+    "prebuild": "turbo run prebuild --cache-dir=.turbo",
+    "build": "turbo run build --cache-dir=.turbo --filter='!./packages/summer-earn-gov-validator' --filter='!./packages/summer-earn-interface' --filter='!./packages/summer-earn-auctions-frontend'",
+    "lint": "turbo run lint --cache-dir=.turbo",
+    "lint:fix": "turbo run lint:fix",
+    "test": "turbo run test --cache-dir=.turbo",
+    "test:integration": "turbo run test:integration --cache-dir=.turbo",
+    "check-circular": "turbo run check-circular --cache-dir=.turbo",
+    "cicheck": "turbo run cicheck --cache-dir=.turbo --filter=./packages/* && pnpm run coverage:total",
+    "cicheck:dev": "turbo run cicheck --cache-dir=.turbo --output-logs=new-only --concurrency=100% --continue",
+    "graph": "pnpm dlx nx graph",
+    "format": "prettier --check \"./**/*.{ts,tsx,js,jsx,json,sol}\"",
+    "format:fix": "prettier --write \"./**/*.{ts,tsx,js,jsx,json,sol}\"",
+    "coverage": "turbo run coverage --cache-dir=.turbo",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@summerfi/eslint-config": "workspace:*",
+    "@summerfi/typescript-config": "workspace:*",
+    "@tsconfig/node20": "20.1.4",
+    "@types/jest": "29.5.12",
+    "@types/node": "20.12.7",
+    "dotenv": "16.4.5",
+    "dotenv-cli": "7.4.2",
+    "esbuild": "0.20.2",
+    "eslint": "8.57.0",
+    "husky": "^9.1.7",
+    "jest": "29.7.0",
+    "jest-expect-message": "1.1.3",
+    "jest-extended": "4.0.2",
+    "lcov": "1.16.0",
+    "madge": "7.0.0",
+    "nyc": "17.0.0",
+    "prettier": "3.2.5",
+    "prettier-plugin-organize-imports": "4.0.0",
+    "prettier-plugin-solidity": "1.3.1",
+    "ts-jest": "29.1.2",
+    "tsc-alias": "1.8.8",
+    "turbo": "1.13.2",
+    "typescript": "5.4.5",
+    "zx": "8.0.1"
+  },
+  "name": "summerfi-monorepo",
+  "packageManager": "pnpm@8.15.4",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bignumber.js": "9.1.2",
+    "sonner": "^2.0.7",
+    "viem": "2.21.55",
+    "zod": "3.22.4"
+  },
+  "version": "1.0.0",
+  "description": "## TLDR;",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OasisDEX/summer-earn-protocol.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/OasisDEX/summer-earn-protocol/issues"
+  },
+  "homepage": "https://github.com/OasisDEX/summer-earn-protocol#readme"
+}
+
 

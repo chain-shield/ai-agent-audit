@@ -12,14 +12,12 @@ use rusqlite::{Connection, OptionalExtension};
 /// counting for optimal code slice generation within LLM context limits.
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::enumerator::libraries::generate_library_to_code_mapping;
 use crate::enumerator::libraries::get_library_code_for_library_calls;
 use crate::enumerator::libraries::ParsedLibrary;
 use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
-use crate::llm_review::contract_file_map::insert_interface_to_file_mapping;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
@@ -44,6 +42,31 @@ static CODE_IR_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<(String, String), S
 /// Key: project_id, Value: Storage map for that project
 static STORAGE_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<String, Vec<StorageVar>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Decide if we should include grandparent contracts.
+/// Skip if it's a known standard library to reduce token count.
+fn should_include_parent(parent: &str) -> bool {
+    const SKIP_LIST: &[&str] = &[
+        "Math",
+        "Context",
+        "ERC165",
+        "IERC165",
+        "Ownable",
+        "AccessControl",
+        "ReentrancyGuard",
+        "Pausable",
+        "ERC20",
+        "ERC721",
+        "ERC4626",
+        "ERC1155",
+        "Initializable",
+        "UUPSUpgradeable",
+    ];
+
+    !SKIP_LIST.iter().any(|skip| parent.contains(skip))
+        && !parent.starts_with("IERC20")
+        && !parent.starts_with("IAccessControl")
+}
 
 /// Generates a markdown code block for a specific function with IR representation.
 ///
@@ -137,7 +160,7 @@ pub async fn get_hashmap_of_contract_to_functions(
     // find all main contracts for app (ones in /src)
     info!("grabbing all contracts...");
 
-    let contracts = contracts_in_source_folder(repo, &ContractScope::All).await?;
+    let contracts = contracts_in_source_folder(repo).await?;
 
     if contracts.is_empty() {
         // Either return empty map or error — your call
@@ -331,10 +354,7 @@ pub enum ContractScope {
 }
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
-pub async fn contracts_in_source_folder(
-    repo: &RepoPaths,
-    scope: &ContractScope,
-) -> Result<Vec<String>> {
+pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>> {
     if !repo.source_code_folder.exists() {
         anyhow::bail!(
             "no src/ folder found at {},",
@@ -342,50 +362,20 @@ pub async fn contracts_in_source_folder(
         );
     }
     // get exclusions if any
-    let excluded_folders = repo.excluded_folders.clone().unwrap_or(Vec::new());
-    let scoped_files = repo.extract_scoped_files()?;
     let mut libraries = Vec::<ParsedLibrary>::new();
 
     // Regex matches `contract Foo`, or `library FooMath` ignores `interface`
-    // let re = Regex::new(r"(?m)^\s*contract\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
-    let contract_or_library_regex =
-        Regex::new(r"(?m)^\s*(?:contract|library)\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
-    let interface_regex = Regex::new(r"(?m)^\s*(?:interface)\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap();
+    let contract_or_library_regex = Regex::new(
+        r"(?m)^\s*(?:abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+    )
+    .unwrap();
     let mut contracts = Vec::<String>::new();
 
-    let in_scope_files: &Vec<PathBuf> =
-        if !scoped_files.is_empty() && *scope == ContractScope::InScope {
-            &scoped_files
-        } else {
-            &repo
-                .sol_files
-                .iter()
-                .filter(|f| f.starts_with(&repo.source_code_folder))
-                .filter(|f| {
-                    *scope == ContractScope::All
-                        || !excluded_folders
-                            .iter()
-                            .any(|excluded| f.starts_with(excluded))
-                })
-                .map(|f| f.to_owned())
-                .collect()
-        };
-
-    for file in in_scope_files {
-        // ✅ is in src ?
-        // if !file.starts_with(&src_root) {
-        //     continue;
-        // }
-
-        // 🚫 Skip if path contains /lib/ or /mock/
-        if scoped_files.is_empty()
-            && file.components().any(|comp| {
-                let part = comp.as_os_str().to_ascii_lowercase();
-                part.to_string_lossy().to_ascii_lowercase().contains("mock")
-            })
-        {
+    for file in &repo.sol_files {
+        if !file.starts_with(&repo.source_code_folder) {
             continue;
         }
+
         // Skip directories and symlinks
         if fs::symlink_metadata(file)?.file_type().is_symlink() {
             continue;
@@ -417,25 +407,12 @@ pub async fn contracts_in_source_folder(
                     //     file.display()
                     // );
                     // record in contract to file hashmap
-                    insert_contract_to_file_mapping(contract, file, repo).await?;
                 }
+                // info!("inserting contract {} into file mapping", contract);
+                insert_contract_to_file_mapping(contract, file, repo).await?;
             }
         }
 
-        for cap in interface_regex.captures_iter(&content) {
-            if let Some(interface_name) = cap.get(1) {
-                let interface = interface_name.as_str();
-                if !interface.to_ascii_lowercase().contains("mock") {
-                    // info!(
-                    //     "adding interface {} and file {} to map",
-                    //     interface,
-                    //     file.display()
-                    // );
-                    // record in contract to file hashmap
-                    insert_interface_to_file_mapping(interface, file, repo).await?;
-                }
-            }
-        }
         // generated library.fn -> code mapping
         generate_library_to_code_mapping(&libraries).await?;
     }
