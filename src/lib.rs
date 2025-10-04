@@ -62,9 +62,11 @@ pub mod enumerator {
     pub mod codeblock_db;
     /// Code block generation logic
     pub mod codeblock_maker;
-    /// Core code slicing functionality
     pub mod codeblocks;
+    /// Core code slicing functionality
+    pub mod extract_ir;
     pub mod libraries;
+    pub mod parse_solidity;
     /// Enumeration utilities
     pub mod utils;
 }
