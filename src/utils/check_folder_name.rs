@@ -1,5 +1,9 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Result;
+
+use crate::prepare_code::git_clone::extract_list_of_files;
+
 fn path_has_any_segment(file: &Path, root: &Path, segments: &[&str]) -> bool {
     if file.is_dir() {
         return false;
@@ -21,6 +25,26 @@ fn path_has_any_segment(file: &Path, root: &Path, segments: &[&str]) -> bool {
     false
 }
 
+fn path_has_parent_segment(file: &Path, segments: &[&str]) -> bool {
+    if file.is_dir() {
+        return false;
+    }
+    // Walk up ancestors and check if any directory name equals one of the segments
+    match file.parent() {
+        Some(dir) => {
+            if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
+                let lname = name.to_ascii_lowercase();
+                if segments.iter().any(|s| lname == *s) {
+                    return true;
+                }
+            }
+        }
+        None => {
+            return false;
+        }
+    }
+    false
+}
 // check if folder contains build config
 pub fn contains_build_config(dir: &PathBuf) -> bool {
     let foundry = dir.join("foundry.toml");
@@ -35,11 +59,11 @@ pub fn is_test_file(file: &Path, root: &Path) -> bool {
     path_has_any_segment(file, root, &["test", "tests"])
 }
 
-pub fn is_script_file(file: &Path, root: &Path) -> bool {
-    path_has_any_segment(file, root, &["script", "scripts", "deploy"])
+pub fn is_script_file(file: &Path) -> bool {
+    path_has_parent_segment(file, &["script", "scripts", "deploy"])
 }
 
-pub fn is_config_file(file: &Path, root: &Path) -> bool {
+pub fn is_root_config_file(file: &Path, root: &Path) -> bool {
     // make sure file is in root
     if let Some(parent) = file.parent() {
         if parent != root {
@@ -49,6 +73,29 @@ pub fn is_config_file(file: &Path, root: &Path) -> bool {
         return false;
     };
 
+    is_file_config(file)
+}
+
+// check if config file is contained in one of the monorepos listed in monorepo_file (contains list of repos)
+pub fn is_monorepo_config_file(
+    file: &Path,
+    root: &Path,
+    monorepo_file: &Option<PathBuf>,
+) -> Result<bool> {
+    if let Some(repo_list_file) = monorepo_file {
+        let list_of_paths = extract_list_of_files(&repo_list_file, &root.to_path_buf())?;
+        let full_repo_list_paths: Vec<PathBuf> =
+            list_of_paths.iter().map(|r| root.join(r)).collect();
+        Ok(full_repo_list_paths.iter().any(|p| file.starts_with(p))
+            && !file.to_string_lossy().contains("node_modules")
+            && !file.to_string_lossy().contains("lib")
+            && is_file_config(file))
+    } else {
+        return Ok(false);
+    }
+}
+
+pub fn is_file_config(file: &Path) -> bool {
     let filename = file.file_name().unwrap_or_default().to_string_lossy();
 
     let config_files = [

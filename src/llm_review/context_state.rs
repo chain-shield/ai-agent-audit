@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize::{self, summarize_protocol, FileSummaryType},
+        summarize::{self, summarize_protocol, summarize_src_files, FileSummaryType},
     },
     cost::cost_data::get_token_count,
     prepare_code::git_clone::RepoPaths,
@@ -44,7 +44,21 @@ pub async fn generate_and_save_metadata_context(
     let mut metadata = String::new();
 
     // full context
-    let full_context = generate_context_for_code_review(repo, semantics_path).await?;
+    let mut full_context = generate_context_for_code_review(repo, semantics_path).await?;
+
+    let summaries = summarize_src_files(repo, semantics_path).await?;
+
+    // add file summaries to context summary
+    full_context.push_str("\n## SUMMARY OF SOURCE CODE FILES\n\n");
+    for summary in summaries {
+        let file_type = summary.file_type.unwrap_or(FileSummaryType::OutOfScope);
+        if file_type == FileSummaryType::Source {
+            full_context.push_str(&format!("### Summary of {}", summary.filename));
+            full_context.push_str(&summary.summary);
+            full_context.push_str("\n");
+        }
+    }
+
     let protocol_summary = summarize_protocol(repo, Some(&full_context)).await?;
 
     metadata.push_str(&format!(

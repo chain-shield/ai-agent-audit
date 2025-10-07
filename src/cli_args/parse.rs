@@ -25,8 +25,8 @@ pub struct Cli {
     pub subfolder: Option<String>,
 
     /// Optional folders pointing to where main source is located (if not src/), defaults to src
-    #[arg(long, default_value = "src")]
-    pub code_folder: String,
+    #[arg(long, default_value = "src", value_delimiter = ',')]
+    pub code_folders: Vec<String>,
 
     /// Optional audit scope doc (markdown file please), should be in current directory
     #[arg(long)]
