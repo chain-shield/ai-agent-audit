@@ -43,31 +43,6 @@ static CODE_IR_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<(String, String), S
 static STORAGE_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<String, Vec<StorageVar>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-/// Decide if we should include grandparent contracts.
-/// Skip if it's a known standard library to reduce token count.
-fn should_include_parent(parent: &str) -> bool {
-    const SKIP_LIST: &[&str] = &[
-        "Math",
-        "Context",
-        "ERC165",
-        "IERC165",
-        "Ownable",
-        "AccessControl",
-        "ReentrancyGuard",
-        "Pausable",
-        "ERC20",
-        "ERC721",
-        "ERC4626",
-        "ERC1155",
-        "Initializable",
-        "UUPSUpgradeable",
-    ];
-
-    !SKIP_LIST.iter().any(|skip| parent.contains(skip))
-        && !parent.starts_with("IERC20")
-        && !parent.starts_with("IAccessControl")
-}
-
 /// Generates a markdown code block for a specific function with IR representation.
 ///
 /// Creates a formatted markdown section containing the function's SlithIR

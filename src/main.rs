@@ -53,14 +53,15 @@ async fn main() -> Result<()> {
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
     info!("repo source folder => {:?}", &repo.source_code_folder);
-    info!("repo tests => {:?}", &repo.test_files);
     info!("repo scoped_files => {:?}", &repo.scoped_files);
     info!("repo auidt scope => {:?}", &repo.audit_scope);
     info!("repo scripts => {:?}", &repo.script_files);
+    info!("repo lib config files => {:?}", &repo.lib_config_files);
     info!("repo config files => {:?}", &repo.config_files);
     info!("repo docs => {:?}", &repo.docs);
     info!("excluded folders => {:?}", &repo.excluded_folders);
 
+    return Ok(());
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
     // ────────────────────────────────
@@ -71,6 +72,9 @@ async fn main() -> Result<()> {
     // Generate and cache protocol metadata context for AI analysis
     info!("generating metadata context...");
     context_state::generate_and_save_metadata_context(&repo, &semantics_db).await?;
+
+    // save metadata
+    contract_data::save_metadata(&repo).await?;
 
     // ────────────────────────────────
     // 3. Code Slice Generation
@@ -95,8 +99,7 @@ async fn main() -> Result<()> {
 
     // save contract IR and metadata
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo).await?;
-    contract_data::save_metadata(&repo).await?;
-    return Ok(());
+
     // ────────────────────────────────
     // 5. AI Security Analysis
     // ────────────────────────────────

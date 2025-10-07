@@ -1,6 +1,5 @@
 use crate::{
-    config::AuditType,
-    llm_review::prompt_support::severity_rubics::{self, SHERLOCK_SEVERITY_RUBRIC},
+    config::AuditType, llm_review::prompt_support::severity_rubics::SHERLOCK_SEVERITY_RUBRIC,
 };
 
 use super::severity_rubics::CODE4RENA_SEVERITY_RUBRIC;

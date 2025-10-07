@@ -3,9 +3,7 @@ use crate::{
     llm_review::{
         enums::{all_enum_variants, generate_enum_list},
         findings::PrivilegeLevel,
-        prompt_support::{
-            severity_rubics::DEFAULT_SEVERITY_RUBRIC, verify_prompt::generate_verify_prompt,
-        },
+        prompt_support::verify_prompt::generate_verify_prompt,
     },
 };
 

@@ -10,12 +10,13 @@ use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cac
 use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::extract_ir::robust_extract_fn_metadata_from_func_id;
 use crate::enumerator::parse_solidity::{
-    detect_source_code_dependencies, is_standard_interface_name, path_is_standard_lib,
+    detect_source_code_dependencies, is_standard_interface_name, is_standard_library_contract_name,
 };
 use crate::enumerator::utils::{
     get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
 };
 use crate::llm_review::contract_file_map::get_file_from_contract;
+use crate::llm_review::utils::contract_in_scope::is_contract_in_scope;
 use crate::prepare_code::git_clone::RepoPaths;
 use tokio::fs;
 
@@ -56,6 +57,11 @@ pub async fn generate_codeblock_from_codebase(
     let contract_to_func_map = get_hashmap_of_contract_to_functions(repo, semantic_db).await?;
 
     for (main_contract, functions_of_contract) in contract_to_func_map {
+        // check contract in inscope!
+        if !is_contract_in_scope(&main_contract, repo).await? {
+            continue;
+        }
+
         // Check if codeblock already generated
         log::info!("contract => {:#?}", main_contract);
         log::info!("fn count of contract => {:#?}", functions_of_contract.len());
@@ -70,8 +76,7 @@ pub async fn generate_codeblock_from_codebase(
         }
         let mut visited = HashSet::new();
         let mut contracts = HashSet::new();
-        let mut contracts_depth_1 = HashSet::new();
-        let mut all_funcs_connected_to_contract = Vec::<SmartContractFunction>::new();
+        let mut contracts_with_depth = HashSet::new();
         let mut token_count = 0_usize;
 
         while let Some((func, depth)) = frontier.pop_front() {
@@ -80,13 +85,14 @@ pub async fn generate_codeblock_from_codebase(
             }
 
             //keep track of unique contract traversed in BPS
-            contracts.insert(func.contract.clone());
-            if depth == 1 {
-                contracts_depth_1.insert(func.contract.clone());
+            if !is_standard_interface_name(&func.contract)
+                && !is_standard_library_contract_name(&func.contract)
+            {
+                contracts.insert(func.contract.clone());
+                if depth > 0 && depth <= 2 {
+                    contracts_with_depth.insert(func.contract.clone());
+                }
             }
-            // info!("contract {} / func {} added...", func.contract, func.name);
-
-            all_funcs_connected_to_contract.push(func.clone());
 
             // get token count of new fn + IR + storage
             let token_count_fn_ir_storage = get_token_count_of_function_ir(&func, repo).await?;
@@ -123,36 +129,12 @@ pub async fn generate_codeblock_from_codebase(
         // -- 2. get collection of all inherited and called contracts
         let mut contracts_with_parents = HashSet::new();
 
-        // Add main contract itself (might not be in contracts set if no callees)
-        contracts_with_parents.insert(main_contract.clone());
-
-        // Add parents of main contract (up to 2 levels)
+        // Add parents of main contract (up to 1 level)
         let parents_of_main = callgraph::get_parents(&main_contract, repo).await?;
         for parent in &parents_of_main {
-            contracts_with_parents.insert(parent.clone());
-        }
-
-        // Detect contracts and interfaces from source code that Slither's call graph misses
-        // This includes: constructor calls, interface casts, imports, type declarations
-        // We analyze BOTH the main contract AND all called contracts for comprehensive coverage
-
-        // First, analyze the main contract
-        let (mut main_source_contracts, mut main_source_interfaces) =
-            detect_source_code_dependencies(&main_contract, repo).await?;
-
-        for contract in contracts_depth_1 {
-            let (source_contracts, source_interfaces) =
-                detect_source_code_dependencies(&contract, repo).await?;
-            main_source_interfaces.extend(source_interfaces);
-            main_source_contracts.extend(source_contracts);
-        }
-
-        for contract_name in &main_source_contracts {
-            // info!(
-            //     "adding source-detected contract {} from main contract {}",
-            //     contract_name, main_contract
-            // );
-            contracts.insert(contract_name.clone());
+            if !is_standard_interface_name(parent) && !is_standard_library_contract_name(parent) {
+                contracts_with_parents.insert(parent.clone());
+            }
         }
 
         // Add called contracts and their parents
@@ -162,15 +144,36 @@ pub async fn generate_codeblock_from_codebase(
                 continue;
             }
 
-            // Add the called contract itself
-            contracts_with_parents.insert(contract.clone());
-
             // Add direct parents (1 level up) for called contracts
             let parents = callgraph::get_parents(contract, repo).await?;
             for parent in &parents {
                 // info!("inserting {} (parent of {})", parent, contract);
-                contracts_with_parents.insert(parent.clone());
+                if !is_standard_interface_name(parent) && !is_standard_library_contract_name(parent)
+                {
+                    contracts_with_parents.insert(parent.clone());
+                }
             }
+        }
+
+        // Detect contracts and interfaces from source code that Slither's call graph misses
+        // This includes: constructor calls, interface casts, imports, type declarations
+        // We analyze BOTH the main contract AND all called contracts for comprehensive coverage
+
+        // First, analyze the main contract
+        let mut main_source_contracts =
+            detect_source_code_dependencies(&main_contract, repo).await?;
+
+        for contract in contracts_with_depth {
+            let source = detect_source_code_dependencies(&contract, repo).await?;
+            main_source_contracts.extend(source);
+        }
+
+        for contract_name in &main_source_contracts {
+            info!(
+                "adding source-detected contract {} from main and called contract",
+                contract_name,
+            );
+            contracts.insert(contract_name.clone());
         }
 
         // ── 3.  Assemble final Markdown body with TOKEN BUDGET ENFORCEMENT ────────────────────────────
@@ -206,9 +209,8 @@ pub async fn generate_codeblock_from_codebase(
         current_token_count += get_token_count(supporting_header);
 
         // Prioritize contracts by importance:
-        // 1. HIGHEST: Scoped contracts (explicitly marked for audit)
-        // 2. HIGH: Called contracts (user flow, attack surface)
-        // 3. MEDIUM: Parent contracts (standard libraries)
+        // 1. HIGH: Called contracts (user flow, attack surface)
+        // 2. MEDIUM: Parent contracts (standard libraries)
         let mut prioritized_contracts = Vec::new();
 
         // Priority 1: Add called contracts (HIGH PRIORITY - user flow, attack surface)
@@ -233,10 +235,10 @@ pub async fn generate_codeblock_from_codebase(
             let contract_code = get_contract_file_content(&contract, repo).await?;
             // Skip if no content (could not resolve file)
             if contract_code.trim().is_empty() {
-                // info!(
-                //     "⏭️ Skipping '{} contract: {}' - no file or empty content",
-                //     contract_type, contract
-                // );
+                info!(
+                    "⏭️ Skipping '{} contract: {}' - no file or empty content",
+                    contract_type, contract
+                );
                 contracts_skipped += 1;
                 continue;
             }
@@ -278,71 +280,7 @@ pub async fn generate_codeblock_from_codebase(
             contracts_added, contracts_skipped
         );
 
-        let mut interfaces_added = HashSet::new();
-        let mut interfaces_added_count = 0;
-        let mut interfaces_skipped_count = 0;
-
-        for contract in &main_source_interfaces {
-            // Check if contract name starts with 'I' (interface naming convention)
-            if interfaces_added.insert(contract.clone()) {
-                // Cheap check first: standard by name
-                if is_standard_interface_name(&contract) {
-                    // info!("⏭️ Skipping standard interface: {}", contract);
-                    interfaces_skipped_count += 1;
-                    continue;
-                }
-
-                // Then check by known library path (requires a mapping lookup)
-                if let Some(iface_path) = get_file_from_contract(&contract, repo).await {
-                    if path_is_standard_lib(&iface_path) {
-                        // info!("⏭️ Skipping standard interface: {}", contract);
-                        interfaces_skipped_count += 1;
-                        continue;
-                    }
-                }
-
-                let interface_code = get_contract_file_content(&contract, repo).await?;
-                if !interface_code.is_empty() {
-                    let interface_section = format!("{}\n", interface_code);
-                    let section_tokens = get_token_count(&interface_section);
-
-                    // Minimum section size gate for interfaces
-                    if section_tokens < 5 {
-                        info!(
-                            "⏭️ Skipping 'Interface: {}' ({} tokens) - below minimum (5 tokens)",
-                            contract, section_tokens
-                        );
-                        interfaces_skipped_count += 1;
-                        continue;
-                    }
-
-                    let new_total = current_token_count + section_tokens;
-
-                    if new_total > token_budget {
-                        info!(
-                            "⏭️ Skipping 'Interface: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
-                            contract, section_tokens, new_total, token_budget
-                        );
-                        interfaces_skipped_count += 1;
-                    } else {
-                        info!(
-                            "✅ Adding 'Interface: {}' ({} tokens) - total: {}/{} tokens",
-                            contract, section_tokens, new_total, token_budget
-                        );
-                        markdown_codeblock_for_llm.push_str(&interface_section);
-                        current_token_count = new_total;
-                        interfaces_added_count += 1;
-                    }
-                }
-            }
-        }
-
         markdown_codeblock_for_llm.push_str("\nEND OF SUPPORTING CONTRACTS AND INTERFACES\n");
-
-        info!(
-            "📊 Interfaces: {} added, {} skipped due to budget",
-            interfaces_added_count, interfaces_skipped_count
-        );
 
         // Final token count verification
         let final_token_count = get_token_count(&markdown_codeblock_for_llm);
@@ -375,11 +313,6 @@ pub async fn generate_codeblock_from_codebase(
 
         // save to cache
         set_codeblock_cache(&main_contract, &codeblock).await;
-
-        // if codeblock.contract.contains("LaunchpadV2Pair") {
-        //     info!("CONTRACT => {}", codeblock.contract);
-        //     info!("codeblock => {}", codeblock.content);
-        // }
     }
 
     Ok(())

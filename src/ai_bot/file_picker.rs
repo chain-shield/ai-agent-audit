@@ -227,7 +227,10 @@ mod tests {
             test_files: vec![PathBuf::from("/tmp/test.sol")],
             script_files: vec![PathBuf::from("/tmp/test.sol")],
             config_files: vec![PathBuf::from("/tmp/test.sol")],
+            lib_config_files: vec![PathBuf::from("/tmp/test.sol")],
             docs: vec![PathBuf::from("/tmp/README.md")],
+            scanned_files_count: 0,
+
             audit_scope: None,
             scoped_files: None,
             excluded_folders: None,
@@ -237,13 +240,17 @@ mod tests {
 
         let file_picker = FilePickerTool::new(repo);
         assert_eq!(file_picker.available_files.len(), 1); // Only test.sol, README.md is excluded
-        assert!(file_picker
-            .available_files
-            .contains(&"test.sol".to_string()));
+        assert!(
+            file_picker
+                .available_files
+                .contains(&"test.sol".to_string())
+        );
         // README.md should be excluded since it's already in context
-        assert!(!file_picker
-            .available_files
-            .contains(&"README.md".to_string()));
+        assert!(
+            !file_picker
+                .available_files
+                .contains(&"README.md".to_string())
+        );
     }
 
     #[test]
@@ -269,8 +276,11 @@ mod tests {
             source_code_folder: PathBuf::from("/tmp"),
             sol_files: vec![PathBuf::from("/tmp/test.sol")],
             test_files: vec![PathBuf::from("/tmp/test.sol")],
+            scanned_files_count: 0,
+
             script_files: vec![PathBuf::from("/tmp/test.sol")],
             config_files: vec![PathBuf::from("/tmp/test.sol")],
+            lib_config_files: vec![PathBuf::from("/tmp/test.sol")],
             scoped_files: None,
             audit_scope: None,
             docs: vec![PathBuf::from("/tmp/README.md")],

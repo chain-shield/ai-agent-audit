@@ -6,7 +6,7 @@ use crate::{
     config::INVARIANT_RUNS,
     error::Result,
     llm_review::{
-        context_state::{get_metadata_context, ContextType},
+        context_state::get_metadata_context,
         dynamic_prompts::{
             self,
             invariants::{generate_invariant_prompt, get_invariant_json},
@@ -47,7 +47,7 @@ where
     let mut handles = vec![];
     let all_patterns = Arc::new(Mutex::new(T::default()));
 
-    let context = get_metadata_context(repo, &ContextType::Abridged)
+    let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
 

@@ -360,356 +360,7 @@ contract SummerVestingWalletsEscrow is
 
 END OF MAIN TARGET CONTRACT
 
-## SUPPORTING CONTEXT: PARENT AND CALLED CONTRACTS
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.28;
-
-/// @dev this is a minimal vesting factory interface
-interface IMinimalVestingFactory {
-    /// @dev each user can have a single vesting wallet - the balance of the vesting wallet can only go down
-    function vestingWallets(address _user) external view returns (address);
-    /// @dev the owner of the vesting wallet
-    function vestingWalletOwners(
-        address _wallet
-    ) external view returns (address);
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.28;
-
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import {ERC20Pausable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Pausable.sol";
-import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
-import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
-import {ProtocolAccessManaged} from "@summerfi/access-contracts/contracts/ProtocolAccessManaged.sol";
-import {IStakedSummerToken} from "../interfaces/IStakedSummerToken.sol";
-
-/**
- * @title StakedSummerToken (xSUMR)
- * @notice Non-transferable staked representation of SUMR used for governance and rewards accounting.
- * @dev Key properties:
- *      - Minting/Burning controlled by governance-authorized staking modules
- *      - Direct transfers disabled; only mint (from address(0)) and burn (to address(0)) allowed
- *      - Pausable by guardian/governor for emergency response
- *      - Integrates ERC20Permit and ERC20Votes for signatures and governance snapshots
- *
- * Access control model:
- *      - Governor can add/remove staking modules, which grants MINTER and BURNER roles
- *      - Only modules with MINTER_ROLE can mint
- *      - burnFrom requires either the token owner or an address with BURNER_ROLE plus standard allowance
- */
-contract StakedSummerToken is
-    IStakedSummerToken,
-    ERC20Burnable,
-    ERC20Pausable,
-    ProtocolAccessManaged,
-    AccessControl,
-    ERC20Permit,
-    ERC20Votes
-{
-    // ============ ROLES ============
-    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
-
-    // ============ CONSTRUCTOR ============
-    constructor(
-        address _protocolAccessManager
-    )
-        ERC20("StakedSummerToken", "xSUMR")
-        ERC20Permit("StakedSummerToken")
-        ProtocolAccessManaged(_protocolAccessManager)
-    {}
-
-    // ============ GOVERNANCE ============
-
-    /// @inheritdoc IStakedSummerToken
-    function addStakingModule(address _stakingModule) external onlyGovernor {
-        if (_stakingModule == address(0)) {
-            revert xSumr_InvalidStakingModule(
-                "Staking module address cannot be zero"
-            );
-        }
-        // Authorize staking module to participate in mint/burn flows
-        _grantRole(MINTER_ROLE, _stakingModule);
-        _grantRole(BURNER_ROLE, _stakingModule);
-
-        emit StakingModuleAdded(_stakingModule);
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function removeStakingModule(address _stakingModule) external onlyGovernor {
-        // Fully deauthorize staking module by revoking both roles
-        _revokeRole(MINTER_ROLE, _stakingModule);
-        _revokeRole(BURNER_ROLE, _stakingModule);
-        emit StakingModuleRemoved(_stakingModule);
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function pause() external onlyGuardianOrGovernor {
-        _pause();
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function unpause() external onlyGuardianOrGovernor {
-        _unpause();
-    }
-
-    // ============ MINT / BURN API ============
-
-    /// @inheritdoc IStakedSummerToken
-    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
-        // Only authorized staking modules are permitted to mint xSUMR
-        _mint(to, amount);
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function burn(
-        uint256 amount
-    ) public override(ERC20Burnable, IStakedSummerToken) {
-        super.burn(amount);
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function burnFrom(
-        address from,
-        uint256 amount
-    ) public override(ERC20Burnable, IStakedSummerToken) {
-        if (!_canBurnFrom(from, msg.sender)) {
-            revert xSumr__NotAuthorized();
-        }
-        // Honor allowance semantics when `msg.sender != from` via ERC20Burnable
-        super.burnFrom(from, amount);
-    }
-
-    // ============ ERC6372 / ERC20Votes ============
-    /// @notice Returns the current clock in seconds, used by ERC20Votes for timestamp-based checkpoints.
-    function clock() public view override returns (uint48) {
-        return uint48(block.timestamp);
-    }
-
-    // solhint-disable-next-line func-name-mixedcase
-    /// @notice Returns the clock mode string as required by ERC-6372.
-    function CLOCK_MODE() public pure override returns (string memory) {
-        return "mode=timestamp";
-    }
-
-    // The following functions are overrides required by Solidity.
-    function _update(
-        address from,
-        address to,
-        uint256 value
-    ) internal override(ERC20, ERC20Pausable, ERC20Votes) {
-        if (!_canTransfer(from, to)) {
-            revert xSumr_TransferNotAllowed();
-        }
-        // Run pausable and votes hooks (checkpoints, etc.)
-        super._update(from, to, value);
-    }
-
-    function nonces(
-        address owner
-    ) public view override(ERC20Permit, Nonces) returns (uint256) {
-        return super.nonces(owner);
-    }
-
-    // ============ ROLE MANAGEMENT (GOVERNOR) ============
-
-    /// @inheritdoc IStakedSummerToken
-    function grantMinterRole(address _minter) external onlyGovernor {
-        _grantRole(MINTER_ROLE, _minter);
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function revokeMinterRole(address _minter) external onlyGovernor {
-        _revokeRole(MINTER_ROLE, _minter);
-    }
-
-    /**
-     * @dev Overrides the grantRole function from AccessControl to disable direct role granting.
-     * @notice This function always reverts with a DirectGrantIsDisabled error.
-     */
-    function grantRole(bytes32, address) public view override {
-        revert DirectGrantIsDisabled(msg.sender);
-    }
-
-    /**
-     * @dev Overrides the revokeRole function from AccessControl to disable direct role revoking.
-     * @notice This function always reverts with a DirectRevokeIsDisabled error.
-     */
-    function revokeRole(bytes32, address) public view override {
-        revert DirectRevokeIsDisabled(msg.sender);
-    }
-
-    // ============ INTERNAL HELPERS ============
-
-    /**
-     * @dev Only allow mint (from == address(0)) and burn (to == address(0)) movements. Block user-to-user transfers.
-     * @notice All staking module interactions are based on `mint()` and `burnFrom()`;
-     * transfers between users are disallowed.
-     * @param from The address to transfer tokens from.
-     * @param to The address to transfer tokens to.
-     * @return bool True if the transfer is allowed, false otherwise.
-     */
-    function _canTransfer(
-        address from,
-        address to
-    ) internal pure returns (bool) {
-        return from == address(0) || to == address(0);
-    }
-
-    /**
-     * @notice Allows `burnFrom` only if `spender` burns its own tokens or holds `BURNER_ROLE`.
-     * @dev Even with `BURNER_ROLE`, standard ERC20 allowance rules apply.
-     * @param from The address to burn tokens from.
-     * @param spender The address to check for `BURNER_ROLE`.
-     * @return bool True if the burn is allowed, false otherwise.
-     */
-    function _canBurnFrom(
-        address from,
-        address spender
-    ) internal view returns (bool) {
-        return spender == from || hasRole(BURNER_ROLE, spender);
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.28;
-
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-/**
- * @title IStakedSummerToken
- * @notice Interface for xSUMR, the non-transferable staked representation of SUMR used for governance and rewards.
- * @dev xSUMR is mint/burn controlled by approved staking modules. Direct transfers between users are disabled; only
- *      minting (from address(0)) and burning (to address(0)) are permitted movements. Implementations SHOULD enforce
- *      role-based access control for minting and restricted burning, and MAY expose pause controls via governance.
- *
- * Rationale and Invariants:
- * - Transfer path is intentionally restricted to mint/burn to avoid bypassing staking logic and snapshots.
- * - Multiple staking modules may be authorized concurrently; governance manages their lifecycle.
- * - `burnFrom` authorization requires either the owner or an address with BURNER role; allowance rules still apply.
- */
-interface IStakedSummerToken is IERC20 {
-    // =============================
-    //            EVENTS
-    // =============================
-
-    /**
-     * @notice Emitted when a staking module is granted mint/burn permissions on xSUMR.
-     * @param stakingModule Address of the staking module added.
-     */
-    event StakingModuleAdded(address indexed stakingModule);
-
-    /**
-     * @notice Emitted when a staking module has its mint/burn permissions revoked on xSUMR.
-     * @param stakingModule Address of the staking module removed.
-     */
-    event StakingModuleRemoved(address indexed stakingModule);
-
-    // =============================
-    //            ERRORS
-    // =============================
-
-    /**
-     * @notice Thrown when a zero address or otherwise invalid staking module is supplied.
-     * @param message Details about the invalid staking module input.
-     */
-    error xSumr_InvalidStakingModule(string message);
-
-    /**
-     * @notice Thrown when a caller attempts an operation without the required authorization.
-     */
-    error xSumr__NotAuthorized();
-
-    /**
-     * @notice Thrown when a forbidden token transfer is attempted (only mint/burn flows are allowed).
-     */
-    error xSumr_TransferNotAllowed();
-
-    // =============================
-    //          GOVERNANCE
-    // =============================
-
-    /**
-     * @notice Adds a staking module with mint and burn permissions.
-     * @dev Access restricted to governance in the implementing contract.
-     * @param _stakingModule The staking module to authorize.
-     *        Must be a non-zero address and expected to integrate with staking flows.
-     * @custom:reverts xSumr_InvalidStakingModule If `_stakingModule` is the zero address.
-     * @custom:emits StakingModuleAdded Emitted upon successful addition.
-     */
-    function addStakingModule(address _stakingModule) external;
-
-    /**
-     * @notice Removes a staking module with mint and burn permissions.
-     * @dev Access restricted to governance in the implementing contract.
-     * @param _stakingModule The staking module to remove.
-     *        Must be a non-zero address and previously authorized.
-     * @custom:reverts xSumr_InvalidStakingModule If `_stakingModule` is the zero address.
-     * @custom:emits StakingModuleRemoved Emitted upon successful removal.
-     */
-    function removeStakingModule(address _stakingModule) external;
-
-    /**
-     * @notice Grants MINTER_ROLE to a specified address. Governor-only.
-     * @dev Intended for emergency recovery scenarios (e.g., user burned xSUMR prematurely
-     *      and needs redemption support). Normal mint authorization should be managed via
-     *      `addStakingModule`.
-     * @param _minter Address to grant MINTER_ROLE to.
-     */
-    function grantMinterRole(address _minter) external;
-
-    /**
-     * @notice Revokes MINTER_ROLE from a specified address. Governor-only.
-     * @dev Intended for emergency recovery scenarios. Normal flow uses `removeStakingModule` for module revocation.
-     * @param _minter Address to revoke MINTER_ROLE from.
-     */
-    function revokeMinterRole(address _minter) external;
-
-    /**
-     * @notice  Pauses token operations that honor pausability (e.g., burns).
-     * @dev Callable by guardian or governor. While paused, `mint`, `burn` and `burnFrom` are blocked by ERC20Pausable.
-     */
-    function pause() external;
-
-    /**
-     * @notice Unpauses token operations.
-     * @dev Callable by guardian or governor. Restores normal `mint`/`burn`/`burnFrom` behavior.
-     */
-    function unpause() external;
-
-    // =============================
-    //        MINT / BURN API
-    // =============================
-
-    /**
-     * @notice Mints xSUMR to a recipient address.
-     * @dev Access is expected to be restricted to authorized staking modules.
-     * @param _to Recipient address for newly minted xSUMR.
-     * @param _amount Amount of xSUMR to mint (1:1 to staked SUMR backing in typical flows).
-     */
-    function mint(address _to, uint256 _amount) external;
-
-    /**
-     * @notice Burns caller's xSUMR balance.
-     * @dev Access: Token owner. Used for self-burn flows like unstaking where the owner directly initiates the burn.
-     * @param _amount Amount of xSUMR to burn from the caller's balance.
-     */
-    function burn(uint256 _amount) external;
-
-    /**
-     * @notice Burns xSUMR from a specified address using module authorization and/or allowance
-     * @dev Implementations SHOULD allow either the token owner or an authorized burner module to execute.
-     * @param _from Address from which tokens will be burned.
-     * @param _amount Amount of xSUMR to burn.
-     * @dev Implementations SHOULD enforce either owner self-burn or burner-role authorization plus allowance.
-     */
-    function burnFrom(address _from, uint256 _amount) external;
-}
-
+## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.28;
 
@@ -1037,16 +688,14 @@ contract ProtocolAccessManaged is IAccessControlErrors, Context {
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.28;
 
-/// @dev this is a minimal vesting wallet interface
-interface IMinimalVestingWallet {
-    /// @dev the balance of the vesting wallet can only go down - if it goes up - tokens were sent to the wallet (unintended bhavior)
-    function balanceOf(address _user) external view returns (uint256);
-    /// @dev the current owner of the vesting wallet ( might be different that owner in the factory contract)
-    function owner() external view returns (address);
-    /// @dev the ownership of the vesting wallet can be trnsfered - this is used to transfer the ownership of the vesting wallet to the user
-    function transferOwnership(address newOwner) external;
-    /// @dev the amount of tokens released from the vesting wallet
-    function released(address _token) external view returns (uint256);
+/// @dev this is a minimal vesting factory interface
+interface IMinimalVestingFactory {
+    /// @dev each user can have a single vesting wallet - the balance of the vesting wallet can only go down
+    function vestingWallets(address _user) external view returns (address);
+    /// @dev the owner of the vesting wallet
+    function vestingWalletOwners(
+        address _wallet
+    ) external view returns (address);
 }
 
 // SPDX-License-Identifier: BUSL-1.1
@@ -1310,6 +959,207 @@ interface ISummerToken is
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.28;
 
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
+import {ERC20Pausable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Pausable.sol";
+import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
+import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
+import {ProtocolAccessManaged} from "@summerfi/access-contracts/contracts/ProtocolAccessManaged.sol";
+import {IStakedSummerToken} from "../interfaces/IStakedSummerToken.sol";
+
+/**
+ * @title StakedSummerToken (xSUMR)
+ * @notice Non-transferable staked representation of SUMR used for governance and rewards accounting.
+ * @dev Key properties:
+ *      - Minting/Burning controlled by governance-authorized staking modules
+ *      - Direct transfers disabled; only mint (from address(0)) and burn (to address(0)) allowed
+ *      - Pausable by guardian/governor for emergency response
+ *      - Integrates ERC20Permit and ERC20Votes for signatures and governance snapshots
+ *
+ * Access control model:
+ *      - Governor can add/remove staking modules, which grants MINTER and BURNER roles
+ *      - Only modules with MINTER_ROLE can mint
+ *      - burnFrom requires either the token owner or an address with BURNER_ROLE plus standard allowance
+ */
+contract StakedSummerToken is
+    IStakedSummerToken,
+    ERC20Burnable,
+    ERC20Pausable,
+    ProtocolAccessManaged,
+    AccessControl,
+    ERC20Permit,
+    ERC20Votes
+{
+    // ============ ROLES ============
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+
+    // ============ CONSTRUCTOR ============
+    constructor(
+        address _protocolAccessManager
+    )
+        ERC20("StakedSummerToken", "xSUMR")
+        ERC20Permit("StakedSummerToken")
+        ProtocolAccessManaged(_protocolAccessManager)
+    {}
+
+    // ============ GOVERNANCE ============
+
+    /// @inheritdoc IStakedSummerToken
+    function addStakingModule(address _stakingModule) external onlyGovernor {
+        if (_stakingModule == address(0)) {
+            revert xSumr_InvalidStakingModule(
+                "Staking module address cannot be zero"
+            );
+        }
+        // Authorize staking module to participate in mint/burn flows
+        _grantRole(MINTER_ROLE, _stakingModule);
+        _grantRole(BURNER_ROLE, _stakingModule);
+
+        emit StakingModuleAdded(_stakingModule);
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function removeStakingModule(address _stakingModule) external onlyGovernor {
+        // Fully deauthorize staking module by revoking both roles
+        _revokeRole(MINTER_ROLE, _stakingModule);
+        _revokeRole(BURNER_ROLE, _stakingModule);
+        emit StakingModuleRemoved(_stakingModule);
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function pause() external onlyGuardianOrGovernor {
+        _pause();
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function unpause() external onlyGuardianOrGovernor {
+        _unpause();
+    }
+
+    // ============ MINT / BURN API ============
+
+    /// @inheritdoc IStakedSummerToken
+    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
+        // Only authorized staking modules are permitted to mint xSUMR
+        _mint(to, amount);
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function burn(
+        uint256 amount
+    ) public override(ERC20Burnable, IStakedSummerToken) {
+        super.burn(amount);
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function burnFrom(
+        address from,
+        uint256 amount
+    ) public override(ERC20Burnable, IStakedSummerToken) {
+        if (!_canBurnFrom(from, msg.sender)) {
+            revert xSumr__NotAuthorized();
+        }
+        // Honor allowance semantics when `msg.sender != from` via ERC20Burnable
+        super.burnFrom(from, amount);
+    }
+
+    // ============ ERC6372 / ERC20Votes ============
+    /// @notice Returns the current clock in seconds, used by ERC20Votes for timestamp-based checkpoints.
+    function clock() public view override returns (uint48) {
+        return uint48(block.timestamp);
+    }
+
+    // solhint-disable-next-line func-name-mixedcase
+    /// @notice Returns the clock mode string as required by ERC-6372.
+    function CLOCK_MODE() public pure override returns (string memory) {
+        return "mode=timestamp";
+    }
+
+    // The following functions are overrides required by Solidity.
+    function _update(
+        address from,
+        address to,
+        uint256 value
+    ) internal override(ERC20, ERC20Pausable, ERC20Votes) {
+        if (!_canTransfer(from, to)) {
+            revert xSumr_TransferNotAllowed();
+        }
+        // Run pausable and votes hooks (checkpoints, etc.)
+        super._update(from, to, value);
+    }
+
+    function nonces(
+        address owner
+    ) public view override(ERC20Permit, Nonces) returns (uint256) {
+        return super.nonces(owner);
+    }
+
+    // ============ ROLE MANAGEMENT (GOVERNOR) ============
+
+    /// @inheritdoc IStakedSummerToken
+    function grantMinterRole(address _minter) external onlyGovernor {
+        _grantRole(MINTER_ROLE, _minter);
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function revokeMinterRole(address _minter) external onlyGovernor {
+        _revokeRole(MINTER_ROLE, _minter);
+    }
+
+    /**
+     * @dev Overrides the grantRole function from AccessControl to disable direct role granting.
+     * @notice This function always reverts with a DirectGrantIsDisabled error.
+     */
+    function grantRole(bytes32, address) public view override {
+        revert DirectGrantIsDisabled(msg.sender);
+    }
+
+    /**
+     * @dev Overrides the revokeRole function from AccessControl to disable direct role revoking.
+     * @notice This function always reverts with a DirectRevokeIsDisabled error.
+     */
+    function revokeRole(bytes32, address) public view override {
+        revert DirectRevokeIsDisabled(msg.sender);
+    }
+
+    // ============ INTERNAL HELPERS ============
+
+    /**
+     * @dev Only allow mint (from == address(0)) and burn (to == address(0)) movements. Block user-to-user transfers.
+     * @notice All staking module interactions are based on `mint()` and `burnFrom()`;
+     * transfers between users are disallowed.
+     * @param from The address to transfer tokens from.
+     * @param to The address to transfer tokens to.
+     * @return bool True if the transfer is allowed, false otherwise.
+     */
+    function _canTransfer(
+        address from,
+        address to
+    ) internal pure returns (bool) {
+        return from == address(0) || to == address(0);
+    }
+
+    /**
+     * @notice Allows `burnFrom` only if `spender` burns its own tokens or holds `BURNER_ROLE`.
+     * @dev Even with `BURNER_ROLE`, standard ERC20 allowance rules apply.
+     * @param from The address to burn tokens from.
+     * @param spender The address to check for `BURNER_ROLE`.
+     * @return bool True if the burn is allowed, false otherwise.
+     */
+    function _canBurnFrom(
+        address from,
+        address spender
+    ) internal view returns (bool) {
+        return spender == from || hasRole(BURNER_ROLE, spender);
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
 /**
  * @title ISummerVestingWalletsEscrow
  * @notice Interface for the escrow that allows staking xSUMR against SUMR balances held in vesting wallets.
@@ -1512,111 +1362,239 @@ interface ISummerVestingWalletsEscrow {
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.28;
 
-import {ISummerVestingWallet} from "../interfaces/ISummerVestingWallet.sol";
+/// @dev this is a minimal vesting wallet interface
+interface IMinimalVestingWallet {
+    /// @dev the balance of the vesting wallet can only go down - if it goes up - tokens were sent to the wallet (unintended bhavior)
+    function balanceOf(address _user) external view returns (uint256);
+    /// @dev the current owner of the vesting wallet ( might be different that owner in the factory contract)
+    function owner() external view returns (address);
+    /// @dev the ownership of the vesting wallet can be trnsfered - this is used to transfer the ownership of the vesting wallet to the user
+    function transferOwnership(address newOwner) external;
+    /// @dev the amount of tokens released from the vesting wallet
+    function released(address _token) external view returns (uint256);
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
- * @title ISummerTokenErrors
- * @notice Interface defining custom errors for the SummerToken contract
+ * @title IStakedSummerToken
+ * @notice Interface for xSUMR, the non-transferable staked representation of SUMR used for governance and rewards.
+ * @dev xSUMR is mint/burn controlled by approved staking modules. Direct transfers between users are disabled; only
+ *      minting (from address(0)) and burning (to address(0)) are permitted movements. Implementations SHOULD enforce
+ *      role-based access control for minting and restricted burning, and MAY expose pause controls via governance.
+ *
+ * Rationale and Invariants:
+ * - Transfer path is intentionally restricted to mint/burn to avoid bypassing staking logic and snapshots.
+ * - Multiple staking modules may be authorized concurrently; governance manages their lifecycle.
+ * - `burnFrom` authorization requires either the owner or an address with BURNER role; allowance rules still apply.
  */
-interface ISummerTokenErrors {
-    /**
-     * @dev Error thrown when an invalid vesting type is provided
-     * @param invalidType The invalid vesting type that was provided
-     */
-    error InvalidVestingType(ISummerVestingWallet.VestingType invalidType);
+interface IStakedSummerToken is IERC20 {
+    // =============================
+    //            EVENTS
+    // =============================
 
     /**
-     * @dev Error thrown when the caller is not the decay manager or governor
-     * @param caller The address of the caller
+     * @notice Emitted when a staking module is granted mint/burn permissions on xSUMR.
+     * @param stakingModule Address of the staking module added.
      */
-    error CallerIsNotAuthorized(address caller);
+    event StakingModuleAdded(address indexed stakingModule);
 
     /**
-     * @dev Error thrown when the caller is not the decay manager
-     * @param caller The address of the caller
+     * @notice Emitted when a staking module has its mint/burn permissions revoked on xSUMR.
+     * @param stakingModule Address of the staking module removed.
      */
-    error CallerIsNotDecayManager(address caller);
+    event StakingModuleRemoved(address indexed stakingModule);
+
+    // =============================
+    //            ERRORS
+    // =============================
 
     /**
-     * @dev Error thrown when the decay rate is too high
+     * @notice Thrown when a zero address or otherwise invalid staking module is supplied.
+     * @param message Details about the invalid staking module input.
      */
-    error DecayRateTooHigh(uint256 rate);
+    error xSumr_InvalidStakingModule(string message);
 
     /**
-     * @dev Error thrown when the decay free window is invalid (less than 30 days or more than 365.25 days)
-     * @param window The invalid window duration that was provided
+     * @notice Thrown when a caller attempts an operation without the required authorization.
      */
-    error InvalidDecayFreeWindow(uint40 window);
+    error xSumr__NotAuthorized();
 
     /**
-     * @dev Error thrown when attempting to initialize the contract after it has already been initialized
+     * @notice Thrown when a forbidden token transfer is attempted (only mint/burn flows are allowed).
      */
-    error AlreadyInitialized();
+    error xSumr_TransferNotAllowed();
+
+    // =============================
+    //          GOVERNANCE
+    // =============================
 
     /**
-     * @dev Error thrown when attempting to undelegate while staked
+     * @notice Adds a staking module with mint and burn permissions.
+     * @dev Access restricted to governance in the implementing contract.
+     * @param _stakingModule The staking module to authorize.
+     *        Must be a non-zero address and expected to integrate with staking flows.
+     * @custom:reverts xSumr_InvalidStakingModule If `_stakingModule` is the zero address.
+     * @custom:emits StakingModuleAdded Emitted upon successful addition.
      */
-    error CannotUndelegateWhileStaked();
+    function addStakingModule(address _stakingModule) external;
+
+    /**
+     * @notice Removes a staking module with mint and burn permissions.
+     * @dev Access restricted to governance in the implementing contract.
+     * @param _stakingModule The staking module to remove.
+     *        Must be a non-zero address and previously authorized.
+     * @custom:reverts xSumr_InvalidStakingModule If `_stakingModule` is the zero address.
+     * @custom:emits StakingModuleRemoved Emitted upon successful removal.
+     */
+    function removeStakingModule(address _stakingModule) external;
+
+    /**
+     * @notice Grants MINTER_ROLE to a specified address. Governor-only.
+     * @dev Intended for emergency recovery scenarios (e.g., user burned xSUMR prematurely
+     *      and needs redemption support). Normal mint authorization should be managed via
+     *      `addStakingModule`.
+     * @param _minter Address to grant MINTER_ROLE to.
+     */
+    function grantMinterRole(address _minter) external;
+
+    /**
+     * @notice Revokes MINTER_ROLE from a specified address. Governor-only.
+     * @dev Intended for emergency recovery scenarios. Normal flow uses `removeStakingModule` for module revocation.
+     * @param _minter Address to revoke MINTER_ROLE from.
+     */
+    function revokeMinterRole(address _minter) external;
+
+    /**
+     * @notice  Pauses token operations that honor pausability (e.g., burns).
+     * @dev Callable by guardian or governor. While paused, `mint`, `burn` and `burnFrom` are blocked by ERC20Pausable.
+     */
+    function pause() external;
+
+    /**
+     * @notice Unpauses token operations.
+     * @dev Callable by guardian or governor. Restores normal `mint`/`burn`/`burnFrom` behavior.
+     */
+    function unpause() external;
+
+    // =============================
+    //        MINT / BURN API
+    // =============================
+
+    /**
+     * @notice Mints xSUMR to a recipient address.
+     * @dev Access is expected to be restricted to authorized staking modules.
+     * @param _to Recipient address for newly minted xSUMR.
+     * @param _amount Amount of xSUMR to mint (1:1 to staked SUMR backing in typical flows).
+     */
+    function mint(address _to, uint256 _amount) external;
+
+    /**
+     * @notice Burns caller's xSUMR balance.
+     * @dev Access: Token owner. Used for self-burn flows like unstaking where the owner directly initiates the burn.
+     * @param _amount Amount of xSUMR to burn from the caller's balance.
+     */
+    function burn(uint256 _amount) external;
+
+    /**
+     * @notice Burns xSUMR from a specified address using module authorization and/or allowance
+     * @dev Implementations SHOULD allow either the token owner or an authorized burner module to execute.
+     * @param _from Address from which tokens will be burned.
+     * @param _amount Amount of xSUMR to burn.
+     * @dev Implementations SHOULD enforce either owner self-burn or burner-role authorization plus allowance.
+     */
+    function burnFrom(address _from, uint256 _amount) external;
 }
 
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.0.0) (governance/utils/IVotes.sol)
+// OpenZeppelin Contracts (last updated v5.0.0) (utils/ReentrancyGuard.sol)
+
 pragma solidity ^0.8.20;
 
 /**
- * @dev Common interface for {ERC20Votes}, {ERC721Votes}, and other {Votes}-enabled contracts.
+ * @dev Contract module that helps prevent reentrant calls to a function.
+ *
+ * Inheriting from `ReentrancyGuard` will make the {nonReentrant} modifier
+ * available, which can be applied to functions to make sure there are no nested
+ * (reentrant) calls to them.
+ *
+ * Note that because there is a single `nonReentrant` guard, functions marked as
+ * `nonReentrant` may not call one another. This can be worked around by making
+ * those functions `private`, and then adding `external` `nonReentrant` entry
+ * points to them.
+ *
+ * TIP: If EIP-1153 (transient storage) is available on the chain you're deploying at,
+ * consider using {ReentrancyGuardTransient} instead.
+ *
+ * TIP: If you would like to learn more about reentrancy and alternative ways
+ * to protect against it, check out our blog post
+ * https://blog.openzeppelin.com/reentrancy-after-istanbul/[Reentrancy After Istanbul].
  */
-interface IVotes {
-    /**
-     * @dev The signature used has expired.
-     */
-    error VotesExpiredSignature(uint256 expiry);
+abstract contract ReentrancyGuard {
+    // Booleans are more expensive than uint256 or any type that takes up a full
+    // word because each write operation emits an extra SLOAD to first read the
+    // slot's contents, replace the bits taken up by the boolean, and then write
+    // back. This is the compiler's defense against contract upgrades and
+    // pointer aliasing, and it cannot be disabled.
+
+    // The values being non-zero value makes deployment a bit more expensive,
+    // but in exchange the refund on every call to nonReentrant will be lower in
+    // amount. Since refunds are capped to a percentage of the total
+    // transaction's gas, it is best to keep them low in cases like this one, to
+    // increase the likelihood of the full refund coming into effect.
+    uint256 private constant NOT_ENTERED = 1;
+    uint256 private constant ENTERED = 2;
+
+    uint256 private _status;
 
     /**
-     * @dev Emitted when an account changes their delegate.
+     * @dev Unauthorized reentrant call.
      */
-    event DelegateChanged(address indexed delegator, address indexed fromDelegate, address indexed toDelegate);
+    error ReentrancyGuardReentrantCall();
+
+    constructor() {
+        _status = NOT_ENTERED;
+    }
 
     /**
-     * @dev Emitted when a token transfer or delegate change results in changes to a delegate's number of voting units.
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and making it call a
+     * `private` function that does the actual work.
      */
-    event DelegateVotesChanged(address indexed delegate, uint256 previousVotes, uint256 newVotes);
+    modifier nonReentrant() {
+        _nonReentrantBefore();
+        _;
+        _nonReentrantAfter();
+    }
+
+    function _nonReentrantBefore() private {
+        // On the first call to nonReentrant, _status will be NOT_ENTERED
+        if (_status == ENTERED) {
+            revert ReentrancyGuardReentrantCall();
+        }
+
+        // Any calls to nonReentrant after this point will fail
+        _status = ENTERED;
+    }
+
+    function _nonReentrantAfter() private {
+        // By storing the original value once again, a refund is triggered (see
+        // https://eips.ethereum.org/EIPS/eip-2200)
+        _status = NOT_ENTERED;
+    }
 
     /**
-     * @dev Returns the current amount of votes that `account` has.
+     * @dev Returns true if the reentrancy guard is currently set to "entered", which indicates there is a
+     * `nonReentrant` function in the call stack.
      */
-    function getVotes(address account) external view returns (uint256);
-
-    /**
-     * @dev Returns the amount of votes that `account` had at a specific moment in the past. If the `clock()` is
-     * configured to use block numbers, this will return the value at the end of the corresponding block.
-     */
-    function getPastVotes(address account, uint256 timepoint) external view returns (uint256);
-
-    /**
-     * @dev Returns the total supply of votes available at a specific moment in the past. If the `clock()` is
-     * configured to use block numbers, this will return the value at the end of the corresponding block.
-     *
-     * NOTE: This value is the sum of all available votes, which is not necessarily the sum of all delegated votes.
-     * Votes that have not been delegated are still part of total supply, even though they would not participate in a
-     * vote.
-     */
-    function getPastTotalSupply(uint256 timepoint) external view returns (uint256);
-
-    /**
-     * @dev Returns the delegate that `account` has chosen.
-     */
-    function delegates(address account) external view returns (address);
-
-    /**
-     * @dev Delegates votes from the sender to `delegatee`.
-     */
-    function delegate(address delegatee) external;
-
-    /**
-     * @dev Delegates votes from signer to `delegatee`.
-     */
-    function delegateBySig(address delegatee, uint256 nonce, uint256 expiry, uint8 v, bytes32 r, bytes32 s) external;
+    function _reentrancyGuardEntered() internal view returns (bool) {
+        return _status == ENTERED;
+    }
 }
 
 

@@ -6,9 +6,7 @@ use crate::{
             EnumString, Severity,
         },
         findings::PrivilegeLevel,
-        prompt_support::severity_rubics::{
-            self, CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
-        },
+        prompt_support::severity_rubics::{CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC},
     },
 };
 

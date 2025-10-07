@@ -4,12 +4,12 @@
 /// complete repository information including paths, file lists, documentation,
 /// and generated context data from RepoPaths and metadata analysis.
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
 
 use crate::{
     config::{CHAINSHIELD_DB_FOLDER, REPO_DATA_DB},
-    llm_review::context_state::{get_metadata_context, ContextType},
+    llm_review::context_state::get_metadata_context,
     prepare_code::git_clone::RepoPaths,
 };
 
@@ -34,6 +34,8 @@ pub struct RepoData {
     pub script_files: String,
     /// Serialized list of config files
     pub config_files: String,
+    /// Serialized list of config files
+    pub lib_config_files: String,
     /// Serialized list of documentation files
     pub docs: String,
     /// Audit scope file path (optional)
@@ -49,9 +51,7 @@ pub async fn save_repo_data_to_db(repo: &RepoPaths) -> anyhow::Result<()> {
         "{}/{}",
         CHAINSHIELD_DB_FOLDER, REPO_DATA_DB
     )))?;
-    let context = get_metadata_context(repo, &ContextType::Abridged)
-        .await
-        .expect("no context found!");
+    let context = get_metadata_context(repo).await.expect("no context found!");
 
     repodata_db.insert_repo_data(repo, &context)?;
 
@@ -141,7 +141,7 @@ impl RepoDataDb {
     pub fn get_repo_data(&self, project_id: &str) -> Result<Option<RepoData>> {
         let mut stmt = self.0.prepare(
             "SELECT project_id, root, repo_name, commit_hash, source_code_folder,
-                    sol_files, test_files, script_files, config_files, docs,
+                    sol_files, test_files, script_files, config_files, lib_config_files, docs,
                     audit_scope, excluded_folders, context
              FROM repo_data WHERE project_id = ?1",
         )?;
@@ -157,10 +157,11 @@ impl RepoDataDb {
                 test_files: row.get(6)?,
                 script_files: row.get(7)?,
                 config_files: row.get(8)?,
-                docs: row.get(9)?,
-                audit_scope: row.get(10)?,
-                excluded_folders: row.get(11)?,
-                context: row.get(12)?,
+                lib_config_files: row.get(9)?,
+                docs: row.get(10)?,
+                audit_scope: row.get(11)?,
+                excluded_folders: row.get(12)?,
+                context: row.get(13)?,
             })
         })?;
 
@@ -211,6 +212,7 @@ impl RepoData {
         let test_files: Vec<PathBuf> = serde_json::from_str(&self.test_files)?;
         let script_files: Vec<PathBuf> = serde_json::from_str(&self.script_files)?;
         let config_files: Vec<PathBuf> = serde_json::from_str(&self.config_files)?;
+        let lib_config_files: Vec<PathBuf> = serde_json::from_str(&self.lib_config_files)?;
         let docs: Vec<PathBuf> = serde_json::from_str(&self.docs)?;
         let excluded_folders: Option<Vec<PathBuf>> = self
             .excluded_folders
@@ -225,10 +227,12 @@ impl RepoData {
             test_files,
             script_files,
             config_files,
+            lib_config_files,
             source_code_folder: PathBuf::from(&self.source_code_folder),
             scoped_files: None,
             monorepo_folders: None,
             docs,
+            scanned_files_count: 0,
             repo_name: self.repo_name.clone(),
             audit_scope: self.audit_scope.as_ref().map(PathBuf::from),
             excluded_folders,

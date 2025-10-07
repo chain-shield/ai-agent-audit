@@ -6,7 +6,7 @@ use crate::{
     config::AUDIT_TYPE,
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context, ContextType},
+        context_state::{generate_audit_scope, get_metadata_context},
         enums::AIAgent,
         findings::{Finding, Findings},
         prompt_support::{post_verify::POST_VERIFY, verify_prompt::generate_verify_prompt},
@@ -63,7 +63,7 @@ pub async fn execute(
 
     let mut handles = vec![];
     let deduped_findings = Arc::new(findings.dedup().await?);
-    let context = get_metadata_context(repo, &ContextType::Abridged)
+    let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
