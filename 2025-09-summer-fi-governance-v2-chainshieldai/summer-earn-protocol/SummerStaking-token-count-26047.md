@@ -815,26 +815,542 @@ contract SummerStaking is
 
 END OF MAIN TARGET CONTRACT
 
-## SUPPORTING CONTEXT: PARENT AND CALLED CONTRACTS
+## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.28;
 
-import {ERC20Wrapper} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Wrapper.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IConfigurationManagerErrors} from "../errors/IConfigurationManagerErrors.sol";
+import {IConfigurationManagerEvents} from "../events/IConfigurationManagerEvents.sol";
+import {ConfigurationManagerParams} from "../types/ConfigurationManagerTypes.sol";
 
 /**
- * @title WrappedStakingToken
- * @notice A simple wrapper for the staking token that inherits from ERC20Wrapper
- * @dev This contract is used by GovernanceRewardsManager to wrap staking tokens when they are used as rewards
+ * @title IConfigurationManager
+ * @notice Interface for the ConfigurationManager contract, which manages system-wide parameters
+ * @dev This interface defines the getters and setters for system-wide parameters
  */
-contract WrappedStakingToken is ERC20Wrapper {
-    constructor(
-        address underlyingToken
-    )
-        ERC20(string.concat("Wrapped ", "Summer"), string.concat("w", "SUMR"))
-        ERC20Wrapper(IERC20(underlyingToken))
-    {}
+
+interface IConfigurationManager is
+    IConfigurationManagerEvents,
+    IConfigurationManagerErrors
+{
+    /**
+     * @notice Initialize the configuration with the given parameters
+     * @param params The parameters to initialize the configuration with
+     * @dev Can only be called by the governor
+     */
+    function initializeConfiguration(
+        ConfigurationManagerParams memory params
+    ) external;
+
+    /**
+     * @notice Get the address of the Raft contract
+     * @return The address of the Raft contract
+     * @dev This is where rewards and farmed tokens are sent for processing
+     */
+    function raft() external view returns (address);
+
+    /**
+     * @notice Get the current tip jar address
+     * @return The current tip jar address
+     * @dev This is the contract that owns tips and is responsible for
+     *     dispensing them to claimants
+     */
+    function tipJar() external view returns (address);
+
+    /**
+     * @notice Get the current treasury address
+     * @return The current treasury address
+     *       @dev This is the contract that owns the treasury and is responsible for
+     *      dispensing funds to the protocol's operations
+     */
+    function treasury() external view returns (address);
+
+    /**
+     * @notice Get the address of theHarbor command
+     * @return The address of theHarbor command
+     * @dev This is the contract that's the registry of all Fleet Commanders
+     */
+    function harborCommand() external view returns (address);
+
+    /**
+     * @notice Get the address of the Fleet Commander Rewards Manager Factory contract
+     * @return The address of the Fleet Commander Rewards Manager Factory contract
+     */
+    function fleetCommanderRewardsManagerFactory()
+        external
+        view
+        returns (address);
+
+    /**
+     * @notice Set a new address for the Raft contract
+     * @param newRaft The new address for the Raft contract
+     * @dev Can only be called by the governor
+     */
+    function setRaft(address newRaft) external;
+
+    /**
+     * @notice Set a new tip ar address
+     * @param newTipJar The address of the new tip jar
+     * @dev Can only be called by the governor
+     */
+    function setTipJar(address newTipJar) external;
+
+    /**
+     * @notice Set a new treasury address
+     * @param newTreasury The address of the new treasury
+     * @dev Can only be called by the governor
+     */
+    function setTreasury(address newTreasury) external;
+
+    /**
+     * @notice Set a new harbor command address
+     * @param newHarborCommand The address of the new harbor command
+     * @dev Can only be called by the governor
+     */
+    function setHarborCommand(address newHarborCommand) external;
+
+    /**
+     * @notice Set a new fleet commander rewards manager factory address
+     * @param newFleetCommanderRewardsManagerFactory The address of the new fleet commander rewards manager factory
+     * @dev Can only be called by the governor
+     */
+    function setFleetCommanderRewardsManagerFactory(
+        address newFleetCommanderRewardsManagerFactory
+    ) external;
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+/**
+ * @title StakingRewardsManager
+ * @notice Contract for managing staking rewards with multiple reward tokens in the Summer protocol
+ * @dev Implements IStakingRewards interface and inherits from ReentrancyGuardTransient and ProtocolAccessManaged
+ * @dev Inspired by Synthetix's StakingRewards contract:
+ * https://github.com/Synthetixio/synthetix/blob/v2.101.3/contracts/StakingRewards.sol
+ */
+import {IStakingRewardsManagerBase} from "../interfaces/IStakingRewardsManagerBase.sol";
+import {ProtocolAccessManaged} from "@summerfi/access-contracts/contracts/ProtocolAccessManaged.sol";
+import {ReentrancyGuardTransient} from "@summerfi/dependencies/openzeppelin-next/ReentrancyGuardTransient.sol";
+import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {Constants} from "@summerfi/constants/Constants.sol";
+import {ERC20Wrapper} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Wrapper.sol";
+
+/**
+ * @title StakingRewards
+ * @notice Contract for managing staking rewards with multiple reward tokens in the Summer protocol
+ * @dev Implements IStakingRewards interface and inherits from ReentrancyGuardTransient and ProtocolAccessManaged
+ */
+abstract contract StakingRewardsManagerBase is
+    IStakingRewardsManagerBase,
+    ReentrancyGuardTransient,
+    ProtocolAccessManaged
+{
+    using SafeERC20 for IERC20;
+    using EnumerableSet for EnumerableSet.AddressSet;
+
+    struct RewardData {
+        uint256 periodFinish;
+        uint256 rewardRate;
+        uint256 rewardsDuration;
+        uint256 lastUpdateTime;
+        uint256 rewardPerTokenStored;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            STATE VARIABLES
+    //////////////////////////////////////////////////////////////*/
+
+    /* @notice List of all reward tokens supported by this contract */
+    EnumerableSet.AddressSet internal _rewardTokensList;
+    /* @notice The token that users stake to earn rewards */
+    address public immutable stakingToken;
+
+    /* @notice Mapping of reward token to its reward distribution data */
+    mapping(address rewardToken => RewardData data) public rewardData;
+    /* @notice Tracks the last reward per token paid to each user for each reward token */
+    mapping(address rewardToken => mapping(address account => uint256 rewardPerTokenPaid))
+        public userRewardPerTokenPaid;
+    /* @notice Tracks the unclaimed rewards for each user for each reward token */
+    mapping(address rewardToken => mapping(address account => uint256 rewardAmount))
+        public rewards;
+
+    /* @notice Total amount of tokens staked in the contract */
+    uint256 public totalSupply;
+    mapping(address account => uint256 balance) internal _balances;
+
+    uint256 private constant MAX_REWARD_DURATION = 360 days; // 1 year
+
+    /*//////////////////////////////////////////////////////////////
+                                MODIFIERS
+    //////////////////////////////////////////////////////////////*/
+
+    modifier updateReward(address account) virtual {
+        _updateReward(account);
+        _;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                CONSTRUCTOR
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @notice Initializes the StakingRewards contract
+     * @param accessManager The address of the access manager
+     */
+    constructor(address accessManager) ProtocolAccessManaged(accessManager) {}
+
+    /*//////////////////////////////////////////////////////////////
+                                VIEWS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function rewardTokens(
+        uint256 index
+    ) external view override returns (address) {
+        if (index >= _rewardTokensList.length()) revert IndexOutOfBounds();
+        address rewardTokenAddress = _rewardTokensList.at(index);
+        return rewardTokenAddress;
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function rewardTokensLength() external view returns (uint256) {
+        return _rewardTokensList.length();
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function balanceOf(address account) public view virtual returns (uint256) {
+        return _balances[account];
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function lastTimeRewardApplicable(
+        address rewardToken
+    ) public view returns (uint256) {
+        return
+            block.timestamp < rewardData[rewardToken].periodFinish
+                ? block.timestamp
+                : rewardData[rewardToken].periodFinish;
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function rewardPerToken(address rewardToken) public view returns (uint256) {
+        if (totalSupply == 0) {
+            return rewardData[rewardToken].rewardPerTokenStored;
+        }
+        return
+            rewardData[rewardToken].rewardPerTokenStored +
+            ((lastTimeRewardApplicable(rewardToken) -
+                rewardData[rewardToken].lastUpdateTime) *
+                rewardData[rewardToken].rewardRate) /
+            totalSupply;
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function earned(
+        address account,
+        address rewardToken
+    ) public view virtual returns (uint256) {
+        return _earned(account, rewardToken);
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function getRewardForDuration(
+        address rewardToken
+    ) external view returns (uint256) {
+        RewardData storage data = rewardData[rewardToken];
+        if (block.timestamp >= data.periodFinish) {
+            return (data.rewardRate * data.rewardsDuration) / Constants.WAD;
+        }
+        // For active periods, calculate remaining rewards plus any new rewards
+        uint256 remaining = data.periodFinish - block.timestamp;
+        return (data.rewardRate * remaining) / Constants.WAD;
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function isRewardToken(address rewardToken) external view returns (bool) {
+        return _isRewardToken(rewardToken);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            MUTATIVE FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function stake(uint256 amount) external virtual updateReward(_msgSender()) {
+        _stake(_msgSender(), _msgSender(), amount);
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function unstake(
+        uint256 amount
+    ) external virtual updateReward(_msgSender()) {
+        _unstake(_msgSender(), _msgSender(), amount);
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function getReward() public virtual nonReentrant {
+        uint256 rewardTokenCount = _rewardTokensList.length();
+        for (uint256 i = 0; i < rewardTokenCount; i++) {
+            address rewardTokenAddress = _rewardTokensList.at(i);
+            _getReward(_msgSender(), rewardTokenAddress);
+        }
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function getReward(address rewardToken) public virtual nonReentrant {
+        if (!_isRewardToken(rewardToken)) revert RewardTokenDoesNotExist();
+        _getReward(_msgSender(), rewardToken);
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function exit() external virtual {
+        getReward();
+        _unstake(_msgSender(), _msgSender(), _balances[_msgSender()]);
+    }
+
+    /// @notice Claims rewards for a specific account
+    /// @param account The address to claim rewards for
+    function getRewardFor(address account) public virtual nonReentrant {
+        uint256 rewardTokenCount = _rewardTokensList.length();
+        for (uint256 i = 0; i < rewardTokenCount; i++) {
+            address rewardTokenAddress = _rewardTokensList.at(i);
+            _getReward(account, rewardTokenAddress);
+        }
+    }
+
+    /// @notice Claims rewards for a specific account and specific reward token
+    /// @param account The address to claim rewards for
+    /// @param rewardToken The address of the reward token to claim
+    function getRewardFor(
+        address account,
+        address rewardToken
+    ) public virtual nonReentrant {
+        if (!_isRewardToken(rewardToken)) revert RewardTokenDoesNotExist();
+        _getReward(account, rewardToken);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            RESTRICTED FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function notifyRewardAmount(
+        address rewardToken,
+        uint256 reward,
+        uint256 newRewardsDuration
+    ) external virtual onlyGovernor updateReward(address(0)) {
+        _notifyRewardAmount(rewardToken, reward, newRewardsDuration);
+    }
+
+    /// @inheritdoc IStakingRewardsManagerBase
+    function setRewardsDuration(
+        address rewardToken,
+        uint256 _rewardsDuration
+    ) external onlyGovernor {
+        if (!_isRewardToken(rewardToken)) {
+            revert RewardTokenDoesNotExist();
+        }
+        if (_rewardsDuration == 0) {
+            revert RewardsDurationCannotBeZero();
+        }
+        if (_rewardsDuration > MAX_REWARD_DURATION) {
+            revert RewardsDurationTooLong();
+        }
+
+        RewardData storage data = rewardData[rewardToken];
+        if (block.timestamp <= data.periodFinish) {
+            revert RewardPeriodNotComplete();
+        }
+        data.rewardsDuration = _rewardsDuration;
+        emit RewardsDurationUpdated(address(rewardToken), _rewardsDuration);
+    }
+
+    /// @notice Removes a reward token from the list of reward tokens
+    /// @param rewardToken The address of the reward token to remove
+    function removeRewardToken(address rewardToken) external onlyGovernor {
+        if (!_isRewardToken(rewardToken)) {
+            revert RewardTokenDoesNotExist();
+        }
+
+        if (block.timestamp <= rewardData[rewardToken].periodFinish) {
+            revert RewardPeriodNotComplete();
+        }
+
+        // Check if all tokens have been claimed, allowing a small dust balance
+        uint256 remainingBalance = IERC20(rewardToken).balanceOf(address(this));
+        uint256 dustThreshold;
+
+        try IERC20Metadata(address(rewardToken)).decimals() returns (
+            uint8 decimals
+        ) {
+            // For tokens with 4 or fewer decimals, use a minimum threshold of 1
+            // For tokens with more decimals, use 0.01% of 1 token
+            if (decimals <= 4) {
+                dustThreshold = 1;
+            } else {
+                dustThreshold = 10 ** (decimals - 4); // 0.01% of 1 token
+            }
+        } catch {
+            dustThreshold = 1e14; // Default threshold for tokens without decimals
+        }
+
+        if (remainingBalance > dustThreshold) {
+            revert RewardTokenStillHasBalance(remainingBalance);
+        }
+
+        // Remove the token from the rewardTokens map
+        bool success = _rewardTokensList.remove(address(rewardToken));
+        if (!success) revert RewardTokenDoesNotExist();
+
+        emit RewardTokenRemoved(address(rewardToken));
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            INTERNAL FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    function _isRewardToken(address rewardToken) internal view returns (bool) {
+        return _rewardTokensList.contains(rewardToken);
+    }
+
+    function _stake(
+        address staker,
+        address receiver,
+        uint256 amount
+    ) internal virtual {
+        if (receiver == address(0)) revert CannotStakeToZeroAddress();
+        if (amount == 0) revert CannotStakeZero();
+        if (address(stakingToken) == address(0)) {
+            revert StakingTokenNotInitialized();
+        }
+        totalSupply += amount;
+        _balances[receiver] += amount;
+        IERC20(stakingToken).safeTransferFrom(staker, address(this), amount);
+        emit Staked(staker, receiver, amount);
+    }
+
+    function _unstake(
+        address staker,
+        address receiver,
+        uint256 amount
+    ) internal virtual {
+        if (amount == 0) revert CannotUnstakeZero();
+        totalSupply -= amount;
+        _balances[staker] -= amount;
+        IERC20(stakingToken).safeTransfer(receiver, amount);
+        emit Unstaked(staker, receiver, amount);
+    }
+
+    /*
+     * @notice Internal function to calculate earned rewards for an account
+     * @param account The address to calculate earnings for
+     * @param rewardToken The reward token to calculate earnings for
+     * @return The amount of reward tokens earned
+     */
+    function _earned(
+        address account,
+        address rewardToken
+    ) internal view returns (uint256) {
+        return
+            (_balances[account] *
+                (rewardPerToken(rewardToken) -
+                    userRewardPerTokenPaid[rewardToken][account])) /
+            Constants.WAD +
+            rewards[rewardToken][account];
+    }
+
+    function _updateReward(address account) internal {
+        uint256 rewardTokenCount = _rewardTokensList.length();
+        for (uint256 i = 0; i < rewardTokenCount; i++) {
+            address rewardTokenAddress = _rewardTokensList.at(i);
+            RewardData storage rewardTokenData = rewardData[rewardTokenAddress];
+            rewardTokenData.rewardPerTokenStored = rewardPerToken(
+                rewardTokenAddress
+            );
+            rewardTokenData.lastUpdateTime = lastTimeRewardApplicable(
+                rewardTokenAddress
+            );
+            if (account != address(0)) {
+                rewards[rewardTokenAddress][account] = earned(
+                    account,
+                    rewardTokenAddress
+                );
+                userRewardPerTokenPaid[rewardTokenAddress][
+                    account
+                ] = rewardTokenData.rewardPerTokenStored;
+            }
+        }
+    }
+
+    /**
+     * @notice Internal function to claim rewards for an account for a specific token
+     * @param account The address to claim rewards for
+     * @param rewardTokenAddress The address of the reward token to claim
+     * @dev rewards go straight to the user's wallet
+     */
+    function _getReward(
+        address account,
+        address rewardTokenAddress
+    ) internal virtual updateReward(account) {
+        uint256 reward = rewards[rewardTokenAddress][account];
+        if (reward > 0) {
+            rewards[rewardTokenAddress][account] = 0;
+            IERC20(rewardTokenAddress).safeTransfer(account, reward);
+            emit RewardPaid(account, rewardTokenAddress, reward);
+        }
+    }
+
+    /**
+     * @dev Internal implementation of notifyRewardAmount
+     * @param rewardToken The token to distribute as rewards
+     * @param reward The amount of reward tokens to distribute
+     * @param newRewardsDuration The duration for new reward tokens (only used for first time)
+     */
+    function _notifyRewardAmount(
+        address rewardToken,
+        uint256 reward,
+        uint256 newRewardsDuration
+    ) internal {
+        RewardData storage rewardTokenData = rewardData[rewardToken];
+        if (newRewardsDuration == 0) {
+            revert RewardsDurationCannotBeZero();
+        }
+
+        if (newRewardsDuration > MAX_REWARD_DURATION) {
+            revert RewardsDurationTooLong();
+        }
+
+        // For existing reward tokens, check if current period is complete
+        if (_isRewardToken(rewardToken)) {
+            if (newRewardsDuration != rewardTokenData.rewardsDuration) {
+                revert CannotChangeRewardsDuration();
+            }
+        } else {
+            // First time setup for new reward token
+            bool success = _rewardTokensList.add(rewardToken);
+            if (!success) revert RewardTokenAlreadyExists();
+
+            rewardTokenData.rewardsDuration = newRewardsDuration;
+            emit RewardTokenAdded(rewardToken, rewardTokenData.rewardsDuration);
+        }
+
+        // Transfer exact amount needed for new rewards
+        IERC20(rewardToken).safeTransferFrom(msg.sender, address(this), reward);
+
+        // Calculate new reward rate
+        rewardTokenData.rewardRate =
+            (reward * Constants.WAD) /
+            rewardTokenData.rewardsDuration;
+        rewardTokenData.lastUpdateTime = block.timestamp;
+        rewardTokenData.periodFinish =
+            block.timestamp +
+            rewardTokenData.rewardsDuration;
+
+        emit RewardAdded(address(rewardToken), reward);
+    }
 }
 
 // SPDX-License-Identifier: BUSL-1.1
@@ -867,6 +1383,548 @@ library Constants {
         0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFDFFFFFFFFFFFFFF;
     uint256 internal constant PAUSED_MASK =
         0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFFFFFFFFF;
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+/**
+ * @title IStakedSummerToken
+ * @notice Interface for xSUMR, the non-transferable staked representation of SUMR used for governance and rewards.
+ * @dev xSUMR is mint/burn controlled by approved staking modules. Direct transfers between users are disabled; only
+ *      minting (from address(0)) and burning (to address(0)) are permitted movements. Implementations SHOULD enforce
+ *      role-based access control for minting and restricted burning, and MAY expose pause controls via governance.
+ *
+ * Rationale and Invariants:
+ * - Transfer path is intentionally restricted to mint/burn to avoid bypassing staking logic and snapshots.
+ * - Multiple staking modules may be authorized concurrently; governance manages their lifecycle.
+ * - `burnFrom` authorization requires either the owner or an address with BURNER role; allowance rules still apply.
+ */
+interface IStakedSummerToken is IERC20 {
+    // =============================
+    //            EVENTS
+    // =============================
+
+    /**
+     * @notice Emitted when a staking module is granted mint/burn permissions on xSUMR.
+     * @param stakingModule Address of the staking module added.
+     */
+    event StakingModuleAdded(address indexed stakingModule);
+
+    /**
+     * @notice Emitted when a staking module has its mint/burn permissions revoked on xSUMR.
+     * @param stakingModule Address of the staking module removed.
+     */
+    event StakingModuleRemoved(address indexed stakingModule);
+
+    // =============================
+    //            ERRORS
+    // =============================
+
+    /**
+     * @notice Thrown when a zero address or otherwise invalid staking module is supplied.
+     * @param message Details about the invalid staking module input.
+     */
+    error xSumr_InvalidStakingModule(string message);
+
+    /**
+     * @notice Thrown when a caller attempts an operation without the required authorization.
+     */
+    error xSumr__NotAuthorized();
+
+    /**
+     * @notice Thrown when a forbidden token transfer is attempted (only mint/burn flows are allowed).
+     */
+    error xSumr_TransferNotAllowed();
+
+    // =============================
+    //          GOVERNANCE
+    // =============================
+
+    /**
+     * @notice Adds a staking module with mint and burn permissions.
+     * @dev Access restricted to governance in the implementing contract.
+     * @param _stakingModule The staking module to authorize.
+     *        Must be a non-zero address and expected to integrate with staking flows.
+     * @custom:reverts xSumr_InvalidStakingModule If `_stakingModule` is the zero address.
+     * @custom:emits StakingModuleAdded Emitted upon successful addition.
+     */
+    function addStakingModule(address _stakingModule) external;
+
+    /**
+     * @notice Removes a staking module with mint and burn permissions.
+     * @dev Access restricted to governance in the implementing contract.
+     * @param _stakingModule The staking module to remove.
+     *        Must be a non-zero address and previously authorized.
+     * @custom:reverts xSumr_InvalidStakingModule If `_stakingModule` is the zero address.
+     * @custom:emits StakingModuleRemoved Emitted upon successful removal.
+     */
+    function removeStakingModule(address _stakingModule) external;
+
+    /**
+     * @notice Grants MINTER_ROLE to a specified address. Governor-only.
+     * @dev Intended for emergency recovery scenarios (e.g., user burned xSUMR prematurely
+     *      and needs redemption support). Normal mint authorization should be managed via
+     *      `addStakingModule`.
+     * @param _minter Address to grant MINTER_ROLE to.
+     */
+    function grantMinterRole(address _minter) external;
+
+    /**
+     * @notice Revokes MINTER_ROLE from a specified address. Governor-only.
+     * @dev Intended for emergency recovery scenarios. Normal flow uses `removeStakingModule` for module revocation.
+     * @param _minter Address to revoke MINTER_ROLE from.
+     */
+    function revokeMinterRole(address _minter) external;
+
+    /**
+     * @notice  Pauses token operations that honor pausability (e.g., burns).
+     * @dev Callable by guardian or governor. While paused, `mint`, `burn` and `burnFrom` are blocked by ERC20Pausable.
+     */
+    function pause() external;
+
+    /**
+     * @notice Unpauses token operations.
+     * @dev Callable by guardian or governor. Restores normal `mint`/`burn`/`burnFrom` behavior.
+     */
+    function unpause() external;
+
+    // =============================
+    //        MINT / BURN API
+    // =============================
+
+    /**
+     * @notice Mints xSUMR to a recipient address.
+     * @dev Access is expected to be restricted to authorized staking modules.
+     * @param _to Recipient address for newly minted xSUMR.
+     * @param _amount Amount of xSUMR to mint (1:1 to staked SUMR backing in typical flows).
+     */
+    function mint(address _to, uint256 _amount) external;
+
+    /**
+     * @notice Burns caller's xSUMR balance.
+     * @dev Access: Token owner. Used for self-burn flows like unstaking where the owner directly initiates the burn.
+     * @param _amount Amount of xSUMR to burn from the caller's balance.
+     */
+    function burn(uint256 _amount) external;
+
+    /**
+     * @notice Burns xSUMR from a specified address using module authorization and/or allowance
+     * @dev Implementations SHOULD allow either the token owner or an authorized burner module to execute.
+     * @param _from Address from which tokens will be burned.
+     * @param _amount Amount of xSUMR to burn.
+     * @dev Implementations SHOULD enforce either owner self-burn or burner-role authorization plus allowance.
+     */
+    function burnFrom(address _from, uint256 _amount) external;
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+import {IConfigurationManager} from "./IConfigurationManager.sol";
+
+/**
+ * @title IConfigurationManaged
+ * @notice Interface for contracts that need to read from the ConfigurationManager
+ * @dev This interface defines the standard methods for accessing configuration values
+ *      from the ConfigurationManager. It should be implemented by contracts that
+ *      need to read these configurations.
+ */
+interface IConfigurationManaged {
+    /**
+     * @notice Gets the address of the ConfigurationManager contract
+     * @return The address of the ConfigurationManager contract
+     */
+    function configurationManager()
+        external
+        view
+        returns (IConfigurationManager);
+
+    /**
+     * @notice Gets the address of the Raft contract
+     * @return The address of the Raft contract
+     */
+    function raft() external view returns (address);
+
+    /**
+     * @notice Gets the address of the TipJar contract
+     * @return The address of the TipJar contract
+     */
+    function tipJar() external view returns (address);
+
+    /**
+     * @notice Gets the address of the Treasury contract
+     * @return The address of the Treasury contract
+     */
+    function treasury() external view returns (address);
+
+    /**
+     * @notice Gets the address of the HarborCommand contract
+     * @return The address of the HarborCommand contract
+     */
+    function harborCommand() external view returns (address);
+
+    /**
+     * @notice Gets the address of the Fleet Commander Rewards Manager Factory contract
+     * @return The address of the Fleet Commander Rewards Manager Factory contract
+     */
+    function fleetCommanderRewardsManagerFactory()
+        external
+        view
+        returns (address);
+
+    error ConfigurationManagerZeroAddress();
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+/**
+ * @title IConfigurationManagerErrors
+ * @dev This file contains custom error definitions for the ConfigurationManager contract.
+ * @notice These custom errors provide more gas-efficient and informative error handling
+ * compared to traditional require statements with string messages.
+ */
+interface IConfigurationManagerErrors {
+    /**
+     * @notice Thrown when an operation is attempted with a zero address where a non-zero address is required.
+     */
+    error ZeroAddress();
+    /**
+     * @notice Thrown when ConfigurationManager was already initialized.
+     */
+    error ConfigurationManagerAlreadyInitialized();
+
+    /**
+     * @notice Thrown when the Raft address is not set.
+     */
+    error RaftNotSet();
+
+    /**
+     * @notice Thrown when the TipJar address is not set.
+     */
+    error TipJarNotSet();
+
+    /**
+     * @notice Thrown when the Treasury address is not set.
+     */
+    error TreasuryNotSet();
+
+    /**
+     * @notice Thrown when constructor address is set to the zero address.
+     */
+    error AddressZero();
+
+    /**
+     * @notice Thrown when the HarborCommand address is not set.
+     */
+    error HarborCommandNotSet();
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.0.1) (utils/Context.sol)
+
+pragma solidity ^0.8.20;
+
+/**
+ * @dev Provides information about the current execution context, including the
+ * sender of the transaction and its data. While these are generally available
+ * via msg.sender and msg.data, they should not be accessed in such a direct
+ * manner, since when dealing with meta-transactions the account sending and
+ * paying for execution may not be the actual sender (as far as an application
+ * is concerned).
+ *
+ * This contract is only required for intermediate, library-like contracts.
+ */
+abstract contract Context {
+    function _msgSender() internal view virtual returns (address) {
+        return msg.sender;
+    }
+
+    function _msgData() internal view virtual returns (bytes calldata) {
+        return msg.data;
+    }
+
+    function _contextSuffixLength() internal view virtual returns (uint256) {
+        return 0;
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
+import {ERC20Pausable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Pausable.sol";
+import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
+import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
+import {ProtocolAccessManaged} from "@summerfi/access-contracts/contracts/ProtocolAccessManaged.sol";
+import {IStakedSummerToken} from "../interfaces/IStakedSummerToken.sol";
+
+/**
+ * @title StakedSummerToken (xSUMR)
+ * @notice Non-transferable staked representation of SUMR used for governance and rewards accounting.
+ * @dev Key properties:
+ *      - Minting/Burning controlled by governance-authorized staking modules
+ *      - Direct transfers disabled; only mint (from address(0)) and burn (to address(0)) allowed
+ *      - Pausable by guardian/governor for emergency response
+ *      - Integrates ERC20Permit and ERC20Votes for signatures and governance snapshots
+ *
+ * Access control model:
+ *      - Governor can add/remove staking modules, which grants MINTER and BURNER roles
+ *      - Only modules with MINTER_ROLE can mint
+ *      - burnFrom requires either the token owner or an address with BURNER_ROLE plus standard allowance
+ */
+contract StakedSummerToken is
+    IStakedSummerToken,
+    ERC20Burnable,
+    ERC20Pausable,
+    ProtocolAccessManaged,
+    AccessControl,
+    ERC20Permit,
+    ERC20Votes
+{
+    // ============ ROLES ============
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+
+    // ============ CONSTRUCTOR ============
+    constructor(
+        address _protocolAccessManager
+    )
+        ERC20("StakedSummerToken", "xSUMR")
+        ERC20Permit("StakedSummerToken")
+        ProtocolAccessManaged(_protocolAccessManager)
+    {}
+
+    // ============ GOVERNANCE ============
+
+    /// @inheritdoc IStakedSummerToken
+    function addStakingModule(address _stakingModule) external onlyGovernor {
+        if (_stakingModule == address(0)) {
+            revert xSumr_InvalidStakingModule(
+                "Staking module address cannot be zero"
+            );
+        }
+        // Authorize staking module to participate in mint/burn flows
+        _grantRole(MINTER_ROLE, _stakingModule);
+        _grantRole(BURNER_ROLE, _stakingModule);
+
+        emit StakingModuleAdded(_stakingModule);
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function removeStakingModule(address _stakingModule) external onlyGovernor {
+        // Fully deauthorize staking module by revoking both roles
+        _revokeRole(MINTER_ROLE, _stakingModule);
+        _revokeRole(BURNER_ROLE, _stakingModule);
+        emit StakingModuleRemoved(_stakingModule);
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function pause() external onlyGuardianOrGovernor {
+        _pause();
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function unpause() external onlyGuardianOrGovernor {
+        _unpause();
+    }
+
+    // ============ MINT / BURN API ============
+
+    /// @inheritdoc IStakedSummerToken
+    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
+        // Only authorized staking modules are permitted to mint xSUMR
+        _mint(to, amount);
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function burn(
+        uint256 amount
+    ) public override(ERC20Burnable, IStakedSummerToken) {
+        super.burn(amount);
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function burnFrom(
+        address from,
+        uint256 amount
+    ) public override(ERC20Burnable, IStakedSummerToken) {
+        if (!_canBurnFrom(from, msg.sender)) {
+            revert xSumr__NotAuthorized();
+        }
+        // Honor allowance semantics when `msg.sender != from` via ERC20Burnable
+        super.burnFrom(from, amount);
+    }
+
+    // ============ ERC6372 / ERC20Votes ============
+    /// @notice Returns the current clock in seconds, used by ERC20Votes for timestamp-based checkpoints.
+    function clock() public view override returns (uint48) {
+        return uint48(block.timestamp);
+    }
+
+    // solhint-disable-next-line func-name-mixedcase
+    /// @notice Returns the clock mode string as required by ERC-6372.
+    function CLOCK_MODE() public pure override returns (string memory) {
+        return "mode=timestamp";
+    }
+
+    // The following functions are overrides required by Solidity.
+    function _update(
+        address from,
+        address to,
+        uint256 value
+    ) internal override(ERC20, ERC20Pausable, ERC20Votes) {
+        if (!_canTransfer(from, to)) {
+            revert xSumr_TransferNotAllowed();
+        }
+        // Run pausable and votes hooks (checkpoints, etc.)
+        super._update(from, to, value);
+    }
+
+    function nonces(
+        address owner
+    ) public view override(ERC20Permit, Nonces) returns (uint256) {
+        return super.nonces(owner);
+    }
+
+    // ============ ROLE MANAGEMENT (GOVERNOR) ============
+
+    /// @inheritdoc IStakedSummerToken
+    function grantMinterRole(address _minter) external onlyGovernor {
+        _grantRole(MINTER_ROLE, _minter);
+    }
+
+    /// @inheritdoc IStakedSummerToken
+    function revokeMinterRole(address _minter) external onlyGovernor {
+        _revokeRole(MINTER_ROLE, _minter);
+    }
+
+    /**
+     * @dev Overrides the grantRole function from AccessControl to disable direct role granting.
+     * @notice This function always reverts with a DirectGrantIsDisabled error.
+     */
+    function grantRole(bytes32, address) public view override {
+        revert DirectGrantIsDisabled(msg.sender);
+    }
+
+    /**
+     * @dev Overrides the revokeRole function from AccessControl to disable direct role revoking.
+     * @notice This function always reverts with a DirectRevokeIsDisabled error.
+     */
+    function revokeRole(bytes32, address) public view override {
+        revert DirectRevokeIsDisabled(msg.sender);
+    }
+
+    // ============ INTERNAL HELPERS ============
+
+    /**
+     * @dev Only allow mint (from == address(0)) and burn (to == address(0)) movements. Block user-to-user transfers.
+     * @notice All staking module interactions are based on `mint()` and `burnFrom()`;
+     * transfers between users are disallowed.
+     * @param from The address to transfer tokens from.
+     * @param to The address to transfer tokens to.
+     * @return bool True if the transfer is allowed, false otherwise.
+     */
+    function _canTransfer(
+        address from,
+        address to
+    ) internal pure returns (bool) {
+        return from == address(0) || to == address(0);
+    }
+
+    /**
+     * @notice Allows `burnFrom` only if `spender` burns its own tokens or holds `BURNER_ROLE`.
+     * @dev Even with `BURNER_ROLE`, standard ERC20 allowance rules apply.
+     * @param from The address to burn tokens from.
+     * @param spender The address to check for `BURNER_ROLE`.
+     * @return bool True if the burn is allowed, false otherwise.
+     */
+    function _canBurnFrom(
+        address from,
+        address spender
+    ) internal view returns (bool) {
+        return spender == from || hasRole(BURNER_ROLE, spender);
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+import {ERC20Wrapper} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Wrapper.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+/**
+ * @title WrappedStakingToken
+ * @notice A simple wrapper for the staking token that inherits from ERC20Wrapper
+ * @dev This contract is used by GovernanceRewardsManager to wrap staking tokens when they are used as rewards
+ */
+contract WrappedStakingToken is ERC20Wrapper {
+    constructor(
+        address underlyingToken
+    )
+        ERC20(string.concat("Wrapped ", "Summer"), string.concat("w", "SUMR"))
+        ERC20Wrapper(IERC20(underlyingToken))
+    {}
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.28;
+
+/**
+ * @title IConfigurationManagerEvents
+ * @notice Interface for events emitted by the Configuration Manager
+ */
+interface IConfigurationManagerEvents {
+    /**
+     * @notice Emitted when the Raft address is updated
+     * @param newRaft The address of the new Raft
+     */
+    event RaftUpdated(address oldRaft, address newRaft);
+
+    /**
+     * @notice Emitted when the tip jar address is updated
+     * @param newTipJar The address of the new tip jar
+     */
+    event TipJarUpdated(address oldTipJar, address newTipJar);
+
+    /**
+     * @notice Emitted when the tip rate is updated
+     * @param newTipRate The new tip rate value
+     */
+    event TipRateUpdated(uint8 oldTipRate, uint8 newTipRate);
+
+    /**
+     * @notice Emitted when the Treasury address is updated
+     * @param newTreasury The address of the new Treasury
+     */
+    event TreasuryUpdated(address oldTreasury, address newTreasury);
+
+    /**
+     * @notice Emitted when the Harbor Command address is updated
+     * @param oldHarborCommand The address of the old Harbor Command
+     * @param newHarborCommand The address of the new Harbor Command
+     */
+    event HarborCommandUpdated(
+        address oldHarborCommand,
+        address newHarborCommand
+    );
+
+    /**
+     * @notice Emitted when the Fleet Commander Rewards Manager Factory address is updated
+     * @param oldFleetCommanderRewardsManagerFactory The address of the old Fleet Commander Rewards Manager Factory
+     * @param newFleetCommanderRewardsManagerFactory The address of the new Fleet Commander Rewards Manager Factory
+     */
+    event FleetCommanderRewardsManagerFactoryUpdated(
+        address oldFleetCommanderRewardsManagerFactory,
+        address newFleetCommanderRewardsManagerFactory
+    );
 }
 
 // SPDX-License-Identifier: BUSL-1.1
@@ -1497,776 +2555,6 @@ interface ISummerStaking is IStakingRewardsManagerBase {
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.28;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-/**
- * @title IStakedSummerToken
- * @notice Interface for xSUMR, the non-transferable staked representation of SUMR used for governance and rewards.
- * @dev xSUMR is mint/burn controlled by approved staking modules. Direct transfers between users are disabled; only
- *      minting (from address(0)) and burning (to address(0)) are permitted movements. Implementations SHOULD enforce
- *      role-based access control for minting and restricted burning, and MAY expose pause controls via governance.
- *
- * Rationale and Invariants:
- * - Transfer path is intentionally restricted to mint/burn to avoid bypassing staking logic and snapshots.
- * - Multiple staking modules may be authorized concurrently; governance manages their lifecycle.
- * - `burnFrom` authorization requires either the owner or an address with BURNER role; allowance rules still apply.
- */
-interface IStakedSummerToken is IERC20 {
-    // =============================
-    //            EVENTS
-    // =============================
-
-    /**
-     * @notice Emitted when a staking module is granted mint/burn permissions on xSUMR.
-     * @param stakingModule Address of the staking module added.
-     */
-    event StakingModuleAdded(address indexed stakingModule);
-
-    /**
-     * @notice Emitted when a staking module has its mint/burn permissions revoked on xSUMR.
-     * @param stakingModule Address of the staking module removed.
-     */
-    event StakingModuleRemoved(address indexed stakingModule);
-
-    // =============================
-    //            ERRORS
-    // =============================
-
-    /**
-     * @notice Thrown when a zero address or otherwise invalid staking module is supplied.
-     * @param message Details about the invalid staking module input.
-     */
-    error xSumr_InvalidStakingModule(string message);
-
-    /**
-     * @notice Thrown when a caller attempts an operation without the required authorization.
-     */
-    error xSumr__NotAuthorized();
-
-    /**
-     * @notice Thrown when a forbidden token transfer is attempted (only mint/burn flows are allowed).
-     */
-    error xSumr_TransferNotAllowed();
-
-    // =============================
-    //          GOVERNANCE
-    // =============================
-
-    /**
-     * @notice Adds a staking module with mint and burn permissions.
-     * @dev Access restricted to governance in the implementing contract.
-     * @param _stakingModule The staking module to authorize.
-     *        Must be a non-zero address and expected to integrate with staking flows.
-     * @custom:reverts xSumr_InvalidStakingModule If `_stakingModule` is the zero address.
-     * @custom:emits StakingModuleAdded Emitted upon successful addition.
-     */
-    function addStakingModule(address _stakingModule) external;
-
-    /**
-     * @notice Removes a staking module with mint and burn permissions.
-     * @dev Access restricted to governance in the implementing contract.
-     * @param _stakingModule The staking module to remove.
-     *        Must be a non-zero address and previously authorized.
-     * @custom:reverts xSumr_InvalidStakingModule If `_stakingModule` is the zero address.
-     * @custom:emits StakingModuleRemoved Emitted upon successful removal.
-     */
-    function removeStakingModule(address _stakingModule) external;
-
-    /**
-     * @notice Grants MINTER_ROLE to a specified address. Governor-only.
-     * @dev Intended for emergency recovery scenarios (e.g., user burned xSUMR prematurely
-     *      and needs redemption support). Normal mint authorization should be managed via
-     *      `addStakingModule`.
-     * @param _minter Address to grant MINTER_ROLE to.
-     */
-    function grantMinterRole(address _minter) external;
-
-    /**
-     * @notice Revokes MINTER_ROLE from a specified address. Governor-only.
-     * @dev Intended for emergency recovery scenarios. Normal flow uses `removeStakingModule` for module revocation.
-     * @param _minter Address to revoke MINTER_ROLE from.
-     */
-    function revokeMinterRole(address _minter) external;
-
-    /**
-     * @notice  Pauses token operations that honor pausability (e.g., burns).
-     * @dev Callable by guardian or governor. While paused, `mint`, `burn` and `burnFrom` are blocked by ERC20Pausable.
-     */
-    function pause() external;
-
-    /**
-     * @notice Unpauses token operations.
-     * @dev Callable by guardian or governor. Restores normal `mint`/`burn`/`burnFrom` behavior.
-     */
-    function unpause() external;
-
-    // =============================
-    //        MINT / BURN API
-    // =============================
-
-    /**
-     * @notice Mints xSUMR to a recipient address.
-     * @dev Access is expected to be restricted to authorized staking modules.
-     * @param _to Recipient address for newly minted xSUMR.
-     * @param _amount Amount of xSUMR to mint (1:1 to staked SUMR backing in typical flows).
-     */
-    function mint(address _to, uint256 _amount) external;
-
-    /**
-     * @notice Burns caller's xSUMR balance.
-     * @dev Access: Token owner. Used for self-burn flows like unstaking where the owner directly initiates the burn.
-     * @param _amount Amount of xSUMR to burn from the caller's balance.
-     */
-    function burn(uint256 _amount) external;
-
-    /**
-     * @notice Burns xSUMR from a specified address using module authorization and/or allowance
-     * @dev Implementations SHOULD allow either the token owner or an authorized burner module to execute.
-     * @param _from Address from which tokens will be burned.
-     * @param _amount Amount of xSUMR to burn.
-     * @dev Implementations SHOULD enforce either owner self-burn or burner-role authorization plus allowance.
-     */
-    function burnFrom(address _from, uint256 _amount) external;
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.28;
-
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import {ERC20Pausable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Pausable.sol";
-import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
-import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
-import {ProtocolAccessManaged} from "@summerfi/access-contracts/contracts/ProtocolAccessManaged.sol";
-import {IStakedSummerToken} from "../interfaces/IStakedSummerToken.sol";
-
-/**
- * @title StakedSummerToken (xSUMR)
- * @notice Non-transferable staked representation of SUMR used for governance and rewards accounting.
- * @dev Key properties:
- *      - Minting/Burning controlled by governance-authorized staking modules
- *      - Direct transfers disabled; only mint (from address(0)) and burn (to address(0)) allowed
- *      - Pausable by guardian/governor for emergency response
- *      - Integrates ERC20Permit and ERC20Votes for signatures and governance snapshots
- *
- * Access control model:
- *      - Governor can add/remove staking modules, which grants MINTER and BURNER roles
- *      - Only modules with MINTER_ROLE can mint
- *      - burnFrom requires either the token owner or an address with BURNER_ROLE plus standard allowance
- */
-contract StakedSummerToken is
-    IStakedSummerToken,
-    ERC20Burnable,
-    ERC20Pausable,
-    ProtocolAccessManaged,
-    AccessControl,
-    ERC20Permit,
-    ERC20Votes
-{
-    // ============ ROLES ============
-    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
-
-    // ============ CONSTRUCTOR ============
-    constructor(
-        address _protocolAccessManager
-    )
-        ERC20("StakedSummerToken", "xSUMR")
-        ERC20Permit("StakedSummerToken")
-        ProtocolAccessManaged(_protocolAccessManager)
-    {}
-
-    // ============ GOVERNANCE ============
-
-    /// @inheritdoc IStakedSummerToken
-    function addStakingModule(address _stakingModule) external onlyGovernor {
-        if (_stakingModule == address(0)) {
-            revert xSumr_InvalidStakingModule(
-                "Staking module address cannot be zero"
-            );
-        }
-        // Authorize staking module to participate in mint/burn flows
-        _grantRole(MINTER_ROLE, _stakingModule);
-        _grantRole(BURNER_ROLE, _stakingModule);
-
-        emit StakingModuleAdded(_stakingModule);
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function removeStakingModule(address _stakingModule) external onlyGovernor {
-        // Fully deauthorize staking module by revoking both roles
-        _revokeRole(MINTER_ROLE, _stakingModule);
-        _revokeRole(BURNER_ROLE, _stakingModule);
-        emit StakingModuleRemoved(_stakingModule);
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function pause() external onlyGuardianOrGovernor {
-        _pause();
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function unpause() external onlyGuardianOrGovernor {
-        _unpause();
-    }
-
-    // ============ MINT / BURN API ============
-
-    /// @inheritdoc IStakedSummerToken
-    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
-        // Only authorized staking modules are permitted to mint xSUMR
-        _mint(to, amount);
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function burn(
-        uint256 amount
-    ) public override(ERC20Burnable, IStakedSummerToken) {
-        super.burn(amount);
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function burnFrom(
-        address from,
-        uint256 amount
-    ) public override(ERC20Burnable, IStakedSummerToken) {
-        if (!_canBurnFrom(from, msg.sender)) {
-            revert xSumr__NotAuthorized();
-        }
-        // Honor allowance semantics when `msg.sender != from` via ERC20Burnable
-        super.burnFrom(from, amount);
-    }
-
-    // ============ ERC6372 / ERC20Votes ============
-    /// @notice Returns the current clock in seconds, used by ERC20Votes for timestamp-based checkpoints.
-    function clock() public view override returns (uint48) {
-        return uint48(block.timestamp);
-    }
-
-    // solhint-disable-next-line func-name-mixedcase
-    /// @notice Returns the clock mode string as required by ERC-6372.
-    function CLOCK_MODE() public pure override returns (string memory) {
-        return "mode=timestamp";
-    }
-
-    // The following functions are overrides required by Solidity.
-    function _update(
-        address from,
-        address to,
-        uint256 value
-    ) internal override(ERC20, ERC20Pausable, ERC20Votes) {
-        if (!_canTransfer(from, to)) {
-            revert xSumr_TransferNotAllowed();
-        }
-        // Run pausable and votes hooks (checkpoints, etc.)
-        super._update(from, to, value);
-    }
-
-    function nonces(
-        address owner
-    ) public view override(ERC20Permit, Nonces) returns (uint256) {
-        return super.nonces(owner);
-    }
-
-    // ============ ROLE MANAGEMENT (GOVERNOR) ============
-
-    /// @inheritdoc IStakedSummerToken
-    function grantMinterRole(address _minter) external onlyGovernor {
-        _grantRole(MINTER_ROLE, _minter);
-    }
-
-    /// @inheritdoc IStakedSummerToken
-    function revokeMinterRole(address _minter) external onlyGovernor {
-        _revokeRole(MINTER_ROLE, _minter);
-    }
-
-    /**
-     * @dev Overrides the grantRole function from AccessControl to disable direct role granting.
-     * @notice This function always reverts with a DirectGrantIsDisabled error.
-     */
-    function grantRole(bytes32, address) public view override {
-        revert DirectGrantIsDisabled(msg.sender);
-    }
-
-    /**
-     * @dev Overrides the revokeRole function from AccessControl to disable direct role revoking.
-     * @notice This function always reverts with a DirectRevokeIsDisabled error.
-     */
-    function revokeRole(bytes32, address) public view override {
-        revert DirectRevokeIsDisabled(msg.sender);
-    }
-
-    // ============ INTERNAL HELPERS ============
-
-    /**
-     * @dev Only allow mint (from == address(0)) and burn (to == address(0)) movements. Block user-to-user transfers.
-     * @notice All staking module interactions are based on `mint()` and `burnFrom()`;
-     * transfers between users are disallowed.
-     * @param from The address to transfer tokens from.
-     * @param to The address to transfer tokens to.
-     * @return bool True if the transfer is allowed, false otherwise.
-     */
-    function _canTransfer(
-        address from,
-        address to
-    ) internal pure returns (bool) {
-        return from == address(0) || to == address(0);
-    }
-
-    /**
-     * @notice Allows `burnFrom` only if `spender` burns its own tokens or holds `BURNER_ROLE`.
-     * @dev Even with `BURNER_ROLE`, standard ERC20 allowance rules apply.
-     * @param from The address to burn tokens from.
-     * @param spender The address to check for `BURNER_ROLE`.
-     * @return bool True if the burn is allowed, false otherwise.
-     */
-    function _canBurnFrom(
-        address from,
-        address spender
-    ) internal view returns (bool) {
-        return spender == from || hasRole(BURNER_ROLE, spender);
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.28;
-
-/**
- * @title StakingRewardsManager
- * @notice Contract for managing staking rewards with multiple reward tokens in the Summer protocol
- * @dev Implements IStakingRewards interface and inherits from ReentrancyGuardTransient and ProtocolAccessManaged
- * @dev Inspired by Synthetix's StakingRewards contract:
- * https://github.com/Synthetixio/synthetix/blob/v2.101.3/contracts/StakingRewards.sol
- */
-import {IStakingRewardsManagerBase} from "../interfaces/IStakingRewardsManagerBase.sol";
-import {ProtocolAccessManaged} from "@summerfi/access-contracts/contracts/ProtocolAccessManaged.sol";
-import {ReentrancyGuardTransient} from "@summerfi/dependencies/openzeppelin-next/ReentrancyGuardTransient.sol";
-import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
-import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-import {Constants} from "@summerfi/constants/Constants.sol";
-import {ERC20Wrapper} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Wrapper.sol";
-
-/**
- * @title StakingRewards
- * @notice Contract for managing staking rewards with multiple reward tokens in the Summer protocol
- * @dev Implements IStakingRewards interface and inherits from ReentrancyGuardTransient and ProtocolAccessManaged
- */
-abstract contract StakingRewardsManagerBase is
-    IStakingRewardsManagerBase,
-    ReentrancyGuardTransient,
-    ProtocolAccessManaged
-{
-    using SafeERC20 for IERC20;
-    using EnumerableSet for EnumerableSet.AddressSet;
-
-    struct RewardData {
-        uint256 periodFinish;
-        uint256 rewardRate;
-        uint256 rewardsDuration;
-        uint256 lastUpdateTime;
-        uint256 rewardPerTokenStored;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                            STATE VARIABLES
-    //////////////////////////////////////////////////////////////*/
-
-    /* @notice List of all reward tokens supported by this contract */
-    EnumerableSet.AddressSet internal _rewardTokensList;
-    /* @notice The token that users stake to earn rewards */
-    address public immutable stakingToken;
-
-    /* @notice Mapping of reward token to its reward distribution data */
-    mapping(address rewardToken => RewardData data) public rewardData;
-    /* @notice Tracks the last reward per token paid to each user for each reward token */
-    mapping(address rewardToken => mapping(address account => uint256 rewardPerTokenPaid))
-        public userRewardPerTokenPaid;
-    /* @notice Tracks the unclaimed rewards for each user for each reward token */
-    mapping(address rewardToken => mapping(address account => uint256 rewardAmount))
-        public rewards;
-
-    /* @notice Total amount of tokens staked in the contract */
-    uint256 public totalSupply;
-    mapping(address account => uint256 balance) internal _balances;
-
-    uint256 private constant MAX_REWARD_DURATION = 360 days; // 1 year
-
-    /*//////////////////////////////////////////////////////////////
-                                MODIFIERS
-    //////////////////////////////////////////////////////////////*/
-
-    modifier updateReward(address account) virtual {
-        _updateReward(account);
-        _;
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                                CONSTRUCTOR
-    //////////////////////////////////////////////////////////////*/
-
-    /**
-     * @notice Initializes the StakingRewards contract
-     * @param accessManager The address of the access manager
-     */
-    constructor(address accessManager) ProtocolAccessManaged(accessManager) {}
-
-    /*//////////////////////////////////////////////////////////////
-                                VIEWS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function rewardTokens(
-        uint256 index
-    ) external view override returns (address) {
-        if (index >= _rewardTokensList.length()) revert IndexOutOfBounds();
-        address rewardTokenAddress = _rewardTokensList.at(index);
-        return rewardTokenAddress;
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function rewardTokensLength() external view returns (uint256) {
-        return _rewardTokensList.length();
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function balanceOf(address account) public view virtual returns (uint256) {
-        return _balances[account];
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function lastTimeRewardApplicable(
-        address rewardToken
-    ) public view returns (uint256) {
-        return
-            block.timestamp < rewardData[rewardToken].periodFinish
-                ? block.timestamp
-                : rewardData[rewardToken].periodFinish;
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function rewardPerToken(address rewardToken) public view returns (uint256) {
-        if (totalSupply == 0) {
-            return rewardData[rewardToken].rewardPerTokenStored;
-        }
-        return
-            rewardData[rewardToken].rewardPerTokenStored +
-            ((lastTimeRewardApplicable(rewardToken) -
-                rewardData[rewardToken].lastUpdateTime) *
-                rewardData[rewardToken].rewardRate) /
-            totalSupply;
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function earned(
-        address account,
-        address rewardToken
-    ) public view virtual returns (uint256) {
-        return _earned(account, rewardToken);
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function getRewardForDuration(
-        address rewardToken
-    ) external view returns (uint256) {
-        RewardData storage data = rewardData[rewardToken];
-        if (block.timestamp >= data.periodFinish) {
-            return (data.rewardRate * data.rewardsDuration) / Constants.WAD;
-        }
-        // For active periods, calculate remaining rewards plus any new rewards
-        uint256 remaining = data.periodFinish - block.timestamp;
-        return (data.rewardRate * remaining) / Constants.WAD;
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function isRewardToken(address rewardToken) external view returns (bool) {
-        return _isRewardToken(rewardToken);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                            MUTATIVE FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function stake(uint256 amount) external virtual updateReward(_msgSender()) {
-        _stake(_msgSender(), _msgSender(), amount);
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function unstake(
-        uint256 amount
-    ) external virtual updateReward(_msgSender()) {
-        _unstake(_msgSender(), _msgSender(), amount);
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function getReward() public virtual nonReentrant {
-        uint256 rewardTokenCount = _rewardTokensList.length();
-        for (uint256 i = 0; i < rewardTokenCount; i++) {
-            address rewardTokenAddress = _rewardTokensList.at(i);
-            _getReward(_msgSender(), rewardTokenAddress);
-        }
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function getReward(address rewardToken) public virtual nonReentrant {
-        if (!_isRewardToken(rewardToken)) revert RewardTokenDoesNotExist();
-        _getReward(_msgSender(), rewardToken);
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function exit() external virtual {
-        getReward();
-        _unstake(_msgSender(), _msgSender(), _balances[_msgSender()]);
-    }
-
-    /// @notice Claims rewards for a specific account
-    /// @param account The address to claim rewards for
-    function getRewardFor(address account) public virtual nonReentrant {
-        uint256 rewardTokenCount = _rewardTokensList.length();
-        for (uint256 i = 0; i < rewardTokenCount; i++) {
-            address rewardTokenAddress = _rewardTokensList.at(i);
-            _getReward(account, rewardTokenAddress);
-        }
-    }
-
-    /// @notice Claims rewards for a specific account and specific reward token
-    /// @param account The address to claim rewards for
-    /// @param rewardToken The address of the reward token to claim
-    function getRewardFor(
-        address account,
-        address rewardToken
-    ) public virtual nonReentrant {
-        if (!_isRewardToken(rewardToken)) revert RewardTokenDoesNotExist();
-        _getReward(account, rewardToken);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                            RESTRICTED FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function notifyRewardAmount(
-        address rewardToken,
-        uint256 reward,
-        uint256 newRewardsDuration
-    ) external virtual onlyGovernor updateReward(address(0)) {
-        _notifyRewardAmount(rewardToken, reward, newRewardsDuration);
-    }
-
-    /// @inheritdoc IStakingRewardsManagerBase
-    function setRewardsDuration(
-        address rewardToken,
-        uint256 _rewardsDuration
-    ) external onlyGovernor {
-        if (!_isRewardToken(rewardToken)) {
-            revert RewardTokenDoesNotExist();
-        }
-        if (_rewardsDuration == 0) {
-            revert RewardsDurationCannotBeZero();
-        }
-        if (_rewardsDuration > MAX_REWARD_DURATION) {
-            revert RewardsDurationTooLong();
-        }
-
-        RewardData storage data = rewardData[rewardToken];
-        if (block.timestamp <= data.periodFinish) {
-            revert RewardPeriodNotComplete();
-        }
-        data.rewardsDuration = _rewardsDuration;
-        emit RewardsDurationUpdated(address(rewardToken), _rewardsDuration);
-    }
-
-    /// @notice Removes a reward token from the list of reward tokens
-    /// @param rewardToken The address of the reward token to remove
-    function removeRewardToken(address rewardToken) external onlyGovernor {
-        if (!_isRewardToken(rewardToken)) {
-            revert RewardTokenDoesNotExist();
-        }
-
-        if (block.timestamp <= rewardData[rewardToken].periodFinish) {
-            revert RewardPeriodNotComplete();
-        }
-
-        // Check if all tokens have been claimed, allowing a small dust balance
-        uint256 remainingBalance = IERC20(rewardToken).balanceOf(address(this));
-        uint256 dustThreshold;
-
-        try IERC20Metadata(address(rewardToken)).decimals() returns (
-            uint8 decimals
-        ) {
-            // For tokens with 4 or fewer decimals, use a minimum threshold of 1
-            // For tokens with more decimals, use 0.01% of 1 token
-            if (decimals <= 4) {
-                dustThreshold = 1;
-            } else {
-                dustThreshold = 10 ** (decimals - 4); // 0.01% of 1 token
-            }
-        } catch {
-            dustThreshold = 1e14; // Default threshold for tokens without decimals
-        }
-
-        if (remainingBalance > dustThreshold) {
-            revert RewardTokenStillHasBalance(remainingBalance);
-        }
-
-        // Remove the token from the rewardTokens map
-        bool success = _rewardTokensList.remove(address(rewardToken));
-        if (!success) revert RewardTokenDoesNotExist();
-
-        emit RewardTokenRemoved(address(rewardToken));
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                            INTERNAL FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    function _isRewardToken(address rewardToken) internal view returns (bool) {
-        return _rewardTokensList.contains(rewardToken);
-    }
-
-    function _stake(
-        address staker,
-        address receiver,
-        uint256 amount
-    ) internal virtual {
-        if (receiver == address(0)) revert CannotStakeToZeroAddress();
-        if (amount == 0) revert CannotStakeZero();
-        if (address(stakingToken) == address(0)) {
-            revert StakingTokenNotInitialized();
-        }
-        totalSupply += amount;
-        _balances[receiver] += amount;
-        IERC20(stakingToken).safeTransferFrom(staker, address(this), amount);
-        emit Staked(staker, receiver, amount);
-    }
-
-    function _unstake(
-        address staker,
-        address receiver,
-        uint256 amount
-    ) internal virtual {
-        if (amount == 0) revert CannotUnstakeZero();
-        totalSupply -= amount;
-        _balances[staker] -= amount;
-        IERC20(stakingToken).safeTransfer(receiver, amount);
-        emit Unstaked(staker, receiver, amount);
-    }
-
-    /*
-     * @notice Internal function to calculate earned rewards for an account
-     * @param account The address to calculate earnings for
-     * @param rewardToken The reward token to calculate earnings for
-     * @return The amount of reward tokens earned
-     */
-    function _earned(
-        address account,
-        address rewardToken
-    ) internal view returns (uint256) {
-        return
-            (_balances[account] *
-                (rewardPerToken(rewardToken) -
-                    userRewardPerTokenPaid[rewardToken][account])) /
-            Constants.WAD +
-            rewards[rewardToken][account];
-    }
-
-    function _updateReward(address account) internal {
-        uint256 rewardTokenCount = _rewardTokensList.length();
-        for (uint256 i = 0; i < rewardTokenCount; i++) {
-            address rewardTokenAddress = _rewardTokensList.at(i);
-            RewardData storage rewardTokenData = rewardData[rewardTokenAddress];
-            rewardTokenData.rewardPerTokenStored = rewardPerToken(
-                rewardTokenAddress
-            );
-            rewardTokenData.lastUpdateTime = lastTimeRewardApplicable(
-                rewardTokenAddress
-            );
-            if (account != address(0)) {
-                rewards[rewardTokenAddress][account] = earned(
-                    account,
-                    rewardTokenAddress
-                );
-                userRewardPerTokenPaid[rewardTokenAddress][
-                    account
-                ] = rewardTokenData.rewardPerTokenStored;
-            }
-        }
-    }
-
-    /**
-     * @notice Internal function to claim rewards for an account for a specific token
-     * @param account The address to claim rewards for
-     * @param rewardTokenAddress The address of the reward token to claim
-     * @dev rewards go straight to the user's wallet
-     */
-    function _getReward(
-        address account,
-        address rewardTokenAddress
-    ) internal virtual updateReward(account) {
-        uint256 reward = rewards[rewardTokenAddress][account];
-        if (reward > 0) {
-            rewards[rewardTokenAddress][account] = 0;
-            IERC20(rewardTokenAddress).safeTransfer(account, reward);
-            emit RewardPaid(account, rewardTokenAddress, reward);
-        }
-    }
-
-    /**
-     * @dev Internal implementation of notifyRewardAmount
-     * @param rewardToken The token to distribute as rewards
-     * @param reward The amount of reward tokens to distribute
-     * @param newRewardsDuration The duration for new reward tokens (only used for first time)
-     */
-    function _notifyRewardAmount(
-        address rewardToken,
-        uint256 reward,
-        uint256 newRewardsDuration
-    ) internal {
-        RewardData storage rewardTokenData = rewardData[rewardToken];
-        if (newRewardsDuration == 0) {
-            revert RewardsDurationCannotBeZero();
-        }
-
-        if (newRewardsDuration > MAX_REWARD_DURATION) {
-            revert RewardsDurationTooLong();
-        }
-
-        // For existing reward tokens, check if current period is complete
-        if (_isRewardToken(rewardToken)) {
-            if (newRewardsDuration != rewardTokenData.rewardsDuration) {
-                revert CannotChangeRewardsDuration();
-            }
-        } else {
-            // First time setup for new reward token
-            bool success = _rewardTokensList.add(rewardToken);
-            if (!success) revert RewardTokenAlreadyExists();
-
-            rewardTokenData.rewardsDuration = newRewardsDuration;
-            emit RewardTokenAdded(rewardToken, rewardTokenData.rewardsDuration);
-        }
-
-        // Transfer exact amount needed for new rewards
-        IERC20(rewardToken).safeTransferFrom(msg.sender, address(this), reward);
-
-        // Calculate new reward rate
-        rewardTokenData.rewardRate =
-            (reward * Constants.WAD) /
-            rewardTokenData.rewardsDuration;
-        rewardTokenData.lastUpdateTime = block.timestamp;
-        rewardTokenData.periodFinish =
-            block.timestamp +
-            rewardTokenData.rewardsDuration;
-
-        emit RewardAdded(address(rewardToken), reward);
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.28;
-
 import {IConfigurationManaged} from "../interfaces/IConfigurationManaged.sol";
 import {IConfigurationManager} from "../interfaces/IConfigurationManager.sol";
 
@@ -2317,134 +2605,6 @@ abstract contract ConfigurationManaged is IConfigurationManaged {
         returns (address)
     {
         return configurationManager.fleetCommanderRewardsManagerFactory();
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.28;
-
-/* @title IStakingRewardsManagerBaseErrors
- * @notice Interface defining custom errors for the Staking Rewards Manager
- */
-interface IStakingRewardsManagerBaseErrors {
-    /* @notice Thrown when attempting to stake zero tokens */
-    error CannotStakeZero();
-
-    /* @notice Thrown when attempting to withdraw zero tokens */
-    error CannotWithdrawZero();
-
-    /* @notice Thrown when the provided reward amount is too high */
-    error ProvidedRewardTooHigh();
-
-    /* @notice Thrown when trying to set rewards before the current period is complete */
-    error RewardPeriodNotComplete();
-
-    /* @notice Thrown when there are no reward tokens set */
-    error NoRewardTokens();
-
-    /* @notice Thrown when trying to add a reward token that already exists */
-    error RewardTokenAlreadyExists();
-
-    /* @notice Thrown when setting an invalid rewards duration */
-    error InvalidRewardsDuration();
-
-    /* @notice Thrown when trying to interact with a reward token that hasn't been initialized */
-    error RewardTokenNotInitialized();
-
-    /* @notice Thrown when the reward amount is invalid for the given duration
-     * @param rewardToken The address of the reward token
-     * @param rewardsDuration The duration for which the reward is invalid
-     */
-    error InvalidRewardAmount(address rewardToken, uint256 rewardsDuration);
-
-    /* @notice Thrown when trying to interact with the staking token before it's initialized */
-    error StakingTokenNotInitialized();
-
-    /* @notice Thrown when trying to remove a reward token that doesn't exist */
-    error RewardTokenDoesNotExist();
-
-    /* @notice Thrown when trying to change the rewards duration of a reward token */
-    error CannotChangeRewardsDuration();
-
-    /* @notice Thrown when a reward token still has a balance */
-    error RewardTokenStillHasBalance(uint256 balance);
-
-    /* @notice Thrown when the index is out of bounds */
-    error IndexOutOfBounds();
-
-    /* @notice Thrown when the rewards duration is zero */
-    error RewardsDurationCannotBeZero();
-
-    /* @notice Thrown when attempting to unstake zero tokens */
-    error CannotUnstakeZero();
-
-    /* @notice Thrown when the rewards duration is too long */
-    error RewardsDurationTooLong();
-
-    /**
-     * @notice Thrown when the receiver is the zero address
-     */
-    error CannotStakeToZeroAddress();
-}
-
-// SPDX-License-Identifier: MIT
-
-pragma solidity ^0.8.24;
-
-import {StorageSlot} from "./StorageSlot.sol";
-
-/**
- * @dev Variant of {ReentrancyGuard} that uses transient storage.
- *
- * NOTE: This variant only works on networks where EIP-1153 is available.
- *
- * _Available since v5.1._
- */
-abstract contract ReentrancyGuardTransient {
-    using StorageSlot for *;
-
-    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.ReentrancyGuard")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant REENTRANCY_GUARD_STORAGE =
-        0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
-
-    /**
-     * @dev Unauthorized reentrant call.
-     */
-    error ReentrancyGuardReentrantCall();
-
-    /**
-     * @dev Prevents a contract from calling itself, directly or indirectly.
-     * Calling a `nonReentrant` function from another `nonReentrant`
-     * function is not supported. It is possible to prevent this from happening
-     * by making the `nonReentrant` function external, and making it call a
-     * `private` function that does the actual work.
-     */
-    modifier nonReentrant() {
-        _nonReentrantBefore();
-        _;
-        _nonReentrantAfter();
-    }
-
-    function _nonReentrantBefore() private {
-        // On the first call to nonReentrant, _status will be NOT_ENTERED
-        if (_reentrancyGuardEntered()) {
-            revert ReentrancyGuardReentrantCall();
-        }
-
-        // Any calls to nonReentrant after this point will fail
-        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(true);
-    }
-
-    function _nonReentrantAfter() private {
-        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(false);
-    }
-
-    /**
-     * @dev Returns true if the reentrancy guard is currently set to "entered", which indicates there is a
-     * `nonReentrant` function in the call stack.
-     */
-    function _reentrancyGuardEntered() internal view returns (bool) {
-        return REENTRANCY_GUARD_STORAGE.asBoolean().tload();
     }
 }
 
@@ -2769,6 +2929,67 @@ contract ProtocolAccessManaged is IAccessControlErrors, Context {
     function _isFoundation(address account) internal view returns (bool) {
         return
             _accessManager.hasRole(_accessManager.FOUNDATION_ROLE(), account);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.24;
+
+import {StorageSlot} from "./StorageSlot.sol";
+
+/**
+ * @dev Variant of {ReentrancyGuard} that uses transient storage.
+ *
+ * NOTE: This variant only works on networks where EIP-1153 is available.
+ *
+ * _Available since v5.1._
+ */
+abstract contract ReentrancyGuardTransient {
+    using StorageSlot for *;
+
+    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.ReentrancyGuard")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant REENTRANCY_GUARD_STORAGE =
+        0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
+
+    /**
+     * @dev Unauthorized reentrant call.
+     */
+    error ReentrancyGuardReentrantCall();
+
+    /**
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and making it call a
+     * `private` function that does the actual work.
+     */
+    modifier nonReentrant() {
+        _nonReentrantBefore();
+        _;
+        _nonReentrantAfter();
+    }
+
+    function _nonReentrantBefore() private {
+        // On the first call to nonReentrant, _status will be NOT_ENTERED
+        if (_reentrancyGuardEntered()) {
+            revert ReentrancyGuardReentrantCall();
+        }
+
+        // Any calls to nonReentrant after this point will fail
+        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(true);
+    }
+
+    function _nonReentrantAfter() private {
+        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(false);
+    }
+
+    /**
+     * @dev Returns true if the reentrancy guard is currently set to "entered", which indicates there is a
+     * `nonReentrant` function in the call stack.
+     */
+    function _reentrancyGuardEntered() internal view returns (bool) {
+        return REENTRANCY_GUARD_STORAGE.asBoolean().tload();
     }
 }
 

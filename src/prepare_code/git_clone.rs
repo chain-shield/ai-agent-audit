@@ -19,7 +19,9 @@ use walkdir::WalkDir;
 
 use crate::cli_args::parse::Cli;
 use crate::config::audit_config;
-use crate::utils::check_folder_name::{is_config_file, is_script_file, is_test_file};
+use crate::utils::check_folder_name::{
+    is_config_file, is_library_package_json, is_script_file, is_test_file,
+};
 use crate::utils::file_security::validate_repo_url;
 
 /// Build flags for forge compilation
@@ -44,10 +46,13 @@ pub struct RepoPaths {
     pub sol_files: Vec<PathBuf>, // includes test and script files
     pub test_files: Vec<PathBuf>,
     pub script_files: Vec<PathBuf>,
-    pub config_files: Vec<PathBuf>, // NOT in sol_files
+    pub config_files: Vec<PathBuf>,     // NOT in sol_files
+    pub lib_config_files: Vec<PathBuf>, // config files (package.json) in lib folder
     pub source_code_folder: PathBuf,
     /// Paths to documentation files (README.md, etc.)
     pub docs: Vec<PathBuf>,
+    /// Total number of files scanned by WalkDir after filtering (not counting directories/symlinks/ignored)
+    pub scanned_files_count: usize,
     /// e.g. `"my-cool-repo"`
     pub repo_name: String,
     /// audit scope file
@@ -185,7 +190,11 @@ pub fn clone_and_filter_git_repo(
     let mut sol_files = Vec::new();
     let mut test_files = Vec::new();
     let mut script_files = Vec::new();
+    let mut scanned_files_count: usize = 0;
+
     let mut config_files = Vec::new();
+    let mut lib_config_files = Vec::new();
+
     for entry in WalkDir::new(&search_root)
         .into_iter()
         .filter_entry(|e| {
@@ -205,12 +214,14 @@ pub fn clone_and_filter_git_repo(
         if entry.file_type().is_dir() {
             continue;
         }
-        // skip if gitignore or simlink
+        // skip if gitignore or symlink
         if ign.matched(path, false).is_ignore()
             || fs::symlink_metadata(path)?.file_type().is_symlink()
         {
             continue;
         }
+        // Count every file that passes directory/ignore/symlink filters
+        scanned_files_count += 1;
 
         //only get md docs from root folder /*.md
         match path.extension().and_then(|e| e.to_str()) {
@@ -231,8 +242,22 @@ pub fn clone_and_filter_git_repo(
             {
                 docs.push(path.to_path_buf())
             }
-            Some(_) if is_config_file(path, search_root.as_path()) => {
-                config_files.push(path.to_path_buf())
+            Some(_) => {
+                let fname = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if fname == "package.json" {
+                    let is_lib = is_library_package_json(path, search_root.as_path());
+                    if is_lib {
+                        lib_config_files.push(path.to_path_buf())
+                    } else if is_config_file(path, search_root.as_path()) {
+                        config_files.push(path.to_path_buf())
+                    }
+                } else if is_config_file(path, search_root.as_path()) {
+                    config_files.push(path.to_path_buf())
+                }
             }
             _ => {}
         }
@@ -260,8 +285,10 @@ pub fn clone_and_filter_git_repo(
         test_files,
         script_files,
         config_files,
+        lib_config_files,
         source_code_folder,
         docs,
+        scanned_files_count,
         repo_name,
         audit_scope,
         excluded_folders,
@@ -282,6 +309,7 @@ fn add_github_auth(repo_url: &str) -> String {
             );
         }
     }
+
     repo_url.to_string()
 }
 
@@ -292,6 +320,12 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     // Derived paths
     let repo_root = repo_name.split('/').next().unwrap_or(repo_name);
     let workspace_root = docker_path.join(repo_root);
+    // Test override: allow tests to provide a local workspace path to bypass Docker
+    if let Ok(local_ws) = std::env::var("AIAUDIT_TEST_LOCAL_WORKSPACE") {
+        log::info!("Using test local workspace override at {}", local_ws);
+        return Ok(PathBuf::from(local_ws));
+    }
+
     let build_stamp = docker_path.join(".chainshield_build_ok");
 
     // If we already have a valid workspace and not forcing rebuild, reuse it
@@ -493,6 +527,19 @@ impl RepoPaths {
         }
 
         Ok(docs)
+    }
+
+    pub fn extract_lib_config_headers(&self) -> Result<String> {
+        let mut config_headers = String::new();
+
+        for config_file in &self.config_files {
+            if let Some((filename, content)) = Self::read_file_content(config_file)? {
+                let first_five_lines = content.lines().take(5).collect::<Vec<_>>().join("\n");
+                config_headers.push_str(&format!("### {}\n\n{}\n\n", filename, first_five_lines));
+            }
+        }
+
+        Ok(config_headers)
     }
 
     pub fn extract_content_from_config_files(&self) -> Result<String> {

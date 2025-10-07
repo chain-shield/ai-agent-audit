@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 /// Global cache for source code dependency detection results.
 /// Key format: "repo_hash:contract_name"
 /// Value: (HashSet<contracts>, HashSet<interfaces>)
-static SOURCE_DEPENDENCY_CACHE: Lazy<Mutex<HashMap<String, (HashSet<String>, HashSet<String>)>>> =
+static SOURCE_DEPENDENCY_CACHE: Lazy<Mutex<HashMap<String, HashSet<String>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// # Returns
@@ -20,7 +20,7 @@ static SOURCE_DEPENDENCY_CACHE: Lazy<Mutex<HashMap<String, (HashSet<String>, Has
 pub async fn detect_source_code_dependencies(
     contract: &str,
     repo: &RepoPaths,
-) -> Result<(HashSet<String>, HashSet<String>)> {
+) -> Result<HashSet<String>> {
     // Create cache key: "repo_hash:contract_name"
     let cache_key = format!("{}:{}", repo.unique_repo_hash(), contract);
 
@@ -56,8 +56,8 @@ pub async fn detect_source_code_dependencies(
             );
             // Cache the empty result to avoid re-attempting failed lookups
             let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
-            cache.insert(cache_key, (contracts.clone(), interfaces.clone()));
-            return Ok((contracts, interfaces));
+            cache.insert(cache_key, HashSet::new());
+            return Ok(HashSet::new());
         }
     };
 
@@ -70,7 +70,7 @@ pub async fn detect_source_code_dependencies(
                 file.display(),
                 e
             );
-            return Ok((contracts, interfaces));
+            return Ok(HashSet::new());
         }
     };
     // Strip comments and string literals to avoid false positives (e.g., "XOR (^)" in comments)
@@ -441,15 +441,6 @@ pub async fn detect_source_code_dependencies(
         }
     }
 
-    // Cache the result before returning
-    {
-        let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
-        cache.insert(
-            cache_key,
-            (filtered_contracts.clone(), filtered_interfaces.clone()),
-        );
-    }
-
     info!(
         "cached source dependencies for contract {} (repo: {}): {} contracts, {} interfaces",
         contract,
@@ -458,7 +449,17 @@ pub async fn detect_source_code_dependencies(
         filtered_interfaces.len()
     );
 
-    Ok((filtered_contracts, filtered_interfaces))
+    let mut filtered_sources = HashSet::new();
+    filtered_sources.extend(filtered_contracts);
+    filtered_sources.extend(filtered_interfaces);
+
+    // Cache the result before returning
+    {
+        let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
+        cache.insert(cache_key, filtered_sources.clone());
+    }
+
+    Ok(filtered_sources)
 }
 
 fn strip_comments_and_strings(src: &str) -> String {

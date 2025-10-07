@@ -5,7 +5,7 @@
 use crate::{
     error::Result,
     llm_review::{
-        context_state::{get_metadata_context, ContextType},
+        context_state::get_metadata_context,
         enums::{AIAgent, Severity},
         findings::{Finding, Findings},
         prompt_support::{post_qualify::generate_post_qualify, qualify_prompt::QUALIFY_PROMPT},
@@ -64,7 +64,7 @@ pub async fn execute(
 
     let mut handles = vec![];
     let findings = Arc::new(findings);
-    let context = get_metadata_context(repo, &ContextType::Abridged)
+    let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);

@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use strum_macros::EnumString;
 use tokio::sync::Semaphore;
 
 use crate::{
@@ -28,6 +29,13 @@ use crate::{
 };
 use crate::{llm_review::context_state, utils::check_folder_name::is_script_file};
 
+#[derive(Debug, Clone, PartialEq, Eq, EnumString, strum_macros::Display)]
+pub enum FileSummaryType {
+    Source,
+    DeployScript,
+    OutOfScope,
+}
+
 /// Represents a summary of a source file with metadata
 #[derive(Default, Debug, Clone)]
 pub struct SrcFileSummary {
@@ -35,6 +43,7 @@ pub struct SrcFileSummary {
     pub filename: String,
     /// AI-generated summary of the file's purpose and functionality
     pub summary: String,
+    pub file_type: Option<FileSummaryType>,
 }
 
 /// Structured response format for LLM file summarization
@@ -50,67 +59,6 @@ pub struct FileSummary {
 pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 100;
 pub const MAX_WORDS_FUNCTION_SUMMARY: u16 = 20;
 pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
-
-// pub async fn summarize_docs(
-//     repo: &RepoPaths,
-//     current_context: &str,
-// ) -> Result<Vec<SrcFileSummary>> {
-//     let key = cache_key(&repo.root, "docs-summary");
-//     let cache = Arc::clone(&FILE_SUMMARY_CACHE);
-//     let mut summaries_cache = cache.lock().await;
-//
-//     // Return cached output if exists
-//     if let Some(cached) = summaries_cache.get(&key) {
-//         return Ok(cached.clone());
-//     }
-//
-//     let documentation = repo.extract_content_from_docs()?;
-//     let mut doc_summaries = Vec::new();
-//
-//     let mut docs_plus_context = format!("\n ## DOCUMENTATION: \n\n {}\n\n", documentation);
-//     docs_plus_context.push_str("\n ## CURRENT SECURITY AUDIT CONTEXT \n\n");
-//     docs_plus_context.push_str(&format!("\n #### The Documentation Summary should NOT contain content that is already included below.\n\n {} \n\n", current_context));
-//
-//     let openai_client = openai::Client::new(&std::env::var("OPENAI_API_KEY")?);
-//
-//     info!("generate summmary of all major files and docs in repo...");
-//     let preamble =
-//         "You are a senior solidity dev and expert solidity security researcher. Please provide detailed and comprehensive summary of below DOCUMENTATION. Should be up to 4000 words, but no longer.  Should cover **all relevant details** that a security researcher should know about this protocol to do a proper smart contract audit. ALSO, exclude any information from the summary that is already included in below CURRENT SECURITY AUDIT CONTEXT, because both DOCUMENTATION and CURRENT SECURITY AUDIT CONTEXT will be provide as context for an llm to do a security scan of protocol code.  So its important there is NO duplicate information between DOCUMENTATION and CURRENT SECURITY AUDIT CONTEXT ";
-//     let ai_summary_agent = openai_client
-//         .extractor::<FileSummary>(O3)
-//         .preamble(preamble)
-//         .build();
-//
-//     info!("summarizing documentation");
-//
-//     let metadata = AgentMetadata {
-//         model: O3.to_string(),
-//         ..Default::default()
-//     };
-//     let doc_summary =
-//         match extractor_with_retry(&ai_summary_agent, &docs_plus_context, &metadata).await {
-//             Ok(res) => {
-//                 add_to_inference_cost_by_type(&res.summary, &metadata, TokenType::Output).await;
-//                 SrcFileSummary {
-//                     filename: "readme.md".to_string(),
-//                     summary: res.summary,
-//                 }
-//             }
-//             Err(e) => {
-//                 log::error!("❌ summarizing readme.md failed: {e}");
-//                 SrcFileSummary {
-//                     filename: "readme.md".to_string(),
-//                     summary: String::new(),
-//                 }
-//             }
-//         };
-//
-//     log::info!("readme.md summary => {:#?}", doc_summary);
-//     doc_summaries.push(doc_summary);
-//
-//     summaries_cache.insert(key, doc_summaries.clone());
-//     Ok(doc_summaries)
-// }
 
 pub async fn summarize_src_files(
     repo: &RepoPaths,
@@ -136,21 +84,42 @@ pub async fn summarize_src_files(
 
     // info!("slither metadata => {:#?}", context);
     info!("generate summmary of all major files and docs in repo...");
-    let preamble = format!(
-        "You are a senior solidity dev. Please summarize below content (source code, or deploy scripts). Format in markdown for easy reading. Start with a {MAX_WORDS_CONTRACT_SUMMARY} word or less summary of the contract, that includes  purpose trust model (user funds? admin?), also major entrypoints. Then list storage vars plus optional {MAX_CHARS_STORAGE_DESC} max chars description for each. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add {MAX_WORDS_FUNCTION_SUMMARY} word max natspec for EACH function. Respond only with valid JSON matching the schema!"
+    let preamble_source_summary = format!(
+        "You are a senior solidity dev. Please summarize below source code. Format in markdown for easy reading. Start with a {MAX_WORDS_CONTRACT_SUMMARY} word or less summary of the contract, that includes  purpose trust model (user funds? admin?), also major entrypoints. Then list storage vars plus optional {MAX_CHARS_STORAGE_DESC} max chars description for each. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add {MAX_WORDS_FUNCTION_SUMMARY} word max natspec for EACH function. Respond only with valid JSON matching the schema!");
+    let preamble_deploy_script_summary = format!(
+        r#"
+You are a senior Web3 deploy engineer. Summarize the deployment script (TS/JS/Hardhat/Ignition/Foundry). Use markdown. Start with a 100-word summary: purpose, target networks/env, trust model (who holds keys/roles), major steps.
+Then sections:
+1) Inputs/Config: env vars, CLI args, constants/defaults, network logic, preconditions (≤20 chars each).
+2) Dependencies: external libs/tools (ethers/hardhat/ignition/viem), prior contracts/artifacts.
+3) Contracts Deployed/Interacted: for each—name, method (new/deploy/module/proxy type), constructor/init args (symbolic), post-deploy actions, outputs.
+4) Steps (ordered): each step’s anchor (function/task); 20-word max note of effects; key params.
+5) Permissions/Trust: ownership transfers, roles, approvals; who controls what after.
+6) Post-Deploy Outputs: verification, artifacts, addresses/registries, exports.
+7) Safety/Idempotency: skip-if-deployed, waits/confirmations, gas/network settings, failure handling.
+8) Script Functions/Tasks: each full interface (name(params): returns; visibility/exported; async); 20-word (max) purpose/effects.
+Respond only with valid JSON matching the schema!
+"#
     );
+
     let ai_summary_agent = openai_client
         .extractor::<FileSummary>("gpt-5")
-        .preamble(&preamble)
+        .preamble(&preamble_source_summary)
         .context(&context)
         .build();
 
+    let ai_deploy_summary_agent = openai_client
+        .extractor::<FileSummary>("gpt-5")
+        .preamble(&preamble_deploy_script_summary)
+        .context(&context)
+        .build();
     // ---------------------------------------------
     // 1.  PREP – collect the  files we want to summarize first
     // ---------------------------------------------
     let mut work_items = Vec::new();
 
     let monorepo_folders = repo.extract_monorepo_folders()?;
+    let mut current_file_summary_type = FileSummaryType::OutOfScope;
 
     let protocol_root = repo.get_protocol_root();
     // Walk through the repository and collect relevant files
@@ -164,14 +133,31 @@ pub async fn summarize_src_files(
             }
         }
 
-        let is_file_we_want_summary_of = file.extension().map_or(false, |ext| ext == "sol")
+        // check if file is in scope for summary (source or script) for foundry projects
+        if file.extension().map_or(false, |ext| ext == "sol")
             && !file
                 .file_name()
                 .and_then(|n| n.to_str())
                 .map_or(false, |n| n.ends_with("t.sol"))
-            && (file.starts_with(&repo.source_code_folder) || is_script_file(file, &protocol_root));
+        {
+            if is_script_file(file, &protocol_root) {
+                current_file_summary_type = FileSummaryType::DeployScript;
+            } else if file.starts_with(&repo.source_code_folder) {
+                current_file_summary_type = FileSummaryType::Source;
+            } else {
+                current_file_summary_type = FileSummaryType::OutOfScope;
+            }
+        }
 
-        if !is_file_we_want_summary_of {
+        // check file type for hardhat
+        if current_file_summary_type == FileSummaryType::OutOfScope
+            && file.extension().map_or(false, |ext| ext == "ts")
+            && is_script_file(file, &protocol_root)
+        {
+            current_file_summary_type = FileSummaryType::DeployScript;
+        }
+
+        if current_file_summary_type == FileSummaryType::OutOfScope {
             continue;
         }
 
@@ -191,17 +177,23 @@ pub async fn summarize_src_files(
         }
 
         // push full path & content into the work queue
-        work_items.push((file.to_owned(), content));
+        work_items.push((file.to_owned(), content, current_file_summary_type.clone()));
     }
 
     let max_parallel = 50;
     let sem = Arc::new(Semaphore::new(max_parallel));
     let agent = Arc::new(ai_summary_agent); // the OpenAI client
+    let deploy_agent = Arc::new(ai_deploy_summary_agent); // the OpenAI client
     let mut handles = Vec::new();
 
-    for (file, content) in work_items {
+    for (file, content, file_type) in work_items {
         let sem = sem.clone();
-        let agent = agent.clone();
+        let agent = if file_type == FileSummaryType::Source {
+            agent.clone()
+        } else {
+            deploy_agent.clone()
+        };
+
         let repo_root = repo.root.clone();
 
         let handle = tokio::spawn(async move {
@@ -227,6 +219,7 @@ pub async fn summarize_src_files(
                     Some(SrcFileSummary {
                         filename,
                         summary: res.summary,
+                        file_type: Some(file_type),
                     })
                 }
                 Err(e) => {

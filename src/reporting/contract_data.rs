@@ -2,8 +2,7 @@ use crate::{
     cost::cost_data::get_token_count,
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
-        context_state::{get_metadata_context, ContextType},
-        utils::contract_in_scope::is_contract_in_scope,
+        context_state::get_metadata_context, utils::contract_in_scope::is_contract_in_scope,
     },
     prepare_code::git_clone::RepoPaths,
     reporting::save_file::save_file_locally,
@@ -56,7 +55,7 @@ pub async fn save_contract_and_fn_ir(
 /// * `semantics_path` - Path to the semantic analysis database
 /// * `repo` - Repository paths and metadata for naming
 pub async fn save_metadata(repo: &RepoPaths) -> anyhow::Result<()> {
-    let metadata = get_metadata_context(repo, &ContextType::Abridged)
+    let metadata = get_metadata_context(repo)
         .await
         .expect("cannot load metadata");
 

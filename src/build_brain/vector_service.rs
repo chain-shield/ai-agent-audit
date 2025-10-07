@@ -8,11 +8,11 @@ use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use log::info;
 use qdrant_client::{
-    qdrant::{
-        vectors_config::Config, CreateCollection, Distance, PointStruct, UpsertPointsBuilder,
-        VectorParams, VectorsConfig,
-    },
     Payload, Qdrant,
+    qdrant::{
+        CreateCollection, Distance, PointStruct, UpsertPointsBuilder, VectorParams, VectorsConfig,
+        vectors_config::Config,
+    },
 };
 use std::sync::Arc;
 
@@ -252,7 +252,9 @@ mod tests {
             test_files: vec![],
             script_files: vec![],
             config_files: vec![],
+            lib_config_files: vec![],
             docs: vec![],
+            scanned_files_count: 0,
             source_code_folder: temp_dir.path().to_path_buf(),
             audit_scope: None,
             scoped_files: None,

@@ -1,10 +1,6 @@
-use crate::build_brain::callgraph;
 use crate::build_brain::graph_db::SmartContractFunction;
 use crate::cost::cost_data::get_token_count;
-use crate::enumerator::parse_solidity::{
-    detect_source_code_dependencies, is_standard_interface_name, is_standard_library_contract_name,
-    path_is_standard_lib,
-};
+use crate::enumerator::parse_solidity::is_standard_library_contract_name;
 use crate::enumerator::utils::{
     get_function_metadata_from_contract_plus_fn, get_function_metadata_from_id,
 };

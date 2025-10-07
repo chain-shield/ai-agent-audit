@@ -1,9 +1,9 @@
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::path::Path;
 
 use crate::{
-    build_brain::summarize::SrcFileSummary,
+    build_brain::summarize::{FileSummaryType, SrcFileSummary},
     config::{CHAINSHIELD_DB_FOLDER, SUMMARY_DB},
     prepare_code::git_clone::RepoPaths,
 };
@@ -23,6 +23,7 @@ impl SummaryDb {
               project_id TEXT,
               filename TEXT,
               summary TEXT,
+              file_type TEXT,
               PRIMARY KEY (project_id, filename)
             );
             "#,
@@ -30,12 +31,23 @@ impl SummaryDb {
         Ok(Self(conn))
     }
 
-    fn insert_summary(&self, filename: &str, summary: &str, repo: &RepoPaths) -> Result<()> {
+    fn insert_summary(
+        &self,
+        filename: &str,
+        summary: &str,
+        file_type: Option<FileSummaryType>,
+        repo: &RepoPaths,
+    ) -> Result<()> {
         self.0.execute(
             r#"
-        INSERT INTO summaries (project_id, filename, summary) VALUES (?1, ?2, ?3)
+        INSERT INTO summaries (project_id, filename, summary, file_type) VALUES (?1, ?2, ?3, ?4)
         "#,
-            params![&repo.project_id, filename, summary],
+            params![
+                &repo.project_id,
+                filename,
+                summary,
+                file_type.as_ref().map(|t| t.to_string())
+            ],
         )?;
         Ok(())
     }
@@ -44,12 +56,15 @@ impl SummaryDb {
     fn get_summaries(&self, repo: &RepoPaths) -> Result<Vec<SrcFileSummary>> {
         let mut query = self
             .0
-            .prepare("SELECT filename, summary FROM summaries WHERE project_id = ?1")?;
+            .prepare("SELECT filename, summary, file_type FROM summaries WHERE project_id = ?1")?;
 
         let rows = query.query_map([&repo.project_id], |row| {
+            let file_type_str: Option<String> = row.get(2)?;
+            let file_type = file_type_str.and_then(|s| s.parse().ok());
             Ok(SrcFileSummary {
                 filename: row.get(0)?,
                 summary: row.get(1)?,
+                file_type,
             })
         })?;
 
@@ -66,13 +81,16 @@ impl SummaryDb {
     // get specific summary file
     fn get_summary_file(&self, filename: &str, repo: &RepoPaths) -> Result<Option<SrcFileSummary>> {
         let mut query = self.0.prepare(
-            "SELECT filename, summary FROM summaries WHERE project_id = ?1 AND filename = ?2",
+            "SELECT filename, summary, file_type FROM summaries WHERE project_id = ?1 AND filename = ?2",
         )?;
 
         let result = query.query_row([&repo.project_id, filename], |row| {
+            let file_type_str: Option<String> = row.get(2)?;
+            let file_type = file_type_str.and_then(|s| s.parse().ok());
             Ok(SrcFileSummary {
                 filename: row.get(0)?,
                 summary: row.get(1)?,
+                file_type,
             })
         });
 
@@ -91,7 +109,12 @@ pub fn insert_file_summaries_to_db(summaries: &[SrcFileSummary], repo: &RepoPath
     )))?;
 
     for summary in summaries {
-        summary_db.insert_summary(&summary.filename, &summary.summary, repo)?;
+        summary_db.insert_summary(
+            &summary.filename,
+            &summary.summary,
+            summary.file_type.clone(),
+            repo,
+        )?;
     }
     Ok(())
 }
@@ -102,7 +125,7 @@ pub fn insert_file_summary_to_db(filename: &str, summary: &str, repo: &RepoPaths
         CHAINSHIELD_DB_FOLDER, SUMMARY_DB
     )))?;
 
-    summary_db.insert_summary(&filename, &summary, repo)?;
+    summary_db.insert_summary(&filename, &summary, None, repo)?;
     Ok(())
 }
 

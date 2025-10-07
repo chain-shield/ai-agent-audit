@@ -4,11 +4,21 @@ fn path_has_any_segment(file: &Path, root: &Path, segments: &[&str]) -> bool {
     if file.is_dir() {
         return false;
     }
-    if let Some(parent) = file.parent() {
-        segments.iter().any(|s| root.join(s) == parent)
-    } else {
-        false
+    // Walk up ancestors and check if any directory name equals one of the segments
+    let mut cursor = file.parent();
+    while let Some(dir) = cursor {
+        if dir == root {
+            break;
+        }
+        if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
+            let lname = name.to_ascii_lowercase();
+            if segments.iter().any(|s| lname == *s) {
+                return true;
+            }
+        }
+        cursor = dir.parent();
     }
+    false
 }
 
 // check if folder contains build config
@@ -51,4 +61,14 @@ pub fn is_config_file(file: &Path, root: &Path) -> bool {
 
     let filename_str = filename.as_ref();
     config_files.iter().any(|f| *f == filename_str)
+}
+
+pub fn is_library_package_json(file: &Path, root: &Path) -> bool {
+    let filename = file.file_name().unwrap_or_default().to_string_lossy();
+
+    if filename != "package.json" {
+        return false;
+    }
+
+    path_has_any_segment(file, root, &["lib", "library"])
 }
