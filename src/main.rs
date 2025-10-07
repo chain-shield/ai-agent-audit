@@ -52,12 +52,14 @@ async fn main() -> Result<()> {
     let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli)?;
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
-    info!("repo source folder => {:?}", &repo.source_code_folder);
+    info!("repo source folder => {:?}", &repo.source_code_folders);
     info!("repo scoped_files => {:?}", &repo.scoped_files);
-    info!("repo auidt scope => {:?}", &repo.audit_scope);
-    info!("repo scripts => {:?}", &repo.script_files);
-    info!("repo lib config files => {:?}", &repo.lib_config_files);
-    info!("repo config files => {:?}", &repo.config_files);
+    info!("repo audit scope => {:?}", &repo.audit_scope);
+    info!("repo test files count => {:?}", &repo.test_files.len());
+    info!("repo scripts count => {:?}", &repo.script_files.len());
+    info!("repo scripts files => {:#?}", &repo.script_files);
+    info!("repo lib config files  => {:#?}", &repo.lib_config_files);
+    info!("repo config files => {:#?}", &repo.config_files);
     info!("repo docs => {:?}", &repo.docs);
     info!("excluded folders => {:?}", &repo.excluded_folders);
 

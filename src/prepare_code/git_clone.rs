@@ -20,7 +20,8 @@ use walkdir::WalkDir;
 use crate::cli_args::parse::Cli;
 use crate::config::audit_config;
 use crate::utils::check_folder_name::{
-    is_config_file, is_library_package_json, is_script_file, is_test_file,
+    is_library_package_json, is_monorepo_config_file, is_root_config_file, is_script_file,
+    is_test_file,
 };
 use crate::utils::file_security::validate_repo_url;
 
@@ -48,11 +49,9 @@ pub struct RepoPaths {
     pub script_files: Vec<PathBuf>,
     pub config_files: Vec<PathBuf>,     // NOT in sol_files
     pub lib_config_files: Vec<PathBuf>, // config files (package.json) in lib folder
-    pub source_code_folder: PathBuf,
+    pub source_code_folders: Vec<PathBuf>,
     /// Paths to documentation files (README.md, etc.)
     pub docs: Vec<PathBuf>,
-    /// Total number of files scanned by WalkDir after filtering (not counting directories/symlinks/ignored)
-    pub scanned_files_count: usize,
     /// e.g. `"my-cool-repo"`
     pub repo_name: String,
     /// audit scope file
@@ -130,7 +129,11 @@ pub fn clone_and_filter_git_repo(
     let search_root = root.join(&repo_name);
     // info!("search_root => {}", search_root.display());
 
-    let source_code_folder = search_root.join(&cli.code_folder);
+    let source_code_folders = cli
+        .code_folders
+        .iter()
+        .map(|f| search_root.join(f))
+        .collect::<Vec<PathBuf>>();
     // info!("source_code_folder => {}", source_code_folder.display());
 
     // Validate that the search root exists
@@ -186,11 +189,15 @@ pub fn clone_and_filter_git_repo(
         None => false,
     };
 
+    let monorepo_folders = match &cli.monorepo_folders {
+        Some(repos) => Some(Path::new(repos).to_path_buf()),
+        None => None,
+    };
+
     // Initialize vectors to store file paths
     let mut sol_files = Vec::new();
     let mut test_files = Vec::new();
     let mut script_files = Vec::new();
-    let mut scanned_files_count: usize = 0;
 
     let mut config_files = Vec::new();
     let mut lib_config_files = Vec::new();
@@ -220,16 +227,15 @@ pub fn clone_and_filter_git_repo(
         {
             continue;
         }
-        // Count every file that passes directory/ignore/symlink filters
-        scanned_files_count += 1;
 
         //only get md docs from root folder /*.md
+        let file_extension = path.extension().and_then(|e| e.to_str());
         match path.extension().and_then(|e| e.to_str()) {
             Some("sol") => {
                 if is_test_file(path, search_root.as_path()) {
                     test_files.push(path.to_path_buf());
                 }
-                if is_script_file(path, search_root.as_path()) {
+                if is_script_file(path) {
                     script_files.push(path.to_path_buf());
                 }
 
@@ -243,19 +249,11 @@ pub fn clone_and_filter_git_repo(
                 docs.push(path.to_path_buf())
             }
             Some(_) => {
-                let fname = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_ascii_lowercase();
-                if fname == "package.json" {
-                    let is_lib = is_library_package_json(path, search_root.as_path());
-                    if is_lib {
-                        lib_config_files.push(path.to_path_buf())
-                    } else if is_config_file(path, search_root.as_path()) {
-                        config_files.push(path.to_path_buf())
-                    }
-                } else if is_config_file(path, search_root.as_path()) {
+                if is_library_package_json(path, search_root.as_path()) {
+                    lib_config_files.push(path.to_path_buf())
+                } else if is_root_config_file(path, search_root.as_path())
+                    || is_monorepo_config_file(path, search_root.as_path(), &monorepo_folders)?
+                {
                     config_files.push(path.to_path_buf())
                 }
             }
@@ -273,10 +271,6 @@ pub fn clone_and_filter_git_repo(
         None => None,
     };
 
-    let monorepo_folders = match &cli.monorepo_folders {
-        Some(repos) => Some(Path::new(repos).to_path_buf()),
-        None => None,
-    };
     // Return the collected paths
     Ok(RepoPaths {
         project_id,
@@ -286,9 +280,8 @@ pub fn clone_and_filter_git_repo(
         script_files,
         config_files,
         lib_config_files,
-        source_code_folder,
+        source_code_folders,
         docs,
-        scanned_files_count,
         repo_name,
         audit_scope,
         excluded_folders,
@@ -557,7 +550,7 @@ impl RepoPaths {
 
 // read a files that contains a list of files (with relative path) and return array with full
 // path for each file
-fn extract_list_of_files(files: &PathBuf, root_folder: &PathBuf) -> Result<Vec<PathBuf>> {
+pub fn extract_list_of_files(files: &PathBuf, root_folder: &PathBuf) -> Result<Vec<PathBuf>> {
     let file = File::open(files)?;
     let reader = io::BufReader::new(file);
 

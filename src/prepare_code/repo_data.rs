@@ -4,7 +4,7 @@
 /// complete repository information including paths, file lists, documentation,
 /// and generated context data from RepoPaths and metadata analysis.
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -25,7 +25,7 @@ pub struct RepoData {
     /// Full commit hash
     pub commit_hash: String,
     /// Source code folder path
-    pub source_code_folder: String,
+    pub source_code_folders: String,
     /// Serialized list of Solidity files
     pub sol_files: String,
     /// Serialized list of test files
@@ -73,7 +73,7 @@ impl RepoDataDb {
               root TEXT NOT NULL,
               repo_name TEXT NOT NULL,
               commit_hash TEXT NOT NULL,
-              source_code_folder TEXT NOT NULL,
+              source_code_folders TEXT NOT NULL,
               sol_files TEXT NOT NULL,
               test_files TEXT NOT NULL,
               script_files TEXT NOT NULL,
@@ -101,6 +101,7 @@ impl RepoDataDb {
         let script_files = serde_json::to_string(&repo.script_files)?;
         let config_files = serde_json::to_string(&repo.config_files)?;
         let docs = serde_json::to_string(&repo.docs)?;
+        let source_code_folders = serde_json::to_string(&repo.source_code_folders)?;
         let excluded_folders = repo
             .excluded_folders
             .as_ref()
@@ -109,7 +110,7 @@ impl RepoDataDb {
 
         self.0.execute(
             "INSERT OR REPLACE INTO repo_data(
-                project_id, root, repo_name, commit_hash, source_code_folder,
+                project_id, root, repo_name, commit_hash, source_code_folders,
                 sol_files, test_files, script_files, config_files, docs,
                 audit_scope, excluded_folders, context
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13);",
@@ -118,7 +119,7 @@ impl RepoDataDb {
                 repo.root.to_string_lossy(),
                 repo.repo_name,
                 repo.commit_hash,
-                repo.source_code_folder.to_string_lossy(),
+                source_code_folders,
                 sol_files,
                 test_files,
                 script_files,
@@ -140,7 +141,7 @@ impl RepoDataDb {
     /// and generated metadata context.
     pub fn get_repo_data(&self, project_id: &str) -> Result<Option<RepoData>> {
         let mut stmt = self.0.prepare(
-            "SELECT project_id, root, repo_name, commit_hash, source_code_folder,
+            "SELECT project_id, root, repo_name, commit_hash, source_code_folders,
                     sol_files, test_files, script_files, config_files, lib_config_files, docs,
                     audit_scope, excluded_folders, context
              FROM repo_data WHERE project_id = ?1",
@@ -152,7 +153,7 @@ impl RepoDataDb {
                 root: row.get(1)?,
                 repo_name: row.get(2)?,
                 commit_hash: row.get(3)?,
-                source_code_folder: row.get(4)?,
+                source_code_folders: row.get(4)?,
                 sol_files: row.get(5)?,
                 test_files: row.get(6)?,
                 script_files: row.get(7)?,
@@ -213,6 +214,7 @@ impl RepoData {
         let script_files: Vec<PathBuf> = serde_json::from_str(&self.script_files)?;
         let config_files: Vec<PathBuf> = serde_json::from_str(&self.config_files)?;
         let lib_config_files: Vec<PathBuf> = serde_json::from_str(&self.lib_config_files)?;
+        let source_code_folders: Vec<PathBuf> = serde_json::from_str(&self.source_code_folders)?;
         let docs: Vec<PathBuf> = serde_json::from_str(&self.docs)?;
         let excluded_folders: Option<Vec<PathBuf>> = self
             .excluded_folders
@@ -228,11 +230,10 @@ impl RepoData {
             script_files,
             config_files,
             lib_config_files,
-            source_code_folder: PathBuf::from(&self.source_code_folder),
+            source_code_folders,
             scoped_files: None,
             monorepo_folders: None,
             docs,
-            scanned_files_count: 0,
             repo_name: self.repo_name.clone(),
             audit_scope: self.audit_scope.as_ref().map(PathBuf::from),
             excluded_folders,

@@ -140,9 +140,9 @@ Respond only with valid JSON matching the schema!
                 .and_then(|n| n.to_str())
                 .map_or(false, |n| n.ends_with("t.sol"))
         {
-            if is_script_file(file, &protocol_root) {
+            if is_script_file(file) {
                 current_file_summary_type = FileSummaryType::DeployScript;
-            } else if file.starts_with(&repo.source_code_folder) {
+            } else if repo.source_code_folders.iter().any(|f| file.starts_with(f)) {
                 current_file_summary_type = FileSummaryType::Source;
             } else {
                 current_file_summary_type = FileSummaryType::OutOfScope;
@@ -152,7 +152,7 @@ Respond only with valid JSON matching the schema!
         // check file type for hardhat
         if current_file_summary_type == FileSummaryType::OutOfScope
             && file.extension().map_or(false, |ext| ext == "ts")
-            && is_script_file(file, &protocol_root)
+            && is_script_file(file)
         {
             current_file_summary_type = FileSummaryType::DeployScript;
         }

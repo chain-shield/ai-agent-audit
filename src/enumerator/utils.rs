@@ -330,11 +330,8 @@ pub enum ContractScope {
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
 pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>> {
-    if !repo.source_code_folder.exists() {
-        anyhow::bail!(
-            "no src/ folder found at {},",
-            repo.source_code_folder.display()
-        );
+    if !repo.source_code_folders.iter().any(|f| f.exists()) {
+        anyhow::bail!("no src/ folder found at {:?},", repo.source_code_folders);
     }
     // get exclusions if any
     let mut libraries = Vec::<ParsedLibrary>::new();
@@ -347,7 +344,7 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
     let mut contracts = Vec::<String>::new();
 
     for file in &repo.sol_files {
-        if !file.starts_with(&repo.source_code_folder) {
+        if !repo.source_code_folders.iter().any(|f| file.starts_with(f)) {
             continue;
         }
 
