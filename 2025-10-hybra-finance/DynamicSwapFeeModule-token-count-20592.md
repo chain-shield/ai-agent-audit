@@ -220,6 +220,424 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import "./pool/ICLPoolConstants.sol";
+import "./pool/ICLPoolState.sol";
+import "./pool/ICLPoolDerivedState.sol";
+import "./pool/ICLPoolActions.sol";
+import "./pool/ICLPoolOwnerActions.sol";
+import "./pool/ICLPoolEvents.sol";
+
+/// @title The interface for a CL Pool
+/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
+/// to the ERC20 specification
+/// @dev The pool interface is broken up into many smaller pieces
+interface ICLPool is
+    ICLPoolConstants,
+    ICLPoolState,
+    ICLPoolDerivedState,
+    ICLPoolActions,
+    ICLPoolEvents,
+    ICLPoolOwnerActions
+{}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.4.0 <0.8.0;
+
+/// @title Contains 512-bit math functions
+/// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision
+/// @dev Handles "phantom overflow" i.e., allows multiplication and division where an intermediate value overflows 256 bits
+library FullMath {
+    /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
+    /// @param a The multiplicand
+    /// @param b The multiplier
+    /// @param denominator The divisor
+    /// @return result The 256-bit result
+    /// @dev Credit to Remco Bloemen under MIT license https://xn--2-umb.com/21/muldiv
+    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        // 512-bit multiply [prod1 prod0] = a * b
+        // Compute the product mod 2**256 and mod 2**256 - 1
+        // then use the Chinese Remainder Theorem to reconstruct
+        // the 512 bit result. The result is stored in two 256
+        // variables such that product = prod1 * 2**256 + prod0
+        uint256 prod0; // Least significant 256 bits of the product
+        uint256 prod1; // Most significant 256 bits of the product
+        assembly {
+            let mm := mulmod(a, b, not(0))
+            prod0 := mul(a, b)
+            prod1 := sub(sub(mm, prod0), lt(mm, prod0))
+        }
+
+        // Handle non-overflow cases, 256 by 256 division
+        if (prod1 == 0) {
+            require(denominator > 0);
+            assembly {
+                result := div(prod0, denominator)
+            }
+            return result;
+        }
+
+        // Make sure the result is less than 2**256.
+        // Also prevents denominator == 0
+        require(denominator > prod1);
+
+        ///////////////////////////////////////////////
+        // 512 by 256 division.
+        ///////////////////////////////////////////////
+
+        // Make division exact by subtracting the remainder from [prod1 prod0]
+        // Compute remainder using mulmod
+        uint256 remainder;
+        assembly {
+            remainder := mulmod(a, b, denominator)
+        }
+        // Subtract 256 bit number from 512 bit number
+        assembly {
+            prod1 := sub(prod1, gt(remainder, prod0))
+            prod0 := sub(prod0, remainder)
+        }
+
+        // Factor powers of two out of denominator
+        // Compute largest power of two divisor of denominator.
+        // Always >= 1.
+        uint256 twos = -denominator & denominator;
+        // Divide denominator by power of two
+        assembly {
+            denominator := div(denominator, twos)
+        }
+
+        // Divide [prod1 prod0] by the factors of two
+        assembly {
+            prod0 := div(prod0, twos)
+        }
+        // Shift in bits from prod1 into prod0. For this we need
+        // to flip `twos` such that it is 2**256 / twos.
+        // If twos is zero, then it becomes one
+        assembly {
+            twos := add(div(sub(0, twos), twos), 1)
+        }
+        prod0 |= prod1 * twos;
+
+        // Invert denominator mod 2**256
+        // Now that denominator is an odd number, it has an inverse
+        // modulo 2**256 such that denominator * inv = 1 mod 2**256.
+        // Compute the inverse by starting with a seed that is correct
+        // correct for four bits. That is, denominator * inv = 1 mod 2**4
+        uint256 inv = (3 * denominator) ^ 2;
+        // Now use Newton-Raphson iteration to improve the precision.
+        // Thanks to Hensel's lifting lemma, this also works in modular
+        // arithmetic, doubling the correct bits in each step.
+        inv *= 2 - denominator * inv; // inverse mod 2**8
+        inv *= 2 - denominator * inv; // inverse mod 2**16
+        inv *= 2 - denominator * inv; // inverse mod 2**32
+        inv *= 2 - denominator * inv; // inverse mod 2**64
+        inv *= 2 - denominator * inv; // inverse mod 2**128
+        inv *= 2 - denominator * inv; // inverse mod 2**256
+
+        // Because the division is now exact we can divide by multiplying
+        // with the modular inverse of denominator. This will give us the
+        // correct result modulo 2**256. Since the precoditions guarantee
+        // that the outcome is less than 2**256, this is the final result.
+        // We don't need to compute the high bits of the result and prod1
+        // is no longer required.
+        result = prod0 * inv;
+        return result;
+    }
+
+    /// @notice Calculates ceil(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
+    /// @param a The multiplicand
+    /// @param b The multiplier
+    /// @param denominator The divisor
+    /// @return result The 256-bit result
+    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        result = mulDiv(a, b, denominator);
+        if (mulmod(a, b, denominator) > 0) {
+            require(result < type(uint256).max);
+            result++;
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.7.6;
+
+interface IGaugeManager {
+    
+    struct FarmingParam {
+        address farmingCenter;
+        address algebraEternalFarming;
+        address nfpm;
+    }
+
+    function isGaugeAliveForPool(address _pool) external view returns (bool);
+    function gauges(address _pair) external view returns (address);
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+pragma abicoder v2;
+
+import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+
+interface IVoter {
+    function ve() external view returns (IVotingEscrow);
+
+    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
+
+    function gauges(address _pool) external view returns (address);
+
+    function gaugeToFees(address _gauge) external view returns (address);
+
+    function gaugeToBribes(address _gauge) external view returns (address);
+
+    function createGauge(address _poolFactory, address _pool) external returns (address);
+
+    function distribute(address gauge) external;
+
+    function factoryRegistry() external view returns (IFactoryRegistry);
+
+    /// @dev Utility to distribute to gauges of pools in array.
+    /// @param _gauges Array of gauges to distribute to.
+    function distribute(address[] memory _gauges) external;
+
+    function isAlive(address _gauge) external view returns (bool);
+
+    function killGauge(address _gauge) external;
+
+    function emergencyCouncil() external view returns (address);
+
+    /// @notice Claim emissions from gauges.
+    /// @param _gauges Array of gauges to collect emissions from.
+    function claimRewards(address[] memory _gauges) external;
+
+    /// @notice Claim fees for a given NFT.
+    /// @dev Utility to help batch fee claims.
+    /// @param _fees    Array of FeesVotingReward contracts to collect from.
+    /// @param _tokens  Array of tokens that are used as fees.
+    /// @param _tokenId Id of veNFT that you wish to claim fees for.
+    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import {IVoter} from "contracts/core/interfaces/IVoter.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+import {IGaugeManager} from "contracts/core/interfaces/IGaugeManager.sol";
+
+
+/// @title The interface for the CL Factory
+/// @notice The CL Factory facilitates creation of CL pools and control over the protocol fees
+interface ICLFactory {
+    /// @notice Emitted when the owner of the factory is changed
+    /// @param oldOwner The owner before the owner was changed
+    /// @param newOwner The owner after the owner was changed
+    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
+
+    /// @notice Emitted when the swapFeeManager of the factory is changed
+    /// @param oldFeeManager The swapFeeManager before the swapFeeManager was changed
+    /// @param newFeeManager The swapFeeManager after the swapFeeManager was changed
+    event SwapFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
+
+    /// @notice Emitted when the swapFeeModule of the factory is changed
+    /// @param oldFeeModule The swapFeeModule before the swapFeeModule was changed
+    /// @param newFeeModule The swapFeeModule after the swapFeeModule was changed
+    event SwapFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
+
+    /// @notice Emitted when the unstakedFeeManager of the factory is changed
+    /// @param oldFeeManager The unstakedFeeManager before the unstakedFeeManager was changed
+    /// @param newFeeManager The unstakedFeeManager after the unstakedFeeManager was changed
+    event UnstakedFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
+
+    /// @notice Emitted when the unstakedFeeModule of the factory is changed
+    /// @param oldFeeModule The unstakedFeeModule before the unstakedFeeModule was changed
+    /// @param newFeeModule The unstakedFeeModule after the unstakedFeeModule was changed
+    event UnstakedFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
+
+    /// @notice Emitted when the defaultUnstakedFee of the factory is changed
+    /// @param oldUnstakedFee The defaultUnstakedFee before the defaultUnstakedFee was changed
+    /// @param newUnstakedFee The defaultUnstakedFee after the unstakedFeeModule was changed
+    event DefaultUnstakedFeeChanged(uint24 indexed oldUnstakedFee, uint24 indexed newUnstakedFee);
+
+    /// @notice Emitted when a pool is created
+    /// @param token0 The first token of the pool by address sort order
+    /// @param token1 The second token of the pool by address sort order
+    /// @param tickSpacing The minimum number of ticks between initialized ticks
+    /// @param pool The address of the created pool
+    event PoolCreated(address indexed token0, address indexed token1, int24 indexed tickSpacing, address pool);
+
+    /// @notice Emitted when a new tick spacing is enabled for pool creation via the factory
+    /// @param tickSpacing The minimum number of ticks between initialized ticks for pools
+    /// @param fee The default fee for a pool created with a given tickSpacing
+    event TickSpacingEnabled(int24 indexed tickSpacing, uint24 indexed fee);
+
+
+
+    /// @notice The address of the pool implementation contract used to deploy proxies / clones
+    /// @return The address of the pool implementation contract
+    function poolImplementation() external view returns (address);
+
+    /// @notice Factory registry for valid pool / gauge / rewards factories
+    /// @return The address of the factory registry
+
+    function gaugeManager() external view returns (IGaugeManager);
+
+    /// @notice Returns the current owner of the factory
+    /// @dev Can be changed by the current owner via setOwner
+    /// @return The address of the factory owner
+    function owner() external view returns (address);
+
+    /// @notice Returns the current swapFeeManager of the factory
+    /// @dev Can be changed by the current swap fee manager via setSwapFeeManager
+    /// @return The address of the factory swapFeeManager
+    function swapFeeManager() external view returns (address);
+
+    /// @notice Returns the current protocolFeeManager of the factory
+    /// @dev Can be changed by the current protocol fee manager via setProtocolFeeManager
+    /// @return The address of the factory protocolFeeManager
+    function protocolFeeManager() external view returns (address);
+
+    /// @notice Returns the current swapFeeModule of the factory
+    /// @dev Can be changed by the current swap fee manager via setSwapFeeModule
+    /// @return The address of the factory swapFeeModule
+    function swapFeeModule() external view returns (address);
+
+    /// @notice Returns the current unstakedFeeManager of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeManager
+    /// @return The address of the factory unstakedFeeManager
+    function unstakedFeeManager() external view returns (address);
+
+    /// @notice Returns the current unstakedFeeModule of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeModule
+    /// @return The address of the factory unstakedFeeModule
+    function unstakedFeeModule() external view returns (address);
+
+
+    function protocolFeeModule() external view returns (address);
+
+    /// @notice Returns the current defaultUnstakedFee of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setDefaultUnstakedFee
+    /// @return The default Unstaked Fee of the factory
+    function defaultUnstakedFee() external view returns (uint24);
+
+
+    function defaultProtocolFee() external view returns (uint24);
+
+    /// @notice Returns a default fee for a tick spacing.
+    /// @dev Use getFee for the most up to date fee for a given pool.
+    /// A tick spacing can never be removed, so this value should be hard coded or cached in the calling context
+    /// @param tickSpacing The enabled tick spacing. Returns 0 if not enabled
+    /// @return fee The default fee for the given tick spacing
+    function tickSpacingToFee(int24 tickSpacing) external view returns (uint24 fee);
+
+    /// @notice Returns a list of enabled tick spacings. Used to iterate through pools created by the factory
+    /// @dev Tick spacings cannot be removed. Tick spacings are not ordered
+    /// @return List of enabled tick spacings
+    function tickSpacings() external view returns (int24[] memory);
+
+    /// @notice Returns the pool address for a given pair of tokens and a tick spacing, or address 0 if it does not exist
+    /// @dev tokenA and tokenB may be passed in either token0/token1 or token1/token0 order
+    /// @param tokenA The contract address of either token0 or token1
+    /// @param tokenB The contract address of the other token
+    /// @param tickSpacing The tick spacing of the pool
+    /// @return pool The pool address
+    function getPool(address tokenA, address tokenB, int24 tickSpacing) external view returns (address pool);
+
+    /// @notice Return address of pool created by this factory given its `index`
+    /// @param index Index of the pool
+    /// @return The pool address in the given index
+    function allPools(uint256 index) external view returns (address);
+
+    /// @notice Returns the number of pools created from this factory
+    /// @return Number of pools created from this factory
+    function allPoolsLength() external view returns (uint256);
+
+    /// @notice Used in VotingEscrow to determine if a contract is a valid pool of the factory
+    /// @param pool The address of the pool to check
+    /// @return Whether the pool is a valid pool of the factory
+    function isPool(address pool) external view returns (bool);
+
+    /// @notice Get swap & flash fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Swap & flash fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the swap & flash fee for
+    /// @return The swap & flash fee for the given pool
+    function getSwapFee(address pool) external view returns (uint24);
+
+    /// @notice Get unstaked fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Unstaked fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the unstaked fee for
+    /// @return The unstaked fee for the given pool
+    function getUnstakedFee(address pool) external view returns (uint24);
+
+    /// @notice Get protocol fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Protocol fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the protocol fee for
+    /// @return The protocol fee for the given pool
+    function getProtocolFee(address pool) external view returns (uint24);
+
+    /// @notice Creates a pool for the given two tokens and fee
+    /// @param tokenA One of the two tokens in the desired pool
+    /// @param tokenB The other of the two tokens in the desired pool
+    /// @param tickSpacing The desired tick spacing for the pool
+    /// @param sqrtPriceX96 The initial sqrt price of the pool, as a Q64.96
+    /// @dev tokenA and tokenB may be passed in either order: token0/token1 or token1/token0. The call will
+    /// revert if the pool already exists, the tick spacing is invalid, or the token arguments are invalid
+    /// @return pool The address of the newly created pool
+    function createPool(address tokenA, address tokenB, int24 tickSpacing, uint160 sqrtPriceX96)
+        external
+        returns (address pool);
+
+    /// @notice Updates the owner of the factory
+    /// @dev Must be called by the current owner
+    /// @param _owner The new owner of the factory
+    function setOwner(address _owner) external;
+
+    /// @notice Updates the swapFeeManager of the factory
+    /// @dev Must be called by the current swap fee manager
+    /// @param _swapFeeManager The new swapFeeManager of the factory
+    function setSwapFeeManager(address _swapFeeManager) external;
+
+    /// @notice Updates the swapFeeModule of the factory
+    /// @dev Must be called by the current swap fee manager
+    /// @param _swapFeeModule The new swapFeeModule of the factory
+    function setSwapFeeModule(address _swapFeeModule) external;
+
+    /// @notice Updates the unstakedFeeManager of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _unstakedFeeManager The new unstakedFeeManager of the factory
+    function setUnstakedFeeManager(address _unstakedFeeManager) external;
+
+    /// @notice Updates the unstakedFeeModule of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _unstakedFeeModule The new unstakedFeeModule of the factory
+    function setUnstakedFeeModule(address _unstakedFeeModule) external;
+
+    /// @notice Updates the protocolFeeManager of the factory
+    /// @dev Must be called by the current protocol fee manager
+    /// @param _protocolFeeManager The new protocolFeeManager of the factory
+    function setProtocolFeeManager(address _protocolFeeManager) external;
+
+    /// @notice Updates the protocolFeeModule of the factory
+    /// @dev Must be called by the current protocol fee manager
+    /// @param _protocolFeeModule The new protocolFeeModule of the factory
+    function setProtocolFeeModule(address _protocolFeeModule) external;
+
+    /// @notice Updates the defaultUnstakedFee of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _defaultUnstakedFee The new defaultUnstakedFee of the factory
+    function setDefaultUnstakedFee(uint24 _defaultUnstakedFee) external;
+
+    /// @notice Enables a certain tickSpacing
+    /// @dev Tick spacings may never be removed once enabled
+    /// @param tickSpacing The spacing between ticks to be enforced in the pool
+    /// @param fee The default fee associated with a given tick spacing
+    function enableTickSpacing(int24 tickSpacing, uint24 fee) external;
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.7.6;
 
 import "./interfaces/ICLFactory.sol";
@@ -492,437 +910,6 @@ contract CLFactory is ICLFactory {
         return _isPool[pool];
     }
 }
-
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-pragma abicoder v2;
-
-import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
-
-interface IVoter {
-    function ve() external view returns (IVotingEscrow);
-
-    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
-
-    function gauges(address _pool) external view returns (address);
-
-    function gaugeToFees(address _gauge) external view returns (address);
-
-    function gaugeToBribes(address _gauge) external view returns (address);
-
-    function createGauge(address _poolFactory, address _pool) external returns (address);
-
-    function distribute(address gauge) external;
-
-    function factoryRegistry() external view returns (IFactoryRegistry);
-
-    /// @dev Utility to distribute to gauges of pools in array.
-    /// @param _gauges Array of gauges to distribute to.
-    function distribute(address[] memory _gauges) external;
-
-    function isAlive(address _gauge) external view returns (bool);
-
-    function killGauge(address _gauge) external;
-
-    function emergencyCouncil() external view returns (address);
-
-    /// @notice Claim emissions from gauges.
-    /// @param _gauges Array of gauges to collect emissions from.
-    function claimRewards(address[] memory _gauges) external;
-
-    /// @notice Claim fees for a given NFT.
-    /// @dev Utility to help batch fee claims.
-    /// @param _fees    Array of FeesVotingReward contracts to collect from.
-    /// @param _tokens  Array of tokens that are used as fees.
-    /// @param _tokenId Id of veNFT that you wish to claim fees for.
-    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.4.0 <0.8.0;
-
-/// @title Contains 512-bit math functions
-/// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision
-/// @dev Handles "phantom overflow" i.e., allows multiplication and division where an intermediate value overflows 256 bits
-library FullMath {
-    /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
-    /// @param a The multiplicand
-    /// @param b The multiplier
-    /// @param denominator The divisor
-    /// @return result The 256-bit result
-    /// @dev Credit to Remco Bloemen under MIT license https://xn--2-umb.com/21/muldiv
-    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
-        // 512-bit multiply [prod1 prod0] = a * b
-        // Compute the product mod 2**256 and mod 2**256 - 1
-        // then use the Chinese Remainder Theorem to reconstruct
-        // the 512 bit result. The result is stored in two 256
-        // variables such that product = prod1 * 2**256 + prod0
-        uint256 prod0; // Least significant 256 bits of the product
-        uint256 prod1; // Most significant 256 bits of the product
-        assembly {
-            let mm := mulmod(a, b, not(0))
-            prod0 := mul(a, b)
-            prod1 := sub(sub(mm, prod0), lt(mm, prod0))
-        }
-
-        // Handle non-overflow cases, 256 by 256 division
-        if (prod1 == 0) {
-            require(denominator > 0);
-            assembly {
-                result := div(prod0, denominator)
-            }
-            return result;
-        }
-
-        // Make sure the result is less than 2**256.
-        // Also prevents denominator == 0
-        require(denominator > prod1);
-
-        ///////////////////////////////////////////////
-        // 512 by 256 division.
-        ///////////////////////////////////////////////
-
-        // Make division exact by subtracting the remainder from [prod1 prod0]
-        // Compute remainder using mulmod
-        uint256 remainder;
-        assembly {
-            remainder := mulmod(a, b, denominator)
-        }
-        // Subtract 256 bit number from 512 bit number
-        assembly {
-            prod1 := sub(prod1, gt(remainder, prod0))
-            prod0 := sub(prod0, remainder)
-        }
-
-        // Factor powers of two out of denominator
-        // Compute largest power of two divisor of denominator.
-        // Always >= 1.
-        uint256 twos = -denominator & denominator;
-        // Divide denominator by power of two
-        assembly {
-            denominator := div(denominator, twos)
-        }
-
-        // Divide [prod1 prod0] by the factors of two
-        assembly {
-            prod0 := div(prod0, twos)
-        }
-        // Shift in bits from prod1 into prod0. For this we need
-        // to flip `twos` such that it is 2**256 / twos.
-        // If twos is zero, then it becomes one
-        assembly {
-            twos := add(div(sub(0, twos), twos), 1)
-        }
-        prod0 |= prod1 * twos;
-
-        // Invert denominator mod 2**256
-        // Now that denominator is an odd number, it has an inverse
-        // modulo 2**256 such that denominator * inv = 1 mod 2**256.
-        // Compute the inverse by starting with a seed that is correct
-        // correct for four bits. That is, denominator * inv = 1 mod 2**4
-        uint256 inv = (3 * denominator) ^ 2;
-        // Now use Newton-Raphson iteration to improve the precision.
-        // Thanks to Hensel's lifting lemma, this also works in modular
-        // arithmetic, doubling the correct bits in each step.
-        inv *= 2 - denominator * inv; // inverse mod 2**8
-        inv *= 2 - denominator * inv; // inverse mod 2**16
-        inv *= 2 - denominator * inv; // inverse mod 2**32
-        inv *= 2 - denominator * inv; // inverse mod 2**64
-        inv *= 2 - denominator * inv; // inverse mod 2**128
-        inv *= 2 - denominator * inv; // inverse mod 2**256
-
-        // Because the division is now exact we can divide by multiplying
-        // with the modular inverse of denominator. This will give us the
-        // correct result modulo 2**256. Since the precoditions guarantee
-        // that the outcome is less than 2**256, this is the final result.
-        // We don't need to compute the high bits of the result and prod1
-        // is no longer required.
-        result = prod0 * inv;
-        return result;
-    }
-
-    /// @notice Calculates ceil(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
-    /// @param a The multiplicand
-    /// @param b The multiplier
-    /// @param denominator The divisor
-    /// @return result The 256-bit result
-    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
-        result = mulDiv(a, b, denominator);
-        if (mulmod(a, b, denominator) > 0) {
-            require(result < type(uint256).max);
-            result++;
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-import {IVoter} from "contracts/core/interfaces/IVoter.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
-import {IGaugeManager} from "contracts/core/interfaces/IGaugeManager.sol";
-
-
-/// @title The interface for the CL Factory
-/// @notice The CL Factory facilitates creation of CL pools and control over the protocol fees
-interface ICLFactory {
-    /// @notice Emitted when the owner of the factory is changed
-    /// @param oldOwner The owner before the owner was changed
-    /// @param newOwner The owner after the owner was changed
-    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
-
-    /// @notice Emitted when the swapFeeManager of the factory is changed
-    /// @param oldFeeManager The swapFeeManager before the swapFeeManager was changed
-    /// @param newFeeManager The swapFeeManager after the swapFeeManager was changed
-    event SwapFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
-
-    /// @notice Emitted when the swapFeeModule of the factory is changed
-    /// @param oldFeeModule The swapFeeModule before the swapFeeModule was changed
-    /// @param newFeeModule The swapFeeModule after the swapFeeModule was changed
-    event SwapFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
-
-    /// @notice Emitted when the unstakedFeeManager of the factory is changed
-    /// @param oldFeeManager The unstakedFeeManager before the unstakedFeeManager was changed
-    /// @param newFeeManager The unstakedFeeManager after the unstakedFeeManager was changed
-    event UnstakedFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
-
-    /// @notice Emitted when the unstakedFeeModule of the factory is changed
-    /// @param oldFeeModule The unstakedFeeModule before the unstakedFeeModule was changed
-    /// @param newFeeModule The unstakedFeeModule after the unstakedFeeModule was changed
-    event UnstakedFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
-
-    /// @notice Emitted when the defaultUnstakedFee of the factory is changed
-    /// @param oldUnstakedFee The defaultUnstakedFee before the defaultUnstakedFee was changed
-    /// @param newUnstakedFee The defaultUnstakedFee after the unstakedFeeModule was changed
-    event DefaultUnstakedFeeChanged(uint24 indexed oldUnstakedFee, uint24 indexed newUnstakedFee);
-
-    /// @notice Emitted when a pool is created
-    /// @param token0 The first token of the pool by address sort order
-    /// @param token1 The second token of the pool by address sort order
-    /// @param tickSpacing The minimum number of ticks between initialized ticks
-    /// @param pool The address of the created pool
-    event PoolCreated(address indexed token0, address indexed token1, int24 indexed tickSpacing, address pool);
-
-    /// @notice Emitted when a new tick spacing is enabled for pool creation via the factory
-    /// @param tickSpacing The minimum number of ticks between initialized ticks for pools
-    /// @param fee The default fee for a pool created with a given tickSpacing
-    event TickSpacingEnabled(int24 indexed tickSpacing, uint24 indexed fee);
-
-
-
-    /// @notice The address of the pool implementation contract used to deploy proxies / clones
-    /// @return The address of the pool implementation contract
-    function poolImplementation() external view returns (address);
-
-    /// @notice Factory registry for valid pool / gauge / rewards factories
-    /// @return The address of the factory registry
-
-    function gaugeManager() external view returns (IGaugeManager);
-
-    /// @notice Returns the current owner of the factory
-    /// @dev Can be changed by the current owner via setOwner
-    /// @return The address of the factory owner
-    function owner() external view returns (address);
-
-    /// @notice Returns the current swapFeeManager of the factory
-    /// @dev Can be changed by the current swap fee manager via setSwapFeeManager
-    /// @return The address of the factory swapFeeManager
-    function swapFeeManager() external view returns (address);
-
-    /// @notice Returns the current protocolFeeManager of the factory
-    /// @dev Can be changed by the current protocol fee manager via setProtocolFeeManager
-    /// @return The address of the factory protocolFeeManager
-    function protocolFeeManager() external view returns (address);
-
-    /// @notice Returns the current swapFeeModule of the factory
-    /// @dev Can be changed by the current swap fee manager via setSwapFeeModule
-    /// @return The address of the factory swapFeeModule
-    function swapFeeModule() external view returns (address);
-
-    /// @notice Returns the current unstakedFeeManager of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeManager
-    /// @return The address of the factory unstakedFeeManager
-    function unstakedFeeManager() external view returns (address);
-
-    /// @notice Returns the current unstakedFeeModule of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeModule
-    /// @return The address of the factory unstakedFeeModule
-    function unstakedFeeModule() external view returns (address);
-
-
-    function protocolFeeModule() external view returns (address);
-
-    /// @notice Returns the current defaultUnstakedFee of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setDefaultUnstakedFee
-    /// @return The default Unstaked Fee of the factory
-    function defaultUnstakedFee() external view returns (uint24);
-
-
-    function defaultProtocolFee() external view returns (uint24);
-
-    /// @notice Returns a default fee for a tick spacing.
-    /// @dev Use getFee for the most up to date fee for a given pool.
-    /// A tick spacing can never be removed, so this value should be hard coded or cached in the calling context
-    /// @param tickSpacing The enabled tick spacing. Returns 0 if not enabled
-    /// @return fee The default fee for the given tick spacing
-    function tickSpacingToFee(int24 tickSpacing) external view returns (uint24 fee);
-
-    /// @notice Returns a list of enabled tick spacings. Used to iterate through pools created by the factory
-    /// @dev Tick spacings cannot be removed. Tick spacings are not ordered
-    /// @return List of enabled tick spacings
-    function tickSpacings() external view returns (int24[] memory);
-
-    /// @notice Returns the pool address for a given pair of tokens and a tick spacing, or address 0 if it does not exist
-    /// @dev tokenA and tokenB may be passed in either token0/token1 or token1/token0 order
-    /// @param tokenA The contract address of either token0 or token1
-    /// @param tokenB The contract address of the other token
-    /// @param tickSpacing The tick spacing of the pool
-    /// @return pool The pool address
-    function getPool(address tokenA, address tokenB, int24 tickSpacing) external view returns (address pool);
-
-    /// @notice Return address of pool created by this factory given its `index`
-    /// @param index Index of the pool
-    /// @return The pool address in the given index
-    function allPools(uint256 index) external view returns (address);
-
-    /// @notice Returns the number of pools created from this factory
-    /// @return Number of pools created from this factory
-    function allPoolsLength() external view returns (uint256);
-
-    /// @notice Used in VotingEscrow to determine if a contract is a valid pool of the factory
-    /// @param pool The address of the pool to check
-    /// @return Whether the pool is a valid pool of the factory
-    function isPool(address pool) external view returns (bool);
-
-    /// @notice Get swap & flash fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Swap & flash fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the swap & flash fee for
-    /// @return The swap & flash fee for the given pool
-    function getSwapFee(address pool) external view returns (uint24);
-
-    /// @notice Get unstaked fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Unstaked fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the unstaked fee for
-    /// @return The unstaked fee for the given pool
-    function getUnstakedFee(address pool) external view returns (uint24);
-
-    /// @notice Get protocol fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Protocol fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the protocol fee for
-    /// @return The protocol fee for the given pool
-    function getProtocolFee(address pool) external view returns (uint24);
-
-    /// @notice Creates a pool for the given two tokens and fee
-    /// @param tokenA One of the two tokens in the desired pool
-    /// @param tokenB The other of the two tokens in the desired pool
-    /// @param tickSpacing The desired tick spacing for the pool
-    /// @param sqrtPriceX96 The initial sqrt price of the pool, as a Q64.96
-    /// @dev tokenA and tokenB may be passed in either order: token0/token1 or token1/token0. The call will
-    /// revert if the pool already exists, the tick spacing is invalid, or the token arguments are invalid
-    /// @return pool The address of the newly created pool
-    function createPool(address tokenA, address tokenB, int24 tickSpacing, uint160 sqrtPriceX96)
-        external
-        returns (address pool);
-
-    /// @notice Updates the owner of the factory
-    /// @dev Must be called by the current owner
-    /// @param _owner The new owner of the factory
-    function setOwner(address _owner) external;
-
-    /// @notice Updates the swapFeeManager of the factory
-    /// @dev Must be called by the current swap fee manager
-    /// @param _swapFeeManager The new swapFeeManager of the factory
-    function setSwapFeeManager(address _swapFeeManager) external;
-
-    /// @notice Updates the swapFeeModule of the factory
-    /// @dev Must be called by the current swap fee manager
-    /// @param _swapFeeModule The new swapFeeModule of the factory
-    function setSwapFeeModule(address _swapFeeModule) external;
-
-    /// @notice Updates the unstakedFeeManager of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _unstakedFeeManager The new unstakedFeeManager of the factory
-    function setUnstakedFeeManager(address _unstakedFeeManager) external;
-
-    /// @notice Updates the unstakedFeeModule of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _unstakedFeeModule The new unstakedFeeModule of the factory
-    function setUnstakedFeeModule(address _unstakedFeeModule) external;
-
-    /// @notice Updates the protocolFeeManager of the factory
-    /// @dev Must be called by the current protocol fee manager
-    /// @param _protocolFeeManager The new protocolFeeManager of the factory
-    function setProtocolFeeManager(address _protocolFeeManager) external;
-
-    /// @notice Updates the protocolFeeModule of the factory
-    /// @dev Must be called by the current protocol fee manager
-    /// @param _protocolFeeModule The new protocolFeeModule of the factory
-    function setProtocolFeeModule(address _protocolFeeModule) external;
-
-    /// @notice Updates the defaultUnstakedFee of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _defaultUnstakedFee The new defaultUnstakedFee of the factory
-    function setDefaultUnstakedFee(uint24 _defaultUnstakedFee) external;
-
-    /// @notice Enables a certain tickSpacing
-    /// @dev Tick spacings may never be removed once enabled
-    /// @param tickSpacing The spacing between ticks to be enforced in the pool
-    /// @param fee The default fee associated with a given tick spacing
-    function enableTickSpacing(int24 tickSpacing, uint24 fee) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IFactoryRegistry {
-    function approve(address poolFactory, address votingRewardsFactory, address gaugeFactory) external;
-
-    function isPoolFactoryApproved(address poolFactory) external returns (bool);
-
-    function factoriesToPoolFactory(address poolFactory)
-        external
-        returns (address votingRewardsFactory, address gaugeFactory);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-
-interface IGaugeManager {
-    
-    struct FarmingParam {
-        address farmingCenter;
-        address algebraEternalFarming;
-        address nfpm;
-    }
-
-    function isGaugeAliveForPool(address _pool) external view returns (bool);
-    function gauges(address _pair) external view returns (address);
-    function isGauge(address _gauge) external view returns (bool);
-    function poolForGauge(address _gauge) external view returns (address);
-}
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-import "./pool/ICLPoolConstants.sol";
-import "./pool/ICLPoolState.sol";
-import "./pool/ICLPoolDerivedState.sol";
-import "./pool/ICLPoolActions.sol";
-import "./pool/ICLPoolOwnerActions.sol";
-import "./pool/ICLPoolEvents.sol";
-
-/// @title The interface for a CL Pool
-/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
-/// to the ERC20 specification
-/// @dev The pool interface is broken up into many smaller pieces
-interface ICLPool is
-    ICLPoolConstants,
-    ICLPoolState,
-    ICLPoolDerivedState,
-    ICLPoolActions,
-    ICLPoolEvents,
-    ICLPoolOwnerActions
-{}
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.7.6;
@@ -2002,6 +1989,19 @@ contract CLPool is ICLPool {
         gauge = _gauge;
         nft = _nft;
     }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+
+interface IFactoryRegistry {
+    function approve(address poolFactory, address votingRewardsFactory, address gaugeFactory) external;
+
+    function isPoolFactoryApproved(address poolFactory) external returns (bool);
+
+    function factoriesToPoolFactory(address poolFactory)
+        external
+        returns (address votingRewardsFactory, address gaugeFactory);
 }
 
 // SPDX-License-Identifier: MIT

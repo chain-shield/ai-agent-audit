@@ -229,67 +229,6 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IBribeFactory {
-    function createInternalBribe(address[] memory) external returns (address);
-    function createExternalBribe(address[] memory) external returns (address);
-    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IFactoryRegistry {
-    function approve(address poolFactory, address votingRewardsFactory, address gaugeFactory) external;
-
-    function isPoolFactoryApproved(address poolFactory) external returns (bool);
-
-    function factoriesToPoolFactory(address poolFactory)
-        external
-        returns (address votingRewardsFactory, address gaugeFactory);
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-import "./pool/ICLPoolConstants.sol";
-import "./pool/ICLPoolState.sol";
-import "./pool/ICLPoolDerivedState.sol";
-import "./pool/ICLPoolActions.sol";
-import "./pool/ICLPoolOwnerActions.sol";
-import "./pool/ICLPoolEvents.sol";
-
-/// @title The interface for a CL Pool
-/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
-/// to the ERC20 specification
-/// @dev The pool interface is broken up into many smaller pieces
-interface ICLPool is
-    ICLPoolConstants,
-    ICLPoolState,
-    ICLPoolDerivedState,
-    ICLPoolActions,
-    ICLPoolEvents,
-    ICLPoolOwnerActions
-{}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IGaugeCL {
-    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
-    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function balanceOf(uint256 tokenId) external view returns (uint256); 
-    function emergency() external returns (bool);
-    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
-    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
-    function totalSupply() external view returns (uint);
-    function rewardRate() external view returns (uint);
-    function rewardForDuration() external view returns (uint256);
-    function stakedFees() external view returns (uint256, uint256);
-}
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
 
@@ -512,315 +451,23 @@ library VotingDelegationLib {
 
 }
 // SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-
-interface IGaugeManager {
-    
-    struct FarmingParam {
-        address farmingCenter;
-        address algebraEternalFarming;
-        address nfpm;
-    }
-
-    function isGaugeAliveForPool(address _pool) external view returns (bool);
-    function gauges(address _pair) external view returns (address);
-    function isGauge(address _gauge) external view returns (bool);
-    function poolForGauge(address _gauge) external view returns (address);
-}
-// SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.13;
 
-import './libraries/Math.sol';
-import './interfaces/IRewardsDistributor.sol';
-import './interfaces/IVotingEscrow.sol';
-import {HybraTimeLibrary} from "./libraries/HybraTimeLibrary.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
-/*
-
-@title Curve Fee Distribution modified for ve(3,3) emissions
-@author Curve Finance, andrecronje
-@license MIT
-
-*/
-
-contract RewardsDistributor is IRewardsDistributor {
-    using SafeERC20 for IERC20;
-    event CheckpointToken(
-        uint time,
-        uint tokens
-    );
-
-    event Claimed(
-        uint tokenId,
-        uint amount,
-        uint claim_epoch,
-        uint max_epoch
-    );
-
-    uint256 public WEEK;
-
-    uint public start_time;
-    uint public time_cursor;
-    mapping(uint => uint) public time_cursor_of;
-
-    uint public last_token_time;
-    uint[1000000000000000] public tokens_per_week;
-    uint public token_last_balance;
-    uint[1000000000000000] public ve_supply;
-
-    address public owner;
-    address public voting_escrow;
-    address public token;
-    address public depositor;
-
-
-    constructor(address _voting_escrow) {
-        WEEK = HybraTimeLibrary.WEEK;
-        uint _t = block.timestamp / WEEK * WEEK;
-        start_time = _t;
-        last_token_time = _t;
-        time_cursor = _t;
-        address _token = IVotingEscrow(_voting_escrow).token();
-        token = _token;
-        voting_escrow = _voting_escrow;
-        depositor = msg.sender;
-        owner = msg.sender;
-        require(IERC20(_token).approve(_voting_escrow, type(uint).max), "approval failed");
-    }
-
-    modifier onlyOwner {
-        require(msg.sender == owner, 'not owner');
-        _;
-    }
-
-    function timestamp() external view returns (uint) {
-        return block.timestamp / WEEK * WEEK;
-    }
-
-    function _checkpoint_token() internal {
-        uint token_balance = IERC20(token).balanceOf(address(this));
-        uint to_distribute = token_balance - token_last_balance;
-        token_last_balance = token_balance;
-
-        uint t = last_token_time;
-        uint since_last = block.timestamp - t;
-        last_token_time = block.timestamp;
-        uint this_week = t / WEEK * WEEK;
-        uint next_week = 0;
-
-        for (uint i = 0; i < 20; i++) {
-            next_week = this_week + WEEK;
-            if (block.timestamp < next_week) {
-                if (since_last == 0 && block.timestamp == t) {
-                    tokens_per_week[this_week] += to_distribute;
-                } else {
-                    tokens_per_week[this_week] += to_distribute * (block.timestamp - t) / since_last;
-                }
-                break;
-            } else {
-                if (since_last == 0 && next_week == t) {
-                    tokens_per_week[this_week] += to_distribute;
-                } else {
-                    tokens_per_week[this_week] += to_distribute * (next_week - t) / since_last;
-                }
-            }
-            t = next_week;
-            this_week = next_week;
-        }
-        emit CheckpointToken(block.timestamp, to_distribute);
-    }
-
-    function checkpoint_token() external {
-        assert(msg.sender == depositor);
-        _checkpoint_token();
-    }
-
-    function _find_timestamp_user_epoch(address ve, uint tokenId, uint _timestamp, uint max_user_epoch) internal view returns (uint) {
-        uint _min = 0;
-        uint _max = max_user_epoch;
-        for (uint i = 0; i < 128; i++) {
-            if (_min >= _max) break;
-            uint _mid = (_min + _max + 2) / 2;
-            IVotingEscrow.Point memory pt = IVotingEscrow(ve).user_point_history(tokenId, _mid);
-            if (pt.ts <= _timestamp) {
-                _min = _mid;
-            } else {
-                _max = _mid -1;
-            }
-        }
-        return _min;
-    }
-
-    function _claim(uint _tokenId, address ve, uint _last_token_time) internal returns (uint) {
-        uint to_distribute = 0;
-
-        uint max_user_epoch = IVotingEscrow(ve).user_point_epoch(_tokenId);
-        uint _start_time = start_time;
-
-        if (max_user_epoch == 0) return 0;
-
-        uint week_cursor = time_cursor_of[_tokenId];
-        if (week_cursor == 0) {
-            IVotingEscrow.Point memory user_point = IVotingEscrow(ve).user_point_history(_tokenId, 1);
-            week_cursor = user_point.ts / WEEK * WEEK;
-        }
-
-        if (week_cursor >= last_token_time) return 0;
-        if (week_cursor < _start_time) week_cursor = _start_time;
-
-        uint supply;
-
-        for (uint i = 0; i < 50; i++) {
-            if (week_cursor >= _last_token_time) break;
-            uint balance_of = IVotingEscrow(ve).balanceOfNFTAt(_tokenId, week_cursor + WEEK - 1);
-            supply = IVotingEscrow(ve).totalSupplyAtT(week_cursor + WEEK - 1);
-            supply = supply == 0 ? 1 : supply;
-            to_distribute += balance_of * tokens_per_week[week_cursor] / supply;
-            week_cursor += WEEK;
-        }
-        time_cursor_of[_tokenId] = week_cursor;
-
-        emit Claimed(_tokenId, to_distribute, week_cursor, max_user_epoch);
-
-        return to_distribute;
-    }
-
-    function _claimable(uint _tokenId, address ve, uint _last_token_time) internal view returns (uint) {
-        uint to_distribute = 0;
-
-        uint max_user_epoch = IVotingEscrow(ve).user_point_epoch(_tokenId);
-        uint _start_time = start_time;
-
-        if (max_user_epoch == 0) return 0;
-
-        uint week_cursor = time_cursor_of[_tokenId];
-        if (week_cursor == 0) {
-            IVotingEscrow.Point memory user_point = IVotingEscrow(ve).user_point_history(_tokenId, 1);
-            week_cursor = user_point.ts / WEEK * WEEK;
-        }
-
-        if (week_cursor >= last_token_time) return 0;
-        if (week_cursor < _start_time) week_cursor = _start_time;
-        uint supply;
-
-        for (uint i = 0; i < 50; i++) {
-            if (week_cursor >= _last_token_time) break;
-            uint balance_of = IVotingEscrow(ve).balanceOfNFTAt(_tokenId, week_cursor + WEEK - 1);
-            supply = IVotingEscrow(ve).totalSupplyAtT(week_cursor + WEEK - 1);
-            supply = supply == 0 ? 1 : supply;
-            to_distribute += balance_of * tokens_per_week[week_cursor] / supply;
-            week_cursor += WEEK;
-        }
-
-        return to_distribute;
-    }
-
-    function claimable(uint _tokenId) external view returns (uint) {
-        uint _last_token_time = last_token_time / WEEK * WEEK;
-        return _claimable(_tokenId, voting_escrow, _last_token_time);
-    }
-
-    function claim(uint256 _tokenId) external returns (uint256) {
-        uint _last_token_time = last_token_time;
-        _last_token_time = _last_token_time / WEEK * WEEK;
-        uint amount = _claim(_tokenId, voting_escrow, _last_token_time);
-        if (amount != 0) {
-            // if locked.end then send directly
-            IVotingEscrow.LockedBalance memory _locked = IVotingEscrow(voting_escrow).locked(_tokenId);
-            // If lock has expired and is not permanent, transfer tokens directly
-            if (_locked.end < block.timestamp && !_locked.isPermanent) {
-                address _nftOwner = IVotingEscrow(voting_escrow).ownerOf(_tokenId);
-                IERC20(token).safeTransfer(_nftOwner, amount);
-            } else {
-                IVotingEscrow(voting_escrow).deposit_for(_tokenId, amount);
-            }
-            token_last_balance -= amount;
-        }
-        return amount;
-    }
-
-    function claim_many(uint[] memory _tokenIds) external returns (bool) {
-        uint _last_token_time = last_token_time;
-        _last_token_time = _last_token_time / WEEK * WEEK;
-        address _voting_escrow = voting_escrow;
-        uint total = 0;
-
-        for (uint i = 0; i < _tokenIds.length; i++) {
-            uint _tokenId = _tokenIds[i];
-            if (_tokenId == 0) break;
-            uint amount = _claim(_tokenId, _voting_escrow, _last_token_time);
-            if (amount != 0) {
-                // if locked.end then send directly
-                IVotingEscrow.LockedBalance memory _locked = IVotingEscrow(_voting_escrow).locked(_tokenId);
-                if(_locked.end < block.timestamp && !_locked.isPermanent){
-                    address _nftOwner = IVotingEscrow(_voting_escrow).ownerOf(_tokenId);
-                    IERC20(token).safeTransfer(_nftOwner, amount);
-                } else {
-                    IVotingEscrow(_voting_escrow).deposit_for(_tokenId, amount);
-                }
-                total += amount;
-            }
-        }
-        if (total != 0) {
-            token_last_balance -= total;
-        }
-
-        return true;
-    }
-
-    function setDepositor(address _depositor) external {
-        require(msg.sender == owner);
-        depositor = _depositor;
-    }
-
-    function setOwner(address _owner) external {
-        require(msg.sender == owner);
-        owner = _owner;
-    }
-
-    function withdrawERC20(address _token) external {
-        require(msg.sender == owner);
-        require(_token != address(0));
-        uint256 _balance = IERC20(_token).balanceOf(address(this));
-        IERC20(_token).safeTransfer(msg.sender, _balance);
-    }
+interface IBribeFactory {
+    function createInternalBribe(address[] memory) external returns (address);
+    function createExternalBribe(address[] memory) external returns (address);
+    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+// SPDX-License-Identifier: None
+// HybraHole Foundation 2025
 
-interface IHybraGovernor {
-    enum ProposalState {
-        Pending,
-        Active,
-        Canceled,
-        Defeated,
-        Succeeded,
-        Queued,
-        Expired,
-        Executed
-    }
-
-    /// @dev Stores most recent voting result. Will be either Defeated, Succeeded or Expired.
-    ///      Any contracts that wish to use this governor must read from this to determine results.
-    function status() external returns (ProposalState);
-}
-
-
-// SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IPairFactory {
-    function allPairsLength() external view returns (uint);
-    function isPair(address pair) external view returns (bool);
-    function allPairs(uint index) external view returns (address);
-    function pairCodeHash() external view returns (bytes32);
-    function getPair(address tokenA, address token, bool stable) external view returns (address);
-    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
-    function isGenesis(address pair) external view returns (bool);
-}
+import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
+interface IHybraVotes is IVotes{
+}
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
@@ -1380,28 +1027,6 @@ contract GaugeManager is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IBribe {
-    function deposit(uint amount, uint tokenId) external;
-    function withdraw(uint amount, uint tokenId) external;
-    function getRewardForAddress(address _owner, address[] memory tokens) external;
-    function notifyRewardAmount(address token, uint amount) external;
-    function left(address token) external view returns (uint);
-    function getReward(uint tokenId, address[] memory tokens) external;
-    function bribeTokens(uint256 i) external view returns(address); 
-    function rewardsListLength() external view returns (uint256);
-    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IVeArtProxy {
-    function _tokenURI(uint _tokenId, uint _balanceOf, uint _locked_end, uint _value) external pure returns (string memory output);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
 interface IHybra {
     function totalSupply() external view returns (uint);
     function balanceOf(address) external view returns (uint);
@@ -1412,103 +1037,6 @@ interface IHybra {
     function minter() external returns (address);
     function burn(uint) external returns (bool);
     function burnFrom(address, uint) external returns (bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface ITokenHandler {
-    function isWhitelisted(address token) external view returns (bool);
-    function isWhitelistedNFT(uint256 token) external view returns (bool);
-    function isConnector(address token) external view returns (bool);
-
-    function whitelistToken(address _token) external;
-    function blacklistToken(address _token) external;
-
-    function whiteListed(uint256 index) external returns (address);
-    function connectors(uint256 index) external returns (address);
-
-    function whiteListedTokensLength() external returns (uint256);
-    function connectorTokensLength() external returns (uint256);
-
-    function whiteListedTokens() external view returns(address[] memory tokens);
-    function connectorTokens() external view returns(address[] memory tokens);
-}
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-pragma abicoder v2;
-
-import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
-
-interface IVoter {
-    function ve() external view returns (IVotingEscrow);
-
-    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
-
-    function gauges(address _pool) external view returns (address);
-
-    function gaugeToFees(address _gauge) external view returns (address);
-
-    function gaugeToBribes(address _gauge) external view returns (address);
-
-    function createGauge(address _poolFactory, address _pool) external returns (address);
-
-    function distribute(address gauge) external;
-
-    function factoryRegistry() external view returns (IFactoryRegistry);
-
-    /// @dev Utility to distribute to gauges of pools in array.
-    /// @param _gauges Array of gauges to distribute to.
-    function distribute(address[] memory _gauges) external;
-
-    function isAlive(address _gauge) external view returns (bool);
-
-    function killGauge(address _gauge) external;
-
-    function emergencyCouncil() external view returns (address);
-
-    /// @notice Claim emissions from gauges.
-    /// @param _gauges Array of gauges to collect emissions from.
-    function claimRewards(address[] memory _gauges) external;
-
-    /// @notice Claim fees for a given NFT.
-    /// @dev Utility to help batch fee claims.
-    /// @param _fees    Array of FeesVotingReward contracts to collect from.
-    /// @param _tokens  Array of tokens that are used as fees.
-    /// @param _tokenId Id of veNFT that you wish to claim fees for.
-    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPermissionsRegistry {
-    function emergencyCouncil() external view returns(address);
-    function hybraTeamMultisig() external view returns(address);
-    function hasRole(bytes memory role, address caller) external view returns(bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IGaugeFactory {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IVotingEscrow {
-    function team() external returns (address);
-
-    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
-    /// @param _value Amount to deposit
-    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
-    /// @return TokenId of created veNFT
-    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
 }
 
 // SPDX-License-Identifier: MIT
@@ -2868,6 +2396,13 @@ contract VotingEscrow is IERC721, IERC721Metadata, IHybraVotes {
 }
 
 // SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IVeArtProxy {
+    function _tokenURI(uint _tokenId, uint _balanceOf, uint _locked_end, uint _value) external pure returns (string memory output);
+}
+
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
 import {IVotingEscrow} from "../interfaces/IVotingEscrow.sol";
@@ -3109,22 +2644,21 @@ library VotingBalanceLogic {
         }
     }
 }
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity =0.7.6;
-interface IMinter {
-    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
-    /// @return _period Start of current epoch.
-    function updatePeriod() external returns (uint256 _period);
-}
-
-// SPDX-License-Identifier: None
-// HybraHole Foundation 2025
-
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
-
-interface IHybraVotes is IVotes{
+interface IGaugeCL {
+    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
+    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function balanceOf(uint256 tokenId) external view returns (uint256); 
+    function emergency() external returns (bool);
+    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
+    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
+    function totalSupply() external view returns (uint);
+    function rewardRate() external view returns (uint);
+    function rewardForDuration() external view returns (uint256);
+    function stakedFees() external view returns (uint256, uint256);
 }
 pragma solidity 0.8.13;
 
@@ -3214,32 +2748,121 @@ interface IRewardsDistributor {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IGauge {
+interface IBribe {
+    function deposit(uint amount, uint tokenId) external;
+    function withdraw(uint amount, uint tokenId) external;
+    function getRewardForAddress(address _owner, address[] memory tokens) external;
     function notifyRewardAmount(address token, uint amount) external;
-    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
-    function getReward(address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
     function left(address token) external view returns (uint);
-    function rewardRate(address _pair) external view returns (uint);
-    function balanceOf(address _account) external view returns (uint);
-    function isForPair() external view returns (bool);
-    function totalSupply() external view returns (uint);
-    function earned(address token, address account) external view returns (uint);
-    function setGenesisPool(address genesisPool) external;
-    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
-    function emergency() external returns (bool);
+    function getReward(uint tokenId, address[] memory tokens) external;
+    function bribeTokens(uint256 i) external view returns(address); 
+    function rewardsListLength() external view returns (uint256);
+    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-import "./IGaugeManager.sol";
+interface IPairInfo {
 
-interface IGaugeFactoryCL {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
+    function token0() external view returns(address);
+    function reserve0() external view returns(uint);
+    function decimals0() external view returns(uint);
+    function token1() external view returns(address);
+    function reserve1() external view returns(uint);
+    function decimals1() external view returns(uint);
+    function isPair(address _pair) external view returns(bool);
 }
+
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+pragma abicoder v2;
+
+import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+
+interface IVoter {
+    function ve() external view returns (IVotingEscrow);
+
+    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
+
+    function gauges(address _pool) external view returns (address);
+
+    function gaugeToFees(address _gauge) external view returns (address);
+
+    function gaugeToBribes(address _gauge) external view returns (address);
+
+    function createGauge(address _poolFactory, address _pool) external returns (address);
+
+    function distribute(address gauge) external;
+
+    function factoryRegistry() external view returns (IFactoryRegistry);
+
+    /// @dev Utility to distribute to gauges of pools in array.
+    /// @param _gauges Array of gauges to distribute to.
+    function distribute(address[] memory _gauges) external;
+
+    function isAlive(address _gauge) external view returns (bool);
+
+    function killGauge(address _gauge) external;
+
+    function emergencyCouncil() external view returns (address);
+
+    /// @notice Claim emissions from gauges.
+    /// @param _gauges Array of gauges to collect emissions from.
+    function claimRewards(address[] memory _gauges) external;
+
+    /// @notice Claim fees for a given NFT.
+    /// @dev Utility to help batch fee claims.
+    /// @param _fees    Array of FeesVotingReward contracts to collect from.
+    /// @param _tokens  Array of tokens that are used as fees.
+    /// @param _tokenId Id of veNFT that you wish to claim fees for.
+    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+
+interface IFactoryRegistry {
+    function approve(address poolFactory, address votingRewardsFactory, address gaugeFactory) external;
+
+    function isPoolFactoryApproved(address poolFactory) external returns (bool);
+
+    function factoriesToPoolFactory(address poolFactory)
+        external
+        returns (address votingRewardsFactory, address gaugeFactory);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IPermissionsRegistry {
+    function emergencyCouncil() external view returns(address);
+    function hybraTeamMultisig() external view returns(address);
+    function hasRole(bytes memory role, address caller) external view returns(bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IHybraGovernor {
+    enum ProposalState {
+        Pending,
+        Active,
+        Canceled,
+        Defeated,
+        Succeeded,
+        Queued,
+        Expired,
+        Executed
+    }
+
+    /// @dev Stores most recent voting result. Will be either Defeated, Succeeded or Expired.
+    ///      Any contracts that wish to use this governor must read from this to determine results.
+    function status() external returns (ProposalState);
+}
+
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
@@ -3322,18 +2945,395 @@ library HybraTimeLibrary {
     }
 }
 
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma solidity 0.8.13;
+
+import './libraries/Math.sol';
+import './interfaces/IRewardsDistributor.sol';
+import './interfaces/IVotingEscrow.sol';
+import {HybraTimeLibrary} from "./libraries/HybraTimeLibrary.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+/*
+
+@title Curve Fee Distribution modified for ve(3,3) emissions
+@author Curve Finance, andrecronje
+@license MIT
+
+*/
+
+contract RewardsDistributor is IRewardsDistributor {
+    using SafeERC20 for IERC20;
+    event CheckpointToken(
+        uint time,
+        uint tokens
+    );
+
+    event Claimed(
+        uint tokenId,
+        uint amount,
+        uint claim_epoch,
+        uint max_epoch
+    );
+
+    uint256 public WEEK;
+
+    uint public start_time;
+    uint public time_cursor;
+    mapping(uint => uint) public time_cursor_of;
+
+    uint public last_token_time;
+    uint[1000000000000000] public tokens_per_week;
+    uint public token_last_balance;
+    uint[1000000000000000] public ve_supply;
+
+    address public owner;
+    address public voting_escrow;
+    address public token;
+    address public depositor;
+
+
+    constructor(address _voting_escrow) {
+        WEEK = HybraTimeLibrary.WEEK;
+        uint _t = block.timestamp / WEEK * WEEK;
+        start_time = _t;
+        last_token_time = _t;
+        time_cursor = _t;
+        address _token = IVotingEscrow(_voting_escrow).token();
+        token = _token;
+        voting_escrow = _voting_escrow;
+        depositor = msg.sender;
+        owner = msg.sender;
+        require(IERC20(_token).approve(_voting_escrow, type(uint).max), "approval failed");
+    }
+
+    modifier onlyOwner {
+        require(msg.sender == owner, 'not owner');
+        _;
+    }
+
+    function timestamp() external view returns (uint) {
+        return block.timestamp / WEEK * WEEK;
+    }
+
+    function _checkpoint_token() internal {
+        uint token_balance = IERC20(token).balanceOf(address(this));
+        uint to_distribute = token_balance - token_last_balance;
+        token_last_balance = token_balance;
+
+        uint t = last_token_time;
+        uint since_last = block.timestamp - t;
+        last_token_time = block.timestamp;
+        uint this_week = t / WEEK * WEEK;
+        uint next_week = 0;
+
+        for (uint i = 0; i < 20; i++) {
+            next_week = this_week + WEEK;
+            if (block.timestamp < next_week) {
+                if (since_last == 0 && block.timestamp == t) {
+                    tokens_per_week[this_week] += to_distribute;
+                } else {
+                    tokens_per_week[this_week] += to_distribute * (block.timestamp - t) / since_last;
+                }
+                break;
+            } else {
+                if (since_last == 0 && next_week == t) {
+                    tokens_per_week[this_week] += to_distribute;
+                } else {
+                    tokens_per_week[this_week] += to_distribute * (next_week - t) / since_last;
+                }
+            }
+            t = next_week;
+            this_week = next_week;
+        }
+        emit CheckpointToken(block.timestamp, to_distribute);
+    }
+
+    function checkpoint_token() external {
+        assert(msg.sender == depositor);
+        _checkpoint_token();
+    }
+
+    function _find_timestamp_user_epoch(address ve, uint tokenId, uint _timestamp, uint max_user_epoch) internal view returns (uint) {
+        uint _min = 0;
+        uint _max = max_user_epoch;
+        for (uint i = 0; i < 128; i++) {
+            if (_min >= _max) break;
+            uint _mid = (_min + _max + 2) / 2;
+            IVotingEscrow.Point memory pt = IVotingEscrow(ve).user_point_history(tokenId, _mid);
+            if (pt.ts <= _timestamp) {
+                _min = _mid;
+            } else {
+                _max = _mid -1;
+            }
+        }
+        return _min;
+    }
+
+    function _claim(uint _tokenId, address ve, uint _last_token_time) internal returns (uint) {
+        uint to_distribute = 0;
+
+        uint max_user_epoch = IVotingEscrow(ve).user_point_epoch(_tokenId);
+        uint _start_time = start_time;
+
+        if (max_user_epoch == 0) return 0;
+
+        uint week_cursor = time_cursor_of[_tokenId];
+        if (week_cursor == 0) {
+            IVotingEscrow.Point memory user_point = IVotingEscrow(ve).user_point_history(_tokenId, 1);
+            week_cursor = user_point.ts / WEEK * WEEK;
+        }
+
+        if (week_cursor >= last_token_time) return 0;
+        if (week_cursor < _start_time) week_cursor = _start_time;
+
+        uint supply;
+
+        for (uint i = 0; i < 50; i++) {
+            if (week_cursor >= _last_token_time) break;
+            uint balance_of = IVotingEscrow(ve).balanceOfNFTAt(_tokenId, week_cursor + WEEK - 1);
+            supply = IVotingEscrow(ve).totalSupplyAtT(week_cursor + WEEK - 1);
+            supply = supply == 0 ? 1 : supply;
+            to_distribute += balance_of * tokens_per_week[week_cursor] / supply;
+            week_cursor += WEEK;
+        }
+        time_cursor_of[_tokenId] = week_cursor;
+
+        emit Claimed(_tokenId, to_distribute, week_cursor, max_user_epoch);
+
+        return to_distribute;
+    }
+
+    function _claimable(uint _tokenId, address ve, uint _last_token_time) internal view returns (uint) {
+        uint to_distribute = 0;
+
+        uint max_user_epoch = IVotingEscrow(ve).user_point_epoch(_tokenId);
+        uint _start_time = start_time;
+
+        if (max_user_epoch == 0) return 0;
+
+        uint week_cursor = time_cursor_of[_tokenId];
+        if (week_cursor == 0) {
+            IVotingEscrow.Point memory user_point = IVotingEscrow(ve).user_point_history(_tokenId, 1);
+            week_cursor = user_point.ts / WEEK * WEEK;
+        }
+
+        if (week_cursor >= last_token_time) return 0;
+        if (week_cursor < _start_time) week_cursor = _start_time;
+        uint supply;
+
+        for (uint i = 0; i < 50; i++) {
+            if (week_cursor >= _last_token_time) break;
+            uint balance_of = IVotingEscrow(ve).balanceOfNFTAt(_tokenId, week_cursor + WEEK - 1);
+            supply = IVotingEscrow(ve).totalSupplyAtT(week_cursor + WEEK - 1);
+            supply = supply == 0 ? 1 : supply;
+            to_distribute += balance_of * tokens_per_week[week_cursor] / supply;
+            week_cursor += WEEK;
+        }
+
+        return to_distribute;
+    }
+
+    function claimable(uint _tokenId) external view returns (uint) {
+        uint _last_token_time = last_token_time / WEEK * WEEK;
+        return _claimable(_tokenId, voting_escrow, _last_token_time);
+    }
+
+    function claim(uint256 _tokenId) external returns (uint256) {
+        uint _last_token_time = last_token_time;
+        _last_token_time = _last_token_time / WEEK * WEEK;
+        uint amount = _claim(_tokenId, voting_escrow, _last_token_time);
+        if (amount != 0) {
+            // if locked.end then send directly
+            IVotingEscrow.LockedBalance memory _locked = IVotingEscrow(voting_escrow).locked(_tokenId);
+            // If lock has expired and is not permanent, transfer tokens directly
+            if (_locked.end < block.timestamp && !_locked.isPermanent) {
+                address _nftOwner = IVotingEscrow(voting_escrow).ownerOf(_tokenId);
+                IERC20(token).safeTransfer(_nftOwner, amount);
+            } else {
+                IVotingEscrow(voting_escrow).deposit_for(_tokenId, amount);
+            }
+            token_last_balance -= amount;
+        }
+        return amount;
+    }
+
+    function claim_many(uint[] memory _tokenIds) external returns (bool) {
+        uint _last_token_time = last_token_time;
+        _last_token_time = _last_token_time / WEEK * WEEK;
+        address _voting_escrow = voting_escrow;
+        uint total = 0;
+
+        for (uint i = 0; i < _tokenIds.length; i++) {
+            uint _tokenId = _tokenIds[i];
+            if (_tokenId == 0) break;
+            uint amount = _claim(_tokenId, _voting_escrow, _last_token_time);
+            if (amount != 0) {
+                // if locked.end then send directly
+                IVotingEscrow.LockedBalance memory _locked = IVotingEscrow(_voting_escrow).locked(_tokenId);
+                if(_locked.end < block.timestamp && !_locked.isPermanent){
+                    address _nftOwner = IVotingEscrow(_voting_escrow).ownerOf(_tokenId);
+                    IERC20(token).safeTransfer(_nftOwner, amount);
+                } else {
+                    IVotingEscrow(_voting_escrow).deposit_for(_tokenId, amount);
+                }
+                total += amount;
+            }
+        }
+        if (total != 0) {
+            token_last_balance -= total;
+        }
+
+        return true;
+    }
+
+    function setDepositor(address _depositor) external {
+        require(msg.sender == owner);
+        depositor = _depositor;
+    }
+
+    function setOwner(address _owner) external {
+        require(msg.sender == owner);
+        owner = _owner;
+    }
+
+    function withdrawERC20(address _token) external {
+        require(msg.sender == owner);
+        require(_token != address(0));
+        uint256 _balance = IERC20(_token).balanceOf(address(this));
+        IERC20(_token).safeTransfer(msg.sender, _balance);
+    }
+}
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IPairInfo {
+import "./IGaugeManager.sol";
 
-    function token0() external view returns(address);
-    function reserve0() external view returns(uint);
-    function decimals0() external view returns(uint);
-    function token1() external view returns(address);
-    function reserve1() external view returns(uint);
-    function decimals1() external view returns(uint);
-    function isPair(address _pair) external view returns(bool);
+interface IGaugeFactoryCL {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
+}
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import "./pool/ICLPoolConstants.sol";
+import "./pool/ICLPoolState.sol";
+import "./pool/ICLPoolDerivedState.sol";
+import "./pool/ICLPoolActions.sol";
+import "./pool/ICLPoolOwnerActions.sol";
+import "./pool/ICLPoolEvents.sol";
+
+/// @title The interface for a CL Pool
+/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
+/// to the ERC20 specification
+/// @dev The pool interface is broken up into many smaller pieces
+interface ICLPool is
+    ICLPoolConstants,
+    ICLPoolState,
+    ICLPoolDerivedState,
+    ICLPoolActions,
+    ICLPoolEvents,
+    ICLPoolOwnerActions
+{}
+
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+
+interface IVotingEscrow {
+    function team() external returns (address);
+
+    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
+    /// @param _value Amount to deposit
+    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
+    /// @return TokenId of created veNFT
+    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.7.6;
+
+interface IGaugeManager {
+    
+    struct FarmingParam {
+        address farmingCenter;
+        address algebraEternalFarming;
+        address nfpm;
+    }
+
+    function isGaugeAliveForPool(address _pool) external view returns (bool);
+    function gauges(address _pair) external view returns (address);
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGaugeFactory {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGauge {
+    function notifyRewardAmount(address token, uint amount) external;
+    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
+    function getReward(address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function left(address token) external view returns (uint);
+    function rewardRate(address _pair) external view returns (uint);
+    function balanceOf(address _account) external view returns (uint);
+    function isForPair() external view returns (bool);
+    function totalSupply() external view returns (uint);
+    function earned(address token, address account) external view returns (uint);
+    function setGenesisPool(address genesisPool) external;
+    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
+    function emergency() external returns (bool);
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity =0.7.6;
+interface IMinter {
+    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
+    /// @return _period Start of current epoch.
+    function updatePeriod() external returns (uint256 _period);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface ITokenHandler {
+    function isWhitelisted(address token) external view returns (bool);
+    function isWhitelistedNFT(uint256 token) external view returns (bool);
+    function isConnector(address token) external view returns (bool);
+
+    function whitelistToken(address _token) external;
+    function blacklistToken(address _token) external;
+
+    function whiteListed(uint256 index) external returns (address);
+    function connectors(uint256 index) external returns (address);
+
+    function whiteListedTokensLength() external returns (uint256);
+    function connectorTokensLength() external returns (uint256);
+
+    function whiteListedTokens() external view returns(address[] memory tokens);
+    function connectorTokens() external view returns(address[] memory tokens);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IPairFactory {
+    function allPairsLength() external view returns (uint);
+    function isPair(address pair) external view returns (bool);
+    function allPairs(uint index) external view returns (address);
+    function pairCodeHash() external view returns (bytes32);
+    function getPair(address tokenA, address token, bool stable) external view returns (address);
+    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
+    function isGenesis(address pair) external view returns (bool);
 }
 
 

@@ -2188,7 +2188,7 @@ Let’s prove the hydra can live.
  
  When code reviewing be mindful of which version of openzepplin, chainlink, etc the package version is using.
 
- ### 2025-10-hybra-finance/ve33/lib/forge-std/package.json
+ ### ve33/lib/forge-std/package.json
 
 {
   "name": "forge-std",
@@ -2199,7 +2199,7 @@ Let’s prove the hydra can live.
   "license": "(Apache-2.0 OR MIT)",
   "author": "Contributors to Forge Standard Library",
 
-### 2025-10-hybra-finance/ve33/lib/openzeppelin-contracts/contracts/package.json
+### ve33/lib/openzeppelin-contracts/contracts/package.json
 
 {
   "name": "@openzeppelin/contracts",
@@ -2210,7 +2210,7 @@ Let’s prove the hydra can live.
     "/build/contracts/*.json",
     "!/mocks/**/*"
 
-### 2025-10-hybra-finance/ve33/lib/openzeppelin-contracts/package.json
+### ve33/lib/openzeppelin-contracts/package.json
 
 {
   "name": "openzeppelin-solidity",
@@ -2221,7 +2221,7 @@ Let’s prove the hydra can live.
     "/contracts/**/*.sol",
     "!/contracts/mocks/**/*"
 
-### 2025-10-hybra-finance/ve33/lib/openzeppelin-contracts/scripts/solhint-custom/package.json
+### ve33/lib/openzeppelin-contracts/scripts/solhint-custom/package.json
 
 {
   "name": "solhint-plugin-openzeppelin",
@@ -2232,7 +2232,7 @@ Let’s prove the hydra can live.
   }
 }
 
-### 2025-10-hybra-finance/ve33/lib/openzeppelin-contracts/lib/forge-std/package.json
+### ve33/lib/openzeppelin-contracts/lib/forge-std/package.json
 
 {
   "name": "forge-std",
@@ -2243,7 +2243,7 @@ Let’s prove the hydra can live.
   "license": "(Apache-2.0 OR MIT)",
   "author": "Contributors to Forge Standard Library",
 
-### 2025-10-hybra-finance/cl/lib/forge-std/package.json
+### cl/lib/forge-std/package.json
 
 {
   "name": "forge-std",
@@ -2254,7 +2254,7 @@ Let’s prove the hydra can live.
   "license": "(Apache-2.0 OR MIT)",
   "author": "Contributors to Forge Standard Library",
 
-### 2025-10-hybra-finance/cl/lib/base64/package.json
+### cl/lib/base64/package.json
 
 {
   "name": "base64-sol",
@@ -2265,7 +2265,7 @@ Let’s prove the hydra can live.
     "test": "echo \"Error: no test specified\" && exit 1"
   },
 
-### 2025-10-hybra-finance/cl/lib/solidity-lib/package.json
+### cl/lib/solidity-lib/package.json
 
 {
   "name": "@uniswap/lib",
@@ -2276,7 +2276,7 @@ Let’s prove the hydra can live.
     "!contracts/test"
   ],
 
-### 2025-10-hybra-finance/cl/lib/ExcessivelySafeCall/package.json
+### cl/lib/ExcessivelySafeCall/package.json
 
 {
   "name": "@nomad-xyz/excessively-safe-call",
@@ -2287,7 +2287,7 @@ Let’s prove the hydra can live.
     "excessively safe call"
   ],
 
-### 2025-10-hybra-finance/cl/lib/openzeppelin-contracts/contracts/package.json
+### cl/lib/openzeppelin-contracts/contracts/package.json
 
 {
   "name": "@openzeppelin/contracts",
@@ -2298,7 +2298,7 @@ Let’s prove the hydra can live.
     "/build/contracts/*.json",
     "!/mocks",
 
-### 2025-10-hybra-finance/cl/lib/openzeppelin-contracts/package.json
+### cl/lib/openzeppelin-contracts/package.json
 
 {
   "name": "openzeppelin-solidity",
@@ -2314,7 +2314,7 @@ Let’s prove the hydra can live.
 
  Note: Check for important package version info.
 
- ### 2025-10-hybra-finance/ve33/foundry.toml
+ ### ve33/foundry.toml
 
 [profile.default]
 src = "contracts"
@@ -2382,7 +2382,7 @@ ignored = [
     "unused-import"             # Unused imports
 ]
 
-### 2025-10-hybra-finance/ve33/hardhat.config.js
+### ve33/hardhat.config.js
 
 require("@nomiclabs/hardhat-waffle");
 require('@openzeppelin/hardhat-upgrades');
@@ -2440,7 +2440,7 @@ module.exports = {
 };
 
 
-### 2025-10-hybra-finance/ve33/package.json
+### ve33/package.json
 
 {
   "dependencies": {
@@ -2454,7 +2454,7 @@ module.exports = {
 }
 
 
-### 2025-10-hybra-finance/cl/foundry.toml
+### cl/foundry.toml
 
 [profile.default]
 src = "contracts"
@@ -2490,7 +2490,7 @@ base = { key = "${BASE_ETHERSCAN_API_KEY}", url = "${BASE_ETHERSCAN_VERIFIER_URL
 hyper = { key = "${HYPEREVM_ETHERSCAN_API_KEY}", url = "${HYPEREVM_ETHERSCAN_VERIFIER_URL}" }
 hyper_test = { key = "${HYPEREVM_ETHERSCAN_API_KEY}", url = "${HYPEREVM_ETHERSCAN_VERIFIER_URL}" }
 
-### 2025-10-hybra-finance/cl/package.json
+### cl/package.json
 
 {
   "name": "@aerodrome-finance/slipstream",
@@ -2543,7 +2543,7 @@ hyper_test = { key = "${HYPEREVM_ETHERSCAN_API_KEY}", url = "${HYPEREVM_ETHERSCA
 }
 
 
-### 2025-10-hybra-finance/cl/remappings.txt
+### cl/remappings.txt
 
 @ensdomains/=node_modules/@ensdomains/
 @solidity-parser/=node_modules/solhint/node_modules/@solidity-parser/

@@ -378,42 +378,120 @@ contract GaugeCL is ReentrancyGuard, Ownable, IERC721Receiver {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.4.0 <0.8.0;
 
-import "contracts/core/interfaces/ICLFactory.sol";
-import "@openzeppelin/contracts/proxy/Clones.sol";
+/// @title Contains 512-bit math functions
+/// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision
+/// @dev Handles "phantom overflow" i.e., allows multiplication and division where an intermediate value overflows 256 bits
+library FullMath {
+    /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
+    /// @param a The multiplicand
+    /// @param b The multiplier
+    /// @param denominator The divisor
+    /// @return result The 256-bit result
+    /// @dev Credit to Remco Bloemen under MIT license https://xn--2-umb.com/21/muldiv
+    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        // 512-bit multiply [prod1 prod0] = a * b
+        // Compute the product mod 2**256 and mod 2**256 - 1
+        // then use the Chinese Remainder Theorem to reconstruct
+        // the 512 bit result. The result is stored in two 256
+        // variables such that product = prod1 * 2**256 + prod0
+        uint256 prod0; // Least significant 256 bits of the product
+        uint256 prod1; // Most significant 256 bits of the product
+        assembly {
+            let mm := mulmod(a, b, not(0))
+            prod0 := mul(a, b)
+            prod1 := sub(sub(mm, prod0), lt(mm, prod0))
+        }
 
-/// @title Provides functions for deriving a pool address from the factory, tokens, and the fee
-library PoolAddress {
-    /// @notice The identifying key of the pool
-    struct PoolKey {
-        address token0;
-        address token1;
-        int24 tickSpacing;
+        // Handle non-overflow cases, 256 by 256 division
+        if (prod1 == 0) {
+            require(denominator > 0);
+            assembly {
+                result := div(prod0, denominator)
+            }
+            return result;
+        }
+
+        // Make sure the result is less than 2**256.
+        // Also prevents denominator == 0
+        require(denominator > prod1);
+
+        ///////////////////////////////////////////////
+        // 512 by 256 division.
+        ///////////////////////////////////////////////
+
+        // Make division exact by subtracting the remainder from [prod1 prod0]
+        // Compute remainder using mulmod
+        uint256 remainder;
+        assembly {
+            remainder := mulmod(a, b, denominator)
+        }
+        // Subtract 256 bit number from 512 bit number
+        assembly {
+            prod1 := sub(prod1, gt(remainder, prod0))
+            prod0 := sub(prod0, remainder)
+        }
+
+        // Factor powers of two out of denominator
+        // Compute largest power of two divisor of denominator.
+        // Always >= 1.
+        uint256 twos = -denominator & denominator;
+        // Divide denominator by power of two
+        assembly {
+            denominator := div(denominator, twos)
+        }
+
+        // Divide [prod1 prod0] by the factors of two
+        assembly {
+            prod0 := div(prod0, twos)
+        }
+        // Shift in bits from prod1 into prod0. For this we need
+        // to flip `twos` such that it is 2**256 / twos.
+        // If twos is zero, then it becomes one
+        assembly {
+            twos := add(div(sub(0, twos), twos), 1)
+        }
+        prod0 |= prod1 * twos;
+
+        // Invert denominator mod 2**256
+        // Now that denominator is an odd number, it has an inverse
+        // modulo 2**256 such that denominator * inv = 1 mod 2**256.
+        // Compute the inverse by starting with a seed that is correct
+        // correct for four bits. That is, denominator * inv = 1 mod 2**4
+        uint256 inv = (3 * denominator) ^ 2;
+        // Now use Newton-Raphson iteration to improve the precision.
+        // Thanks to Hensel's lifting lemma, this also works in modular
+        // arithmetic, doubling the correct bits in each step.
+        inv *= 2 - denominator * inv; // inverse mod 2**8
+        inv *= 2 - denominator * inv; // inverse mod 2**16
+        inv *= 2 - denominator * inv; // inverse mod 2**32
+        inv *= 2 - denominator * inv; // inverse mod 2**64
+        inv *= 2 - denominator * inv; // inverse mod 2**128
+        inv *= 2 - denominator * inv; // inverse mod 2**256
+
+        // Because the division is now exact we can divide by multiplying
+        // with the modular inverse of denominator. This will give us the
+        // correct result modulo 2**256. Since the precoditions guarantee
+        // that the outcome is less than 2**256, this is the final result.
+        // We don't need to compute the high bits of the result and prod1
+        // is no longer required.
+        result = prod0 * inv;
+        return result;
     }
 
-    /// @notice Returns PoolKey: the ordered tokens with the matched fee levels
-    /// @param tokenA The first token of a pool, unsorted
-    /// @param tokenB The second token of a pool, unsorted
-    /// @param tickSpacing The tick spacing of the pool
-    /// @return Poolkey The pool details with ordered token0 and token1 assignments
-    function getPoolKey(address tokenA, address tokenB, int24 tickSpacing) internal pure returns (PoolKey memory) {
-        if (tokenA > tokenB) (tokenA, tokenB) = (tokenB, tokenA);
-        return PoolKey({token0: tokenA, token1: tokenB, tickSpacing: tickSpacing});
-    }
-
-    /// @notice Deterministically computes the pool address given the factory and PoolKey
-    /// @param factory The CL factory contract address
-    /// @param key The PoolKey
-    /// @return pool The contract address of the V3 pool
-    function computeAddress(address factory, PoolKey memory key) internal view returns (address pool) {
-        require(key.token0 < key.token1);
-        pool = Clones.predictDeterministicAddress({
-            master: ICLFactory(factory).poolImplementation(),
-            salt: keccak256(abi.encode(key.token0, key.token1, key.tickSpacing)),
-            deployer: factory
-        });
+    /// @notice Calculates ceil(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
+    /// @param a The multiplicand
+    /// @param b The multiplier
+    /// @param denominator The divisor
+    /// @return result The 256-bit result
+    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        result = mulDiv(a, b, denominator);
+        if (mulmod(a, b, denominator) > 0) {
+            require(result < type(uint256).max);
+            result++;
+        }
     }
 }
 
@@ -615,61 +693,63 @@ interface INonfungiblePositionManager is
     function setOwner(address _owner) external;
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: MIT
 pragma solidity =0.7.6;
+pragma abicoder v2;
 
-import "../interfaces/IPeripheryImmutableState.sol";
+import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
 
-/// @title Immutable state
-/// @notice Immutable state used by periphery contracts
-abstract contract PeripheryImmutableState is IPeripheryImmutableState {
-    /// @inheritdoc IPeripheryImmutableState
-    address public immutable override factory;
-    /// @inheritdoc IPeripheryImmutableState
-    address public immutable override WETH9;
+interface IVoter {
+    function ve() external view returns (IVotingEscrow);
 
-    constructor(address _factory, address _WETH9) {
-        factory = _factory;
-        WETH9 = _WETH9;
-    }
+    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
+
+    function gauges(address _pool) external view returns (address);
+
+    function gaugeToFees(address _gauge) external view returns (address);
+
+    function gaugeToBribes(address _gauge) external view returns (address);
+
+    function createGauge(address _poolFactory, address _pool) external returns (address);
+
+    function distribute(address gauge) external;
+
+    function factoryRegistry() external view returns (IFactoryRegistry);
+
+    /// @dev Utility to distribute to gauges of pools in array.
+    /// @param _gauges Array of gauges to distribute to.
+    function distribute(address[] memory _gauges) external;
+
+    function isAlive(address _gauge) external view returns (bool);
+
+    function killGauge(address _gauge) external;
+
+    function emergencyCouncil() external view returns (address);
+
+    /// @notice Claim emissions from gauges.
+    /// @param _gauges Array of gauges to collect emissions from.
+    function claimRewards(address[] memory _gauges) external;
+
+    /// @notice Claim fees for a given NFT.
+    /// @dev Utility to help batch fee claims.
+    /// @param _fees    Array of FeesVotingReward contracts to collect from.
+    /// @param _tokens  Array of tokens that are used as fees.
+    /// @param _tokenId Id of veNFT that you wish to claim fees for.
+    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+pragma solidity =0.7.6;
 
-interface ITokenHandler {
-    function isWhitelisted(address token) external view returns (bool);
-    function isWhitelistedNFT(uint256 token) external view returns (bool);
-    function isConnector(address token) external view returns (bool);
+interface IFactoryRegistry {
+    function approve(address poolFactory, address votingRewardsFactory, address gaugeFactory) external;
 
-    function whitelistToken(address _token) external;
-    function blacklistToken(address _token) external;
+    function isPoolFactoryApproved(address poolFactory) external returns (bool);
 
-    function whiteListed(uint256 index) external returns (address);
-    function connectors(uint256 index) external returns (address);
-
-    function whiteListedTokensLength() external returns (uint256);
-    function connectorTokensLength() external returns (uint256);
-
-    function whiteListedTokens() external view returns(address[] memory tokens);
-    function connectorTokens() external view returns(address[] memory tokens);
-}
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-import "./INonfungiblePositionManager.sol";
-
-/// @title Describes position NFT tokens via URI
-interface INonfungibleTokenPositionDescriptor {
-    /// @notice Produces the URI describing a particular token ID for a position manager
-    /// @dev Note this URI may be a data: URI with the JSON contents directly inlined
-    /// @param positionManager The position manager for which to describe the token
-    /// @param tokenId The ID of the token for which to produce a description, which may not be valid
-    /// @return The URI of the ERC721-compliant metadata
-    function tokenURI(INonfungiblePositionManager positionManager, uint256 tokenId)
+    function factoriesToPoolFactory(address poolFactory)
         external
-        view
-        returns (string memory);
+        returns (address votingRewardsFactory, address gaugeFactory);
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -888,6 +968,88 @@ interface ICLFactory {
     function enableTickSpacing(int24 tickSpacing, uint24 fee) external;
 }
 
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+library HybraTimeLibrary {
+
+    // for testnet
+    uint256 internal constant WEEK = 1800;
+    uint internal constant NO_VOTING_WINDOW = 300;
+    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
+    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
+    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
+
+    // uint256 internal constant WEEK = 7 * 86400;
+    // uint internal constant NO_VOTING_WINDOW = 3600;
+    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
+    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
+    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
+
+    /// @dev Returns start of epoch based on current timestamp
+    function epochStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK);
+        }
+    }
+
+    /// @dev Returns start of next epoch / end of current epoch
+    function epochNext(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK;
+        }
+    }
+
+    /// @dev Returns start of voting window
+    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
+        }
+    }
+
+    /// @dev Returns end of voting window / beginning of unrestricted voting window
+    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
+        }
+    }
+
+    /// @dev Returns the status if it is the last hour of the epoch
+    function isLastHour(uint256 timestamp) internal pure returns (bool) {
+        // return block.timestamp % 7 days >= 6 days + 23 hours;
+        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
+        && timestamp < HybraTimeLibrary.epochNext(timestamp);
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function epochMultiples(uint256 duration) internal pure returns (uint256) {
+        unchecked {
+            return (duration / WEEK) * WEEK;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
+        unchecked {
+            return  endTime - WEEK <= timestamp && timestamp < endTime;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
+}
+
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0 <0.8.0;
 
@@ -976,12 +1138,387 @@ library Position {
     }
 }
 
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.7.6;
-interface IMinter {
-    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
-    /// @return _period Start of current epoch.
-    function updatePeriod() external returns (uint256 _period);
+
+import "../interfaces/IPeripheryImmutableState.sol";
+
+/// @title Immutable state
+/// @notice Immutable state used by periphery contracts
+abstract contract PeripheryImmutableState is IPeripheryImmutableState {
+    /// @inheritdoc IPeripheryImmutableState
+    address public immutable override factory;
+    /// @inheritdoc IPeripheryImmutableState
+    address public immutable override WETH9;
+
+    constructor(address _factory, address _WETH9) {
+        factory = _factory;
+        WETH9 = _WETH9;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "./interfaces/IMinter.sol";
+import "./interfaces/IVoter.sol";
+import "./interfaces/IGaugeManager.sol";
+import "./interfaces/IVotingEscrow.sol";
+import "./interfaces/ITokenHandler.sol";
+import {HybraTimeLibrary} from "./libraries/HybraTimeLibrary.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+
+
+contract Bribe is ReentrancyGuard {
+    using SafeERC20 for IERC20;
+    uint256 public WEEK; 
+
+    /* ========== STATE VARIABLES ========== */
+
+    struct Checkpoint {
+        uint256 timestamp;
+        uint256 balanceOf;
+    }
+
+    struct SupplyCheckpoint {
+        uint256 timestamp;
+        uint256 supply;
+    }
+
+    mapping(address => mapping(uint256 => uint256)) public tokenRewardsPerEpoch; // token -> startTimestamp -> rewardBalance
+    address public voter;
+    address public gaugeManager;
+    address public immutable bribeFactory;
+    address public minter;
+    address public immutable ve;
+    address public owner;
+    ITokenHandler public tokenHandler;
+
+    string public TYPE;
+
+    uint256 public totalSupply;
+    mapping(uint256 => uint256) public balanceOf;
+
+    mapping(address => mapping(uint256 => uint256)) public lastEarn;
+
+    mapping(uint256 => mapping(uint256 => Checkpoint)) public checkpoints;
+    mapping(uint256 => uint256) public numCheckpoints;
+
+    mapping(uint256 => SupplyCheckpoint) public supplyCheckpoints;
+    uint256 public supplyNumCheckpoints;
+
+    mapping(address => bool) internal isBribeToken;
+    address[] public bribeTokens;
+
+
+    /* ========== CONSTRUCTOR ========== */
+
+    constructor(address _owner,address _voter,address _gaugeManager, address _bribeFactory, address _tokenHandler, address _token0, address _token1, string memory _type)  {
+        require(_bribeFactory != address(0) && _voter != address(0) && _gaugeManager != address(0) && _owner != address(0), "ZA");
+        WEEK = HybraTimeLibrary.WEEK;
+        voter = _voter;
+        gaugeManager = _gaugeManager;
+        bribeFactory = _bribeFactory;
+        tokenHandler = ITokenHandler(_tokenHandler);
+        ve = IVoter(_voter)._ve();
+        minter = IGaugeManager(_gaugeManager).minter();
+        require(minter != address(0), "ZA");
+        owner = _owner;
+        TYPE = _type;
+
+        bribeTokens.push(_token0);
+        bribeTokens.push(_token1);
+        isBribeToken[_token0] = true;
+        isBribeToken[_token1] = true;
+    }
+
+    function getEpochStart() public view returns(uint256){
+        return IMinter(minter).active_period();
+    }
+
+    /// @notice get next epoch (where bribes are saved)
+    function getNextEpochStart() public view returns(uint256){
+        return HybraTimeLibrary.epochNext(block.timestamp);
+    }
+
+    /* ========== VIEWS ========== */
+
+    /// @notice get the length of the reward tokens
+    function rewardsListLength() external view returns(uint256) {
+        return bribeTokens.length;
+    }
+
+    /// @notice Read earned amount given a tokenID and _rewardToken
+    function earned(uint256 tokenId, address _rewardToken) public view returns(uint256){
+        if (numCheckpoints[tokenId] == 0) {
+            return 0;
+        }
+        
+        uint256 reward = 0;
+        uint256 _supply = 1;
+        uint256 _currTs = HybraTimeLibrary.epochStart(lastEarn[_rewardToken][tokenId]); // take epoch last claimed in as starting point
+        uint256 _index = getPriorBalanceIndex(tokenId, _currTs);
+        Checkpoint memory cp0 = checkpoints[tokenId][_index];
+        
+        
+        // accounts for case where lastEarn is before first checkpoint
+        _currTs = Math.max(_currTs, HybraTimeLibrary.epochStart(cp0.timestamp));
+
+        // get epochs between current epoch and first checkpoint in same epoch as last claim
+        uint256 numEpochs = (HybraTimeLibrary.epochStart(block.timestamp) - _currTs) / WEEK;
+
+        if (numEpochs > 0) {
+            for (uint256 i = 0; i < numEpochs; i++) {
+                // get index of last checkpoint in this epoch
+                _index = getPriorBalanceIndex(tokenId, _currTs + WEEK - 1);
+                // get checkpoint in this epoch
+                cp0 = checkpoints[tokenId][_index];
+                // get supply of last checkpoint in this epoch
+                _supply = Math.max(supplyCheckpoints[getPriorSupplyIndex(_currTs + WEEK - 1)].supply, 1);
+                reward += (cp0.balanceOf * tokenRewardsPerEpoch[_rewardToken][_currTs]) / _supply;
+                _currTs += WEEK;
+            }
+        } 
+        return reward;  
+    }
+
+
+    function getPriorBalanceIndex(uint256 tokenId, uint256 timestamp) public view returns (uint256) {
+        uint256 nCheckpoints = numCheckpoints[tokenId];
+        if (nCheckpoints == 0) {
+            return 0;
+        }
+
+        // First check most recent balance
+        if (checkpoints[tokenId][nCheckpoints - 1].timestamp <= timestamp) {
+            return (nCheckpoints - 1);
+        }
+
+        // Next check implicit zero balance
+        if (checkpoints[tokenId][0].timestamp > timestamp) {
+            return 0;
+        }
+
+        uint256 lower = 0;
+        uint256 upper = nCheckpoints - 1;
+        while (upper > lower) {
+            uint256 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
+            Checkpoint memory cp = checkpoints[tokenId][center];
+            if (cp.timestamp == timestamp) {
+                return center;
+            } else if (cp.timestamp < timestamp) {
+                lower = center;
+            } else {
+                upper = center - 1;
+            }
+        }
+        return lower;
+    }
+
+    function getPriorSupplyIndex(uint256 timestamp) public view returns (uint256) {
+        uint256 nCheckpoints = supplyNumCheckpoints;
+        if (nCheckpoints == 0) {
+            return 0;
+        }
+
+        // First check most recent balance
+        if (supplyCheckpoints[nCheckpoints - 1].timestamp <= timestamp) {
+            return (nCheckpoints - 1);
+        }
+
+        // Next check implicit zero balance
+        if (supplyCheckpoints[0].timestamp > timestamp) {
+            return 0;
+        }
+
+        uint256 lower = 0;
+        uint256 upper = nCheckpoints - 1;
+        while (upper > lower) {
+            uint256 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
+            SupplyCheckpoint memory cp = supplyCheckpoints[center];
+            if (cp.timestamp == timestamp) {
+                return center;
+            } else if (cp.timestamp < timestamp) {
+                lower = center;
+            } else {
+                upper = center - 1;
+            }
+        }
+        return lower;
+    }
+
+    function isRewardToken(address _rewardToken) external view returns (bool) {
+        return _isRewardToken(_rewardToken);
+    }
+
+    function _isRewardToken(address _rewardToken) internal view returns (bool) {
+        return isBribeToken[_rewardToken] || tokenHandler.isConnector(_rewardToken);
+    }
+ 
+    /* ========== MUTATIVE FUNCTIONS ========== */
+
+    /// @notice User votes deposit
+    /// @dev    called on voter.vote() or voter.poke()
+    ///         we save into owner "address" and not "tokenID". 
+    ///         Owner must reset before transferring token
+    function deposit(uint256 amount, uint256 tokenId) external nonReentrant {
+        require(amount > 0, "ZV");
+        require(msg.sender == voter, "NA");
+        totalSupply += amount;
+        balanceOf[tokenId] += amount;
+
+        _writeCheckpoint(tokenId, balanceOf[tokenId]);
+        _writeSupplyCheckpoint();
+        
+        emit Staked(tokenId, amount);
+    }
+
+    function _writeCheckpoint(uint256 tokenId, uint256 balance) internal {
+        uint256 _nCheckPoints = numCheckpoints[tokenId];
+        uint256 _timestamp = block.timestamp;
+
+        if (
+            _nCheckPoints > 0 &&
+            HybraTimeLibrary.epochStart(checkpoints[tokenId][_nCheckPoints - 1].timestamp) ==
+            HybraTimeLibrary.epochStart(_timestamp)
+        ) {
+            checkpoints[tokenId][_nCheckPoints - 1] = Checkpoint(_timestamp, balance);
+        } else {
+            checkpoints[tokenId][_nCheckPoints] = Checkpoint(_timestamp, balance);
+            numCheckpoints[tokenId] = _nCheckPoints + 1;
+        }
+    }
+
+
+    function _writeSupplyCheckpoint() internal {
+        uint256 _nCheckPoints = supplyNumCheckpoints;
+        uint256 _timestamp = block.timestamp;
+
+        if (
+            _nCheckPoints > 0 &&
+            HybraTimeLibrary.epochStart(supplyCheckpoints[_nCheckPoints - 1].timestamp) ==
+            HybraTimeLibrary.epochStart(_timestamp)
+        ) {
+            supplyCheckpoints[_nCheckPoints - 1] = SupplyCheckpoint(_timestamp, totalSupply);
+        } else {
+            supplyCheckpoints[_nCheckPoints] = SupplyCheckpoint(_timestamp, totalSupply);
+            supplyNumCheckpoints = _nCheckPoints + 1;
+        }
+    }
+
+    /// @notice User votes withdrawal 
+    /// @dev    called on voter.reset()
+    function withdraw(uint256 amount, uint256 tokenId) external nonReentrant {
+        require(amount > 0, "ZV");
+        require(msg.sender == voter, "NA");
+        if (amount <= balanceOf[tokenId]) {
+            totalSupply -= amount;
+            balanceOf[tokenId] -= amount;
+
+            _writeCheckpoint(tokenId, balanceOf[tokenId]);
+            _writeSupplyCheckpoint();
+            emit Withdrawn(tokenId, amount);
+        }
+    }
+
+    /// @notice Claim the TOKENID rewards
+    function getReward(uint256 tokenId, address[] memory tokens) external nonReentrant  {
+        address _owner = IVotingEscrow(ve).ownerOf(tokenId);
+        require(msg.sender == gaugeManager, "NA");
+        uint256 _length = tokens.length;
+        for (uint256 i = 0; i < _length; i++) {
+            uint256 _reward = earned(tokenId, tokens[i]);
+            lastEarn[tokens[i]][tokenId] = block.timestamp;
+            if (_reward > 0) {
+                IERC20(tokens[i]).safeTransfer(_owner, _reward);
+            }
+        }
+    }
+
+    /// @dev Rewards are saved into Current EPOCH mapping. 
+    function notifyRewardAmount(address _rewardsToken, uint256 reward) external nonReentrant {
+        require(_isRewardToken(_rewardsToken), "!VERIFIED");
+
+        if(!isBribeToken[_rewardsToken]){
+            isBribeToken[_rewardsToken] = true;
+            bribeTokens.push(_rewardsToken);
+        }
+
+        IERC20(_rewardsToken).safeTransferFrom(msg.sender,address(this),reward);
+        uint256 epochStart = HybraTimeLibrary.epochStart(block.timestamp);
+        tokenRewardsPerEpoch[_rewardsToken][epochStart] += reward;
+        emit RewardAdded(_rewardsToken, reward, epochStart);
+    }
+
+    /* ========== RESTRICTED FUNCTIONS ========== */
+
+    /// @notice Recover some ERC20 from the contract and updated given bribe
+    function recoverERC20AndUpdateData(address tokenAddress, uint256 tokenAmount) external onlyAllowed {
+        require(tokenAmount <= IERC20(tokenAddress).balanceOf(address(this)), "TOO_MUCH");
+        
+        uint256 _startTimestamp = IMinter(minter).active_period() + WEEK;
+        uint256 _lastReward = tokenRewardsPerEpoch[tokenAddress][_startTimestamp];
+        tokenRewardsPerEpoch[tokenAddress][_startTimestamp] = _lastReward - tokenAmount;
+        IERC20(tokenAddress).safeTransfer(owner, tokenAmount);
+        emit Recovered(tokenAddress, tokenAmount);
+    }
+
+    /// @notice Recover some ERC20 from the contract.
+    /// @dev    Be careful --> if called then getReward() at last epoch will fail because some reward are missing! 
+    ///         Think about calling recoverERC20AndUpdateData()
+    function emergencyRecoverERC20(address tokenAddress, uint256 tokenAmount) external onlyAllowed {
+        require(tokenAmount <= IERC20(tokenAddress).balanceOf(address(this)), "TOO_MUCH");
+        IERC20(tokenAddress).safeTransfer(owner, tokenAmount);
+        emit Recovered(tokenAddress, tokenAmount);
+    }
+
+    /// @notice Set a new voter
+    function setVoter(address _Voter) external onlyAllowed {
+        require(_Voter != address(0), "ZA");
+        voter = _Voter;
+    }
+
+        /// @notice Set a new gaugeManager
+    function setGaugeManager(address _gaugeManager) external onlyAllowed {
+        require(_gaugeManager != address(0));
+        gaugeManager = _gaugeManager;
+    }
+
+    /// @notice Set a new minter
+    function setMinter(address _minter) external onlyAllowed {
+        require(_minter != address(0), "ZA");
+        minter = _minter;
+    }
+
+
+    /// @notice Set a new Owner
+    event SetOwner(address indexed _owner);
+    function setOwner(address _owner) external onlyAllowed {
+        require(_owner != address(0), "ZA");
+        owner = _owner;
+        emit SetOwner(_owner);
+    }
+
+
+
+    /* ========== MODIFIERS ========== */
+
+    modifier onlyAllowed() {
+        require( (msg.sender == owner || msg.sender == bribeFactory), "NA" );
+        _;
+    }
+
+
+    /* ========== EVENTS ========== */
+
+    event RewardAdded(address indexed rewardToken, uint256 reward, uint256 startTimestamp);
+    event Staked(uint256 indexed tokenId, uint256 amount);
+    event Withdrawn(uint256 indexed tokenId, uint256 amount);
+    event RewardPaid(address indexed user,address indexed rewardsToken,uint256 reward);
+    event Recovered(address indexed token, uint256 amount);
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -995,73 +1532,177 @@ library PositionKey {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-pragma abicoder v2;
+pragma solidity 0.7.6;
 
-import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+interface IGaugeManager {
+    
+    struct FarmingParam {
+        address farmingCenter;
+        address algebraEternalFarming;
+        address nfpm;
+    }
 
-interface IVoter {
-    function ve() external view returns (IVotingEscrow);
+    function isGaugeAliveForPool(address _pool) external view returns (bool);
+    function gauges(address _pair) external view returns (address);
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
+}
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.4.0;
 
-    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
-
-    function gauges(address _pool) external view returns (address);
-
-    function gaugeToFees(address _gauge) external view returns (address);
-
-    function gaugeToBribes(address _gauge) external view returns (address);
-
-    function createGauge(address _poolFactory, address _pool) external returns (address);
-
-    function distribute(address gauge) external;
-
-    function factoryRegistry() external view returns (IFactoryRegistry);
-
-    /// @dev Utility to distribute to gauges of pools in array.
-    /// @param _gauges Array of gauges to distribute to.
-    function distribute(address[] memory _gauges) external;
-
-    function isAlive(address _gauge) external view returns (bool);
-
-    function killGauge(address _gauge) external;
-
-    function emergencyCouncil() external view returns (address);
-
-    /// @notice Claim emissions from gauges.
-    /// @param _gauges Array of gauges to collect emissions from.
-    function claimRewards(address[] memory _gauges) external;
-
-    /// @notice Claim fees for a given NFT.
-    /// @dev Utility to help batch fee claims.
-    /// @param _fees    Array of FeesVotingReward contracts to collect from.
-    /// @param _tokens  Array of tokens that are used as fees.
-    /// @param _tokenId Id of veNFT that you wish to claim fees for.
-    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
+/// @title FixedPoint128
+/// @notice A library for handling binary fixed point numbers, see https://en.wikipedia.org/wiki/Q_(number_format)
+library FixedPoint128 {
+    uint256 internal constant Q128 = 0x100000000000000000000000000000000;
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
-import "./pool/ICLPoolConstants.sol";
-import "./pool/ICLPoolState.sol";
-import "./pool/ICLPoolDerivedState.sol";
-import "./pool/ICLPoolActions.sol";
-import "./pool/ICLPoolOwnerActions.sol";
-import "./pool/ICLPoolEvents.sol";
+import "contracts/core/interfaces/ICLFactory.sol";
+import "@openzeppelin/contracts/proxy/Clones.sol";
 
-/// @title The interface for a CL Pool
-/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
-/// to the ERC20 specification
-/// @dev The pool interface is broken up into many smaller pieces
-interface ICLPool is
-    ICLPoolConstants,
-    ICLPoolState,
-    ICLPoolDerivedState,
-    ICLPoolActions,
-    ICLPoolEvents,
-    ICLPoolOwnerActions
-{}
+/// @title Provides functions for deriving a pool address from the factory, tokens, and the fee
+library PoolAddress {
+    /// @notice The identifying key of the pool
+    struct PoolKey {
+        address token0;
+        address token1;
+        int24 tickSpacing;
+    }
+
+    /// @notice Returns PoolKey: the ordered tokens with the matched fee levels
+    /// @param tokenA The first token of a pool, unsorted
+    /// @param tokenB The second token of a pool, unsorted
+    /// @param tickSpacing The tick spacing of the pool
+    /// @return Poolkey The pool details with ordered token0 and token1 assignments
+    function getPoolKey(address tokenA, address tokenB, int24 tickSpacing) internal pure returns (PoolKey memory) {
+        if (tokenA > tokenB) (tokenA, tokenB) = (tokenB, tokenA);
+        return PoolKey({token0: tokenA, token1: tokenB, tickSpacing: tickSpacing});
+    }
+
+    /// @notice Deterministically computes the pool address given the factory and PoolKey
+    /// @param factory The CL factory contract address
+    /// @param key The PoolKey
+    /// @return pool The contract address of the V3 pool
+    function computeAddress(address factory, PoolKey memory key) internal view returns (address pool) {
+        require(key.token0 < key.token1);
+        pool = Clones.predictDeterministicAddress({
+            master: ICLFactory(factory).poolImplementation(),
+            salt: keccak256(abi.encode(key.token0, key.token1, key.tickSpacing)),
+            deployer: factory
+        });
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IRHYBR {
+    // Enums
+    enum RedeemType {
+        TO_HYBR,        // 0: Convert to HYBR with penalty (70%-90% rate)
+        TO_VEHYBR,      // 1: Convert to veHYBR 1:1 (max lock, new NFT)
+        TO_GHYBR        // 2: Convert to gHYBR at current ratio
+    }
+
+    // Events
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event ConvertToHYBR(address indexed user, uint256 rHYBRAmount, uint256 HYBRReceived, uint256 penalty);
+    event ConvertToGHYBR(address indexed user, uint256 rHYBRAmount, uint256 gHYBRReceived);
+    event ConvertToVeHYBR(address indexed user, uint256 rHYBRAmount, uint256 tokenId, uint256 lockTime);
+    event RateUpdated(uint256 oldRate, uint256 newRate);
+    event MinterSet(address indexed oldMinter, address indexed newMinter);
+    event GHYBRSet(address indexed gHYBR);
+    event ConversionRateBoundsUpdated(uint256 oldMinRate, uint256 oldMaxRate, uint256 newMinRate, uint256 newMaxRate);
+    event Converted(address indexed user, uint256 amount);
+
+    // View functions
+    function name() external pure returns (string memory);
+    function symbol() external pure returns (string memory);
+    function decimals() external pure returns (uint8);
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    
+    // Conversion rate parameters
+    function minConversionRate() external view returns (uint256);
+    function maxConversionRate() external view returns (uint256);
+    function RATE_PRECISION() external pure returns (uint256);
+    function RATE_INCREASE_PER_HOUR() external pure returns (uint256);
+    function RATE_DECREASE_PER_CONVERSION() external pure returns (uint256);
+    function MIN_DECREASE_PER_CONVERSION() external pure returns (uint256);
+    
+    // Dynamic rate state
+    function currentConversionRate() external view returns (uint256);
+    function lastConversionTime() external view returns (uint256);
+    function lastRateUpdateTime() external view returns (uint256);
+    
+    // External contracts
+    function HYBR() external view returns (address);
+    function gHYBR() external view returns (address);
+    function votingEscrow() external view returns (address);
+    function minter() external view returns (address);
+    function gaugeManager() external view returns (address);
+
+    // Core functions
+    function updateConversionRate() external;
+    function depostionEmissionsToken(uint256 _amount) external;
+    function withdraw(uint256 amount) external;
+    function redeem(uint256 amount, uint8 redeemType) external;
+    function redeemFor(uint256 amount, uint8 redeemType, address recipient) external;
+    function mint(address to, uint256 amount) external;
+    
+    // Transfer functions
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function approve(address spender, uint256 amount) external pure returns (bool);
+    function allowance(address owner, address spender) external pure returns (uint256);
+    
+    // Admin functions
+    function setMinter(address _minter) external;
+    function setGHYBR(address _gHYBR) external;
+    function setConversionRateBounds(uint256 _minRate, uint256 _maxRate) external;
+    function emergencyWithdraw(address token, uint256 amount) external;
+    
+    // Whitelist management
+    function addExempt(address account) external;
+    function removeExempt(address account) external;
+    function addExemptTo(address account) external;
+    function removeExemptTo(address account) external;
+    function setGaugeManager(address _gaugeManager) external;
+    function isExempt(address account) external view returns (bool);
+    function isExemptTo(address account) external view returns (bool);
+
+    // gHYBR interface functions (for compatibility)
+    function deposit(uint256 amount, address recipient) external;
+    function getPenaltyReward(uint256 amount) external;
+    function rebase() external;
+}
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import "./INonfungiblePositionManager.sol";
+
+/// @title Describes position NFT tokens via URI
+interface INonfungibleTokenPositionDescriptor {
+    /// @notice Produces the URI describing a particular token ID for a position manager
+    /// @dev Note this URI may be a data: URI with the JSON contents directly inlined
+    /// @param positionManager The position manager for which to describe the token
+    /// @param tokenId The ID of the token for which to produce a description, which may not be valid
+    /// @return The URI of the ERC721-compliant metadata
+    function tokenURI(INonfungiblePositionManager positionManager, uint256 tokenId)
+        external
+        view
+        returns (string memory);
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity =0.7.6;
+interface IMinter {
+    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
+    /// @return _period Start of current epoch.
+    function updatePeriod() external returns (uint256 _period);
+}
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.7.6;
@@ -1523,304 +2164,6 @@ contract NonfungiblePositionManager is
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity >=0.4.0 <0.8.0;
-
-/// @title Contains 512-bit math functions
-/// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision
-/// @dev Handles "phantom overflow" i.e., allows multiplication and division where an intermediate value overflows 256 bits
-library FullMath {
-    /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
-    /// @param a The multiplicand
-    /// @param b The multiplier
-    /// @param denominator The divisor
-    /// @return result The 256-bit result
-    /// @dev Credit to Remco Bloemen under MIT license https://xn--2-umb.com/21/muldiv
-    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
-        // 512-bit multiply [prod1 prod0] = a * b
-        // Compute the product mod 2**256 and mod 2**256 - 1
-        // then use the Chinese Remainder Theorem to reconstruct
-        // the 512 bit result. The result is stored in two 256
-        // variables such that product = prod1 * 2**256 + prod0
-        uint256 prod0; // Least significant 256 bits of the product
-        uint256 prod1; // Most significant 256 bits of the product
-        assembly {
-            let mm := mulmod(a, b, not(0))
-            prod0 := mul(a, b)
-            prod1 := sub(sub(mm, prod0), lt(mm, prod0))
-        }
-
-        // Handle non-overflow cases, 256 by 256 division
-        if (prod1 == 0) {
-            require(denominator > 0);
-            assembly {
-                result := div(prod0, denominator)
-            }
-            return result;
-        }
-
-        // Make sure the result is less than 2**256.
-        // Also prevents denominator == 0
-        require(denominator > prod1);
-
-        ///////////////////////////////////////////////
-        // 512 by 256 division.
-        ///////////////////////////////////////////////
-
-        // Make division exact by subtracting the remainder from [prod1 prod0]
-        // Compute remainder using mulmod
-        uint256 remainder;
-        assembly {
-            remainder := mulmod(a, b, denominator)
-        }
-        // Subtract 256 bit number from 512 bit number
-        assembly {
-            prod1 := sub(prod1, gt(remainder, prod0))
-            prod0 := sub(prod0, remainder)
-        }
-
-        // Factor powers of two out of denominator
-        // Compute largest power of two divisor of denominator.
-        // Always >= 1.
-        uint256 twos = -denominator & denominator;
-        // Divide denominator by power of two
-        assembly {
-            denominator := div(denominator, twos)
-        }
-
-        // Divide [prod1 prod0] by the factors of two
-        assembly {
-            prod0 := div(prod0, twos)
-        }
-        // Shift in bits from prod1 into prod0. For this we need
-        // to flip `twos` such that it is 2**256 / twos.
-        // If twos is zero, then it becomes one
-        assembly {
-            twos := add(div(sub(0, twos), twos), 1)
-        }
-        prod0 |= prod1 * twos;
-
-        // Invert denominator mod 2**256
-        // Now that denominator is an odd number, it has an inverse
-        // modulo 2**256 such that denominator * inv = 1 mod 2**256.
-        // Compute the inverse by starting with a seed that is correct
-        // correct for four bits. That is, denominator * inv = 1 mod 2**4
-        uint256 inv = (3 * denominator) ^ 2;
-        // Now use Newton-Raphson iteration to improve the precision.
-        // Thanks to Hensel's lifting lemma, this also works in modular
-        // arithmetic, doubling the correct bits in each step.
-        inv *= 2 - denominator * inv; // inverse mod 2**8
-        inv *= 2 - denominator * inv; // inverse mod 2**16
-        inv *= 2 - denominator * inv; // inverse mod 2**32
-        inv *= 2 - denominator * inv; // inverse mod 2**64
-        inv *= 2 - denominator * inv; // inverse mod 2**128
-        inv *= 2 - denominator * inv; // inverse mod 2**256
-
-        // Because the division is now exact we can divide by multiplying
-        // with the modular inverse of denominator. This will give us the
-        // correct result modulo 2**256. Since the precoditions guarantee
-        // that the outcome is less than 2**256, this is the final result.
-        // We don't need to compute the high bits of the result and prod1
-        // is no longer required.
-        result = prod0 * inv;
-        return result;
-    }
-
-    /// @notice Calculates ceil(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
-    /// @param a The multiplicand
-    /// @param b The multiplier
-    /// @param denominator The divisor
-    /// @return result The 256-bit result
-    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
-        result = mulDiv(a, b, denominator);
-        if (mulmod(a, b, denominator) > 0) {
-            require(result < type(uint256).max);
-            result++;
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IRHYBR {
-    // Enums
-    enum RedeemType {
-        TO_HYBR,        // 0: Convert to HYBR with penalty (70%-90% rate)
-        TO_VEHYBR,      // 1: Convert to veHYBR 1:1 (max lock, new NFT)
-        TO_GHYBR        // 2: Convert to gHYBR at current ratio
-    }
-
-    // Events
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event ConvertToHYBR(address indexed user, uint256 rHYBRAmount, uint256 HYBRReceived, uint256 penalty);
-    event ConvertToGHYBR(address indexed user, uint256 rHYBRAmount, uint256 gHYBRReceived);
-    event ConvertToVeHYBR(address indexed user, uint256 rHYBRAmount, uint256 tokenId, uint256 lockTime);
-    event RateUpdated(uint256 oldRate, uint256 newRate);
-    event MinterSet(address indexed oldMinter, address indexed newMinter);
-    event GHYBRSet(address indexed gHYBR);
-    event ConversionRateBoundsUpdated(uint256 oldMinRate, uint256 oldMaxRate, uint256 newMinRate, uint256 newMaxRate);
-    event Converted(address indexed user, uint256 amount);
-
-    // View functions
-    function name() external pure returns (string memory);
-    function symbol() external pure returns (string memory);
-    function decimals() external pure returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    
-    // Conversion rate parameters
-    function minConversionRate() external view returns (uint256);
-    function maxConversionRate() external view returns (uint256);
-    function RATE_PRECISION() external pure returns (uint256);
-    function RATE_INCREASE_PER_HOUR() external pure returns (uint256);
-    function RATE_DECREASE_PER_CONVERSION() external pure returns (uint256);
-    function MIN_DECREASE_PER_CONVERSION() external pure returns (uint256);
-    
-    // Dynamic rate state
-    function currentConversionRate() external view returns (uint256);
-    function lastConversionTime() external view returns (uint256);
-    function lastRateUpdateTime() external view returns (uint256);
-    
-    // External contracts
-    function HYBR() external view returns (address);
-    function gHYBR() external view returns (address);
-    function votingEscrow() external view returns (address);
-    function minter() external view returns (address);
-    function gaugeManager() external view returns (address);
-
-    // Core functions
-    function updateConversionRate() external;
-    function depostionEmissionsToken(uint256 _amount) external;
-    function withdraw(uint256 amount) external;
-    function redeem(uint256 amount, uint8 redeemType) external;
-    function redeemFor(uint256 amount, uint8 redeemType, address recipient) external;
-    function mint(address to, uint256 amount) external;
-    
-    // Transfer functions
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function approve(address spender, uint256 amount) external pure returns (bool);
-    function allowance(address owner, address spender) external pure returns (uint256);
-    
-    // Admin functions
-    function setMinter(address _minter) external;
-    function setGHYBR(address _gHYBR) external;
-    function setConversionRateBounds(uint256 _minRate, uint256 _maxRate) external;
-    function emergencyWithdraw(address token, uint256 amount) external;
-    
-    // Whitelist management
-    function addExempt(address account) external;
-    function removeExempt(address account) external;
-    function addExemptTo(address account) external;
-    function removeExemptTo(address account) external;
-    function setGaugeManager(address _gaugeManager) external;
-    function isExempt(address account) external view returns (bool);
-    function isExemptTo(address account) external view returns (bool);
-
-    // gHYBR interface functions (for compatibility)
-    function deposit(uint256 amount, address recipient) external;
-    function getPenaltyReward(uint256 amount) external;
-    function rebase() external;
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-library HybraTimeLibrary {
-
-    // for testnet
-    uint256 internal constant WEEK = 1800;
-    uint internal constant NO_VOTING_WINDOW = 300;
-    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
-    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
-    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
-
-    // uint256 internal constant WEEK = 7 * 86400;
-    // uint internal constant NO_VOTING_WINDOW = 3600;
-    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
-    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
-    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
-
-    /// @dev Returns start of epoch based on current timestamp
-    function epochStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK);
-        }
-    }
-
-    /// @dev Returns start of next epoch / end of current epoch
-    function epochNext(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK;
-        }
-    }
-
-    /// @dev Returns start of voting window
-    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
-        }
-    }
-
-    /// @dev Returns end of voting window / beginning of unrestricted voting window
-    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
-        }
-    }
-
-    /// @dev Returns the status if it is the last hour of the epoch
-    function isLastHour(uint256 timestamp) internal pure returns (bool) {
-        // return block.timestamp % 7 days >= 6 days + 23 hours;
-        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
-        && timestamp < HybraTimeLibrary.epochNext(timestamp);
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function epochMultiples(uint256 duration) internal pure returns (uint256) {
-        unchecked {
-            return (duration / WEEK) * WEEK;
-        }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
-        unchecked {
-            return  endTime - WEEK <= timestamp && timestamp < endTime;
-        }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
-        }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-
-interface IGaugeManager {
-    
-    struct FarmingParam {
-        address farmingCenter;
-        address algebraEternalFarming;
-        address nfpm;
-    }
-
-    function isGaugeAliveForPool(address _pool) external view returns (bool);
-    function gauges(address _pair) external view returns (address);
-    function isGauge(address _gauge) external view returns (bool);
-    function poolForGauge(address _gauge) external view returns (address);
-}
-// SPDX-License-Identifier: MIT
 pragma solidity =0.7.6;
 
 interface IVotingEscrow {
@@ -1833,406 +2176,28 @@ interface IVotingEscrow {
     function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IBribe {
-    function deposit(uint amount, uint tokenId) external;
-    function withdraw(uint amount, uint tokenId) external;
-    function getRewardForAddress(address _owner, address[] memory tokens) external;
-    function notifyRewardAmount(address token, uint amount) external;
-    function left(address token) external view returns (uint);
-    function getReward(uint tokenId, address[] memory tokens) external;
-    function bribeTokens(uint256 i) external view returns(address); 
-    function rewardsListLength() external view returns (uint256);
-    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IFactoryRegistry {
-    function approve(address poolFactory, address votingRewardsFactory, address gaugeFactory) external;
-
-    function isPoolFactoryApproved(address poolFactory) external returns (bool);
-
-    function factoriesToPoolFactory(address poolFactory)
-        external
-        returns (address votingRewardsFactory, address gaugeFactory);
-}
-
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.4.0;
-
-/// @title FixedPoint128
-/// @notice A library for handling binary fixed point numbers, see https://en.wikipedia.org/wiki/Q_(number_format)
-library FixedPoint128 {
-    uint256 internal constant Q128 = 0x100000000000000000000000000000000;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-import "./interfaces/IMinter.sol";
-import "./interfaces/IVoter.sol";
-import "./interfaces/IGaugeManager.sol";
-import "./interfaces/IVotingEscrow.sol";
-import "./interfaces/ITokenHandler.sol";
-import {HybraTimeLibrary} from "./libraries/HybraTimeLibrary.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-
-
-contract Bribe is ReentrancyGuard {
-    using SafeERC20 for IERC20;
-    uint256 public WEEK; 
-
-    /* ========== STATE VARIABLES ========== */
-
-    struct Checkpoint {
-        uint256 timestamp;
-        uint256 balanceOf;
-    }
-
-    struct SupplyCheckpoint {
-        uint256 timestamp;
-        uint256 supply;
-    }
-
-    mapping(address => mapping(uint256 => uint256)) public tokenRewardsPerEpoch; // token -> startTimestamp -> rewardBalance
-    address public voter;
-    address public gaugeManager;
-    address public immutable bribeFactory;
-    address public minter;
-    address public immutable ve;
-    address public owner;
-    ITokenHandler public tokenHandler;
-
-    string public TYPE;
-
-    uint256 public totalSupply;
-    mapping(uint256 => uint256) public balanceOf;
-
-    mapping(address => mapping(uint256 => uint256)) public lastEarn;
-
-    mapping(uint256 => mapping(uint256 => Checkpoint)) public checkpoints;
-    mapping(uint256 => uint256) public numCheckpoints;
-
-    mapping(uint256 => SupplyCheckpoint) public supplyCheckpoints;
-    uint256 public supplyNumCheckpoints;
-
-    mapping(address => bool) internal isBribeToken;
-    address[] public bribeTokens;
-
-
-    /* ========== CONSTRUCTOR ========== */
-
-    constructor(address _owner,address _voter,address _gaugeManager, address _bribeFactory, address _tokenHandler, address _token0, address _token1, string memory _type)  {
-        require(_bribeFactory != address(0) && _voter != address(0) && _gaugeManager != address(0) && _owner != address(0), "ZA");
-        WEEK = HybraTimeLibrary.WEEK;
-        voter = _voter;
-        gaugeManager = _gaugeManager;
-        bribeFactory = _bribeFactory;
-        tokenHandler = ITokenHandler(_tokenHandler);
-        ve = IVoter(_voter)._ve();
-        minter = IGaugeManager(_gaugeManager).minter();
-        require(minter != address(0), "ZA");
-        owner = _owner;
-        TYPE = _type;
-
-        bribeTokens.push(_token0);
-        bribeTokens.push(_token1);
-        isBribeToken[_token0] = true;
-        isBribeToken[_token1] = true;
-    }
-
-    function getEpochStart() public view returns(uint256){
-        return IMinter(minter).active_period();
-    }
-
-    /// @notice get next epoch (where bribes are saved)
-    function getNextEpochStart() public view returns(uint256){
-        return HybraTimeLibrary.epochNext(block.timestamp);
-    }
-
-    /* ========== VIEWS ========== */
-
-    /// @notice get the length of the reward tokens
-    function rewardsListLength() external view returns(uint256) {
-        return bribeTokens.length;
-    }
-
-    /// @notice Read earned amount given a tokenID and _rewardToken
-    function earned(uint256 tokenId, address _rewardToken) public view returns(uint256){
-        if (numCheckpoints[tokenId] == 0) {
-            return 0;
-        }
-        
-        uint256 reward = 0;
-        uint256 _supply = 1;
-        uint256 _currTs = HybraTimeLibrary.epochStart(lastEarn[_rewardToken][tokenId]); // take epoch last claimed in as starting point
-        uint256 _index = getPriorBalanceIndex(tokenId, _currTs);
-        Checkpoint memory cp0 = checkpoints[tokenId][_index];
-        
-        
-        // accounts for case where lastEarn is before first checkpoint
-        _currTs = Math.max(_currTs, HybraTimeLibrary.epochStart(cp0.timestamp));
-
-        // get epochs between current epoch and first checkpoint in same epoch as last claim
-        uint256 numEpochs = (HybraTimeLibrary.epochStart(block.timestamp) - _currTs) / WEEK;
-
-        if (numEpochs > 0) {
-            for (uint256 i = 0; i < numEpochs; i++) {
-                // get index of last checkpoint in this epoch
-                _index = getPriorBalanceIndex(tokenId, _currTs + WEEK - 1);
-                // get checkpoint in this epoch
-                cp0 = checkpoints[tokenId][_index];
-                // get supply of last checkpoint in this epoch
-                _supply = Math.max(supplyCheckpoints[getPriorSupplyIndex(_currTs + WEEK - 1)].supply, 1);
-                reward += (cp0.balanceOf * tokenRewardsPerEpoch[_rewardToken][_currTs]) / _supply;
-                _currTs += WEEK;
-            }
-        } 
-        return reward;  
-    }
-
-
-    function getPriorBalanceIndex(uint256 tokenId, uint256 timestamp) public view returns (uint256) {
-        uint256 nCheckpoints = numCheckpoints[tokenId];
-        if (nCheckpoints == 0) {
-            return 0;
-        }
-
-        // First check most recent balance
-        if (checkpoints[tokenId][nCheckpoints - 1].timestamp <= timestamp) {
-            return (nCheckpoints - 1);
-        }
-
-        // Next check implicit zero balance
-        if (checkpoints[tokenId][0].timestamp > timestamp) {
-            return 0;
-        }
-
-        uint256 lower = 0;
-        uint256 upper = nCheckpoints - 1;
-        while (upper > lower) {
-            uint256 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
-            Checkpoint memory cp = checkpoints[tokenId][center];
-            if (cp.timestamp == timestamp) {
-                return center;
-            } else if (cp.timestamp < timestamp) {
-                lower = center;
-            } else {
-                upper = center - 1;
-            }
-        }
-        return lower;
-    }
-
-    function getPriorSupplyIndex(uint256 timestamp) public view returns (uint256) {
-        uint256 nCheckpoints = supplyNumCheckpoints;
-        if (nCheckpoints == 0) {
-            return 0;
-        }
-
-        // First check most recent balance
-        if (supplyCheckpoints[nCheckpoints - 1].timestamp <= timestamp) {
-            return (nCheckpoints - 1);
-        }
-
-        // Next check implicit zero balance
-        if (supplyCheckpoints[0].timestamp > timestamp) {
-            return 0;
-        }
-
-        uint256 lower = 0;
-        uint256 upper = nCheckpoints - 1;
-        while (upper > lower) {
-            uint256 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
-            SupplyCheckpoint memory cp = supplyCheckpoints[center];
-            if (cp.timestamp == timestamp) {
-                return center;
-            } else if (cp.timestamp < timestamp) {
-                lower = center;
-            } else {
-                upper = center - 1;
-            }
-        }
-        return lower;
-    }
-
-    function isRewardToken(address _rewardToken) external view returns (bool) {
-        return _isRewardToken(_rewardToken);
-    }
-
-    function _isRewardToken(address _rewardToken) internal view returns (bool) {
-        return isBribeToken[_rewardToken] || tokenHandler.isConnector(_rewardToken);
-    }
- 
-    /* ========== MUTATIVE FUNCTIONS ========== */
-
-    /// @notice User votes deposit
-    /// @dev    called on voter.vote() or voter.poke()
-    ///         we save into owner "address" and not "tokenID". 
-    ///         Owner must reset before transferring token
-    function deposit(uint256 amount, uint256 tokenId) external nonReentrant {
-        require(amount > 0, "ZV");
-        require(msg.sender == voter, "NA");
-        totalSupply += amount;
-        balanceOf[tokenId] += amount;
-
-        _writeCheckpoint(tokenId, balanceOf[tokenId]);
-        _writeSupplyCheckpoint();
-        
-        emit Staked(tokenId, amount);
-    }
-
-    function _writeCheckpoint(uint256 tokenId, uint256 balance) internal {
-        uint256 _nCheckPoints = numCheckpoints[tokenId];
-        uint256 _timestamp = block.timestamp;
-
-        if (
-            _nCheckPoints > 0 &&
-            HybraTimeLibrary.epochStart(checkpoints[tokenId][_nCheckPoints - 1].timestamp) ==
-            HybraTimeLibrary.epochStart(_timestamp)
-        ) {
-            checkpoints[tokenId][_nCheckPoints - 1] = Checkpoint(_timestamp, balance);
-        } else {
-            checkpoints[tokenId][_nCheckPoints] = Checkpoint(_timestamp, balance);
-            numCheckpoints[tokenId] = _nCheckPoints + 1;
-        }
-    }
-
-
-    function _writeSupplyCheckpoint() internal {
-        uint256 _nCheckPoints = supplyNumCheckpoints;
-        uint256 _timestamp = block.timestamp;
-
-        if (
-            _nCheckPoints > 0 &&
-            HybraTimeLibrary.epochStart(supplyCheckpoints[_nCheckPoints - 1].timestamp) ==
-            HybraTimeLibrary.epochStart(_timestamp)
-        ) {
-            supplyCheckpoints[_nCheckPoints - 1] = SupplyCheckpoint(_timestamp, totalSupply);
-        } else {
-            supplyCheckpoints[_nCheckPoints] = SupplyCheckpoint(_timestamp, totalSupply);
-            supplyNumCheckpoints = _nCheckPoints + 1;
-        }
-    }
-
-    /// @notice User votes withdrawal 
-    /// @dev    called on voter.reset()
-    function withdraw(uint256 amount, uint256 tokenId) external nonReentrant {
-        require(amount > 0, "ZV");
-        require(msg.sender == voter, "NA");
-        if (amount <= balanceOf[tokenId]) {
-            totalSupply -= amount;
-            balanceOf[tokenId] -= amount;
-
-            _writeCheckpoint(tokenId, balanceOf[tokenId]);
-            _writeSupplyCheckpoint();
-            emit Withdrawn(tokenId, amount);
-        }
-    }
-
-    /// @notice Claim the TOKENID rewards
-    function getReward(uint256 tokenId, address[] memory tokens) external nonReentrant  {
-        address _owner = IVotingEscrow(ve).ownerOf(tokenId);
-        require(msg.sender == gaugeManager, "NA");
-        uint256 _length = tokens.length;
-        for (uint256 i = 0; i < _length; i++) {
-            uint256 _reward = earned(tokenId, tokens[i]);
-            lastEarn[tokens[i]][tokenId] = block.timestamp;
-            if (_reward > 0) {
-                IERC20(tokens[i]).safeTransfer(_owner, _reward);
-            }
-        }
-    }
-
-    /// @dev Rewards are saved into Current EPOCH mapping. 
-    function notifyRewardAmount(address _rewardsToken, uint256 reward) external nonReentrant {
-        require(_isRewardToken(_rewardsToken), "!VERIFIED");
-
-        if(!isBribeToken[_rewardsToken]){
-            isBribeToken[_rewardsToken] = true;
-            bribeTokens.push(_rewardsToken);
-        }
-
-        IERC20(_rewardsToken).safeTransferFrom(msg.sender,address(this),reward);
-        uint256 epochStart = HybraTimeLibrary.epochStart(block.timestamp);
-        tokenRewardsPerEpoch[_rewardsToken][epochStart] += reward;
-        emit RewardAdded(_rewardsToken, reward, epochStart);
-    }
-
-    /* ========== RESTRICTED FUNCTIONS ========== */
-
-    /// @notice Recover some ERC20 from the contract and updated given bribe
-    function recoverERC20AndUpdateData(address tokenAddress, uint256 tokenAmount) external onlyAllowed {
-        require(tokenAmount <= IERC20(tokenAddress).balanceOf(address(this)), "TOO_MUCH");
-        
-        uint256 _startTimestamp = IMinter(minter).active_period() + WEEK;
-        uint256 _lastReward = tokenRewardsPerEpoch[tokenAddress][_startTimestamp];
-        tokenRewardsPerEpoch[tokenAddress][_startTimestamp] = _lastReward - tokenAmount;
-        IERC20(tokenAddress).safeTransfer(owner, tokenAmount);
-        emit Recovered(tokenAddress, tokenAmount);
-    }
-
-    /// @notice Recover some ERC20 from the contract.
-    /// @dev    Be careful --> if called then getReward() at last epoch will fail because some reward are missing! 
-    ///         Think about calling recoverERC20AndUpdateData()
-    function emergencyRecoverERC20(address tokenAddress, uint256 tokenAmount) external onlyAllowed {
-        require(tokenAmount <= IERC20(tokenAddress).balanceOf(address(this)), "TOO_MUCH");
-        IERC20(tokenAddress).safeTransfer(owner, tokenAmount);
-        emit Recovered(tokenAddress, tokenAmount);
-    }
-
-    /// @notice Set a new voter
-    function setVoter(address _Voter) external onlyAllowed {
-        require(_Voter != address(0), "ZA");
-        voter = _Voter;
-    }
-
-        /// @notice Set a new gaugeManager
-    function setGaugeManager(address _gaugeManager) external onlyAllowed {
-        require(_gaugeManager != address(0));
-        gaugeManager = _gaugeManager;
-    }
-
-    /// @notice Set a new minter
-    function setMinter(address _minter) external onlyAllowed {
-        require(_minter != address(0), "ZA");
-        minter = _minter;
-    }
-
-
-    /// @notice Set a new Owner
-    event SetOwner(address indexed _owner);
-    function setOwner(address _owner) external onlyAllowed {
-        require(_owner != address(0), "ZA");
-        owner = _owner;
-        emit SetOwner(_owner);
-    }
-
-
-
-    /* ========== MODIFIERS ========== */
-
-    modifier onlyAllowed() {
-        require( (msg.sender == owner || msg.sender == bribeFactory), "NA" );
-        _;
-    }
-
-
-    /* ========== EVENTS ========== */
-
-    event RewardAdded(address indexed rewardToken, uint256 reward, uint256 startTimestamp);
-    event Staked(uint256 indexed tokenId, uint256 amount);
-    event Withdrawn(uint256 indexed tokenId, uint256 amount);
-    event RewardPaid(address indexed user,address indexed rewardsToken,uint256 reward);
-    event Recovered(address indexed token, uint256 amount);
-}
+pragma solidity >=0.5.0;
+
+import "./pool/ICLPoolConstants.sol";
+import "./pool/ICLPoolState.sol";
+import "./pool/ICLPoolDerivedState.sol";
+import "./pool/ICLPoolActions.sol";
+import "./pool/ICLPoolOwnerActions.sol";
+import "./pool/ICLPoolEvents.sol";
+
+/// @title The interface for a CL Pool
+/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
+/// to the ERC20 specification
+/// @dev The pool interface is broken up into many smaller pieces
+interface ICLPool is
+    ICLPoolConstants,
+    ICLPoolState,
+    ICLPoolDerivedState,
+    ICLPoolActions,
+    ICLPoolEvents,
+    ICLPoolOwnerActions
+{}
 
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.13;
@@ -2337,47 +2302,41 @@ contract HYBR is IHybra {
     }
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity =0.7.6;
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
 
-import "./BlockTimestamp.sol";
-
-abstract contract PeripheryValidation is BlockTimestamp {
-    modifier checkDeadline(uint256 deadline) {
-        require(_blockTimestamp() <= deadline);
-        _;
-    }
+interface IBribe {
+    function deposit(uint amount, uint tokenId) external;
+    function withdraw(uint amount, uint tokenId) external;
+    function getRewardForAddress(address _owner, address[] memory tokens) external;
+    function notifyRewardAmount(address token, uint amount) external;
+    function left(address token) external view returns (uint);
+    function getReward(uint tokenId, address[] memory tokens) external;
+    function bribeTokens(uint256 i) external view returns(address); 
+    function rewardsListLength() external view returns (uint256);
+    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity =0.7.6;
-pragma abicoder v2;
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
 
-import "../interfaces/IMulticall.sol";
+interface ITokenHandler {
+    function isWhitelisted(address token) external view returns (bool);
+    function isWhitelistedNFT(uint256 token) external view returns (bool);
+    function isConnector(address token) external view returns (bool);
 
-/// @title Multicall
-/// @notice Enables calling multiple methods in a single call to the contract
-abstract contract Multicall is IMulticall {
-    /// @inheritdoc IMulticall
-    function multicall(bytes[] calldata data) public payable override returns (bytes[] memory results) {
-        results = new bytes[](data.length);
-        for (uint256 i = 0; i < data.length; i++) {
-            (bool success, bytes memory result) = address(this).delegatecall(data[i]);
+    function whitelistToken(address _token) external;
+    function blacklistToken(address _token) external;
 
-            if (!success) {
-                // Next 5 lines from https://ethereum.stackexchange.com/a/83577
-                if (result.length < 68) revert();
-                assembly {
-                    result := add(result, 0x04)
-                }
-                revert(abi.decode(result, (string)));
-            }
+    function whiteListed(uint256 index) external returns (address);
+    function connectors(uint256 index) external returns (address);
 
-            results[i] = result;
-        }
-    }
+    function whiteListedTokensLength() external returns (uint256);
+    function connectorTokensLength() external returns (uint256);
+
+    function whiteListedTokens() external view returns(address[] memory tokens);
+    function connectorTokens() external view returns(address[] memory tokens);
 }
-
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.7.6;
 pragma abicoder v2;
@@ -2501,6 +2460,47 @@ abstract contract SelfPermit is ISelfPermit {
     {
         if (IERC20(token).allowance(msg.sender, address(this)) < type(uint256).max) {
             selfPermitAllowed(token, nonce, expiry, v, r, s);
+        }
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity =0.7.6;
+
+import "./BlockTimestamp.sol";
+
+abstract contract PeripheryValidation is BlockTimestamp {
+    modifier checkDeadline(uint256 deadline) {
+        require(_blockTimestamp() <= deadline);
+        _;
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity =0.7.6;
+pragma abicoder v2;
+
+import "../interfaces/IMulticall.sol";
+
+/// @title Multicall
+/// @notice Enables calling multiple methods in a single call to the contract
+abstract contract Multicall is IMulticall {
+    /// @inheritdoc IMulticall
+    function multicall(bytes[] calldata data) public payable override returns (bytes[] memory results) {
+        results = new bytes[](data.length);
+        for (uint256 i = 0; i < data.length; i++) {
+            (bool success, bytes memory result) = address(this).delegatecall(data[i]);
+
+            if (!success) {
+                // Next 5 lines from https://ethereum.stackexchange.com/a/83577
+                if (result.length < 68) revert();
+                assembly {
+                    result := add(result, 0x04)
+                }
+                revert(abi.decode(result, (string)));
+            }
+
+            results[i] = result;
         }
     }
 }

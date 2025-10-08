@@ -16,7 +16,7 @@ pub enum AuditType {
 }
 
 // TYPE OF AUDIT
-pub const AUDIT_TYPE: AuditType = AuditType::Sherlock;
+pub const AUDIT_TYPE: AuditType = AuditType::Code4rena;
 
 // Application constants - these don't need to be configurable via environment
 /// Maximum call graph traversal depth for code slice generation

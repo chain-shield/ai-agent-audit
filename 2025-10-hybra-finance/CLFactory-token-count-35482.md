@@ -278,25 +278,22 @@ contract CLFactory is ICLFactory {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
 
-interface IVotingEscrow {
-    function team() external returns (address);
-
-    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
-    /// @param _value Amount to deposit
-    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
-    /// @return TokenId of created veNFT
-    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity =0.7.6;
-interface IMinter {
-    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
-    /// @return _period Start of current epoch.
-    function updatePeriod() external returns (uint256 _period);
+/// @title Callback for ICLPoolActions#swap
+/// @notice Any contract that calls ICLPoolActions#swap must implement this interface
+interface ICLSwapCallback {
+    /// @notice Called to `msg.sender` after executing a swap via ICLPool#swap.
+    /// @dev In the implementation you must pay the pool tokens owed for the swap.
+    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
+    /// amount0Delta and amount1Delta can both be 0 if no tokens were swapped.
+    /// @param amount0Delta The amount of token0 that was sent (negative) or must be received (positive) by the pool by
+    /// the end of the swap. If positive, the callback must send that amount of token0 to the pool.
+    /// @param amount1Delta The amount of token1 that was sent (negative) or must be received (positive) by the pool by
+    /// the end of the swap. If positive, the callback must send that amount of token1 to the pool.
+    /// @param data Any data passed through by the caller via the ICLPoolActions#swap call
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external;
 }
 
 pragma solidity 0.8.13;
@@ -377,809 +374,19 @@ library VoterFactoryLib {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface ITokenHandler {
-    function isWhitelisted(address token) external view returns (bool);
-    function isWhitelistedNFT(uint256 token) external view returns (bool);
-    function isConnector(address token) external view returns (bool);
-
-    function whitelistToken(address _token) external;
-    function blacklistToken(address _token) external;
-
-    function whiteListed(uint256 index) external returns (address);
-    function connectors(uint256 index) external returns (address);
-
-    function whiteListedTokensLength() external returns (uint256);
-    function connectorTokensLength() external returns (uint256);
-
-    function whiteListedTokens() external view returns(address[] memory tokens);
-    function connectorTokens() external view returns(address[] memory tokens);
+interface IGaugeFactory {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
 }
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-import './libraries/Math.sol';
-import './interfaces/IVoter.sol';
-import './interfaces/ITokenHandler.sol';
-import './interfaces/IERC20.sol';
-import './interfaces/IPairInfo.sol';
-import './interfaces/IPairFactory.sol';
-import './interfaces/IVotingEscrow.sol';
-import './interfaces/IPermissionsRegistry.sol';
-import './interfaces/IGaugeFactoryCL.sol';
-import './interfaces/IGaugeManager.sol';
-import './interfaces/IBribe.sol';
-import './interfaces/IBribeFactory.sol';
-import './interfaces/IGauge.sol';
-import './interfaces/IMinter.sol';
-import './interfaces/IGaugeCL.sol';
-import './interfaces/IBribe.sol';
-import './interfaces/IGaugeFactory.sol';
-import "./CLGauge/interface/ICLPool.sol";
-import {VoterFactoryLib} from "./libraries/VoterFactoryLib.sol";
-import {HybraTimeLibrary} from "./libraries/HybraTimeLibrary.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
-
-
-contract GaugeManager is OwnableUpgradeable, ReentrancyGuardUpgradeable {
-    using SafeERC20Upgradeable for IERC20Upgradeable;
-    address[] public pools;
-    
-    address public minter; 
-    uint256 internal index; 
-    address internal base; 
-    address public bribefactory; 
-    address public _ve; 
-    mapping(address => uint256) internal supplyIndex;              // gauge    => index
-    mapping(address => uint256) public claimable;                  // gauge    => claimable $the
-    mapping(address => address) public gauges;                  // pool     => gauge
-    mapping(address => uint256) public gaugesDistributionTimestmap;// gauge    => last Distribution Time
-    mapping(address => address) public poolForGauge;            // gauge    => pool    
-    mapping(address => address) public internal_bribes;         // gauge    => internal bribe (only fees)
-    mapping(address => address) public external_bribes;         // gauge    => external bribe (real bribes)
-    
-    VoterFactoryLib.Data private _factoriesData;
-    address public permissionRegistry;  
-    address public voter;  
-    address public tokenHandler; 
-    address public HybraGovernor;
-    address public nfpm;
-    mapping(address => bool) public isGauge;                    // gauge    => boolean [is a gauge?]
-    mapping(address => bool) public isCLGauge;
-    mapping(address => bool) public isAlive;                    // gauge    => boolean [is the gauge alive?]
-
-
-
-
-  
-    event GaugeCreated(address indexed gauge, address creator, address internal_bribe, address indexed external_bribe, address indexed pool);
-    event GaugeKilled(address indexed gauge);
-    event GaugeRevived(address indexed gauge);
-    event NotifyReward(address indexed sender, address indexed reward, uint256 amount);
-    event DistributeReward(address indexed sender, address indexed gauge, uint256 amount);
-    event SetBribeFor(bool isInternal, address indexed old, address indexed latest, address indexed gauge);
-    event SetMinter(address indexed old, address indexed latest);
-    event SetBribeFactory(address indexed old, address indexed latest);
-    event SetPermissionRegistry(address indexed old, address indexed latest);
-
-    constructor() {}
-
-    function initialize(address __ve, address _tokenHandler, address _gaugeFactory, address _gaugeFactoryCL, 
-                        address _pairFactory, address _pairFactoryCL, address _permissionRegistory, address _nfpm) initializer public {
-     __Ownable_init();
-     __ReentrancyGuard_init();
-      _ve = __ve;  
-      base = IVotingEscrow(__ve).token();  
-      tokenHandler = _tokenHandler;
-       permissionRegistry = _permissionRegistory;
-      _factoriesData.gaugeFactories.push(_gaugeFactory);
-      _factoriesData.gaugeFactories.push(_gaugeFactoryCL);
-      _factoriesData.pairFactories.push(_pairFactory);
-      _factoriesData.pairFactories.push(_pairFactoryCL);
-      nfpm = _nfpm;
-    }
-
-    modifier GaugeAdmin() {
-        require(IPermissionsRegistry(permissionRegistry).hasRole("GAUGE_ADMIN",msg.sender), 'GAUGE_ADMIN');
-        _;
-    }
-
-    modifier Governance() {
-        require(IPermissionsRegistry(permissionRegistry).hasRole("GOVERNANCE",msg.sender), 'GOVERNANCE');
-        _;
-    }
-
-    /// @notice Set a new Bribe Factory
-    function setBribeFactory(address _bribeFactory) external GaugeAdmin {
-        require(_bribeFactory.code.length > 0, "CODELEN");
-        require(_bribeFactory != address(0), "ZA");
-        bribefactory = _bribeFactory;
-        emit SetBribeFactory(bribefactory, _bribeFactory);
-    }
-
-    /// @notice Set a new PermissionRegistry
-    function setPermissionsRegistry(address _permissionRegistry) external GaugeAdmin {
-        require(_permissionRegistry.code.length > 0, "CODELEN");
-        require(_permissionRegistry != address(0), "ZA");
-        emit SetPermissionRegistry(permissionRegistry, _permissionRegistry);
-        permissionRegistry = _permissionRegistry;
-    }
-
-    function setVoter(address _voter) external GaugeAdmin{
-        require(_voter.code.length > 0, "CODELEN");
-        require(_voter != address(0), "ZA");
-        voter = _voter;
-    }
-
-   
-    function getHybraGovernor() external view returns (address){
-        return HybraGovernor;
-    }
-
-    function setHybraGovernor(address _HybraGovernor) external GaugeAdmin {
-        require(_HybraGovernor != address(0), "ZA");
-        HybraGovernor = _HybraGovernor;
-    }
-    
-    /* -----------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-                                    GAUGE CREATION
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    ----------------------------------------------------------------------------- */
-    /// @notice create multiple gauges
-    function createGauges(address[] memory _pool, uint256[] memory _gaugeTypes) external nonReentrant returns(address[] memory, address[] memory, address[] memory)  {
-        require(_pool.length == _gaugeTypes.length, "MISMATCH_LEN");
-        require(_pool.length <= 10, "MAXVAL");
-        address[] memory _gauge = new address[](_pool.length);
-        address[] memory _int = new address[](_pool.length);
-        address[] memory _ext = new address[](_pool.length);
-
-        uint256 i = 0;
-        for(i; i < _pool.length; i++){
-            (_gauge[i], _int[i], _ext[i]) = _createGauge(_pool[i], _gaugeTypes[i]);
-        }
-        return (_gauge, _int, _ext);
-    }
-
-    /// @notice create a gauge  
-    function createGauge(address _pool, uint256 _gaugeType) external nonReentrant returns (address _gauge, address _internal_bribe, address _external_bribe)  {
-        (_gauge, _internal_bribe, _external_bribe) = _createGauge(_pool, _gaugeType);
-    }
-
-
-
-    /// @notice create a gauge
-    /// @param  _pool       LP address 
-    /// @param  _gaugeType  the type of the gauge you want to create
-    /// @dev    To create stable/Volatile pair gaugeType = 0, Concentrated liqudity = 1, ...
-    ///         Make sure to use the corrcet gaugeType or it will fail
-
-    function _createGauge(address _pool, uint256 _gaugeType) internal returns (address _gauge, address _internal_bribe, address _external_bribe) {
-        require(_gaugeType < _factoriesData.pairFactories.length, "GAUGETYPE");
-        require(gauges[_pool] == address(0x0), "DNE");
-        require(_pool.code.length > 0, "CODELEN");
-        bool isPair;
-        address _factory = _factoriesData.pairFactories[_gaugeType];
-        address _gaugeFactory = _factoriesData.gaugeFactories[_gaugeType];
-        require(_factory != address(0), "ZA");
-        require(_gaugeFactory != address(0), "ZA");
-        
-
-        address tokenA = address(0);
-        address tokenB = address(0);
-        (tokenA) = IPairInfo(_pool).token0();
-        (tokenB) = IPairInfo(_pool).token1();
-
-        // for future implementation add isPair() in factory
-        if(_gaugeType == 0){
-            isPair = IPairFactory(_factory).isPair(_pool);
-        } 
-        if(_gaugeType == 1) {
-            // removed due to code size
-            // require(_pool_hyper == _pool_factory, 'wrong tokens');    
-            isPair = true;
-        }
-
-        require(ITokenHandler(tokenHandler).isWhitelisted(tokenA) && ITokenHandler(tokenHandler).isWhitelisted(tokenB), "!WHITELISTED");
-        require(ITokenHandler(tokenHandler).isConnector(tokenA) || ITokenHandler(tokenHandler).isConnector(tokenB), "!CONNECTOR");
-        require(isPair, "!POOL");
-        require(tokenA != address(0) && tokenB != address(0), "!TOKENS");
-
-        (_internal_bribe, _external_bribe) = _deployBribes(_pool, tokenA, tokenB, _gaugeType);
-        // create gauge
-        if(_gaugeType == 0) {
-            _gauge = IGaugeFactory(_gaugeFactory).createGauge(base, _ve, _pool, address(this), _internal_bribe, _external_bribe, isPair);
-        }
-        if(_gaugeType == 1) {
-            _gauge = IGaugeFactoryCL(_gaugeFactory).createGauge(base, _ve, _pool, address(this), _internal_bribe, _external_bribe, isPair, nfpm);
-            isCLGauge[_gauge] = true;
-            ICLPool(_pool).setGaugeAndPositionManager(_gauge, nfpm);
-        }
-        // approve spending for $the
-        IERC20(base).approve(_gauge, type(uint256).max);
-        _saveBribeData(_pool, _gauge, _internal_bribe, _external_bribe);
-        emit GaugeCreated(_gauge, msg.sender, _internal_bribe, _external_bribe, _pool);
-    }
-
-    function _saveBribeData(address _pool, address _gauge, address _internal_bribe, address _external_bribe) private {
-        // save data
-        internal_bribes[_gauge] = _internal_bribe;
-        external_bribes[_gauge] = _external_bribe;
-        gauges[_pool] = _gauge;
-        poolForGauge[_gauge] = _pool;
-        isGauge[_gauge] = true;
-        isAlive[_gauge] = true;
-        pools.push(_pool);
-
-        // update index
-        // todo: below line will go to ve33 rewarder. 
-        supplyIndex[_gauge] = index; // new gauges are set to the default global state
-    }
-    
-    function _deployBribes(address _pool, address tokenA, address tokenB, uint256 _gaugeType) private returns (address _internal_bribe, address _external_bribe) 
-    {
-        // create internal and external bribe
-        address _owner = IPermissionsRegistry(permissionRegistry).hybraTeamMultisig();
-        string memory _internalType;
-        string memory _extrenalType;
-        if(_gaugeType == 0) {
-            _internalType =  string.concat("Hybra LP Fees: ", IERC20(_pool).symbol() );
-            _extrenalType = string.concat("Hybra Bribes: ", IERC20(_pool).symbol() );
-        }
-        if(_gaugeType == 1) {
-            string memory poolStr = addressToString(_pool);
-            _internalType = string.concat("Hybra LP Fees: ", poolStr);
-            _extrenalType = string.concat("Hybra Bribes: ", poolStr);
-        }
-        
-        _internal_bribe = IBribeFactory(bribefactory).createBribe(_owner, tokenA, tokenB, _internalType);
-        _external_bribe = IBribeFactory(bribefactory).createBribe(_owner, tokenA, tokenB, _extrenalType);
-    }
-
-    function addressToString(address _addr) internal pure returns (string memory) {
-        bytes20 value = bytes20(_addr);
-        bytes memory alphabet = "0123456789abcdef";
-
-        bytes memory str = new bytes(42);
-        str[0] = '0';
-        str[1] = 'x';
-
-        for (uint i = 0; i < 20; i++) {
-            str[2 + i * 2] = alphabet[uint8(value[i] >> 4)];
-            str[3 + i * 2] = alphabet[uint8(value[i] & 0x0f)];
-        }
-
-        return string(str);
-    }
-
-
-
-    /// @notice notify reward amount for gauge
-    /// @dev    the function is called by the minter each epoch. Anyway anyone can top up some extra rewards.
-    /// @param  amount  amount to distribute
-    function notifyRewardAmount(uint256 amount) external {
-        require(msg.sender == minter, "NA");
-        IERC20Upgradeable(base).safeTransferFrom(msg.sender, address(this), amount);
-
-        uint256 _ratio = 0;
-        uint256 totalWeight = IVoter(voter).totalWeight();
-        if(totalWeight > 0) _ratio = amount * 1e18 / Math.max(totalWeight, 1);     // 1e18 adjustment is removed during claim
-        if (_ratio > 0) {
-            index += _ratio;
-        }
-
-        emit NotifyReward(msg.sender, base, amount);
-    }
-
-    function distributeFees() external nonReentrant {
-        uint256 i = 0;
-        uint256 poolsLength = pools.length;
-        for (i; i < poolsLength; i++) {
-            address _pool = pools[i];
-            _distributeFees(_pool);
-        }
-    }
-
-   function distributeFees(uint256 _start, uint256 _finish) external nonReentrant {
-        for (uint256 x = _start; x < _finish; x++) {
-            address _pool = pools[x];
-            _distributeFees(_pool);
-        }
-    }
-
-
-    function _distributeFees(address _pool) internal {
-        if (isGauge[gauges[_pool]] && isAlive[gauges[_pool]]){
-            if(!isCLGauge[gauges[_pool]]) {
-                IGauge(gauges[_pool]).claimFees();
-            } else {
-                IGaugeCL(gauges[_pool]).claimFees();
-            }
-        }
-    }
-    
-    /// @notice Distribute the emission for ALL gauges 
-    function distributeAll() external nonReentrant {
-        
-        IMinter(minter).update_period();
-
-        uint256 x = 0;
-        uint256 stop = pools.length;
-        for (x; x < stop; x++) {
-            _distribute(gauges[pools[x]]);
-        }
-    }
-
-    function distribute(uint256 _start, uint256 _finish) external nonReentrant {
-        IMinter(minter).update_period();
-        for (uint256 x = _start; x < _finish; x++) {
-            _distribute(gauges[pools[x]]);
-        }
-    }
-
-    /// @notice distribute reward onyl for given gauges
-    /// @dev    this function is used in case some distribution fails
-    function distribute(address[] memory _gauges) external nonReentrant {
-        IMinter(minter).update_period();
-        for (uint256 x = 0; x < _gauges.length; x++) {
-            _distribute(_gauges[x]);
-        }
-    }
-
-    /// @notice distribute the emission
-    function _distribute(address _gauge) internal {
-
-        uint256 lastTimestamp = gaugesDistributionTimestmap[_gauge];
-        uint256 currentTimestamp = HybraTimeLibrary.epochStart(block.timestamp);
-        if(lastTimestamp < currentTimestamp){
-            _updateForAfterDistribution(_gauge); // should set claimable to 0 if killed
-
-            uint256 _claimable = claimable[_gauge];
-
-            // distribute only if claimable is > 0, currentEpoch != lastepoch and gauge is alive
-            if (_claimable > 0 && isAlive[_gauge] && !IGauge(_gauge).emergency()) {
-                claimable[_gauge] = 0;
-                gaugesDistributionTimestmap[_gauge] = currentTimestamp;
-                if(!isCLGauge[_gauge]) {
-                    IGauge(_gauge).notifyRewardAmount(base, _claimable);
-                } else {
-                    IGaugeCL(_gauge).notifyRewardAmount(base, _claimable);
-                }
-                emit DistributeReward(msg.sender, _gauge, _claimable);
-            }
-        }
-    }
-
-
-    /* -----------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-                                    HELPERS
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    ----------------------------------------------------------------------------- */
- 
-  
-    /// @notice update info for gauges
-    /// @dev    this function track the gauge index to emit the correct $the amount after the distribution
-    function _updateForAfterDistribution(address _gauge) private {
-        address _pool = poolForGauge[_gauge];
-        //uint256 _supplied = weightsPerEpoch[_time][_pool];
-        uint256 _supplied = IVoter(voter).weights(_pool);
-
-        if (_supplied > 0) {
-            uint256 _supplyIndex = supplyIndex[_gauge];
-            uint256 _index = index; // get global index0 for accumulated distro
-            // SupplyIndex will be updated for Killed Gauges as well so we don't need to udpate index while reviving gauge.
-            supplyIndex[_gauge] = _index; // update _gauge current position to global position
-            uint256 _delta = _index - _supplyIndex; // see if there is any difference that need to be accrued
-            if (_delta > 0) {
-                uint256 _share = _supplied * _delta / 1e18; // add accrued difference for each supplied token
-                if (isAlive[_gauge]) {
-                    claimable[_gauge] += _share;
-                } else {
-                    IERC20Upgradeable(base).safeTransfer(minter, _share); // send rewards back to Minter so they're not stuck in GaugeManager
-                }
-            }
-        } else {
-            supplyIndex[_gauge] = index; // new users are set to the default global state
-        }
-    }
-
-    /* -----------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-                                    GOVERNANCE
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    ----------------------------------------------------------------------------- */
-    
-
-     /// @notice Kill a malicious gauge 
-    /// @param  _gauge gauge to kill
-    function killGauge(address _gauge) external Governance {
-        require(isAlive[_gauge], "DEAD");
-        isAlive[_gauge] = false;
-
-        // Return claimable back to minter
-        uint256 _claimable = claimable[_gauge];
-        if (_claimable > 0) {
-            IERC20Upgradeable(base).safeTransfer(minter, _claimable);
-        }
-        claimable[_gauge] = 0;
-
-        // We shouldn't update totalWeight because if we decrease it other pools will get more emission while in current scenario 
-        // emissionAmount of killed gauge will get transferred back to Minter
-        // We're decreasing totalWeight in case of Reset functionality while resetting vote from killed gauge.
-        //totalWeight = totalWeight - weights[poolForGauge[_gauge]];
-        emit GaugeKilled(_gauge);
-    }
-
-    /// @notice Revive a malicious gauge 
-    /// @param  _gauge gauge to revive
-    function reviveGauge(address _gauge) external Governance {
-        require(!isAlive[_gauge], "ALIVE");
-        require(isGauge[_gauge], 'DEAD');
-        isAlive[_gauge] = true;
-        emit GaugeRevived(_gauge);
-    }
-
-
-
-      /// @notice Set a new bribes for a given gauge
-    function setNewBribes(address _gauge, address _internal, address _external) external GaugeAdmin {
-        require(isGauge[_gauge], "!GAUGE");
-        require(_gauge.code.length > 0, "CODELEN");
-        _setInternalBribe(_gauge, _internal);
-        _setExternalBribe(_gauge, _external);
-    }
-
-    /// @notice Set a new internal bribe for a given gauge
-    function setInternalBribeFor(address _gauge, address _internal) external GaugeAdmin {
-        require(isGauge[_gauge], "!GAUGE");
-        _setInternalBribe(_gauge, _internal);
-    }
-
-    /// @notice Set a new External bribe for a given gauge
-    function setExternalBribeFor(address _gauge, address _external) external GaugeAdmin {
-        require(isGauge[_gauge], "!GAUGE");
-        _setExternalBribe(_gauge, _external);
-    }
-
-    function _setInternalBribe(address _gauge, address _internal) private {
-        require(_internal.code.length > 0, "CODELEN");
-        emit SetBribeFor(true, internal_bribes[_gauge], _internal, _gauge);
-        internal_bribes[_gauge] = _internal;
-    }
-
-    function _setExternalBribe(address _gauge, address _external) private {
-        require(_external.code.length > 0, "CODELEN");
-        emit SetBribeFor(false, internal_bribes[_gauge], _external, _gauge);
-        external_bribes[_gauge] = _external;
-    }
-
-    /// @notice claim LP gauge rewards
-    function claimRewards(address[] memory _gauges, uint8 _redeemType) external {
-        for (uint256 i = 0; i < _gauges.length; i++) {
-            IGauge(_gauges[i]).getReward(msg.sender, _redeemType);
-        }
-    }
-
-    /// @notice claim LP gauge rewards
-    function claimRewards(address _gauge, uint256[] memory _nftIds, uint8 _redeemType) external {
-        for (uint256 i = 0; i < _nftIds.length; i++) {
-            IGaugeCL(_gauge).getReward(_nftIds[i], msg.sender, _redeemType);
-        }
-    }
-
-    function claimAllRewards(address[] memory _gauges, uint256[][] memory _nftIds, uint8 _redeemType) external {
-        for (uint256 i = 0; i < _gauges.length; i++) {
-            for (uint256 j = 0; j < _nftIds[i].length; j++) {
-                IGaugeCL(_gauges[i]).getReward(_nftIds[i][j], msg.sender, _redeemType);
-            }
-        }
-    }
-
-    /// @notice claim bribes rewards given a TokenID
-    function claimBribes(address[] memory _bribes, address[][] memory _tokens, uint256 _tokenId) external {
-        require(IVotingEscrow(_ve).isApprovedOrOwner(msg.sender, _tokenId), "NAO");
-        for (uint256 i = 0; i < _bribes.length; i++) {
-            IBribe(_bribes[i]).getReward(_tokenId, _tokens[i]);
-        }
-    }
-
-    function claimAllBribes(address[] memory _bribes, address[][] memory _tokens, uint256[][] memory _nftIds) external {
-        require(_bribes.length == _tokens.length && _bribes.length == _nftIds.length, "Array length mismatch");
-
-        for (uint256 i = 0; i < _bribes.length; i++) {
-            for (uint256 j = 0; j < _nftIds[i].length; j++) {
-                require(IVotingEscrow(_ve).isApprovedOrOwner(msg.sender, _nftIds[i][j]), "NAO");
-                IBribe(_bribes[i]).getReward(_nftIds[i][j], _tokens[i]);
-            }
-        }
-    }
-
-    function fetchInternalBribeFromPool(address _pool) external returns (address) {
-        return internal_bribes[gauges[_pool]];
-    }
-
-    function fetchExternalBribeFromPool(address _pool) external returns (address) {
-        return external_bribes[gauges[_pool]];
-    }
-
-    function isGaugeAliveForPool(address _pool) external returns (bool) {
-        return isGauge[gauges[_pool]] && isAlive[gauges[_pool]];
-    }
-
-        /// @notice Set a new Minter
-    function setMinter(address _minter) external GaugeAdmin {
-        require(_minter != address(0), "ZA");
-        require(_minter.code.length > 0, "CODELEN");
-        emit SetMinter(minter, _minter);
-        minter = _minter;
-    }
-
-    function addGaugeFactory(address _gaugeFactory) external GaugeAdmin {
-        VoterFactoryLib.addGaugeFactory(_factoriesData, _gaugeFactory);
-    }
-
-    function replaceGaugeFactory(address _gaugeFactory, uint256 _pos) external GaugeAdmin {
-        VoterFactoryLib.replaceGaugeFactory(_factoriesData, _gaugeFactory, _pos);
-    }
-
-    function removeGaugeFactory(uint256 _pos) external GaugeAdmin {
-        VoterFactoryLib.removeGaugeFactory(_factoriesData, _pos);
-    }
-
-    function addPairFactory(address _pairFactory) external GaugeAdmin {
-        VoterFactoryLib.addPairFactory(_factoriesData, _pairFactory);
-    }
-
-    function replacePairFactory(address _pairFactory, uint256 _pos) external GaugeAdmin {
-        VoterFactoryLib.replacePairFactory(_factoriesData, _pairFactory, _pos);
-    }
-
-    function removePairFactory(uint256 _pos) external GaugeAdmin {
-        VoterFactoryLib.removePairFactory(_factoriesData, _pos);
-    }
-    
-
-
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-
-interface IGaugeManager {
-    
-    struct FarmingParam {
-        address farmingCenter;
-        address algebraEternalFarming;
-        address nfpm;
-    }
-
-    function isGaugeAliveForPool(address _pool) external view returns (bool);
-    function gauges(address _pair) external view returns (address);
-    function isGauge(address _gauge) external view returns (bool);
-    function poolForGauge(address _gauge) external view returns (address);
-}
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-import {IVoter} from "contracts/core/interfaces/IVoter.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
-import {IGaugeManager} from "contracts/core/interfaces/IGaugeManager.sol";
-
-
-/// @title The interface for the CL Factory
-/// @notice The CL Factory facilitates creation of CL pools and control over the protocol fees
-interface ICLFactory {
-    /// @notice Emitted when the owner of the factory is changed
-    /// @param oldOwner The owner before the owner was changed
-    /// @param newOwner The owner after the owner was changed
-    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
-
-    /// @notice Emitted when the swapFeeManager of the factory is changed
-    /// @param oldFeeManager The swapFeeManager before the swapFeeManager was changed
-    /// @param newFeeManager The swapFeeManager after the swapFeeManager was changed
-    event SwapFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
-
-    /// @notice Emitted when the swapFeeModule of the factory is changed
-    /// @param oldFeeModule The swapFeeModule before the swapFeeModule was changed
-    /// @param newFeeModule The swapFeeModule after the swapFeeModule was changed
-    event SwapFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
-
-    /// @notice Emitted when the unstakedFeeManager of the factory is changed
-    /// @param oldFeeManager The unstakedFeeManager before the unstakedFeeManager was changed
-    /// @param newFeeManager The unstakedFeeManager after the unstakedFeeManager was changed
-    event UnstakedFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
-
-    /// @notice Emitted when the unstakedFeeModule of the factory is changed
-    /// @param oldFeeModule The unstakedFeeModule before the unstakedFeeModule was changed
-    /// @param newFeeModule The unstakedFeeModule after the unstakedFeeModule was changed
-    event UnstakedFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
-
-    /// @notice Emitted when the defaultUnstakedFee of the factory is changed
-    /// @param oldUnstakedFee The defaultUnstakedFee before the defaultUnstakedFee was changed
-    /// @param newUnstakedFee The defaultUnstakedFee after the unstakedFeeModule was changed
-    event DefaultUnstakedFeeChanged(uint24 indexed oldUnstakedFee, uint24 indexed newUnstakedFee);
-
-    /// @notice Emitted when a pool is created
-    /// @param token0 The first token of the pool by address sort order
-    /// @param token1 The second token of the pool by address sort order
-    /// @param tickSpacing The minimum number of ticks between initialized ticks
-    /// @param pool The address of the created pool
-    event PoolCreated(address indexed token0, address indexed token1, int24 indexed tickSpacing, address pool);
-
-    /// @notice Emitted when a new tick spacing is enabled for pool creation via the factory
-    /// @param tickSpacing The minimum number of ticks between initialized ticks for pools
-    /// @param fee The default fee for a pool created with a given tickSpacing
-    event TickSpacingEnabled(int24 indexed tickSpacing, uint24 indexed fee);
-
-
-
-    /// @notice The address of the pool implementation contract used to deploy proxies / clones
-    /// @return The address of the pool implementation contract
-    function poolImplementation() external view returns (address);
-
-    /// @notice Factory registry for valid pool / gauge / rewards factories
-    /// @return The address of the factory registry
-
-    function gaugeManager() external view returns (IGaugeManager);
-
-    /// @notice Returns the current owner of the factory
-    /// @dev Can be changed by the current owner via setOwner
-    /// @return The address of the factory owner
-    function owner() external view returns (address);
-
-    /// @notice Returns the current swapFeeManager of the factory
-    /// @dev Can be changed by the current swap fee manager via setSwapFeeManager
-    /// @return The address of the factory swapFeeManager
-    function swapFeeManager() external view returns (address);
-
-    /// @notice Returns the current protocolFeeManager of the factory
-    /// @dev Can be changed by the current protocol fee manager via setProtocolFeeManager
-    /// @return The address of the factory protocolFeeManager
-    function protocolFeeManager() external view returns (address);
-
-    /// @notice Returns the current swapFeeModule of the factory
-    /// @dev Can be changed by the current swap fee manager via setSwapFeeModule
-    /// @return The address of the factory swapFeeModule
-    function swapFeeModule() external view returns (address);
-
-    /// @notice Returns the current unstakedFeeManager of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeManager
-    /// @return The address of the factory unstakedFeeManager
-    function unstakedFeeManager() external view returns (address);
-
-    /// @notice Returns the current unstakedFeeModule of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeModule
-    /// @return The address of the factory unstakedFeeModule
-    function unstakedFeeModule() external view returns (address);
-
-
-    function protocolFeeModule() external view returns (address);
-
-    /// @notice Returns the current defaultUnstakedFee of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setDefaultUnstakedFee
-    /// @return The default Unstaked Fee of the factory
-    function defaultUnstakedFee() external view returns (uint24);
-
-
-    function defaultProtocolFee() external view returns (uint24);
-
-    /// @notice Returns a default fee for a tick spacing.
-    /// @dev Use getFee for the most up to date fee for a given pool.
-    /// A tick spacing can never be removed, so this value should be hard coded or cached in the calling context
-    /// @param tickSpacing The enabled tick spacing. Returns 0 if not enabled
-    /// @return fee The default fee for the given tick spacing
-    function tickSpacingToFee(int24 tickSpacing) external view returns (uint24 fee);
-
-    /// @notice Returns a list of enabled tick spacings. Used to iterate through pools created by the factory
-    /// @dev Tick spacings cannot be removed. Tick spacings are not ordered
-    /// @return List of enabled tick spacings
-    function tickSpacings() external view returns (int24[] memory);
-
-    /// @notice Returns the pool address for a given pair of tokens and a tick spacing, or address 0 if it does not exist
-    /// @dev tokenA and tokenB may be passed in either token0/token1 or token1/token0 order
-    /// @param tokenA The contract address of either token0 or token1
-    /// @param tokenB The contract address of the other token
-    /// @param tickSpacing The tick spacing of the pool
-    /// @return pool The pool address
-    function getPool(address tokenA, address tokenB, int24 tickSpacing) external view returns (address pool);
-
-    /// @notice Return address of pool created by this factory given its `index`
-    /// @param index Index of the pool
-    /// @return The pool address in the given index
-    function allPools(uint256 index) external view returns (address);
-
-    /// @notice Returns the number of pools created from this factory
-    /// @return Number of pools created from this factory
-    function allPoolsLength() external view returns (uint256);
-
-    /// @notice Used in VotingEscrow to determine if a contract is a valid pool of the factory
-    /// @param pool The address of the pool to check
-    /// @return Whether the pool is a valid pool of the factory
-    function isPool(address pool) external view returns (bool);
-
-    /// @notice Get swap & flash fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Swap & flash fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the swap & flash fee for
-    /// @return The swap & flash fee for the given pool
-    function getSwapFee(address pool) external view returns (uint24);
-
-    /// @notice Get unstaked fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Unstaked fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the unstaked fee for
-    /// @return The unstaked fee for the given pool
-    function getUnstakedFee(address pool) external view returns (uint24);
-
-    /// @notice Get protocol fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Protocol fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the protocol fee for
-    /// @return The protocol fee for the given pool
-    function getProtocolFee(address pool) external view returns (uint24);
-
-    /// @notice Creates a pool for the given two tokens and fee
-    /// @param tokenA One of the two tokens in the desired pool
-    /// @param tokenB The other of the two tokens in the desired pool
-    /// @param tickSpacing The desired tick spacing for the pool
-    /// @param sqrtPriceX96 The initial sqrt price of the pool, as a Q64.96
-    /// @dev tokenA and tokenB may be passed in either order: token0/token1 or token1/token0. The call will
-    /// revert if the pool already exists, the tick spacing is invalid, or the token arguments are invalid
-    /// @return pool The address of the newly created pool
-    function createPool(address tokenA, address tokenB, int24 tickSpacing, uint160 sqrtPriceX96)
-        external
-        returns (address pool);
-
-    /// @notice Updates the owner of the factory
-    /// @dev Must be called by the current owner
-    /// @param _owner The new owner of the factory
-    function setOwner(address _owner) external;
-
-    /// @notice Updates the swapFeeManager of the factory
-    /// @dev Must be called by the current swap fee manager
-    /// @param _swapFeeManager The new swapFeeManager of the factory
-    function setSwapFeeManager(address _swapFeeManager) external;
-
-    /// @notice Updates the swapFeeModule of the factory
-    /// @dev Must be called by the current swap fee manager
-    /// @param _swapFeeModule The new swapFeeModule of the factory
-    function setSwapFeeModule(address _swapFeeModule) external;
-
-    /// @notice Updates the unstakedFeeManager of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _unstakedFeeManager The new unstakedFeeManager of the factory
-    function setUnstakedFeeManager(address _unstakedFeeManager) external;
-
-    /// @notice Updates the unstakedFeeModule of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _unstakedFeeModule The new unstakedFeeModule of the factory
-    function setUnstakedFeeModule(address _unstakedFeeModule) external;
-
-    /// @notice Updates the protocolFeeManager of the factory
-    /// @dev Must be called by the current protocol fee manager
-    /// @param _protocolFeeManager The new protocolFeeManager of the factory
-    function setProtocolFeeManager(address _protocolFeeManager) external;
-
-    /// @notice Updates the protocolFeeModule of the factory
-    /// @dev Must be called by the current protocol fee manager
-    /// @param _protocolFeeModule The new protocolFeeModule of the factory
-    function setProtocolFeeModule(address _protocolFeeModule) external;
-
-    /// @notice Updates the defaultUnstakedFee of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _defaultUnstakedFee The new defaultUnstakedFee of the factory
-    function setDefaultUnstakedFee(uint24 _defaultUnstakedFee) external;
-
-    /// @notice Enables a certain tickSpacing
-    /// @dev Tick spacings may never be removed once enabled
-    /// @param tickSpacing The spacing between ticks to be enforced in the pool
-    /// @param fee The default fee associated with a given tick spacing
-    function enableTickSpacing(int24 tickSpacing, uint24 fee) external;
+interface IPermissionsRegistry {
+    function emergencyCouncil() external view returns(address);
+    function hybraTeamMultisig() external view returns(address);
+    function hasRole(bytes memory role, address caller) external view returns(bool);
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -1391,10 +598,16 @@ library TickMath {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IBribeFactory {
-    function createInternalBribe(address[] memory) external returns (address);
-    function createExternalBribe(address[] memory) external returns (address);
-    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
+interface IBribe {
+    function deposit(uint amount, uint tokenId) external;
+    function withdraw(uint amount, uint tokenId) external;
+    function getRewardForAddress(address _owner, address[] memory tokens) external;
+    function notifyRewardAmount(address token, uint amount) external;
+    function left(address token) external view returns (uint);
+    function getReward(uint tokenId, address[] memory tokens) external;
+    function bribeTokens(uint256 i) external view returns(address); 
+    function rewardsListLength() external view returns (uint256);
+    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -2477,23 +1690,19 @@ contract CLPool is ICLPool {
     }
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
 
-interface IGauge {
-    function notifyRewardAmount(address token, uint amount) external;
-    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
-    function getReward(address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function left(address token) external view returns (uint);
-    function rewardRate(address _pair) external view returns (uint);
-    function balanceOf(address _account) external view returns (uint);
-    function isForPair() external view returns (bool);
-    function totalSupply() external view returns (uint);
-    function earned(address token, address account) external view returns (uint);
-    function setGenesisPool(address genesisPool) external;
-    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
-    function emergency() external returns (bool);
+/// @title Callback for ICLPoolActions#flash
+/// @notice Any contract that calls ICLPoolActions#flash must implement this interface
+interface ICLFlashCallback {
+    /// @notice Called to `msg.sender` after transferring to the recipient from ICLPool#flash.
+    /// @dev In the implementation you must repay the pool the tokens sent by flash plus the computed fee amounts.
+    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
+    /// @param fee0 The fee amount in token0 due to the pool by the end of the flash
+    /// @param fee1 The fee amount in token1 due to the pool by the end of the flash
+    /// @param data Any data passed through by the caller via the ICLPoolActions#flash call
+    function uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) external;
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -2742,6 +1951,982 @@ library Tick {
         nets.stakedLiquidityNet = info.stakedLiquidityNet;
     }
 }
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+library HybraTimeLibrary {
+
+    // for testnet
+    uint256 internal constant WEEK = 1800;
+    uint internal constant NO_VOTING_WINDOW = 300;
+    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
+    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
+    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
+
+    // uint256 internal constant WEEK = 7 * 86400;
+    // uint internal constant NO_VOTING_WINDOW = 3600;
+    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
+    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
+    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
+
+    /// @dev Returns start of epoch based on current timestamp
+    function epochStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK);
+        }
+    }
+
+    /// @dev Returns start of next epoch / end of current epoch
+    function epochNext(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK;
+        }
+    }
+
+    /// @dev Returns start of voting window
+    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
+        }
+    }
+
+    /// @dev Returns end of voting window / beginning of unrestricted voting window
+    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
+        }
+    }
+
+    /// @dev Returns the status if it is the last hour of the epoch
+    function isLastHour(uint256 timestamp) internal pure returns (bool) {
+        // return block.timestamp % 7 days >= 6 days + 23 hours;
+        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
+        && timestamp < HybraTimeLibrary.epochNext(timestamp);
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function epochMultiples(uint256 duration) internal pure returns (uint256) {
+        unchecked {
+            return (duration / WEEK) * WEEK;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
+        unchecked {
+            return  endTime - WEEK <= timestamp && timestamp < endTime;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGauge {
+    function notifyRewardAmount(address token, uint amount) external;
+    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
+    function getReward(address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function left(address token) external view returns (uint);
+    function rewardRate(address _pair) external view returns (uint);
+    function balanceOf(address _account) external view returns (uint);
+    function isForPair() external view returns (bool);
+    function totalSupply() external view returns (uint);
+    function earned(address token, address account) external view returns (uint);
+    function setGenesisPool(address genesisPool) external;
+    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
+    function emergency() external returns (bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGaugeCL {
+    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
+    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function balanceOf(uint256 tokenId) external view returns (uint256); 
+    function emergency() external returns (bool);
+    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
+    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
+    function totalSupply() external view returns (uint);
+    function rewardRate() external view returns (uint);
+    function rewardForDuration() external view returns (uint256);
+    function stakedFees() external view returns (uint256, uint256);
+}
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import {IVoter} from "contracts/core/interfaces/IVoter.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+import {IGaugeManager} from "contracts/core/interfaces/IGaugeManager.sol";
+
+
+/// @title The interface for the CL Factory
+/// @notice The CL Factory facilitates creation of CL pools and control over the protocol fees
+interface ICLFactory {
+    /// @notice Emitted when the owner of the factory is changed
+    /// @param oldOwner The owner before the owner was changed
+    /// @param newOwner The owner after the owner was changed
+    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
+
+    /// @notice Emitted when the swapFeeManager of the factory is changed
+    /// @param oldFeeManager The swapFeeManager before the swapFeeManager was changed
+    /// @param newFeeManager The swapFeeManager after the swapFeeManager was changed
+    event SwapFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
+
+    /// @notice Emitted when the swapFeeModule of the factory is changed
+    /// @param oldFeeModule The swapFeeModule before the swapFeeModule was changed
+    /// @param newFeeModule The swapFeeModule after the swapFeeModule was changed
+    event SwapFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
+
+    /// @notice Emitted when the unstakedFeeManager of the factory is changed
+    /// @param oldFeeManager The unstakedFeeManager before the unstakedFeeManager was changed
+    /// @param newFeeManager The unstakedFeeManager after the unstakedFeeManager was changed
+    event UnstakedFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
+
+    /// @notice Emitted when the unstakedFeeModule of the factory is changed
+    /// @param oldFeeModule The unstakedFeeModule before the unstakedFeeModule was changed
+    /// @param newFeeModule The unstakedFeeModule after the unstakedFeeModule was changed
+    event UnstakedFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
+
+    /// @notice Emitted when the defaultUnstakedFee of the factory is changed
+    /// @param oldUnstakedFee The defaultUnstakedFee before the defaultUnstakedFee was changed
+    /// @param newUnstakedFee The defaultUnstakedFee after the unstakedFeeModule was changed
+    event DefaultUnstakedFeeChanged(uint24 indexed oldUnstakedFee, uint24 indexed newUnstakedFee);
+
+    /// @notice Emitted when a pool is created
+    /// @param token0 The first token of the pool by address sort order
+    /// @param token1 The second token of the pool by address sort order
+    /// @param tickSpacing The minimum number of ticks between initialized ticks
+    /// @param pool The address of the created pool
+    event PoolCreated(address indexed token0, address indexed token1, int24 indexed tickSpacing, address pool);
+
+    /// @notice Emitted when a new tick spacing is enabled for pool creation via the factory
+    /// @param tickSpacing The minimum number of ticks between initialized ticks for pools
+    /// @param fee The default fee for a pool created with a given tickSpacing
+    event TickSpacingEnabled(int24 indexed tickSpacing, uint24 indexed fee);
+
+
+
+    /// @notice The address of the pool implementation contract used to deploy proxies / clones
+    /// @return The address of the pool implementation contract
+    function poolImplementation() external view returns (address);
+
+    /// @notice Factory registry for valid pool / gauge / rewards factories
+    /// @return The address of the factory registry
+
+    function gaugeManager() external view returns (IGaugeManager);
+
+    /// @notice Returns the current owner of the factory
+    /// @dev Can be changed by the current owner via setOwner
+    /// @return The address of the factory owner
+    function owner() external view returns (address);
+
+    /// @notice Returns the current swapFeeManager of the factory
+    /// @dev Can be changed by the current swap fee manager via setSwapFeeManager
+    /// @return The address of the factory swapFeeManager
+    function swapFeeManager() external view returns (address);
+
+    /// @notice Returns the current protocolFeeManager of the factory
+    /// @dev Can be changed by the current protocol fee manager via setProtocolFeeManager
+    /// @return The address of the factory protocolFeeManager
+    function protocolFeeManager() external view returns (address);
+
+    /// @notice Returns the current swapFeeModule of the factory
+    /// @dev Can be changed by the current swap fee manager via setSwapFeeModule
+    /// @return The address of the factory swapFeeModule
+    function swapFeeModule() external view returns (address);
+
+    /// @notice Returns the current unstakedFeeManager of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeManager
+    /// @return The address of the factory unstakedFeeManager
+    function unstakedFeeManager() external view returns (address);
+
+    /// @notice Returns the current unstakedFeeModule of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeModule
+    /// @return The address of the factory unstakedFeeModule
+    function unstakedFeeModule() external view returns (address);
+
+
+    function protocolFeeModule() external view returns (address);
+
+    /// @notice Returns the current defaultUnstakedFee of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setDefaultUnstakedFee
+    /// @return The default Unstaked Fee of the factory
+    function defaultUnstakedFee() external view returns (uint24);
+
+
+    function defaultProtocolFee() external view returns (uint24);
+
+    /// @notice Returns a default fee for a tick spacing.
+    /// @dev Use getFee for the most up to date fee for a given pool.
+    /// A tick spacing can never be removed, so this value should be hard coded or cached in the calling context
+    /// @param tickSpacing The enabled tick spacing. Returns 0 if not enabled
+    /// @return fee The default fee for the given tick spacing
+    function tickSpacingToFee(int24 tickSpacing) external view returns (uint24 fee);
+
+    /// @notice Returns a list of enabled tick spacings. Used to iterate through pools created by the factory
+    /// @dev Tick spacings cannot be removed. Tick spacings are not ordered
+    /// @return List of enabled tick spacings
+    function tickSpacings() external view returns (int24[] memory);
+
+    /// @notice Returns the pool address for a given pair of tokens and a tick spacing, or address 0 if it does not exist
+    /// @dev tokenA and tokenB may be passed in either token0/token1 or token1/token0 order
+    /// @param tokenA The contract address of either token0 or token1
+    /// @param tokenB The contract address of the other token
+    /// @param tickSpacing The tick spacing of the pool
+    /// @return pool The pool address
+    function getPool(address tokenA, address tokenB, int24 tickSpacing) external view returns (address pool);
+
+    /// @notice Return address of pool created by this factory given its `index`
+    /// @param index Index of the pool
+    /// @return The pool address in the given index
+    function allPools(uint256 index) external view returns (address);
+
+    /// @notice Returns the number of pools created from this factory
+    /// @return Number of pools created from this factory
+    function allPoolsLength() external view returns (uint256);
+
+    /// @notice Used in VotingEscrow to determine if a contract is a valid pool of the factory
+    /// @param pool The address of the pool to check
+    /// @return Whether the pool is a valid pool of the factory
+    function isPool(address pool) external view returns (bool);
+
+    /// @notice Get swap & flash fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Swap & flash fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the swap & flash fee for
+    /// @return The swap & flash fee for the given pool
+    function getSwapFee(address pool) external view returns (uint24);
+
+    /// @notice Get unstaked fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Unstaked fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the unstaked fee for
+    /// @return The unstaked fee for the given pool
+    function getUnstakedFee(address pool) external view returns (uint24);
+
+    /// @notice Get protocol fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Protocol fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the protocol fee for
+    /// @return The protocol fee for the given pool
+    function getProtocolFee(address pool) external view returns (uint24);
+
+    /// @notice Creates a pool for the given two tokens and fee
+    /// @param tokenA One of the two tokens in the desired pool
+    /// @param tokenB The other of the two tokens in the desired pool
+    /// @param tickSpacing The desired tick spacing for the pool
+    /// @param sqrtPriceX96 The initial sqrt price of the pool, as a Q64.96
+    /// @dev tokenA and tokenB may be passed in either order: token0/token1 or token1/token0. The call will
+    /// revert if the pool already exists, the tick spacing is invalid, or the token arguments are invalid
+    /// @return pool The address of the newly created pool
+    function createPool(address tokenA, address tokenB, int24 tickSpacing, uint160 sqrtPriceX96)
+        external
+        returns (address pool);
+
+    /// @notice Updates the owner of the factory
+    /// @dev Must be called by the current owner
+    /// @param _owner The new owner of the factory
+    function setOwner(address _owner) external;
+
+    /// @notice Updates the swapFeeManager of the factory
+    /// @dev Must be called by the current swap fee manager
+    /// @param _swapFeeManager The new swapFeeManager of the factory
+    function setSwapFeeManager(address _swapFeeManager) external;
+
+    /// @notice Updates the swapFeeModule of the factory
+    /// @dev Must be called by the current swap fee manager
+    /// @param _swapFeeModule The new swapFeeModule of the factory
+    function setSwapFeeModule(address _swapFeeModule) external;
+
+    /// @notice Updates the unstakedFeeManager of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _unstakedFeeManager The new unstakedFeeManager of the factory
+    function setUnstakedFeeManager(address _unstakedFeeManager) external;
+
+    /// @notice Updates the unstakedFeeModule of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _unstakedFeeModule The new unstakedFeeModule of the factory
+    function setUnstakedFeeModule(address _unstakedFeeModule) external;
+
+    /// @notice Updates the protocolFeeManager of the factory
+    /// @dev Must be called by the current protocol fee manager
+    /// @param _protocolFeeManager The new protocolFeeManager of the factory
+    function setProtocolFeeManager(address _protocolFeeManager) external;
+
+    /// @notice Updates the protocolFeeModule of the factory
+    /// @dev Must be called by the current protocol fee manager
+    /// @param _protocolFeeModule The new protocolFeeModule of the factory
+    function setProtocolFeeModule(address _protocolFeeModule) external;
+
+    /// @notice Updates the defaultUnstakedFee of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _defaultUnstakedFee The new defaultUnstakedFee of the factory
+    function setDefaultUnstakedFee(uint24 _defaultUnstakedFee) external;
+
+    /// @notice Enables a certain tickSpacing
+    /// @dev Tick spacings may never be removed once enabled
+    /// @param tickSpacing The spacing between ticks to be enforced in the pool
+    /// @param fee The default fee associated with a given tick spacing
+    function enableTickSpacing(int24 tickSpacing, uint24 fee) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IPairFactory {
+    function allPairsLength() external view returns (uint);
+    function isPair(address pair) external view returns (bool);
+    function allPairs(uint index) external view returns (address);
+    function pairCodeHash() external view returns (bytes32);
+    function getPair(address tokenA, address token, bool stable) external view returns (address);
+    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
+    function isGenesis(address pair) external view returns (bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "./IGaugeManager.sol";
+
+interface IGaugeFactoryCL {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+
+interface IVotingEscrow {
+    function team() external returns (address);
+
+    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
+    /// @param _value Amount to deposit
+    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
+    /// @return TokenId of created veNFT
+    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface ITokenHandler {
+    function isWhitelisted(address token) external view returns (bool);
+    function isWhitelistedNFT(uint256 token) external view returns (bool);
+    function isConnector(address token) external view returns (bool);
+
+    function whitelistToken(address _token) external;
+    function blacklistToken(address _token) external;
+
+    function whiteListed(uint256 index) external returns (address);
+    function connectors(uint256 index) external returns (address);
+
+    function whiteListedTokensLength() external returns (uint256);
+    function connectorTokensLength() external returns (uint256);
+
+    function whiteListedTokens() external view returns(address[] memory tokens);
+    function connectorTokens() external view returns(address[] memory tokens);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import './libraries/Math.sol';
+import './interfaces/IVoter.sol';
+import './interfaces/ITokenHandler.sol';
+import './interfaces/IERC20.sol';
+import './interfaces/IPairInfo.sol';
+import './interfaces/IPairFactory.sol';
+import './interfaces/IVotingEscrow.sol';
+import './interfaces/IPermissionsRegistry.sol';
+import './interfaces/IGaugeFactoryCL.sol';
+import './interfaces/IGaugeManager.sol';
+import './interfaces/IBribe.sol';
+import './interfaces/IBribeFactory.sol';
+import './interfaces/IGauge.sol';
+import './interfaces/IMinter.sol';
+import './interfaces/IGaugeCL.sol';
+import './interfaces/IBribe.sol';
+import './interfaces/IGaugeFactory.sol';
+import "./CLGauge/interface/ICLPool.sol";
+import {VoterFactoryLib} from "./libraries/VoterFactoryLib.sol";
+import {HybraTimeLibrary} from "./libraries/HybraTimeLibrary.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+
+
+contract GaugeManager is OwnableUpgradeable, ReentrancyGuardUpgradeable {
+    using SafeERC20Upgradeable for IERC20Upgradeable;
+    address[] public pools;
+    
+    address public minter; 
+    uint256 internal index; 
+    address internal base; 
+    address public bribefactory; 
+    address public _ve; 
+    mapping(address => uint256) internal supplyIndex;              // gauge    => index
+    mapping(address => uint256) public claimable;                  // gauge    => claimable $the
+    mapping(address => address) public gauges;                  // pool     => gauge
+    mapping(address => uint256) public gaugesDistributionTimestmap;// gauge    => last Distribution Time
+    mapping(address => address) public poolForGauge;            // gauge    => pool    
+    mapping(address => address) public internal_bribes;         // gauge    => internal bribe (only fees)
+    mapping(address => address) public external_bribes;         // gauge    => external bribe (real bribes)
+    
+    VoterFactoryLib.Data private _factoriesData;
+    address public permissionRegistry;  
+    address public voter;  
+    address public tokenHandler; 
+    address public HybraGovernor;
+    address public nfpm;
+    mapping(address => bool) public isGauge;                    // gauge    => boolean [is a gauge?]
+    mapping(address => bool) public isCLGauge;
+    mapping(address => bool) public isAlive;                    // gauge    => boolean [is the gauge alive?]
+
+
+
+
+  
+    event GaugeCreated(address indexed gauge, address creator, address internal_bribe, address indexed external_bribe, address indexed pool);
+    event GaugeKilled(address indexed gauge);
+    event GaugeRevived(address indexed gauge);
+    event NotifyReward(address indexed sender, address indexed reward, uint256 amount);
+    event DistributeReward(address indexed sender, address indexed gauge, uint256 amount);
+    event SetBribeFor(bool isInternal, address indexed old, address indexed latest, address indexed gauge);
+    event SetMinter(address indexed old, address indexed latest);
+    event SetBribeFactory(address indexed old, address indexed latest);
+    event SetPermissionRegistry(address indexed old, address indexed latest);
+
+    constructor() {}
+
+    function initialize(address __ve, address _tokenHandler, address _gaugeFactory, address _gaugeFactoryCL, 
+                        address _pairFactory, address _pairFactoryCL, address _permissionRegistory, address _nfpm) initializer public {
+     __Ownable_init();
+     __ReentrancyGuard_init();
+      _ve = __ve;  
+      base = IVotingEscrow(__ve).token();  
+      tokenHandler = _tokenHandler;
+       permissionRegistry = _permissionRegistory;
+      _factoriesData.gaugeFactories.push(_gaugeFactory);
+      _factoriesData.gaugeFactories.push(_gaugeFactoryCL);
+      _factoriesData.pairFactories.push(_pairFactory);
+      _factoriesData.pairFactories.push(_pairFactoryCL);
+      nfpm = _nfpm;
+    }
+
+    modifier GaugeAdmin() {
+        require(IPermissionsRegistry(permissionRegistry).hasRole("GAUGE_ADMIN",msg.sender), 'GAUGE_ADMIN');
+        _;
+    }
+
+    modifier Governance() {
+        require(IPermissionsRegistry(permissionRegistry).hasRole("GOVERNANCE",msg.sender), 'GOVERNANCE');
+        _;
+    }
+
+    /// @notice Set a new Bribe Factory
+    function setBribeFactory(address _bribeFactory) external GaugeAdmin {
+        require(_bribeFactory.code.length > 0, "CODELEN");
+        require(_bribeFactory != address(0), "ZA");
+        bribefactory = _bribeFactory;
+        emit SetBribeFactory(bribefactory, _bribeFactory);
+    }
+
+    /// @notice Set a new PermissionRegistry
+    function setPermissionsRegistry(address _permissionRegistry) external GaugeAdmin {
+        require(_permissionRegistry.code.length > 0, "CODELEN");
+        require(_permissionRegistry != address(0), "ZA");
+        emit SetPermissionRegistry(permissionRegistry, _permissionRegistry);
+        permissionRegistry = _permissionRegistry;
+    }
+
+    function setVoter(address _voter) external GaugeAdmin{
+        require(_voter.code.length > 0, "CODELEN");
+        require(_voter != address(0), "ZA");
+        voter = _voter;
+    }
+
+   
+    function getHybraGovernor() external view returns (address){
+        return HybraGovernor;
+    }
+
+    function setHybraGovernor(address _HybraGovernor) external GaugeAdmin {
+        require(_HybraGovernor != address(0), "ZA");
+        HybraGovernor = _HybraGovernor;
+    }
+    
+    /* -----------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+                                    GAUGE CREATION
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    ----------------------------------------------------------------------------- */
+    /// @notice create multiple gauges
+    function createGauges(address[] memory _pool, uint256[] memory _gaugeTypes) external nonReentrant returns(address[] memory, address[] memory, address[] memory)  {
+        require(_pool.length == _gaugeTypes.length, "MISMATCH_LEN");
+        require(_pool.length <= 10, "MAXVAL");
+        address[] memory _gauge = new address[](_pool.length);
+        address[] memory _int = new address[](_pool.length);
+        address[] memory _ext = new address[](_pool.length);
+
+        uint256 i = 0;
+        for(i; i < _pool.length; i++){
+            (_gauge[i], _int[i], _ext[i]) = _createGauge(_pool[i], _gaugeTypes[i]);
+        }
+        return (_gauge, _int, _ext);
+    }
+
+    /// @notice create a gauge  
+    function createGauge(address _pool, uint256 _gaugeType) external nonReentrant returns (address _gauge, address _internal_bribe, address _external_bribe)  {
+        (_gauge, _internal_bribe, _external_bribe) = _createGauge(_pool, _gaugeType);
+    }
+
+
+
+    /// @notice create a gauge
+    /// @param  _pool       LP address 
+    /// @param  _gaugeType  the type of the gauge you want to create
+    /// @dev    To create stable/Volatile pair gaugeType = 0, Concentrated liqudity = 1, ...
+    ///         Make sure to use the corrcet gaugeType or it will fail
+
+    function _createGauge(address _pool, uint256 _gaugeType) internal returns (address _gauge, address _internal_bribe, address _external_bribe) {
+        require(_gaugeType < _factoriesData.pairFactories.length, "GAUGETYPE");
+        require(gauges[_pool] == address(0x0), "DNE");
+        require(_pool.code.length > 0, "CODELEN");
+        bool isPair;
+        address _factory = _factoriesData.pairFactories[_gaugeType];
+        address _gaugeFactory = _factoriesData.gaugeFactories[_gaugeType];
+        require(_factory != address(0), "ZA");
+        require(_gaugeFactory != address(0), "ZA");
+        
+
+        address tokenA = address(0);
+        address tokenB = address(0);
+        (tokenA) = IPairInfo(_pool).token0();
+        (tokenB) = IPairInfo(_pool).token1();
+
+        // for future implementation add isPair() in factory
+        if(_gaugeType == 0){
+            isPair = IPairFactory(_factory).isPair(_pool);
+        } 
+        if(_gaugeType == 1) {
+            // removed due to code size
+            // require(_pool_hyper == _pool_factory, 'wrong tokens');    
+            isPair = true;
+        }
+
+        require(ITokenHandler(tokenHandler).isWhitelisted(tokenA) && ITokenHandler(tokenHandler).isWhitelisted(tokenB), "!WHITELISTED");
+        require(ITokenHandler(tokenHandler).isConnector(tokenA) || ITokenHandler(tokenHandler).isConnector(tokenB), "!CONNECTOR");
+        require(isPair, "!POOL");
+        require(tokenA != address(0) && tokenB != address(0), "!TOKENS");
+
+        (_internal_bribe, _external_bribe) = _deployBribes(_pool, tokenA, tokenB, _gaugeType);
+        // create gauge
+        if(_gaugeType == 0) {
+            _gauge = IGaugeFactory(_gaugeFactory).createGauge(base, _ve, _pool, address(this), _internal_bribe, _external_bribe, isPair);
+        }
+        if(_gaugeType == 1) {
+            _gauge = IGaugeFactoryCL(_gaugeFactory).createGauge(base, _ve, _pool, address(this), _internal_bribe, _external_bribe, isPair, nfpm);
+            isCLGauge[_gauge] = true;
+            ICLPool(_pool).setGaugeAndPositionManager(_gauge, nfpm);
+        }
+        // approve spending for $the
+        IERC20(base).approve(_gauge, type(uint256).max);
+        _saveBribeData(_pool, _gauge, _internal_bribe, _external_bribe);
+        emit GaugeCreated(_gauge, msg.sender, _internal_bribe, _external_bribe, _pool);
+    }
+
+    function _saveBribeData(address _pool, address _gauge, address _internal_bribe, address _external_bribe) private {
+        // save data
+        internal_bribes[_gauge] = _internal_bribe;
+        external_bribes[_gauge] = _external_bribe;
+        gauges[_pool] = _gauge;
+        poolForGauge[_gauge] = _pool;
+        isGauge[_gauge] = true;
+        isAlive[_gauge] = true;
+        pools.push(_pool);
+
+        // update index
+        // todo: below line will go to ve33 rewarder. 
+        supplyIndex[_gauge] = index; // new gauges are set to the default global state
+    }
+    
+    function _deployBribes(address _pool, address tokenA, address tokenB, uint256 _gaugeType) private returns (address _internal_bribe, address _external_bribe) 
+    {
+        // create internal and external bribe
+        address _owner = IPermissionsRegistry(permissionRegistry).hybraTeamMultisig();
+        string memory _internalType;
+        string memory _extrenalType;
+        if(_gaugeType == 0) {
+            _internalType =  string.concat("Hybra LP Fees: ", IERC20(_pool).symbol() );
+            _extrenalType = string.concat("Hybra Bribes: ", IERC20(_pool).symbol() );
+        }
+        if(_gaugeType == 1) {
+            string memory poolStr = addressToString(_pool);
+            _internalType = string.concat("Hybra LP Fees: ", poolStr);
+            _extrenalType = string.concat("Hybra Bribes: ", poolStr);
+        }
+        
+        _internal_bribe = IBribeFactory(bribefactory).createBribe(_owner, tokenA, tokenB, _internalType);
+        _external_bribe = IBribeFactory(bribefactory).createBribe(_owner, tokenA, tokenB, _extrenalType);
+    }
+
+    function addressToString(address _addr) internal pure returns (string memory) {
+        bytes20 value = bytes20(_addr);
+        bytes memory alphabet = "0123456789abcdef";
+
+        bytes memory str = new bytes(42);
+        str[0] = '0';
+        str[1] = 'x';
+
+        for (uint i = 0; i < 20; i++) {
+            str[2 + i * 2] = alphabet[uint8(value[i] >> 4)];
+            str[3 + i * 2] = alphabet[uint8(value[i] & 0x0f)];
+        }
+
+        return string(str);
+    }
+
+
+
+    /// @notice notify reward amount for gauge
+    /// @dev    the function is called by the minter each epoch. Anyway anyone can top up some extra rewards.
+    /// @param  amount  amount to distribute
+    function notifyRewardAmount(uint256 amount) external {
+        require(msg.sender == minter, "NA");
+        IERC20Upgradeable(base).safeTransferFrom(msg.sender, address(this), amount);
+
+        uint256 _ratio = 0;
+        uint256 totalWeight = IVoter(voter).totalWeight();
+        if(totalWeight > 0) _ratio = amount * 1e18 / Math.max(totalWeight, 1);     // 1e18 adjustment is removed during claim
+        if (_ratio > 0) {
+            index += _ratio;
+        }
+
+        emit NotifyReward(msg.sender, base, amount);
+    }
+
+    function distributeFees() external nonReentrant {
+        uint256 i = 0;
+        uint256 poolsLength = pools.length;
+        for (i; i < poolsLength; i++) {
+            address _pool = pools[i];
+            _distributeFees(_pool);
+        }
+    }
+
+   function distributeFees(uint256 _start, uint256 _finish) external nonReentrant {
+        for (uint256 x = _start; x < _finish; x++) {
+            address _pool = pools[x];
+            _distributeFees(_pool);
+        }
+    }
+
+
+    function _distributeFees(address _pool) internal {
+        if (isGauge[gauges[_pool]] && isAlive[gauges[_pool]]){
+            if(!isCLGauge[gauges[_pool]]) {
+                IGauge(gauges[_pool]).claimFees();
+            } else {
+                IGaugeCL(gauges[_pool]).claimFees();
+            }
+        }
+    }
+    
+    /// @notice Distribute the emission for ALL gauges 
+    function distributeAll() external nonReentrant {
+        
+        IMinter(minter).update_period();
+
+        uint256 x = 0;
+        uint256 stop = pools.length;
+        for (x; x < stop; x++) {
+            _distribute(gauges[pools[x]]);
+        }
+    }
+
+    function distribute(uint256 _start, uint256 _finish) external nonReentrant {
+        IMinter(minter).update_period();
+        for (uint256 x = _start; x < _finish; x++) {
+            _distribute(gauges[pools[x]]);
+        }
+    }
+
+    /// @notice distribute reward onyl for given gauges
+    /// @dev    this function is used in case some distribution fails
+    function distribute(address[] memory _gauges) external nonReentrant {
+        IMinter(minter).update_period();
+        for (uint256 x = 0; x < _gauges.length; x++) {
+            _distribute(_gauges[x]);
+        }
+    }
+
+    /// @notice distribute the emission
+    function _distribute(address _gauge) internal {
+
+        uint256 lastTimestamp = gaugesDistributionTimestmap[_gauge];
+        uint256 currentTimestamp = HybraTimeLibrary.epochStart(block.timestamp);
+        if(lastTimestamp < currentTimestamp){
+            _updateForAfterDistribution(_gauge); // should set claimable to 0 if killed
+
+            uint256 _claimable = claimable[_gauge];
+
+            // distribute only if claimable is > 0, currentEpoch != lastepoch and gauge is alive
+            if (_claimable > 0 && isAlive[_gauge] && !IGauge(_gauge).emergency()) {
+                claimable[_gauge] = 0;
+                gaugesDistributionTimestmap[_gauge] = currentTimestamp;
+                if(!isCLGauge[_gauge]) {
+                    IGauge(_gauge).notifyRewardAmount(base, _claimable);
+                } else {
+                    IGaugeCL(_gauge).notifyRewardAmount(base, _claimable);
+                }
+                emit DistributeReward(msg.sender, _gauge, _claimable);
+            }
+        }
+    }
+
+
+    /* -----------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+                                    HELPERS
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    ----------------------------------------------------------------------------- */
+ 
+  
+    /// @notice update info for gauges
+    /// @dev    this function track the gauge index to emit the correct $the amount after the distribution
+    function _updateForAfterDistribution(address _gauge) private {
+        address _pool = poolForGauge[_gauge];
+        //uint256 _supplied = weightsPerEpoch[_time][_pool];
+        uint256 _supplied = IVoter(voter).weights(_pool);
+
+        if (_supplied > 0) {
+            uint256 _supplyIndex = supplyIndex[_gauge];
+            uint256 _index = index; // get global index0 for accumulated distro
+            // SupplyIndex will be updated for Killed Gauges as well so we don't need to udpate index while reviving gauge.
+            supplyIndex[_gauge] = _index; // update _gauge current position to global position
+            uint256 _delta = _index - _supplyIndex; // see if there is any difference that need to be accrued
+            if (_delta > 0) {
+                uint256 _share = _supplied * _delta / 1e18; // add accrued difference for each supplied token
+                if (isAlive[_gauge]) {
+                    claimable[_gauge] += _share;
+                } else {
+                    IERC20Upgradeable(base).safeTransfer(minter, _share); // send rewards back to Minter so they're not stuck in GaugeManager
+                }
+            }
+        } else {
+            supplyIndex[_gauge] = index; // new users are set to the default global state
+        }
+    }
+
+    /* -----------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+                                    GOVERNANCE
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    ----------------------------------------------------------------------------- */
+    
+
+     /// @notice Kill a malicious gauge 
+    /// @param  _gauge gauge to kill
+    function killGauge(address _gauge) external Governance {
+        require(isAlive[_gauge], "DEAD");
+        isAlive[_gauge] = false;
+
+        // Return claimable back to minter
+        uint256 _claimable = claimable[_gauge];
+        if (_claimable > 0) {
+            IERC20Upgradeable(base).safeTransfer(minter, _claimable);
+        }
+        claimable[_gauge] = 0;
+
+        // We shouldn't update totalWeight because if we decrease it other pools will get more emission while in current scenario 
+        // emissionAmount of killed gauge will get transferred back to Minter
+        // We're decreasing totalWeight in case of Reset functionality while resetting vote from killed gauge.
+        //totalWeight = totalWeight - weights[poolForGauge[_gauge]];
+        emit GaugeKilled(_gauge);
+    }
+
+    /// @notice Revive a malicious gauge 
+    /// @param  _gauge gauge to revive
+    function reviveGauge(address _gauge) external Governance {
+        require(!isAlive[_gauge], "ALIVE");
+        require(isGauge[_gauge], 'DEAD');
+        isAlive[_gauge] = true;
+        emit GaugeRevived(_gauge);
+    }
+
+
+
+      /// @notice Set a new bribes for a given gauge
+    function setNewBribes(address _gauge, address _internal, address _external) external GaugeAdmin {
+        require(isGauge[_gauge], "!GAUGE");
+        require(_gauge.code.length > 0, "CODELEN");
+        _setInternalBribe(_gauge, _internal);
+        _setExternalBribe(_gauge, _external);
+    }
+
+    /// @notice Set a new internal bribe for a given gauge
+    function setInternalBribeFor(address _gauge, address _internal) external GaugeAdmin {
+        require(isGauge[_gauge], "!GAUGE");
+        _setInternalBribe(_gauge, _internal);
+    }
+
+    /// @notice Set a new External bribe for a given gauge
+    function setExternalBribeFor(address _gauge, address _external) external GaugeAdmin {
+        require(isGauge[_gauge], "!GAUGE");
+        _setExternalBribe(_gauge, _external);
+    }
+
+    function _setInternalBribe(address _gauge, address _internal) private {
+        require(_internal.code.length > 0, "CODELEN");
+        emit SetBribeFor(true, internal_bribes[_gauge], _internal, _gauge);
+        internal_bribes[_gauge] = _internal;
+    }
+
+    function _setExternalBribe(address _gauge, address _external) private {
+        require(_external.code.length > 0, "CODELEN");
+        emit SetBribeFor(false, internal_bribes[_gauge], _external, _gauge);
+        external_bribes[_gauge] = _external;
+    }
+
+    /// @notice claim LP gauge rewards
+    function claimRewards(address[] memory _gauges, uint8 _redeemType) external {
+        for (uint256 i = 0; i < _gauges.length; i++) {
+            IGauge(_gauges[i]).getReward(msg.sender, _redeemType);
+        }
+    }
+
+    /// @notice claim LP gauge rewards
+    function claimRewards(address _gauge, uint256[] memory _nftIds, uint8 _redeemType) external {
+        for (uint256 i = 0; i < _nftIds.length; i++) {
+            IGaugeCL(_gauge).getReward(_nftIds[i], msg.sender, _redeemType);
+        }
+    }
+
+    function claimAllRewards(address[] memory _gauges, uint256[][] memory _nftIds, uint8 _redeemType) external {
+        for (uint256 i = 0; i < _gauges.length; i++) {
+            for (uint256 j = 0; j < _nftIds[i].length; j++) {
+                IGaugeCL(_gauges[i]).getReward(_nftIds[i][j], msg.sender, _redeemType);
+            }
+        }
+    }
+
+    /// @notice claim bribes rewards given a TokenID
+    function claimBribes(address[] memory _bribes, address[][] memory _tokens, uint256 _tokenId) external {
+        require(IVotingEscrow(_ve).isApprovedOrOwner(msg.sender, _tokenId), "NAO");
+        for (uint256 i = 0; i < _bribes.length; i++) {
+            IBribe(_bribes[i]).getReward(_tokenId, _tokens[i]);
+        }
+    }
+
+    function claimAllBribes(address[] memory _bribes, address[][] memory _tokens, uint256[][] memory _nftIds) external {
+        require(_bribes.length == _tokens.length && _bribes.length == _nftIds.length, "Array length mismatch");
+
+        for (uint256 i = 0; i < _bribes.length; i++) {
+            for (uint256 j = 0; j < _nftIds[i].length; j++) {
+                require(IVotingEscrow(_ve).isApprovedOrOwner(msg.sender, _nftIds[i][j]), "NAO");
+                IBribe(_bribes[i]).getReward(_nftIds[i][j], _tokens[i]);
+            }
+        }
+    }
+
+    function fetchInternalBribeFromPool(address _pool) external returns (address) {
+        return internal_bribes[gauges[_pool]];
+    }
+
+    function fetchExternalBribeFromPool(address _pool) external returns (address) {
+        return external_bribes[gauges[_pool]];
+    }
+
+    function isGaugeAliveForPool(address _pool) external returns (bool) {
+        return isGauge[gauges[_pool]] && isAlive[gauges[_pool]];
+    }
+
+        /// @notice Set a new Minter
+    function setMinter(address _minter) external GaugeAdmin {
+        require(_minter != address(0), "ZA");
+        require(_minter.code.length > 0, "CODELEN");
+        emit SetMinter(minter, _minter);
+        minter = _minter;
+    }
+
+    function addGaugeFactory(address _gaugeFactory) external GaugeAdmin {
+        VoterFactoryLib.addGaugeFactory(_factoriesData, _gaugeFactory);
+    }
+
+    function replaceGaugeFactory(address _gaugeFactory, uint256 _pos) external GaugeAdmin {
+        VoterFactoryLib.replaceGaugeFactory(_factoriesData, _gaugeFactory, _pos);
+    }
+
+    function removeGaugeFactory(uint256 _pos) external GaugeAdmin {
+        VoterFactoryLib.removeGaugeFactory(_factoriesData, _pos);
+    }
+
+    function addPairFactory(address _pairFactory) external GaugeAdmin {
+        VoterFactoryLib.addPairFactory(_factoriesData, _pairFactory);
+    }
+
+    function replacePairFactory(address _pairFactory, uint256 _pos) external GaugeAdmin {
+        VoterFactoryLib.replacePairFactory(_factoriesData, _pairFactory, _pos);
+    }
+
+    function removePairFactory(uint256 _pos) external GaugeAdmin {
+        VoterFactoryLib.removePairFactory(_factoriesData, _pos);
+    }
+    
+
+
+}
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity =0.7.6;
+interface IMinter {
+    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
+    /// @return _period Start of current epoch.
+    function updatePeriod() external returns (uint256 _period);
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import "./pool/ICLPoolConstants.sol";
+import "./pool/ICLPoolState.sol";
+import "./pool/ICLPoolDerivedState.sol";
+import "./pool/ICLPoolActions.sol";
+import "./pool/ICLPoolOwnerActions.sol";
+import "./pool/ICLPoolEvents.sol";
+
+/// @title The interface for a CL Pool
+/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
+/// to the ERC20 specification
+/// @dev The pool interface is broken up into many smaller pieces
+interface ICLPool is
+    ICLPoolConstants,
+    ICLPoolState,
+    ICLPoolDerivedState,
+    ICLPoolActions,
+    ICLPoolEvents,
+    ICLPoolOwnerActions
+{}
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0 <0.8.0;
@@ -3054,85 +3239,65 @@ library Oracle {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+pragma solidity 0.7.6;
 
-library HybraTimeLibrary {
-
-    // for testnet
-    uint256 internal constant WEEK = 1800;
-    uint internal constant NO_VOTING_WINDOW = 300;
-    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
-    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
-    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
-
-    // uint256 internal constant WEEK = 7 * 86400;
-    // uint internal constant NO_VOTING_WINDOW = 3600;
-    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
-    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
-    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
-
-    /// @dev Returns start of epoch based on current timestamp
-    function epochStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK);
-        }
+interface IGaugeManager {
+    
+    struct FarmingParam {
+        address farmingCenter;
+        address algebraEternalFarming;
+        address nfpm;
     }
 
-    /// @dev Returns start of next epoch / end of current epoch
-    function epochNext(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK;
-        }
-    }
+    function isGaugeAliveForPool(address _pool) external view returns (bool);
+    function gauges(address _pair) external view returns (address);
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+pragma abicoder v2;
 
-    /// @dev Returns start of voting window
-    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
-        }
-    }
+import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
 
-    /// @dev Returns end of voting window / beginning of unrestricted voting window
-    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
-        }
-    }
+interface IVoter {
+    function ve() external view returns (IVotingEscrow);
 
-    /// @dev Returns the status if it is the last hour of the epoch
-    function isLastHour(uint256 timestamp) internal pure returns (bool) {
-        // return block.timestamp % 7 days >= 6 days + 23 hours;
-        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
-        && timestamp < HybraTimeLibrary.epochNext(timestamp);
-    }
+    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
 
-    /// @dev Returns duration in multiples of epoch
-    function epochMultiples(uint256 duration) internal pure returns (uint256) {
-        unchecked {
-            return (duration / WEEK) * WEEK;
-        }
-    }
+    function gauges(address _pool) external view returns (address);
 
-    /// @dev Returns duration in multiples of epoch
-    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
-        unchecked {
-            return  endTime - WEEK <= timestamp && timestamp < endTime;
-        }
-    }
+    function gaugeToFees(address _gauge) external view returns (address);
 
-    /// @dev Returns duration in multiples of epoch
-    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
-        }
-    }
+    function gaugeToBribes(address _gauge) external view returns (address);
 
-    /// @dev Returns duration in multiples of epoch
-    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
-        }
-    }
+    function createGauge(address _poolFactory, address _pool) external returns (address);
+
+    function distribute(address gauge) external;
+
+    function factoryRegistry() external view returns (IFactoryRegistry);
+
+    /// @dev Utility to distribute to gauges of pools in array.
+    /// @param _gauges Array of gauges to distribute to.
+    function distribute(address[] memory _gauges) external;
+
+    function isAlive(address _gauge) external view returns (bool);
+
+    function killGauge(address _gauge) external;
+
+    function emergencyCouncil() external view returns (address);
+
+    /// @notice Claim emissions from gauges.
+    /// @param _gauges Array of gauges to collect emissions from.
+    function claimRewards(address[] memory _gauges) external;
+
+    /// @notice Claim fees for a given NFT.
+    /// @dev Utility to help batch fee claims.
+    /// @param _fees    Array of FeesVotingReward contracts to collect from.
+    /// @param _tokens  Array of tokens that are used as fees.
+    /// @param _tokenId Id of veNFT that you wish to claim fees for.
+    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
 }
 
 // SPDX-License-Identifier: MIT
@@ -3149,82 +3314,6 @@ interface IPairInfo {
     function isPair(address _pair) external view returns(bool);
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-/// @title Callback for ICLPoolActions#flash
-/// @notice Any contract that calls ICLPoolActions#flash must implement this interface
-interface ICLFlashCallback {
-    /// @notice Called to `msg.sender` after transferring to the recipient from ICLPool#flash.
-    /// @dev In the implementation you must repay the pool the tokens sent by flash plus the computed fee amounts.
-    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
-    /// @param fee0 The fee amount in token0 due to the pool by the end of the flash
-    /// @param fee1 The fee amount in token1 due to the pool by the end of the flash
-    /// @param data Any data passed through by the caller via the ICLPoolActions#flash call
-    function uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPairFactory {
-    function allPairsLength() external view returns (uint);
-    function isPair(address pair) external view returns (bool);
-    function allPairs(uint index) external view returns (address);
-    function pairCodeHash() external view returns (bytes32);
-    function getPair(address tokenA, address token, bool stable) external view returns (address);
-    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
-    function isGenesis(address pair) external view returns (bool);
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-import "./pool/ICLPoolConstants.sol";
-import "./pool/ICLPoolState.sol";
-import "./pool/ICLPoolDerivedState.sol";
-import "./pool/ICLPoolActions.sol";
-import "./pool/ICLPoolOwnerActions.sol";
-import "./pool/ICLPoolEvents.sol";
-
-/// @title The interface for a CL Pool
-/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
-/// to the ERC20 specification
-/// @dev The pool interface is broken up into many smaller pieces
-interface ICLPool is
-    ICLPoolConstants,
-    ICLPoolState,
-    ICLPoolDerivedState,
-    ICLPoolActions,
-    ICLPoolEvents,
-    ICLPoolOwnerActions
-{}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPermissionsRegistry {
-    function emergencyCouncil() external view returns(address);
-    function hybraTeamMultisig() external view returns(address);
-    function hasRole(bytes memory role, address caller) external view returns(bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IGaugeCL {
-    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
-    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function balanceOf(uint256 tokenId) external view returns (uint256); 
-    function emergency() external returns (bool);
-    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
-    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
-    function totalSupply() external view returns (uint);
-    function rewardRate() external view returns (uint);
-    function rewardForDuration() external view returns (uint256);
-    function stakedFees() external view returns (uint256, uint256);
-}
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.6.0;
 
@@ -3276,100 +3365,11 @@ library TransferHelper {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IBribe {
-    function deposit(uint amount, uint tokenId) external;
-    function withdraw(uint amount, uint tokenId) external;
-    function getRewardForAddress(address _owner, address[] memory tokens) external;
-    function notifyRewardAmount(address token, uint amount) external;
-    function left(address token) external view returns (uint);
-    function getReward(uint tokenId, address[] memory tokens) external;
-    function bribeTokens(uint256 i) external view returns(address); 
-    function rewardsListLength() external view returns (uint256);
-    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
+interface IBribeFactory {
+    function createInternalBribe(address[] memory) external returns (address);
+    function createExternalBribe(address[] memory) external returns (address);
+    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IGaugeFactory {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-pragma abicoder v2;
-
-import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
-
-interface IVoter {
-    function ve() external view returns (IVotingEscrow);
-
-    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
-
-    function gauges(address _pool) external view returns (address);
-
-    function gaugeToFees(address _gauge) external view returns (address);
-
-    function gaugeToBribes(address _gauge) external view returns (address);
-
-    function createGauge(address _poolFactory, address _pool) external returns (address);
-
-    function distribute(address gauge) external;
-
-    function factoryRegistry() external view returns (IFactoryRegistry);
-
-    /// @dev Utility to distribute to gauges of pools in array.
-    /// @param _gauges Array of gauges to distribute to.
-    function distribute(address[] memory _gauges) external;
-
-    function isAlive(address _gauge) external view returns (bool);
-
-    function killGauge(address _gauge) external;
-
-    function emergencyCouncil() external view returns (address);
-
-    /// @notice Claim emissions from gauges.
-    /// @param _gauges Array of gauges to collect emissions from.
-    function claimRewards(address[] memory _gauges) external;
-
-    /// @notice Claim fees for a given NFT.
-    /// @dev Utility to help batch fee claims.
-    /// @param _fees    Array of FeesVotingReward contracts to collect from.
-    /// @param _tokens  Array of tokens that are used as fees.
-    /// @param _tokenId Id of veNFT that you wish to claim fees for.
-    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-/// @title Callback for ICLPoolActions#swap
-/// @notice Any contract that calls ICLPoolActions#swap must implement this interface
-interface ICLSwapCallback {
-    /// @notice Called to `msg.sender` after executing a swap via ICLPool#swap.
-    /// @dev In the implementation you must pay the pool tokens owed for the swap.
-    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
-    /// amount0Delta and amount1Delta can both be 0 if no tokens were swapped.
-    /// @param amount0Delta The amount of token0 that was sent (negative) or must be received (positive) by the pool by
-    /// the end of the swap. If positive, the callback must send that amount of token0 to the pool.
-    /// @param amount1Delta The amount of token1 that was sent (negative) or must be received (positive) by the pool by
-    /// the end of the swap. If positive, the callback must send that amount of token1 to the pool.
-    /// @param data Any data passed through by the caller via the ICLPoolActions#swap call
-    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-import "./IGaugeManager.sol";
-
-interface IGaugeFactoryCL {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
-}
 
 END OF SUPPORTING CONTRACTS AND INTERFACES
