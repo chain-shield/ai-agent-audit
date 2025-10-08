@@ -44,22 +44,23 @@ pub async fn generate_and_save_metadata_context(
     let mut metadata = String::new();
 
     // full context
-    let mut full_context = generate_context_for_code_review(repo, semantics_path).await?;
+    let full_context = generate_context_for_code_review(repo, semantics_path).await?;
 
     let summaries = summarize_src_files(repo, semantics_path).await?;
 
     // add file summaries to context summary
-    full_context.push_str("\n## SUMMARY OF SOURCE CODE FILES\n\n");
+    let mut full_context_plus_summaries = full_context.clone();
+    full_context_plus_summaries.push_str("\n## SUMMARY OF SOURCE CODE FILES\n\n");
     for summary in summaries {
         let file_type = summary.file_type.unwrap_or(FileSummaryType::OutOfScope);
         if file_type == FileSummaryType::Source {
-            full_context.push_str(&format!("### Summary of {}", summary.filename));
-            full_context.push_str(&summary.summary);
-            full_context.push_str("\n");
+            full_context_plus_summaries.push_str(&format!("### Summary of {}\n", summary.filename));
+            full_context_plus_summaries.push_str(&summary.summary);
+            full_context_plus_summaries.push_str("\n");
         }
     }
 
-    let protocol_summary = summarize_protocol(repo, Some(&full_context)).await?;
+    let protocol_summary = summarize_protocol(repo, Some(&full_context_plus_summaries)).await?;
 
     metadata.push_str(&format!(
         "\n## PROTOCOL OVERVIEW:\n\n{}\n\n",
@@ -128,7 +129,7 @@ pub async fn generate_context_for_code_review(
     let lib_config_headers = repo.extract_lib_config_headers()?;
     full_prompt_context.push_str("\n ## PACKAGE.JSON HEADERS OF LIB PACKAGES: \n");
     full_prompt_context.push_str("\n Note: Check for important lib version info\n\n ");
-    full_prompt_context.push_str("\n When code reviewing be mindful of which version of openzepplin, chainlink, etc the package is using.\n\n ");
+    full_prompt_context.push_str("\n When code reviewing be mindful of which version of openzepplin, chainlink, etc the package version is using.\n\n ");
     full_prompt_context.push_str(&lib_config_headers);
 
     let config_files_content = repo.extract_content_from_config_files()?;
