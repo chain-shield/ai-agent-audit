@@ -269,244 +269,12 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-
-library VotingDelegationLib {
-    /// @notice A checkpoint for marking delegated tokenIds from a given timestamp
-    struct Checkpoint {
-        uint timestamp;
-        uint[] tokenIds;
-    }
-
-    // A struct that holds all checkpoint data for different accounts.
-    // The calling contract will include one instance of this struct in storage.
-    struct Data {
-        // For each account, store a mapping from checkpoint index to Checkpoint.
-        mapping(address => mapping(uint32 => Checkpoint)) checkpoints;
-        // For each account, store the number of checkpoints.
-        mapping(address => uint32) numCheckpoints;
-    }
-
-    struct TokenHelpers {
-        function(uint) view returns (address) ownerOfFn;
-        function(address) view returns (uint) ownerToNFTokenCountFn;
-        function(address, uint) view returns (uint) tokenOfOwnerByIndex;
-    }
-
-    uint public constant MAX_DELEGATES = 1024; // avoid too much gas
-    /**
-     * @notice Returns the checkpoint index to write for an account.
-     * If the most recent checkpoint was created in the current timestamp, returns that index.
-     * Otherwise, returns the current number of checkpoints (i.e. a new checkpoint index).
-     */
-    function findCheckpointToWrite(
-        Data storage self,
-        address account,
-        uint256 currentTimestamp
-    ) internal view returns (uint32) {
-        uint32 n = self.numCheckpoints[account];
-        if (n > 0 && self.checkpoints[account][n - 1].timestamp == currentTimestamp) {
-            return n - 1;
-        } else {
-            return n;
-        }
-    }
-
-    function moveTokenDelegates(
-        Data storage self,
-        address srcRep,
-        address dstRep,
-        uint _tokenId,
-        function(uint) view returns (address) ownerOfFn
-    ) internal {
-        if (srcRep != dstRep && _tokenId > 0) {
-            if (srcRep != address(0)) {
-                uint32 srcRepNum = self.numCheckpoints[srcRep];
-                uint[] storage srcRepOld = srcRepNum > 0
-                    ? self.checkpoints[srcRep][srcRepNum - 1].tokenIds
-                    : self.checkpoints[srcRep][0].tokenIds;
-                uint32 nextSrcRepNum = findCheckpointToWrite(self, srcRep, block.timestamp);
-                bool _isCheckpointInNewBlock = (srcRepNum > 0) ? (nextSrcRepNum != srcRepNum - 1) : true;
-                Checkpoint storage cpSrcRep = self.checkpoints[srcRep][nextSrcRepNum];
-                uint[] storage srcRepNew = cpSrcRep.tokenIds;
-                cpSrcRep.timestamp = block.timestamp;
-                // All the same except _tokenId
-                uint256 length = srcRepOld.length;
-                for (uint i = 0; i < length;) {
-                    uint tId = srcRepOld[i];
-                    if(_isCheckpointInNewBlock) {
-                        if(ownerOfFn(tId) == srcRep) {
-                            srcRepNew.push(tId);
-                        }
-                        i++;
-                    } else {
-                        if(ownerOfFn(tId) != srcRep) {
-                            srcRepNew[i] = srcRepNew[length -1];
-                            srcRepNew.pop();
-                            length--;
-                        } else {
-                            i++;
-                        }
-                    }
-                }
-                self.numCheckpoints[srcRep] = nextSrcRepNum + 1;   
-            }
-
-            if (dstRep != address(0)) {
-                uint32 dstRepNum = self.numCheckpoints[dstRep];
-                uint[] storage dstRepOld = dstRepNum > 0
-                    ? self.checkpoints[dstRep][dstRepNum - 1].tokenIds
-                    : self.checkpoints[dstRep][0].tokenIds;
-                uint32 nextDstRepNum = findCheckpointToWrite(self, dstRep, block.timestamp);
-                bool _isCheckpointInNewBlock = (dstRepNum > 0) ? (nextDstRepNum != dstRepNum - 1) : true;
-                Checkpoint storage cpDstRep = self.checkpoints[dstRep][nextDstRepNum];
-                uint[] storage dstRepNew = cpDstRep.tokenIds;
-                cpDstRep.timestamp = block.timestamp;
-                require(
-                    dstRepOld.length + 1 <= MAX_DELEGATES,
-                    "tokens>1"
-                );
-                if(_isCheckpointInNewBlock) {
-                    for (uint i = 0; i < dstRepOld.length; i++) {
-                        uint tId = dstRepOld[i];
-                        dstRepNew.push(tId);
-                    }
-                }
-                dstRepNew.push(_tokenId);
-                self.numCheckpoints[dstRep] = nextDstRepNum + 1;
-            }
-        }
-    }
-
-    function _moveAllDelegates(
-        Data storage self,
-        address owner,
-        address srcRep,
-        address dstRep,
-        TokenHelpers memory tokenHelpers
-    ) internal {
-        // You can only redelegate what you own
-        address _owner = owner;
-        Data storage _self = self;
-        address _srcRep = srcRep;
-        address _dstRep = dstRep;
-        TokenHelpers memory _tokenHelper = tokenHelpers;
-        if (_srcRep != _dstRep) {
-            if (_srcRep != address(0)) {
-                uint32 srcRepNum = _self.numCheckpoints[_srcRep];
-                uint[] storage srcRepOld = srcRepNum > 0
-                    ? _self.checkpoints[_srcRep][srcRepNum - 1].tokenIds
-                    : _self.checkpoints[_srcRep][0].tokenIds;
-                uint32 nextSrcRepNum = findCheckpointToWrite(_self,_srcRep, block.timestamp);
-                bool _isCheckpointInNewBlock = (srcRepNum > 0) ? (nextSrcRepNum != srcRepNum - 1) : true;
-                // if(_isCheckpointInNewBlock) {
-                Checkpoint storage cpSrcRep = _self.checkpoints[_srcRep][nextSrcRepNum];
-                uint[] storage srcRepNew = cpSrcRep.tokenIds;
-                cpSrcRep.timestamp = block.timestamp;
-
-                uint256 length = srcRepOld.length;
-                for (uint i = 0; i < length;) {
-                    uint tId = srcRepOld[i];
-                    if(_isCheckpointInNewBlock) {
-                        if(_tokenHelper.ownerOfFn(tId) != _owner) {
-                            srcRepNew.push(tId);
-                        }
-                        i++;
-                    } else {
-                        if(_tokenHelper.ownerOfFn(tId) == _owner) {
-                            srcRepNew[i] = srcRepNew[length -1];
-                            srcRepNew.pop();
-                            length--;
-                        } else {
-                            i++;
-                        }
-                    }
-                }
-                _self.numCheckpoints[_srcRep] = nextSrcRepNum + 1;
-            }
-
-
-            if (_dstRep != address(0)) {
-                uint32 dstRepNum = _self.numCheckpoints[_dstRep];
-                uint[] storage dstRepOld = dstRepNum > 0
-                    ? _self.checkpoints[_dstRep][dstRepNum - 1].tokenIds
-                    : _self.checkpoints[_dstRep][0].tokenIds;
-                uint32 nextDstRepNum = findCheckpointToWrite(_self,_dstRep, block.timestamp);
-                bool _isCheckpointInNewBlock = (dstRepNum > 0) ? (nextDstRepNum != dstRepNum - 1) : true;
-                Checkpoint storage cpDstRep = _self.checkpoints[_dstRep][nextDstRepNum];
-                uint[] storage dstRepNew = cpDstRep.tokenIds;
-                cpDstRep.timestamp = block.timestamp;
-                uint ownerTokenCount = _tokenHelper.ownerToNFTokenCountFn(_owner);
-                require(
-                    dstRepOld.length + ownerTokenCount <= MAX_DELEGATES,
-                    "tokens>1"
-                );
-                if(_isCheckpointInNewBlock) {
-                    for (uint i = 0; i < dstRepOld.length; i++) {
-                        uint tId = dstRepOld[i];
-                        dstRepNew.push(tId);
-                    }
-                }
-                // Plus all that's owned
-                for (uint i = 0; i < ownerTokenCount; i++) {
-                    uint tId = _tokenHelper.tokenOfOwnerByIndex(_owner,i);
-                    dstRepNew.push(tId);
-                }
-                _self.numCheckpoints[_dstRep] = nextDstRepNum + 1;   
-            }
-        }
-    }
-
-    function getPastVotesIndex(Data storage data, address account, uint timestamp) internal view returns (uint32) {
-        uint32 nCheckpoints = data.numCheckpoints[account];
-        if (nCheckpoints == 0) {
-            return 0;
-        }
-        // First check most recent balance
-        if (data.checkpoints[account][nCheckpoints - 1].timestamp <= timestamp) {
-            return (nCheckpoints - 1);
-        }
-
-        // Next check implicit zero balance
-        if (data.checkpoints[account][0].timestamp > timestamp) {
-            return 0;
-        }
-
-        uint32 lower = 0;
-        uint32 upper = nCheckpoints - 1;
-        while (upper > lower) {
-            uint32 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
-            VotingDelegationLib.Checkpoint storage cp = data.checkpoints[account][center];
-            if (cp.timestamp == timestamp) {
-                return center;
-            } else if (cp.timestamp < timestamp) {
-                lower = center;
-            } else {
-                upper = center - 1;
-            }
-        }
-        return lower;
-    }
-
-}
-// SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IGauge {
-    function notifyRewardAmount(address token, uint amount) external;
-    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
-    function getReward(address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function left(address token) external view returns (uint);
-    function rewardRate(address _pair) external view returns (uint);
-    function balanceOf(address _account) external view returns (uint);
-    function isForPair() external view returns (bool);
-    function totalSupply() external view returns (uint);
-    function earned(address token, address account) external view returns (uint);
-    function setGenesisPool(address genesisPool) external;
-    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
-    function emergency() external returns (bool);
+interface IPermissionsRegistry {
+    function emergencyCouncil() external view returns(address);
+    function hybraTeamMultisig() external view returns(address);
+    function hasRole(bytes memory role, address caller) external view returns(bool);
 }
 
 // SPDX-License-Identifier: MIT
@@ -594,656 +362,22 @@ library HybraTimeLibrary {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IGaugeCL {
-    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
-    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function balanceOf(uint256 tokenId) external view returns (uint256); 
-    function emergency() external returns (bool);
-    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
-    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
-    function totalSupply() external view returns (uint);
-    function rewardRate() external view returns (uint);
-    function rewardForDuration() external view returns (uint256);
-    function stakedFees() external view returns (uint256, uint256);
-}
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity =0.7.6;
-interface IMinter {
-    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
-    /// @return _period Start of current epoch.
-    function updatePeriod() external returns (uint256 _period);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IBribeFactory {
-    function createInternalBribe(address[] memory) external returns (address);
-    function createExternalBribe(address[] memory) external returns (address);
-    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-
-interface IGaugeManager {
-    
-    struct FarmingParam {
-        address farmingCenter;
-        address algebraEternalFarming;
-        address nfpm;
-    }
-
-    function isGaugeAliveForPool(address _pool) external view returns (bool);
-    function gauges(address _pair) external view returns (address);
-    function isGauge(address _gauge) external view returns (bool);
-    function poolForGauge(address _gauge) external view returns (address);
-}
-// SPDX-License-Identifier: None
-// HybraHole Foundation 2025
-
-pragma solidity 0.8.13;
-
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
-
-interface IHybraVotes is IVotes{
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IGaugeFactory {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPairInfo {
-
-    function token0() external view returns(address);
-    function reserve0() external view returns(uint);
-    function decimals0() external view returns(uint);
-    function token1() external view returns(address);
-    function reserve1() external view returns(uint);
-    function decimals1() external view returns(uint);
-    function isPair(address _pair) external view returns(bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IVotingEscrow {
-    function team() external returns (address);
-
-    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
-    /// @param _value Amount to deposit
-    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
-    /// @return TokenId of created veNFT
-    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface ITokenHandler {
-    function isWhitelisted(address token) external view returns (bool);
-    function isWhitelistedNFT(uint256 token) external view returns (bool);
-    function isConnector(address token) external view returns (bool);
-
-    function whitelistToken(address _token) external;
-    function blacklistToken(address _token) external;
-
-    function whiteListed(uint256 index) external returns (address);
-    function connectors(uint256 index) external returns (address);
-
-    function whiteListedTokensLength() external returns (uint256);
-    function connectorTokensLength() external returns (uint256);
-
-    function whiteListedTokens() external view returns(address[] memory tokens);
-    function connectorTokens() external view returns(address[] memory tokens);
-}
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-pragma abicoder v2;
-
-import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
-
-interface IVoter {
-    function ve() external view returns (IVotingEscrow);
-
-    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
-
-    function gauges(address _pool) external view returns (address);
-
-    function gaugeToFees(address _gauge) external view returns (address);
-
-    function gaugeToBribes(address _gauge) external view returns (address);
-
-    function createGauge(address _poolFactory, address _pool) external returns (address);
-
-    function distribute(address gauge) external;
-
-    function factoryRegistry() external view returns (IFactoryRegistry);
-
-    /// @dev Utility to distribute to gauges of pools in array.
-    /// @param _gauges Array of gauges to distribute to.
-    function distribute(address[] memory _gauges) external;
-
-    function isAlive(address _gauge) external view returns (bool);
-
-    function killGauge(address _gauge) external;
-
-    function emergencyCouncil() external view returns (address);
-
-    /// @notice Claim emissions from gauges.
-    /// @param _gauges Array of gauges to collect emissions from.
-    function claimRewards(address[] memory _gauges) external;
-
-    /// @notice Claim fees for a given NFT.
-    /// @dev Utility to help batch fee claims.
-    /// @param _fees    Array of FeesVotingReward contracts to collect from.
-    /// @param _tokens  Array of tokens that are used as fees.
-    /// @param _tokenId Id of veNFT that you wish to claim fees for.
-    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-import "./interfaces/IMinter.sol";
-import "./interfaces/IVoter.sol";
-import "./interfaces/IGaugeManager.sol";
-import "./interfaces/IVotingEscrow.sol";
-import "./interfaces/ITokenHandler.sol";
-import {HybraTimeLibrary} from "./libraries/HybraTimeLibrary.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-
-
-contract Bribe is ReentrancyGuard {
-    using SafeERC20 for IERC20;
-    uint256 public WEEK; 
-
-    /* ========== STATE VARIABLES ========== */
-
-    struct Checkpoint {
-        uint256 timestamp;
-        uint256 balanceOf;
-    }
-
-    struct SupplyCheckpoint {
-        uint256 timestamp;
-        uint256 supply;
-    }
-
-    mapping(address => mapping(uint256 => uint256)) public tokenRewardsPerEpoch; // token -> startTimestamp -> rewardBalance
-    address public voter;
-    address public gaugeManager;
-    address public immutable bribeFactory;
-    address public minter;
-    address public immutable ve;
-    address public owner;
-    ITokenHandler public tokenHandler;
-
-    string public TYPE;
-
-    uint256 public totalSupply;
-    mapping(uint256 => uint256) public balanceOf;
-
-    mapping(address => mapping(uint256 => uint256)) public lastEarn;
-
-    mapping(uint256 => mapping(uint256 => Checkpoint)) public checkpoints;
-    mapping(uint256 => uint256) public numCheckpoints;
-
-    mapping(uint256 => SupplyCheckpoint) public supplyCheckpoints;
-    uint256 public supplyNumCheckpoints;
-
-    mapping(address => bool) internal isBribeToken;
-    address[] public bribeTokens;
-
-
-    /* ========== CONSTRUCTOR ========== */
-
-    constructor(address _owner,address _voter,address _gaugeManager, address _bribeFactory, address _tokenHandler, address _token0, address _token1, string memory _type)  {
-        require(_bribeFactory != address(0) && _voter != address(0) && _gaugeManager != address(0) && _owner != address(0), "ZA");
-        WEEK = HybraTimeLibrary.WEEK;
-        voter = _voter;
-        gaugeManager = _gaugeManager;
-        bribeFactory = _bribeFactory;
-        tokenHandler = ITokenHandler(_tokenHandler);
-        ve = IVoter(_voter)._ve();
-        minter = IGaugeManager(_gaugeManager).minter();
-        require(minter != address(0), "ZA");
-        owner = _owner;
-        TYPE = _type;
-
-        bribeTokens.push(_token0);
-        bribeTokens.push(_token1);
-        isBribeToken[_token0] = true;
-        isBribeToken[_token1] = true;
-    }
-
-    function getEpochStart() public view returns(uint256){
-        return IMinter(minter).active_period();
-    }
-
-    /// @notice get next epoch (where bribes are saved)
-    function getNextEpochStart() public view returns(uint256){
-        return HybraTimeLibrary.epochNext(block.timestamp);
-    }
-
-    /* ========== VIEWS ========== */
-
-    /// @notice get the length of the reward tokens
-    function rewardsListLength() external view returns(uint256) {
-        return bribeTokens.length;
-    }
-
-    /// @notice Read earned amount given a tokenID and _rewardToken
-    function earned(uint256 tokenId, address _rewardToken) public view returns(uint256){
-        if (numCheckpoints[tokenId] == 0) {
-            return 0;
-        }
-        
-        uint256 reward = 0;
-        uint256 _supply = 1;
-        uint256 _currTs = HybraTimeLibrary.epochStart(lastEarn[_rewardToken][tokenId]); // take epoch last claimed in as starting point
-        uint256 _index = getPriorBalanceIndex(tokenId, _currTs);
-        Checkpoint memory cp0 = checkpoints[tokenId][_index];
-        
-        
-        // accounts for case where lastEarn is before first checkpoint
-        _currTs = Math.max(_currTs, HybraTimeLibrary.epochStart(cp0.timestamp));
-
-        // get epochs between current epoch and first checkpoint in same epoch as last claim
-        uint256 numEpochs = (HybraTimeLibrary.epochStart(block.timestamp) - _currTs) / WEEK;
-
-        if (numEpochs > 0) {
-            for (uint256 i = 0; i < numEpochs; i++) {
-                // get index of last checkpoint in this epoch
-                _index = getPriorBalanceIndex(tokenId, _currTs + WEEK - 1);
-                // get checkpoint in this epoch
-                cp0 = checkpoints[tokenId][_index];
-                // get supply of last checkpoint in this epoch
-                _supply = Math.max(supplyCheckpoints[getPriorSupplyIndex(_currTs + WEEK - 1)].supply, 1);
-                reward += (cp0.balanceOf * tokenRewardsPerEpoch[_rewardToken][_currTs]) / _supply;
-                _currTs += WEEK;
-            }
-        } 
-        return reward;  
-    }
-
-
-    function getPriorBalanceIndex(uint256 tokenId, uint256 timestamp) public view returns (uint256) {
-        uint256 nCheckpoints = numCheckpoints[tokenId];
-        if (nCheckpoints == 0) {
-            return 0;
-        }
-
-        // First check most recent balance
-        if (checkpoints[tokenId][nCheckpoints - 1].timestamp <= timestamp) {
-            return (nCheckpoints - 1);
-        }
-
-        // Next check implicit zero balance
-        if (checkpoints[tokenId][0].timestamp > timestamp) {
-            return 0;
-        }
-
-        uint256 lower = 0;
-        uint256 upper = nCheckpoints - 1;
-        while (upper > lower) {
-            uint256 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
-            Checkpoint memory cp = checkpoints[tokenId][center];
-            if (cp.timestamp == timestamp) {
-                return center;
-            } else if (cp.timestamp < timestamp) {
-                lower = center;
-            } else {
-                upper = center - 1;
-            }
-        }
-        return lower;
-    }
-
-    function getPriorSupplyIndex(uint256 timestamp) public view returns (uint256) {
-        uint256 nCheckpoints = supplyNumCheckpoints;
-        if (nCheckpoints == 0) {
-            return 0;
-        }
-
-        // First check most recent balance
-        if (supplyCheckpoints[nCheckpoints - 1].timestamp <= timestamp) {
-            return (nCheckpoints - 1);
-        }
-
-        // Next check implicit zero balance
-        if (supplyCheckpoints[0].timestamp > timestamp) {
-            return 0;
-        }
-
-        uint256 lower = 0;
-        uint256 upper = nCheckpoints - 1;
-        while (upper > lower) {
-            uint256 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
-            SupplyCheckpoint memory cp = supplyCheckpoints[center];
-            if (cp.timestamp == timestamp) {
-                return center;
-            } else if (cp.timestamp < timestamp) {
-                lower = center;
-            } else {
-                upper = center - 1;
-            }
-        }
-        return lower;
-    }
-
-    function isRewardToken(address _rewardToken) external view returns (bool) {
-        return _isRewardToken(_rewardToken);
-    }
-
-    function _isRewardToken(address _rewardToken) internal view returns (bool) {
-        return isBribeToken[_rewardToken] || tokenHandler.isConnector(_rewardToken);
-    }
- 
-    /* ========== MUTATIVE FUNCTIONS ========== */
-
-    /// @notice User votes deposit
-    /// @dev    called on voter.vote() or voter.poke()
-    ///         we save into owner "address" and not "tokenID". 
-    ///         Owner must reset before transferring token
-    function deposit(uint256 amount, uint256 tokenId) external nonReentrant {
-        require(amount > 0, "ZV");
-        require(msg.sender == voter, "NA");
-        totalSupply += amount;
-        balanceOf[tokenId] += amount;
-
-        _writeCheckpoint(tokenId, balanceOf[tokenId]);
-        _writeSupplyCheckpoint();
-        
-        emit Staked(tokenId, amount);
-    }
-
-    function _writeCheckpoint(uint256 tokenId, uint256 balance) internal {
-        uint256 _nCheckPoints = numCheckpoints[tokenId];
-        uint256 _timestamp = block.timestamp;
-
-        if (
-            _nCheckPoints > 0 &&
-            HybraTimeLibrary.epochStart(checkpoints[tokenId][_nCheckPoints - 1].timestamp) ==
-            HybraTimeLibrary.epochStart(_timestamp)
-        ) {
-            checkpoints[tokenId][_nCheckPoints - 1] = Checkpoint(_timestamp, balance);
-        } else {
-            checkpoints[tokenId][_nCheckPoints] = Checkpoint(_timestamp, balance);
-            numCheckpoints[tokenId] = _nCheckPoints + 1;
-        }
-    }
-
-
-    function _writeSupplyCheckpoint() internal {
-        uint256 _nCheckPoints = supplyNumCheckpoints;
-        uint256 _timestamp = block.timestamp;
-
-        if (
-            _nCheckPoints > 0 &&
-            HybraTimeLibrary.epochStart(supplyCheckpoints[_nCheckPoints - 1].timestamp) ==
-            HybraTimeLibrary.epochStart(_timestamp)
-        ) {
-            supplyCheckpoints[_nCheckPoints - 1] = SupplyCheckpoint(_timestamp, totalSupply);
-        } else {
-            supplyCheckpoints[_nCheckPoints] = SupplyCheckpoint(_timestamp, totalSupply);
-            supplyNumCheckpoints = _nCheckPoints + 1;
-        }
-    }
-
-    /// @notice User votes withdrawal 
-    /// @dev    called on voter.reset()
-    function withdraw(uint256 amount, uint256 tokenId) external nonReentrant {
-        require(amount > 0, "ZV");
-        require(msg.sender == voter, "NA");
-        if (amount <= balanceOf[tokenId]) {
-            totalSupply -= amount;
-            balanceOf[tokenId] -= amount;
-
-            _writeCheckpoint(tokenId, balanceOf[tokenId]);
-            _writeSupplyCheckpoint();
-            emit Withdrawn(tokenId, amount);
-        }
-    }
-
-    /// @notice Claim the TOKENID rewards
-    function getReward(uint256 tokenId, address[] memory tokens) external nonReentrant  {
-        address _owner = IVotingEscrow(ve).ownerOf(tokenId);
-        require(msg.sender == gaugeManager, "NA");
-        uint256 _length = tokens.length;
-        for (uint256 i = 0; i < _length; i++) {
-            uint256 _reward = earned(tokenId, tokens[i]);
-            lastEarn[tokens[i]][tokenId] = block.timestamp;
-            if (_reward > 0) {
-                IERC20(tokens[i]).safeTransfer(_owner, _reward);
-            }
-        }
-    }
-
-    /// @dev Rewards are saved into Current EPOCH mapping. 
-    function notifyRewardAmount(address _rewardsToken, uint256 reward) external nonReentrant {
-        require(_isRewardToken(_rewardsToken), "!VERIFIED");
-
-        if(!isBribeToken[_rewardsToken]){
-            isBribeToken[_rewardsToken] = true;
-            bribeTokens.push(_rewardsToken);
-        }
-
-        IERC20(_rewardsToken).safeTransferFrom(msg.sender,address(this),reward);
-        uint256 epochStart = HybraTimeLibrary.epochStart(block.timestamp);
-        tokenRewardsPerEpoch[_rewardsToken][epochStart] += reward;
-        emit RewardAdded(_rewardsToken, reward, epochStart);
-    }
-
-    /* ========== RESTRICTED FUNCTIONS ========== */
-
-    /// @notice Recover some ERC20 from the contract and updated given bribe
-    function recoverERC20AndUpdateData(address tokenAddress, uint256 tokenAmount) external onlyAllowed {
-        require(tokenAmount <= IERC20(tokenAddress).balanceOf(address(this)), "TOO_MUCH");
-        
-        uint256 _startTimestamp = IMinter(minter).active_period() + WEEK;
-        uint256 _lastReward = tokenRewardsPerEpoch[tokenAddress][_startTimestamp];
-        tokenRewardsPerEpoch[tokenAddress][_startTimestamp] = _lastReward - tokenAmount;
-        IERC20(tokenAddress).safeTransfer(owner, tokenAmount);
-        emit Recovered(tokenAddress, tokenAmount);
-    }
-
-    /// @notice Recover some ERC20 from the contract.
-    /// @dev    Be careful --> if called then getReward() at last epoch will fail because some reward are missing! 
-    ///         Think about calling recoverERC20AndUpdateData()
-    function emergencyRecoverERC20(address tokenAddress, uint256 tokenAmount) external onlyAllowed {
-        require(tokenAmount <= IERC20(tokenAddress).balanceOf(address(this)), "TOO_MUCH");
-        IERC20(tokenAddress).safeTransfer(owner, tokenAmount);
-        emit Recovered(tokenAddress, tokenAmount);
-    }
-
-    /// @notice Set a new voter
-    function setVoter(address _Voter) external onlyAllowed {
-        require(_Voter != address(0), "ZA");
-        voter = _Voter;
-    }
-
-        /// @notice Set a new gaugeManager
-    function setGaugeManager(address _gaugeManager) external onlyAllowed {
-        require(_gaugeManager != address(0));
-        gaugeManager = _gaugeManager;
-    }
-
-    /// @notice Set a new minter
-    function setMinter(address _minter) external onlyAllowed {
-        require(_minter != address(0), "ZA");
-        minter = _minter;
-    }
-
-
-    /// @notice Set a new Owner
-    event SetOwner(address indexed _owner);
-    function setOwner(address _owner) external onlyAllowed {
-        require(_owner != address(0), "ZA");
-        owner = _owner;
-        emit SetOwner(_owner);
-    }
-
-
-
-    /* ========== MODIFIERS ========== */
-
-    modifier onlyAllowed() {
-        require( (msg.sender == owner || msg.sender == bribeFactory), "NA" );
-        _;
-    }
-
-
-    /* ========== EVENTS ========== */
-
-    event RewardAdded(address indexed rewardToken, uint256 reward, uint256 startTimestamp);
-    event Staked(uint256 indexed tokenId, uint256 amount);
-    event Withdrawn(uint256 indexed tokenId, uint256 amount);
-    event RewardPaid(address indexed user,address indexed rewardsToken,uint256 reward);
-    event Recovered(address indexed token, uint256 amount);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPermissionsRegistry {
-    function emergencyCouncil() external view returns(address);
-    function hybraTeamMultisig() external view returns(address);
-    function hasRole(bytes memory role, address caller) external view returns(bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IVeArtProxy {
-    function _tokenURI(uint _tokenId, uint _balanceOf, uint _locked_end, uint _value) external pure returns (string memory output);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IBribe {
-    function deposit(uint amount, uint tokenId) external;
-    function withdraw(uint amount, uint tokenId) external;
-    function getRewardForAddress(address _owner, address[] memory tokens) external;
+interface IGauge {
     function notifyRewardAmount(address token, uint amount) external;
+    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
+    function getReward(address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
     function left(address token) external view returns (uint);
-    function getReward(uint tokenId, address[] memory tokens) external;
-    function bribeTokens(uint256 i) external view returns(address); 
-    function rewardsListLength() external view returns (uint256);
-    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
+    function rewardRate(address _pair) external view returns (uint);
+    function balanceOf(address _account) external view returns (uint);
+    function isForPair() external view returns (bool);
+    function totalSupply() external view returns (uint);
+    function earned(address token, address account) external view returns (uint);
+    function setGenesisPool(address genesisPool) external;
+    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
+    function emergency() external returns (bool);
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-import "./pool/ICLPoolConstants.sol";
-import "./pool/ICLPoolState.sol";
-import "./pool/ICLPoolDerivedState.sol";
-import "./pool/ICLPoolActions.sol";
-import "./pool/ICLPoolOwnerActions.sol";
-import "./pool/ICLPoolEvents.sol";
-
-/// @title The interface for a CL Pool
-/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
-/// to the ERC20 specification
-/// @dev The pool interface is broken up into many smaller pieces
-interface ICLPool is
-    ICLPoolConstants,
-    ICLPoolState,
-    ICLPoolDerivedState,
-    ICLPoolActions,
-    ICLPoolEvents,
-    ICLPoolOwnerActions
-{}
-
-pragma solidity 0.8.13;
-
-library VoterFactoryLib {
-    struct Data {
-        address[] pairFactories;
-        address[] gaugeFactories;
-        mapping(address => bool) isFactory;
-        mapping(address => bool) isGaugeFactory;
-    }
-
-    event AddPairFactories(address indexed pairfactory);
-    event AddGaugeFactories(address indexed gaugefactory);
-    event SetGaugeFactory(address indexed old, address indexed latest);
-    event SetPairFactory(address indexed old, address indexed latest);
-
-
-    function addPairFactory(Data storage self, address _pairFactory) external {
-        require(_pairFactory != address(0) , 'addr0');
-        require(!self.isFactory[_pairFactory], "fact");
-        require(_pairFactory.code.length > 0, "!contract");
-        self.pairFactories.push(_pairFactory);
-        self.isFactory[_pairFactory] = true;
-        emit AddPairFactories(_pairFactory);
-    }
-
-    function addGaugeFactory(Data storage self, address _gaugeFactory) external {
-        require(_gaugeFactory != address(0) , 'addr0');
-        require(!self.isGaugeFactory[_gaugeFactory], "gFact");
-        require(_gaugeFactory.code.length > 0, "!contract");
-        self.gaugeFactories.push(_gaugeFactory);
-        self.isGaugeFactory[_gaugeFactory] = true;
-        emit AddGaugeFactories(_gaugeFactory);
-    }
-
-    function replacePairFactory(Data storage self, address _pairFactory, uint256 _pos) external {
-        require(_pairFactory != address(0), 'addr0');
-        require(!self.isFactory[_pairFactory], 'fact');
-        require(_pairFactory.code.length > 0, "!contract");
-        address oldPF = self.pairFactories[_pos];
-        self.isFactory[oldPF] = false;
-        self.pairFactories[_pos] = _pairFactory;
-        self.isFactory[_pairFactory] = true;
-
-        emit SetPairFactory(oldPF, _pairFactory);
-    }
-
-    function replaceGaugeFactory(Data storage self, address _gaugeFactory, uint256 _pos) external {
-        require(_gaugeFactory != address(0) , 'addr0');
-        require(!self.isGaugeFactory[_gaugeFactory], 'gFact');
-        require(_gaugeFactory.code.length > 0, "!contract");
-        address oldGF = self.gaugeFactories[_pos];
-        self.isGaugeFactory[oldGF] = false;
-        self.gaugeFactories[_pos] = _gaugeFactory;
-        self.isGaugeFactory[_gaugeFactory] = true;
-
-        emit SetGaugeFactory(oldGF, _gaugeFactory);
-    }
-
-    function removePairFactory(Data storage self, uint256 _pos) external {
-        address oldPF = self.pairFactories[_pos];
-        require(self.isFactory[oldPF], "!exists");
-        self.isFactory[oldPF] = false;
-        self.pairFactories[_pos] = address(0);
-        emit SetPairFactory(oldPF, address(0));
-    }
-
-    function removeGaugeFactory(Data storage self, uint256 _pos) external {
-        address oldGF = self.gaugeFactories[_pos];
-        require(self.isGaugeFactory[oldGF], "!exists");
-        self.isGaugeFactory[oldGF] = false;
-        self.gaugeFactories[_pos] = address(0);
-        emit SetGaugeFactory(oldGF, address(0));
-    }
-
-}
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
@@ -1487,28 +621,227 @@ library VotingBalanceLogic {
     }
 }
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+pragma solidity ^0.8.13;
 
-import "./IGaugeManager.sol";
 
-interface IGaugeFactoryCL {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
+library VotingDelegationLib {
+    /// @notice A checkpoint for marking delegated tokenIds from a given timestamp
+    struct Checkpoint {
+        uint timestamp;
+        uint[] tokenIds;
+    }
+
+    // A struct that holds all checkpoint data for different accounts.
+    // The calling contract will include one instance of this struct in storage.
+    struct Data {
+        // For each account, store a mapping from checkpoint index to Checkpoint.
+        mapping(address => mapping(uint32 => Checkpoint)) checkpoints;
+        // For each account, store the number of checkpoints.
+        mapping(address => uint32) numCheckpoints;
+    }
+
+    struct TokenHelpers {
+        function(uint) view returns (address) ownerOfFn;
+        function(address) view returns (uint) ownerToNFTokenCountFn;
+        function(address, uint) view returns (uint) tokenOfOwnerByIndex;
+    }
+
+    uint public constant MAX_DELEGATES = 1024; // avoid too much gas
+    /**
+     * @notice Returns the checkpoint index to write for an account.
+     * If the most recent checkpoint was created in the current timestamp, returns that index.
+     * Otherwise, returns the current number of checkpoints (i.e. a new checkpoint index).
+     */
+    function findCheckpointToWrite(
+        Data storage self,
+        address account,
+        uint256 currentTimestamp
+    ) internal view returns (uint32) {
+        uint32 n = self.numCheckpoints[account];
+        if (n > 0 && self.checkpoints[account][n - 1].timestamp == currentTimestamp) {
+            return n - 1;
+        } else {
+            return n;
+        }
+    }
+
+    function moveTokenDelegates(
+        Data storage self,
+        address srcRep,
+        address dstRep,
+        uint _tokenId,
+        function(uint) view returns (address) ownerOfFn
+    ) internal {
+        if (srcRep != dstRep && _tokenId > 0) {
+            if (srcRep != address(0)) {
+                uint32 srcRepNum = self.numCheckpoints[srcRep];
+                uint[] storage srcRepOld = srcRepNum > 0
+                    ? self.checkpoints[srcRep][srcRepNum - 1].tokenIds
+                    : self.checkpoints[srcRep][0].tokenIds;
+                uint32 nextSrcRepNum = findCheckpointToWrite(self, srcRep, block.timestamp);
+                bool _isCheckpointInNewBlock = (srcRepNum > 0) ? (nextSrcRepNum != srcRepNum - 1) : true;
+                Checkpoint storage cpSrcRep = self.checkpoints[srcRep][nextSrcRepNum];
+                uint[] storage srcRepNew = cpSrcRep.tokenIds;
+                cpSrcRep.timestamp = block.timestamp;
+                // All the same except _tokenId
+                uint256 length = srcRepOld.length;
+                for (uint i = 0; i < length;) {
+                    uint tId = srcRepOld[i];
+                    if(_isCheckpointInNewBlock) {
+                        if(ownerOfFn(tId) == srcRep) {
+                            srcRepNew.push(tId);
+                        }
+                        i++;
+                    } else {
+                        if(ownerOfFn(tId) != srcRep) {
+                            srcRepNew[i] = srcRepNew[length -1];
+                            srcRepNew.pop();
+                            length--;
+                        } else {
+                            i++;
+                        }
+                    }
+                }
+                self.numCheckpoints[srcRep] = nextSrcRepNum + 1;   
+            }
+
+            if (dstRep != address(0)) {
+                uint32 dstRepNum = self.numCheckpoints[dstRep];
+                uint[] storage dstRepOld = dstRepNum > 0
+                    ? self.checkpoints[dstRep][dstRepNum - 1].tokenIds
+                    : self.checkpoints[dstRep][0].tokenIds;
+                uint32 nextDstRepNum = findCheckpointToWrite(self, dstRep, block.timestamp);
+                bool _isCheckpointInNewBlock = (dstRepNum > 0) ? (nextDstRepNum != dstRepNum - 1) : true;
+                Checkpoint storage cpDstRep = self.checkpoints[dstRep][nextDstRepNum];
+                uint[] storage dstRepNew = cpDstRep.tokenIds;
+                cpDstRep.timestamp = block.timestamp;
+                require(
+                    dstRepOld.length + 1 <= MAX_DELEGATES,
+                    "tokens>1"
+                );
+                if(_isCheckpointInNewBlock) {
+                    for (uint i = 0; i < dstRepOld.length; i++) {
+                        uint tId = dstRepOld[i];
+                        dstRepNew.push(tId);
+                    }
+                }
+                dstRepNew.push(_tokenId);
+                self.numCheckpoints[dstRep] = nextDstRepNum + 1;
+            }
+        }
+    }
+
+    function _moveAllDelegates(
+        Data storage self,
+        address owner,
+        address srcRep,
+        address dstRep,
+        TokenHelpers memory tokenHelpers
+    ) internal {
+        // You can only redelegate what you own
+        address _owner = owner;
+        Data storage _self = self;
+        address _srcRep = srcRep;
+        address _dstRep = dstRep;
+        TokenHelpers memory _tokenHelper = tokenHelpers;
+        if (_srcRep != _dstRep) {
+            if (_srcRep != address(0)) {
+                uint32 srcRepNum = _self.numCheckpoints[_srcRep];
+                uint[] storage srcRepOld = srcRepNum > 0
+                    ? _self.checkpoints[_srcRep][srcRepNum - 1].tokenIds
+                    : _self.checkpoints[_srcRep][0].tokenIds;
+                uint32 nextSrcRepNum = findCheckpointToWrite(_self,_srcRep, block.timestamp);
+                bool _isCheckpointInNewBlock = (srcRepNum > 0) ? (nextSrcRepNum != srcRepNum - 1) : true;
+                // if(_isCheckpointInNewBlock) {
+                Checkpoint storage cpSrcRep = _self.checkpoints[_srcRep][nextSrcRepNum];
+                uint[] storage srcRepNew = cpSrcRep.tokenIds;
+                cpSrcRep.timestamp = block.timestamp;
+
+                uint256 length = srcRepOld.length;
+                for (uint i = 0; i < length;) {
+                    uint tId = srcRepOld[i];
+                    if(_isCheckpointInNewBlock) {
+                        if(_tokenHelper.ownerOfFn(tId) != _owner) {
+                            srcRepNew.push(tId);
+                        }
+                        i++;
+                    } else {
+                        if(_tokenHelper.ownerOfFn(tId) == _owner) {
+                            srcRepNew[i] = srcRepNew[length -1];
+                            srcRepNew.pop();
+                            length--;
+                        } else {
+                            i++;
+                        }
+                    }
+                }
+                _self.numCheckpoints[_srcRep] = nextSrcRepNum + 1;
+            }
+
+
+            if (_dstRep != address(0)) {
+                uint32 dstRepNum = _self.numCheckpoints[_dstRep];
+                uint[] storage dstRepOld = dstRepNum > 0
+                    ? _self.checkpoints[_dstRep][dstRepNum - 1].tokenIds
+                    : _self.checkpoints[_dstRep][0].tokenIds;
+                uint32 nextDstRepNum = findCheckpointToWrite(_self,_dstRep, block.timestamp);
+                bool _isCheckpointInNewBlock = (dstRepNum > 0) ? (nextDstRepNum != dstRepNum - 1) : true;
+                Checkpoint storage cpDstRep = _self.checkpoints[_dstRep][nextDstRepNum];
+                uint[] storage dstRepNew = cpDstRep.tokenIds;
+                cpDstRep.timestamp = block.timestamp;
+                uint ownerTokenCount = _tokenHelper.ownerToNFTokenCountFn(_owner);
+                require(
+                    dstRepOld.length + ownerTokenCount <= MAX_DELEGATES,
+                    "tokens>1"
+                );
+                if(_isCheckpointInNewBlock) {
+                    for (uint i = 0; i < dstRepOld.length; i++) {
+                        uint tId = dstRepOld[i];
+                        dstRepNew.push(tId);
+                    }
+                }
+                // Plus all that's owned
+                for (uint i = 0; i < ownerTokenCount; i++) {
+                    uint tId = _tokenHelper.tokenOfOwnerByIndex(_owner,i);
+                    dstRepNew.push(tId);
+                }
+                _self.numCheckpoints[_dstRep] = nextDstRepNum + 1;   
+            }
+        }
+    }
+
+    function getPastVotesIndex(Data storage data, address account, uint timestamp) internal view returns (uint32) {
+        uint32 nCheckpoints = data.numCheckpoints[account];
+        if (nCheckpoints == 0) {
+            return 0;
+        }
+        // First check most recent balance
+        if (data.checkpoints[account][nCheckpoints - 1].timestamp <= timestamp) {
+            return (nCheckpoints - 1);
+        }
+
+        // Next check implicit zero balance
+        if (data.checkpoints[account][0].timestamp > timestamp) {
+            return 0;
+        }
+
+        uint32 lower = 0;
+        uint32 upper = nCheckpoints - 1;
+        while (upper > lower) {
+            uint32 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
+            VotingDelegationLib.Checkpoint storage cp = data.checkpoints[account][center];
+            if (cp.timestamp == timestamp) {
+                return center;
+            } else if (cp.timestamp < timestamp) {
+                lower = center;
+            } else {
+                upper = center - 1;
+            }
+        }
+        return lower;
+    }
+
 }
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPairFactory {
-    function allPairsLength() external view returns (uint);
-    function isPair(address pair) external view returns (bool);
-    function allPairs(uint index) external view returns (address);
-    function pairCodeHash() external view returns (bytes32);
-    function getPair(address tokenA, address token, bool stable) external view returns (address);
-    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
-    function isGenesis(address pair) external view returns (bool);
-}
-
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
@@ -2868,6 +2201,500 @@ contract VotingEscrow is IERC721, IERC721Metadata, IHybraVotes {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
+interface IPairFactory {
+    function allPairsLength() external view returns (uint);
+    function isPair(address pair) external view returns (bool);
+    function allPairs(uint index) external view returns (address);
+    function pairCodeHash() external view returns (bytes32);
+    function getPair(address tokenA, address token, bool stable) external view returns (address);
+    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
+    function isGenesis(address pair) external view returns (bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "./interfaces/IMinter.sol";
+import "./interfaces/IVoter.sol";
+import "./interfaces/IGaugeManager.sol";
+import "./interfaces/IVotingEscrow.sol";
+import "./interfaces/ITokenHandler.sol";
+import {HybraTimeLibrary} from "./libraries/HybraTimeLibrary.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+
+
+contract Bribe is ReentrancyGuard {
+    using SafeERC20 for IERC20;
+    uint256 public WEEK; 
+
+    /* ========== STATE VARIABLES ========== */
+
+    struct Checkpoint {
+        uint256 timestamp;
+        uint256 balanceOf;
+    }
+
+    struct SupplyCheckpoint {
+        uint256 timestamp;
+        uint256 supply;
+    }
+
+    mapping(address => mapping(uint256 => uint256)) public tokenRewardsPerEpoch; // token -> startTimestamp -> rewardBalance
+    address public voter;
+    address public gaugeManager;
+    address public immutable bribeFactory;
+    address public minter;
+    address public immutable ve;
+    address public owner;
+    ITokenHandler public tokenHandler;
+
+    string public TYPE;
+
+    uint256 public totalSupply;
+    mapping(uint256 => uint256) public balanceOf;
+
+    mapping(address => mapping(uint256 => uint256)) public lastEarn;
+
+    mapping(uint256 => mapping(uint256 => Checkpoint)) public checkpoints;
+    mapping(uint256 => uint256) public numCheckpoints;
+
+    mapping(uint256 => SupplyCheckpoint) public supplyCheckpoints;
+    uint256 public supplyNumCheckpoints;
+
+    mapping(address => bool) internal isBribeToken;
+    address[] public bribeTokens;
+
+
+    /* ========== CONSTRUCTOR ========== */
+
+    constructor(address _owner,address _voter,address _gaugeManager, address _bribeFactory, address _tokenHandler, address _token0, address _token1, string memory _type)  {
+        require(_bribeFactory != address(0) && _voter != address(0) && _gaugeManager != address(0) && _owner != address(0), "ZA");
+        WEEK = HybraTimeLibrary.WEEK;
+        voter = _voter;
+        gaugeManager = _gaugeManager;
+        bribeFactory = _bribeFactory;
+        tokenHandler = ITokenHandler(_tokenHandler);
+        ve = IVoter(_voter)._ve();
+        minter = IGaugeManager(_gaugeManager).minter();
+        require(minter != address(0), "ZA");
+        owner = _owner;
+        TYPE = _type;
+
+        bribeTokens.push(_token0);
+        bribeTokens.push(_token1);
+        isBribeToken[_token0] = true;
+        isBribeToken[_token1] = true;
+    }
+
+    function getEpochStart() public view returns(uint256){
+        return IMinter(minter).active_period();
+    }
+
+    /// @notice get next epoch (where bribes are saved)
+    function getNextEpochStart() public view returns(uint256){
+        return HybraTimeLibrary.epochNext(block.timestamp);
+    }
+
+    /* ========== VIEWS ========== */
+
+    /// @notice get the length of the reward tokens
+    function rewardsListLength() external view returns(uint256) {
+        return bribeTokens.length;
+    }
+
+    /// @notice Read earned amount given a tokenID and _rewardToken
+    function earned(uint256 tokenId, address _rewardToken) public view returns(uint256){
+        if (numCheckpoints[tokenId] == 0) {
+            return 0;
+        }
+        
+        uint256 reward = 0;
+        uint256 _supply = 1;
+        uint256 _currTs = HybraTimeLibrary.epochStart(lastEarn[_rewardToken][tokenId]); // take epoch last claimed in as starting point
+        uint256 _index = getPriorBalanceIndex(tokenId, _currTs);
+        Checkpoint memory cp0 = checkpoints[tokenId][_index];
+        
+        
+        // accounts for case where lastEarn is before first checkpoint
+        _currTs = Math.max(_currTs, HybraTimeLibrary.epochStart(cp0.timestamp));
+
+        // get epochs between current epoch and first checkpoint in same epoch as last claim
+        uint256 numEpochs = (HybraTimeLibrary.epochStart(block.timestamp) - _currTs) / WEEK;
+
+        if (numEpochs > 0) {
+            for (uint256 i = 0; i < numEpochs; i++) {
+                // get index of last checkpoint in this epoch
+                _index = getPriorBalanceIndex(tokenId, _currTs + WEEK - 1);
+                // get checkpoint in this epoch
+                cp0 = checkpoints[tokenId][_index];
+                // get supply of last checkpoint in this epoch
+                _supply = Math.max(supplyCheckpoints[getPriorSupplyIndex(_currTs + WEEK - 1)].supply, 1);
+                reward += (cp0.balanceOf * tokenRewardsPerEpoch[_rewardToken][_currTs]) / _supply;
+                _currTs += WEEK;
+            }
+        } 
+        return reward;  
+    }
+
+
+    function getPriorBalanceIndex(uint256 tokenId, uint256 timestamp) public view returns (uint256) {
+        uint256 nCheckpoints = numCheckpoints[tokenId];
+        if (nCheckpoints == 0) {
+            return 0;
+        }
+
+        // First check most recent balance
+        if (checkpoints[tokenId][nCheckpoints - 1].timestamp <= timestamp) {
+            return (nCheckpoints - 1);
+        }
+
+        // Next check implicit zero balance
+        if (checkpoints[tokenId][0].timestamp > timestamp) {
+            return 0;
+        }
+
+        uint256 lower = 0;
+        uint256 upper = nCheckpoints - 1;
+        while (upper > lower) {
+            uint256 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
+            Checkpoint memory cp = checkpoints[tokenId][center];
+            if (cp.timestamp == timestamp) {
+                return center;
+            } else if (cp.timestamp < timestamp) {
+                lower = center;
+            } else {
+                upper = center - 1;
+            }
+        }
+        return lower;
+    }
+
+    function getPriorSupplyIndex(uint256 timestamp) public view returns (uint256) {
+        uint256 nCheckpoints = supplyNumCheckpoints;
+        if (nCheckpoints == 0) {
+            return 0;
+        }
+
+        // First check most recent balance
+        if (supplyCheckpoints[nCheckpoints - 1].timestamp <= timestamp) {
+            return (nCheckpoints - 1);
+        }
+
+        // Next check implicit zero balance
+        if (supplyCheckpoints[0].timestamp > timestamp) {
+            return 0;
+        }
+
+        uint256 lower = 0;
+        uint256 upper = nCheckpoints - 1;
+        while (upper > lower) {
+            uint256 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
+            SupplyCheckpoint memory cp = supplyCheckpoints[center];
+            if (cp.timestamp == timestamp) {
+                return center;
+            } else if (cp.timestamp < timestamp) {
+                lower = center;
+            } else {
+                upper = center - 1;
+            }
+        }
+        return lower;
+    }
+
+    function isRewardToken(address _rewardToken) external view returns (bool) {
+        return _isRewardToken(_rewardToken);
+    }
+
+    function _isRewardToken(address _rewardToken) internal view returns (bool) {
+        return isBribeToken[_rewardToken] || tokenHandler.isConnector(_rewardToken);
+    }
+ 
+    /* ========== MUTATIVE FUNCTIONS ========== */
+
+    /// @notice User votes deposit
+    /// @dev    called on voter.vote() or voter.poke()
+    ///         we save into owner "address" and not "tokenID". 
+    ///         Owner must reset before transferring token
+    function deposit(uint256 amount, uint256 tokenId) external nonReentrant {
+        require(amount > 0, "ZV");
+        require(msg.sender == voter, "NA");
+        totalSupply += amount;
+        balanceOf[tokenId] += amount;
+
+        _writeCheckpoint(tokenId, balanceOf[tokenId]);
+        _writeSupplyCheckpoint();
+        
+        emit Staked(tokenId, amount);
+    }
+
+    function _writeCheckpoint(uint256 tokenId, uint256 balance) internal {
+        uint256 _nCheckPoints = numCheckpoints[tokenId];
+        uint256 _timestamp = block.timestamp;
+
+        if (
+            _nCheckPoints > 0 &&
+            HybraTimeLibrary.epochStart(checkpoints[tokenId][_nCheckPoints - 1].timestamp) ==
+            HybraTimeLibrary.epochStart(_timestamp)
+        ) {
+            checkpoints[tokenId][_nCheckPoints - 1] = Checkpoint(_timestamp, balance);
+        } else {
+            checkpoints[tokenId][_nCheckPoints] = Checkpoint(_timestamp, balance);
+            numCheckpoints[tokenId] = _nCheckPoints + 1;
+        }
+    }
+
+
+    function _writeSupplyCheckpoint() internal {
+        uint256 _nCheckPoints = supplyNumCheckpoints;
+        uint256 _timestamp = block.timestamp;
+
+        if (
+            _nCheckPoints > 0 &&
+            HybraTimeLibrary.epochStart(supplyCheckpoints[_nCheckPoints - 1].timestamp) ==
+            HybraTimeLibrary.epochStart(_timestamp)
+        ) {
+            supplyCheckpoints[_nCheckPoints - 1] = SupplyCheckpoint(_timestamp, totalSupply);
+        } else {
+            supplyCheckpoints[_nCheckPoints] = SupplyCheckpoint(_timestamp, totalSupply);
+            supplyNumCheckpoints = _nCheckPoints + 1;
+        }
+    }
+
+    /// @notice User votes withdrawal 
+    /// @dev    called on voter.reset()
+    function withdraw(uint256 amount, uint256 tokenId) external nonReentrant {
+        require(amount > 0, "ZV");
+        require(msg.sender == voter, "NA");
+        if (amount <= balanceOf[tokenId]) {
+            totalSupply -= amount;
+            balanceOf[tokenId] -= amount;
+
+            _writeCheckpoint(tokenId, balanceOf[tokenId]);
+            _writeSupplyCheckpoint();
+            emit Withdrawn(tokenId, amount);
+        }
+    }
+
+    /// @notice Claim the TOKENID rewards
+    function getReward(uint256 tokenId, address[] memory tokens) external nonReentrant  {
+        address _owner = IVotingEscrow(ve).ownerOf(tokenId);
+        require(msg.sender == gaugeManager, "NA");
+        uint256 _length = tokens.length;
+        for (uint256 i = 0; i < _length; i++) {
+            uint256 _reward = earned(tokenId, tokens[i]);
+            lastEarn[tokens[i]][tokenId] = block.timestamp;
+            if (_reward > 0) {
+                IERC20(tokens[i]).safeTransfer(_owner, _reward);
+            }
+        }
+    }
+
+    /// @dev Rewards are saved into Current EPOCH mapping. 
+    function notifyRewardAmount(address _rewardsToken, uint256 reward) external nonReentrant {
+        require(_isRewardToken(_rewardsToken), "!VERIFIED");
+
+        if(!isBribeToken[_rewardsToken]){
+            isBribeToken[_rewardsToken] = true;
+            bribeTokens.push(_rewardsToken);
+        }
+
+        IERC20(_rewardsToken).safeTransferFrom(msg.sender,address(this),reward);
+        uint256 epochStart = HybraTimeLibrary.epochStart(block.timestamp);
+        tokenRewardsPerEpoch[_rewardsToken][epochStart] += reward;
+        emit RewardAdded(_rewardsToken, reward, epochStart);
+    }
+
+    /* ========== RESTRICTED FUNCTIONS ========== */
+
+    /// @notice Recover some ERC20 from the contract and updated given bribe
+    function recoverERC20AndUpdateData(address tokenAddress, uint256 tokenAmount) external onlyAllowed {
+        require(tokenAmount <= IERC20(tokenAddress).balanceOf(address(this)), "TOO_MUCH");
+        
+        uint256 _startTimestamp = IMinter(minter).active_period() + WEEK;
+        uint256 _lastReward = tokenRewardsPerEpoch[tokenAddress][_startTimestamp];
+        tokenRewardsPerEpoch[tokenAddress][_startTimestamp] = _lastReward - tokenAmount;
+        IERC20(tokenAddress).safeTransfer(owner, tokenAmount);
+        emit Recovered(tokenAddress, tokenAmount);
+    }
+
+    /// @notice Recover some ERC20 from the contract.
+    /// @dev    Be careful --> if called then getReward() at last epoch will fail because some reward are missing! 
+    ///         Think about calling recoverERC20AndUpdateData()
+    function emergencyRecoverERC20(address tokenAddress, uint256 tokenAmount) external onlyAllowed {
+        require(tokenAmount <= IERC20(tokenAddress).balanceOf(address(this)), "TOO_MUCH");
+        IERC20(tokenAddress).safeTransfer(owner, tokenAmount);
+        emit Recovered(tokenAddress, tokenAmount);
+    }
+
+    /// @notice Set a new voter
+    function setVoter(address _Voter) external onlyAllowed {
+        require(_Voter != address(0), "ZA");
+        voter = _Voter;
+    }
+
+        /// @notice Set a new gaugeManager
+    function setGaugeManager(address _gaugeManager) external onlyAllowed {
+        require(_gaugeManager != address(0));
+        gaugeManager = _gaugeManager;
+    }
+
+    /// @notice Set a new minter
+    function setMinter(address _minter) external onlyAllowed {
+        require(_minter != address(0), "ZA");
+        minter = _minter;
+    }
+
+
+    /// @notice Set a new Owner
+    event SetOwner(address indexed _owner);
+    function setOwner(address _owner) external onlyAllowed {
+        require(_owner != address(0), "ZA");
+        owner = _owner;
+        emit SetOwner(_owner);
+    }
+
+
+
+    /* ========== MODIFIERS ========== */
+
+    modifier onlyAllowed() {
+        require( (msg.sender == owner || msg.sender == bribeFactory), "NA" );
+        _;
+    }
+
+
+    /* ========== EVENTS ========== */
+
+    event RewardAdded(address indexed rewardToken, uint256 reward, uint256 startTimestamp);
+    event Staked(uint256 indexed tokenId, uint256 amount);
+    event Withdrawn(uint256 indexed tokenId, uint256 amount);
+    event RewardPaid(address indexed user,address indexed rewardsToken,uint256 reward);
+    event Recovered(address indexed token, uint256 amount);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "./IGaugeManager.sol";
+
+interface IGaugeFactoryCL {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
+}
+pragma solidity 0.8.13;
+
+library VoterFactoryLib {
+    struct Data {
+        address[] pairFactories;
+        address[] gaugeFactories;
+        mapping(address => bool) isFactory;
+        mapping(address => bool) isGaugeFactory;
+    }
+
+    event AddPairFactories(address indexed pairfactory);
+    event AddGaugeFactories(address indexed gaugefactory);
+    event SetGaugeFactory(address indexed old, address indexed latest);
+    event SetPairFactory(address indexed old, address indexed latest);
+
+
+    function addPairFactory(Data storage self, address _pairFactory) external {
+        require(_pairFactory != address(0) , 'addr0');
+        require(!self.isFactory[_pairFactory], "fact");
+        require(_pairFactory.code.length > 0, "!contract");
+        self.pairFactories.push(_pairFactory);
+        self.isFactory[_pairFactory] = true;
+        emit AddPairFactories(_pairFactory);
+    }
+
+    function addGaugeFactory(Data storage self, address _gaugeFactory) external {
+        require(_gaugeFactory != address(0) , 'addr0');
+        require(!self.isGaugeFactory[_gaugeFactory], "gFact");
+        require(_gaugeFactory.code.length > 0, "!contract");
+        self.gaugeFactories.push(_gaugeFactory);
+        self.isGaugeFactory[_gaugeFactory] = true;
+        emit AddGaugeFactories(_gaugeFactory);
+    }
+
+    function replacePairFactory(Data storage self, address _pairFactory, uint256 _pos) external {
+        require(_pairFactory != address(0), 'addr0');
+        require(!self.isFactory[_pairFactory], 'fact');
+        require(_pairFactory.code.length > 0, "!contract");
+        address oldPF = self.pairFactories[_pos];
+        self.isFactory[oldPF] = false;
+        self.pairFactories[_pos] = _pairFactory;
+        self.isFactory[_pairFactory] = true;
+
+        emit SetPairFactory(oldPF, _pairFactory);
+    }
+
+    function replaceGaugeFactory(Data storage self, address _gaugeFactory, uint256 _pos) external {
+        require(_gaugeFactory != address(0) , 'addr0');
+        require(!self.isGaugeFactory[_gaugeFactory], 'gFact');
+        require(_gaugeFactory.code.length > 0, "!contract");
+        address oldGF = self.gaugeFactories[_pos];
+        self.isGaugeFactory[oldGF] = false;
+        self.gaugeFactories[_pos] = _gaugeFactory;
+        self.isGaugeFactory[_gaugeFactory] = true;
+
+        emit SetGaugeFactory(oldGF, _gaugeFactory);
+    }
+
+    function removePairFactory(Data storage self, uint256 _pos) external {
+        address oldPF = self.pairFactories[_pos];
+        require(self.isFactory[oldPF], "!exists");
+        self.isFactory[oldPF] = false;
+        self.pairFactories[_pos] = address(0);
+        emit SetPairFactory(oldPF, address(0));
+    }
+
+    function removeGaugeFactory(Data storage self, uint256 _pos) external {
+        address oldGF = self.gaugeFactories[_pos];
+        require(self.isGaugeFactory[oldGF], "!exists");
+        self.isGaugeFactory[oldGF] = false;
+        self.gaugeFactories[_pos] = address(0);
+        emit SetGaugeFactory(oldGF, address(0));
+    }
+
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IVeArtProxy {
+    function _tokenURI(uint _tokenId, uint _balanceOf, uint _locked_end, uint _value) external pure returns (string memory output);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.7.6;
+
+interface IGaugeManager {
+    
+    struct FarmingParam {
+        address farmingCenter;
+        address algebraEternalFarming;
+        address nfpm;
+    }
+
+    function isGaugeAliveForPool(address _pool) external view returns (bool);
+    function gauges(address _pair) external view returns (address);
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGaugeFactory {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
 import './libraries/Math.sol';
 import './interfaces/IVoter.sol';
 import './interfaces/ITokenHandler.sol';
@@ -3424,6 +3251,61 @@ contract GaugeManager is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
+interface IBribeFactory {
+    function createInternalBribe(address[] memory) external returns (address);
+    function createExternalBribe(address[] memory) external returns (address);
+    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+pragma abicoder v2;
+
+import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+
+interface IVoter {
+    function ve() external view returns (IVotingEscrow);
+
+    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
+
+    function gauges(address _pool) external view returns (address);
+
+    function gaugeToFees(address _gauge) external view returns (address);
+
+    function gaugeToBribes(address _gauge) external view returns (address);
+
+    function createGauge(address _poolFactory, address _pool) external returns (address);
+
+    function distribute(address gauge) external;
+
+    function factoryRegistry() external view returns (IFactoryRegistry);
+
+    /// @dev Utility to distribute to gauges of pools in array.
+    /// @param _gauges Array of gauges to distribute to.
+    function distribute(address[] memory _gauges) external;
+
+    function isAlive(address _gauge) external view returns (bool);
+
+    function killGauge(address _gauge) external;
+
+    function emergencyCouncil() external view returns (address);
+
+    /// @notice Claim emissions from gauges.
+    /// @param _gauges Array of gauges to collect emissions from.
+    function claimRewards(address[] memory _gauges) external;
+
+    /// @notice Claim fees for a given NFT.
+    /// @dev Utility to help batch fee claims.
+    /// @param _fees    Array of FeesVotingReward contracts to collect from.
+    /// @param _tokens  Array of tokens that are used as fees.
+    /// @param _tokenId Id of veNFT that you wish to claim fees for.
+    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
 interface IHybra {
     function totalSupply() external view returns (uint);
     function balanceOf(address) external view returns (uint);
@@ -3434,6 +3316,124 @@ interface IHybra {
     function minter() external returns (address);
     function burn(uint) external returns (bool);
     function burnFrom(address, uint) external returns (bool);
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity =0.7.6;
+interface IMinter {
+    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
+    /// @return _period Start of current epoch.
+    function updatePeriod() external returns (uint256 _period);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface ITokenHandler {
+    function isWhitelisted(address token) external view returns (bool);
+    function isWhitelistedNFT(uint256 token) external view returns (bool);
+    function isConnector(address token) external view returns (bool);
+
+    function whitelistToken(address _token) external;
+    function blacklistToken(address _token) external;
+
+    function whiteListed(uint256 index) external returns (address);
+    function connectors(uint256 index) external returns (address);
+
+    function whiteListedTokensLength() external returns (uint256);
+    function connectorTokensLength() external returns (uint256);
+
+    function whiteListedTokens() external view returns(address[] memory tokens);
+    function connectorTokens() external view returns(address[] memory tokens);
+}
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import "./pool/ICLPoolConstants.sol";
+import "./pool/ICLPoolState.sol";
+import "./pool/ICLPoolDerivedState.sol";
+import "./pool/ICLPoolActions.sol";
+import "./pool/ICLPoolOwnerActions.sol";
+import "./pool/ICLPoolEvents.sol";
+
+/// @title The interface for a CL Pool
+/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
+/// to the ERC20 specification
+/// @dev The pool interface is broken up into many smaller pieces
+interface ICLPool is
+    ICLPoolConstants,
+    ICLPoolState,
+    ICLPoolDerivedState,
+    ICLPoolActions,
+    ICLPoolEvents,
+    ICLPoolOwnerActions
+{}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGaugeCL {
+    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
+    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function balanceOf(uint256 tokenId) external view returns (uint256); 
+    function emergency() external returns (bool);
+    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
+    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
+    function totalSupply() external view returns (uint);
+    function rewardRate() external view returns (uint);
+    function rewardForDuration() external view returns (uint256);
+    function stakedFees() external view returns (uint256, uint256);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IBribe {
+    function deposit(uint amount, uint tokenId) external;
+    function withdraw(uint amount, uint tokenId) external;
+    function getRewardForAddress(address _owner, address[] memory tokens) external;
+    function notifyRewardAmount(address token, uint amount) external;
+    function left(address token) external view returns (uint);
+    function getReward(uint tokenId, address[] memory tokens) external;
+    function bribeTokens(uint256 i) external view returns(address); 
+    function rewardsListLength() external view returns (uint256);
+    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
+}
+
+// SPDX-License-Identifier: None
+// HybraHole Foundation 2025
+
+pragma solidity 0.8.13;
+
+import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
+
+interface IHybraVotes is IVotes{
+}
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+
+interface IVotingEscrow {
+    function team() external returns (address);
+
+    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
+    /// @param _value Amount to deposit
+    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
+    /// @return TokenId of created veNFT
+    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IPairInfo {
+
+    function token0() external view returns(address);
+    function reserve0() external view returns(uint);
+    function decimals0() external view returns(uint);
+    function token1() external view returns(address);
+    function reserve1() external view returns(uint);
+    function decimals1() external view returns(uint);
+    function isPair(address _pair) external view returns(bool);
 }
 
 
