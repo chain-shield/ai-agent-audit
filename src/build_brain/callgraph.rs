@@ -145,10 +145,10 @@ pub async fn get_inheritance_map(repo: &RepoPaths) -> Result<HashMap<String, Vec
     }
 
     // Cache miss - compute the result
-    log::info!(
-        "Cache miss for get_inheritance_map - running Slither for project {}",
-        repo.project_id
-    );
+    // log::info!(
+    //     "Cache miss for get_inheritance_map - running Slither for project {}",
+    //     repo.project_id
+    // );
 
     // Get inheritance edges (child, parent) tuples
     let edges = generate_inheritance_edges(repo).await?;

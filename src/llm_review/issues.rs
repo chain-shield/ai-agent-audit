@@ -1,7 +1,7 @@
 // represents abstraction of Findings and ContractInvariants
 
 use crate::{
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::{
         agent_factory::{AgentConfig, AgentFactory},
         dynamic_prompts::{
@@ -188,10 +188,7 @@ where
     // // Build a lightweight OpenAI agent just for deduping comparisons
     // let openai_client = openai::Client::from_env();
     // let openai_agent = Arc::new(openai_client.agent("gpt-5").build());
-    // Create O3 agent with flex tier for cost optimization
-    let openai_config = AgentConfig::new(None)
-        .with_model("o3")
-        .with_openai_service_tier("flex");
+    let openai_config = AgentConfig::new(None).with_model("gpt-5");
 
     let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 
