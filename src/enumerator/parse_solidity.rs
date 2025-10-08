@@ -441,13 +441,13 @@ pub async fn detect_source_code_dependencies(
         }
     }
 
-    info!(
-        "cached source dependencies for contract {} (repo: {}): {} contracts, {} interfaces",
-        contract,
-        repo.unique_repo_hash(),
-        filtered_contracts.len(),
-        filtered_interfaces.len()
-    );
+    // info!(
+    //     "cached source dependencies for contract {} (repo: {}): {} contracts, {} interfaces",
+    //     contract,
+    //     repo.unique_repo_hash(),
+    //     filtered_contracts.len(),
+    //     filtered_interfaces.len()
+    // );
 
     let mut filtered_sources = HashSet::new();
     filtered_sources.extend(filtered_contracts);
