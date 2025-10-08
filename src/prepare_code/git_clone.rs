@@ -457,11 +457,12 @@ impl RepoPaths {
             return Ok(None);
         }
 
-        info!("filename: {}", file.display());
-        info!("root: {}", self.root.display());
+        let protocol_folder = self.root.join(&self.repo_name);
 
         let filename = if file.starts_with(&self.root) {
-            file.strip_prefix(&self.root)?.to_string_lossy().to_string()
+            file.strip_prefix(&protocol_folder)?
+                .to_string_lossy()
+                .to_string()
         } else {
             file.file_name() // Option<&OsStr>
                 .and_then(|f| Some(f.to_string_lossy().to_string())) // Option<&str>
