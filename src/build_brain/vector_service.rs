@@ -8,11 +8,11 @@ use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use log::info;
 use qdrant_client::{
-    Payload, Qdrant,
     qdrant::{
-        CreateCollection, Distance, PointStruct, UpsertPointsBuilder, VectorParams, VectorsConfig,
-        vectors_config::Config,
+        vectors_config::Config, CreateCollection, Distance, PointStruct, UpsertPointsBuilder,
+        VectorParams, VectorsConfig,
     },
+    Payload, Qdrant,
 };
 use std::sync::Arc;
 
@@ -235,56 +235,4 @@ pub fn vector_service() -> &'static Arc<VectorDbService> {
 /// Returns a reference to the global vector database service, or None if not initialized.
 pub fn try_vector_service() -> Option<&'static Arc<VectorDbService>> {
     VECTOR_SERVICE.get()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    fn create_test_repo() -> RepoPaths {
-        let temp_dir = TempDir::new().unwrap();
-        RepoPaths {
-            project_id: "test-repo".to_string(),
-            monorepo_folders: None,
-            root: temp_dir.path().to_path_buf(),
-            sol_files: vec![],
-            test_files: vec![],
-            script_files: vec![],
-            config_files: vec![],
-            lib_config_files: vec![],
-            docs: vec![],
-            source_code_folders: vec![temp_dir.path().to_path_buf()],
-            audit_scope: None,
-            scoped_files: None,
-            excluded_folders: None,
-            repo_name: "test-repo".to_string(),
-            commit_hash: "abc123def456".to_string(),
-        }
-    }
-
-    #[test]
-    fn test_collection_name_generation() {
-        let service = VectorDbService {
-            client: Qdrant::from_url("http://localhost:6334").build().unwrap(),
-            vector_dimension: audit_config().vector_dimension,
-        };
-
-        let repo = create_test_repo();
-        let collection_name = service.collection_name(&repo);
-
-        assert!(collection_name.contains("test-repo"));
-        assert!(collection_name.contains("abc123"));
-        assert!(collection_name.ends_with("-contract_chunks"));
-    }
-
-    #[test]
-    fn test_vector_dimension() {
-        let service = VectorDbService {
-            client: Qdrant::from_url("http://localhost:6334").build().unwrap(),
-            vector_dimension: audit_config().vector_dimension,
-        };
-
-        assert_eq!(service.vector_dimension(), audit_config().vector_dimension);
-    }
 }

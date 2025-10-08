@@ -121,7 +121,6 @@ Respond only with valid JSON matching the schema!
     let monorepo_folders = repo.extract_monorepo_folders()?;
     let mut current_file_summary_type = FileSummaryType::OutOfScope;
 
-    let protocol_root = repo.get_protocol_root();
     // Walk through the repository and collect relevant files
     for file in &repo.sol_files {
         // if protocol in monorepo make sure file to summarize is in the monorepo
@@ -131,6 +130,11 @@ Respond only with valid JSON matching the schema!
             if !is_in_monorepo {
                 continue;
             }
+        }
+
+        // check if lib folder or test files
+        if file.to_string_lossy().contains("lib") || file.to_string_lossy().contains("t.sol") {
+            continue;
         }
 
         // check if file is in scope for summary (source or script) for foundry projects
@@ -179,6 +183,17 @@ Respond only with valid JSON matching the schema!
         // push full path & content into the work queue
         work_items.push((file.to_owned(), content, current_file_summary_type.clone()));
     }
+
+    // let mut files_to_summarize = String::new();
+    //
+    // for (file, _, file_type) in work_items {
+    //     files_to_summarize.push_str(&format!(
+    //         "file: {}, type: {}\n",
+    //         file.display(),
+    //         file_type.to_string()
+    //     ));
+    // }
+    // info!("{}", files_to_summarize);
 
     let max_parallel = 50;
     let sem = Arc::new(Semaphore::new(max_parallel));

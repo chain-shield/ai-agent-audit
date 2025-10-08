@@ -63,7 +63,6 @@ async fn main() -> Result<()> {
     info!("repo docs => {:?}", &repo.docs);
     info!("excluded folders => {:?}", &repo.excluded_folders);
 
-    return Ok(());
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
     // ────────────────────────────────
@@ -102,6 +101,7 @@ async fn main() -> Result<()> {
     // save contract IR and metadata
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo).await?;
 
+    return Ok(());
     // ────────────────────────────────
     // 5. AI Security Analysis
     // ────────────────────────────────

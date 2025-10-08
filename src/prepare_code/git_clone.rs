@@ -229,7 +229,6 @@ pub fn clone_and_filter_git_repo(
         }
 
         //only get md docs from root folder /*.md
-        let file_extension = path.extension().and_then(|e| e.to_str());
         match path.extension().and_then(|e| e.to_str()) {
             Some("sol") => {
                 if is_test_file(path, search_root.as_path()) {
@@ -453,15 +452,21 @@ impl RepoPaths {
     }
 
     /// Generic helper to safely read a file, skipping symlinks and empty files.
-    fn read_file_content(file: &Path) -> Result<Option<(String, String)>> {
+    fn read_file_content(&self, file: &Path) -> Result<Option<(String, String)>> {
         if fs::symlink_metadata(file)?.file_type().is_symlink() {
             return Ok(None);
         }
 
-        let filename = file
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        info!("filename: {}", file.display());
+        info!("root: {}", self.root.display());
+
+        let filename = if file.starts_with(&self.root) {
+            file.strip_prefix(&self.root)?.to_string_lossy().to_string()
+        } else {
+            file.file_name() // Option<&OsStr>
+                .and_then(|f| Some(f.to_string_lossy().to_string())) // Option<&str>
+                .unwrap_or_else(|| file.to_string_lossy().to_string()) // fallback
+        };
 
         let content = match fs::read_to_string(file) {
             Ok(c) => c,
@@ -483,7 +488,7 @@ impl RepoPaths {
             return Ok(String::new());
         };
 
-        if let Some((filename, content)) = Self::read_file_content(scope_file)? {
+        if let Some((filename, content)) = self.read_file_content(scope_file)? {
             info!("extracting audit scope from {}", filename);
             Ok(content)
         } else {
@@ -513,7 +518,7 @@ impl RepoPaths {
         let mut docs = String::new();
 
         for doc in &self.docs {
-            if let Some((filename, content)) = Self::read_file_content(doc)? {
+            if let Some((filename, content)) = self.read_file_content(doc)? {
                 // info!("extracting content from {} doc file", filename);
                 docs.push_str(&format!("### {}\n\n{}\n\n", filename, content));
             }
@@ -525,10 +530,10 @@ impl RepoPaths {
     pub fn extract_lib_config_headers(&self) -> Result<String> {
         let mut config_headers = String::new();
 
-        for config_file in &self.config_files {
-            if let Some((filename, content)) = Self::read_file_content(config_file)? {
-                let first_five_lines = content.lines().take(5).collect::<Vec<_>>().join("\n");
-                config_headers.push_str(&format!("### {}\n\n{}\n\n", filename, first_five_lines));
+        for config_file in &self.lib_config_files {
+            if let Some((file, content)) = self.read_file_content(config_file)? {
+                let first_eight_lines = content.lines().take(8).collect::<Vec<_>>().join("\n");
+                config_headers.push_str(&format!("### {}\n\n{}\n\n", file, first_eight_lines));
             }
         }
 
@@ -536,15 +541,15 @@ impl RepoPaths {
     }
 
     pub fn extract_content_from_config_files(&self) -> Result<String> {
-        let mut source_code = String::new();
+        let mut config_content = String::new();
 
-        for code in &self.config_files {
-            if let Some((filename, content)) = Self::read_file_content(code)? {
-                source_code.push_str(&format!("### {}\n\n{}\n\n", filename, content));
+        for config in &self.config_files {
+            if let Some((file, content)) = self.read_file_content(config)? {
+                config_content.push_str(&format!("### {}\n\n{}\n\n", file, content));
             }
         }
 
-        Ok(source_code)
+        Ok(config_content)
     }
 }
 
