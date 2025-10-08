@@ -4,7 +4,7 @@ use super::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::enums::EnumString,
     utils::semantic_compare,
 };
@@ -193,10 +193,7 @@ impl Findings {
             });
         }
 
-        // Create O3 agent with flex tier for cost optimization
-        let openai_config = AgentConfig::new(None)
-            .with_model("o3")
-            .with_openai_service_tier("flex");
+        let openai_config = AgentConfig::new(None).with_model("gpt-5");
 
         let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 

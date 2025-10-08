@@ -169,10 +169,10 @@ pub async fn generate_codeblock_from_codebase(
         }
 
         for contract_name in &main_source_contracts {
-            info!(
-                "adding source-detected contract {} from main and called contract",
-                contract_name,
-            );
+            // info!(
+            //     "adding source-detected contract {} from main and called contract",
+            //     contract_name,
+            // );
             contracts.insert(contract_name.clone());
         }
 

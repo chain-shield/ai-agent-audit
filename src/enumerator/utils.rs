@@ -244,10 +244,10 @@ pub async fn get_code_ir_map(
     }
 
     // Cache miss - compute the result
-    info!(
-        "Cache miss for get_code_ir_map - running Slither for project {}",
-        repo.project_id
-    );
+    // info!(
+    //     "Cache miss for get_code_ir_map - running Slither for project {}",
+    //     repo.project_id
+    // );
 
     // Regex to extract function name from full signature (e.g., "Contract.function(args)")
     let extract_function_name = Regex::new(r#"[A-Za-z0-9$_]+\.([A-Za-z0-9$_]+)\([^)]*\)"#)?;
@@ -293,10 +293,10 @@ async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec
     }
 
     // Cache miss - compute the result
-    info!(
-        "Cache miss for get_storage_map - running Slither for project {}",
-        repo.project_id
-    );
+    // info!(
+    //     "Cache miss for get_storage_map - running Slither for project {}",
+    //     repo.project_id
+    // );
 
     let (_, storage_vec, _) = build_brain::slither_ffi::get_slither_ir_and_storage(repo).await?;
 

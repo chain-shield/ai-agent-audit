@@ -28,20 +28,20 @@ pub async fn detect_source_code_dependencies(
     {
         let cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
         if let Some(cached_result) = cache.get(&cache_key) {
-            info!(
-                "cache hit for source dependencies of contract {} (repo: {})",
-                contract,
-                repo.unique_repo_hash()
-            );
+            // info!(
+            //     "cache hit for source dependencies of contract {} (repo: {})",
+            //     contract,
+            //     repo.unique_repo_hash()
+            // );
             return Ok(cached_result.clone());
         }
     }
 
-    info!(
-        "cache miss for source dependencies of contract {} (repo: {}), analyzing...",
-        contract,
-        repo.unique_repo_hash()
-    );
+    // info!(
+    //     "cache miss for source dependencies of contract {} (repo: {}), analyzing...",
+    //     contract,
+    //     repo.unique_repo_hash()
+    // );
 
     let mut contracts = HashSet::new();
     let mut interfaces = HashSet::new();
