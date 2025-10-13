@@ -1,8 +1,11 @@
-use crate::llm_review::contract_file_map::get_file_from_contract;
 use crate::prepare_code::git_clone::RepoPaths;
+use crate::{
+    llm_review::contract_file_map::get_file_from_contract,
+    utils::contract_name_check::contains_contract_reference,
+};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::sync::Mutex;
+use std::{path::PathBuf, sync::Mutex};
 use tokio::fs;
 
 use anyhow::Result;
@@ -15,8 +18,11 @@ use std::collections::{HashMap, HashSet};
 static SOURCE_DEPENDENCY_CACHE: Lazy<Mutex<HashMap<String, HashSet<String>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+static CONTRACT_TO_SCRIPT_CACHE: Lazy<Mutex<HashMap<String, HashSet<PathBuf>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 /// # Returns
-/// * `(HashSet<String>, HashSet<String>)` - (contracts, interfaces) found in source
+/// * `HashSet<String>` - contracts & interfaces found in source
 pub async fn detect_source_code_dependencies(
     contract: &str,
     repo: &RepoPaths,
@@ -460,6 +466,54 @@ pub async fn detect_source_code_dependencies(
     }
 
     Ok(filtered_sources)
+}
+
+pub async fn detect_scripts_connected_to_contract(
+    contract: &str,
+    repo: &RepoPaths,
+) -> Result<HashSet<PathBuf>> {
+    // Create cache key: "repo_hash:contract_name"
+    let cache_key = format!("{}:{}-deploy-script", repo.unique_repo_hash(), contract);
+
+    // Check cache first
+    {
+        let cache = CONTRACT_TO_SCRIPT_CACHE.lock().unwrap();
+        if let Some(cached_result) = cache.get(&cache_key) {
+            return Ok(cached_result.clone());
+        }
+    }
+
+    let mut scripts = HashSet::new();
+
+    for script in &repo.script_files {
+        // Read the source code
+        let source_code = match fs::read_to_string(script).await {
+            Ok(content) => content,
+            Err(e) => {
+                info!(
+                    "could not read file {} for dependency detection: {}",
+                    script.display(),
+                    e
+                );
+                continue;
+            }
+        };
+
+        // Strip comments and string literals to avoid false positives (e.g., "XOR (^)" in comments)
+        let source_code = strip_comments_and_strings(&source_code);
+
+        if contains_contract_reference(contract, &source_code) {
+            scripts.insert(script.clone());
+        }
+    }
+
+    // Cache the result before returning
+    {
+        let mut cache = CONTRACT_TO_SCRIPT_CACHE.lock().unwrap();
+        cache.insert(cache_key, scripts.clone());
+    }
+
+    Ok(scripts)
 }
 
 fn strip_comments_and_strings(src: &str) -> String {

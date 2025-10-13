@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize::{self, summarize_protocol, summarize_src_files, FileSummaryType},
+        summarize::{summarize_protocol, summarize_src_files, FileSummaryType},
     },
     cost::cost_data::get_token_count,
     prepare_code::git_clone::RepoPaths,
@@ -104,20 +104,21 @@ pub async fn generate_context_for_code_review(
 
     let mut full_prompt_context = String::new();
 
-    let mut file_summaries = String::new();
-    let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
-    for summary in summaries {
-        let file_type = summary.file_type.unwrap_or(FileSummaryType::OutOfScope);
-        if file_type == FileSummaryType::DeployScript {
-            file_summaries.push_str(&format!(
-                "\n## SUMMARY OF DEPLOY SCRIPT: {}\n",
-                summary.filename
-            ));
-            file_summaries.push_str(&summary.summary);
-            file_summaries.push_str("\n\n");
-        }
-    }
-    full_prompt_context.push_str(&file_summaries);
+    // NOTE: now excluding file summarizes from metadata
+    // let mut file_summaries = String::new();
+    // let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
+    // for summary in summaries {
+    //     let file_type = summary.file_type.unwrap_or(FileSummaryType::OutOfScope);
+    //     if file_type == FileSummaryType::DeployScript {
+    //         file_summaries.push_str(&format!(
+    //             "\n## SUMMARY OF DEPLOY SCRIPT: {}\n",
+    //             summary.filename
+    //         ));
+    //         file_summaries.push_str(&summary.summary);
+    //         file_summaries.push_str("\n\n");
+    //     }
+    // }
+    // full_prompt_context.push_str(&file_summaries);
     full_prompt_context.push_str(&slither_metadata);
 
     // let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
