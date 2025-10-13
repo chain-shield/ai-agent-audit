@@ -203,6 +203,12 @@ Respond only with valid JSON matching the schema!
 
     for (file, content, file_type) in work_items {
         let sem = sem.clone();
+
+        // NOTE: skipping deploy script summaries
+        if file_type != FileSummaryType::Source {
+            continue;
+        }
+
         let agent = if file_type == FileSummaryType::Source {
             agent.clone()
         } else {

@@ -10,7 +10,8 @@ use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cac
 use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::extract_ir::robust_extract_fn_metadata_from_func_id;
 use crate::enumerator::parse_solidity::{
-    detect_source_code_dependencies, is_standard_interface_name, is_standard_library_contract_name,
+    detect_scripts_connected_to_contract, detect_source_code_dependencies,
+    is_standard_interface_name, is_standard_library_contract_name,
 };
 use crate::enumerator::utils::{
     get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
@@ -280,7 +281,52 @@ pub async fn generate_codeblock_from_codebase(
             contracts_added, contracts_skipped
         );
 
-        markdown_codeblock_for_llm.push_str("\nEND OF SUPPORTING CONTRACTS AND INTERFACES\n");
+        markdown_codeblock_for_llm.push_str("\nEND OF SUPPORTING CONTRACTS AND INTERFACES\n\n");
+        markdown_codeblock_for_llm.push_str("\nDEPLOYMENT SCRIPTS\n\n");
+
+        // Add relevant deploy scripts
+        let contract_scripts = detect_scripts_connected_to_contract(&main_contract, repo).await?;
+
+        for script in &contract_scripts {
+            let script_content = match fs::read_to_string(script).await {
+                Ok(content) => content,
+                Err(e) => {
+                    info!(
+                        "could not read file {} for dependency detection: {}",
+                        script.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            let script_section = format!("{}\n", script_content);
+            let script_tokens = get_token_count(&script_section);
+
+            let new_total = current_token_count + script_tokens;
+
+            let script_file_relative = script.strip_prefix(&repo.root.join(&repo.repo_name))?;
+
+            if new_total > token_budget {
+                info!(
+                    "⏭️ Skipping 'script: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
+                    script_file_relative.display(),
+                    script_tokens,
+                    new_total,
+                    token_budget
+                );
+            } else {
+                info!(
+                    "✅ Adding 'script: {}' ({} tokens) - total: {}/{} tokens",
+                    script_file_relative.display(),
+                    script_tokens,
+                    new_total,
+                    token_budget
+                );
+                markdown_codeblock_for_llm.push_str(&script_section);
+                current_token_count = new_total;
+            }
+        }
 
         // Final token count verification
         let final_token_count = get_token_count(&markdown_codeblock_for_llm);
