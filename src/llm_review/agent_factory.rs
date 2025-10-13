@@ -23,6 +23,9 @@ use serde_json::json;
 // use rig_qdrant::QdrantVectorStore;  // Temporarily disabled due to version conflicts
 use std::sync::OnceLock;
 
+/// Antrophic thinking
+const VALID_THINKING_SETTING: &[&str] = &["enabled", "disabled"];
+
 /// Default OpenAI model for agents
 const DEFAULT_OPENAI_MODEL: &str = "gpt-5";
 
@@ -90,6 +93,39 @@ impl LlmProvider {
             "gemini" | "google" => Some(LlmProvider::Gemini),
             "deepseek" => Some(LlmProvider::DeepSeek),
             _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AnthropicConfig {
+    pub thinking: Option<String>,
+    pub thinking_token_budget: u32,
+}
+
+impl Default for AnthropicConfig {
+    fn default() -> Self {
+        Self {
+            thinking: Some("disabled".to_string()),
+            thinking_token_budget: 30000,
+        }
+    }
+}
+
+impl AnthropicConfig {
+    /// Validates the service tier value
+    pub fn validate_thinking(thinking_setting: &str) -> Result<()> {
+        if VALID_THINKING_SETTING.contains(&thinking_setting) {
+            Ok(())
+        } else {
+            Err(AuditError::configuration(
+                "anthropic_thinking_setting",
+                &format!(
+                    "Invalid thinking setting '{}'. Valid options: {}",
+                    thinking_setting,
+                    VALID_THINKING_SETTING.join(", ")
+                ),
+            ))
         }
     }
 }
@@ -171,6 +207,7 @@ pub struct AgentConfig {
     pub enable_file_picker: bool,
     /// OpenAI-specific configuration (service tier, reasoning effort)
     pub openai_config: OpenAIConfig,
+    pub anthropic_config: AnthropicConfig,
 }
 
 impl AgentConfig {
@@ -188,6 +225,7 @@ impl AgentConfig {
             enable_file_retrieval: false,
             enable_file_picker: false,
             openai_config: OpenAIConfig::default(),
+            anthropic_config: AnthropicConfig::default(),
         }
     }
 
@@ -264,6 +302,23 @@ impl AgentConfig {
             panic!("Invalid reasoning effort in config builder: {}", e);
         }
         self.openai_config.reasoning_effort = Some(effort);
+        self
+    }
+
+    /// Sets the anthropic thinking effort ("disabled", "enabled").
+    /// Validates the input and panics on invalid values during development.
+    pub fn with_anthropic_thinking(
+        mut self,
+        thinking: impl Into<String>,
+        budget: impl Into<u32>,
+    ) -> Self {
+        let think = thinking.into();
+        let token_budget = budget.into();
+        if let Err(e) = AnthropicConfig::validate_thinking(&think) {
+            panic!("Invalid thinking in config builder: {}", e);
+        }
+        self.anthropic_config.thinking = Some(think.into());
+        self.anthropic_config.thinking_token_budget = token_budget;
         self
     }
 
@@ -523,6 +578,24 @@ impl AgentFactory {
         //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
         // }
 
+        // Add Anthropic-specific parameters using additional_params
+        // Only send non-default values to avoid unnecessary API overhead
+        let mut additional_params = serde_json::Map::new();
+
+        if let Some(thinking) = &config.anthropic_config.thinking {
+            let token_budget = config.anthropic_config.thinking_token_budget;
+            if thinking != "disabled" {
+                additional_params.insert(
+                    "thinking".to_string(),
+                    json!({ "type": thinking, "budget_tokens": token_budget }),
+                );
+            }
+        }
+
+        if !additional_params.is_empty() {
+            builder = builder.additional_params(serde_json::Value::Object(additional_params));
+        }
+
         // Add file retrieval tool if enabled
         if config.enable_file_retrieval {
             if let Some(repo_paths) = &config.repo_paths {
@@ -721,5 +794,50 @@ impl AgentFactory {
             .filter(|provider| provider.is_available())
             .copied()
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_anthropic_thinking_config() {
+        // Test default config
+        let config = AnthropicConfig::default();
+        assert_eq!(config.thinking, Some("disabled".to_string()));
+        assert_eq!(config.thinking_token_budget, 30000);
+
+        // Test validation
+        assert!(AnthropicConfig::validate_thinking("enabled").is_ok());
+        assert!(AnthropicConfig::validate_thinking("disabled").is_ok());
+        assert!(AnthropicConfig::validate_thinking("invalid").is_err());
+    }
+
+    #[test]
+    fn test_agent_config_with_anthropic_thinking() {
+        use crate::config::init_config;
+
+        // Initialize config (required for AgentConfig::new)
+        let _ = init_config();
+
+        let config = AgentConfig::new(None).with_anthropic_thinking("enabled", 10000u32);
+
+        assert_eq!(
+            config.anthropic_config.thinking,
+            Some("enabled".to_string())
+        );
+        assert_eq!(config.anthropic_config.thinking_token_budget, 10000);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid thinking")]
+    fn test_agent_config_with_invalid_thinking() {
+        use crate::config::init_config;
+
+        // Initialize config (required for AgentConfig::new)
+        let _ = init_config();
+
+        let _config = AgentConfig::new(None).with_anthropic_thinking("invalid", 10000u32);
     }
 }
