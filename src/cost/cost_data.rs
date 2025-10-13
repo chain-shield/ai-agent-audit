@@ -82,6 +82,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "claude-3.5-sonnet" | "claude-3-5-sonnet" => 3.00,
             "claude-3.7-sonnet" | "claude-3-7-sonnet" => 3.00,
             "claude-4.0-sonnet" | "claude-4-0-sonnet" => 3.00,
+            "claude-4.5-sonnet" | "claude-4-5-sonnet" => 3.00,
             "claude-4" => 3.00,
 
             // Gemini models
@@ -111,6 +112,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "claude-3.5-sonnet" | "claude-3-5-sonnet" => 15.00,
             "claude-3.7-sonnet" | "claude-3-7-sonnet" => 15.00,
             "claude-4.0-sonnet" | "claude-4-0-sonnet" => 15.00,
+            "claude-4.5-sonnet" | "claude-4-5-sonnet" => 15.00,
             "claude-4" => 15.00,
 
             // Gemini models
