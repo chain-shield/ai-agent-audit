@@ -1,12 +1,12 @@
 use crate::{
-    config::{AUDIT_TYPE, AuditType},
+    config::{AuditType, AUDIT_TYPE},
     llm_review::{
         enums::{
-            EnumData, EnumString, Severity, all_enum_variants, generate_enum_bulleted_list,
-            generate_enum_list,
+            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
+            EnumString, Severity,
         },
         findings::PrivilegeLevel,
-        prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
+        prompt_support::severity_rubics::{CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC},
     },
 };
 
@@ -18,9 +18,13 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
 ) -> String {
     let exploit_enums = issue_enum.to_types();
     let exploit_bullets = generate_enum_bulleted_list(exploit_enums); // "- Oracle\n- Reentrancy\n..."
+    let severity_rubic = match AUDIT_TYPE {
+        AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
+        _ => CODE4RENA_SEVERITY_RUBRIC,
+    };
 
     format!(
-        r#"You are a top Code4rena security warden. Your job: analyze the target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
+        r#"You are a top Code4rena security warden. Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
 
         ## Rules
         - Only report exploits tied to the below {pattern_name} {pattern_type}.
@@ -49,7 +53,7 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
         {full_spec}
         "#,
         pattern_type = issue_type,
-        rubric = CODE4RENA_SEVERITY_RUBRIC,
+        rubric = severity_rubic,
         pattern_name = issue_enum.as_str(),
         pattern_def = issue_definition,
         exploit_bullets = exploit_bullets,

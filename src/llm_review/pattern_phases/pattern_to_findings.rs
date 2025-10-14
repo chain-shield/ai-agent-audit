@@ -6,7 +6,7 @@ use crate::{
     config::DISCOVERY_RUNS,
     error::Result,
     llm_review::{
-        context_state::{ContextType, generate_audit_scope, get_metadata_context},
+        context_state::{generate_audit_scope, get_metadata_context},
         enums::AIAgent,
         findings::Findings,
         issues::{IssueStructTrait, IssueTrait},
@@ -16,7 +16,7 @@ use crate::{
 };
 use log::info;
 
-use serde::{Deserializer, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserializer};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -42,7 +42,7 @@ where
     }));
 
     let mut handles = vec![];
-    let context = get_metadata_context(repo, &ContextType::Full)
+    let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);

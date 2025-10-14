@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -14,11 +14,12 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::build_brain::inheritance;
 use crate::build_brain::parsers::parse_slithir_contract_summary;
 use crate::build_brain::summarize::summarize_src_files;
+// use crate::build_brain::summarize::summarize_src_files;
 use crate::cost::cost_data::get_token_count;
 use crate::prepare_code::git_clone::RepoPaths;
+use crate::utils::check_folder_name::contains_build_config;
 
 use super::callgraph;
 use super::parsers::{parse_slither, parse_slithir_ir_code, parse_storage};
@@ -54,7 +55,7 @@ pub struct ContractSummary {
 ///
 /// This struct contains information about a storage variable, including
 /// its name, type, and the contract it belongs to.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageVar {
     /// Name of the contract containing this storage variable
     pub contract: String,
@@ -213,6 +214,7 @@ fn detect_project_type(repo: &RepoPaths) -> ProjectType {
 pub fn build_slither_args(
     repo: &RepoPaths,
     printer: Option<&str>,
+    subfolder: Option<PathBuf>,
     json_output: bool,
 ) -> Vec<String> {
     let project_type = detect_project_type(repo);
@@ -319,15 +321,22 @@ pub fn build_slither_args(
     }
 
     // Add the target (project directory) last; Slither CLI prefers positional at the end
-    args.push(repo.repo_name.clone());
+    let target_dir = if let Some(folder) = subfolder {
+        // folder is an absolute path, we need to make it relative to repo.root
+        let relative_folder = folder.strip_prefix(&repo.root).unwrap_or(&folder);
+        relative_folder.to_string_lossy().to_string()
+    } else {
+        repo.repo_name.clone()
+    };
+    args.push(target_dir);
 
-    log::info!("Detected project type: {:?}", project_type);
+    // log::info!("Detected project type: {:?}", project_type);
 
     args
 }
 
 pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
-    let key = cache_key(&repo.root, "detector");
+    let key = cache_key(&repo.root, "detector", None);
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
     let mut printer_cache = cache.lock().await;
 
@@ -337,7 +346,7 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
     }
 
     log::info!("Running Slither detector");
-    let mut args = build_slither_args(repo, None, false);
+    let mut args = build_slither_args(repo, None, None, false);
     // Add detector-specific arguments
     args.push("--exclude-dependencies".to_string());
 
@@ -369,8 +378,12 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
 /// @param repo_root - Path to the repository root containing Solidity contracts
 /// @param printer - Name of the Slither printer to run (e.g., "slithir-ssa", "variable-order")
 /// @return Result containing the printer's output as a string
-pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
-    let key = cache_key(&repo.root, printer);
+pub async fn run_printer(
+    repo: &RepoPaths,
+    printer: &str,
+    subfolder: Option<PathBuf>,
+) -> Result<String> {
+    let key = cache_key(&repo.root, printer, subfolder.clone());
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
     let mut printer_cache = cache.lock().await;
 
@@ -380,7 +393,7 @@ pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
     }
 
     log::info!("Running Slither printer: {}", printer);
-    let args = build_slither_args(repo, Some(printer), false);
+    let args = build_slither_args(repo, Some(printer), subfolder, false);
     let output = Command::new("docker")
         .args(&args)
         .stdout(Stdio::piped()) // Capture printer text from stdout
@@ -425,10 +438,26 @@ pub async fn run_printer(repo: &RepoPaths, printer: &str) -> Result<String> {
     printer_cache.insert(key, text.clone());
     Ok(text)
 }
+pub async fn run_printer_monorepo(repo: &RepoPaths, printer: &str) -> Result<String> {
+    let mut total_output = String::new();
+    let folders = repo.extract_monorepo_folders()?;
 
+    for folder in folders {
+        // TODO: handle edge where no build config (find sol files)
+        if contains_build_config(&folder) {
+            let output = run_printer(repo, printer, Some(folder)).await?;
+            total_output.push_str(&format!("\n{}\n", output));
+        }
+    }
+    Ok(total_output)
+}
 // use for inheritance and call-graph
-pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String> {
-    let key = cache_key(&repo.root, printer);
+pub async fn run_printer_json(
+    repo: &RepoPaths,
+    printer: &str,
+    subfolder: Option<PathBuf>,
+) -> Result<String> {
+    let key = cache_key(&repo.root, printer, subfolder.clone());
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
     let mut printer_cache = cache.lock().await;
 
@@ -437,11 +466,32 @@ pub async fn run_printer_json(repo: &RepoPaths, printer: &str) -> Result<String>
         return Ok(cached.clone());
     }
 
-    log::info!("Running Slither printer: {}", printer);
-    let args = build_slither_args(repo, Some(printer), true);
+    // log::info!("Running Slither printer: {}", printer);
+    let args = build_slither_args(repo, Some(printer), subfolder.clone(), true);
+
+    // Log the full docker command for debugging
+    // log::info!("Docker command: docker {}", args.join(" "));
+
     let out = Command::new("docker").args(&args).output()?;
 
-    anyhow::ensure!(out.status.success(), format!("slither {} failed", printer));
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        log::error!(
+            "Slither {} failed with exit code: {:?}",
+            printer,
+            out.status.code()
+        );
+        log::error!("Stdout: {}", stdout);
+        log::error!("Stderr: {}", stderr);
+        anyhow::bail!(
+            "slither {} failed with exit code {:?}\nStdout: {}\nStderr: {}",
+            printer,
+            out.status.code(),
+            stdout,
+            stderr
+        );
+    }
 
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
 
@@ -467,11 +517,16 @@ pub async fn get_slither_ir_and_storage(
     repo: &RepoPaths,
 ) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>, Vec<String>)> {
     // Run the slithir-ssa printer to get IR information
-    let ir_raw = run_printer(repo, "slithir-ssa").await?;
+    let ir_raw = match repo.monorepo_folders {
+        Some(_) => run_printer_monorepo(repo, "slithir-ssa").await?,
+        None => run_printer(repo, "slithir-ssa", None).await?,
+    };
 
     // Run the variable-order printer to get storage information
-    let storage_raw = run_printer(repo, "variable-order").await?;
-    // info!("storage raw => {}", storage_raw);
+    let storage_raw = match repo.monorepo_folders {
+        Some(_) => run_printer_monorepo(repo, "variable-order").await?,
+        None => run_printer(repo, "variable-order", None).await?,
+    };
 
     let slither_scan_results = run_slither_detector(repo).await?;
 
@@ -502,13 +557,15 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
     let (_, _, slither_scan_vec) = get_slither_ir_and_storage(repo).await?;
     // info!("storage vec => {:?}", storage_vec);
 
+    // Use monorepo-aware functions for call graph and inheritance
     let (funcs, edges) = callgraph::get_dot_funcs_and_dot_edges(repo).await?;
-    let inheritance_json = run_printer_json(repo, "inheritance").await?;
-    let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
-    let contract_summary = run_printer(repo, "contract-summary").await?;
+    let inheritance_edges = callgraph::generate_inheritance_edges(repo).await?;
+    let contract_summary = match repo.monorepo_folders {
+        Some(_) => run_printer_monorepo(repo, "contract-summary").await?,
+        None => run_printer(repo, "contract-summary", None).await?,
+    };
     let contract_summary_vec = parse_slithir_contract_summary(&contract_summary);
     let src_file_list = get_all_files_src(repo)?;
-    // TODO - undo comment out
     let summaries = summarize_src_files(repo, &semantics_path).await?;
 
     // 2 . serialise each artefact → one text file
@@ -520,7 +577,7 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
     fs::write(&file_list, src_file_list)?;
     out_paths.push(file_list);
 
-    info!("convert file summaries to txt files");
+    // info!("convert file summaries to txt files");
     for sum in &summaries {
         let meta = format!("{}::file_summary", sum.filename);
         // info!("contract meta => {}", meta);
@@ -587,6 +644,9 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
     Ok(out_paths)
 }
 
-pub fn cache_key(repo_root: &Path, printer: &str) -> String {
-    format!("{}::{}", repo_root.display(), printer)
+pub fn cache_key(repo_root: &Path, printer: &str, subfolder: Option<PathBuf>) -> String {
+    match subfolder {
+        Some(folder) => format!("{}-{}::{}", repo_root.display(), folder.display(), printer),
+        None => format!("{}::{}", repo_root.display(), printer),
+    }
 }

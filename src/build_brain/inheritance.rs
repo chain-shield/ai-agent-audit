@@ -34,6 +34,7 @@ pub fn parse_inheritance_json(json: &str) -> Result<Vec<(String, String)>> {
     }
     #[derive(Deserialize)]
     struct Results {
+        #[serde(default)]
         printers: Vec<Printer>,
     }
 

@@ -599,4 +599,191 @@ if (_isRewardToken(rewardToken)) {
 - `StakingRewardsManagerBase.sol`,`ProtocolAccessManaged.sol`,`ConfigurationManaged.sol` [REPORT](https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/68c01d6c3692197b1ecda495_ChainSecurity_Summer_fi_Summer_Earn_Protocol_audit.pdf)
 - `StakingRewardsManagerBase.sol`, `SummerGovernor.sol` [REPORT](https://github.com/Prototech-Labs/published-work/blob/main/18012025%20Prototech-SummerFi-Report.pdf)
 
+# Summer Protocol Governance v2 — LayerZero Integration (Auditor Context)
+
+> **Scope:** Architectural context for reviewing a Solidity codebase that uses **LayerZero v2** to propagate **hub-chain** governance decisions to **satellite chains**. External LayerZero contracts/libraries are assumed trusted/out of scope; focus is on integration, configuration, and on-chain security boundaries.
+
+---
+
+## 1) System Overview (Hub–Satellite)
+
+* **Hub chain (source of truth):** Proposals are created and voted **only** on the hub using **xSUMR** (non-transferable ERC20Votes minted 1:1 for staked SUMR or approved vesting balances). Successful proposals are queued & executed via **`SummerTimelockController`** (delay enforced).
+* **Satellite chains (execute-only):** No proposing/voting. Satellites **queue and execute** hub-approved operations after their local timelock delay.
+* **Cross-chain transport:** **LayerZero v2** message passing sends finalized proposal payloads from hub → satellites. Satellite receivers validate sender (trusted remote) and enqueue locally.
+
+---
+
+## 2) LayerZero Components Used (per repo deps)
+
+* `@layerzerolabs/lz-evm-protocol-v2`, `@layerzerolabs/lz-evm-messagelib-v2` — core v2 protocol + message library.
+* `@layerzerolabs/oapp-evm` — OApp base for sending/receiving cross-chain messages (typical `lzSend`/`lzReceive` flow, non-blocking receive).
+* `@layerzerolabs/oft-evm` — Omnichain Fungible Token (OFT) stack for **SUMR** cross-chain supply (burn/mint across chains without wrappers).
+
+> **Implication for audit:** Verify **trusted remote** configuration, endpoint checks, adapter parameter usage (gas/fee), and access-control around send/receive entrypoints.
+
+---
+
+## 3) Contracts & Roles (integration-relevant)
+
+* **`SummerGovernorV2` (hub):**
+
+  * Uses xSUMR as voting token.
+  * After hub timelock execution, **serializes proposal actions** (targets/values/calldata) and **sends** LayerZero messages to each satellite.
+  * **Accepts ETH** only from the **LayerZero endpoint** or the **hub timelock** (defensive receive).
+* **`SummerGovernorV2` (satellite mode):**
+
+  * **Receiver** of LayerZero messages from hub.
+  * Verifies **trusted remote** (hub gov address) and **queues** actions into local timelock. **No propose/vote paths** enabled.
+* **`SummerTimelockController` (hub & satellites):**
+
+  * Enforces delay; supports **guardian cancellation rules**; defines who can **schedule/execute**.
+* **`StakedSummerToken` (xSUMR):**
+
+  * Non-transferable ERC20Votes; **only** authorized staking modules may `mint`/`burnFrom`.
+  * Pausable by **governor/guardian**.
+* **`SummerStaking` / `SummerVestingWalletsEscrow`:**
+
+  * Authorized **minter/burner** of xSUMR in stake/unstake flows (1:1 with SUMR staked or escrowed).
+* **`IProtocolAccessManager`:**
+
+  * Source of truth for **guardian**/role checks used by governor & timelock.
+* **LayerZero Endpoints (per chain):**
+
+  * Deliver messages; satellite receivers should only accept calls from the **endpoint** and only when **trusted remote** matches the hub sender.
+
+---
+
+## 4) Message Flow (Hub → Satellites)
+
+1. **Stake → xSUMR:** Users stake SUMR (or via vesting escrow) to mint xSUMR (1:1). Voting happens **only** on hub.
+2. **Propose & Vote (hub):** xSUMR holders (or **guardian** below threshold) propose; community votes; if passed, **hub timelock** queues actions.
+3. **Execute on hub:** After delay, hub timelock executes proposal actions.
+4. **Dispatch via LayerZero:** Hub governor **`lzSend`** per target chain with encoded action bundle and adapter params (gas, value).
+5. **Receive on satellite:** Satellite governor’s `lzReceive` (or OApp hook) validates **endpoint caller** + **trusted remote**; calls internal **`_queueCrossChainProposal`** → **satellite timelock** schedules actions.
+6. **Execute on satellite:** After local delay, permitted executor triggers timelock **execute** → actions run on that chain.
+
+> **Non-blocking delivery:** If one satellite message fails, OApp patterns typically avoid blocking others. Ensure there is **retry/unblocking** logic or admin path to clear failed messages (if implemented).
+
+---
+
+## 5) Trust Model & Security Boundaries
+
+* **Consensus & voting authority:** Centralized on **hub**; satellites **must not** have propose/vote codepaths reachable.
+* **Authentication on satellites:**
+
+  * `msg.sender` **must** be the **LayerZero endpoint**.
+  * The message **origin** (trusted remote) **must** equal the **hub governor** (per chainID/EID).
+  * No other caller should be able to enqueue actions.
+* **Timelock invariants:**
+
+  * Only **hub governor** schedules on hub; only **satellite gov (receiver)** schedules on satellites.
+  * **Delay respected** before execution.
+  * **Guardian cancel** only per defined policy.
+* **xSUMR supply control:** Mint/burn only via **authorized** staking/escrow modules; no arbitrary transfer/mint routes.
+* **ETH handling:** Governor accepts ETH **only** from endpoint/timelock; prevents griefing via accidental payable paths.
+* **OFT (SUMR):** Cross-chain mint/burn aligns total supply; governance voting power comes from **xSUMR on hub**, not from OFT balances on satellites.
+
+---
+
+## 6) Satellite Hardening Checklist
+
+* [ ] **No propose/vote** functions exposed; any inherited OZ Governor methods disabled/reverted on satellites.
+* [ ] **`trustedRemote` mapping** correctly set (EID → hub governor address & path). Immutable or governance-controlled with delay.
+* [ ] **Endpoint-only gate:** `require(msg.sender == lzEndpoint)` in receiver; **no alternate receive path**.
+* [ ] **Replay/duplication:** Message nonce/path enforced by OApp; verify no re-enqueue without intent.
+* [ ] **Timelock roles:** Only satellite governor can **schedule**; executor set per policy (often **anyone** can execute after delay).
+* [ ] **Adapter params:** Destination gas limits sufficient and **bounded**; no user-controlled param injection that could grief.
+* [ ] **Pausability:** Satellite governor/timelock/xSUMR pause hooks correctly wired; guardian can pause if needed.
+* [ ] **Upgradeability:** If proxies exist, upgrade authority should be governed (hub-controlled), not EOAs.
+
+---
+
+## 7) Failure Modes & Mitigations
+
+| Risk                                | Description                                         | Mitigation to Verify                                                                    |
+| ----------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Misconfigured trusted remote        | Satellite accepts messages from wrong address/chain | One-time setup guarded by timelock; tests for mismatch revert                           |
+| Bypass receiver checks              | `lzReceive` reachable without endpoint              | `require(msg.sender == endpoint)`; internal only functions                              |
+| Message gas grief                   | Insufficient dest gas causes stuck queue            | Reasonable adapter gas; admin retry/unblock path (if implemented)                       |
+| Replay / double-queue               | Reuse of payload/nonces                             | OApp path/nonce checks; timelock prevents duplicate `schedule` with same opId           |
+| Satellite propose/vote path exposed | Accidental OZ methods left enabled                  | Explicit reverts; tests assert revert                                                   |
+| ETH receive grief                   | Anyone sends ETH to governor                        | Payable guarded to endpoint/timelock only                                               |
+| xSUMR mint/burn abuse               | Unauthorized module mints votes                     | RBAC: only approved modules; pause on emergency                                         |
+| Guardian overreach                  | Guardian can cancel too broadly                     | Narrow rules; eventing; timelock-gated changes to guardian list                         |
+| Cross-chain drift                   | Hub executed, satellite didn’t                      | Monitoring: emitted message IDs, delivery status, on-chain assertions; retry mechanisms |
+
+---
+
+## 8) Invariants & Properties (good for automated checks)
+
+* **I1 (Satellite Auth):** Every successful satellite queue event **must** have `msg.sender == lzEndpoint` **and** `trustedRemote == hubGovernor`.
+* **I2 (Satellite Authority):** No successful call to any satellite **propose/vote/cancel** function (should revert).
+* **I3 (Delay):** All executions (hub & satellites) occur **after** timelock delay ≥ configured seconds.
+* **I4 (xSUMR Supply):** ΔxSUMR totalSupply equals net **stake/unstake/escrow** operations; no mint outside authorized modules.
+* **I5 (Pause Behavior):** When paused, xSUMR mint/burn (and any gated ops) revert.
+* **I6 (ETH Guard):** Governor receives ETH only from endpoint/timelock; any other sender reverts.
+* **I7 (Trusted Remote Immutability):** Changing trusted remote requires governance & timelock delay (if mutable at all).
+
+---
+
+## 9) What to Review (Code Pointers / Patterns)
+
+* **Hub governor**: the function that **packages proposal actions** and calls LayerZero send (payload schema; adapter params; fee handling; events).
+* **Satellite governor**: the **receive hook** (`lzReceive` or OApp callback) → **trusted remote** check → **timelock.schedule** path.
+* **Timelock**: custom cancellation rules (guardian powers), executor permissions, duplicate op ID prevention, delay constants.
+* **xSUMR**: RBAC (`MINTER_ROLE`, `BURNER_ROLE`), pause, disable transfer, mint/burn callsites (staking, escrow).
+* **Staking / Vesting escrow**: 1:1 mint/burn, lockup & penalty math (not governance power), bucket caps enforcement, `transferStakes(to)` safety.
+* **AccessManager**: guardian lookup paths used by governor/timelock; tests for accurate gatekeeping.
+* **LZ config**: endpoint addresses, EIDs, `trustedRemote` initialization & upgradability constraints.
+
+---
+
+## 10) Targeted Test Ideas (Foundry)
+
+* **Auth tests (satellite):**
+
+  * `lzReceive` called by non-endpoint → revert.
+  * Trusted remote mismatch → revert.
+  * Propose/vote on satellite → revert.
+* **Happy path (E2E):**
+
+  * Hub vote passes → timelock executes → LZ message delivered → satellite queues → after delay executes exact calldata.
+* **Adapter gas boundary:**
+
+  * Undersized gas → delivery fails; retry path (if provided) succeeds.
+* **Pause scenarios:**
+
+  * Pause xSUMR → mint/burn blocked; unpause restores.
+* **Guardian cancel:**
+
+  * Queued op canceled per policy; cannot execute afterward.
+* **xSUMR supply sanity:**
+
+  * Stake/unstake/escrow stake affects xSUMR supply exactly; no drift.
+
+---
+
+## 11) Notes on Staking Weights & Penalties (context)
+
+* **Rewards weighting only:** `weighted = amount * (1 + 7e-16 * t^2)`, capped at 3y; **does not** affect governance voting (xSUMR remains 1:1).
+* **Early unlock penalty:** 2% flat if <~110 days remaining; otherwise **linear** up to 20% at 3y remaining. Penalty to `treasury()`.
+* **Buckets & caps:** Duration buckets with governor-set caps; **disabled (cap=0)** by default. Portfolio supports up to 1000 stakes; `transferStakes(to)` migrates portfolio.
+
+---
+
+## 12) Assumptions & Out-of-Scope
+
+* LayerZero v2 protocol contracts, endpoints, and OFT libraries are treated as **trusted dependencies**.
+* Oracle/Relayer selection & economic assumptions are **out of scope** unless the app configures custom modules (not indicated here).
+* Bridging economics (fees) and off-chain monitoring infra are informational only; focus is on **on-chain authorization & safety**.
+
+---
+
+### TL;DR for Reviewers
+
+* **Only hub governs; satellites execute.**
+* **Only endpoint can call `lzReceive`; only trusted hub may enqueue.**
+* **Timelocks enforce delays; guardians can cancel per strict rules.**
+* **xSUMR is non-transferable; mint/burn strictly RBAC-gated.**
+* **Verify trusted remote config, payable guards, adapter gas, and that all satellite governance entrypoints besides queue/execute are dead-ended.**
 

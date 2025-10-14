@@ -220,13 +220,16 @@ mod tests {
     fn test_file_picker_creation() {
         let repo = RepoPaths {
             project_id: "test-repo".to_string(),
+            monorepo_folders: None,
             root: PathBuf::from("/tmp"),
-            source_code_folder: PathBuf::from("/tmp"),
+            source_code_folders: vec![PathBuf::from("/tmp")],
             sol_files: vec![PathBuf::from("/tmp/test.sol")],
             test_files: vec![PathBuf::from("/tmp/test.sol")],
             script_files: vec![PathBuf::from("/tmp/test.sol")],
             config_files: vec![PathBuf::from("/tmp/test.sol")],
+            lib_config_files: vec![PathBuf::from("/tmp/test.sol")],
             docs: vec![PathBuf::from("/tmp/README.md")],
+
             audit_scope: None,
             scoped_files: None,
             excluded_folders: None,
@@ -267,12 +270,15 @@ mod tests {
     async fn test_call_limiting() {
         let repo = RepoPaths {
             project_id: "test-repo".to_string(),
+            monorepo_folders: None,
             root: PathBuf::from("/tmp"),
-            source_code_folder: PathBuf::from("/tmp"),
+            source_code_folders: vec![PathBuf::from("/tmp")],
             sol_files: vec![PathBuf::from("/tmp/test.sol")],
             test_files: vec![PathBuf::from("/tmp/test.sol")],
+
             script_files: vec![PathBuf::from("/tmp/test.sol")],
             config_files: vec![PathBuf::from("/tmp/test.sol")],
+            lib_config_files: vec![PathBuf::from("/tmp/test.sol")],
             scoped_files: None,
             audit_scope: None,
             docs: vec![PathBuf::from("/tmp/README.md")],
