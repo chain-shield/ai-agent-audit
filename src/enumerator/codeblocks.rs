@@ -164,16 +164,36 @@ pub async fn generate_codeblock_from_codebase(
         let mut main_source_contracts =
             detect_source_code_dependencies(&main_contract, repo).await?;
 
-        for contract in contracts_with_depth {
-            let source = detect_source_code_dependencies(&contract, repo).await?;
+        info!(
+            "🔍 DEBUG: Source dependencies for main contract '{}': {} contracts",
+            main_contract,
+            main_source_contracts.len()
+        );
+        info!(
+            "🔍 DEBUG: contracts_with_depth has {} contracts",
+            contracts_with_depth.len()
+        );
+
+        for contract in &contracts_with_depth {
+            let source = detect_source_code_dependencies(contract, repo).await?;
+            info!(
+                "🔍 DEBUG: Source dependencies for '{}': {} contracts",
+                contract,
+                source.len()
+            );
             main_source_contracts.extend(source);
         }
 
+        info!(
+            "🔍 DEBUG: Total source dependencies after analyzing depth contracts: {}",
+            main_source_contracts.len()
+        );
+
         for contract_name in &main_source_contracts {
-            // info!(
-            //     "adding source-detected contract {} from main and called contract",
-            //     contract_name,
-            // );
+            info!(
+                "adding source-detected contract {} into main and called contract",
+                contract_name,
+            );
             contracts.insert(contract_name.clone());
         }
 
@@ -228,10 +248,25 @@ pub async fn generate_codeblock_from_codebase(
             }
         }
 
+        // DEBUG: Log what contracts were detected
+        info!("🔍 DEBUG: Total contracts detected: {}", contracts.len());
+        info!("🔍 DEBUG: contracts = {:?}", contracts);
+        info!(
+            "🔍 DEBUG: contracts_with_parents = {:?}",
+            contracts_with_parents
+        );
+        info!(
+            "🔍 DEBUG: contracts_with_depth = {:?}",
+            contracts_with_depth
+        );
+
         // Process contracts in priority order (called → parents)
         // The prioritized_contracts vector is already ordered correctly from above
         let mut contracts_added = 0;
-        let mut contracts_skipped = 0;
+        let mut contracts_skipped_no_file = 0;
+        let mut contracts_skipped_too_small = 0;
+        let mut contracts_skipped_budget = 0;
+
         for (contract, contract_type) in prioritized_contracts {
             let contract_code = get_contract_file_content(&contract, repo).await?;
             // Skip if no content (could not resolve file)
@@ -240,7 +275,7 @@ pub async fn generate_codeblock_from_codebase(
                     "⏭️ Skipping '{} contract: {}' - no file or empty content",
                     contract_type, contract
                 );
-                contracts_skipped += 1;
+                contracts_skipped_no_file += 1;
                 continue;
             }
 
@@ -253,7 +288,7 @@ pub async fn generate_codeblock_from_codebase(
                     "⏭️ Skipping '{} contract: {}' ({} tokens) - below minimum (5 tokens)",
                     contract_type, contract, section_tokens
                 );
-                contracts_skipped += 1;
+                contracts_skipped_too_small += 1;
                 continue;
             }
 
@@ -264,7 +299,7 @@ pub async fn generate_codeblock_from_codebase(
                     "⏭️ Skipping '{} contract: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
                     contract_type, contract, section_tokens, new_total, token_budget
                 );
-                contracts_skipped += 1;
+                contracts_skipped_budget += 1;
             } else {
                 info!(
                     "✅ Adding '{} contract: {}' ({} tokens) - total: {}/{} tokens",
@@ -277,8 +312,12 @@ pub async fn generate_codeblock_from_codebase(
         }
 
         info!(
-            "📊 Supporting contracts: {} added, {} skipped due to budget",
-            contracts_added, contracts_skipped
+            "📊 Supporting contracts: {} added, {} skipped (no file: {}, too small: {}, budget: {})",
+            contracts_added,
+            contracts_skipped_no_file + contracts_skipped_too_small + contracts_skipped_budget,
+            contracts_skipped_no_file,
+            contracts_skipped_too_small,
+            contracts_skipped_budget
         );
 
         markdown_codeblock_for_llm.push_str("\nEND OF SUPPORTING CONTRACTS AND INTERFACES\n\n");
