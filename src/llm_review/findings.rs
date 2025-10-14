@@ -4,7 +4,7 @@ use super::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::enums::EnumString,
     utils::semantic_compare,
 };
@@ -18,6 +18,7 @@ use strum_macros::EnumIter;
 use tokio::sync::Mutex;
 
 pub const CLAUDE_4_0_SONNET: &str = "claude-sonnet-4-0";
+pub const CLAUDE_4_5_SONNET: &str = "claude-sonnet-4-5";
 pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -193,10 +194,7 @@ impl Findings {
             });
         }
 
-        // Create O3 agent with flex tier for cost optimization
-        let openai_config = AgentConfig::new(None)
-            .with_model("o3")
-            .with_openai_service_tier("flex");
+        let openai_config = AgentConfig::new(None).with_model("gpt-5");
 
         let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 

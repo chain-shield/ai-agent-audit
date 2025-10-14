@@ -1,6 +1,9 @@
 use crate::{
+    cost::cost_data::get_token_count,
     enumerator::codeblock_db::CodeBlocksDb,
-    llm_review::context_state::{ContextType, get_metadata_context},
+    llm_review::{
+        context_state::get_metadata_context, utils::contract_in_scope::is_contract_in_scope,
+    },
     prepare_code::git_clone::RepoPaths,
     reporting::save_file::save_file_locally,
 };
@@ -19,7 +22,10 @@ use std::path::{Path, PathBuf};
 /// # Arguments
 // * `codeblocks_path` - Path to the code blocks database
 /// * `repo` - Repository paths and metadata for naming
-pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> anyhow::Result<()> {
+pub async fn save_contract_and_fn_ir(
+    codeblocks_path: &PathBuf,
+    repo: &RepoPaths,
+) -> anyhow::Result<()> {
     let codeblocks_db = CodeBlocksDb::open(codeblocks_path)?;
 
     // grab all solidity contracts from database
@@ -28,7 +34,12 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
     let output_dir = Path::new(&repo.repo_name);
 
     for (contract, codeblock) in contracts {
-        let filename = format!("{}-{}.md", contract, repo.unique_repo_hash());
+        // check contract in inscope!
+        if !is_contract_in_scope(&contract, repo).await? {
+            continue;
+        }
+        let token_count = get_token_count(&codeblock);
+        let filename = format!("{}-token-count-{}.md", contract, token_count);
         let full_path = output_dir.join(filename);
         save_file_locally(&codeblock, &full_path)?;
     }
@@ -44,7 +55,7 @@ pub fn save_contract_and_fn_ir(codeblocks_path: &PathBuf, repo: &RepoPaths) -> a
 /// * `semantics_path` - Path to the semantic analysis database
 /// * `repo` - Repository paths and metadata for naming
 pub async fn save_metadata(repo: &RepoPaths) -> anyhow::Result<()> {
-    let metadata = get_metadata_context(repo, &ContextType::Full)
+    let metadata = get_metadata_context(repo)
         .await
         .expect("cannot load metadata");
 

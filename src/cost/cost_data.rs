@@ -1,4 +1,7 @@
-use crate::llm_review::enums::{AIAgent, AgentMetadata};
+use crate::{
+    llm_review::enums::{AIAgent, AgentMetadata},
+    utils::bpe::get_bpe,
+};
 /// Cost tracking and calculation for LLM inference across multiple providers.
 ///
 /// This module provides real-time cost tracking for AI agent operations,
@@ -79,6 +82,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "claude-3.5-sonnet" | "claude-3-5-sonnet" => 3.00,
             "claude-3.7-sonnet" | "claude-3-7-sonnet" => 3.00,
             "claude-4.0-sonnet" | "claude-4-0-sonnet" => 3.00,
+            "claude-4.5-sonnet" | "claude-4-5-sonnet" => 3.00,
             "claude-4" => 3.00,
 
             // Gemini models
@@ -108,6 +112,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "claude-3.5-sonnet" | "claude-3-5-sonnet" => 15.00,
             "claude-3.7-sonnet" | "claude-3-7-sonnet" => 15.00,
             "claude-4.0-sonnet" | "claude-4-0-sonnet" => 15.00,
+            "claude-4.5-sonnet" | "claude-4-5-sonnet" => 15.00,
             "claude-4" => 15.00,
 
             // Gemini models
@@ -228,7 +233,7 @@ pub fn get_token_count(text: &str) -> usize {
 
     // NOTE testing different count
     // Use the actual BPE tokenizer for accurate token counting
-    let bpe = crate::utils::bpe::get_bpe();
+    let bpe = get_bpe();
     bpe.encode_with_special_tokens(text).len()
 }
 
@@ -298,7 +303,7 @@ mod tests {
     #[tokio::test]
     async fn test_cost_calculation_vs_openai_api() {
         use reqwest::Client;
-        use serde_json::{Value, json};
+        use serde_json::{json, Value};
 
         // Skip test if no API key
         let api_key = match std::env::var("OPENAI_API_KEY") {

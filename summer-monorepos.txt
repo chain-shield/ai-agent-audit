@@ -1,0 +1,11 @@
+./packages/access-contracts/
+./packages/constants/
+./packages/core-contracts/
+./packages/gov-contracts/
+./packages/rewards-contracts/
+./packages/chain-bridge/
+./packages/dutch-auction/
+./packages/match-utils/
+./packages/percentage/
+./packages/voting-decay/
+./packages/intent-system/

@@ -11,17 +11,11 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize::{self, summarize_protocol},
+        summarize::{summarize_protocol, summarize_src_files, FileSummaryType},
     },
     cost::cost_data::get_token_count,
     prepare_code::git_clone::RepoPaths,
 };
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContextType {
-    Full,
-    Abridged,
-}
 
 /// Global metadata context shared across all AI agents
 
@@ -31,11 +25,8 @@ pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
 pub static METADATA_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
-pub fn get_context_key(repo: &RepoPaths, context_type: &ContextType) -> String {
-    match context_type {
-        ContextType::Full => cache_key(&repo.root, "prompt_context"),
-        ContextType::Abridged => cache_key(&repo.root, "abridged_prompt_context"),
-    }
+pub fn get_context_key(repo: &RepoPaths) -> String {
+    cache_key(&repo.root, "prompt_context", None)
 }
 /// Generates and caches protocol metadata context for AI analysis.
 ///
@@ -53,11 +44,23 @@ pub async fn generate_and_save_metadata_context(
     let mut metadata = String::new();
 
     // full context
-    let full_context =
-        generate_context_for_code_review(repo, semantics_path, &ContextType::Full).await?;
-    let abridged_context =
-        generate_context_for_code_review(repo, semantics_path, &ContextType::Abridged).await?;
-    let protocol_summary = summarize_protocol(repo, Some(&full_context)).await?;
+    let full_context = generate_context_for_code_review(repo, semantics_path).await?;
+
+    let summaries = summarize_src_files(repo, semantics_path).await?;
+
+    // add file summaries to context summary
+    let mut full_context_plus_summaries = full_context.clone();
+    full_context_plus_summaries.push_str("\n## SUMMARY OF SOURCE CODE FILES\n\n");
+    for summary in summaries {
+        let file_type = summary.file_type.unwrap_or(FileSummaryType::OutOfScope);
+        if file_type == FileSummaryType::Source {
+            full_context_plus_summaries.push_str(&format!("### Summary of {}\n", summary.filename));
+            full_context_plus_summaries.push_str(&summary.summary);
+            full_context_plus_summaries.push_str("\n");
+        }
+    }
+
+    let protocol_summary = summarize_protocol(repo, Some(&full_context_plus_summaries)).await?;
 
     metadata.push_str(&format!(
         "\n## PROTOCOL OVERVIEW:\n\n{}\n\n",
@@ -69,15 +72,10 @@ pub async fn generate_and_save_metadata_context(
 
     // saving full context
     metadata_cache.insert(
-        get_context_key(repo, &ContextType::Full),
+        get_context_key(repo),
         format!("{}{}", metadata, full_context),
     );
 
-    // saving abridge context
-    metadata_cache.insert(
-        get_context_key(repo, &ContextType::Abridged),
-        format!("{}{}", metadata, abridged_context),
-    );
     Ok(())
 }
 
@@ -88,8 +86,8 @@ pub async fn generate_and_save_metadata_context(
 ///
 /// # Returns
 /// * `String` - Cached protocol metadata context
-pub async fn get_metadata_context(repo: &RepoPaths, context_type: &ContextType) -> Option<String> {
-    let key = get_context_key(repo, context_type);
+pub async fn get_metadata_context(repo: &RepoPaths) -> Option<String> {
+    let key = get_context_key(repo);
     let metadata_context = Arc::clone(&METADATA_CONTEXT);
     let metadata_cache = metadata_context.lock().await;
     // Return cached output if exists
@@ -99,7 +97,6 @@ pub async fn get_metadata_context(repo: &RepoPaths, context_type: &ContextType) 
 pub async fn generate_context_for_code_review(
     repo: &RepoPaths,
     semantics_path: &Path,
-    context_type: &ContextType,
 ) -> Result<String> {
     log::info!("generate slither metadata");
     let slither_metadata = generate_slither_metadata_prompt_context(repo, &semantics_path).await?;
@@ -107,17 +104,22 @@ pub async fn generate_context_for_code_review(
 
     let mut full_prompt_context = String::new();
 
-    let mut file_summaries = String::new();
-    if *context_type == ContextType::Full {
-        let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
-        for summary in summaries {
-            file_summaries.push_str(&format!("\n## SUMMARY OF FILE: {}\n", summary.filename));
-            file_summaries.push_str(&summary.summary);
-            file_summaries.push_str("\n\n");
-        }
-        full_prompt_context.push_str(&file_summaries);
-        full_prompt_context.push_str(&slither_metadata);
-    }
+    // NOTE: now excluding file summarizes from metadata
+    // let mut file_summaries = String::new();
+    // let summaries = summarize::summarize_src_files(repo, &semantics_path).await?;
+    // for summary in summaries {
+    //     let file_type = summary.file_type.unwrap_or(FileSummaryType::OutOfScope);
+    //     if file_type == FileSummaryType::DeployScript {
+    //         file_summaries.push_str(&format!(
+    //             "\n## SUMMARY OF DEPLOY SCRIPT: {}\n",
+    //             summary.filename
+    //         ));
+    //         file_summaries.push_str(&summary.summary);
+    //         file_summaries.push_str("\n\n");
+    //     }
+    // }
+    // full_prompt_context.push_str(&file_summaries);
+    full_prompt_context.push_str(&slither_metadata);
 
     // let docs = summarize::summarize_docs(repo, &full_prompt_context).await?;
     let documentation = repo.extract_content_from_docs()?;
@@ -125,37 +127,32 @@ pub async fn generate_context_for_code_review(
     full_prompt_context.push_str("\n ## DOCUMENTATION: \n\n ");
     full_prompt_context.push_str(&documentation);
 
-    if *context_type == ContextType::Full {
-        let config_files_content = repo.extract_content_from_config_files()?;
-        // adding config files: foundry.toml, package.json, etc
-        full_prompt_context.push_str("\n ## CONFIG FILES: \n\n ");
-        full_prompt_context.push_str(&config_files_content);
-    }
+    let lib_config_headers = repo.extract_lib_config_headers()?;
+    full_prompt_context.push_str("\n ## PACKAGE.JSON HEADERS OF LIB PACKAGES: \n");
+    full_prompt_context.push_str("\n Note: Check for important lib version info\n\n ");
+    full_prompt_context.push_str("\n When code reviewing be mindful of which version of openzepplin, chainlink, etc the package version is using.\n\n ");
+    full_prompt_context.push_str(&lib_config_headers);
+
+    let config_files_content = repo.extract_content_from_config_files()?;
+    // adding config files: foundry.toml, package.json, etc
+    full_prompt_context.push_str("\n ## CONFIG FILES: \n");
+    full_prompt_context.push_str("\n Note: Check for important package version info.\n\n ");
+    full_prompt_context.push_str(&config_files_content);
 
     log::info!(
         "documentation full token count => {}",
         get_token_count(&documentation)
     );
-    match context_type {
-        ContextType::Full => {
-            log::info!(
-                "full prompt context token count => {}",
-                get_token_count(&full_prompt_context)
-            );
-        }
-        ContextType::Abridged => {
-            log::info!(
-                "abridge prompt context token count => {}",
-                get_token_count(&full_prompt_context)
-            );
-        }
-    }
+    log::info!(
+        "prompt context token count => {}",
+        get_token_count(&full_prompt_context)
+    );
 
     Ok(full_prompt_context)
 }
 
 pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
-    let key = cache_key(&repo.root, "audit_scope");
+    let key = cache_key(&repo.root, "audit_scope", None);
 
     // Return cached output if exists
     if let Some(cached) = METADATA_CONTEXT.lock().await.get(&key).cloned() {
@@ -181,7 +178,7 @@ pub async fn generate_slither_metadata_prompt_context(
     repo: &RepoPaths,
     _semantics_path: &Path,
 ) -> Result<String> {
-    let key = cache_key(&repo.root, "prompt_context");
+    let key = cache_key(&repo.root, "prompt_context", None);
     // Return cached output if exists
     // Return cached output if exists
     if let Some(cached) = PROMPT_CONTEXT.lock().await.get(&key).cloned() {

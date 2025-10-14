@@ -23,13 +23,15 @@ pub const AUDIT_TYPE: AuditType = AuditType::Code4rena;
 pub const MAX_DEPTH: usize = 3;
 
 /// Maximum token budget per codeblock + context to stay within LLM context limits
-pub const TOKEN_BUDGET: usize = 140_000;
+pub const TOKEN_BUDGET: usize = 115_000;
 
 /// Number of discovery rounds per contract during analysis
-pub const DISCOVERY_RUNS: usize = 2;
-pub const INVARIANT_RUNS: usize = 5;
+pub const DISCOVERY_RUNS: usize = 1;
+pub const INVARIANT_RUNS: usize = 1;
+pub const MAX_PATTERN_RUN_TOP: usize = 1;
+pub const MAX_PATTERN_RUN_FREQUENT: usize = 1;
 
-pub const MAX_FILE_RUNS: usize = 5;
+pub const MAX_FILE_RUNS: usize = 1;
 
 pub const MAX_RAG_QUERY_CONTENT_LENGTH: usize = 8192; // 8192 token limit for embedding
 
@@ -38,7 +40,7 @@ pub const DOCKER_VOLUME: &str = "/tmp/audit-analysis";
 
 pub const CHAINSHIELD_DB_FOLDER: &str = "/Users/apmfree/chainshield_db";
 pub const REPO_DATA_DB: &str = "repo_data.db";
-pub const SUMMARY_DB: &str = "repo_data.db";
+pub const SUMMARY_DB: &str = "summary.db";
 pub const SEMANTIC_DB: &str = "semantic.db";
 pub const CODEBLOCK_DB: &str = "codeblock.db";
 pub const FINDINGS_DB: &str = "findings.db";

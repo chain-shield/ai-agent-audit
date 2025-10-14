@@ -19,7 +19,10 @@ use walkdir::WalkDir;
 
 use crate::cli_args::parse::Cli;
 use crate::config::audit_config;
-use crate::utils::check_folder_name::{is_config_file, is_script_file, is_test_file};
+use crate::utils::check_folder_name::{
+    is_library_package_json, is_monorepo_config_file, is_root_config_file, is_script_file,
+    is_test_file,
+};
 use crate::utils::file_security::validate_repo_url;
 
 /// Build flags for forge compilation
@@ -44,8 +47,9 @@ pub struct RepoPaths {
     pub sol_files: Vec<PathBuf>, // includes test and script files
     pub test_files: Vec<PathBuf>,
     pub script_files: Vec<PathBuf>,
-    pub config_files: Vec<PathBuf>, // NOT in sol_files
-    pub source_code_folder: PathBuf,
+    pub config_files: Vec<PathBuf>,     // NOT in sol_files
+    pub lib_config_files: Vec<PathBuf>, // config files (package.json) in lib folder
+    pub source_code_folders: Vec<PathBuf>,
     /// Paths to documentation files (README.md, etc.)
     pub docs: Vec<PathBuf>,
     /// e.g. `"my-cool-repo"`
@@ -55,6 +59,7 @@ pub struct RepoPaths {
     /// folder exclude from scope
     pub excluded_folders: Option<Vec<PathBuf>>,
     pub scoped_files: Option<PathBuf>,
+    pub monorepo_folders: Option<PathBuf>,
     /// full 40-char SHA, e.g. `"1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t"`
     pub commit_hash: String,
 }
@@ -124,7 +129,11 @@ pub fn clone_and_filter_git_repo(
     let search_root = root.join(&repo_name);
     // info!("search_root => {}", search_root.display());
 
-    let source_code_folder = search_root.join(&cli.code_folder);
+    let source_code_folders = cli
+        .code_folders
+        .iter()
+        .map(|f| search_root.join(f))
+        .collect::<Vec<PathBuf>>();
     // info!("source_code_folder => {}", source_code_folder.display());
 
     // Validate that the search root exists
@@ -180,11 +189,19 @@ pub fn clone_and_filter_git_repo(
         None => false,
     };
 
+    let monorepo_folders = match &cli.monorepo_folders {
+        Some(repos) => Some(Path::new(repos).to_path_buf()),
+        None => None,
+    };
+
     // Initialize vectors to store file paths
     let mut sol_files = Vec::new();
     let mut test_files = Vec::new();
     let mut script_files = Vec::new();
+
     let mut config_files = Vec::new();
+    let mut lib_config_files = Vec::new();
+
     for entry in WalkDir::new(&search_root)
         .into_iter()
         .filter_entry(|e| {
@@ -204,7 +221,7 @@ pub fn clone_and_filter_git_repo(
         if entry.file_type().is_dir() {
             continue;
         }
-        // skip if gitignore or simlink
+        // skip if gitignore or symlink
         if ign.matched(path, false).is_ignore()
             || fs::symlink_metadata(path)?.file_type().is_symlink()
         {
@@ -217,7 +234,7 @@ pub fn clone_and_filter_git_repo(
                 if is_test_file(path, search_root.as_path()) {
                     test_files.push(path.to_path_buf());
                 }
-                if is_script_file(path, search_root.as_path()) {
+                if is_script_file(path) {
                     script_files.push(path.to_path_buf());
                 }
 
@@ -230,8 +247,14 @@ pub fn clone_and_filter_git_repo(
             {
                 docs.push(path.to_path_buf())
             }
-            Some(_) if is_config_file(path, search_root.as_path()) => {
-                config_files.push(path.to_path_buf())
+            Some(_) => {
+                if is_library_package_json(path, search_root.as_path()) {
+                    lib_config_files.push(path.to_path_buf())
+                } else if is_root_config_file(path, search_root.as_path())
+                    || is_monorepo_config_file(path, search_root.as_path(), &monorepo_folders)?
+                {
+                    config_files.push(path.to_path_buf())
+                }
             }
             _ => {}
         }
@@ -255,14 +278,31 @@ pub fn clone_and_filter_git_repo(
         test_files,
         script_files,
         config_files,
-        source_code_folder,
+        lib_config_files,
+        source_code_folders,
         docs,
         repo_name,
         audit_scope,
         excluded_folders,
         scoped_files,
+        monorepo_folders,
         commit_hash,
     })
+}
+
+/// Adds GitHub authentication token to URL if GITHUB_TOKEN env var is set.
+/// This enables cloning private repositories.
+fn add_github_auth(repo_url: &str) -> String {
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        if repo_url.starts_with("https://github.com/") {
+            return repo_url.replace(
+                "https://github.com/",
+                &format!("https://{}@github.com/", token),
+            );
+        }
+    }
+
+    repo_url.to_string()
 }
 
 pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Result<PathBuf> {
@@ -272,13 +312,19 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     // Derived paths
     let repo_root = repo_name.split('/').next().unwrap_or(repo_name);
     let workspace_root = docker_path.join(repo_root);
+    // Test override: allow tests to provide a local workspace path to bypass Docker
+    if let Ok(local_ws) = std::env::var("AIAUDIT_TEST_LOCAL_WORKSPACE") {
+        log::info!("Using test local workspace override at {}", local_ws);
+        return Ok(PathBuf::from(local_ws));
+    }
+
     let build_stamp = docker_path.join(".chainshield_build_ok");
 
     // If we already have a valid workspace and not forcing rebuild, reuse it
     if docker_path.exists()
         && build_stamp.exists()
         && workspace_root.exists()
-        && (workspace_root.join("out").exists() || workspace_root.join("artifacts").exists())
+        // && (workspace_root.join("out").exists() || workspace_root.join("artifacts").exists())
         && !cli.force_rebuild
     {
         log::info!(
@@ -308,13 +354,24 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     log::info!("git cloning repo...");
 
     let build_command = cli.generate_build_command();
-    let repo_url = &cli.repo;
+    let repo_url = add_github_auth(&cli.repo);
+
+    // Install build tools if using custom builder (needed for native node modules)
+    let setup_build_tools = if matches!(cli.builder, crate::cli_args::parse::BuilderType::Custom) {
+        "apt-get update -qq && apt-get install -y -qq build-essential python3 > /dev/null 2>&1 && "
+    } else {
+        ""
+    };
+
     let clone_and_build_command = format!(
-        "git clone --depth=1 {repo_url} {repo_root} && \
+        "{setup_build_tools}\
+     git clone --depth=1 {repo_url} {repo_root} && \
      cd {repo_name} && \
      git config --global url.\"https://github.com/\".insteadOf \"ssh://git@github.com/\" && \
      git config --global url.\"https://github.com/\".insteadOf \"git@github.com:\" && \
      git config --global url.\"https://\".insteadOf \"ssh://\" && \
+     export PNPM_HOME=/workspace/.pnpm && \
+     export PATH=$PNPM_HOME:$PATH && \
      {build_command}"
     );
 
@@ -355,8 +412,10 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
 }
 
 fn get_commit_hash(repo_url: &str) -> Result<String> {
+    let auth_url = add_github_auth(repo_url);
+
     let output = Command::new("git")
-        .args(["ls-remote", repo_url, "HEAD"])
+        .args(["ls-remote", &auth_url, "HEAD"])
         .output()
         .context("Failed to run git ls-remote")?;
 
@@ -393,15 +452,22 @@ impl RepoPaths {
     }
 
     /// Generic helper to safely read a file, skipping symlinks and empty files.
-    fn read_file_content(file: &Path) -> Result<Option<(String, String)>> {
+    fn read_file_content(&self, file: &Path) -> Result<Option<(String, String)>> {
         if fs::symlink_metadata(file)?.file_type().is_symlink() {
             return Ok(None);
         }
 
-        let filename = file
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let protocol_folder = self.root.join(&self.repo_name);
+
+        let filename = if file.starts_with(&self.root) {
+            file.strip_prefix(&protocol_folder)?
+                .to_string_lossy()
+                .to_string()
+        } else {
+            file.file_name() // Option<&OsStr>
+                .and_then(|f| Some(f.to_string_lossy().to_string())) // Option<&str>
+                .unwrap_or_else(|| file.to_string_lossy().to_string()) // fallback
+        };
 
         let content = match fs::read_to_string(file) {
             Ok(c) => c,
@@ -423,7 +489,7 @@ impl RepoPaths {
             return Ok(String::new());
         };
 
-        if let Some((filename, content)) = Self::read_file_content(scope_file)? {
+        if let Some((filename, content)) = self.read_file_content(scope_file)? {
             info!("extracting audit scope from {}", filename);
             Ok(content)
         } else {
@@ -431,34 +497,29 @@ impl RepoPaths {
         }
     }
 
+    pub fn extract_monorepo_folders(&self) -> Result<Vec<PathBuf>> {
+        let Some(monorepos) = &self.monorepo_folders else {
+            return Ok(Vec::new());
+        };
+
+        let search_root = self.root.join(&self.repo_name);
+        extract_list_of_files(monorepos, &search_root)
+    }
+
     pub fn extract_scoped_files(&self) -> Result<Vec<PathBuf>> {
         let Some(scoped_files) = &self.scoped_files else {
             return Ok(Vec::new());
         };
 
-        let file = File::open(scoped_files)?;
-        let reader = io::BufReader::new(file);
         let search_root = self.root.join(&self.repo_name);
-
-        let paths: Vec<PathBuf> = reader
-            .lines()
-            .filter_map(|line| line.ok()) // drop I/O errors
-            .map(|line| line.trim().to_string())
-            .filter(|line| !line.is_empty()) // skip blank lines
-            .map(|p| {
-                let path = p.strip_prefix("./").unwrap_or(&p);
-                search_root.join(path)
-            }) // turn String into PathBuf
-            .collect();
-
-        Ok(paths)
+        extract_list_of_files(scoped_files, &search_root)
     }
 
     pub fn extract_content_from_docs(&self) -> Result<String> {
         let mut docs = String::new();
 
         for doc in &self.docs {
-            if let Some((filename, content)) = Self::read_file_content(doc)? {
+            if let Some((filename, content)) = self.read_file_content(doc)? {
                 // info!("extracting content from {} doc file", filename);
                 docs.push_str(&format!("### {}\n\n{}\n\n", filename, content));
             }
@@ -467,15 +528,48 @@ impl RepoPaths {
         Ok(docs)
     }
 
-    pub fn extract_content_from_config_files(&self) -> Result<String> {
-        let mut source_code = String::new();
+    pub fn extract_lib_config_headers(&self) -> Result<String> {
+        let mut config_headers = String::new();
 
-        for code in &self.config_files {
-            if let Some((filename, content)) = Self::read_file_content(code)? {
-                source_code.push_str(&format!("### {}\n\n{}\n\n", filename, content));
+        for config_file in &self.lib_config_files {
+            if let Some((file, content)) = self.read_file_content(config_file)? {
+                let first_eight_lines = content.lines().take(8).collect::<Vec<_>>().join("\n");
+                config_headers.push_str(&format!("### {}\n\n{}\n\n", file, first_eight_lines));
             }
         }
 
-        Ok(source_code)
+        Ok(config_headers)
     }
+
+    pub fn extract_content_from_config_files(&self) -> Result<String> {
+        let mut config_content = String::new();
+
+        for config in &self.config_files {
+            if let Some((file, content)) = self.read_file_content(config)? {
+                config_content.push_str(&format!("### {}\n\n{}\n\n", file, content));
+            }
+        }
+
+        Ok(config_content)
+    }
+}
+
+// read a files that contains a list of files (with relative path) and return array with full
+// path for each file
+pub fn extract_list_of_files(files: &PathBuf, root_folder: &PathBuf) -> Result<Vec<PathBuf>> {
+    let file = File::open(files)?;
+    let reader = io::BufReader::new(file);
+
+    let paths: Vec<PathBuf> = reader
+        .lines()
+        .filter_map(|line| line.ok()) // drop I/O errors
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty()) // skip blank lines
+        .map(|p| {
+            let path = p.strip_prefix("./").unwrap_or(&p);
+            root_folder.join(path)
+        }) // turn String into PathBuf
+        .collect();
+
+    Ok(paths)
 }

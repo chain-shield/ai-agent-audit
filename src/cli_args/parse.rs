@@ -25,8 +25,8 @@ pub struct Cli {
     pub subfolder: Option<String>,
 
     /// Optional folders pointing to where main source is located (if not src/), defaults to src
-    #[arg(long, default_value = "src")]
-    pub code_folder: String,
+    #[arg(long, default_value = "src", value_delimiter = ',')]
+    pub code_folders: Vec<String>,
 
     /// Optional audit scope doc (markdown file please), should be in current directory
     #[arg(long)]
@@ -35,6 +35,11 @@ pub struct Cli {
     /// Optional doc folders, specify where to find documention if not in src/*.md
     #[arg(long)]
     pub doc_folder: Option<String>,
+
+    /// Optional add if monorepo, text file that contains all folder of monorepo packages (list of
+    /// files)
+    #[arg(long)]
+    pub monorepo_folders: Option<String>,
 
     /// Optional custom doc to replace docs (md file) in /src folder, *should be md filename in current directory*
     #[arg(long)]
