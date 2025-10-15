@@ -168,8 +168,11 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
                 finding.title,
                 &finding.derived_from.clone().unwrap_or_default()
             ));
-            findings_summary.push_str(&format!("Finding Status: {}\n", finding.status.to_string()));
-            if finding.status == FindingStatus::NeedsMoreInfo {
+            findings_summary.push_str(&format!(
+                "Finding Status: {}\n",
+                finding.status.unwrap_or_default().to_string()
+            ));
+            if finding.status == Some(FindingStatus::NeedsMoreInfo) {
                 findings_summary.push_str(&format!(
                     "Finding Status Justification: {}\n",
                     finding.status_justification.clone().unwrap_or_default()
@@ -177,9 +180,9 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
             }
             findings_summary.push_str(&format!(
                 "Status Confidence: {}\n",
-                finding.status_confidence.to_string()
+                finding.status_confidence.unwrap_or_default().to_string()
             ));
-            if finding.status_confidence == FindingConfidence::SomeWhatConfident {
+            if finding.status_confidence == Some(FindingConfidence::SomeWhatConfident) {
                 findings_summary.push_str(&format!(
                     "Finding Confidence Justification: {}\n",
                     finding
@@ -190,7 +193,7 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
             }
             findings_summary.push_str(&format!(
                 "Finding Complexity: {}\n",
-                finding.finding_complexity
+                finding.finding_complexity.unwrap_or_default()
             ));
             findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.as_str()));
         }
@@ -245,12 +248,42 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
         findings_summary.push_str(&format!("\n\n **Derived From** : {}\n\n", pattern));
         for f in findings_vec {
             match report_type {
-                ReportDataType::Summary => findings_summary.push_str(&format!(
-                    "[{}-{}]. {}\n",
-                    f.severity.as_initial(),
-                    num,
-                    f.title
-                )),
+                ReportDataType::Summary => {
+                    findings_summary.push_str(&format!(
+                        "[{}-{}]. {}\n",
+                        f.severity.as_initial(),
+                        num,
+                        f.title
+                    ));
+
+                    findings_summary.push_str(&format!(
+                        "Finding Status: {}\n",
+                        f.status.unwrap_or_default().to_string()
+                    ));
+                    if f.status == Some(FindingStatus::NeedsMoreInfo) {
+                        findings_summary.push_str(&format!(
+                            "Finding Status Justification: {}\n",
+                            f.status_justification.clone().unwrap_or_default()
+                        ));
+                    }
+                    findings_summary.push_str(&format!(
+                        "Status Confidence: {}\n",
+                        f.status_confidence.unwrap_or_default().to_string()
+                    ));
+                    if f.status_confidence == Some(FindingConfidence::SomeWhatConfident) {
+                        findings_summary.push_str(&format!(
+                            "Finding Confidence Justification: {}\n",
+                            f.status_confidence_justification
+                                .clone()
+                                .unwrap_or_default()
+                        ));
+                    }
+                    findings_summary.push_str(&format!(
+                        "Finding Complexity: {}\n",
+                        f.finding_complexity.unwrap_or_default()
+                    ));
+                    findings_summary.push_str(&format!("Privilege: {}\n", f.privilege.as_str()));
+                }
                 ReportDataType::Full => {
                     findings_summary.push_str(&prompt_context::get_finding_report(
                         f,
