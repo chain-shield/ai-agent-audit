@@ -24,14 +24,24 @@ pub fn generate_verify_prompt(audit_type: AuditType) -> String {
     };
     format!(
         r#"
-Your task: decide if a reported issue would likely receive **≥ Medium severity** in a {contest} contest.
+Your task: decide if a reported issue is valid and would likely receive **≥ Medium severity** in a {contest} contest.
 
-Consider these 2 Criteria:
-1. Is it a Legit Bug (and NOT a false positive AND in scope - if scope provided)
-2. Would it likely receive **≥ Medium severity** in a {contest} contest
+Consider the following Criteria:
+1. Is issue in scope? (if scope is provided)
+2. Is this issue valid? Does protocol have safeguards against it? Is it realistic for an attacker to exploit under normal market conditions? are there any external depedencies that cannot be seen and analyzed (creating uncertainly about validity of finding)?
+3. Would it likely receive **≥ Medium severity** in a {contest} contest
 
-You should return `"true"` ONLY if both of the above are TRUE - its a legit in scope vulnerability AND High or Medium severity. 
-Otherwise return `"false"`.
+Carefully trace the code to verify issue validity.
+
+Based on your assessment please provided the following:
+
+*Severity:* High | Medium | Low | informational  ({contest} rubric is provided)
+*Finding Severity Justification:* Explain why you assigned this severity. 
+*Finding Status:* Valid | Invalid | OutOfScope | NeedsMoreInfo
+*Status Justification:* if invalid, out of scope, or needs more info, please explain why.
+*Finding Status Confidence:* VeryConfident | Confident | SomewhatConfident 
+*Finding Status Confidence Justification:* if Somewhat Confident, please explain why. 
+*Finding Complexity:* How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty.
 
 ## {contest} Guidelines
 # {contest} Severity Rubric (What {contest} Actually Pays For)

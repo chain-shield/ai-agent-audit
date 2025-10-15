@@ -5,7 +5,10 @@ use super::{
 };
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, TokenType},
-    llm_review::enums::EnumString,
+    llm_review::{
+        enums::EnumString,
+        phases::verify_findings::{FindingConfidence, FindingStatus},
+    },
     utils::semantic_compare,
 };
 use regex::Regex;
@@ -38,6 +41,12 @@ pub struct Finding {
     #[schemars(description = "Severity level: Critical, High, Medium, Low, Info")]
     pub severity: Severity, //severity of issue
     pub mitigation: Option<String>,
+    pub severity_justification: Option<String>,
+    pub status: FindingStatus,
+    pub status_justification: Option<String>,
+    pub status_confidence: FindingConfidence,
+    pub status_confidence_justification: String,
+    pub finding_complexity: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -344,7 +353,12 @@ where
             cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
         }
 
-        cleaned.to_string()
+        let cleaned_str = cleaned.to_string();
+
+        // Fix numeric fields that are returned as strings (e.g., "finding_complexity": "5" -> "finding_complexity": 5)
+        // This regex finds patterns like "field_name": "123" and removes quotes around the number
+        let re = Regex::new(r#""(finding_complexity|[a-z_]*count)":\s*"(\d+)""#).unwrap();
+        re.replace_all(&cleaned_str, r#""$1": $2"#).to_string()
     }
 
     fn parse_from_llm_response(response: &str) -> Result<Self, Box<dyn std::error::Error>> {
