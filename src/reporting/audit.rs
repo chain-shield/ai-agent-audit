@@ -5,7 +5,8 @@ use crate::{
     llm_review::{
         enums::{EnumString, Severity},
         findings::{Finding, Findings},
-        utils::prompt_context,
+        phases::verify_findings::{FindingConfidence, FindingStatus},
+        utils::prompt_context::{self, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -113,7 +114,11 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
         findings_report.push_str(&format!("\n# {} Risk Findings\n\n", severity.as_str()));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
-            findings_report.push_str(&prompt_context::get_finding_report(finding, Some(i)));
+            findings_report.push_str(&prompt_context::get_finding_report(
+                finding,
+                Some(i),
+                FindingReportType::Enhanced,
+            ));
         }
     } else {
         return String::new();
@@ -163,6 +168,31 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
                 finding.title,
                 &finding.derived_from.clone().unwrap_or_default()
             ));
+            findings_summary.push_str(&format!("Finding Status: {}\n", finding.status.to_string()));
+            if finding.status == FindingStatus::NeedsMoreInfo {
+                findings_summary.push_str(&format!(
+                    "Finding Status Justification: {}\n",
+                    finding.status_justification.clone().unwrap_or_default()
+                ));
+            }
+            findings_summary.push_str(&format!(
+                "Status Confidence: {}\n",
+                finding.status_confidence.to_string()
+            ));
+            if finding.status_confidence == FindingConfidence::SomeWhatConfident {
+                findings_summary.push_str(&format!(
+                    "Finding Confidence Justification: {}\n",
+                    finding
+                        .status_confidence_justification
+                        .clone()
+                        .unwrap_or_default()
+                ));
+            }
+            findings_summary.push_str(&format!(
+                "Finding Complexity: {}\n",
+                finding.finding_complexity
+            ));
+            findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.as_str()));
         }
     } else {
         return String::new();
@@ -222,7 +252,11 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
                     f.title
                 )),
                 ReportDataType::Full => {
-                    findings_summary.push_str(&prompt_context::get_finding_report(f, Some(num - 1)))
+                    findings_summary.push_str(&prompt_context::get_finding_report(
+                        f,
+                        Some(num - 1),
+                        FindingReportType::Enhanced,
+                    ));
                 }
             }
             num += 1;

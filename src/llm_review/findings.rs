@@ -45,7 +45,7 @@ pub struct Finding {
     pub status: FindingStatus,
     pub status_justification: Option<String>,
     pub status_confidence: FindingConfidence,
-    pub status_confidence_justification: String,
+    pub status_confidence_justification: Option<String>,
     pub finding_complexity: u8,
 }
 
