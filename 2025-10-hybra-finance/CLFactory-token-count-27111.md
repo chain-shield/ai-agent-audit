@@ -1,7 +1,7 @@
 
 ## *MAIN TARGET CONTRACT* TO REVIEW
 
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-1.0-or-later
 pragma solidity =0.7.6;
 
 import "./interfaces/ICLFactory.sol";

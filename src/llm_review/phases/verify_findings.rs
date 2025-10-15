@@ -73,7 +73,7 @@ pub struct LegitVulnerability {
     pub status: FindingStatus,
     pub status_justification: Option<String>,
     pub status_confidence: FindingConfidence,
-    pub status_confidence_justification: String,
+    pub status_confidence_justification: Option<String>,
     #[serde(deserialize_with = "deserialize_finding_complexity")]
     pub finding_complexity: u8,
 }
@@ -227,7 +227,10 @@ pub async fn execute(
         .findings
         .iter()
         .enumerate()
-        .filter(|(idx, _)| legit_findings_vec[*idx].status == FindingStatus::Valid)
+        .filter(|(idx, _)| {
+            legit_findings_vec[*idx].status == FindingStatus::Valid
+                || legit_findings_vec[*idx].status == FindingStatus::NeedsMoreInfo
+        })
         .map(|(idx, f)| {
             let legit_findings = legit_findings_vec[idx].clone();
             let enriched_finding = Finding {
@@ -285,7 +288,7 @@ mod tests {
             status: FindingStatus::Valid,
             status_justification: Some("Confirmed vulnerability".to_string()),
             status_confidence: FindingConfidence::VeryConfident,
-            status_confidence_justification: "Clear attack path demonstrated".to_string(),
+            status_confidence_justification: Some("Clear attack path demonstrated".to_string()),
             finding_complexity: 8,
         };
 
@@ -305,7 +308,7 @@ mod tests {
             status: FindingStatus::Invalid,
             status_justification: None,
             status_confidence: FindingConfidence::SomeWhatConfident,
-            status_confidence_justification: String::new(),
+            status_confidence_justification: None,
             finding_complexity: 1,
         };
 
@@ -587,7 +590,7 @@ mod tests {
             status: FindingStatus::Valid,
             status_justification: Some("Exploit confirmed in tests".to_string()),
             status_confidence: FindingConfidence::VeryConfident,
-            status_confidence_justification: "PoC provided".to_string(),
+            status_confidence_justification: Some("PoC provided".to_string()),
             finding_complexity: 9,
         };
 

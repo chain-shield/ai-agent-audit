@@ -3,6 +3,7 @@ use crate::llm_review::{
     findings::Finding,
     invariants::InvariantFinding,
     patterns::{ImpactHint, Pattern},
+    phases::verify_findings::{FindingConfidence, FindingStatus},
 };
 
 pub fn generate_prompt_for_issue_check(
@@ -17,7 +18,7 @@ pub fn generate_prompt_for_issue_check(
     prompt.push_str("## REPORT FOR SECURITY ISSUE");
     prompt.push_str("\n\n");
 
-    let report = get_finding_report(finding, None);
+    let report = get_finding_report(finding, None, FindingReportType::Standard);
     prompt.push_str(&report);
     prompt.push_str("\n\n");
 
@@ -100,7 +101,17 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
     pattern_list
 }
 
-pub fn get_finding_report(finding: &Finding, index: Option<usize>) -> String {
+#[derive(PartialEq, Eq)]
+pub enum FindingReportType {
+    Standard,
+    Enhanced,
+}
+
+pub fn get_finding_report(
+    finding: &Finding,
+    index: Option<usize>,
+    report_type: FindingReportType,
+) -> String {
     let mut findings_report = String::new();
 
     if let Some(inx) = index {
@@ -132,6 +143,37 @@ pub fn get_finding_report(finding: &Finding, index: Option<usize>) -> String {
     findings_report.push_str("## Location\n");
     findings_report.push_str(&format!("{}.{}", finding.contract, finding.function));
     findings_report.push_str("\n\n");
+
+    // for final report include status, confidence, and complexity
+    if report_type == FindingReportType::Enhanced {
+        findings_report.push_str(&format!(
+            "## Finding Status: {}\n",
+            finding.status.to_string()
+        ));
+        if finding.status == FindingStatus::NeedsMoreInfo {
+            findings_report.push_str(&format!(
+                "### Finding Status Justification: {}\n",
+                finding.status_justification.clone().unwrap_or_default()
+            ));
+        }
+        findings_report.push_str(&format!(
+            "## Status Confidence: {}\n",
+            finding.status_confidence.to_string()
+        ));
+        if finding.status_confidence == FindingConfidence::SomeWhatConfident {
+            findings_report.push_str(&format!(
+                "### Finding Confidence Justification: {}\n",
+                finding
+                    .status_confidence_justification
+                    .clone()
+                    .unwrap_or_default()
+            ));
+        }
+        findings_report.push_str(&format!(
+            "### Finding Complexity: {}\n",
+            finding.finding_complexity
+        ));
+    }
 
     //privilege
     findings_report.push_str("## Minimim Privilege Required\n");
