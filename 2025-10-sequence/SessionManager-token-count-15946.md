@@ -141,6 +141,217 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
+import { Payload } from "../../../modules/Payload.sol";
+import { LibBytes } from "../../../utils/LibBytes.sol";
+
+import { SessionErrors } from "../SessionErrors.sol";
+import { IExplicitSessionManager, SessionPermissions, SessionUsageLimits } from "./IExplicitSessionManager.sol";
+import { Permission, UsageLimit } from "./Permission.sol";
+import { PermissionValidator } from "./PermissionValidator.sol";
+
+abstract contract ExplicitSessionManager is IExplicitSessionManager, PermissionValidator {
+
+  using LibBytes for bytes;
+
+  /// @notice Special address used for tracking native token value limits
+  address public constant VALUE_TRACKING_ADDRESS = address(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
+
+  /// @inheritdoc IExplicitSessionManager
+  function incrementUsageLimit(
+    UsageLimit[] calldata limits
+  ) external {
+    address wallet = msg.sender;
+    for (uint256 i = 0; i < limits.length; i++) {
+      if (limits[i].usageAmount < getLimitUsage(wallet, limits[i].usageHash)) {
+        // Cannot decrement usage limit
+        revert SessionErrors.InvalidLimitUsageIncrement();
+      }
+      setLimitUsage(wallet, limits[i].usageHash, limits[i].usageAmount);
+    }
+  }
+
+  /// @notice Validates an explicit call
+  /// @param payload The decoded payload containing calls
+  /// @param callIdx The index of the call to validate
+  /// @param wallet The wallet's address
+  /// @param sessionSigner The session signer's address
+  /// @param allSessionPermissions All sessions' permissions
+  /// @param permissionIdx The index of the permission to validate
+  /// @param sessionUsageLimits The session usage limits
+  /// @return newSessionUsageLimits The updated session usage limits
+  function _validateExplicitCall(
+    Payload.Decoded calldata payload,
+    uint256 callIdx,
+    address wallet,
+    address sessionSigner,
+    SessionPermissions[] memory allSessionPermissions,
+    uint8 permissionIdx,
+    SessionUsageLimits memory sessionUsageLimits
+  ) internal view returns (SessionUsageLimits memory newSessionUsageLimits) {
+    // Find the permissions for the given session signer
+    SessionPermissions memory sessionPermissions;
+    for (uint256 i = 0; i < allSessionPermissions.length; i++) {
+      if (allSessionPermissions[i].signer == sessionSigner) {
+        sessionPermissions = allSessionPermissions[i];
+        break;
+      }
+    }
+    if (sessionPermissions.signer == address(0)) {
+      revert SessionErrors.InvalidSessionSigner(sessionSigner);
+    }
+
+    // Check if session chainId is valid
+    if (sessionPermissions.chainId != 0 && sessionPermissions.chainId != block.chainid) {
+      revert SessionErrors.InvalidChainId(sessionPermissions.chainId);
+    }
+
+    // Check if session has expired.
+    if (sessionPermissions.deadline != 0 && block.timestamp > sessionPermissions.deadline) {
+      revert SessionErrors.SessionExpired(sessionPermissions.deadline);
+    }
+
+    // Delegate calls are not allowed
+    Payload.Call calldata call = payload.calls[callIdx];
+    if (call.delegateCall) {
+      revert SessionErrors.InvalidDelegateCall();
+    }
+
+    // Calls to incrementUsageLimit are the only allowed calls to this contract
+    if (call.to == address(this)) {
+      if (callIdx != 0) {
+        // IncrementUsageLimit call is only allowed as the first call
+        revert SessionErrors.InvalidLimitUsageIncrement();
+      }
+      if (call.value > 0) {
+        revert SessionErrors.InvalidValue();
+      }
+      // No permissions required for the increment call
+      return sessionUsageLimits;
+    }
+
+    // Get the permission for the current call
+    if (permissionIdx >= sessionPermissions.permissions.length) {
+      revert SessionErrors.MissingPermission();
+    }
+    Permission memory permission = sessionPermissions.permissions[permissionIdx];
+
+    // Validate the permission for the current call
+    (bool isValid, UsageLimit[] memory limits) =
+      validatePermission(permission, call, wallet, sessionSigner, sessionUsageLimits.limits);
+    if (!isValid) {
+      revert SessionErrors.InvalidPermission();
+    }
+    sessionUsageLimits.limits = limits;
+
+    // Increment the total value used
+    if (call.value > 0) {
+      sessionUsageLimits.totalValueUsed += call.value;
+    }
+    if (sessionUsageLimits.totalValueUsed > sessionPermissions.valueLimit) {
+      // Value limit exceeded
+      revert SessionErrors.InvalidValue();
+    }
+
+    return sessionUsageLimits;
+  }
+
+  /// @notice Verifies the limit usage increment
+  /// @param call The first call in the payload, which is expected to be the increment call
+  /// @param sessionUsageLimits The session usage limits
+  /// @dev Reverts if the required increment call is missing or invalid
+  /// @dev If no usage limits are used, this function does nothing
+  function _validateLimitUsageIncrement(
+    Payload.Call calldata call,
+    SessionUsageLimits[] memory sessionUsageLimits
+  ) internal view {
+    // Limits call is only required if there are usage limits used
+    if (sessionUsageLimits.length > 0) {
+      // Verify the first call is the increment call and cannot be skipped
+      if (call.to != address(this) || call.behaviorOnError != Payload.BEHAVIOR_REVERT_ON_ERROR || call.onlyFallback) {
+        revert SessionErrors.InvalidLimitUsageIncrement();
+      }
+
+      // Construct expected limit increments
+      uint256 totalLimitsLength = 0;
+      for (uint256 i = 0; i < sessionUsageLimits.length; i++) {
+        totalLimitsLength += sessionUsageLimits[i].limits.length;
+        if (sessionUsageLimits[i].totalValueUsed > 0) {
+          totalLimitsLength++;
+        }
+      }
+      UsageLimit[] memory limits = new UsageLimit[](totalLimitsLength);
+      uint256 limitIndex = 0;
+      for (uint256 i = 0; i < sessionUsageLimits.length; i++) {
+        for (uint256 j = 0; j < sessionUsageLimits[i].limits.length; j++) {
+          limits[limitIndex++] = sessionUsageLimits[i].limits[j];
+        }
+        if (sessionUsageLimits[i].totalValueUsed > 0) {
+          limits[limitIndex++] = UsageLimit({
+            usageHash: keccak256(abi.encode(sessionUsageLimits[i].signer, VALUE_TRACKING_ADDRESS)),
+            usageAmount: sessionUsageLimits[i].totalValueUsed
+          });
+        }
+      }
+
+      // Verify the increment call data
+      bytes memory expectedData = abi.encodeWithSelector(this.incrementUsageLimit.selector, limits);
+      bytes32 expectedDataHash = keccak256(expectedData);
+      bytes32 actualDataHash = keccak256(call.data);
+      if (actualDataHash != expectedDataHash) {
+        revert SessionErrors.InvalidLimitUsageIncrement();
+      }
+    } else {
+      // Do not allow self calls if there are no usage limits
+      if (call.to == address(this)) {
+        revert SessionErrors.InvalidLimitUsageIncrement();
+      }
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Payload } from "../Payload.sol";
+
+/// @title ISapient
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Sapient signers take an explicit payload and return their own "imageHash" as result
+/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
+interface ISapient {
+
+  /// @notice Recovers the image hash of a given signature
+  /// @param payload The payload to recover the signature from
+  /// @param signature The signature to recover the image hash from
+  /// @return imageHash The recovered image hash
+  function recoverSapientSignature(
+    Payload.Decoded calldata payload,
+    bytes calldata signature
+  ) external view returns (bytes32 imageHash);
+
+}
+
+/// @title ISapientCompact
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Sapient signers take a compacted payload and return their own "imageHash" as result
+/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
+interface ISapientCompact {
+
+  /// @notice Recovers the image hash of a given signature, using a hashed payload
+  /// @param digest The digest of the payload
+  /// @param signature The signature to recover the image hash from
+  /// @return imageHash The recovered image hash
+  function recoverSapientSignatureCompact(
+    bytes32 digest,
+    bytes calldata signature
+  ) external view returns (bytes32 imageHash);
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
 import { LibBytes } from "../utils/LibBytes.sol";
 
 using LibBytes for bytes;
@@ -414,6 +625,240 @@ library Payload {
     bytes32 structHash = toEIP712(_decoded);
     return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
   }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { LibBytes } from "../../../utils/LibBytes.sol";
+import { ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX } from "./ISignalsImplicitMode.sol";
+
+using LibBytes for bytes;
+
+/// @notice Attestation for a specific session
+/// @param approvedSigner Address of the approved signer
+/// @param identityType Identity type
+/// @param issuerHash Hash of the issuer
+/// @param audienceHash Hash of the audience
+/// @param applicationData Unspecified application data
+/// @param authData Auth data
+struct Attestation {
+  address approvedSigner;
+  bytes4 identityType;
+  bytes32 issuerHash;
+  bytes32 audienceHash;
+  bytes applicationData;
+  AuthData authData;
+}
+
+/// @notice Auth data for an attestation
+/// @param redirectUrl Authorization redirect URL
+/// @param issuedAt Timestamp of the attestation issuance
+struct AuthData {
+  string redirectUrl;
+  uint64 issuedAt;
+}
+
+/// @title LibAttestation
+/// @author Michael Standen
+/// @notice Library for attestation management
+library LibAttestation {
+
+  /// @notice Hashes an attestation
+  function toHash(
+    Attestation memory attestation
+  ) internal pure returns (bytes32) {
+    return keccak256(toPacked(attestation));
+  }
+
+  /// @notice Decodes an attestation from a packed bytes array
+  /// @param encoded The packed bytes array
+  /// @param pointer The pointer to the start of the attestation
+  /// @return attestation The decoded attestation
+  /// @return newPointer The new pointer to the end of the attestation
+  function fromPacked(
+    bytes calldata encoded,
+    uint256 pointer
+  ) internal pure returns (Attestation memory attestation, uint256 newPointer) {
+    newPointer = pointer;
+    (attestation.approvedSigner, newPointer) = encoded.readAddress(newPointer);
+    (attestation.identityType, newPointer) = encoded.readBytes4(newPointer);
+    (attestation.issuerHash, newPointer) = encoded.readBytes32(newPointer);
+    (attestation.audienceHash, newPointer) = encoded.readBytes32(newPointer);
+    // Application data (arbitrary bytes)
+    uint256 dataSize;
+    (dataSize, newPointer) = encoded.readUint24(newPointer);
+    attestation.applicationData = encoded[newPointer:newPointer + dataSize];
+    newPointer += dataSize;
+    // Auth data
+    (attestation.authData, newPointer) = fromPackedAuthData(encoded, newPointer);
+    return (attestation, newPointer);
+  }
+
+  /// @notice Decodes the auth data from a packed bytes
+  /// @param encoded The packed bytes containing the auth data
+  /// @param pointer The pointer to the start of the auth data within the encoded data
+  /// @return authData The decoded auth data
+  /// @return newPointer The pointer to the end of the auth data within the encoded data
+  function fromPackedAuthData(
+    bytes calldata encoded,
+    uint256 pointer
+  ) internal pure returns (AuthData memory authData, uint256 newPointer) {
+    uint24 redirectUrlLength;
+    (redirectUrlLength, pointer) = encoded.readUint24(pointer);
+    authData.redirectUrl = string(encoded[pointer:pointer + redirectUrlLength]);
+    pointer += redirectUrlLength;
+    (authData.issuedAt, pointer) = encoded.readUint64(pointer);
+    return (authData, pointer);
+  }
+
+  /// @notice Encodes an attestation into a packed bytes array
+  /// @param attestation The attestation to encode
+  /// @return encoded The packed bytes array
+  function toPacked(
+    Attestation memory attestation
+  ) internal pure returns (bytes memory encoded) {
+    return abi.encodePacked(
+      attestation.approvedSigner,
+      attestation.identityType,
+      attestation.issuerHash,
+      attestation.audienceHash,
+      uint24(attestation.applicationData.length),
+      attestation.applicationData,
+      toPackAuthData(attestation.authData)
+    );
+  }
+
+  /// @notice Encodes the auth data into a packed bytes array
+  /// @param authData The auth data to encode
+  /// @return encoded The packed bytes array
+  function toPackAuthData(
+    AuthData memory authData
+  ) internal pure returns (bytes memory encoded) {
+    return abi.encodePacked(uint24(bytes(authData.redirectUrl).length), bytes(authData.redirectUrl), authData.issuedAt);
+  }
+
+  /// @notice Generates the implicit request magic return value
+  /// @param attestation The attestation
+  /// @param wallet The wallet
+  /// @return magic The expected implicit request magic
+  function generateImplicitRequestMagic(Attestation memory attestation, address wallet) internal pure returns (bytes32) {
+    return keccak256(
+      abi.encodePacked(ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX, wallet, attestation.audienceHash, attestation.issuerHash)
+    );
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Payload } from "../../../modules/Payload.sol";
+
+import { SessionErrors } from "../SessionErrors.sol";
+import { Attestation, LibAttestation } from "./Attestation.sol";
+import { ISignalsImplicitMode } from "./ISignalsImplicitMode.sol";
+
+using LibAttestation for Attestation;
+
+/// @title ImplicitSessionManager
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Manager for implicit sessions
+abstract contract ImplicitSessionManager {
+
+  /// @notice Validates a call in implicit mode
+  /// @param call The call to validate
+  /// @param wallet The wallet's address
+  /// @param sessionSigner The session signer's address
+  /// @param attestation The session attestation
+  function _validateImplicitCall(
+    Payload.Call calldata call,
+    address wallet,
+    address sessionSigner,
+    Attestation memory attestation,
+    address[] memory blacklist
+  ) internal view {
+    // Validate the session signer is attested
+    if (sessionSigner != attestation.approvedSigner) {
+      revert SessionErrors.InvalidSessionSigner(sessionSigner);
+    }
+
+    // Delegate calls are not allowed
+    if (call.delegateCall) {
+      revert SessionErrors.InvalidDelegateCall();
+    }
+    // Check if the signer is blacklisted
+    if (_isAddressBlacklisted(sessionSigner, blacklist)) {
+      revert SessionErrors.BlacklistedAddress(sessionSigner);
+    }
+    // Check if the target address is blacklisted
+    if (_isAddressBlacklisted(call.to, blacklist)) {
+      revert SessionErrors.BlacklistedAddress(call.to);
+    }
+    // No value
+    if (call.value > 0) {
+      revert SessionErrors.InvalidValue();
+    }
+
+    // Validate the implicit request
+    bytes32 result = ISignalsImplicitMode(call.to).acceptImplicitRequest(wallet, attestation, call);
+    bytes32 attestationMagic = attestation.generateImplicitRequestMagic(wallet);
+    if (result != attestationMagic) {
+      revert SessionErrors.InvalidImplicitResult();
+    }
+  }
+
+  /// @notice Checks if an address is in the blacklist using binary search
+  /// @param target The address to check
+  /// @param blacklist The sorted array of blacklisted addresses
+  /// @return bool True if the address is blacklisted, false otherwise
+  function _isAddressBlacklisted(address target, address[] memory blacklist) internal pure returns (bool) {
+    int256 left = 0;
+    int256 right = int256(blacklist.length) - 1;
+
+    while (left <= right) {
+      int256 mid = left + (right - left) / 2;
+      address currentAddress = blacklist[uint256(mid)];
+
+      if (currentAddress == target) {
+        return true;
+      } else if (currentAddress < target) {
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
+
+    return false;
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Payload } from "../../../modules/Payload.sol";
+import { Attestation } from "./Attestation.sol";
+
+/// @dev Magic prefix for the implicit request
+bytes32 constant ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX = keccak256(abi.encodePacked("acceptImplicitRequest"));
+
+/// @title ISignalsImplicitMode
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Interface for the contracts that support implicit mode validation
+interface ISignalsImplicitMode {
+
+  /// @notice Determines if an implicit request is valid
+  /// @param wallet The wallet's address
+  /// @param attestation The attestation data
+  /// @param call The call to validate
+  /// @return magic The hash of the implicit request if valid
+  function acceptImplicitRequest(
+    address wallet,
+    Attestation calldata attestation,
+    Payload.Call calldata call
+  ) external view returns (bytes32 magic);
 
 }
 
@@ -842,57 +1287,42 @@ library SessionSig {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-/// @title SessionErrors
-/// @author Michael Standen
-/// @notice Errors for the session manager
-library SessionErrors {
+import { Permission, UsageLimit } from "./Permission.sol";
 
-  /// @notice Invalid session signer
-  error InvalidSessionSigner(address invalidSigner);
-  /// @notice Invalid chainId
-  error InvalidChainId(uint256 invalidChainId);
-  /// @notice Invalid self call
-  error InvalidSelfCall();
-  /// @notice Invalid delegate call
-  error InvalidDelegateCall();
-  /// @notice Invalid call behavior
-  error InvalidBehavior();
-  /// @notice Invalid value
-  error InvalidValue();
-  /// @notice Invalid node type in session configuration
-  error InvalidNodeType(uint256 flag);
-  /// @notice Error thrown when the payload kind is invalid
-  error InvalidPayloadKind();
-  /// @notice Error thrown when the calls length is invalid
-  error InvalidCallsLength();
-  /// @notice Error thrown when the payload space is invalid
-  error InvalidSpace(uint256 space);
+/// @notice Permissions configuration for a specific session signer
+/// @param signer Address of the session signer these permissions apply to
+/// @param chainId Chain ID of the session (0 = any chain)
+/// @param valueLimit Maximum native token value this signer can send
+/// @param deadline Deadline for the session. (0 = no deadline)
+/// @param permissions Array of encoded permissions granted to this signer
+struct SessionPermissions {
+  address signer;
+  uint256 chainId;
+  uint256 valueLimit;
+  uint64 deadline;
+  Permission[] permissions;
+}
 
-  // ---- Explicit session errors ----
+/// @notice Usage limits configuration for a specific session signer
+/// @param signer Address of the session signer these limits apply to
+/// @param limits Array of usage limits
+/// @param totalValueUsed Total native token value used
+struct SessionUsageLimits {
+  address signer;
+  UsageLimit[] limits;
+  uint256 totalValueUsed;
+}
 
-  /// @notice Missing permission for explicit session
-  error MissingPermission();
-  /// @notice Invalid permission for explicit session
-  error InvalidPermission();
-  /// @notice Session expired
-  error SessionExpired(uint256 deadline);
-  /// @notice Invalid limit usage increment
-  error InvalidLimitUsageIncrement();
+/// @title IExplicitSessionManager
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Interface for the explicit session manager
+interface IExplicitSessionManager {
 
-  // ---- Implicit session errors ----
-
-  /// @notice Blacklisted address
-  error BlacklistedAddress(address target);
-  /// @notice Invalid implicit result
-  error InvalidImplicitResult();
-  /// @notice Invalid identity signer
-  error InvalidIdentitySigner();
-  /// @notice Invalid blacklist
-  error InvalidBlacklist();
-  /// @notice Invalid attestation
-  error InvalidAttestation();
-  /// @notice The blacklist was not sorted
-  error InvalidBlacklistUnsorted();
+  /// @notice Increment usage for a caller's given session and target
+  /// @param limits Array of limit/session/target combinations
+  function incrementUsageLimit(
+    UsageLimit[] calldata limits
+  ) external;
 
 }
 
@@ -1005,6 +1435,75 @@ library LibPermission {
     uint8 operationCumulative = (uint8(rule.operation) << 1) | (rule.cumulative ? 1 : 0);
 
     return abi.encodePacked(operationCumulative, rule.value, rule.offset, rule.mask);
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title LibOptim
+/// @author Agustin Aguilar
+/// @notice Library for optimized EVM operations
+library LibOptim {
+
+  /**
+   * @notice Computes the keccak256 hash of two 32-byte inputs.
+   * @dev It uses only scratch memory space.
+   * @param _a The first 32 bytes of the hash.
+   * @param _b The second 32 bytes of the hash.
+   * @return c The keccak256 hash of the two 32-byte inputs.
+   */
+  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
+    assembly {
+      mstore(0, _a)
+      mstore(32, _b)
+      c := keccak256(0, 64)
+    }
+  }
+
+  /**
+   * @notice Returns the return data from the last call.
+   * @return r The return data from the last call.
+   */
+  function returnData() internal pure returns (bytes memory r) {
+    assembly {
+      let size := returndatasize()
+      r := mload(0x40)
+      let start := add(r, 32)
+      mstore(0x40, add(start, size))
+      mstore(r, size)
+      returndatacopy(start, 0, size)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _val The value to send to the contract.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters, using delegatecall.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
+    }
   }
 
 }
@@ -1148,517 +1647,57 @@ abstract contract PermissionValidator {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import { Permission, UsageLimit } from "./Permission.sol";
-
-/// @notice Permissions configuration for a specific session signer
-/// @param signer Address of the session signer these permissions apply to
-/// @param chainId Chain ID of the session (0 = any chain)
-/// @param valueLimit Maximum native token value this signer can send
-/// @param deadline Deadline for the session. (0 = no deadline)
-/// @param permissions Array of encoded permissions granted to this signer
-struct SessionPermissions {
-  address signer;
-  uint256 chainId;
-  uint256 valueLimit;
-  uint64 deadline;
-  Permission[] permissions;
-}
-
-/// @notice Usage limits configuration for a specific session signer
-/// @param signer Address of the session signer these limits apply to
-/// @param limits Array of usage limits
-/// @param totalValueUsed Total native token value used
-struct SessionUsageLimits {
-  address signer;
-  UsageLimit[] limits;
-  uint256 totalValueUsed;
-}
-
-/// @title IExplicitSessionManager
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Interface for the explicit session manager
-interface IExplicitSessionManager {
-
-  /// @notice Increment usage for a caller's given session and target
-  /// @param limits Array of limit/session/target combinations
-  function incrementUsageLimit(
-    UsageLimit[] calldata limits
-  ) external;
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../../../modules/Payload.sol";
-import { LibBytes } from "../../../utils/LibBytes.sol";
-
-import { SessionErrors } from "../SessionErrors.sol";
-import { IExplicitSessionManager, SessionPermissions, SessionUsageLimits } from "./IExplicitSessionManager.sol";
-import { Permission, UsageLimit } from "./Permission.sol";
-import { PermissionValidator } from "./PermissionValidator.sol";
-
-abstract contract ExplicitSessionManager is IExplicitSessionManager, PermissionValidator {
-
-  using LibBytes for bytes;
-
-  /// @notice Special address used for tracking native token value limits
-  address public constant VALUE_TRACKING_ADDRESS = address(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
-
-  /// @inheritdoc IExplicitSessionManager
-  function incrementUsageLimit(
-    UsageLimit[] calldata limits
-  ) external {
-    address wallet = msg.sender;
-    for (uint256 i = 0; i < limits.length; i++) {
-      if (limits[i].usageAmount < getLimitUsage(wallet, limits[i].usageHash)) {
-        // Cannot decrement usage limit
-        revert SessionErrors.InvalidLimitUsageIncrement();
-      }
-      setLimitUsage(wallet, limits[i].usageHash, limits[i].usageAmount);
-    }
-  }
-
-  /// @notice Validates an explicit call
-  /// @param payload The decoded payload containing calls
-  /// @param callIdx The index of the call to validate
-  /// @param wallet The wallet's address
-  /// @param sessionSigner The session signer's address
-  /// @param allSessionPermissions All sessions' permissions
-  /// @param permissionIdx The index of the permission to validate
-  /// @param sessionUsageLimits The session usage limits
-  /// @return newSessionUsageLimits The updated session usage limits
-  function _validateExplicitCall(
-    Payload.Decoded calldata payload,
-    uint256 callIdx,
-    address wallet,
-    address sessionSigner,
-    SessionPermissions[] memory allSessionPermissions,
-    uint8 permissionIdx,
-    SessionUsageLimits memory sessionUsageLimits
-  ) internal view returns (SessionUsageLimits memory newSessionUsageLimits) {
-    // Find the permissions for the given session signer
-    SessionPermissions memory sessionPermissions;
-    for (uint256 i = 0; i < allSessionPermissions.length; i++) {
-      if (allSessionPermissions[i].signer == sessionSigner) {
-        sessionPermissions = allSessionPermissions[i];
-        break;
-      }
-    }
-    if (sessionPermissions.signer == address(0)) {
-      revert SessionErrors.InvalidSessionSigner(sessionSigner);
-    }
-
-    // Check if session chainId is valid
-    if (sessionPermissions.chainId != 0 && sessionPermissions.chainId != block.chainid) {
-      revert SessionErrors.InvalidChainId(sessionPermissions.chainId);
-    }
-
-    // Check if session has expired.
-    if (sessionPermissions.deadline != 0 && block.timestamp > sessionPermissions.deadline) {
-      revert SessionErrors.SessionExpired(sessionPermissions.deadline);
-    }
-
-    // Delegate calls are not allowed
-    Payload.Call calldata call = payload.calls[callIdx];
-    if (call.delegateCall) {
-      revert SessionErrors.InvalidDelegateCall();
-    }
-
-    // Calls to incrementUsageLimit are the only allowed calls to this contract
-    if (call.to == address(this)) {
-      if (callIdx != 0) {
-        // IncrementUsageLimit call is only allowed as the first call
-        revert SessionErrors.InvalidLimitUsageIncrement();
-      }
-      if (call.value > 0) {
-        revert SessionErrors.InvalidValue();
-      }
-      // No permissions required for the increment call
-      return sessionUsageLimits;
-    }
-
-    // Get the permission for the current call
-    if (permissionIdx >= sessionPermissions.permissions.length) {
-      revert SessionErrors.MissingPermission();
-    }
-    Permission memory permission = sessionPermissions.permissions[permissionIdx];
-
-    // Validate the permission for the current call
-    (bool isValid, UsageLimit[] memory limits) =
-      validatePermission(permission, call, wallet, sessionSigner, sessionUsageLimits.limits);
-    if (!isValid) {
-      revert SessionErrors.InvalidPermission();
-    }
-    sessionUsageLimits.limits = limits;
-
-    // Increment the total value used
-    if (call.value > 0) {
-      sessionUsageLimits.totalValueUsed += call.value;
-    }
-    if (sessionUsageLimits.totalValueUsed > sessionPermissions.valueLimit) {
-      // Value limit exceeded
-      revert SessionErrors.InvalidValue();
-    }
-
-    return sessionUsageLimits;
-  }
-
-  /// @notice Verifies the limit usage increment
-  /// @param call The first call in the payload, which is expected to be the increment call
-  /// @param sessionUsageLimits The session usage limits
-  /// @dev Reverts if the required increment call is missing or invalid
-  /// @dev If no usage limits are used, this function does nothing
-  function _validateLimitUsageIncrement(
-    Payload.Call calldata call,
-    SessionUsageLimits[] memory sessionUsageLimits
-  ) internal view {
-    // Limits call is only required if there are usage limits used
-    if (sessionUsageLimits.length > 0) {
-      // Verify the first call is the increment call and cannot be skipped
-      if (call.to != address(this) || call.behaviorOnError != Payload.BEHAVIOR_REVERT_ON_ERROR || call.onlyFallback) {
-        revert SessionErrors.InvalidLimitUsageIncrement();
-      }
-
-      // Construct expected limit increments
-      uint256 totalLimitsLength = 0;
-      for (uint256 i = 0; i < sessionUsageLimits.length; i++) {
-        totalLimitsLength += sessionUsageLimits[i].limits.length;
-        if (sessionUsageLimits[i].totalValueUsed > 0) {
-          totalLimitsLength++;
-        }
-      }
-      UsageLimit[] memory limits = new UsageLimit[](totalLimitsLength);
-      uint256 limitIndex = 0;
-      for (uint256 i = 0; i < sessionUsageLimits.length; i++) {
-        for (uint256 j = 0; j < sessionUsageLimits[i].limits.length; j++) {
-          limits[limitIndex++] = sessionUsageLimits[i].limits[j];
-        }
-        if (sessionUsageLimits[i].totalValueUsed > 0) {
-          limits[limitIndex++] = UsageLimit({
-            usageHash: keccak256(abi.encode(sessionUsageLimits[i].signer, VALUE_TRACKING_ADDRESS)),
-            usageAmount: sessionUsageLimits[i].totalValueUsed
-          });
-        }
-      }
-
-      // Verify the increment call data
-      bytes memory expectedData = abi.encodeWithSelector(this.incrementUsageLimit.selector, limits);
-      bytes32 expectedDataHash = keccak256(expectedData);
-      bytes32 actualDataHash = keccak256(call.data);
-      if (actualDataHash != expectedDataHash) {
-        revert SessionErrors.InvalidLimitUsageIncrement();
-      }
-    } else {
-      // Do not allow self calls if there are no usage limits
-      if (call.to == address(this)) {
-        revert SessionErrors.InvalidLimitUsageIncrement();
-      }
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../../../modules/Payload.sol";
-
-import { SessionErrors } from "../SessionErrors.sol";
-import { Attestation, LibAttestation } from "./Attestation.sol";
-import { ISignalsImplicitMode } from "./ISignalsImplicitMode.sol";
-
-using LibAttestation for Attestation;
-
-/// @title ImplicitSessionManager
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Manager for implicit sessions
-abstract contract ImplicitSessionManager {
-
-  /// @notice Validates a call in implicit mode
-  /// @param call The call to validate
-  /// @param wallet The wallet's address
-  /// @param sessionSigner The session signer's address
-  /// @param attestation The session attestation
-  function _validateImplicitCall(
-    Payload.Call calldata call,
-    address wallet,
-    address sessionSigner,
-    Attestation memory attestation,
-    address[] memory blacklist
-  ) internal view {
-    // Validate the session signer is attested
-    if (sessionSigner != attestation.approvedSigner) {
-      revert SessionErrors.InvalidSessionSigner(sessionSigner);
-    }
-
-    // Delegate calls are not allowed
-    if (call.delegateCall) {
-      revert SessionErrors.InvalidDelegateCall();
-    }
-    // Check if the signer is blacklisted
-    if (_isAddressBlacklisted(sessionSigner, blacklist)) {
-      revert SessionErrors.BlacklistedAddress(sessionSigner);
-    }
-    // Check if the target address is blacklisted
-    if (_isAddressBlacklisted(call.to, blacklist)) {
-      revert SessionErrors.BlacklistedAddress(call.to);
-    }
-    // No value
-    if (call.value > 0) {
-      revert SessionErrors.InvalidValue();
-    }
-
-    // Validate the implicit request
-    bytes32 result = ISignalsImplicitMode(call.to).acceptImplicitRequest(wallet, attestation, call);
-    bytes32 attestationMagic = attestation.generateImplicitRequestMagic(wallet);
-    if (result != attestationMagic) {
-      revert SessionErrors.InvalidImplicitResult();
-    }
-  }
-
-  /// @notice Checks if an address is in the blacklist using binary search
-  /// @param target The address to check
-  /// @param blacklist The sorted array of blacklisted addresses
-  /// @return bool True if the address is blacklisted, false otherwise
-  function _isAddressBlacklisted(address target, address[] memory blacklist) internal pure returns (bool) {
-    int256 left = 0;
-    int256 right = int256(blacklist.length) - 1;
-
-    while (left <= right) {
-      int256 mid = left + (right - left) / 2;
-      address currentAddress = blacklist[uint256(mid)];
-
-      if (currentAddress == target) {
-        return true;
-      } else if (currentAddress < target) {
-        left = mid + 1;
-      } else {
-        right = mid - 1;
-      }
-    }
-
-    return false;
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { LibBytes } from "../../../utils/LibBytes.sol";
-import { ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX } from "./ISignalsImplicitMode.sol";
-
-using LibBytes for bytes;
-
-/// @notice Attestation for a specific session
-/// @param approvedSigner Address of the approved signer
-/// @param identityType Identity type
-/// @param issuerHash Hash of the issuer
-/// @param audienceHash Hash of the audience
-/// @param applicationData Unspecified application data
-/// @param authData Auth data
-struct Attestation {
-  address approvedSigner;
-  bytes4 identityType;
-  bytes32 issuerHash;
-  bytes32 audienceHash;
-  bytes applicationData;
-  AuthData authData;
-}
-
-/// @notice Auth data for an attestation
-/// @param redirectUrl Authorization redirect URL
-/// @param issuedAt Timestamp of the attestation issuance
-struct AuthData {
-  string redirectUrl;
-  uint64 issuedAt;
-}
-
-/// @title LibAttestation
+/// @title SessionErrors
 /// @author Michael Standen
-/// @notice Library for attestation management
-library LibAttestation {
+/// @notice Errors for the session manager
+library SessionErrors {
 
-  /// @notice Hashes an attestation
-  function toHash(
-    Attestation memory attestation
-  ) internal pure returns (bytes32) {
-    return keccak256(toPacked(attestation));
-  }
+  /// @notice Invalid session signer
+  error InvalidSessionSigner(address invalidSigner);
+  /// @notice Invalid chainId
+  error InvalidChainId(uint256 invalidChainId);
+  /// @notice Invalid self call
+  error InvalidSelfCall();
+  /// @notice Invalid delegate call
+  error InvalidDelegateCall();
+  /// @notice Invalid call behavior
+  error InvalidBehavior();
+  /// @notice Invalid value
+  error InvalidValue();
+  /// @notice Invalid node type in session configuration
+  error InvalidNodeType(uint256 flag);
+  /// @notice Error thrown when the payload kind is invalid
+  error InvalidPayloadKind();
+  /// @notice Error thrown when the calls length is invalid
+  error InvalidCallsLength();
+  /// @notice Error thrown when the payload space is invalid
+  error InvalidSpace(uint256 space);
 
-  /// @notice Decodes an attestation from a packed bytes array
-  /// @param encoded The packed bytes array
-  /// @param pointer The pointer to the start of the attestation
-  /// @return attestation The decoded attestation
-  /// @return newPointer The new pointer to the end of the attestation
-  function fromPacked(
-    bytes calldata encoded,
-    uint256 pointer
-  ) internal pure returns (Attestation memory attestation, uint256 newPointer) {
-    newPointer = pointer;
-    (attestation.approvedSigner, newPointer) = encoded.readAddress(newPointer);
-    (attestation.identityType, newPointer) = encoded.readBytes4(newPointer);
-    (attestation.issuerHash, newPointer) = encoded.readBytes32(newPointer);
-    (attestation.audienceHash, newPointer) = encoded.readBytes32(newPointer);
-    // Application data (arbitrary bytes)
-    uint256 dataSize;
-    (dataSize, newPointer) = encoded.readUint24(newPointer);
-    attestation.applicationData = encoded[newPointer:newPointer + dataSize];
-    newPointer += dataSize;
-    // Auth data
-    (attestation.authData, newPointer) = fromPackedAuthData(encoded, newPointer);
-    return (attestation, newPointer);
-  }
+  // ---- Explicit session errors ----
 
-  /// @notice Decodes the auth data from a packed bytes
-  /// @param encoded The packed bytes containing the auth data
-  /// @param pointer The pointer to the start of the auth data within the encoded data
-  /// @return authData The decoded auth data
-  /// @return newPointer The pointer to the end of the auth data within the encoded data
-  function fromPackedAuthData(
-    bytes calldata encoded,
-    uint256 pointer
-  ) internal pure returns (AuthData memory authData, uint256 newPointer) {
-    uint24 redirectUrlLength;
-    (redirectUrlLength, pointer) = encoded.readUint24(pointer);
-    authData.redirectUrl = string(encoded[pointer:pointer + redirectUrlLength]);
-    pointer += redirectUrlLength;
-    (authData.issuedAt, pointer) = encoded.readUint64(pointer);
-    return (authData, pointer);
-  }
+  /// @notice Missing permission for explicit session
+  error MissingPermission();
+  /// @notice Invalid permission for explicit session
+  error InvalidPermission();
+  /// @notice Session expired
+  error SessionExpired(uint256 deadline);
+  /// @notice Invalid limit usage increment
+  error InvalidLimitUsageIncrement();
 
-  /// @notice Encodes an attestation into a packed bytes array
-  /// @param attestation The attestation to encode
-  /// @return encoded The packed bytes array
-  function toPacked(
-    Attestation memory attestation
-  ) internal pure returns (bytes memory encoded) {
-    return abi.encodePacked(
-      attestation.approvedSigner,
-      attestation.identityType,
-      attestation.issuerHash,
-      attestation.audienceHash,
-      uint24(attestation.applicationData.length),
-      attestation.applicationData,
-      toPackAuthData(attestation.authData)
-    );
-  }
+  // ---- Implicit session errors ----
 
-  /// @notice Encodes the auth data into a packed bytes array
-  /// @param authData The auth data to encode
-  /// @return encoded The packed bytes array
-  function toPackAuthData(
-    AuthData memory authData
-  ) internal pure returns (bytes memory encoded) {
-    return abi.encodePacked(uint24(bytes(authData.redirectUrl).length), bytes(authData.redirectUrl), authData.issuedAt);
-  }
-
-  /// @notice Generates the implicit request magic return value
-  /// @param attestation The attestation
-  /// @param wallet The wallet
-  /// @return magic The expected implicit request magic
-  function generateImplicitRequestMagic(Attestation memory attestation, address wallet) internal pure returns (bytes32) {
-    return keccak256(
-      abi.encodePacked(ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX, wallet, attestation.audienceHash, attestation.issuerHash)
-    );
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../../../modules/Payload.sol";
-import { Attestation } from "./Attestation.sol";
-
-/// @dev Magic prefix for the implicit request
-bytes32 constant ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX = keccak256(abi.encodePacked("acceptImplicitRequest"));
-
-/// @title ISignalsImplicitMode
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Interface for the contracts that support implicit mode validation
-interface ISignalsImplicitMode {
-
-  /// @notice Determines if an implicit request is valid
-  /// @param wallet The wallet's address
-  /// @param attestation The attestation data
-  /// @param call The call to validate
-  /// @return magic The hash of the implicit request if valid
-  function acceptImplicitRequest(
-    address wallet,
-    Attestation calldata attestation,
-    Payload.Call calldata call
-  ) external view returns (bytes32 magic);
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title LibOptim
-/// @author Agustin Aguilar
-/// @notice Library for optimized EVM operations
-library LibOptim {
-
-  /**
-   * @notice Computes the keccak256 hash of two 32-byte inputs.
-   * @dev It uses only scratch memory space.
-   * @param _a The first 32 bytes of the hash.
-   * @param _b The second 32 bytes of the hash.
-   * @return c The keccak256 hash of the two 32-byte inputs.
-   */
-  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
-    assembly {
-      mstore(0, _a)
-      mstore(32, _b)
-      c := keccak256(0, 64)
-    }
-  }
-
-  /**
-   * @notice Returns the return data from the last call.
-   * @return r The return data from the last call.
-   */
-  function returnData() internal pure returns (bytes memory r) {
-    assembly {
-      let size := returndatasize()
-      r := mload(0x40)
-      let start := add(r, 32)
-      mstore(0x40, add(start, size))
-      mstore(r, size)
-      returndatacopy(start, 0, size)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _val The value to send to the contract.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters, using delegatecall.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
+  /// @notice Blacklisted address
+  error BlacklistedAddress(address target);
+  /// @notice Invalid implicit result
+  error InvalidImplicitResult();
+  /// @notice Invalid identity signer
+  error InvalidIdentitySigner();
+  /// @notice Invalid blacklist
+  error InvalidBlacklist();
+  /// @notice Invalid attestation
+  error InvalidAttestation();
+  /// @notice The blacklist was not sorted
+  error InvalidBlacklistUnsorted();
 
 }
 
@@ -1780,45 +1819,6 @@ library LibBytes {
     s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
     v = uint8(yParity) + 27;
   }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../Payload.sol";
-
-/// @title ISapient
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Sapient signers take an explicit payload and return their own "imageHash" as result
-/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
-interface ISapient {
-
-  /// @notice Recovers the image hash of a given signature
-  /// @param payload The payload to recover the signature from
-  /// @param signature The signature to recover the image hash from
-  /// @return imageHash The recovered image hash
-  function recoverSapientSignature(
-    Payload.Decoded calldata payload,
-    bytes calldata signature
-  ) external view returns (bytes32 imageHash);
-
-}
-
-/// @title ISapientCompact
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Sapient signers take a compacted payload and return their own "imageHash" as result
-/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
-interface ISapientCompact {
-
-  /// @notice Recovers the image hash of a given signature, using a hashed payload
-  /// @param digest The digest of the payload
-  /// @param signature The signature to recover the image hash from
-  /// @return imageHash The recovered image hash
-  function recoverSapientSignatureCompact(
-    bytes32 digest,
-    bytes calldata signature
-  ) external view returns (bytes32 imageHash);
 
 }
 
