@@ -148,8 +148,10 @@ pub async fn execute(
     let arc_code_context = Arc::new(code_and_context);
 
     let dedup_finding_count = deduped_findings.findings.len();
-    let is_legit_finding_vec: Arc<Mutex<Vec<LegitVulnerability>>> =
-        Arc::new(Mutex::new(Vec::with_capacity(dedup_finding_count)));
+    let is_legit_finding_vec: Arc<Mutex<Vec<LegitVulnerability>>> = Arc::new(Mutex::new(vec![
+            LegitVulnerability::default();
+            dedup_finding_count
+        ]));
 
     info!("# of findings AFTER deduping => {}", dedup_finding_count);
     info!("now verifying each finding...");
@@ -236,11 +238,11 @@ pub async fn execute(
             let enriched_finding = Finding {
                 severity: legit_findings.severity,
                 severity_justification: legit_findings.severity_justification,
-                status: legit_findings.status,
+                status: Some(legit_findings.status),
                 status_justification: legit_findings.status_justification,
-                status_confidence: legit_findings.status_confidence,
+                status_confidence: Some(legit_findings.status_confidence),
                 status_confidence_justification: legit_findings.status_confidence_justification,
-                finding_complexity: legit_findings.finding_complexity,
+                finding_complexity: Some(legit_findings.finding_complexity),
                 ..f.clone()
             };
             enriched_finding

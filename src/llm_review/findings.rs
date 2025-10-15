@@ -42,11 +42,11 @@ pub struct Finding {
     pub severity: Severity, //severity of issue
     pub mitigation: Option<String>,
     pub severity_justification: Option<String>,
-    pub status: FindingStatus,
+    pub status: Option<FindingStatus>,
     pub status_justification: Option<String>,
-    pub status_confidence: FindingConfidence,
+    pub status_confidence: Option<FindingConfidence>,
     pub status_confidence_justification: Option<String>,
-    pub finding_complexity: u8,
+    pub finding_complexity: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]

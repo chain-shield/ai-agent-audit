@@ -148,9 +148,9 @@ pub fn get_finding_report(
     if report_type == FindingReportType::Enhanced {
         findings_report.push_str(&format!(
             "## Finding Status: {}\n",
-            finding.status.to_string()
+            finding.status.unwrap_or_default().to_string()
         ));
-        if finding.status == FindingStatus::NeedsMoreInfo {
+        if finding.status == Some(FindingStatus::NeedsMoreInfo) {
             findings_report.push_str(&format!(
                 "### Finding Status Justification: {}\n",
                 finding.status_justification.clone().unwrap_or_default()
@@ -158,9 +158,9 @@ pub fn get_finding_report(
         }
         findings_report.push_str(&format!(
             "## Status Confidence: {}\n",
-            finding.status_confidence.to_string()
+            finding.status_confidence.unwrap_or_default().to_string()
         ));
-        if finding.status_confidence == FindingConfidence::SomeWhatConfident {
+        if finding.status_confidence == Some(FindingConfidence::SomeWhatConfident) {
             findings_report.push_str(&format!(
                 "### Finding Confidence Justification: {}\n",
                 finding
@@ -171,7 +171,7 @@ pub fn get_finding_report(
         }
         findings_report.push_str(&format!(
             "### Finding Complexity: {}\n",
-            finding.finding_complexity
+            finding.finding_complexity.unwrap_or_default()
         ));
     }
 
