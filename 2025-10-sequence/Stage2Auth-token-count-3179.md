@@ -53,163 +53,6 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-/// @title Storage
-/// @author Agustin Aguilar
-/// @notice Library for storing data at certain storage slots
-library Storage {
-
-  function writeBytes32(bytes32 _key, bytes32 _val) internal {
-    assembly {
-      sstore(_key, _val)
-    }
-  }
-
-  function readBytes32(
-    bytes32 _key
-  ) internal view returns (bytes32 val) {
-    assembly {
-      val := sload(_key)
-    }
-  }
-
-  function writeBytes32Map(bytes32 _key, bytes32 _subKey, bytes32 _val) internal {
-    bytes32 key = keccak256(abi.encode(_key, _subKey));
-    assembly {
-      sstore(key, _val)
-    }
-  }
-
-  function readBytes32Map(bytes32 _key, bytes32 _subKey) internal view returns (bytes32 val) {
-    bytes32 key = keccak256(abi.encode(_key, _subKey));
-    assembly {
-      val := sload(key)
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
-
-/*
-// Delegate Proxy in Huff
-// @title Delegate Proxy
-// @notice Implements a proxy using the contract's own address to store the delegate target.
-//         Calls with calldata (with or without ETH value) are forwarded to the stored target.
-//         Calls sending only ETH without calldata do nothing and return immediately without forwarding.
-// @author Agusx1211
-#define macro CONSTRUCTOR() = takes (0) returns (0) {
-  0x41                   // [code + arg size] (code_size + 32)
-  __codeoffset(MAIN)     // [code_start, code + arg size]
-  returndatasize         // [0, code_start, code + arg size]
-  codecopy               // []
-
-  __codesize(MAIN)       // [code_size]
-  dup1                   // [code_size, code_size]
-  mload                  // [arg1, code_size]
-  address                // [address, arg1, code_size]
-  sstore                 // [code_size]
-
-  returndatasize         // [0, code_size]
-  return
-}
-
-#define macro MAIN() = takes(0) returns(0) {
-  returndatasize     // [0]
-  returndatasize     // [0, 0]
-  calldatasize       // [cs, 0, 0]
-  iszero             // [cs == 0, 0, 0]
-  callvalue          // [cv, cs == 0, 0, 0]
-  mul                // [cv * cs == 0, 0, 0]
-  success            // [nr, cv * cs == 0, 0, 0]
-  jumpi
-    calldatasize     // [cds, 0, 0]
-    returndatasize   // [0, cds, 0, 0]
-    returndatasize   // [0, 0, cds, 0, 0]
-    calldatacopy     // [0, 0]
-    returndatasize   // [0, 0, 0]
-    calldatasize     // [cds, 0, 0, 0]
-    returndatasize   // [0, cds, 0, 0, 0]
-    address          // [addr, 0, cds, 0, 0, 0]
-    sload            // [imp, 0, cds, 0, 0, 0]
-    gas              // [gas, imp, 0, cds, 0, 0, 0]
-    delegatecall     // [suc, 0]
-    returndatasize   // [rds, suc, 0]
-    dup3             // [0, rds, suc, 0]
-    dup1             // [0, 0, rds, suc, 0]
-    returndatacopy   // [suc, 0]
-    swap1            // [0, suc]
-    returndatasize   // [rds, 0, suc]
-    swap2            // [suc, 0, rds]
-    success          // [nr, suc, 0, rds]
-    jumpi
-      revert
-  success:
-    return
-}
-*/
-
-library Wallet {
-
-  bytes internal constant creationCode =
-    hex"6041600e3d396021805130553df33d3d36153402601f57363d3d373d363d30545af43d82803e903d91601f57fd5bf3";
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { SelfAuth } from "./auth/SelfAuth.sol";
-
-/// @title Implementation
-/// @author Agustin Aguilar
-/// @notice Manages the implementation address of the proxy contract
-contract Implementation is SelfAuth {
-
-  /// @notice Emitted when the implementation is updated
-  event ImplementationUpdated(address newImplementation);
-
-  /// @notice Update the implementation
-  /// @param _implementation The new implementation
-  /// @dev Callable only by the contract itself
-  function updateImplementation(
-    address _implementation
-  ) external payable virtual onlySelf {
-    _updateImplementation(_implementation);
-  }
-
-  /// @notice Get the implementation
-  /// @return implementation The implementation
-  function getImplementation() external view virtual returns (address) {
-    return _getImplementation();
-  }
-
-  function _updateImplementation(
-    address _implementation
-  ) internal virtual {
-    _setImplementation(_implementation);
-    emit ImplementationUpdated(_implementation);
-  }
-
-  function _setImplementation(
-    address _imp
-  ) internal {
-    assembly {
-      sstore(address(), _imp)
-    }
-  }
-
-  function _getImplementation() internal view returns (address _imp) {
-    assembly {
-      _imp := sload(address())
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
 import { Payload } from "../Payload.sol";
 
 import { Storage } from "../Storage.sol";
@@ -379,6 +222,163 @@ abstract contract BaseAuth is IAuth, IPartialAuth, ISapient, IERC1271, SelfAuth 
     (threshold, weight, imageHash, checkpoint, opHash) = BaseSig.recover(_payload, _signature, false, address(0));
     isValidImage = _isValidImage(imageHash);
   }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+/// @title Storage
+/// @author Agustin Aguilar
+/// @notice Library for storing data at certain storage slots
+library Storage {
+
+  function writeBytes32(bytes32 _key, bytes32 _val) internal {
+    assembly {
+      sstore(_key, _val)
+    }
+  }
+
+  function readBytes32(
+    bytes32 _key
+  ) internal view returns (bytes32 val) {
+    assembly {
+      val := sload(_key)
+    }
+  }
+
+  function writeBytes32Map(bytes32 _key, bytes32 _subKey, bytes32 _val) internal {
+    bytes32 key = keccak256(abi.encode(_key, _subKey));
+    assembly {
+      sstore(key, _val)
+    }
+  }
+
+  function readBytes32Map(bytes32 _key, bytes32 _subKey) internal view returns (bytes32 val) {
+    bytes32 key = keccak256(abi.encode(_key, _subKey));
+    assembly {
+      val := sload(key)
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { SelfAuth } from "./auth/SelfAuth.sol";
+
+/// @title Implementation
+/// @author Agustin Aguilar
+/// @notice Manages the implementation address of the proxy contract
+contract Implementation is SelfAuth {
+
+  /// @notice Emitted when the implementation is updated
+  event ImplementationUpdated(address newImplementation);
+
+  /// @notice Update the implementation
+  /// @param _implementation The new implementation
+  /// @dev Callable only by the contract itself
+  function updateImplementation(
+    address _implementation
+  ) external payable virtual onlySelf {
+    _updateImplementation(_implementation);
+  }
+
+  /// @notice Get the implementation
+  /// @return implementation The implementation
+  function getImplementation() external view virtual returns (address) {
+    return _getImplementation();
+  }
+
+  function _updateImplementation(
+    address _implementation
+  ) internal virtual {
+    _setImplementation(_implementation);
+    emit ImplementationUpdated(_implementation);
+  }
+
+  function _setImplementation(
+    address _imp
+  ) internal {
+    assembly {
+      sstore(address(), _imp)
+    }
+  }
+
+  function _getImplementation() internal view returns (address _imp) {
+    assembly {
+      _imp := sload(address())
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.0;
+
+/*
+// Delegate Proxy in Huff
+// @title Delegate Proxy
+// @notice Implements a proxy using the contract's own address to store the delegate target.
+//         Calls with calldata (with or without ETH value) are forwarded to the stored target.
+//         Calls sending only ETH without calldata do nothing and return immediately without forwarding.
+// @author Agusx1211
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+  0x41                   // [code + arg size] (code_size + 32)
+  __codeoffset(MAIN)     // [code_start, code + arg size]
+  returndatasize         // [0, code_start, code + arg size]
+  codecopy               // []
+
+  __codesize(MAIN)       // [code_size]
+  dup1                   // [code_size, code_size]
+  mload                  // [arg1, code_size]
+  address                // [address, arg1, code_size]
+  sstore                 // [code_size]
+
+  returndatasize         // [0, code_size]
+  return
+}
+
+#define macro MAIN() = takes(0) returns(0) {
+  returndatasize     // [0]
+  returndatasize     // [0, 0]
+  calldatasize       // [cs, 0, 0]
+  iszero             // [cs == 0, 0, 0]
+  callvalue          // [cv, cs == 0, 0, 0]
+  mul                // [cv * cs == 0, 0, 0]
+  success            // [nr, cv * cs == 0, 0, 0]
+  jumpi
+    calldatasize     // [cds, 0, 0]
+    returndatasize   // [0, cds, 0, 0]
+    returndatasize   // [0, 0, cds, 0, 0]
+    calldatacopy     // [0, 0]
+    returndatasize   // [0, 0, 0]
+    calldatasize     // [cds, 0, 0, 0]
+    returndatasize   // [0, cds, 0, 0, 0]
+    address          // [addr, 0, cds, 0, 0, 0]
+    sload            // [imp, 0, cds, 0, 0, 0]
+    gas              // [gas, imp, 0, cds, 0, 0, 0]
+    delegatecall     // [suc, 0]
+    returndatasize   // [rds, suc, 0]
+    dup3             // [0, rds, suc, 0]
+    dup1             // [0, 0, rds, suc, 0]
+    returndatacopy   // [suc, 0]
+    swap1            // [0, suc]
+    returndatasize   // [rds, 0, suc]
+    swap2            // [suc, 0, rds]
+    success          // [nr, suc, 0, rds]
+    jumpi
+      revert
+  success:
+    return
+}
+*/
+
+library Wallet {
+
+  bytes internal constant creationCode =
+    hex"6041600e3d396021805130553df33d3d36153402601f57363d3d373d363d30545af43d82803e903d91601f57fd5bf3";
 
 }
 

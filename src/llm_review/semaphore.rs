@@ -2,8 +2,8 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 // increase once hit higher openai teir
-const MAX_CONCURRENTS_VERIFY: usize = 10; // TODO: lower to 5 for claude
-const MAX_CONCURRENTS_REVIEW: usize = 5; // TODO: lower to 1 for claude
+const MAX_CONCURRENTS_VERIFY: usize = 10;
+const MAX_CONCURRENTS_REVIEW: usize = 1;
 
 // at module scope or pass it in
 pub static VERIFY_SEM: once_cell::sync::Lazy<Arc<Semaphore>> =

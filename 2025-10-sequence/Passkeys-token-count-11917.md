@@ -131,6 +131,405 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
+/// @notice Library to encode strings in Base64.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/Base64.sol)
+/// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/main/src/utils/Base64.sol)
+/// @author Modified from (https://github.com/Brechtpd/base64/blob/main/base64.sol) by Brecht Devos - <brecht@loopring.org>.
+library Base64 {
+
+  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
+  /// See: https://datatracker.ietf.org/doc/html/rfc4648
+  /// @param fileSafe  Whether to replace '+' with '-' and '/' with '_'.
+  /// @param noPadding Whether to strip away the padding.
+  function encode(bytes memory data, bool fileSafe, bool noPadding) internal pure returns (string memory result) {
+    /// @solidity memory-safe-assembly
+    assembly {
+      let dataLength := mload(data)
+
+      if dataLength {
+        // Multiply by 4/3 rounded up.
+        // The `shl(2, ...)` is equivalent to multiplying by 4.
+        let encodedLength := shl(2, div(add(dataLength, 2), 3))
+
+        // Set `result` to point to the start of the free memory.
+        result := mload(0x40)
+
+        // Store the table into the scratch space.
+        // Offsetted by -1 byte so that the `mload` will load the character.
+        // We will rewrite the free memory pointer at `0x40` later with
+        // the allocated size.
+        // The magic constant 0x0670 will turn "-_" into "+/".
+        mstore(0x1f, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef")
+        mstore(0x3f, xor("ghijklmnopqrstuvwxyz0123456789-_", mul(iszero(fileSafe), 0x0670)))
+
+        // Skip the first slot, which stores the length.
+        let ptr := add(result, 0x20)
+        let end := add(ptr, encodedLength)
+
+        let dataEnd := add(add(0x20, data), dataLength)
+        let dataEndValue := mload(dataEnd) // Cache the value at the `dataEnd` slot.
+        mstore(dataEnd, 0x00) // Zeroize the `dataEnd` slot to clear dirty bits.
+
+        // Run over the input, 3 bytes at a time.
+        for { } 1 { } {
+          data := add(data, 3) // Advance 3 bytes.
+          let input := mload(data)
+
+          // Write 4 bytes. Optimized for fewer stack operations.
+          mstore8(0, mload(and(shr(18, input), 0x3F)))
+          mstore8(1, mload(and(shr(12, input), 0x3F)))
+          mstore8(2, mload(and(shr(6, input), 0x3F)))
+          mstore8(3, mload(and(input, 0x3F)))
+          mstore(ptr, mload(0x00))
+
+          ptr := add(ptr, 4) // Advance 4 bytes.
+          if iszero(lt(ptr, end)) { break }
+        }
+        mstore(dataEnd, dataEndValue) // Restore the cached value at `dataEnd`.
+        mstore(0x40, add(end, 0x20)) // Allocate the memory.
+        // Equivalent to `o = [0, 2, 1][dataLength % 3]`.
+        let o := div(2, mod(dataLength, 3))
+        // Offset `ptr` and pad with '='. We can simply write over the end.
+        mstore(sub(ptr, o), shl(240, 0x3d3d))
+        // Set `o` to zero if there is padding.
+        o := mul(iszero(iszero(noPadding)), o)
+        mstore(sub(ptr, o), 0) // Zeroize the slot after the string.
+        mstore(result, sub(encodedLength, o)) // Store the length.
+      }
+    }
+  }
+
+  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
+  /// Equivalent to `encode(data, false, false)`.
+  function encode(
+    bytes memory data
+  ) internal pure returns (string memory result) {
+    result = encode(data, false, false);
+  }
+
+  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
+  /// Equivalent to `encode(data, fileSafe, false)`.
+  function encode(bytes memory data, bool fileSafe) internal pure returns (string memory result) {
+    result = encode(data, fileSafe, false);
+  }
+
+  /// @dev Decodes base64 encoded `data`.
+  ///
+  /// Supports:
+  /// - RFC 4648 (both standard and file-safe mode).
+  /// - RFC 3501 (63: ',').
+  ///
+  /// Does not support:
+  /// - Line breaks.
+  ///
+  /// Note: For performance reasons,
+  /// this function will NOT revert on invalid `data` inputs.
+  /// Outputs for invalid inputs will simply be undefined behaviour.
+  /// It is the user's responsibility to ensure that the `data`
+  /// is a valid base64 encoded string.
+  function decode(
+    string memory data
+  ) internal pure returns (bytes memory result) {
+    /// @solidity memory-safe-assembly
+    assembly {
+      let dataLength := mload(data)
+
+      if dataLength {
+        let decodedLength := mul(shr(2, dataLength), 3)
+
+        for { } 1 { } {
+          // If padded.
+          if iszero(and(dataLength, 3)) {
+            let t := xor(mload(add(data, dataLength)), 0x3d3d)
+            // forgefmt: disable-next-item
+            decodedLength := sub(
+                            decodedLength,
+                            add(iszero(byte(30, t)), iszero(byte(31, t)))
+                        )
+            break
+          }
+          // If non-padded.
+          decodedLength := add(decodedLength, sub(and(dataLength, 3), 1))
+          break
+        }
+        result := mload(0x40)
+
+        // Write the length of the bytes.
+        mstore(result, decodedLength)
+
+        // Skip the first slot, which stores the length.
+        let ptr := add(result, 0x20)
+        let end := add(ptr, decodedLength)
+
+        // Load the table into the scratch space.
+        // Constants are optimized for smaller bytecode with zero gas overhead.
+        // `m` also doubles as the mask of the upper 6 bits.
+        let m := 0xfc000000fc00686c7074787c8084888c9094989ca0a4a8acb0b4b8bcc0c4c8cc
+        mstore(0x5b, m)
+        mstore(0x3b, 0x04080c1014181c2024282c3034383c4044484c5054585c6064)
+        mstore(0x1a, 0xf8fcf800fcd0d4d8dce0e4e8ecf0f4)
+
+        for { } 1 { } {
+          // Read 4 bytes.
+          data := add(data, 4)
+          let input := mload(data)
+
+          // Write 3 bytes.
+          // forgefmt: disable-next-item
+          mstore(ptr, or(
+                        and(m, mload(byte(28, input))),
+                        shr(6, or(
+                            and(m, mload(byte(29, input))),
+                            shr(6, or(
+                                and(m, mload(byte(30, input))),
+                                shr(6, mload(byte(31, input)))
+                            ))
+                        ))
+                    ))
+          ptr := add(ptr, 3)
+          if iszero(lt(ptr, end)) { break }
+        }
+        mstore(0x40, add(end, 0x20)) // Allocate the memory.
+        mstore(end, 0) // Zeroize the slot after the bytes.
+        mstore(0x60, 0) // Restore the zero slot.
+      }
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title Library for reading data from bytes arrays
+/// @author Agustin Aguilar (aa@horizon.io), Michael Standen (mstan@horizon.io)
+/// @notice This library contains functions for reading data from bytes arrays.
+/// @dev These functions do not check if the input index is within the bounds of the data array.
+/// @dev Reading out of bounds may return dirty values.
+library LibBytes {
+
+  function readFirstUint8(
+    bytes calldata _data
+  ) internal pure returns (uint8 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(_data.offset)
+      a := shr(248, word)
+      newPointer := 1
+    }
+  }
+
+  function readUint8(bytes calldata _data, uint256 _index) internal pure returns (uint8 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(248, word)
+      newPointer := add(_index, 1)
+    }
+  }
+
+  function readUint16(bytes calldata _data, uint256 _index) internal pure returns (uint16 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(240, word)
+      newPointer := add(_index, 2)
+    }
+  }
+
+  function readUint24(bytes calldata _data, uint256 _index) internal pure returns (uint24 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(232, word)
+      newPointer := add(_index, 3)
+    }
+  }
+
+  function readUint64(bytes calldata _data, uint256 _index) internal pure returns (uint64 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(192, word)
+      newPointer := add(_index, 8)
+    }
+  }
+
+  function readUint160(bytes calldata _data, uint256 _index) internal pure returns (uint160 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(96, word)
+      newPointer := add(_index, 20)
+    }
+  }
+
+  function readUint256(bytes calldata _data, uint256 _index) internal pure returns (uint256 a, uint256 newPointer) {
+    assembly {
+      a := calldataload(add(_index, _data.offset))
+      newPointer := add(_index, 32)
+    }
+  }
+
+  function readUintX(
+    bytes calldata _data,
+    uint256 _index,
+    uint256 _length
+  ) internal pure returns (uint256 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      let shift := sub(256, mul(_length, 8))
+      a := and(shr(shift, word), sub(shl(mul(8, _length), 1), 1))
+      newPointer := add(_index, _length)
+    }
+  }
+
+  function readBytes4(bytes calldata _data, uint256 _pointer) internal pure returns (bytes4 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_pointer, _data.offset))
+      a := and(word, 0xffffffff00000000000000000000000000000000000000000000000000000000)
+      newPointer := add(_pointer, 4)
+    }
+  }
+
+  function readBytes32(bytes calldata _data, uint256 _pointer) internal pure returns (bytes32 a, uint256 newPointer) {
+    assembly {
+      a := calldataload(add(_pointer, _data.offset))
+      newPointer := add(_pointer, 32)
+    }
+  }
+
+  function readAddress(bytes calldata _data, uint256 _index) internal pure returns (address a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := and(shr(96, word), 0xffffffffffffffffffffffffffffffffffffffff)
+      newPointer := add(_index, 20)
+    }
+  }
+
+  /// @dev ERC-2098 Compact Signature
+  function readRSVCompact(
+    bytes calldata _data,
+    uint256 _index
+  ) internal pure returns (bytes32 r, bytes32 s, uint8 v, uint256 newPointer) {
+    uint256 yParityAndS;
+    assembly {
+      r := calldataload(add(_index, _data.offset))
+      yParityAndS := calldataload(add(_index, add(_data.offset, 32)))
+      newPointer := add(_index, 64)
+    }
+    uint256 yParity = uint256(yParityAndS >> 255);
+    s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
+    v = uint8(yParity) + 27;
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Payload } from "../Payload.sol";
+
+/// @title ISapient
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Sapient signers take an explicit payload and return their own "imageHash" as result
+/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
+interface ISapient {
+
+  /// @notice Recovers the image hash of a given signature
+  /// @param payload The payload to recover the signature from
+  /// @param signature The signature to recover the image hash from
+  /// @return imageHash The recovered image hash
+  function recoverSapientSignature(
+    Payload.Decoded calldata payload,
+    bytes calldata signature
+  ) external view returns (bytes32 imageHash);
+
+}
+
+/// @title ISapientCompact
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Sapient signers take a compacted payload and return their own "imageHash" as result
+/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
+interface ISapientCompact {
+
+  /// @notice Recovers the image hash of a given signature, using a hashed payload
+  /// @param digest The digest of the payload
+  /// @param signature The signature to recover the image hash from
+  /// @return imageHash The recovered image hash
+  function recoverSapientSignatureCompact(
+    bytes32 digest,
+    bytes calldata signature
+  ) external view returns (bytes32 imageHash);
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title LibOptim
+/// @author Agustin Aguilar
+/// @notice Library for optimized EVM operations
+library LibOptim {
+
+  /**
+   * @notice Computes the keccak256 hash of two 32-byte inputs.
+   * @dev It uses only scratch memory space.
+   * @param _a The first 32 bytes of the hash.
+   * @param _b The second 32 bytes of the hash.
+   * @return c The keccak256 hash of the two 32-byte inputs.
+   */
+  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
+    assembly {
+      mstore(0, _a)
+      mstore(32, _b)
+      c := keccak256(0, 64)
+    }
+  }
+
+  /**
+   * @notice Returns the return data from the last call.
+   * @return r The return data from the last call.
+   */
+  function returnData() internal pure returns (bytes memory r) {
+    assembly {
+      let size := returndatasize()
+      r := mload(0x40)
+      let start := add(r, 32)
+      mstore(0x40, add(start, size))
+      mstore(r, size)
+      returndatacopy(start, 0, size)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _val The value to send to the contract.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters, using delegatecall.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
 import { Base64 } from "./Base64.sol";
 import { P256 } from "./P256.sol";
 
@@ -465,284 +864,6 @@ library WebAuthn {
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
-/// @notice Library to encode strings in Base64.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/Base64.sol)
-/// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/main/src/utils/Base64.sol)
-/// @author Modified from (https://github.com/Brechtpd/base64/blob/main/base64.sol) by Brecht Devos - <brecht@loopring.org>.
-library Base64 {
-
-  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
-  /// See: https://datatracker.ietf.org/doc/html/rfc4648
-  /// @param fileSafe  Whether to replace '+' with '-' and '/' with '_'.
-  /// @param noPadding Whether to strip away the padding.
-  function encode(bytes memory data, bool fileSafe, bool noPadding) internal pure returns (string memory result) {
-    /// @solidity memory-safe-assembly
-    assembly {
-      let dataLength := mload(data)
-
-      if dataLength {
-        // Multiply by 4/3 rounded up.
-        // The `shl(2, ...)` is equivalent to multiplying by 4.
-        let encodedLength := shl(2, div(add(dataLength, 2), 3))
-
-        // Set `result` to point to the start of the free memory.
-        result := mload(0x40)
-
-        // Store the table into the scratch space.
-        // Offsetted by -1 byte so that the `mload` will load the character.
-        // We will rewrite the free memory pointer at `0x40` later with
-        // the allocated size.
-        // The magic constant 0x0670 will turn "-_" into "+/".
-        mstore(0x1f, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef")
-        mstore(0x3f, xor("ghijklmnopqrstuvwxyz0123456789-_", mul(iszero(fileSafe), 0x0670)))
-
-        // Skip the first slot, which stores the length.
-        let ptr := add(result, 0x20)
-        let end := add(ptr, encodedLength)
-
-        let dataEnd := add(add(0x20, data), dataLength)
-        let dataEndValue := mload(dataEnd) // Cache the value at the `dataEnd` slot.
-        mstore(dataEnd, 0x00) // Zeroize the `dataEnd` slot to clear dirty bits.
-
-        // Run over the input, 3 bytes at a time.
-        for { } 1 { } {
-          data := add(data, 3) // Advance 3 bytes.
-          let input := mload(data)
-
-          // Write 4 bytes. Optimized for fewer stack operations.
-          mstore8(0, mload(and(shr(18, input), 0x3F)))
-          mstore8(1, mload(and(shr(12, input), 0x3F)))
-          mstore8(2, mload(and(shr(6, input), 0x3F)))
-          mstore8(3, mload(and(input, 0x3F)))
-          mstore(ptr, mload(0x00))
-
-          ptr := add(ptr, 4) // Advance 4 bytes.
-          if iszero(lt(ptr, end)) { break }
-        }
-        mstore(dataEnd, dataEndValue) // Restore the cached value at `dataEnd`.
-        mstore(0x40, add(end, 0x20)) // Allocate the memory.
-        // Equivalent to `o = [0, 2, 1][dataLength % 3]`.
-        let o := div(2, mod(dataLength, 3))
-        // Offset `ptr` and pad with '='. We can simply write over the end.
-        mstore(sub(ptr, o), shl(240, 0x3d3d))
-        // Set `o` to zero if there is padding.
-        o := mul(iszero(iszero(noPadding)), o)
-        mstore(sub(ptr, o), 0) // Zeroize the slot after the string.
-        mstore(result, sub(encodedLength, o)) // Store the length.
-      }
-    }
-  }
-
-  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
-  /// Equivalent to `encode(data, false, false)`.
-  function encode(
-    bytes memory data
-  ) internal pure returns (string memory result) {
-    result = encode(data, false, false);
-  }
-
-  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
-  /// Equivalent to `encode(data, fileSafe, false)`.
-  function encode(bytes memory data, bool fileSafe) internal pure returns (string memory result) {
-    result = encode(data, fileSafe, false);
-  }
-
-  /// @dev Decodes base64 encoded `data`.
-  ///
-  /// Supports:
-  /// - RFC 4648 (both standard and file-safe mode).
-  /// - RFC 3501 (63: ',').
-  ///
-  /// Does not support:
-  /// - Line breaks.
-  ///
-  /// Note: For performance reasons,
-  /// this function will NOT revert on invalid `data` inputs.
-  /// Outputs for invalid inputs will simply be undefined behaviour.
-  /// It is the user's responsibility to ensure that the `data`
-  /// is a valid base64 encoded string.
-  function decode(
-    string memory data
-  ) internal pure returns (bytes memory result) {
-    /// @solidity memory-safe-assembly
-    assembly {
-      let dataLength := mload(data)
-
-      if dataLength {
-        let decodedLength := mul(shr(2, dataLength), 3)
-
-        for { } 1 { } {
-          // If padded.
-          if iszero(and(dataLength, 3)) {
-            let t := xor(mload(add(data, dataLength)), 0x3d3d)
-            // forgefmt: disable-next-item
-            decodedLength := sub(
-                            decodedLength,
-                            add(iszero(byte(30, t)), iszero(byte(31, t)))
-                        )
-            break
-          }
-          // If non-padded.
-          decodedLength := add(decodedLength, sub(and(dataLength, 3), 1))
-          break
-        }
-        result := mload(0x40)
-
-        // Write the length of the bytes.
-        mstore(result, decodedLength)
-
-        // Skip the first slot, which stores the length.
-        let ptr := add(result, 0x20)
-        let end := add(ptr, decodedLength)
-
-        // Load the table into the scratch space.
-        // Constants are optimized for smaller bytecode with zero gas overhead.
-        // `m` also doubles as the mask of the upper 6 bits.
-        let m := 0xfc000000fc00686c7074787c8084888c9094989ca0a4a8acb0b4b8bcc0c4c8cc
-        mstore(0x5b, m)
-        mstore(0x3b, 0x04080c1014181c2024282c3034383c4044484c5054585c6064)
-        mstore(0x1a, 0xf8fcf800fcd0d4d8dce0e4e8ecf0f4)
-
-        for { } 1 { } {
-          // Read 4 bytes.
-          data := add(data, 4)
-          let input := mload(data)
-
-          // Write 3 bytes.
-          // forgefmt: disable-next-item
-          mstore(ptr, or(
-                        and(m, mload(byte(28, input))),
-                        shr(6, or(
-                            and(m, mload(byte(29, input))),
-                            shr(6, or(
-                                and(m, mload(byte(30, input))),
-                                shr(6, mload(byte(31, input)))
-                            ))
-                        ))
-                    ))
-          ptr := add(ptr, 3)
-          if iszero(lt(ptr, end)) { break }
-        }
-        mstore(0x40, add(end, 0x20)) // Allocate the memory.
-        mstore(end, 0) // Zeroize the slot after the bytes.
-        mstore(0x60, 0) // Restore the zero slot.
-      }
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../Payload.sol";
-
-/// @title ISapient
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Sapient signers take an explicit payload and return their own "imageHash" as result
-/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
-interface ISapient {
-
-  /// @notice Recovers the image hash of a given signature
-  /// @param payload The payload to recover the signature from
-  /// @param signature The signature to recover the image hash from
-  /// @return imageHash The recovered image hash
-  function recoverSapientSignature(
-    Payload.Decoded calldata payload,
-    bytes calldata signature
-  ) external view returns (bytes32 imageHash);
-
-}
-
-/// @title ISapientCompact
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Sapient signers take a compacted payload and return their own "imageHash" as result
-/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
-interface ISapientCompact {
-
-  /// @notice Recovers the image hash of a given signature, using a hashed payload
-  /// @param digest The digest of the payload
-  /// @param signature The signature to recover the image hash from
-  /// @return imageHash The recovered image hash
-  function recoverSapientSignatureCompact(
-    bytes32 digest,
-    bytes calldata signature
-  ) external view returns (bytes32 imageHash);
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title LibOptim
-/// @author Agustin Aguilar
-/// @notice Library for optimized EVM operations
-library LibOptim {
-
-  /**
-   * @notice Computes the keccak256 hash of two 32-byte inputs.
-   * @dev It uses only scratch memory space.
-   * @param _a The first 32 bytes of the hash.
-   * @param _b The second 32 bytes of the hash.
-   * @return c The keccak256 hash of the two 32-byte inputs.
-   */
-  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
-    assembly {
-      mstore(0, _a)
-      mstore(32, _b)
-      c := keccak256(0, 64)
-    }
-  }
-
-  /**
-   * @notice Returns the return data from the last call.
-   * @return r The return data from the last call.
-   */
-  function returnData() internal pure returns (bytes memory r) {
-    assembly {
-      let size := returndatasize()
-      r := mload(0x40)
-      let start := add(r, 32)
-      mstore(0x40, add(start, size))
-      mstore(r, size)
-      returndatacopy(start, 0, size)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _val The value to send to the contract.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters, using delegatecall.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
-
 /// @notice Gas optimized P256 wrapper.
 /// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/P256.sol)
 /// @author Modified from Daimo P256 Verifier (https://github.com/daimo-eth/p256-verifier/blob/master/src/P256.sol)
@@ -890,127 +1011,6 @@ library P256 {
       x := mul(calldataload(encoded.offset), t)
       y := mul(calldataload(add(encoded.offset, 0x20)), t)
     }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title Library for reading data from bytes arrays
-/// @author Agustin Aguilar (aa@horizon.io), Michael Standen (mstan@horizon.io)
-/// @notice This library contains functions for reading data from bytes arrays.
-/// @dev These functions do not check if the input index is within the bounds of the data array.
-/// @dev Reading out of bounds may return dirty values.
-library LibBytes {
-
-  function readFirstUint8(
-    bytes calldata _data
-  ) internal pure returns (uint8 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(_data.offset)
-      a := shr(248, word)
-      newPointer := 1
-    }
-  }
-
-  function readUint8(bytes calldata _data, uint256 _index) internal pure returns (uint8 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(248, word)
-      newPointer := add(_index, 1)
-    }
-  }
-
-  function readUint16(bytes calldata _data, uint256 _index) internal pure returns (uint16 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(240, word)
-      newPointer := add(_index, 2)
-    }
-  }
-
-  function readUint24(bytes calldata _data, uint256 _index) internal pure returns (uint24 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(232, word)
-      newPointer := add(_index, 3)
-    }
-  }
-
-  function readUint64(bytes calldata _data, uint256 _index) internal pure returns (uint64 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(192, word)
-      newPointer := add(_index, 8)
-    }
-  }
-
-  function readUint160(bytes calldata _data, uint256 _index) internal pure returns (uint160 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(96, word)
-      newPointer := add(_index, 20)
-    }
-  }
-
-  function readUint256(bytes calldata _data, uint256 _index) internal pure returns (uint256 a, uint256 newPointer) {
-    assembly {
-      a := calldataload(add(_index, _data.offset))
-      newPointer := add(_index, 32)
-    }
-  }
-
-  function readUintX(
-    bytes calldata _data,
-    uint256 _index,
-    uint256 _length
-  ) internal pure returns (uint256 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      let shift := sub(256, mul(_length, 8))
-      a := and(shr(shift, word), sub(shl(mul(8, _length), 1), 1))
-      newPointer := add(_index, _length)
-    }
-  }
-
-  function readBytes4(bytes calldata _data, uint256 _pointer) internal pure returns (bytes4 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_pointer, _data.offset))
-      a := and(word, 0xffffffff00000000000000000000000000000000000000000000000000000000)
-      newPointer := add(_pointer, 4)
-    }
-  }
-
-  function readBytes32(bytes calldata _data, uint256 _pointer) internal pure returns (bytes32 a, uint256 newPointer) {
-    assembly {
-      a := calldataload(add(_pointer, _data.offset))
-      newPointer := add(_pointer, 32)
-    }
-  }
-
-  function readAddress(bytes calldata _data, uint256 _index) internal pure returns (address a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := and(shr(96, word), 0xffffffffffffffffffffffffffffffffffffffff)
-      newPointer := add(_index, 20)
-    }
-  }
-
-  /// @dev ERC-2098 Compact Signature
-  function readRSVCompact(
-    bytes calldata _data,
-    uint256 _index
-  ) internal pure returns (bytes32 r, bytes32 s, uint8 v, uint256 newPointer) {
-    uint256 yParityAndS;
-    assembly {
-      r := calldataload(add(_index, _data.offset))
-      yParityAndS := calldataload(add(_index, add(_data.offset, 32)))
-      newPointer := add(_index, 64)
-    }
-    uint256 yParity = uint256(yParityAndS >> 255);
-    s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
-    v = uint8(yParity) + 27;
   }
 
 }

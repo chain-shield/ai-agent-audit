@@ -223,114 +223,6 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../Payload.sol";
-
-/// @title ISapient
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Sapient signers take an explicit payload and return their own "imageHash" as result
-/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
-interface ISapient {
-
-  /// @notice Recovers the image hash of a given signature
-  /// @param payload The payload to recover the signature from
-  /// @param signature The signature to recover the image hash from
-  /// @return imageHash The recovered image hash
-  function recoverSapientSignature(
-    Payload.Decoded calldata payload,
-    bytes calldata signature
-  ) external view returns (bytes32 imageHash);
-
-}
-
-/// @title ISapientCompact
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Sapient signers take a compacted payload and return their own "imageHash" as result
-/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
-interface ISapientCompact {
-
-  /// @notice Recovers the image hash of a given signature, using a hashed payload
-  /// @param digest The digest of the payload
-  /// @param signature The signature to recover the image hash from
-  /// @return imageHash The recovered image hash
-  function recoverSapientSignatureCompact(
-    bytes32 digest,
-    bytes calldata signature
-  ) external view returns (bytes32 imageHash);
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title LibOptim
-/// @author Agustin Aguilar
-/// @notice Library for optimized EVM operations
-library LibOptim {
-
-  /**
-   * @notice Computes the keccak256 hash of two 32-byte inputs.
-   * @dev It uses only scratch memory space.
-   * @param _a The first 32 bytes of the hash.
-   * @param _b The second 32 bytes of the hash.
-   * @return c The keccak256 hash of the two 32-byte inputs.
-   */
-  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
-    assembly {
-      mstore(0, _a)
-      mstore(32, _b)
-      c := keccak256(0, 64)
-    }
-  }
-
-  /**
-   * @notice Returns the return data from the last call.
-   * @return r The return data from the last call.
-   */
-  function returnData() internal pure returns (bytes memory r) {
-    assembly {
-      let size := returndatasize()
-      r := mload(0x40)
-      let start := add(r, 32)
-      mstore(0x40, add(start, size))
-      mstore(r, size)
-      returndatacopy(start, 0, size)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _val The value to send to the contract.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters, using delegatecall.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
 /// @title Library for reading data from bytes arrays
@@ -726,6 +618,114 @@ library Payload {
     bytes32 domain = domainSeparator(_decoded.noChainId, _wallet);
     bytes32 structHash = toEIP712(_decoded);
     return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Payload } from "../Payload.sol";
+
+/// @title ISapient
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Sapient signers take an explicit payload and return their own "imageHash" as result
+/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
+interface ISapient {
+
+  /// @notice Recovers the image hash of a given signature
+  /// @param payload The payload to recover the signature from
+  /// @param signature The signature to recover the image hash from
+  /// @return imageHash The recovered image hash
+  function recoverSapientSignature(
+    Payload.Decoded calldata payload,
+    bytes calldata signature
+  ) external view returns (bytes32 imageHash);
+
+}
+
+/// @title ISapientCompact
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Sapient signers take a compacted payload and return their own "imageHash" as result
+/// @dev The consumer of this signer must validate if the imageHash is valid or not, for the desired configuration
+interface ISapientCompact {
+
+  /// @notice Recovers the image hash of a given signature, using a hashed payload
+  /// @param digest The digest of the payload
+  /// @param signature The signature to recover the image hash from
+  /// @return imageHash The recovered image hash
+  function recoverSapientSignatureCompact(
+    bytes32 digest,
+    bytes calldata signature
+  ) external view returns (bytes32 imageHash);
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title LibOptim
+/// @author Agustin Aguilar
+/// @notice Library for optimized EVM operations
+library LibOptim {
+
+  /**
+   * @notice Computes the keccak256 hash of two 32-byte inputs.
+   * @dev It uses only scratch memory space.
+   * @param _a The first 32 bytes of the hash.
+   * @param _b The second 32 bytes of the hash.
+   * @return c The keccak256 hash of the two 32-byte inputs.
+   */
+  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
+    assembly {
+      mstore(0, _a)
+      mstore(32, _b)
+      c := keccak256(0, 64)
+    }
+  }
+
+  /**
+   * @notice Returns the return data from the last call.
+   * @return r The return data from the last call.
+   */
+  function returnData() internal pure returns (bytes memory r) {
+    assembly {
+      let size := returndatasize()
+      r := mload(0x40)
+      let start := add(r, 32)
+      mstore(0x40, add(start, size))
+      mstore(r, size)
+      returndatacopy(start, 0, size)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _val The value to send to the contract.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters, using delegatecall.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
+    }
   }
 
 }
