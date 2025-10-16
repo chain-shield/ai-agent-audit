@@ -49,7 +49,8 @@ pub async fn review_codebase_for_security_issues_v2(
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
-    let (ai_verify_agent, ai_discovery_agent) = generate_ai_agents(repo).await?;
+    let (ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent) =
+        generate_ai_agents(repo).await?;
 
     let findings_db = Arc::new(Mutex::new(FindingsDb::open()?));
 
@@ -67,6 +68,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
         // Clone shared state for the spawned task
         let verify_agent = Arc::clone(&ai_verify_agent);
+        let finding_verify_agent = Arc::clone(&finding_ai_verify_agent);
         let discovery_agent = Arc::clone(&ai_discovery_agent);
         // let scope = Arc::clone(&audit_scope);
         let results_db = Arc::clone(&findings_db);
@@ -116,7 +118,7 @@ pub async fn review_codebase_for_security_issues_v2(
                     let verify_findings = phases::verify_findings::execute(
                         raw_findings,
                         &codeblock,
-                        &verify_agent,
+                        &finding_verify_agent,
                         &repo_clone,
                     )
                     .await?;
@@ -215,7 +217,9 @@ pub async fn review_codebase_for_security_issues_v2(
 //
 //     Ok(enhanced_block)
 // }
-pub async fn generate_ai_agents(repo: &RepoPaths) -> Result<(Arc<AIAgent>, Arc<AIAgent>)> {
+pub async fn generate_ai_agents(
+    repo: &RepoPaths,
+) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Arc<AIAgent>)> {
     info!("setting up AI agents...");
 
     // Enhanced preamble for verification agent
@@ -241,12 +245,12 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     // ";
 
     // Create verification agent using OpenAI O3
-    let _ = AgentConfig::new(Some(repo.clone()))
+    let verify_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5")
         .with_preamble(verify_preamble)
         .with_file_picker(false); // Disabled to avoid rate limits
 
-    let verify_config = AgentConfig::new(Some(repo.clone()))
+    let finding_verify_config = AgentConfig::new(Some(repo.clone()))
         .with_temperature(1.0)
         .with_model(CLAUDE_4_5_SONNET)
         .with_max_tokens(64_000)
@@ -254,12 +258,15 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         .with_file_picker(false) // Disabled to avoid rate limits
         .with_file_retrieval(false);
 
-    let ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(&verify_config)?);
+    let ai_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
+    let finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
+        &finding_verify_config,
+    )?);
 
     // Enhanced preamble for discovery agents
     let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases.";
 
-    let discovery_config = AgentConfig::new(Some(repo.clone()))
+    let _ = AgentConfig::new(Some(repo.clone()))
         .with_temperature(1.0)
         .with_model(CLAUDE_4_5_SONNET)
         .with_max_tokens(64_000)
@@ -267,7 +274,7 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         .with_file_picker(false) // Disabled to avoid rate limits
         .with_file_retrieval(false);
 
-    let _ = AgentConfig::new(Some(repo.clone()))
+    let discovery_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
@@ -276,12 +283,12 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_dynamic_context(false);
     //
-    let ai_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(&discovery_config)?);
+    let ai_discovery_agent = Arc::new(AgentFactory::create_openai_agent(&discovery_config)?);
 
     // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
     // info!("Created {} discovery agents", ai_discovery_agents.len());
 
-    Ok((ai_verify_agent, ai_discovery_agent))
+    Ok((ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent))
 }
 
 /// Process pattern analysis: generate, verify, and convert to findings
@@ -366,18 +373,15 @@ async fn process_invariants(
     let violations: Vec<InvariantFinding> = raw_invariants
         .issues()
         .iter()
-        .filter(|inv| inv.status == InvariantStatus::Holds)
+        .filter(|inv| inv.status == InvariantStatus::PossibleViolation)
         .map(|inv| inv.to_owned())
         .collect();
 
-    raw_invariants = ContractInvariants {
-        invariants: violations,
-    };
+    // raw_invariants = ContractInvariants {
+    //     invariants: violations,
+    // };
 
-    info!(
-        "{} invariant violations found!",
-        raw_invariants.invariants.len()
-    );
+    info!("{} invariant violations found!", violations.len());
 
     // Phase 2: Verify invariants
     info!("PHASE 2: VERIFY INVARIANTS");
