@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -150,9 +150,12 @@ enum ProjectType {
     Generic,
 }
 
+#[allow(dead_code)]
 fn detect_project_type(repo: &RepoPaths) -> ProjectType {
-    let repo_path = repo.root.join(&repo.repo_name);
+    detect_project_type_at_path(&repo.root.join(&repo.repo_name))
+}
 
+fn detect_project_type_at_path(repo_path: &Path) -> ProjectType {
     // Check for various configuration files
     let has_foundry =
         repo_path.join("foundry.toml").exists() || repo_path.join("forge.toml").exists();
@@ -217,7 +220,16 @@ pub fn build_slither_args(
     subfolder: Option<PathBuf>,
     json_output: bool,
 ) -> Vec<String> {
-    let project_type = detect_project_type(repo);
+    // Determine the actual target directory for Slither analysis
+    let target_path = if let Some(ref folder) = subfolder {
+        folder.clone()
+    } else {
+        repo.root.join(&repo.repo_name)
+    };
+
+    // Detect project type based on the actual target path (which may include subfolder)
+    let project_type = detect_project_type_at_path(&target_path);
+
     let mut args = vec![
         "run".to_string(),
         "--rm".to_string(),
@@ -232,21 +244,29 @@ pub fn build_slither_args(
     // Add project-specific arguments (collect flags first; add target last)
     match project_type {
         ProjectType::Foundry => {
-            args.extend([
-                "--foundry-ignore-compile".to_string(),
-                "--foundry-out-directory".to_string(),
-                "out".to_string(),
-            ]);
+            // Check if out directory exists in the target path
+            if target_path.join("out").exists() {
+                args.extend([
+                    "--foundry-ignore-compile".to_string(),
+                    "--foundry-out-directory".to_string(),
+                    "out".to_string(),
+                ]);
+            } else {
+                // Fallback: let Slither try to compile
+                log::warn!(
+                    "Foundry project detected but no 'out' directory found at {:?}",
+                    target_path
+                );
+            }
         }
         ProjectType::FoundryYarn => {
             // Let Slither compile from source (no ignore flags)
         }
         ProjectType::Hardhat => {
             // Hardhat projects typically compile to artifacts
-            let repo_path = repo.root.join(&repo.repo_name);
-            let artifacts_dir = if repo_path.join("artifacts").exists() {
+            let artifacts_dir = if target_path.join("artifacts").exists() {
                 "artifacts"
-            } else if repo_path
+            } else if target_path
                 .join("packages")
                 .join("hardhat")
                 .join("artifacts")
@@ -267,7 +287,7 @@ pub fn build_slither_args(
         }
         ProjectType::Truffle => {
             // Truffle projects typically compile to build/contracts
-            if repo.root.join(&repo.repo_name).join("build").exists() {
+            if target_path.join("build").exists() {
                 args.extend([
                     "--truffle-ignore-compile".to_string(),
                     "--truffle-build-directory".to_string(),
@@ -277,20 +297,19 @@ pub fn build_slither_args(
         }
         ProjectType::Generic => {
             // For generic projects, try to detect common build directories
-            let repo_path = repo.root.join(&repo.repo_name);
-            if repo_path.join("out").exists() {
+            if target_path.join("out").exists() {
                 args.extend([
                     "--foundry-ignore-compile".to_string(),
                     "--foundry-out-directory".to_string(),
                     "out".to_string(),
                 ]);
-            } else if repo_path.join("artifacts").exists() {
+            } else if target_path.join("artifacts").exists() {
                 args.extend([
                     "--hardhat-ignore-compile".to_string(),
                     "--hardhat-artifacts-directory".to_string(),
                     "artifacts".to_string(),
                 ]);
-            } else if repo_path.join("build").exists() {
+            } else if target_path.join("build").exists() {
                 args.extend([
                     "--truffle-ignore-compile".to_string(),
                     "--truffle-build-directory".to_string(),
