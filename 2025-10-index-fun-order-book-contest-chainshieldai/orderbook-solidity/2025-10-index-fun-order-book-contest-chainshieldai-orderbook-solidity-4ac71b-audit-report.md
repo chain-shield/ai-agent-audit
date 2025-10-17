@@ -54,16 +54,6 @@ Privilege: RequireAdminRole
 
 
 
- **Derived From** : Batch events are emitted: BatchCollateralLocked(conditionIds, users, amounts) and BatchCollateralUnlocked(conditionIds, users, amounts)
-
-[L-6]. Missing batch events in Vault.batchLockCollateral/batchUnlockCollateral desyncs indexers and enables functional DoS on off-chain systems
-Finding Status: Valid
-Status Confidence: VeryConfident
-Finding Complexity: 3
-Privilege: Permissionless
-
-
-
  **Derived From** : Mutable oracle in conditionId causes resolution/token desync after oracle rotation
 
 [M-7]. Oracle rotation desynchronizes conditionId, breaking claims and enabling contradictory roots in MarketResolver._resolveMarketEpochInternal
@@ -71,16 +61,6 @@ Finding Status: Valid
 Status Confidence: VeryConfident
 Finding Complexity: 7
 Privilege: RequireAdminRole
-
-
-
- **Derived From** : custom events PositionTokensMinted/PositionTokensBurned are emitted mirroring state changes
-
-[L-8]. Missing custom PositionTokensMinted/Burned events in PositionTokens mint/burn paths breaks referential event invariant and desynchronizes indexers
-Finding Status: Valid
-Status Confidence: VeryConfident
-Finding Complexity: 3
-Privilege: RequiresRole
 
 
 
@@ -104,26 +84,6 @@ Privilege: RequiresRole
 
 
 
- **Derived From** : Rounding lets matchers micro-fill to dodge fees and shift collateral (penny-shaving)
-
-[L-11]. Authorized matcher can split fills to zero-out per-trade fees in MarketController._executeTokenSwap/_executeAgainstMatcher
-Finding Status: Valid
-Status Confidence: Confident
-Finding Complexity: 4
-Privilege: RequiresRole
-
-
-
- **Derived From** : Emits BatchCollateralLocked(conditionIds, users, amounts) exactly once per call with arrays equal to inputs
-
-[L-12]. Vault.batchLockCollateral omits BatchCollateralLocked, desyncing indexers and enabling revert-spam DoS via stale off-chain balances
-Finding Status: Valid
-Status Confidence: VeryConfident
-Finding Complexity: 3
-Privilege: RequiresRole
-
-
-
  **Derived From** : For any (questionId, epoch, numberOfOutcomes), the conditionId used for resolution must equal keccak256(abi.encodePacked(oldOracle, questionId, numberOfOutcomes, epoch)) if tokens were minted under oldOracle
 
 [M-13]. Oracle rotation in MarketResolver.updateOracle changes conditionId and bricks claims for positions minted under old oracle
@@ -133,14 +93,6 @@ Finding Complexity: 6
 Privilege: RequireAdminRole
 
 
-
- **Derived From** : user != address(0) and userBalances[address(0)] == 0
-
-[L-14]. Vault.unlockCollateral credits zero address, blackholing collateral and breaking balance invariants
-Finding Status: Valid
-Status Confidence: VeryConfident
-Finding Complexity: 6
-Privilege: RequiresRole
 
 
 
@@ -154,15 +106,6 @@ Privilege: RequireAdminRole
 
 
 
- **Derived From** : On successful mint/burn, contract emits PositionTokensMinted/PositionTokensBurned events with correct arrays and conditionId as declared in IPositionTokens
-
-[L-16]. PositionTokens.mintBatch/burn fail to emit IPositionTokens events, breaking event contract and off-chain invariants
-Finding Status: Valid
-Status Confidence: VeryConfident
-Finding Complexity: 3
-Privilege: Permissionless
-
-
 
  **Derived From** : oracle == marketResolver.oracle() at all times
 
@@ -174,13 +117,6 @@ Privilege: RequireAdminRole
 
 
 
- **Derived From** : For existing q, conditionId must be computed with numberOfOutcomes == getOutcomeCount(q): getConditionId(oracle,q,k,epoch) == keccak256(abi.encodePacked(oracle,q,getOutcomeCount(q),(epoch==0? getCurrentEpoch(q): epoch)))
-
-[L-18]. MarketContract.getConditionId accepts caller-supplied outcomeCount, causing conditionId drift and unclaimable markets
-Finding Status: Valid
-Status Confidence: VeryConfident
-Finding Complexity: 7
-Privilege: RequiresRole
 
 
 
@@ -193,14 +129,6 @@ Finding Complexity: 3
 Privilege: RequiresRole
 
 
-
- **Derived From** : On mint/burn, the contract should emit IPositionTokens.PositionTokensMinted/PositionTokensBurned with arrays and conditionId matching the operation
-
-[L-20]. PositionTokens fails to emit custom mint/burn events (no conditionId), breaking referential event invariant and off-chain observability
-Finding Status: Valid
-Status Confidence: VeryConfident
-Finding Complexity: 3
-Privilege: Permissionless
 
 
 ### Number of Findings
