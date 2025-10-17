@@ -159,7 +159,24 @@ pub async fn generate_audit_scope(repo: &RepoPaths) -> Result<String> {
         return Ok(cached);
     }
 
-    let audit_scope = repo.extract_content_from_scope_file()?;
+    let mut audit_scope = "#r 
+
+        ## Privileged Roles 
+
+        All Privileged Roles are TRUSTED by default unless listed as untrusted below.
+
+        Errors and misuse committed by admin (or any other privileged role) are considered
+        **governance risk, NOT vulnerabilities**.  They will get marked as Low or Informational.
+
+        *Caveat*: If the admin can accidentally brick the protocol even while following spec (no malice or error) 
+        — that can rise to Medium. 
+        Example: a valid function like updateFee() can unintentionally revert all 
+        deposits if called with a certain boundary value, even though the admin followed expected usage.
+#".to_string();
+
+    let protocol_specific_audit_scope = repo.extract_content_from_scope_file()?;
+
+    audit_scope.push_str(&format!("\n\n {}", protocol_specific_audit_scope));
 
     // 1 . gather IR + storage  (re-use existing function)
     log::info!("get audit scope from file...");

@@ -7,7 +7,7 @@ Before instructions are provided on the task please note required output format:
 **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
 {
-    "severity": "High | Medium | Low | informational",
+    "severity": "High | Medium | Low | Info", (only provide if finding is finding is NOT invalid and differs from listed severity)
     "severity_justification": "Explain why you assigned this severity",
     "status": "Valid | Invalid | OutOfScope | NeedsMoreInfo",
     "status_justification": "if invalid, out of scope, or needs more info, please explain why",

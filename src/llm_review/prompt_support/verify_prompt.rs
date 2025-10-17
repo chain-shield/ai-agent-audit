@@ -35,7 +35,7 @@ Carefully trace the code to verify issue validity.
 
 Based on your assessment please provided the following:
 
-*Severity:* High | Medium | Low | informational  ({contest} rubric is provided)
+*Severity:* High | Medium | Low | Info  (only provide if finding is finding is NOT invalid and differs from listed severity)
 *Finding Severity Justification:* Explain why you assigned this severity. 
 *Finding Status:* Valid | Invalid | OutOfScope | NeedsMoreInfo
 *Status Justification:* if invalid, out of scope, or needs more info, please explain why.

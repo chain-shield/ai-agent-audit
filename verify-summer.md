@@ -6,7 +6,8 @@ For this security vulnerability posted above follow these steps, please
 1. is the bug IN SCOPE ?
 
 if its in scope then...
-2. honest assessment: is bug legit? does protocol have safeguards against it? is it realistic for an attacker to exploit?
+2. honest assessment: is bug legit? does protocol have safeguards against it? is it realistic for an attacker to exploit? does this exploit work under normal market conditions?
+are there any external dependencies that cannot be seen and analyzed (creating uncertainly about validity of finding)?
 is 'Derived From' pattern/invariant assumption correct? 
 If yes to ALL of the above then...
 

@@ -9,7 +9,9 @@ use crate::{
         context_state::{generate_audit_scope, get_metadata_context},
         enums::{AIAgent, Severity},
         findings::{Finding, Findings},
-        prompt_support::{post_verify::POST_VERIFY, verify_prompt::generate_verify_prompt},
+        prompt_support::{
+            post_verify::POST_VERIFY, pre_verify::PRE_VERIFY, verify_prompt::generate_verify_prompt,
+        },
         semaphore::VERIFY_SEM,
         utils::prompt_context::generate_prompt_for_issue_check,
     },
@@ -68,7 +70,7 @@ pub enum FindingConfidence {
 /// Verification result for a potential vulnerability
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LegitVulnerability {
-    pub severity: Severity,
+    pub severity: Option<Severity>,
     pub severity_justification: Option<String>,
     pub status: FindingStatus,
     pub status_justification: Option<String>,
@@ -164,8 +166,8 @@ pub async fn execute(
         Arc::new(verify_prompt.to_string())
     } else {
         Arc::new(format!(
-            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
-            &verify_prompt, &audit_scope
+            "{}\n {}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
+            PRE_VERIFY,&verify_prompt, &audit_scope
         ))
     };
     // info!("verify prompt + scope => {}", verify_prompt_plus_scope);
@@ -236,7 +238,7 @@ pub async fn execute(
         .map(|(idx, f)| {
             let legit_findings = legit_findings_vec[idx].clone();
             let enriched_finding = Finding {
-                severity: legit_findings.severity,
+                severity: legit_findings.severity.unwrap_or(f.severity),
                 severity_justification: legit_findings.severity_justification,
                 status: Some(legit_findings.status),
                 status_justification: legit_findings.status_justification,
@@ -285,7 +287,7 @@ mod tests {
     #[test]
     fn test_legit_vulnerability_serialization_complete() {
         let vuln = LegitVulnerability {
-            severity: Severity::High,
+            severity: Some(Severity::High),
             severity_justification: Some("Direct fund loss possible".to_string()),
             status: FindingStatus::Valid,
             status_justification: Some("Confirmed vulnerability".to_string()),
@@ -305,7 +307,7 @@ mod tests {
     #[test]
     fn test_legit_vulnerability_serialization_minimal() {
         let vuln = LegitVulnerability {
-            severity: Severity::Info,
+            severity: Some(Severity::Info),
             severity_justification: None,
             status: FindingStatus::Invalid,
             status_justification: None,
@@ -334,7 +336,7 @@ mod tests {
         }"#;
 
         let vuln: LegitVulnerability = serde_json::from_str(json).expect("Failed to deserialize");
-        assert_eq!(vuln.severity, Severity::High);
+        assert_eq!(vuln.severity, Some(Severity::High));
         assert_eq!(vuln.status, FindingStatus::Valid);
         assert_eq!(vuln.status_confidence, FindingConfidence::VeryConfident);
         assert_eq!(vuln.finding_complexity, 7);
@@ -538,7 +540,7 @@ mod tests {
         "#;
 
         let vuln: LegitVulnerability = serde_json::from_str(json).expect("Failed to deserialize");
-        assert_eq!(vuln.severity, Severity::High);
+        assert_eq!(vuln.severity, Some(Severity::High));
         assert_eq!(vuln.status, FindingStatus::Valid);
         assert_eq!(vuln.finding_complexity, 7);
     }
@@ -580,14 +582,14 @@ mod tests {
         }"#;
 
         let vuln: LegitVulnerability = serde_json::from_str(json).expect("Failed to deserialize");
-        assert_eq!(vuln.severity, Severity::Info);
+        assert_eq!(vuln.severity, Some(Severity::Info));
     }
 
     /// Test round-trip serialization/deserialization
     #[test]
     fn test_legit_vulnerability_round_trip() {
         let original = LegitVulnerability {
-            severity: Severity::Critical,
+            severity: Some(Severity::Critical),
             severity_justification: Some("Complete protocol takeover".to_string()),
             status: FindingStatus::Valid,
             status_justification: Some("Exploit confirmed in tests".to_string()),
@@ -626,7 +628,7 @@ mod tests {
     #[test]
     fn test_legit_vulnerability_defaults() {
         let vuln = LegitVulnerability::default();
-        assert_eq!(vuln.severity, Severity::Info); // Default from Severity enum
+        assert_eq!(vuln.severity, Some(Severity::Info)); // Default from Severity enum
         assert_eq!(vuln.status, FindingStatus::Invalid); // Default from FindingStatus enum
         assert_eq!(vuln.status_confidence, FindingConfidence::SomeWhatConfident); // Default from FindingConfidence enum
         assert_eq!(vuln.finding_complexity, 0); // Default u8
