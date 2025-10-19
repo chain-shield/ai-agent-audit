@@ -99,6 +99,7 @@ pub mod llm_review {
         pub mod patterns;
     }
     pub mod phases {
+        pub mod add_poc_findings;
         /// Phase 1: AI-driven file selection and context prefetching
         pub mod prefetch_context;
         /// Phase 5: Quality assurance and final finding refinement
@@ -122,14 +123,17 @@ pub mod llm_review {
         pub mod prompt_context;
         /// AI agent builders and utilities
         pub mod review_utils;
+        pub mod save_run_poc;
     }
     /// Prompt engineering modules for different analysis stages
     pub mod prompt_support {
         /// Deduplication prompts
         pub mod dedup;
         pub mod extractor_prompt;
+        pub mod make_poc_prompt;
         pub mod planner_prompt;
         pub mod post_file_select_prompt;
+        pub mod post_poc;
         /// Post-analysis prompts
         pub mod post_prompt;
         /// Quality check prompts

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::{
     config::{CHAINSHIELD_DB_FOLDER, REPO_DATA_DB},
     llm_review::context_state::get_metadata_context,
-    prepare_code::git_clone::RepoPaths,
+    prepare_code::git_clone::{PocConfig, RepoPaths},
 };
 
 /// Represents complete repository data with all metadata
@@ -223,6 +223,7 @@ impl RepoData {
             .transpose()?;
 
         Ok(RepoPaths {
+            poc: PocConfig::default(),
             project_id: self.project_id.clone(),
             root: PathBuf::from(&self.root),
             sol_files,

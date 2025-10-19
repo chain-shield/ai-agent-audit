@@ -28,7 +28,7 @@ Your task: decide if a reported issue is valid and would likely receive **≥ Me
 
 Consider the following Criteria:
 1. Is issue in scope? (if scope is provided)
-2. Is this issue valid? Does protocol have safeguards against it? Is it realistic for an attacker to exploit under normal market conditions? are there any external depedencies that cannot be seen and analyzed (creating uncertainly about validity of finding)?
+2. Is this issue valid? Does protocol have safeguards against it? Are there any external depedencies that cannot be seen and analyzed (creating uncertainly about validity of finding)?
 3. Would it likely receive **≥ Medium severity** in a {contest} contest
 
 Carefully trace the code to verify issue validity.

@@ -19,6 +19,10 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 * **Dust amounts** (rounding errors, marginal fee variations) → QA/Low.
 * **Real amounts** → Severity depends on conditions and likelihood.
 
+## Finding Likelihood
+* A High Impact Low Likelihood Finding = Medium or High
+* However, Low Likelihood Finding that is NOT High Impact -> QA/Low
+
 ### Loss of Yield
 
 * **Matured yield** loss = High (same as capital).

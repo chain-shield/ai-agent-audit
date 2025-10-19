@@ -114,7 +114,7 @@ pub async fn review_codebase_for_security_issues_v2(
                 }
 
                 if !raw_findings.findings.is_empty() {
-                    // Phase 3: Verify findings and remove false positives
+                    // Phase 4: Verify findings and remove false positives
                     let verify_findings = phases::verify_findings::execute(
                         raw_findings,
                         &codeblock,
@@ -123,19 +123,8 @@ pub async fn review_codebase_for_security_issues_v2(
                     )
                     .await?;
 
-                    // // Phase 3a: Scope findings (only if scope provided)
-                    // if !scope.is_empty() {
-                    //     verify_findings = phases::scope_findings::execute(
-                    //         verify_findings,
-                    //         &codeblock,
-                    //         &verify_agent,
-                    //         &repo_clone,
-                    //     )
-                    //     .await?;
-                    // }
-
-                    // Phase 4: Quality check and enhance findings
-                    let final_findings = phases::quality_check::execute(
+                    // Phase 5: Quality check and enhance findings
+                    let mut quality_findings = phases::quality_check::execute(
                         verify_findings,
                         &codeblock,
                         &verify_agent,
@@ -143,15 +132,37 @@ pub async fn review_codebase_for_security_issues_v2(
                     )
                     .await?;
 
+                    // Phase 6: PoC Generation for High-Severity Findings
+                    // REQUIREMENTS: instructions for writing PoC plus template PoC file (if applicable)
+                    // 1. Write runnable PoC for Critical, High, and Medium findings
+                    // 2. Save PoC to test folder of repo
+                    // 3. Run PoC and capture results
+                    // 4. Have LLM fix PoC if it fails (up to 5 attempts)
+                    // 5. Mark finding as invalid if PoC cannot be created
+
+                    // If instructions and test folder provided, create and run PoC tests
+                    if !repo_clone.poc.instructions.is_empty()
+                        && repo_clone.poc.test_folder.exists()
+                    {
+                        // Phase 6: Write PoC for each Critical, High, and Medium Finding
+                        quality_findings = phases::add_poc_findings::execute(
+                            quality_findings,
+                            &codeblock,
+                            &verify_agent,
+                            &repo_clone,
+                        )
+                        .await?;
+                    }
+
                     // Save findings to database before extending
                     let db = results_db.lock().await;
-                    if let Err(e) = db.insert_findings(&final_findings, &repo_clone) {
+                    if let Err(e) = db.insert_findings(&quality_findings, &repo_clone) {
                         log::warn!("Failed to save findings to database: {}", e);
                     }
 
                     // Extend the aggregate findings
                     let mut all_findings = all_issues.lock().await;
-                    all_findings.findings.extend(final_findings.findings);
+                    all_findings.findings.extend(quality_findings.findings);
                 }
                 Ok(())
             }
@@ -176,47 +187,6 @@ pub async fn review_codebase_for_security_issues_v2(
     Ok(deduped)
 }
 
-// combine codeblock with original file context (that codeblock came from)
-// this contains natspec and additional context
-// pub async fn enhance_codeblock(
-//     contract: &str,
-//     codeblock: &str,
-//     repo: &RepoPaths,
-// ) -> anyhow::Result<String> {
-//     let file = get_file_from_contract(contract, repo)
-//         .await
-//         .expect("cound not find file contract is from, contract not in scope");
-//
-//     let file_content = fs::read_to_string(&file).await?;
-//
-//     let filename = file.strip_prefix(&repo.root)?;
-//     info!("{} contains contract {}", filename.display(), contract);
-//
-//     // NOTE: calculate token count of full prompt to make sure does NOT exceed TOKEN_BUDGET
-//     let context = get_metadata_context(repo, &ContextType::Full)
-//         .await
-//         .expect("context could not be retrieved");
-//
-//     let full_prompt_with_enhancement = format!("{}{}{}", codeblock, &file_content, context);
-//     let full_prompt_size = get_token_count(&full_prompt_with_enhancement);
-//
-//     let enhanced_block = if full_prompt_size < TOKEN_BUDGET {
-//         format!(
-//             "{} \n\n {}: \n\n {}",
-//             codeblock,
-//             filename.display(),
-//             file_content
-//         )
-//     } else {
-//         info!(
-//             "NOTE: token limit exceeded ({} tokens > {} limit) for contract {} prompt with enhancement, skipping enhancement",
-//             full_prompt_size, TOKEN_BUDGET, contract
-//         );
-//         codeblock.to_string()
-//     };
-//
-//     Ok(enhanced_block)
-// }
 pub async fn generate_ai_agents(
     repo: &RepoPaths,
 ) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Arc<AIAgent>)> {
@@ -228,22 +198,6 @@ pub async fn generate_ai_agents(
 You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
 *confirming* reported issues.";
 
-    // You have access to retrieve_file_content tool that can search through different types of code files:
-    // - 'source': Main application code and smart contracts
-    // - 'test': Test files and test cases
-    // - 'script': Deployment and build scripts
-    // - 'library': Library and utility code
-    //
-    // Use them to:
-    // 1. Check that a reported vulnerability exists in the *current* source code.
-    // 2. Check if vulnerability is accurately reported
-    // 3. Cross-reference with tests to understand intended behaviour.
-    // 4. Inspect deployment scripts for mis-configurations.
-    // 5. Verify library or inherited-contract logic.
-    //
-    // When formulating queries for the retrieve_file_content, keep them concise and focused (**under 1000 words**) to avoid exceeding embedding model context limits.
-    // ";
-
     // Create verification agent using OpenAI O3
     let verify_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5")
@@ -251,7 +205,7 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         .with_file_picker(false); // Disabled to avoid rate limits
 
     let finding_verify_config = AgentConfig::new(Some(repo.clone()))
-        .with_temperature(1.0)
+        .with_temperature(0.2)
         .with_model(CLAUDE_4_5_SONNET)
         .with_max_tokens(64_000)
         .with_preamble(verify_preamble)
@@ -356,7 +310,7 @@ async fn process_invariants(
 
     // Phase 1: Generate invariants
     info!("PHASE 1: GENERATE INVARIANTS");
-    let mut raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
+    let raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
         invariant_prompt,
         codeblock,
         ai_discovery_agent,
