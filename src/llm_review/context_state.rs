@@ -118,6 +118,7 @@ pub async fn generate_context_for_code_review(
     //         file_summaries.push_str("\n\n");
     //     }
     // }
+
     // full_prompt_context.push_str(&file_summaries);
     full_prompt_context.push_str(&slither_metadata);
 

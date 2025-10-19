@@ -54,6 +54,18 @@ pub struct Cli {
     #[arg(long)]
     pub scoped_files: Option<String>,
 
+    /// Optional instructions for writing PoC plus command to run PoC
+    #[arg(long)]
+    pub poc_instructions: Option<String>,
+
+    /// Optional provide poc template (and inherited contracts)  for creating PoC tests
+    #[arg(long)]
+    pub poc_template: Option<String>,
+
+    /// Optional provide test folder where poc template should be saved (relative path)
+    #[arg(long)]
+    pub test_folder: Option<String>,
+
     /// Builder type (foundry, hardhat, custom, auto)
     #[arg(long, default_value_t = BuilderType::Auto)]
     pub builder: BuilderType,

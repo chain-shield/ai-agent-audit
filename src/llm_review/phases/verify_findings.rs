@@ -13,7 +13,7 @@ use crate::{
             post_verify::POST_VERIFY, pre_verify::PRE_VERIFY, verify_prompt::generate_verify_prompt,
         },
         semaphore::VERIFY_SEM,
-        utils::prompt_context::generate_prompt_for_issue_check,
+        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -189,6 +189,7 @@ pub async fn execute(
                     &arc_findings.findings[i],
                     &verify_prompt_and_scope,
                     POST_VERIFY,
+                    FindingReportType::Standard,
                 );
 
                 // add to cost
@@ -199,14 +200,16 @@ pub async fn execute(
                 let is_finding_legit = is_legit_struct.status == FindingStatus::Valid;
                 if !is_finding_legit {
                     info!(
-                        "{} is NOT legit => {}",
+                        "{} is {} => {}",
                         arc_findings.findings[i].title,
+                        arc_findings.findings[i].status.unwrap_or_default(),
                         &is_legit_struct
                             .status_justification
                             .clone()
                             .unwrap_or_default()
                     );
                 }
+
                 let mut legit_findings_vec = arc_legit_findings_vec.lock().await;
                 legit_findings_vec[i] = is_legit_struct;
 

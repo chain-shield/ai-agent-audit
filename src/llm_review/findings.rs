@@ -7,7 +7,10 @@ use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::{
         enums::EnumString,
-        phases::verify_findings::{FindingConfidence, FindingStatus},
+        phases::{
+            add_poc_findings::PocStatus,
+            verify_findings::{FindingConfidence, FindingStatus},
+        },
     },
     utils::semantic_compare,
 };
@@ -15,8 +18,8 @@ use regex::Regex;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::{collections::HashMap, path::PathBuf};
 use strum_macros::EnumIter;
 use tokio::sync::Mutex;
 
@@ -38,6 +41,9 @@ pub struct Finding {
     pub impact: Option<String>, // Impact of Issue
     pub proof_of_concept: Option<String>, // Demonstrate how issue can be exploited by hacker
     pub proof_of_code: Option<String>, // Write Foundry Unit test to prove issue exists
+    pub poc_test_file: Option<PathBuf>,
+    pub poc_test_command: Option<String>,
+    pub poc_test_status: Option<PocStatus>,
     #[schemars(description = "Severity level: Critical, High, Medium, Low, Info")]
     pub severity: Severity, //severity of issue
     pub mitigation: Option<String>,
@@ -108,10 +114,17 @@ impl Finding {
         let fn_name = self.get_fn_name();
 
         if let Some(derived) = self.derived_from.clone() {
-            format!("{}-{}-{}", derived.to_string(), self.contract, fn_name)
+            format!(
+                "{}-{}-{}-{}",
+                self.title.replace(" ", "-"),
+                derived.to_string(),
+                self.contract,
+                fn_name
+            )
         } else {
             format!(
-                "{}-{}-{}",
+                "{}-{}-{}-{}",
+                self.title.replace(" ", "-"),
                 self.exploit_type.as_str(),
                 self.contract,
                 fn_name

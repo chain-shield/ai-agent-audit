@@ -11,18 +11,19 @@ pub fn generate_prompt_for_issue_check(
     finding: &Finding,
     instructions: &str,
     post_instructions: &str,
+    report_type: FindingReportType,
 ) -> String {
     let mut prompt = format!("{}{}", instructions, post_instructions);
 
     prompt.push_str("\n\n");
-    prompt.push_str("## REPORT FOR SECURITY ISSUE");
+    prompt.push_str("## REPORT FOR SECURITY FINDING");
     prompt.push_str("\n\n");
 
-    let report = get_finding_report(finding, None, FindingReportType::Standard);
+    let report = get_finding_report(finding, None, report_type);
     prompt.push_str(&report);
     prompt.push_str("\n\n");
 
-    prompt.push_str("## CODEBASE WHERE ISSUE WAS FOUND");
+    prompt.push_str("## CODEBASE WHERE FINDING WAS FOUND");
     prompt.push_str("\n\n");
 
     prompt.push_str(code);
@@ -105,6 +106,7 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
 pub enum FindingReportType {
     Standard,
     Enhanced,
+    NoPoC,
 }
 
 pub fn get_finding_report(
@@ -195,10 +197,12 @@ pub fn get_finding_report(
     findings_report.push_str(&finding.proof_of_concept.clone().unwrap_or_default());
     findings_report.push_str("\n\n");
 
-    //Proof of Code
-    findings_report.push_str("## Proof of Code\n");
-    findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
-    findings_report.push_str("\n\n");
+    if report_type != FindingReportType::NoPoC {
+        //Proof of Code
+        findings_report.push_str("## Proof of Code\n");
+        findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
+        findings_report.push_str("\n\n");
+    }
 
     //Suggested Fix
     findings_report.push_str("## Suggested Mitigation\n");
