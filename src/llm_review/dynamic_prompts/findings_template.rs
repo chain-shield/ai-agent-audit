@@ -1,16 +1,15 @@
 use crate::{
-    config::{AuditType, AUDIT_TYPE},
+    config::{AUDIT_TYPE, AuditType},
     llm_review::{
         enums::{
-            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
-            EnumString, Severity,
+            EnumData, Severity, all_enum_variants, generate_enum_bulleted_list, generate_enum_list,
         },
         findings::PrivilegeLevel,
         prompt_support::severity_rubics::{CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC},
     },
 };
 
-pub fn generate_findings_prompt<T: EnumData + EnumString>(
+pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
     issue_type: &str,
     issue_definition: &str,
     issue_full_spec: &str,
@@ -54,7 +53,7 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
         "#,
         pattern_type = issue_type,
         rubric = severity_rubic,
-        pattern_name = issue_enum.as_str(),
+        pattern_name = issue_enum.to_string(),
         pattern_def = issue_definition,
         exploit_bullets = exploit_bullets,
         full_spec = issue_full_spec,
@@ -64,7 +63,7 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
 
 pub fn get_findings_json_requirement<T>(pattern: &T, pattern_description: &str) -> String
 where
-    T: EnumString + EnumData,
+    T: std::fmt::Display + EnumData,
 {
     let issue_list = generate_enum_list(pattern.to_types());
     let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());

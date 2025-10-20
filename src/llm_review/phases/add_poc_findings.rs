@@ -405,6 +405,29 @@ pub async fn execute(
                     }
                 }
 
+                // If PoC has compilation errors, delete the test file to prevent cross-contamination
+                // with subsequent PoC tests (since Foundry compiles all test files).
+                // Note: We only delete ErrorRunningTests (compilation errors), not FailingTests
+                // (which compile but have failing assertions - those won't break other tests).
+                if matches!(
+                    poc_test.poc_test_status,
+                    PocStatus::ErrorRunningTests | PocStatus::FindingIsInvalid
+                ) {
+                    if poc_test.poc_test_file.exists() {
+                        log::warn!(
+                            "🗑️  Deleting PoC test file with compilation errors to prevent cross-contamination: {}",
+                            poc_test.poc_test_file.display()
+                        );
+                        if let Err(e) = std::fs::remove_file(&poc_test.poc_test_file) {
+                            log::error!(
+                                "Failed to delete PoC test file {}: {:?}",
+                                poc_test.poc_test_file.display(),
+                                e
+                            );
+                        }
+                    }
+                }
+
                 // save final PoC results
                 let mut poc_test_vec = arc_poc_test_vec.lock().await;
                 poc_test_vec.push(poc_test);

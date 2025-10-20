@@ -1,4 +1,4 @@
-use crate::llm_review::invariants::{InvariantStatus, InvariantType};
+use crate::llm_review::invariants::InvariantType;
 use log::info;
 /// AI agent and vulnerability type enumerations.
 ///
@@ -6,12 +6,12 @@ use log::info;
 /// categorization, providing unified interfaces for different AI providers
 /// and systematic vulnerability detection across 19+ security categories.
 use schemars::JsonSchema;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     invariant_prompts::{
         arithmetic::ARITHMETIC, balance::BALANCE, permission::PERMISSION, referential::REFERENTIAL,
         state_machine::STATE_MACHINE, temporal::TEMPORAL,
@@ -105,7 +105,22 @@ where
 /// ------------------------------------------------------------------
 /// 1.  Strict-typed severity enum
 /// ------------------------------------------------------------------
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    JsonSchema,
+    EnumIter,
+    Serialize,
+    Deserialize, // ✅ Use serde's derive - LLMs return exact PascalCase
+    strum_macros::EnumString,
+    strum_macros::Display,
+)]
+#[strum(ascii_case_insensitive)]
+#[serde(rename_all = "PascalCase")]
 pub enum Severity {
     Critical,
     High,
@@ -114,7 +129,22 @@ pub enum Severity {
     Info,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    JsonSchema,
+    EnumIter,
+    Serialize,
+    Deserialize, // ✅ Use serde's derive - LLMs return exact PascalCase
+    strum_macros::EnumString,
+    strum_macros::Display,
+)]
+#[strum(ascii_case_insensitive)]
+#[serde(rename_all = "PascalCase")]
 pub enum VulnerabilityType {
     AccessControl,
     ArrayLimits,
@@ -166,11 +196,25 @@ pub enum VulnerabilityType {
     ERC777HookReentrancy,  // reentrancy via ERC777 hooks
     ERC4626SharePrice,     // vault exchange-rate/share-price bugs
     Custom,
+
+    // added 10/20/2025
+    // Authority & Governance
+    BeaconFactoryAuthorityDrift,
+    TimelockEdgeCase,
+
+    // Reentrancy & Ordering
+    CallOrderingOrCEI,
+    MulticallCrossPathReentrancy,
+
+    // Oracles / MEV
+    OracleHeartbeatFreshness,
+    TWAPWindowPinning,
+
+    // Accounting
+    ForcedAssetVsStrictEquality,
 }
 
-pub trait EnumString {
-    fn as_str(&self) -> &'static str;
-}
+// EnumString trait removed - use strum's Display trait (to_string()) instead!
 
 pub trait EnumData {
     type Spec;
@@ -179,11 +223,11 @@ pub trait EnumData {
     // get predicate or defintion of patten
 }
 
-pub fn generate_enum_list<T: EnumString>(patterns: &[T]) -> String {
+pub fn generate_enum_list<T: std::fmt::Display>(patterns: &[T]) -> String {
     let mut enum_list = String::new();
     let top_pattern_count = patterns.len();
     for (i, pattern) in patterns.iter().enumerate() {
-        enum_list.push_str(pattern.as_str());
+        enum_list.push_str(&pattern.to_string());
         if i < top_pattern_count - 1 {
             enum_list.push_str("|");
         }
@@ -191,11 +235,11 @@ pub fn generate_enum_list<T: EnumString>(patterns: &[T]) -> String {
     enum_list
 }
 
-pub fn generate_enum_bulleted_list<T: EnumString>(patterns: &[T]) -> String {
+pub fn generate_enum_bulleted_list<T: std::fmt::Display>(patterns: &[T]) -> String {
     let mut enum_list = String::new();
     enum_list.push_str("\n");
     for pattern in patterns {
-        enum_list.push_str(&format!("- {}", pattern.as_str()));
+        enum_list.push_str(&format!("- {}", pattern.to_string()));
         enum_list.push_str("\n");
     }
     enum_list
@@ -205,96 +249,7 @@ pub fn all_enum_variants<T: IntoEnumIterator>() -> Vec<T> {
     T::iter().collect()
 }
 
-impl EnumString for Severity {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Severity::Critical => "Critical",
-            Severity::High => "High",
-            Severity::Medium => "Medium",
-            Severity::Low => "Low",
-            Severity::Info => "Info",
-        }
-    }
-}
-
-impl EnumString for InvariantType {
-    fn as_str(&self) -> &'static str {
-        match self {
-            InvariantType::Arithmetic => "Arithmetic",
-            InvariantType::Balance => "Balance",
-            InvariantType::Permission => "Permission",
-            InvariantType::Temporal => "Temporal",
-            InvariantType::Referential => "Referential",
-            InvariantType::StateMachine => "StateMachine",
-        }
-    }
-}
-
-impl EnumString for InvariantStatus {
-    fn as_str(&self) -> &'static str {
-        match self {
-            InvariantStatus::Holds => "Holds",
-            InvariantStatus::PossibleViolation => "PossibleViolation",
-        }
-    }
-}
-
-impl EnumString for VulnerabilityType {
-    fn as_str(&self) -> &'static str {
-        match self {
-            VulnerabilityType::Oracle => "Oracle",
-            VulnerabilityType::AccessControl => "AccessControl",
-            VulnerabilityType::FrontrunMev => "FrontrunMev",
-            VulnerabilityType::UnexpectedEth => "UnexpectedEth",
-            VulnerabilityType::Pragma => "Pragma",
-            VulnerabilityType::Randomness => "Randomness",
-            VulnerabilityType::TxOrigin => "TxOrigin",
-            VulnerabilityType::ZeroCode => "ZeroCode",
-            VulnerabilityType::SelfDestruct => "SelfDestruct",
-            VulnerabilityType::StorageLayout => "StorageLayout",
-            VulnerabilityType::ReplayAttack => "ReplayAttack",
-            VulnerabilityType::ShortAddress => "ShortAddress",
-            VulnerabilityType::IntegerMath => "IntegerMath",
-            VulnerabilityType::UncheckedReturn => "UncheckedReturn",
-            VulnerabilityType::Dos => "Dos",
-            VulnerabilityType::DefaultVisibility => "DefaultVisibility",
-            VulnerabilityType::Inheritance => "Inheritance",
-            VulnerabilityType::ConfidentialData => "ConfidentialData",
-            VulnerabilityType::Reentrancy => "Reentrancy",
-            VulnerabilityType::ArrayLimits => "ArrayLimits",
-            VulnerabilityType::UpgradeabilityInitializerSafety => "UpgradeabilityInitializerSafety",
-            VulnerabilityType::PausableEmergencyStop => "PausableEmergencyStop",
-            VulnerabilityType::TimestampDependentLogic => "TimestampDependentLogic",
-            VulnerabilityType::FlashLoanEconomicManipulation => "FlashLoanEconomicManipulation",
-            VulnerabilityType::DelegatecallLowLevelOps => "DelegatecallLowLevelOps",
-            VulnerabilityType::SignatureMalleability => "SignatureMalleability",
-            VulnerabilityType::EventConsistency => "EventConsistency",
-            VulnerabilityType::GasGriefBlockLimit => "GasGriefBlockLimit",
-            VulnerabilityType::IntegerOverflow => "IntegerOverflow",
-            // New additions
-            VulnerabilityType::PricePrecision => "PricePrecision",
-            VulnerabilityType::RoundingError => "RoundingError",
-            VulnerabilityType::FeeOnTransferAssumption => "FeeOnTransferAssumption",
-            VulnerabilityType::UncheckedERC20Return => "UncheckedERC20Return",
-            VulnerabilityType::SignatureReplay => "SignatureReplay",
-            VulnerabilityType::AuthByPass => "AuthByPass",
-            VulnerabilityType::UntrustedDelegateCall => "UntrustedDelegateCall",
-            VulnerabilityType::TimestampManipulation => "TimestampManipulation",
-            VulnerabilityType::CrossChainMessageSpoofing => "CrossChainMessageSpoofing",
-            VulnerabilityType::AccountingInvariantViolation => "AccountingInvariantViolation",
-            VulnerabilityType::SlippageMissingOrInsufficient => "SlippageMissingOrInsufficient",
-            VulnerabilityType::Custom => "Custom",
-            VulnerabilityType::StandardViolation => "StandardViolation",
-            VulnerabilityType::AllowanceRace => "AllowanceRace",
-            VulnerabilityType::PermitDomainSeparator => "PermitDomainSeparator",
-            VulnerabilityType::PermitNonceMisuse => "PermitNonceMisuse",
-            VulnerabilityType::PermitDeadlineBypass => "PermitDeadlineBypass",
-            VulnerabilityType::ERC20DecimalsMismatch => "ERC20DecimalsMismatch",
-            VulnerabilityType::ERC777HookReentrancy => "ERC777HookReentrancy",
-            VulnerabilityType::ERC4626SharePrice => "ERC4626SharePrice",
-        }
-    }
-}
+// No longer needed! strum's Display trait provides to_string() for free
 
 impl Default for Severity {
     fn default() -> Self {
@@ -649,6 +604,13 @@ impl VulnerabilityType {
             VulnerabilityType::ERC20DecimalsMismatch => "ERC20 Decimals Mismatch",
             VulnerabilityType::ERC777HookReentrancy => "ERC777 Hook Reentrancy",
             VulnerabilityType::ERC4626SharePrice => "ERC4626 Share Price",
+            VulnerabilityType::BeaconFactoryAuthorityDrift => "Beacon Factory Authority Drift",
+            VulnerabilityType::TimelockEdgeCase => "Timelock Edge Case",
+            VulnerabilityType::CallOrderingOrCEI => "Call Ordering Or CEI",
+            VulnerabilityType::MulticallCrossPathReentrancy => "Multicall Cross Path Reentrancy",
+            VulnerabilityType::OracleHeartbeatFreshness => "Oracle Heartbeat Freshness",
+            VulnerabilityType::TWAPWindowPinning => "TWAP Window Pinning",
+            VulnerabilityType::ForcedAssetVsStrictEquality => "Forced Asset Vs Strict Equality",
         }
     }
 
@@ -679,223 +641,7 @@ impl VulnerabilityType {
     }
 }
 
-/// ----- Serde glue --------------------------------------------------
-/// * Accepts any case-insensitive spelling: "high", "HIGH", "High" …
-impl<'de> Deserialize<'de> for Severity {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: String = Deserialize::deserialize(deserializer)?;
-        match s.to_ascii_lowercase().as_str() {
-            "critical" => Ok(Severity::Critical),
-            "high" => Ok(Severity::High),
-            "medium" => Ok(Severity::Medium),
-            "low" => Ok(Severity::Low),
-            "info" => Ok(Severity::Info),
-            other => Err(de::Error::unknown_variant(
-                other,
-                &["Critical", "High", "Medium", "Low", "Info"],
-            )),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for InvariantType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: String = Deserialize::deserialize(deserializer)?;
-        match s.to_ascii_lowercase().as_str() {
-            "arithmetic" => Ok(InvariantType::Arithmetic),
-            "balance" => Ok(InvariantType::Balance),
-            "permission" => Ok(InvariantType::Permission),
-            "temporal" => Ok(InvariantType::Temporal),
-            "referential" => Ok(InvariantType::Referential),
-            "statemachine" => Ok(InvariantType::StateMachine),
-            other => Err(de::Error::unknown_variant(
-                other,
-                &[
-                    "Arithmetic",
-                    "Balance",
-                    "Permission",
-                    "Temporal",
-                    "Referential",
-                    "StateMachine",
-                ],
-            )),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for InvariantStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: String = Deserialize::deserialize(deserializer)?;
-        match s.to_ascii_lowercase().as_str() {
-            "holds" => Ok(InvariantStatus::Holds),
-            "possibleviolation" => Ok(InvariantStatus::PossibleViolation),
-            other => Err(de::Error::unknown_variant(
-                other,
-                &["holds", "possibleviolation"],
-            )),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for VulnerabilityType {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: String = Deserialize::deserialize(deserializer)?;
-        match s.to_ascii_lowercase().as_str() {
-            "oracle" => Ok(VulnerabilityType::Oracle),
-            "accesscontrol" => Ok(VulnerabilityType::AccessControl),
-            "frontrunmev" => Ok(VulnerabilityType::FrontrunMev),
-            "unexpectedeth" => Ok(VulnerabilityType::UnexpectedEth),
-            "pragma" => Ok(VulnerabilityType::Pragma),
-            "randomness" => Ok(VulnerabilityType::Randomness),
-            "txorigin" => Ok(VulnerabilityType::TxOrigin),
-            "zerocode" => Ok(VulnerabilityType::ZeroCode),
-            "selfdestruct" => Ok(VulnerabilityType::SelfDestruct),
-            "storagelayout" => Ok(VulnerabilityType::StorageLayout),
-            "replayattack" => Ok(VulnerabilityType::ReplayAttack),
-            "shortaddress" => Ok(VulnerabilityType::ShortAddress),
-            "integermath" => Ok(VulnerabilityType::IntegerMath),
-            "uncheckedreturn" => Ok(VulnerabilityType::UncheckedReturn),
-            "dos" => Ok(VulnerabilityType::Dos),
-            "defaultvisibility" => Ok(VulnerabilityType::DefaultVisibility),
-            "inheritance" => Ok(VulnerabilityType::Inheritance),
-            "confidentialdata" => Ok(VulnerabilityType::ConfidentialData),
-            "reentrancy" => Ok(VulnerabilityType::Reentrancy),
-            "arraylimits" => Ok(VulnerabilityType::ArrayLimits),
-            "upgradeabilityinitializersafety" => {
-                Ok(VulnerabilityType::UpgradeabilityInitializerSafety)
-            }
-            "pausableemergencystop" => Ok(VulnerabilityType::PausableEmergencyStop),
-            "timestampdependentlogic" => Ok(VulnerabilityType::TimestampDependentLogic),
-            "flashloaneconomicmanipulation" => Ok(VulnerabilityType::FlashLoanEconomicManipulation),
-            "delegatecalllowlevelops" => Ok(VulnerabilityType::DelegatecallLowLevelOps),
-            "signaturemalleability" => Ok(VulnerabilityType::SignatureMalleability),
-            "eventconsistency" => Ok(VulnerabilityType::EventConsistency),
-            "gasgriefblocklimit" => Ok(VulnerabilityType::GasGriefBlockLimit),
-            "integeroverflow" => Ok(VulnerabilityType::IntegerOverflow),
-            // New variants
-            "priceprecision" => Ok(VulnerabilityType::PricePrecision),
-            "roundingerror" => Ok(VulnerabilityType::RoundingError),
-            "feeontransferassumption" => Ok(VulnerabilityType::FeeOnTransferAssumption),
-            "uncheckederc20return" => Ok(VulnerabilityType::UncheckedERC20Return),
-            "signaturereplay" => Ok(VulnerabilityType::SignatureReplay),
-            "authbypass" => Ok(VulnerabilityType::AuthByPass),
-            "untrusteddelegatecall" => Ok(VulnerabilityType::UntrustedDelegateCall),
-            "timestampmanipulation" => Ok(VulnerabilityType::TimestampManipulation),
-            "crosschainmessagespoofing" => Ok(VulnerabilityType::CrossChainMessageSpoofing),
-            "accountinginvariantviolation" => Ok(VulnerabilityType::AccountingInvariantViolation),
-            "slippagemissingorinsufficient" => Ok(VulnerabilityType::SlippageMissingOrInsufficient),
-            "standardviolation" => Ok(VulnerabilityType::StandardViolation),
-            "allowancerace" => Ok(VulnerabilityType::AllowanceRace),
-            "permitdomainseparator" => Ok(VulnerabilityType::PermitDomainSeparator),
-            "permitnoncemisuse" => Ok(VulnerabilityType::PermitNonceMisuse),
-            "permitdeadlinebypass" => Ok(VulnerabilityType::PermitDeadlineBypass),
-            "erc20decimalsmismatch" => Ok(VulnerabilityType::ERC20DecimalsMismatch),
-            "erc777hookreentrancy" => Ok(VulnerabilityType::ERC777HookReentrancy),
-            "erc4626shareprice" => Ok(VulnerabilityType::ERC4626SharePrice),
-            "custom" => Ok(VulnerabilityType::Custom),
-            other => Err(de::Error::unknown_variant(
-                other,
-                &[
-                    "oracle",
-                    "accesscontrol",
-                    "frontrunattack",
-                    "unexpectedeth",
-                    "pragma",
-                    "randomness",
-                    "txorigin",
-                    "zerocode",
-                    "selfdestruct",
-                    "storagelayout",
-                    "replayattack",
-                    "shortaddress",
-                    "integermath",
-                    "uncheckedreturn",
-                    "dos",
-                    "defaultvisibility",
-                    "inheritance",
-                    "confidentialdata",
-                    "reentrancy",
-                    "arraylimits",
-                    "frontrunmev",
-                    "upgradeabilityinitializersafety",
-                    "pausableemergencystop",
-                    "timestampdependentlogic",
-                    "flashloaneconomicmanipulation",
-                    "delegatecalllowlevelops",
-                    "signaturemalleability",
-                    "eventconsistency",
-                    "gasgriefblocklimit",
-                    "integeroverflow",
-                    "priceprecision",
-                    "roundingerror",
-                    "feeontransferassumption",
-                    "uncheckederc20return",
-                    "signaturereplay",
-                    "authbypass",
-                    "untrusteddelegatecall",
-                    "timestampmanipulation",
-                    "crosschainmessagespoofing",
-                    "accountinginvariantviolation",
-                    "slippagemissingorinsufficient",
-                    "custom",
-                    "standardviolation",
-                    "allowancerace",
-                    "permitdomainseparator",
-                    "permitnoncemisuse",
-                    "permitdeadlinebypass",
-                    "erc20decimalsmismatch",
-                    "erc777hookreentrancy",
-                    "erc4626shareprice",
-                ],
-            )),
-        }
-    }
-}
-
-impl Serialize for Severity {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl Serialize for InvariantType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl Serialize for InvariantStatus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl Serialize for VulnerabilityType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
+// ----- Serde glue --------------------------------------------------
+// All enums now use serde's derive for both Serialize and Deserialize!
+// LLMs are instructed to return exact PascalCase in prompts, so no need for
+// case-insensitive deserialization.

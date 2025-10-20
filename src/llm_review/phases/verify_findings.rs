@@ -396,22 +396,15 @@ mod tests {
         assert_eq!(vuln.finding_complexity, 1); // Should clamp to 1
     }
 
-    /// Test all Severity enum variants (case-insensitive)
+    /// Test all Severity enum variants (exact PascalCase as LLMs are instructed)
     #[test]
     fn test_severity_enum_deserialization_all_variants() {
         let test_cases = vec![
             (r#"{"severity": "Critical"}"#, Severity::Critical),
-            (r#"{"severity": "critical"}"#, Severity::Critical),
-            (r#"{"severity": "CRITICAL"}"#, Severity::Critical),
             (r#"{"severity": "High"}"#, Severity::High),
-            (r#"{"severity": "high"}"#, Severity::High),
-            (r#"{"severity": "HIGH"}"#, Severity::High),
             (r#"{"severity": "Medium"}"#, Severity::Medium),
-            (r#"{"severity": "medium"}"#, Severity::Medium),
             (r#"{"severity": "Low"}"#, Severity::Low),
-            (r#"{"severity": "low"}"#, Severity::Low),
             (r#"{"severity": "Info"}"#, Severity::Info),
-            (r#"{"severity": "info"}"#, Severity::Info),
         ];
 
         for (json, expected) in test_cases {

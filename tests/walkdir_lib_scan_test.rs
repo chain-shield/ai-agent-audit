@@ -1,23 +1,28 @@
+use ignore::gitignore::GitignoreBuilder;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use ignore::gitignore::GitignoreBuilder;
 
 /// Test WalkDir scanning on actual local repository
 /// This test uses a local copy of the repo to verify lib folder scanning works
 #[test]
 fn test_walkdir_scans_lib_folders_in_local_repo() {
     // Path to your local repo copy
-    let local_repo = PathBuf::from("/Users/apmfree/Desktop/Audit/2025-09-summer-fi-governance-v2-chainshieldai/summer-earn-protocol");
-    
+    let local_repo = PathBuf::from(
+        "/Users/apmfree/Desktop/Audit/2025-09-summer-fi-governance-v2-chainshieldai/summer-earn-protocol",
+    );
+
     // Skip test if path doesn't exist
     if !local_repo.exists() {
-        println!("Skipping test - local repo not found at: {}", local_repo.display());
+        println!(
+            "Skipping test - local repo not found at: {}",
+            local_repo.display()
+        );
         return;
     }
 
     println!("\n=== Testing WalkDir on Local Repo ===");
     println!("Repo path: {}", local_repo.display());
-    
+
     // Set up gitignore patterns (same as production code)
     let mut ign = GitignoreBuilder::new(&local_repo);
     ign.add_line(None, "dist").unwrap();
@@ -30,7 +35,7 @@ fn test_walkdir_scans_lib_folders_in_local_repo() {
     let mut lib_files_scanned = 0;
     let mut package_json_total = 0;
     let mut package_json_in_lib = 0;
-    
+
     let mut lib_file_examples: Vec<PathBuf> = Vec::new();
     let mut package_json_examples: Vec<PathBuf> = Vec::new();
     let mut lib_package_json_examples: Vec<PathBuf> = Vec::new();
@@ -86,7 +91,7 @@ fn test_walkdir_scans_lib_folders_in_local_repo() {
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        
+
         if filename == "package.json" {
             package_json_total += 1;
             if package_json_examples.len() < 10 {
@@ -137,13 +142,13 @@ fn test_walkdir_scans_lib_folders_in_local_repo() {
     println!("\n=== Lib Folder Check ===");
     println!("lib folder path: {}", lib_folder.display());
     println!("lib folder exists: {}", lib_folder.exists());
-    
+
     if lib_folder.exists() {
         // Count items in lib folder
         let lib_contents: Vec<_> = std::fs::read_dir(&lib_folder)
             .map(|entries| entries.filter_map(Result::ok).collect())
             .unwrap_or_default();
-        
+
         println!("lib folder item count: {}", lib_contents.len());
         println!("\nlib folder contents:");
         for entry in lib_contents.iter().take(20) {
@@ -152,7 +157,8 @@ fn test_walkdir_scans_lib_folders_in_local_repo() {
             let is_symlink = std::fs::symlink_metadata(&path)
                 .map(|m| m.file_type().is_symlink())
                 .unwrap_or(false);
-            println!("  - {} {}{}", 
+            println!(
+                "  - {} {}{}",
                 path.file_name().unwrap_or_default().to_string_lossy(),
                 if is_dir { "(dir)" } else { "(file)" },
                 if is_symlink { " [symlink]" } else { "" }
@@ -166,11 +172,12 @@ fn test_walkdir_scans_lib_folders_in_local_repo() {
                 let subdir_count = std::fs::read_dir(&path)
                     .map(|entries| entries.count())
                     .unwrap_or(0);
-                println!("\n  {} contains {} items", 
+                println!(
+                    "\n  {} contains {} items",
                     path.file_name().unwrap_or_default().to_string_lossy(),
                     subdir_count
                 );
-                
+
                 if subdir_count == 0 {
                     println!("    ⚠️  EMPTY! Dependencies not installed.");
                 }
@@ -182,7 +189,7 @@ fn test_walkdir_scans_lib_folders_in_local_repo() {
 
     // Assertions
     assert!(total_files_scanned > 0, "Should scan at least some files");
-    
+
     // Note: We don't assert lib_package_json_examples > 0 because the lib folder might be empty
     // This test is for diagnostics to see what WalkDir actually finds
 }
@@ -209,18 +216,38 @@ fn is_in_lib_folder(file: &Path, root: &Path) -> bool {
 fn test_lib_folder_detection_logic() {
     // Test the helper function with mock paths
     let root = PathBuf::from("/repo");
-    
+
     // Should match
-    assert!(is_in_lib_folder(&PathBuf::from("/repo/lib/package.json"), &root));
-    assert!(is_in_lib_folder(&PathBuf::from("/repo/lib/utils/package.json"), &root));
-    assert!(is_in_lib_folder(&PathBuf::from("/repo/packages/lib/package.json"), &root));
-    assert!(is_in_lib_folder(&PathBuf::from("/repo/library/package.json"), &root));
-    
+    assert!(is_in_lib_folder(
+        &PathBuf::from("/repo/lib/package.json"),
+        &root
+    ));
+    assert!(is_in_lib_folder(
+        &PathBuf::from("/repo/lib/utils/package.json"),
+        &root
+    ));
+    assert!(is_in_lib_folder(
+        &PathBuf::from("/repo/packages/lib/package.json"),
+        &root
+    ));
+    assert!(is_in_lib_folder(
+        &PathBuf::from("/repo/library/package.json"),
+        &root
+    ));
+
     // Should NOT match
-    assert!(!is_in_lib_folder(&PathBuf::from("/repo/package.json"), &root));
-    assert!(!is_in_lib_folder(&PathBuf::from("/repo/src/package.json"), &root));
-    assert!(!is_in_lib_folder(&PathBuf::from("/repo/node_modules/package.json"), &root));
-    
+    assert!(!is_in_lib_folder(
+        &PathBuf::from("/repo/package.json"),
+        &root
+    ));
+    assert!(!is_in_lib_folder(
+        &PathBuf::from("/repo/src/package.json"),
+        &root
+    ));
+    assert!(!is_in_lib_folder(
+        &PathBuf::from("/repo/node_modules/package.json"),
+        &root
+    ));
+
     println!("✓ Lib folder detection logic works correctly");
 }
-

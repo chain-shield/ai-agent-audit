@@ -17,7 +17,7 @@ use crate::{
 use log::info;
 
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

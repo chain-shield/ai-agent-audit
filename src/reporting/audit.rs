@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 use crate::{
     llm_review::{
-        enums::{EnumString, Severity},
+        enums::Severity,
         findings::{Finding, Findings},
         phases::verify_findings::{FindingConfidence, FindingStatus},
         utils::prompt_context::{self, FindingReportType},
@@ -111,7 +111,7 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
     let mut findings_report = String::new();
 
     if !findings_by_severity.is_empty() {
-        findings_report.push_str(&format!("\n# {} Risk Findings\n\n", severity.as_str()));
+        findings_report.push_str(&format!("\n# {} Risk Findings\n\n", severity.to_string()));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
             findings_report.push_str(&prompt_context::get_finding_report(
@@ -158,7 +158,7 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
     let mut findings_summary = String::new();
 
     if !findings_by_severity.is_empty() {
-        findings_summary.push_str(&format!("## {} Risk Findings\n\n", severity.as_str()));
+        findings_summary.push_str(&format!("## {} Risk Findings\n\n", severity.to_string()));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
             findings_summary.push_str(&format!(
@@ -195,7 +195,7 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
                 "Finding Complexity: {}\n",
                 finding.finding_complexity.unwrap_or_default()
             ));
-            findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.as_str()));
+            findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.to_string()));
         }
     } else {
         return String::new();
@@ -282,7 +282,7 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
                         "Finding Complexity: {}\n",
                         f.finding_complexity.unwrap_or_default()
                     ));
-                    findings_summary.push_str(&format!("Privilege: {}\n", f.privilege.as_str()));
+                    findings_summary.push_str(&format!("Privilege: {}\n", f.privilege.to_string()));
                 }
                 ReportDataType::Full => {
                     findings_summary.push_str(&prompt_context::get_finding_report(

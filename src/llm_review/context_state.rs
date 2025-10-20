@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize::{summarize_protocol, summarize_src_files, FileSummaryType},
+        summarize::{FileSummaryType, summarize_protocol, summarize_src_files},
     },
     cost::cost_data::get_token_count,
     prepare_code::git_clone::RepoPaths,
