@@ -283,6 +283,10 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
                         f.finding_complexity.unwrap_or_default()
                     ));
                     findings_summary.push_str(&format!("Privilege: {}\n", f.privilege.to_string()));
+                    findings_summary.push_str(&format!(
+                        "Poc Test Status: {}\n",
+                        f.poc_test_status.unwrap_or_default().to_string()
+                    ));
                 }
                 ReportDataType::Full => {
                     findings_summary.push_str(&prompt_context::get_finding_report(

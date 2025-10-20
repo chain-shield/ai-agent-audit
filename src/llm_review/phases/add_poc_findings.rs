@@ -14,7 +14,7 @@ use crate::{
             post_poc::POST_CREATE_POC,
         },
         utils::{
-            prompt_context::{FindingReportType, generate_prompt_for_issue_check},
+            prompt_context::{generate_prompt_for_issue_check, FindingReportType},
             save_run_poc::save_and_run_poc_test,
         },
     },
@@ -296,11 +296,13 @@ pub async fn execute(
                 poc_test.poc_test_status = PocStatus::ErrorRunningTests;
                 poc_test.poc_test_output = format!("Error: {:?}", e);
             }
+            print_test_status(&poc_test, finding);
 
             info!(
                 "AI Agent: {}",
                 poc_test_data.commentary.clone().unwrap_or_default()
             );
+
 
             // Retry loop: up to 5 attempts total (initial + 4 retries)
             while poc_pass_attempt < 5 && poc_test.poc_test_status != PocStatus::AllTestPass {
@@ -361,24 +363,7 @@ pub async fn execute(
                     break;
                 }
 
-                match poc_test.poc_test_status {
-                    PocStatus::FailingTests => warn!(
-                        "Some Poc tests are failing for: {}",
-                        finding.title
-                    ),
-                    PocStatus::AllTestPass => info!(
-                        "All PoC tests passing test for: {}",
-                        finding.title
-                    ),
-                    PocStatus::ErrorRunningTests => warn!(
-                        "Error running PoC test for: {}",
-                        finding.title
-                    ),
-                    PocStatus::FindingIsInvalid => warn!(
-                        "Cannot write test, Invalid Finding: {}",
-                        finding.title
-                    ),
-                }
+                print_test_status(&poc_test, finding);
             }
 
             // If PoC has compilation errors, delete the test file to prevent cross-contamination
@@ -443,4 +428,15 @@ pub async fn execute(
     Ok(Findings {
         findings: finding_with_pocs,
     })
+}
+
+fn print_test_status(poc_test: &PocTest, finding: &Finding) {
+    match poc_test.poc_test_status {
+        PocStatus::FailingTests => warn!("Some Poc tests are failing for: {}", finding.title),
+        PocStatus::AllTestPass => info!("All PoC tests passing test for: {}", finding.title),
+        PocStatus::ErrorRunningTests => warn!("Error running PoC test for: {}", finding.title),
+        PocStatus::FindingIsInvalid => {
+            warn!("Cannot write test, Invalid Finding: {}", finding.title)
+        }
+    }
 }
