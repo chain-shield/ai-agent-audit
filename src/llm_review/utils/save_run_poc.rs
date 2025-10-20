@@ -13,12 +13,20 @@ use crate::{
 
 pub fn save_and_run_poc_test(poc_test: &mut PocTest, repo: &RepoPaths) -> Result<()> {
     // save file
+    log::info!(
+        "💾 Saving PoC test to: {}",
+        poc_test.poc_test_file.display()
+    );
     fs::write(
         poc_test.poc_test_file.clone(),
         poc_test.poc_test_code.clone(),
     )?;
 
     // run test
+    log::info!(
+        "🧪 Running PoC test with command: {}",
+        poc_test.poc_test_command
+    );
     let args = vec![
         "run".to_string(),
         "--rm".to_string(),
@@ -40,14 +48,21 @@ pub fn save_and_run_poc_test(poc_test: &mut PocTest, repo: &RepoPaths) -> Result
     let exit_code = out.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    // Try parsing Forge summary from stdout first; if not present, include stderr in parsing too.
-    let parse_target = if stdout.is_empty() {
-        stderr.as_str()
-    } else {
-        stdout.as_str()
-    };
-    poc_test.poc_test_output = parse_target.to_string();
-    let parsed = parse_forge_result(parse_target);
+
+    // Log test output
+    log::info!("📊 PoC test exit code: {}", exit_code);
+    if !stdout.is_empty() {
+        log::info!("📝 PoC test stdout:\n{}", stdout);
+    }
+    if !stderr.is_empty() {
+        log::warn!("⚠️  PoC test stderr:\n{}", stderr);
+    }
+
+    // Always combine stdout and stderr for complete error context
+    // This ensures the LLM sees compilation errors (stderr) along with test results (stdout)
+    let parse_target = format!("{}\n{}", stdout, stderr);
+    poc_test.poc_test_output = parse_target.clone();
+    let parsed = parse_forge_result(&parse_target);
 
     // Classify status:
     // - If docker/forge returned nonzero, prefer "test_error" unless we clearly see failing tests.

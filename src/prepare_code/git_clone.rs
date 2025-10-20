@@ -511,6 +511,12 @@ fn get_commit_hash(repo_url: &str) -> Result<String> {
     Ok(commit_hash)
 }
 
+impl AsRef<RepoPaths> for RepoPaths {
+    fn as_ref(&self) -> &RepoPaths {
+        self
+    }
+}
+
 impl RepoPaths {
     /// Generates a unique identifier for the repository using name and short commit hash.
     /// Used for creating unique vector database collections and cache keys.
