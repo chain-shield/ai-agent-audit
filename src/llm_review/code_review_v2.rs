@@ -83,18 +83,6 @@ pub async fn review_codebase_for_security_issues_v2(
         contract_handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async move {
-                // Generate enhanced codeblock (includes file context)
-                // let codeblock = enhance_codeblock(&contract_clone, &codeblock_clone, &repo_clone)
-                //     .await
-                //     .map_err(|e| {
-                //         use std::io::{Error as IoError, ErrorKind};
-                //         AuditError::file_system(
-                //             "enhance_codeblock",
-                //             format!("could not generate codeblock: {e}"),
-                //             IoError::new(ErrorKind::Other, e.to_string()),
-                //         )
-                //     })?;
-
                 // Run pattern and invariant analysis concurrently within this task
                 let (patterns_res, invariants_res) = tokio::join!(
                     process_patterns(&codeblock, &discovery_agent, &verify_agent, &repo_clone),
@@ -145,6 +133,13 @@ pub async fn review_codebase_for_security_issues_v2(
                         && repo_clone.poc.test_folder.exists()
                     {
                         // Phase 6: Write PoC for each Critical, High, and Medium Finding
+                        // Acquire POC_SEM at contract level to prevent multiple contracts
+                        // from creating PoC tests concurrently in the same test folder
+                        use crate::llm_review::semaphore::POC_SEM;
+                        let poc_sem = Arc::clone(&POC_SEM);
+                        let _poc_permit =
+                            poc_sem.acquire_owned().await.expect("POC semaphore closed");
+
                         match phases::add_poc_findings::execute(
                             quality_findings.clone(),
                             &codeblock,
@@ -163,6 +158,7 @@ pub async fn review_codebase_for_security_issues_v2(
                                 // Continue with existing findings without PoC tests
                             }
                         }
+                        // _poc_permit is dropped here, releasing the semaphore
                     }
 
                     // Save findings to database before extending

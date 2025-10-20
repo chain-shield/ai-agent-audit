@@ -10,13 +10,13 @@ use crate::{
         enums::AIAgent,
         findings::Findings,
         issues::{IssueStructTrait, IssueTrait},
-        semaphore::VERIFY_SEM,
+        semaphore::GENERAL_SEM,
     },
     prepare_code::git_clone::RepoPaths,
 };
 use log::info;
 
-use serde::{Deserializer, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserializer};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -56,7 +56,7 @@ where
             let codeblock_plus_context = Arc::clone(&arc_code_context);
             let arc_agent = Arc::clone(&agent);
             let pattern_clone = Arc::clone(&arc_pattern);
-            let sem = Arc::clone(&VERIFY_SEM);
+            let sem = Arc::clone(&GENERAL_SEM);
             let shared_findings = Arc::clone(&all_findings);
             let title = issue_title.clone();
             let scope = Arc::clone(&audit_scope);
