@@ -34,6 +34,7 @@ fn make_repo_layout(root: &Path, repo_name: &str, files: &[&str], dirs: &[&str])
         excluded_folders: None,
         scoped_files: None,
         commit_hash: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
+        poc: ai_agent_audit::prepare_code::git_clone::PocConfig::default(),
     }
 }
 

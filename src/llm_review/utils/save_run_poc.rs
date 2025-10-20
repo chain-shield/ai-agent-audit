@@ -27,6 +27,25 @@ pub fn save_and_run_poc_test(poc_test: &mut PocTest, repo: &RepoPaths) -> Result
         "🧪 Running PoC test with command: {}",
         poc_test.poc_test_command
     );
+
+    // Determine the working directory for the forge command
+    // For Foundry projects, we need to run from where foundry.toml is located
+    // This is typically repo.root/repo.repo_name
+    // let work_dir = if !repo.source_code_folders.is_empty() {
+    //     // Use the first source code folder (relative to repo.root)
+    //     repo.source_code_folders[0]
+    //         .strip_prefix(&repo.root)
+    //         .unwrap_or_else(|_| Path::new(&repo.repo_name))
+    //         .to_string_lossy()
+    //         .to_string()
+    // } else {
+    //     // Fallback to repo_name
+    //     repo.repo_name.clone()
+    // };
+
+    // Wrap the command to cd into the working directory first
+    let full_command = format!("cd {} && {}", repo.repo_name, poc_test.poc_test_command);
+
     let args = vec![
         "run".to_string(),
         "--rm".to_string(),
@@ -37,7 +56,7 @@ pub fn save_and_run_poc_test(poc_test: &mut PocTest, repo: &RepoPaths) -> Result
         "ghcr.io/trailofbits/eth-security-toolbox:nightly".to_string(),
         "sh".to_string(),
         "-lc".to_string(),
-        poc_test.poc_test_command.clone(),
+        full_command,
     ];
     let out = Command::new("docker")
         .args(&args)
