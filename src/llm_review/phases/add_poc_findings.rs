@@ -21,7 +21,7 @@ use crate::{
     },
     prepare_code::git_clone::RepoPaths,
 };
-use log::info;
+use log::{info, warn};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,8 @@ pub struct GeneratePocTest {
     pub poc_test_code: String,
     pub command_to_run_test: String,
     pub cannot_create_poc_because_finding_invalid: Option<bool>,
+    /// LLM commentary on PoC status and next steps
+    pub commentary: Option<String>,
 }
 
 /// Executes the verification phase
@@ -92,9 +94,13 @@ pub async fn execute(
             .map(|f| f.to_owned())
             .collect(),
     });
-    let context = get_metadata_context(repo)
-        .await
-        .expect("could not extract context");
+    let context = match get_metadata_context(repo).await {
+        Some(ctx) => ctx,
+        None => {
+            log::warn!("Metadata context not available, continuing PoC generation without it");
+            String::new()
+        }
+    };
     let code_and_context = generate_content_plus_context_block(code, &context);
     let arc_code_context = Arc::new(code_and_context);
     let repo_paths = Arc::new(repo.clone());
@@ -114,7 +120,17 @@ pub async fn execute(
 
         handles.push(tokio::spawn(async move {
             // ── acquire permit ────────────────────────
-            let _permit = sem.acquire_owned().await.expect("semaphore closed");
+            let _permit = match sem.acquire_owned().await {
+                Ok(permit) => permit,
+                Err(e) => {
+                    log::error!(
+                        "Failed to acquire semaphore permit for finding #{}: {:?}",
+                        i + 1,
+                        e
+                    );
+                    return;
+                }
+            };
 
             let result: Result<()> = async {
                 let raw_filename = arc_findings.findings[i].title.replace(" ", "-");
@@ -150,7 +166,15 @@ pub async fn execute(
 
                 // Initial attempt to save and run the PoC test
                 let mut poc_pass_attempt = 1;
-                save_and_run_poc_test(&mut poc_test, &arc_repo)?;
+                if let Err(e) = save_and_run_poc_test(&mut poc_test, &arc_repo) {
+                    log::error!(
+                        "Failed to save/run PoC test for finding #{}: {:?}",
+                        i + 1,
+                        e
+                    );
+                    poc_test.poc_test_status = PocStatus::ErrorRunningTests;
+                    poc_test.poc_test_output = format!("Error: {:?}", e);
+                }
 
                 // Retry loop: up to 5 attempts total (initial + 4 retries)
                 while poc_pass_attempt < 5 && poc_test.poc_test_status != PocStatus::AllTestPass {
@@ -176,10 +200,39 @@ pub async fn execute(
                         poc_test.poc_test_command = updated_poc_test_data.command_to_run_test;
 
                         // Save and run the updated PoC test
-                        save_and_run_poc_test(&mut poc_test, &arc_repo)?;
+                        if let Err(e) = save_and_run_poc_test(&mut poc_test, &arc_repo) {
+                            log::error!(
+                                "Failed to save/run PoC test retry #{} for finding #{}: {:?}",
+                                poc_pass_attempt,
+                                i + 1,
+                                e
+                            );
+                            poc_test.poc_test_status = PocStatus::ErrorRunningTests;
+                            poc_test.poc_test_output = format!("Error: {:?}", e);
+                            // Continue to next retry attempt
+                        }
                     } else {
                         poc_test.poc_test_status = PocStatus::FindingIsInvalid;
                         break;
+                    }
+
+                    match poc_test.poc_test_status {
+                        PocStatus::FailingTests => warn!(
+                            "Some Poc tests are failing for: {}",
+                            arc_findings.findings[i].title
+                        ),
+                        PocStatus::AllTestPass => info!(
+                            "All PoC tests passing test for: {}",
+                            arc_findings.findings[i].title
+                        ),
+                        PocStatus::ErrorRunningTests => warn!(
+                            "Error running PoC test for: {}",
+                            arc_findings.findings[i].title
+                        ),
+                        PocStatus::FindingIsInvalid => warn!(
+                            "Cannot write test, Invalid Finding: {}",
+                            arc_findings.findings[i].title
+                        ),
                     }
                 }
 

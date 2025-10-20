@@ -145,13 +145,24 @@ pub async fn review_codebase_for_security_issues_v2(
                         && repo_clone.poc.test_folder.exists()
                     {
                         // Phase 6: Write PoC for each Critical, High, and Medium Finding
-                        quality_findings = phases::add_poc_findings::execute(
-                            quality_findings,
+                        match phases::add_poc_findings::execute(
+                            quality_findings.clone(),
                             &codeblock,
                             &verify_agent,
                             &repo_clone,
                         )
-                        .await?;
+                        .await
+                        {
+                            Ok(findings_with_pocs) => {
+                                quality_findings = findings_with_pocs;
+                                log::info!("✅ Phase 6 completed successfully");
+                            }
+                            Err(e) => {
+                                log::error!("❌ Phase 6 (PoC generation) failed: {:?}", e);
+                                log::warn!("Continuing with findings without PoC tests");
+                                // Continue with existing findings without PoC tests
+                            }
+                        }
                     }
 
                     // Save findings to database before extending

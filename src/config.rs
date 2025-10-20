@@ -29,7 +29,7 @@ pub const TOKEN_BUDGET: usize = 115_000;
 pub const DISCOVERY_RUNS: usize = 1;
 pub const INVARIANT_RUNS: usize = 0;
 pub const MAX_PATTERN_RUN_TOP: usize = 1;
-pub const MAX_PATTERN_RUN_FREQUENT: usize = 1;
+pub const MAX_PATTERN_RUN_FREQUENT: usize = 0;
 
 pub const MAX_FILE_RUNS: usize = 1;
 
