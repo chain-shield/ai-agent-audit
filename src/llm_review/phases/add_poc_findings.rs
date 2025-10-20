@@ -13,7 +13,6 @@ use crate::{
             make_poc_prompt::{generate_poc_prompt, generate_rewrite_poc_prompt},
             post_poc::POST_CREATE_POC,
         },
-        semaphore::POC_SEM,
         utils::{
             prompt_context::{FindingReportType, generate_prompt_for_issue_check},
             save_run_poc::save_and_run_poc_test,
@@ -26,7 +25,6 @@ use log::{info, warn};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
-use tokio::sync::Mutex;
 
 /// Sanitize a string to be safe for use as a filename
 /// Replaces all characters that are not alphanumeric, dash, or underscore with a dash
@@ -214,16 +212,14 @@ pub async fn execute(
 ) -> Result<Findings> {
     info!("🔬 Phase 6: Writing PoC tests for each Medium and High finding...");
 
-    let mut handles = vec![];
     // NOTE: writing PoC ONLY for Critical, High, and Medium findings
-    let m_and_h_findings = Arc::new(Findings {
-        findings: findings
-            .findings
-            .iter()
-            .filter(|f| f.severity != Severity::Low && f.severity != Severity::Info)
-            .map(|f| f.to_owned())
-            .collect(),
-    });
+    let m_and_h_findings: Vec<Finding> = findings
+        .findings
+        .iter()
+        .filter(|f| f.severity != Severity::Low && f.severity != Severity::Info)
+        .map(|f| f.to_owned())
+        .collect();
+
     let context = match get_metadata_context(repo).await {
         Some(ctx) => ctx,
         None => {
@@ -232,235 +228,206 @@ pub async fn execute(
         }
     };
     let code_and_context = generate_content_plus_context_block(code, &context);
-    let arc_code_context = Arc::new(code_and_context);
-    let repo_paths = Arc::new(repo.clone());
 
-    let number_of_findings = m_and_h_findings.findings.len();
-    let poc_tests: Arc<Mutex<Vec<PocTest>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut poc_tests: Vec<PocTest> = Vec::new();
 
-    info!("now writing PoC for each finding...");
+    info!(
+        "now writing PoC for {} findings sequentially...",
+        m_and_h_findings.len()
+    );
 
-    for i in 0..number_of_findings {
-        let codeblock_plus_context = Arc::clone(&arc_code_context);
-        let arc_findings = Arc::clone(&m_and_h_findings);
-        let arc_repo = Arc::clone(&repo_paths);
-        let arc_agent = Arc::clone(&agent);
-        let arc_poc_test_vec = Arc::clone(&poc_tests);
-        let sem = Arc::clone(&POC_SEM);
+    // Process each finding sequentially (no multithreading needed since POC_SEM = 1)
+    for (i, finding) in m_and_h_findings.iter().enumerate() {
+        let result: Result<()> = async {
+            // Sanitize the title to create a safe filename
+            let raw_filename = sanitize_filename(&finding.title);
+            let truncated_name: String = raw_filename.chars().take(20).collect();
+            let filename = format!(
+                "{}-{}.t.sol",
+                finding.severity.as_initial(),
+                truncated_name
+            );
+            let poc_prompt = generate_poc_prompt(&filename, repo)?;
+            let instruction_prompt = generate_prompt_for_issue_check(
+                &code_and_context,
+                finding,
+                &poc_prompt,
+                POST_CREATE_POC,
+                FindingReportType::NoPoC,
+            );
 
-        handles.push(tokio::spawn(async move {
-            // ── acquire permit ────────────────────────
-            let _permit = match sem.acquire_owned().await {
-                Ok(permit) => permit,
-                Err(e) => {
-                    log::error!(
-                        "Failed to acquire semaphore permit for finding #{}: {:?}",
-                        i + 1,
-                        e
-                    );
-                    return;
-                }
+            // add to cost
+            info!("writing PoC for finding #{}", i + 1);
+            let poc_test_data: GeneratePocTest =
+                agent.extract_with_retry(&instruction_prompt).await?;
+
+            // Extract test function name from the generated code
+            let test_function_name = extract_test_function_name(&poc_test_data.poc_test_code);
+
+            // Build the forge test command programmatically with relative path
+            let code_root = repo.root.join(&repo.repo_name);
+            let test_file_path = repo.poc.test_folder.join(&filename);
+            let relative_path = test_file_path
+                .strip_prefix(&code_root)
+                .unwrap_or(&test_file_path)
+                .to_string_lossy()
+                .to_string();
+            let command =
+                build_forge_test_command(&relative_path, test_function_name.as_deref());
+
+            let mut poc_test = PocTest {
+                finding_hash: finding.hash_derived(),
+                poc_test_code: poc_test_data.poc_test_code,
+                poc_test_file: test_file_path,
+                poc_test_filename: filename,
+                poc_test_command: command,
+                poc_test_status: PocStatus::ErrorRunningTests,
+                poc_test_output: String::new(),
             };
 
-            let result: Result<()> = async {
-                // Sanitize the title to create a safe filename
-                let raw_filename = sanitize_filename(&arc_findings.findings[i].title);
-                let truncated_name: String = raw_filename.chars().take(20).collect();
-                let filename = format!(
-                    "{}-{}.t.sol",
-                    arc_findings.findings[i].severity.as_initial(),
-                    truncated_name
+            // Initial attempt to save and run the PoC test
+            let mut poc_pass_attempt = 1;
+            if let Err(e) = save_and_run_poc_test(&mut poc_test, repo) {
+                log::error!(
+                    "Failed to save/run PoC test for finding #{}: {:?}",
+                    i + 1,
+                    e
                 );
-                let poc_prompt = generate_poc_prompt(&filename, &arc_repo)?;
-                let instruction_prompt = generate_prompt_for_issue_check(
-                    &codeblock_plus_context,
-                    &arc_findings.findings[i],
-                    &poc_prompt,
+                poc_test.poc_test_status = PocStatus::ErrorRunningTests;
+                poc_test.poc_test_output = format!("Error: {:?}", e);
+            }
+
+            info!(
+                "AI Agent: {}",
+                poc_test_data.commentary.clone().unwrap_or_default()
+            );
+
+            // Retry loop: up to 5 attempts total (initial + 4 retries)
+            while poc_pass_attempt < 5 && poc_test.poc_test_status != PocStatus::AllTestPass {
+                poc_pass_attempt += 1;
+                info!("PoC attempt {} for finding #{}", poc_pass_attempt, i + 1);
+
+                let retest_prompt = generate_rewrite_poc_prompt(&poc_test, repo)?;
+                let retest_instruction_prompt = generate_prompt_for_issue_check(
+                    &code_and_context,
+                    finding,
+                    &retest_prompt,
                     POST_CREATE_POC,
                     FindingReportType::NoPoC,
                 );
-
-                // add to cost
-                info!("writiing PoC for finding #{}", i + 1);
-                let poc_test_data: GeneratePocTest =
-                    arc_agent.extract_with_retry(&instruction_prompt).await?;
-
-                // Extract test function name from the generated code
-                let test_function_name = extract_test_function_name(&poc_test_data.poc_test_code);
-
-                // Build the forge test command programmatically with relative path
-                let code_root = arc_repo.root.join(&arc_repo.repo_name);
-                let test_file_path = arc_repo.poc.test_folder.join(&filename);
-                let relative_path = test_file_path
-                    .strip_prefix(&code_root)
-                    .unwrap_or(&test_file_path)
-                    .to_string_lossy()
-                    .to_string();
-                let command =
-                    build_forge_test_command(&relative_path, test_function_name.as_deref());
-
-                let mut poc_test = PocTest {
-                    finding_hash: arc_findings.findings[i].hash_derived(),
-                    poc_test_code: poc_test_data.poc_test_code,
-                    poc_test_file: test_file_path,
-                    poc_test_filename: filename,
-                    poc_test_command: command,
-                    poc_test_status: PocStatus::ErrorRunningTests,
-                    poc_test_output: String::new(),
-                };
-
-                // Initial attempt to save and run the PoC test
-                let mut poc_pass_attempt = 1;
-                if let Err(e) = save_and_run_poc_test(&mut poc_test, &arc_repo) {
-                    log::error!(
-                        "Failed to save/run PoC test for finding #{}: {:?}",
-                        i + 1,
-                        e
-                    );
-                    poc_test.poc_test_status = PocStatus::ErrorRunningTests;
-                    poc_test.poc_test_output = format!("Error: {:?}", e);
-                }
+                let updated_poc_test_data: GeneratePocTest = agent
+                    .extract_with_retry(&retest_instruction_prompt)
+                    .await?;
 
                 info!(
                     "AI Agent: {}",
-                    poc_test_data.commentary.clone().unwrap_or_default()
+                    updated_poc_test_data.commentary.clone().unwrap_or_default()
                 );
 
-                // Retry loop: up to 5 attempts total (initial + 4 retries)
-                while poc_pass_attempt < 5 && poc_test.poc_test_status != PocStatus::AllTestPass {
-                    poc_pass_attempt += 1;
-                    info!("PoC attempt {} for finding #{}", poc_pass_attempt, i + 1);
+                if updated_poc_test_data.cannot_create_poc_because_finding_invalid != Some(true)
+                {
+                    // Update the PoC test with new code
+                    poc_test.poc_test_code = updated_poc_test_data.poc_test_code;
 
-                    let retest_prompt = generate_rewrite_poc_prompt(&poc_test, &arc_repo)?;
-                    let retest_instruction_prompt = generate_prompt_for_issue_check(
-                        &codeblock_plus_context,
-                        &arc_findings.findings[i],
-                        &retest_prompt,
-                        POST_CREATE_POC,
-                        FindingReportType::NoPoC,
-                    );
-                    let updated_poc_test_data: GeneratePocTest = arc_agent
-                        .extract_with_retry(&retest_instruction_prompt)
-                        .await?;
+                    // Extract test function name from the updated code
+                    let test_function_name =
+                        extract_test_function_name(&poc_test.poc_test_code);
 
-                    info!(
-                        "AI Agent: {}",
-                        updated_poc_test_data.commentary.clone().unwrap_or_default()
-                    );
+                    // Rebuild the command with the new test function name
+                    let code_root = repo.root.join(&repo.repo_name);
+                    let relative_path = poc_test
+                        .poc_test_file
+                        .strip_prefix(&code_root)
+                        .unwrap_or(&poc_test.poc_test_file)
+                        .to_string_lossy()
+                        .to_string();
+                    poc_test.poc_test_command =
+                        build_forge_test_command(&relative_path, test_function_name.as_deref());
 
-                    if updated_poc_test_data.cannot_create_poc_because_finding_invalid != Some(true)
-                    {
-                        // Update the PoC test with new code
-                        poc_test.poc_test_code = updated_poc_test_data.poc_test_code;
-
-                        // Extract test function name from the updated code
-                        let test_function_name =
-                            extract_test_function_name(&poc_test.poc_test_code);
-
-                        // Rebuild the command with the new test function name
-                        let code_root = arc_repo.root.join(&arc_repo.repo_name);
-                        let relative_path = poc_test
-                            .poc_test_file
-                            .strip_prefix(&code_root)
-                            .unwrap_or(&poc_test.poc_test_file)
-                            .to_string_lossy()
-                            .to_string();
-                        poc_test.poc_test_command =
-                            build_forge_test_command(&relative_path, test_function_name.as_deref());
-
-                        // Save and run the updated PoC test
-                        if let Err(e) = save_and_run_poc_test(&mut poc_test, &arc_repo) {
-                            log::error!(
-                                "Failed to save/run PoC test retry #{} for finding #{}: {:?}",
-                                poc_pass_attempt,
-                                i + 1,
-                                e
-                            );
-                            poc_test.poc_test_status = PocStatus::ErrorRunningTests;
-                            poc_test.poc_test_output = format!("Error: {:?}", e);
-                            // Continue to next retry attempt
-                        }
-                    } else {
-                        poc_test.poc_test_status = PocStatus::FindingIsInvalid;
-                        break;
-                    }
-
-                    match poc_test.poc_test_status {
-                        PocStatus::FailingTests => warn!(
-                            "Some Poc tests are failing for: {}",
-                            arc_findings.findings[i].title
-                        ),
-                        PocStatus::AllTestPass => info!(
-                            "All PoC tests passing test for: {}",
-                            arc_findings.findings[i].title
-                        ),
-                        PocStatus::ErrorRunningTests => warn!(
-                            "Error running PoC test for: {}",
-                            arc_findings.findings[i].title
-                        ),
-                        PocStatus::FindingIsInvalid => warn!(
-                            "Cannot write test, Invalid Finding: {}",
-                            arc_findings.findings[i].title
-                        ),
-                    }
-                }
-
-                // If PoC has compilation errors, delete the test file to prevent cross-contamination
-                // with subsequent PoC tests (since Foundry compiles all test files).
-                // Note: We only delete ErrorRunningTests (compilation errors), not FailingTests
-                // (which compile but have failing assertions - those won't break other tests).
-                if matches!(
-                    poc_test.poc_test_status,
-                    PocStatus::ErrorRunningTests | PocStatus::FindingIsInvalid
-                ) {
-                    if poc_test.poc_test_file.exists() {
-                        log::warn!(
-                            "🗑️  Deleting PoC test file with compilation errors to prevent cross-contamination: {}",
-                            poc_test.poc_test_file.display()
+                    // Save and run the updated PoC test
+                    if let Err(e) = save_and_run_poc_test(&mut poc_test, repo) {
+                        log::error!(
+                            "Failed to save/run PoC test retry #{} for finding #{}: {:?}",
+                            poc_pass_attempt,
+                            i + 1,
+                            e
                         );
-                        if let Err(e) = std::fs::remove_file(&poc_test.poc_test_file) {
-                            log::error!(
-                                "Failed to delete PoC test file {}: {:?}",
-                                poc_test.poc_test_file.display(),
-                                e
-                            );
-                        }
+                        poc_test.poc_test_status = PocStatus::ErrorRunningTests;
+                        poc_test.poc_test_output = format!("Error: {:?}", e);
+                        // Continue to next retry attempt
                     }
+                } else {
+                    poc_test.poc_test_status = PocStatus::FindingIsInvalid;
+                    break;
                 }
 
-                // save final PoC results
-                let mut poc_test_vec = arc_poc_test_vec.lock().await;
-                poc_test_vec.push(poc_test);
-                Ok(())
+                match poc_test.poc_test_status {
+                    PocStatus::FailingTests => warn!(
+                        "Some Poc tests are failing for: {}",
+                        finding.title
+                    ),
+                    PocStatus::AllTestPass => info!(
+                        "All PoC tests passing test for: {}",
+                        finding.title
+                    ),
+                    PocStatus::ErrorRunningTests => warn!(
+                        "Error running PoC test for: {}",
+                        finding.title
+                    ),
+                    PocStatus::FindingIsInvalid => warn!(
+                        "Cannot write test, Invalid Finding: {}",
+                        finding.title
+                    ),
+                }
             }
-            .await;
 
-            if let Err(e) = result {
-                log::error!("Error verifying finding {}: {:?}", i, e);
+            // If PoC has compilation errors, delete the test file to prevent cross-contamination
+            // with subsequent PoC tests (since Foundry compiles all test files).
+            // Note: We only delete ErrorRunningTests (compilation errors), not FailingTests
+            // (which compile but have failing assertions - those won't break other tests).
+            if matches!(
+                poc_test.poc_test_status,
+                PocStatus::ErrorRunningTests | PocStatus::FindingIsInvalid
+            ) {
+                if poc_test.poc_test_file.exists() {
+                    log::warn!(
+                        "🗑️  Deleting PoC test file with compilation errors to prevent cross-contamination: {}",
+                        poc_test.poc_test_file.display()
+                    );
+                    if let Err(e) = std::fs::remove_file(&poc_test.poc_test_file) {
+                        log::error!(
+                            "Failed to delete PoC test file {}: {:?}",
+                            poc_test.poc_test_file.display(),
+                            e
+                        );
+                    }
+                }
             }
-        }));
-    }
 
-    // Wait for all verification tasks to complete
-    for h in handles {
-        let _ = h.await;
+            // save final PoC results
+            poc_tests.push(poc_test);
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = result {
+            log::error!("Error creating PoC for finding {}: {:?}", i, e);
+        }
     }
 
     // Add final runnable PoCs to Findings
-    let poc_tests_final = poc_tests.lock().await;
     let finding_with_pocs: Vec<Finding> = findings
         .findings
         .iter()
         .map(|f| {
-            let poc_test: Option<PocTest> = poc_tests_final
+            let poc_test: Option<&PocTest> = poc_tests
                 .iter()
-                .find(|t| t.finding_hash == f.hash_derived())
-                .cloned();
+                .find(|t| t.finding_hash == f.hash_derived());
             match poc_test {
                 Some(poc_test) => Finding {
-                    proof_of_code: Some(poc_test.poc_test_code),
-                    poc_test_file: Some(poc_test.poc_test_file),
-                    poc_test_command: Some(poc_test.poc_test_command),
+                    proof_of_code: Some(poc_test.poc_test_code.clone()),
+                    poc_test_file: Some(poc_test.poc_test_file.clone()),
+                    poc_test_command: Some(poc_test.poc_test_command.clone()),
                     poc_test_status: Some(poc_test.poc_test_status),
                     ..f.clone()
                 },
@@ -470,7 +437,7 @@ pub async fn execute(
         .collect();
     info!(
         "✅ Phase 6 complete: {} Findings with PoC tests!",
-        m_and_h_findings.findings.len()
+        m_and_h_findings.len()
     );
 
     Ok(Findings {
