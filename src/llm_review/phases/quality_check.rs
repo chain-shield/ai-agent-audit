@@ -10,7 +10,7 @@ use crate::{
         findings::{Finding, Findings},
         prompt_support::{post_qualify::generate_post_qualify, qualify_prompt::QUALIFY_PROMPT},
         semaphore::VERIFY_SEM,
-        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
+        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
     },
     prepare_code::git_clone::RepoPaths,
 };

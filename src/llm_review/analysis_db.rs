@@ -5,7 +5,6 @@ use std::path::Path;
 
 use crate::{
     config::{CHAINSHIELD_DB_FOLDER, FINDINGS_DB},
-    llm_review::enums::EnumString,
     llm_review::findings::{Finding, Findings},
     prepare_code::git_clone::RepoPaths,
 };
@@ -106,7 +105,7 @@ impl FindingDb {
             impact: finding.impact.clone().unwrap_or_default(),
             proof_of_concept: finding.proof_of_concept.clone().unwrap_or_default(),
             proof_of_code: finding.proof_of_code.clone().unwrap_or_default(),
-            severity: finding.severity.as_str().to_string(),
+            severity: finding.severity.to_string(),
         }
     }
 }

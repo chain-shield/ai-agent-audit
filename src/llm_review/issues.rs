@@ -1,7 +1,7 @@
 // represents abstraction of Findings and ContractInvariants
 
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::{
         agent_factory::{AgentConfig, AgentFactory},
         dynamic_prompts::{
@@ -11,7 +11,7 @@ use crate::{
             pattern_findings::generate_pattern_to_findings_prompt,
             patterns::generate_pattern_verify_prompt,
         },
-        enums::{AIAgent, EnumString},
+        enums::AIAgent,
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
         utils::prompt_context::{generate_formatted_invariant_finding, generate_formatted_pattern},
     },
@@ -63,10 +63,10 @@ impl IssueTrait for InvariantFinding {
     fn hash(&self) -> String {
         format!(
             "{}-{}-{}-{}",
-            self.inv_type.as_str(),
+            self.inv_type.to_string(),
             self.contract,
             self.function,
-            self.status.as_str()
+            self.status.to_string()
         )
     }
     async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
@@ -81,7 +81,7 @@ impl IssueTrait for InvariantFinding {
     fn title_str(&self) -> String {
         format!(
             "{} - {}.{}",
-            self.inv_type.as_str(),
+            self.inv_type.to_string(),
             self.contract,
             self.function
         )
@@ -102,7 +102,7 @@ impl IssueTrait for Pattern {
     fn hash(&self) -> String {
         format!(
             "{}-{}-{}",
-            self.issue_type.as_str(),
+            self.issue_type.to_string(),
             self.contract,
             self.function,
         )
@@ -116,7 +116,7 @@ impl IssueTrait for Pattern {
     fn title_str(&self) -> String {
         format!(
             "{} - {}.{}",
-            self.issue_type.as_str(),
+            self.issue_type.to_string(),
             self.contract,
             self.function
         )

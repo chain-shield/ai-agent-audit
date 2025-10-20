@@ -4,13 +4,10 @@ use super::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
-    llm_review::{
-        enums::EnumString,
-        phases::{
-            add_poc_findings::PocStatus,
-            verify_findings::{FindingConfidence, FindingStatus},
-        },
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    llm_review::phases::{
+        add_poc_findings::PocStatus,
+        verify_findings::{FindingConfidence, FindingStatus},
     },
     utils::semantic_compare,
 };
@@ -60,7 +57,17 @@ pub struct Findings {
     pub findings: Vec<Finding>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, EnumIter)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    EnumIter,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
 #[serde(rename_all = "PascalCase")]
 pub enum PrivilegeLevel {
     Permissionless,   // any EOA
@@ -91,7 +98,7 @@ impl Finding {
             format!(
                 "{} issue found with {} severity",
                 self.exploit_type.as_fancy_str(),
-                self.severity.as_str()
+                self.severity.to_string()
             )
         } else {
             format!(
@@ -125,7 +132,7 @@ impl Finding {
             format!(
                 "{}-{}-{}-{}",
                 self.title.replace(" ", "-"),
-                self.exploit_type.as_str(),
+                self.exploit_type.to_string(),
                 self.contract,
                 fn_name
             )
@@ -172,7 +179,7 @@ impl Finding {
         let prompt = DEDUP_PROMPT
             .replace("{contract}", &self.contract)
             .replace("{function}", &self.function)
-            .replace("{issue_type}", self.exploit_type.as_str())
+            .replace("{issue_type}", &self.exploit_type.to_string())
             .replace(
                 "{description_a}",
                 &self.description.clone().unwrap_or_default(),
@@ -198,15 +205,7 @@ impl Default for PrivilegeLevel {
     }
 }
 
-impl EnumString for PrivilegeLevel {
-    fn as_str(&self) -> &'static str {
-        match self {
-            PrivilegeLevel::Permissionless => "Permissionless",
-            PrivilegeLevel::RequiresRole => "RequiresRole",
-            PrivilegeLevel::RequireAdminRole => "RequireAdminRole",
-        }
-    }
-}
+// No longer needed! strum's Display trait provides to_string() for free
 
 impl Findings {
     pub async fn dedup(self) -> anyhow::Result<Findings> {

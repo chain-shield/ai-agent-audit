@@ -1,5 +1,5 @@
 use crate::{
-    config::{AuditType, AUDIT_TYPE},
+    config::{AUDIT_TYPE, AuditType},
     llm_review::prompt_support::severity_rubics::{
         CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
     },

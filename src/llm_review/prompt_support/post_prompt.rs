@@ -1,5 +1,5 @@
 use crate::{
-    config::{AuditType, AUDIT_TYPE},
+    config::{AUDIT_TYPE, AuditType},
     llm_review::{
         enums::{all_enum_variants, generate_enum_list},
         findings::PrivilegeLevel,

@@ -1,5 +1,4 @@
 use crate::llm_review::{
-    enums::EnumString,
     findings::Finding,
     invariants::InvariantFinding,
     patterns::{ImpactHint, Pattern},
@@ -36,7 +35,7 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
 
     invariant_finding.push_str(&format!(
         "\n\n ### Invariant Type: {}\n",
-        &invariant.inv_type.as_str()
+        &invariant.inv_type.to_string()
     ));
 
     invariant_finding.push_str(&format!(
@@ -45,12 +44,15 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
     ));
 
     invariant_finding.push_str("\n ### Description/Code Snippet\n");
-    invariant_finding.push_str(&invariant.desc.as_str());
+    invariant_finding.push_str(&invariant.desc.to_string());
 
     invariant_finding.push_str("\n ### Checks\n");
     invariant_finding.push_str(&invariant.checks.join(", "));
 
-    invariant_finding.push_str(&format!("\n ### Status: {}\n", &invariant.status.as_str()));
+    invariant_finding.push_str(&format!(
+        "\n ### Status: {}\n",
+        &invariant.status.to_string()
+    ));
 
     invariant_finding.push_str("\n ### Pre-State\n");
     invariant_finding.push_str(&invariant.pre_state.clone().unwrap_or_default());
@@ -69,7 +71,7 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
 
     pattern_list.push_str(&format!(
         "\n\n ### Issue Type: {}\n",
-        &pattern.issue_type.as_str()
+        &pattern.issue_type.to_string()
     ));
 
     pattern_list.push_str(&format!(
@@ -78,10 +80,10 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
     ));
 
     pattern_list.push_str("\n ### Title\n");
-    pattern_list.push_str(&pattern.description.as_str());
+    pattern_list.push_str(&pattern.description.to_string());
 
     pattern_list.push_str("\n ### Description/Code Snippet\n");
-    pattern_list.push_str(&pattern.description.as_str());
+    pattern_list.push_str(&pattern.description.to_string());
 
     pattern_list.push_str("\n ### Static Signals\n");
     pattern_list.push_str(&pattern.static_signals.join(", "));
@@ -91,12 +93,12 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
 
     pattern_list.push_str(&format!(
         "\n ### Minimum Privilege Required to Exploit Vulnerability: {}\n",
-        &pattern.privilege.as_str()
+        &pattern.privilege.to_string()
     ));
 
     pattern_list.push_str(&format!(
         "\n ### Impact: {}\n",
-        &pattern.impact.unwrap_or(ImpactHint::Low).as_str()
+        &pattern.impact.unwrap_or(ImpactHint::Low).to_string()
     ));
 
     pattern_list
@@ -128,7 +130,7 @@ pub fn get_finding_report(
         //title without index
         findings_report.push_str(&format!(
             "## [Severity-{}]. {}\n\n",
-            finding.severity.as_str(),
+            finding.severity.to_string(),
             finding.title
         ));
     }
@@ -138,7 +140,7 @@ pub fn get_finding_report(
     findings_report.push_str("\n\n");
     //type
     findings_report.push_str("## Exploit Type\n");
-    findings_report.push_str(&finding.exploit_type.as_str());
+    findings_report.push_str(&finding.exploit_type.to_string());
     findings_report.push_str("\n\n");
 
     //location
@@ -183,7 +185,7 @@ pub fn get_finding_report(
 
     //privilege
     findings_report.push_str("## Minimim Privilege Required\n");
-    findings_report.push_str(&finding.privilege.as_str());
+    findings_report.push_str(&finding.privilege.to_string());
     findings_report.push_str("\n\n");
 
     //description
