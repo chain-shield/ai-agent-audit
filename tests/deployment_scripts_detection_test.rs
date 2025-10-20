@@ -51,6 +51,7 @@ async fn create_test_repo_with_scripts(
         excluded_folders: None,
         repo_name,
         commit_hash,
+        poc: ai_agent_audit::prepare_code::git_clone::PocConfig::default(),
     };
 
     (temp_dir, repo_paths)

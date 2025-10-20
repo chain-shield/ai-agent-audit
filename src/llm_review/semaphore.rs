@@ -4,7 +4,7 @@ use tokio::sync::Semaphore;
 // increase once hit higher openai teir
 const MAX_CONCURRENTS_VERIFY: usize = 10;
 const MAX_CONCURRENTS_REVIEW: usize = 3;
-const MAX_CONCURRENTS_POC: usize = 3;
+const MAX_CONCURRENTS_POC: usize = 1; // Run PoC tests atomically to avoid cross-file compilation errors
 
 // at module scope or pass it in
 pub static VERIFY_SEM: once_cell::sync::Lazy<Arc<Semaphore>> =

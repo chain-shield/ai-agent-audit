@@ -1,0 +1,181 @@
+warning: field `not_immediate` is never read
+  --> src/build_brain/inheritance.rs:16:13
+   |
+14 |     pub struct InheritanceRelation {
+   |                ------------------- field in this struct
+15 |         pub immediate: Vec<String>,
+16 |         pub not_immediate: Vec<String>,
+   |             ^^^^^^^^^^^^^
+   |
+   = note: `InheritanceRelation` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+
+warning: field `base_to_child` is never read
+  --> src/build_brain/inheritance.rs:23:13
+   |
+21 |     pub struct AdditionalFields {
+   |                ---------------- field in this struct
+22 |         pub child_to_base: HashMap<String, InheritanceRelation>,
+23 |         pub base_to_child: HashMap<String, InheritanceRelation>,
+   |             ^^^^^^^^^^^^^
+   |
+   = note: `AdditionalFields` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `ai-agent-audit` (lib) generated 2 warnings
+   Compiling ai-agent-audit v0.1.0 (/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit)
+error[E0609]: no field `vulnerability_type` on type `&Finding`
+  --> tests/poc_retry_loop_test.rs:98:64
+   |
+98 |                 println!("  Vulnerability Type: {:?}", finding.vulnerability_type);
+   |                                                                ^^^^^^^^^^^^^^^^^^ unknown field
+   |
+   = note: available fields are: `derived_from`, `title`, `exploit_type`, `privilege`, `contract` ... and 16 others
+
+error[E0609]: no field `poc_test_output` on type `&Finding`
+   --> tests/poc_retry_loop_test.rs:129:48
+    |
+129 |                 if let Some(output) = &finding.poc_test_output {
+    |                                                ^^^^^^^^^^^^^^^ unknown field
+    |
+help: a field with a similar name exists
+    |
+129 -                 if let Some(output) = &finding.poc_test_output {
+129 +                 if let Some(output) = &finding.poc_test_status {
+    |
+
+error[E0308]: mismatched types
+   --> tests/poc_retry_loop_test.rs:201:22
+    |
+201 | ...n: "enterRaffle pushes new players then validates no dupli...ntil the round is reset.".to_string(),
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<String>`, found `String`
+    |
+    = note: expected enum `Option<String>`
+             found struct `String`
+help: try wrapping the expression in `Some`
+    |
+201 |         description: Some("enterRaffle pushes new players then validates no duplicates by scanning the entire players array with a nested loop, giving O(n^2) complexity over unbounded, user-inflated state. Any EOA can bloat players by adding many unique addresses. Once players grows near the per-tx block gas limit, any subsequent enterRaffle call will run out of gas during the duplicate scan, permanently DoSing further entries until the round is reset.".to_string()),
+    |                      +++++                                                                                                                                                                                                                                                                                                                                                                                                                                                           +
+
+error[E0560]: struct `Finding` has no field named `vulnerability_type`
+   --> tests/poc_retry_loop_test.rs:203:9
+    |
+203 |         vulnerability_type: VulnerabilityType::GasGriefBlockLimit,
+    |         ^^^^^^^^^^^^^^^^^^ `Finding` does not have this field
+    |
+    = note: available fields are: `derived_from`, `exploit_type`, `privilege`, `contract`, `function` ... and 11 others
+
+error[E0560]: struct `Finding` has no field named `location`
+   --> tests/poc_retry_loop_test.rs:204:9
+    |
+204 |         location: "PuppyRaffle.enterRaffle".to_string(),
+    |         ^^^^^^^^ `Finding` does not have this field
+    |
+    = note: available fields are: `derived_from`, `exploit_type`, `privilege`, `contract`, `function` ... and 11 others
+
+error[E0308]: mismatched types
+   --> tests/poc_retry_loop_test.rs:205:17
+    |
+205 | ...t: "A permissionless attacker can bloat players[] wit... pool growth and fee accrual.".to_string(),
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<String>`, found `String`
+    |
+    = note: expected enum `Option<String>`
+             found struct `String`
+help: try wrapping the expression in `Some`
+    |
+205 |         impact: Some("A permissionless attacker can bloat players[] with unique addresses and cause future enterRaffle calls to run out of gas due to the O(n^2) duplicate scan. This prevents any new entries from joining until the round resets in selectWinner(), halting prize pool growth and fee accrual.".to_string()),
+    |                 +++++                                                                                                                                                                                                                                                                                                        +
+
+error[E0560]: struct `Finding` has no field named `suggested_mitigation`
+   --> tests/poc_retry_loop_test.rs:207:9
+    |
+207 | ...   suggested_mitigation: Some("Replace the global O(n^2) duplicate scan with O(1) membership checks via a mapping and only check dupli...
+    |       ^^^^^^^^^^^^^^^^^^^^ `Finding` does not have this field
+    |
+    = note: available fields are: `derived_from`, `exploit_type`, `privilege`, `contract`, `function` ... and 11 others
+
+error[E0560]: struct `Finding` has no field named `privilege_level`
+   --> tests/poc_retry_loop_test.rs:208:9
+    |
+208 |         privilege_level: PrivilegeLevel::Permissionless,
+    |         ^^^^^^^^^^^^^^^ `Finding` does not have this field
+    |
+    = note: available fields are: `derived_from`, `exploit_type`, `privilege`, `contract`, `function` ... and 11 others
+
+error[E0308]: mismatched types
+   --> tests/poc_retry_loop_test.rs:214:22
+    |
+214 | ...n: "selectWinner splits the pot using two separate integer...ocking all accrued fees.".to_string(),
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<String>`, found `String`
+    |
+    = note: expected enum `Option<String>`
+             found struct `String`
+help: try wrapping the expression in `Some`
+    |
+214 |         description: Some("selectWinner splits the pot using two separate integer divisions: (total*80)/100 and (total*20)/100. When totalAmountCollected is not divisible by 5, floor rounding creates a 1 wei dust remainder such that prizePool + fee < total. That dust stays on the contract, while totalFees tracks only the rounded-down fee. withdrawFees then requires address(this).balance == totalFees, so any dust makes this strict equality fail forever, bricking fee withdrawals and locking all accrued fees.".to_string()),
+    |                      +++++                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  +
+
+error[E0560]: struct `Finding` has no field named `vulnerability_type`
+   --> tests/poc_retry_loop_test.rs:216:9
+    |
+216 |         vulnerability_type: VulnerabilityType::RoundingError,
+    |         ^^^^^^^^^^^^^^^^^^ `Finding` does not have this field
+    |
+    = note: available fields are: `derived_from`, `exploit_type`, `privilege`, `contract`, `function` ... and 11 others
+
+error[E0560]: struct `Finding` has no field named `location`
+   --> tests/poc_retry_loop_test.rs:217:9
+    |
+217 |         location: "PuppyRaffle.selectWinner".to_string(),
+    |         ^^^^^^^^ `Finding` does not have this field
+    |
+    = note: available fields are: `derived_from`, `exploit_type`, `privilege`, `contract`, `function` ... and 11 others
+
+error[E0308]: mismatched types
+   --> tests/poc_retry_loop_test.rs:218:17
+    |
+218 | ...t: "Permanent DoS of fee withdrawal; protocol fees become irretrievably stuck as long as any rounding dust exists. A single round with non-multiple-of-5 totals bricks withdrawFees forever, locking all accrued fees.".to_string(),
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<String>`, found `String`
+    |
+    = note: expected enum `Option<String>`
+             found struct `String`
+help: try wrapping the expression in `Some`
+    |
+218 |         impact: Some("Permanent DoS of fee withdrawal; protocol fees become irretrievably stuck as long as any rounding dust exists. A single round with non-multiple-of-5 totals bricks withdrawFees forever, locking all accrued fees.".to_string()),
+    |                 +++++                                                                                                                                                                                                                                +
+
+error[E0560]: struct `Finding` has no field named `suggested_mitigation`
+   --> tests/poc_retry_loop_test.rs:220:9
+    |
+220 | ...   suggested_mitigation: Some("Use a single division to calculate one value and derive the other by subtraction to ensure prizePool + ...
+    |       ^^^^^^^^^^^^^^^^^^^^ `Finding` does not have this field
+    |
+    = note: available fields are: `derived_from`, `exploit_type`, `privilege`, `contract`, `function` ... and 11 others
+
+error[E0560]: struct `Finding` has no field named `privilege_level`
+   --> tests/poc_retry_loop_test.rs:221:9
+    |
+221 |         privilege_level: PrivilegeLevel::Permissionless,
+    |         ^^^^^^^^^^^^^^^ `Finding` does not have this field
+    |
+    = note: available fields are: `derived_from`, `exploit_type`, `privilege`, `contract`, `function` ... and 11 others
+
+error[E0308]: mismatched types
+   --> tests/poc_retry_loop_test.rs:241:26
+    |
+241 |             test_folder: "test".to_string(),
+    |                          ^^^^^^^^^^^^^^^^^^ expected `PathBuf`, found `String`
+    |
+help: call `Into::into` on this expression to convert `String` into `PathBuf`
+    |
+241 |             test_folder: "test".to_string().into(),
+    |                                            +++++++
+
+error[E0277]: the trait bound `RepoPaths: Default` is not satisfied
+   --> tests/poc_retry_loop_test.rs:243:11
+    |
+243 |         ..Default::default()
+    |           ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `RepoPaths`
+
+Some errors have detailed explanations: E0277, E0308, E0560, E0609.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `ai-agent-audit` (test "poc_retry_loop_test") due to 16 previous errors

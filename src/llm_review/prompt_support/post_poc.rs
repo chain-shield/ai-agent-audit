@@ -6,8 +6,7 @@ pub const POST_CREATE_POC: &str = r#"
 
 ```json
 {
-    "poc_test_code": "fully runnable PoC code as a string (escape newlines and quotes properly)",
-    "command_to_run_test": "exact command to run the PoC test (e.g., forge test --match-test testExploit -vvv)",
+    "poc_test_code": "fully runnable PoC code as a string (escape newlines and quotes properly). Test function MUST start with 'test' (e.g., testExploit, testReentrancy)",
     "commentary": "brief explanation of your PoC approach and what it demonstrates",
     "cannot_create_poc_because_finding_invalid": true|false
 }

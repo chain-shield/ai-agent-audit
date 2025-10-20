@@ -77,6 +77,7 @@ async fn test_clfactory_codeblock_generation() {
         scoped_files: None,
         monorepo_folders: None,
         commit_hash: commit_hash.clone(),
+        poc: ai_agent_audit::prepare_code::git_clone::PocConfig::default(),
     };
 
     println!("\n📁 Repository structure:");

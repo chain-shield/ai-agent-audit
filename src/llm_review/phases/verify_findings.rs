@@ -13,7 +13,7 @@ use crate::{
             post_verify::POST_VERIFY, pre_verify::PRE_VERIFY, verify_prompt::generate_verify_prompt,
         },
         semaphore::VERIFY_SEM,
-        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
+        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -167,7 +167,7 @@ pub async fn execute(
     } else {
         Arc::new(format!(
             "{}\n {}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
-            PRE_VERIFY,&verify_prompt, &audit_scope
+            PRE_VERIFY, &verify_prompt, &audit_scope
         ))
     };
     // info!("verify prompt + scope => {}", verify_prompt_plus_scope);
@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn test_legit_vulnerability_defaults() {
         let vuln = LegitVulnerability::default();
-        assert_eq!(vuln.severity, Some(Severity::Info)); // Default from Severity enum
+        assert_eq!(vuln.severity, None); // Option<Severity> defaults to None
         assert_eq!(vuln.status, FindingStatus::Invalid); // Default from FindingStatus enum
         assert_eq!(vuln.status_confidence, FindingConfidence::SomeWhatConfident); // Default from FindingConfidence enum
         assert_eq!(vuln.finding_complexity, 0); // Default u8

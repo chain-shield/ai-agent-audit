@@ -1,0 +1,337 @@
+   Compiling ai-agent-audit v0.1.0 (/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit)
+warning: field `not_immediate` is never read
+  --> src/build_brain/inheritance.rs:16:13
+   |
+14 |     pub struct InheritanceRelation {
+   |                ------------------- field in this struct
+15 |         pub immediate: Vec<String>,
+16 |         pub not_immediate: Vec<String>,
+   |             ^^^^^^^^^^^^^
+   |
+   = note: `InheritanceRelation` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+
+warning: field `base_to_child` is never read
+  --> src/build_brain/inheritance.rs:23:13
+   |
+21 |     pub struct AdditionalFields {
+   |                ---------------- field in this struct
+22 |         pub child_to_base: HashMap<String, InheritanceRelation>,
+23 |         pub base_to_child: HashMap<String, InheritanceRelation>,
+   |             ^^^^^^^^^^^^^
+   |
+   = note: `AdditionalFields` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `ai-agent-audit` (lib) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.93s
+     Running tests/poc_retry_loop_test.rs (target/debug/deps/poc_retry_loop_test-2432a9118b0baccc)
+
+running 1 test
+[2025-10-20T20:12:05Z INFO  ai_agent_audit::llm_review::agent_factory] Initializing OpenAI client...
+[2025-10-20T20:12:05Z INFO  ai_agent_audit::llm_review::agent_factory] OpenAI client initialized successfully
+📄 Loaded contract code (10178 chars)
+📋 Created 2 findings from audit report
+📁 Repo root: /private/tmp/audit-analysis/4-puppy-raffle-audit-3ff0f0
+📝 PoC instructions: Use Foundry/Forge for testing. Import from 'forge-std/Test.sol' for Foundry tests or 'ds-test/test.sol' for ds-test. The contract uses Solidity 0.7.6. Test folder is 'test/'.
+🤖 Using Claude 3.7 Sonnet for PoC generation
+🚀 Starting PoC retry loop test...
+
+[2025-10-20T20:12:05Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] 🔬 Phase 6: Writing PoC tests for each Medium and High finding...
+[2025-10-20T20:12:05Z WARN  ai_agent_audit::llm_review::phases::add_poc_findings] Metadata context not available, continuing PoC generation without it
+[2025-10-20T20:12:05Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] now writing PoC for each finding...
+[2025-10-20T20:12:05Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] writiing PoC for finding #1
+[2025-10-20T20:12:05Z WARN  ai_agent_audit::cost::cost_data] Unknown model 'claude-3-7-sonnet-20250219' for input tokens, using default rate
+[2025-10-20T20:12:26Z WARN  ai_agent_audit::cost::cost_data] Unknown model 'claude-3-7-sonnet-20250219' for output tokens, using default rate
+[2025-10-20T20:12:26Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 💾 Saving PoC test to: /private/tmp/audit-analysis/4-puppy-raffle-audit-3ff0f0/4-puppy-raffle-audit/test/M-Unbounded-O-n-2--dup.t.sol
+[2025-10-20T20:12:26Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 🧪 Running PoC test with command: forge test --match-path test/M-Unbounded-O-n-2--dup.t.sol --match-test testDuplicateScanGasDoS -vvv
+[2025-10-20T20:12:28Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 📊 PoC test exit code: 0
+[2025-10-20T20:12:28Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 📝 PoC test stdout:
+    Compiling 19 files with Solc 0.8.30
+    Solc 0.8.30 finished in 409.59ms
+    Compiler run successful with warnings:
+    Warning (2072): Unused local variable.
+      --> test/M-Unbounded-O-n-2--dup.t.sol:28:9:
+       |
+    28 |         uint256 numPlayers = 100; // This is already enough to show significant gas increase
+       |         ^^^^^^^^^^^^^^^^^^
+    
+    
+    Ran 1 test for test/M-Unbounded-O-n-2--dup.t.sol:UnboundedDuplicateScanTest
+    [PASS] testDuplicateScanGasDoS() (gas: 18617750)
+    Logs:
+      Batch: 2
+      Players: 20
+      Gas Used: 615680
+      Gas Increase: 207571
+      Batch: 3
+      Players: 30
+      Gas Used: 906651
+      Gas Increase: 290971
+      Batch: 4
+      Players: 40
+      Gas Used: 1281021
+      Gas Increase: 374370
+      Batch: 5
+      Players: 50
+      Gas Used: 1738791
+      Gas Increase: 457770
+      Batch: 6
+      Players: 60
+      Gas Used: 2279962
+      Gas Increase: 541171
+      Batch: 7
+      Players: 70
+      Gas Used: 2904532
+      Gas Increase: 624570
+      Batch: 8
+      Players: 80
+      Gas Used: 3612503
+      Gas Increase: 707971
+      Batch: 9
+      Players: 90
+      Gas Used: 4403873
+      Gas Increase: 791370
+      Estimated gas for 500 players: 249600000
+    
+    Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 32.85ms (28.03ms CPU time)
+    
+    Ran 1 test suite in 37.67ms (32.85ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+    
+[2025-10-20T20:12:28Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] AI Agent: This PoC demonstrates the O(n^2) duplicate scan vulnerability in the PuppyRaffle contract. It shows how gas costs increase quadratically as more players enter the raffle. The test adds players in batches and measures the gas cost for each batch, showing the non-linear increase. It then calculates the theoretical gas cost for 500 players, which would exceed the Ethereum block gas limit (approximately 30M gas), making the contract unusable. This effectively creates a DoS condition where new players cannot enter the raffle once the player array grows too large.
+[2025-10-20T20:12:28Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] writiing PoC for finding #2
+[2025-10-20T20:12:28Z WARN  ai_agent_audit::cost::cost_data] Unknown model 'claude-3-7-sonnet-20250219' for input tokens, using default rate
+[2025-10-20T20:12:51Z WARN  ai_agent_audit::cost::cost_data] Unknown model 'claude-3-7-sonnet-20250219' for output tokens, using default rate
+[2025-10-20T20:12:51Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 💾 Saving PoC test to: /private/tmp/audit-analysis/4-puppy-raffle-audit-3ff0f0/4-puppy-raffle-audit/test/M-Rounding-dust-from-8.t.sol
+[2025-10-20T20:12:51Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 🧪 Running PoC test with command: forge test --match-path test/M-Rounding-dust-from-8.t.sol --match-test testRoundingDustLocksWithdrawFees -vvv
+[2025-10-20T20:12:51Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 📊 PoC test exit code: 1
+[2025-10-20T20:12:51Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 📝 PoC test stdout:
+    2025-10-20T20:12:51.676149Z ERROR foundry_compilers::resolver: failed to resolve versions
+    
+[2025-10-20T20:12:51Z WARN  ai_agent_audit::llm_review::utils::save_run_poc] ⚠️  PoC test stderr:
+    Error: Found incompatible versions:
+    test/M-Rounding-dust-from-8.t.sol ^0.8.0 imports:
+        lib/forge-std/src/Test.sol >=0.6.2, <0.9.0
+        src/PuppyRaffle.sol ^0.7.6
+        lib/forge-std/src/console.sol >=0.4.22, <0.9.0
+        lib/forge-std/src/console2.sol >=0.4.22, <0.9.0
+        lib/forge-std/src/safeconsole.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/StdAssertions.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/StdChains.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/StdCheats.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/StdError.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/StdInvariant.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/StdJson.sol >=0.6.0, <0.9.0
+        lib/forge-std/src/StdMath.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/StdStorage.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/StdStyle.sol >=0.4.22, <0.9.0
+        lib/forge-std/src/StdUtils.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/Vm.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/Base.sol >=0.6.2, <0.9.0
+        lib/forge-std/lib/ds-test/src/test.sol >=0.5.0
+        lib/openzeppelin-contracts/contracts/token/ERC721/ERC721.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/access/Ownable.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/utils/Address.sol >=0.6.2, <0.8.0
+        lib/base64/base64.sol >=0.6.0
+        lib/forge-std/lib/ds-test/src/test.sol >=0.5.0
+        lib/forge-std/src/StdMath.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/Vm.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/StdStorage.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/console2.sol >=0.4.22, <0.9.0
+        lib/forge-std/src/Vm.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/Vm.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/Vm.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/Vm.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/interfaces/IMulticall3.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/Vm.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/StdStorage.sol >=0.6.2, <0.9.0
+        lib/forge-std/src/Vm.sol >=0.6.2, <0.9.0
+        lib/openzeppelin-contracts/contracts/utils/Context.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol >=0.6.2, <0.8.0
+        lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Metadata.sol >=0.6.2, <0.8.0
+        lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Enumerable.sol >=0.6.2, <0.8.0
+        lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/introspection/ERC165.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/math/SafeMath.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/utils/Address.sol >=0.6.2, <0.8.0
+        lib/openzeppelin-contracts/contracts/utils/EnumerableSet.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/utils/EnumerableMap.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/utils/Strings.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/utils/Context.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/introspection/IERC165.sol >=0.6.0, <0.8.0
+        lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol >=0.6.2, <0.8.0
+        lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol >=0.6.2, <0.8.0
+        lib/openzeppelin-contracts/contracts/introspection/IERC165.sol >=0.6.0, <0.8.0
+    
+[2025-10-20T20:12:51Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] AI Agent: This PoC demonstrates how rounding errors in the 80/20 split calculation create dust that permanently locks the withdrawFees function. When the total amount collected is not divisible by 5, the integer division in selectWinner() creates a rounding error. For example, with 4 wei total: prize = floor(4*80/100) = 3 wei, fee = floor(4*20/100) = 0 wei, leaving 1 wei dust in the contract. This dust causes the contract balance to be greater than totalFees, making the equality check in withdrawFees() always fail. The test shows that even after subsequent raffles with perfectly divisible amounts, the initial dust remains and continues to prevent fee withdrawals, effectively locking all protocol fees permanently.
+[2025-10-20T20:12:51Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] PoC attempt 2 for finding #2
+[2025-10-20T20:12:51Z WARN  ai_agent_audit::cost::cost_data] Unknown model 'claude-3-7-sonnet-20250219' for input tokens, using default rate
+test test_poc_retry_loop_with_real_findings has been running for over 60 seconds
+[2025-10-20T20:13:13Z WARN  ai_agent_audit::cost::cost_data] Unknown model 'claude-3-7-sonnet-20250219' for output tokens, using default rate
+[2025-10-20T20:13:13Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] AI Agent: Fixed the PoC by changing the Solidity version from ^0.8.0 to ^0.7.6 to match the PuppyRaffle contract. Also replaced makeAddr() function calls with explicit address assignments (address(1), address(2), etc.) since makeAddr() is not available in Solidity 0.7.x. The test now properly demonstrates how rounding dust from the 80/20 split in selectWinner() causes withdrawFees() to be permanently locked due to the strict equality check between contract balance and totalFees.
+[2025-10-20T20:13:13Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 💾 Saving PoC test to: /private/tmp/audit-analysis/4-puppy-raffle-audit-3ff0f0/4-puppy-raffle-audit/test/M-Rounding-dust-from-8.t.sol
+[2025-10-20T20:13:13Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 🧪 Running PoC test with command: forge test --match-path test/M-Rounding-dust-from-8.t.sol --match-test testRoundingDustLocksWithdrawFees -vvv
+[2025-10-20T20:13:15Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 📊 PoC test exit code: 1
+[2025-10-20T20:13:15Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 📝 PoC test stdout:
+    Compiler run failed:
+    Error (6594): Contract "RoundingDustTest" does not use ABI coder v2 but wants to inherit from a contract which uses types that require it. Use "pragma abicoder v2;" for the inheriting contract as well to enable the feature.
+    test/M-Rounding-dust-from-8.t.sol:7:1: TypeError: Contract "RoundingDustTest" does not use ABI coder v2 but wants to inherit from a contract which uses types that require it. Use "pragma abicoder v2;" for the inheriting contract as well to enable the feature.
+    contract RoundingDustTest is Test {
+    ^ (Relevant source part starts here and spans across multiple lines).
+    lib/forge-std/src/StdInvariant.sol:72:5: Type only supported by ABIEncoderV2
+        function excludeArtifacts() public view returns (string[] memory excludedArtifacts_) {
+        ^ (Relevant source part starts here and spans across multiple lines).
+    lib/forge-std/src/StdInvariant.sol:84:5: Type only supported by ABIEncoderV2
+        function targetArtifacts() public view returns (string[] memory targetedArtifacts_) {
+        ^ (Relevant source part starts here and spans across multiple lines).
+    lib/forge-std/src/StdInvariant.sol: 88:5: Type only supported by ABIEncoderV2
+        function targetArtifactSelectors() public view returns (FuzzSelector[] memory targetedArtifactSelectors_) {
+        ^ (Relevant source part starts here and spans across multiple lines).
+    lib/forge-std/src/StdInvariant.sol:96:5: Type only supported by ABIEncoderV2
+        function targetSelectors() public view returns (FuzzSelector[] memory targetedSelectors_) {
+        ^ (Relevant source part starts here and spans across multiple lines).
+    lib/forge-std/src/StdInvariant.sol:104:5: Type only supported by ABIEncoderV2
+        function targetInterfaces() public view returns (FuzzInterface[] memory targetedInterfaces_) {
+        ^ (Relevant source part starts here and spans across multiple lines).
+    
+[2025-10-20T20:13:15Z WARN  ai_agent_audit::llm_review::utils::save_run_poc] ⚠️  PoC test stderr:
+    Error: Compilation failed
+    
+[2025-10-20T20:13:15Z WARN  ai_agent_audit::llm_review::phases::add_poc_findings] Some Poc tests are failing for: Rounding dust from 80/20 split in PuppyRaffle.selectWinner DoSes withdrawFees and permanently locks protocol fees
+[2025-10-20T20:13:15Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] PoC attempt 3 for finding #2
+[2025-10-20T20:13:15Z WARN  ai_agent_audit::cost::cost_data] Unknown model 'claude-3-7-sonnet-20250219' for input tokens, using default rate
+[2025-10-20T20:13:39Z WARN  ai_agent_audit::cost::cost_data] Unknown model 'claude-3-7-sonnet-20250219' for output tokens, using default rate
+[2025-10-20T20:13:39Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] AI Agent: The main issue was that the test was missing the 'pragma abicoder v2;' directive, which is required when using Forge-std with Solidity 0.7.x. The error message indicated that the test contract was trying to inherit from a contract (Test.sol) that uses ABIEncoderV2 features, but the test itself didn't enable this feature. I added the missing pragma directive at the top of the file. Additionally, I fixed a minor issue where address(7) was being used without funding it first by adding vm.deal(address(7), 10 ether) before using that address in the test. The test now properly demonstrates how rounding dust from the 80/20 split in PuppyRaffle.selectWinner can permanently lock protocol fees.
+[2025-10-20T20:13:39Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 💾 Saving PoC test to: /private/tmp/audit-analysis/4-puppy-raffle-audit-3ff0f0/4-puppy-raffle-audit/test/M-Rounding-dust-from-8.t.sol
+[2025-10-20T20:13:39Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 🧪 Running PoC test with command: forge test --match-path test/M-Rounding-dust-from-8.t.sol --match-test testRoundingDustLocksWithdrawFees -vvv
+[2025-10-20T20:13:41Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 📊 PoC test exit code: 0
+[2025-10-20T20:13:41Z INFO  ai_agent_audit::llm_review::utils::save_run_poc] 📝 PoC test stdout:
+    Compiling 1 files with Solc 0.7.6
+    Solc 0.7.6 finished in 490.91ms
+    Compiler run successful with warnings:
+    Warning (2462): Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+    lib/openzeppelin-contracts/contracts/access/Ownable.sol:26:5: Warning: Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+        constructor () internal {
+        ^ (Relevant source part starts here and spans across multiple lines).
+    Warning (2462): Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+    lib/openzeppelin-contracts/contracts/introspection/ERC165.sol:24:5: Warning: Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+        constructor () internal {
+        ^ (Relevant source part starts here and spans across multiple lines).
+    Warning (2462): Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+    lib/openzeppelin-contracts/contracts/token/ERC721/ERC721.sol:93:5: Warning: Visibility for constructor is ignored. If you want the contract to be non-deployable, making it "abstract" is sufficient.
+        constructor (string memory name_, string memory symbol_) public {
+        ^ (Relevant source part starts here and spans across multiple lines).
+    
+    Ran 1 test for test/M-Rounding-dust-from-8.t.sol:RoundingDustTest
+    [PASS] testRoundingDustLocksWithdrawFees() (gas: 532720)
+    Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.52ms (1.03ms CPU time)
+    
+    Ran 1 test suite in 4.31ms (1.52ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
+    
+[2025-10-20T20:13:41Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] All PoC tests passing test for: Rounding dust from 80/20 split in PuppyRaffle.selectWinner DoSes withdrawFees and permanently locks protocol fees
+[2025-10-20T20:13:41Z INFO  ai_agent_audit::llm_review::phases::add_poc_findings] ✅ Phase 6 complete: 2 Findings with PoC tests!
+
+✅ PoC generation workflow completed!
+📊 Detailed Results:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Finding #1: Unbounded O(n^2) duplicate scan in PuppyRaffle.enterRaffle enables gas-based DoS of new raffle entries
+  Severity: Medium
+  Exploit Type: GasGriefBlockLimit
+  Contract: PuppyRaffle
+  Function: enterRaffle
+  PoC Status: AllTestPass
+    ✅ All tests passing!
+  PoC File: /private/tmp/audit-analysis/4-puppy-raffle-audit-3ff0f0/4-puppy-raffle-audit/test/M-Unbounded-O-n-2--dup.t.sol
+
+  Generated PoC Code (first 30 lines):
+      1 | // SPDX-License-Identifier: MIT
+      2 | pragma solidity ^0.8.0;
+      3 | 
+      4 | import "forge-std/Test.sol";
+      5 | 
+      6 | interface IPuppyRaffle {
+      7 |     function enterRaffle(address[] memory newPlayers) external payable;
+      8 |     function players(uint256 index) external view returns (address);
+      9 |     function selectWinner() external;
+     10 | }
+     11 | 
+     12 | contract UnboundedDuplicateScanTest is Test {
+     13 |     IPuppyRaffle puppyRaffle;
+     14 |     uint256 entranceFee = 1e18;
+     15 |     address feeAddress = address(0x1);
+     16 |     uint256 duration = 1 days;
+     17 |     
+     18 |     function setUp() public {
+     19 |         // Deploy the PuppyRaffle contract
+     20 |         vm.startPrank(feeAddress);
+     21 |         puppyRaffle = IPuppyRaffle(deployCode("PuppyRaffle.sol:PuppyRaffle", abi.encode(entranceFee, feeAddress, duration)));
+     22 |         vm.stopPrank();
+     23 |     }
+     24 |     
+     25 |     function testDuplicateScanGasDoS() public {
+     26 |         // Create a large number of players to demonstrate the O(n^2) issue
+     27 |         // We'll use a smaller number for the test, but in reality an attacker could use more
+     28 |         uint256 numPlayers = 100; // This is already enough to show significant gas increase
+     29 |         
+     30 |         // Create the first batch of players
+
+  PoC Command: forge test --match-path test/M-Unbounded-O-n-2--dup.t.sol --match-test testDuplicateScanGasDoS -vvv
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Finding #2: Rounding dust from 80/20 split in PuppyRaffle.selectWinner DoSes withdrawFees and permanently locks protocol fees
+  Severity: Medium
+  Exploit Type: RoundingError
+  Contract: PuppyRaffle
+  Function: selectWinner
+  PoC Status: AllTestPass
+    ✅ All tests passing!
+  PoC File: /private/tmp/audit-analysis/4-puppy-raffle-audit-3ff0f0/4-puppy-raffle-audit/test/M-Rounding-dust-from-8.t.sol
+
+  Generated PoC Code (first 30 lines):
+      1 | // SPDX-License-Identifier: MIT
+      2 | pragma solidity ^0.7.6;
+      3 | pragma abicoder v2;
+      4 | 
+      5 | import "forge-std/Test.sol";
+      6 | import "../src/PuppyRaffle.sol";
+      7 | 
+      8 | contract RoundingDustTest is Test {
+      9 |     PuppyRaffle puppyRaffle;
+     10 |     address public owner;
+     11 |     address public feeAddress;
+     12 |     address public player1;
+     13 |     address public player2;
+     14 |     address public player3;
+     15 |     address public player4;
+     16 | 
+     17 |     function setUp() public {
+     18 |         owner = address(1);
+     19 |         feeAddress = address(2);
+     20 |         player1 = address(3);
+     21 |         player2 = address(4);
+     22 |         player3 = address(5);
+     23 |         player4 = address(6);
+     24 |         
+     25 |         vm.startPrank(owner);
+     26 |         // Set entrance fee to 1 wei to demonstrate the issue
+     27 |         puppyRaffle = new PuppyRaffle(1, feeAddress, 1 days);
+     28 |         vm.stopPrank();
+     29 |         
+     30 |         // Fund players
+
+  PoC Command: forge test --match-path test/M-Rounding-dust-from-8.t.sol --match-test testRoundingDustLocksWithdrawFees -vvv
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 Summary:
+  Total findings: 2
+  ✅ Passing PoCs: 2
+  ⚠️  Failing PoCs: 0
+  ❌ Error PoCs: 0
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Test passed - workflow completed without crashing
+ℹ️  Note: This test is for investigation, not assertion of PoC success
+test test_poc_retry_loop_with_real_findings ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 96.29s
+

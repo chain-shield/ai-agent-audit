@@ -27,7 +27,7 @@ pub fn generate_verify_prompt(audit_type: AuditType) -> String {
 Your task: decide if a reported issue is valid and would likely receive **≥ Medium severity** in a {contest} contest.
 
 Consider the following Criteria:
-1. Is issue in scope? (if scope is provided)
+1. Is issue in scope? (see scope provided below)
 2. Is this issue valid? Does protocol have safeguards against it? Are there any external depedencies that cannot be seen and analyzed (creating uncertainly about validity of finding)?
 3. Would it likely receive **≥ Medium severity** in a {contest} contest
 

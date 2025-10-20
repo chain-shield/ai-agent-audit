@@ -21,6 +21,9 @@ fn build_test_cli() -> Cli {
         via_ir: false,
         force_rebuild: false,
         build_cmd: Some("npm -v".to_string()),
+        poc_instructions: None,
+        poc_template: None,
+        test_folder: None,
     }
 }
 

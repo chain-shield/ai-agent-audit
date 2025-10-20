@@ -28,6 +28,137 @@ use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
+/// Sanitize a string to be safe for use as a filename
+/// Replaces all characters that are not alphanumeric, dash, or underscore with a dash
+fn sanitize_filename(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Extract test function names from Solidity code
+/// Returns the first test function found (function name starting with "test")
+fn extract_test_function_name(code: &str) -> Option<String> {
+    // Regex to match Solidity function declarations starting with "test"
+    // Matches: function testSomething() public { ... }
+    let re = regex::Regex::new(r"function\s+(test\w+)\s*\(").ok()?;
+
+    re.captures(code)
+        .and_then(|cap| cap.get(1))
+        .map(|m| m.as_str().to_string())
+}
+
+/// Build the forge test command programmatically
+/// This ensures consistent command format and correct relative paths
+fn build_forge_test_command(
+    test_file_relative_path: &str,
+    test_function_name: Option<&str>,
+) -> String {
+    match test_function_name {
+        Some(name) => format!(
+            "forge test --match-path {} --match-test {} -vvv",
+            test_file_relative_path, name
+        ),
+        None => format!("forge test --match-path {} -vvv", test_file_relative_path),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_filename() {
+        // Test parentheses
+        assert_eq!(
+            sanitize_filename("Unbounded O(n^2) duplicate scan"),
+            "Unbounded-O-n-2--duplicate-scan"
+        );
+
+        // Test spaces
+        assert_eq!(
+            sanitize_filename("Rounding dust from 80/20 split"),
+            "Rounding-dust-from-80-20-split"
+        );
+
+        // Test special characters
+        assert_eq!(
+            sanitize_filename("Test: with/special\\chars*and?more!"),
+            "Test--with-special-chars-and-more-"
+        );
+
+        // Test already clean
+        assert_eq!(
+            sanitize_filename("Already-clean_filename123"),
+            "Already-clean_filename123"
+        );
+    }
+
+    #[test]
+    fn test_extract_test_function_name() {
+        // Test basic function
+        let code = r#"
+            function testExploit() public {
+                // test code
+            }
+        "#;
+        assert_eq!(
+            extract_test_function_name(code),
+            Some("testExploit".to_string())
+        );
+
+        // Test function with parameters
+        let code = r#"
+            function testReentrancy(uint256 amount) public {
+                // test code
+            }
+        "#;
+        assert_eq!(
+            extract_test_function_name(code),
+            Some("testReentrancy".to_string())
+        );
+
+        // Test multiple functions (should return first)
+        let code = r#"
+            function setUp() public {}
+            function testAccessControl() public {}
+            function testAnother() public {}
+        "#;
+        assert_eq!(
+            extract_test_function_name(code),
+            Some("testAccessControl".to_string())
+        );
+
+        // Test no test function
+        let code = r#"
+            function setUp() public {}
+            function helper() internal {}
+        "#;
+        assert_eq!(extract_test_function_name(code), None);
+    }
+
+    #[test]
+    fn test_build_forge_test_command() {
+        // With test function name
+        assert_eq!(
+            build_forge_test_command("test/MyTest.t.sol", Some("testExploit")),
+            "forge test --match-path test/MyTest.t.sol --match-test testExploit -vvv"
+        );
+
+        // Without test function name
+        assert_eq!(
+            build_forge_test_command("test/MyTest.t.sol", None),
+            "forge test --match-path test/MyTest.t.sol -vvv"
+        );
+    }
+}
+
 #[derive(
     Default,
     Debug,
@@ -66,7 +197,6 @@ pub struct PocTest {
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GeneratePocTest {
     pub poc_test_code: String,
-    pub command_to_run_test: String,
     pub cannot_create_poc_because_finding_invalid: Option<bool>,
     /// LLM commentary on PoC status and next steps
     pub commentary: Option<String>,
@@ -133,7 +263,8 @@ pub async fn execute(
             };
 
             let result: Result<()> = async {
-                let raw_filename = arc_findings.findings[i].title.replace(" ", "-");
+                // Sanitize the title to create a safe filename
+                let raw_filename = sanitize_filename(&arc_findings.findings[i].title);
                 let truncated_name: String = raw_filename.chars().take(20).collect();
                 let filename = format!(
                     "{}-{}.t.sol",
@@ -154,12 +285,26 @@ pub async fn execute(
                 let poc_test_data: GeneratePocTest =
                     arc_agent.extract_with_retry(&instruction_prompt).await?;
 
+                // Extract test function name from the generated code
+                let test_function_name = extract_test_function_name(&poc_test_data.poc_test_code);
+
+                // Build the forge test command programmatically with relative path
+                let code_root = arc_repo.root.join(&arc_repo.repo_name);
+                let test_file_path = arc_repo.poc.test_folder.join(&filename);
+                let relative_path = test_file_path
+                    .strip_prefix(&code_root)
+                    .unwrap_or(&test_file_path)
+                    .to_string_lossy()
+                    .to_string();
+                let command =
+                    build_forge_test_command(&relative_path, test_function_name.as_deref());
+
                 let mut poc_test = PocTest {
                     finding_hash: arc_findings.findings[i].hash_derived(),
                     poc_test_code: poc_test_data.poc_test_code,
-                    poc_test_file: arc_repo.poc.test_folder.join(&filename),
+                    poc_test_file: test_file_path,
                     poc_test_filename: filename,
-                    poc_test_command: poc_test_data.command_to_run_test,
+                    poc_test_command: command,
                     poc_test_status: PocStatus::ErrorRunningTests,
                     poc_test_output: String::new(),
                 };
@@ -175,6 +320,11 @@ pub async fn execute(
                     poc_test.poc_test_status = PocStatus::ErrorRunningTests;
                     poc_test.poc_test_output = format!("Error: {:?}", e);
                 }
+
+                info!(
+                    "AI Agent: {}",
+                    poc_test_data.commentary.clone().unwrap_or_default()
+                );
 
                 // Retry loop: up to 5 attempts total (initial + 4 retries)
                 while poc_pass_attempt < 5 && poc_test.poc_test_status != PocStatus::AllTestPass {
@@ -193,11 +343,30 @@ pub async fn execute(
                         .extract_with_retry(&retest_instruction_prompt)
                         .await?;
 
+                    info!(
+                        "AI Agent: {}",
+                        updated_poc_test_data.commentary.clone().unwrap_or_default()
+                    );
+
                     if updated_poc_test_data.cannot_create_poc_because_finding_invalid != Some(true)
                     {
-                        // Update the PoC test with new code and command
+                        // Update the PoC test with new code
                         poc_test.poc_test_code = updated_poc_test_data.poc_test_code;
-                        poc_test.poc_test_command = updated_poc_test_data.command_to_run_test;
+
+                        // Extract test function name from the updated code
+                        let test_function_name =
+                            extract_test_function_name(&poc_test.poc_test_code);
+
+                        // Rebuild the command with the new test function name
+                        let code_root = arc_repo.root.join(&arc_repo.repo_name);
+                        let relative_path = poc_test
+                            .poc_test_file
+                            .strip_prefix(&code_root)
+                            .unwrap_or(&poc_test.poc_test_file)
+                            .to_string_lossy()
+                            .to_string();
+                        poc_test.poc_test_command =
+                            build_forge_test_command(&relative_path, test_function_name.as_deref());
 
                         // Save and run the updated PoC test
                         if let Err(e) = save_and_run_poc_test(&mut poc_test, &arc_repo) {
