@@ -1,7 +1,9 @@
-use ai_agent_audit::build_brain::enrichment;
-use ai_agent_audit::enumerator::codeblock_db::CodeBlocksDb;
-use ai_agent_audit::enumerator::codeblocks::generate_codeblock_from_codebase;
-use ai_agent_audit::prepare_code::git_clone::RepoPaths;
+use ai_agent_audit::{
+    build_brain::enrichment,
+    config::AuditType,
+    enumerator::{codeblock_db::CodeBlocksDb, codeblocks::generate_codeblock_from_codebase},
+    prepare_code::git_clone::RepoPaths,
+};
 use std::path::PathBuf;
 
 /// Integration test for CLFactory codeblock generation
@@ -77,6 +79,7 @@ async fn test_clfactory_codeblock_generation() {
         scoped_files: None,
         monorepo_folders: None,
         commit_hash: commit_hash.clone(),
+        audit_type: AuditType::Code4rena,
         poc: ai_agent_audit::prepare_code::git_clone::PocConfig::default(),
     };
 

@@ -1,5 +1,8 @@
 use crate::{
-    config::AuditType, llm_review::prompt_support::severity_rubics::SHERLOCK_SEVERITY_RUBRIC,
+    config::AuditType,
+    llm_review::prompt_support::severity_rubics::{
+        CANTINA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
+    },
 };
 
 use super::severity_rubics::CODE4RENA_SEVERITY_RUBRIC;
@@ -16,10 +19,11 @@ You should return `"true"` if the issue meets **any** of these criteria, otherwi
 
 "#;
 
-pub fn generate_verify_prompt(audit_type: AuditType) -> String {
+pub fn generate_verify_prompt(audit_type: &AuditType) -> String {
     let (severity_rubic, contest) = match audit_type {
         AuditType::Code4rena => (CODE4RENA_SEVERITY_RUBRIC, "Code4rena"),
         AuditType::Sherlock => (SHERLOCK_SEVERITY_RUBRIC, "Sherlock"),
+        AuditType::Cantina => (CANTINA_SEVERITY_RUBRIC, "Cantina"),
         _ => (CODE4RENA_SEVERITY_RUBRIC, "Private Audit"),
     };
     format!(

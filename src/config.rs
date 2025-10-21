@@ -8,15 +8,15 @@ use std::env;
 /// for application settings and environment variables only for sensitive
 /// configuration like API keys and URLs.
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Deserialize, strum_macros::EnumString, strum_macros::Display,
+)]
 pub enum AuditType {
     Code4rena,
     Sherlock,
+    Cantina,
     Client,
 }
-
-// TYPE OF AUDIT
-pub const AUDIT_TYPE: AuditType = AuditType::Code4rena;
 
 // Application constants - these don't need to be configurable via environment
 /// Maximum call graph traversal depth for code slice generation

@@ -1,7 +1,7 @@
 // represents abstraction of Findings and ContractInvariants
 
 use crate::{
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::{
         agent_factory::{AgentConfig, AgentFactory},
         dynamic_prompts::{
@@ -15,6 +15,7 @@ use crate::{
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
         utils::prompt_context::{generate_formatted_invariant_finding, generate_formatted_pattern},
     },
+    prepare_code::git_clone::RepoPaths,
     utils::semantic_compare,
 };
 
@@ -54,8 +55,8 @@ pub trait IssueTrait: Send + Sync {
     fn title_str(&self) -> String;
     fn description(&self) -> String;
     fn generate_verify_prompt(&self) -> String;
-    fn pattern_to_findings_prompt(&self) -> String;
-    fn findings_json_required_prompt(&self) -> String;
+    fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String;
+    fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String;
 }
 
 #[async_trait]
@@ -89,11 +90,11 @@ impl IssueTrait for InvariantFinding {
     fn generate_verify_prompt(&self) -> String {
         generate_invariant_verify_prompt(&self)
     }
-    fn pattern_to_findings_prompt(&self) -> String {
-        generate_invariant_to_findings(self)
+    fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String {
+        generate_invariant_to_findings(self, repo)
     }
-    fn findings_json_required_prompt(&self) -> String {
-        get_findings_json_requirement(&self.inv_type, &self.predicate)
+    fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
+        get_findings_json_requirement(&self.inv_type, &self.predicate, repo)
     }
 }
 
@@ -127,11 +128,11 @@ impl IssueTrait for Pattern {
     fn description(&self) -> String {
         self.description.clone()
     }
-    fn pattern_to_findings_prompt(&self) -> String {
-        generate_pattern_to_findings_prompt(self)
+    fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String {
+        generate_pattern_to_findings_prompt(self, repo)
     }
-    fn findings_json_required_prompt(&self) -> String {
-        get_findings_json_requirement(&self.issue_type, &self.title)
+    fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
+        get_findings_json_requirement(&self.issue_type, &self.title, repo)
     }
 }
 

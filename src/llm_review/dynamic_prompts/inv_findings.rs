@@ -1,11 +1,14 @@
-use crate::llm_review::{
-    dynamic_prompts::findings_template::generate_findings_prompt,
-    enums::EnumData,
-    invariants::{InvariantFinding, InvariantSpec},
-    utils::prompt_context::generate_formatted_invariant_finding,
+use crate::{
+    llm_review::{
+        dynamic_prompts::findings_template::generate_findings_prompt,
+        enums::EnumData,
+        invariants::{InvariantFinding, InvariantSpec},
+        utils::prompt_context::generate_formatted_invariant_finding,
+    },
+    prepare_code::git_clone::RepoPaths,
 };
 
-pub fn generate_invariant_to_findings(invariant: &InvariantFinding) -> String {
+pub fn generate_invariant_to_findings(invariant: &InvariantFinding, repo: &RepoPaths) -> String {
     let pattern_data: InvariantSpec = invariant.inv_type.get_spec();
     let pattern_full_spec = generate_formatted_invariant_finding(invariant);
     let invariant_title = "Invariant Violation";
@@ -15,5 +18,6 @@ pub fn generate_invariant_to_findings(invariant: &InvariantFinding) -> String {
         &pattern_data.definition,
         &pattern_full_spec,
         &invariant.inv_type,
+        repo,
     )
 }

@@ -1,5 +1,5 @@
 use ai_agent_audit::{
-    config::init_config,
+    config::{AuditType, init_config},
     llm_review::{
         agent_factory::{AgentConfig, AgentFactory, init_llm_clients},
         enums::{Severity, VulnerabilityType},
@@ -199,6 +199,7 @@ fn create_puppy_raffle_repo_paths() -> RepoPaths {
         scoped_files: None,
         monorepo_folders: None,
         commit_hash: "3ff0f0bfddf25fd0c160fe57388fa6ff2e0f0960".to_string(),
+        audit_type: AuditType::Code4rena,
         poc: poc_config,
     }
 }

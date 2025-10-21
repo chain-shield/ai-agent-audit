@@ -134,15 +134,11 @@ pub mod llm_review {
         pub mod planner_prompt;
         pub mod post_file_select_prompt;
         pub mod post_poc;
-        /// Post-analysis prompts
-        pub mod post_prompt;
         /// Quality check prompts
         pub mod post_qualify;
         /// Verification prompts
         pub mod post_verify;
         pub mod pre_file_select_prompt;
-        /// Pre-analysis prompts
-        pub mod pre_prompt;
         /// Pre-qualification prompts
         pub mod pre_qualify;
         /// Pre-verification prompts
@@ -188,50 +184,6 @@ pub mod master_prompts {
     pub mod prompt_3x_a;
     pub mod prompt_3x_b;
     pub mod prompt_3x_c;
-}
-
-/// Vulnerability-specific detection prompts (19 categories)
-pub mod prompts {
-    /// Access control vulnerabilities
-    pub mod access_control;
-    /// Array bounds checking issues
-    pub mod array_limits;
-    /// Confidential data exposure
-    pub mod confidential_data;
-    /// Default visibility issues
-    pub mod default_visibility;
-    /// Denial of service vulnerabilities
-    pub mod dos;
-    /// Inheritance-related issues
-    pub mod inheritance;
-    /// Integer overflow/underflow
-    pub mod integer_overflow;
-    /// MEV and front-running vulnerabilities
-    pub mod mev;
-    /// Oracle manipulation attacks
-    pub mod oracle;
-    /// Pragma-related issues
-    pub mod pragma;
-    /// Weak randomness vulnerabilities
-    pub mod randomness;
-    /// Reentrancy vulnerabilities
-    pub mod reentrancy;
-    /// Replay attack vulnerabilities
-    pub mod replay_attack;
-    /// Self-destruct related issues
-    pub mod self_destruct;
-    /// Short address attack vulnerabilities
-    pub mod short_address_attack;
-    /// Storage variable issues
-    pub mod storage_variables;
-    /// tx.origin usage vulnerabilities
-    pub mod tx_origin;
-    /// Unchecked return value issues
-    pub mod unchecked_return_value;
-    /// Unexpected ETH handling
-    pub mod unexpected_eth;
-    /// Zero-code contract issues
-    pub mod zero_code;
 }
 
 /// Protocol invariant analysis prompts

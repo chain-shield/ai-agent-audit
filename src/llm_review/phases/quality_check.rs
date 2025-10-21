@@ -10,7 +10,7 @@ use crate::{
         findings::{Finding, Findings},
         prompt_support::{post_qualify::generate_post_qualify, qualify_prompt::QUALIFY_PROMPT},
         semaphore::VERIFY_SEM,
-        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
+        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -69,6 +69,7 @@ pub async fn execute(
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
     let arc_code_context = Arc::new(code_and_context);
+    let arc_repo = Arc::new(repo.clone());
 
     let finding_count = findings.findings.len();
     // create vec (is_quality_check_passed, updated_finding) for each finding
@@ -81,6 +82,7 @@ pub async fn execute(
     for i in 0..finding_count {
         let codeblock_plus_context = Arc::clone(&arc_code_context);
         let arc_agent = Arc::clone(agent);
+        let repo_clone = Arc::clone(&arc_repo);
         let arc_findings = Arc::clone(&findings);
         let arc_legit_findings_vec = Arc::clone(&quality_check_passed_vec);
         let sem = Arc::clone(&VERIFY_SEM);
@@ -88,7 +90,7 @@ pub async fn execute(
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async {
-                let post_qualify = generate_post_qualify();
+                let post_qualify = generate_post_qualify(&repo_clone);
                 let prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
                     &arc_findings.findings[i],

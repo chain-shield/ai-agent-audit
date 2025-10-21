@@ -1,7 +1,7 @@
 use core::fmt;
 use std::fs;
 
-use crate::config::audit_config;
+use crate::config::{audit_config, AuditType};
 use clap::{Parser, ValueEnum};
 use serde::Deserialize;
 
@@ -71,6 +71,10 @@ pub struct Cli {
     /// Optional provide test folder where poc template should be saved (relative path)
     #[arg(long)]
     pub test_folder: Option<String>,
+
+    /// Builder type (foundry, hardhat, custom, auto)
+    #[arg(long, default_value_t = AuditType::Code4rena)]
+    pub audit_type: AuditType,
 
     /// Builder type (foundry, hardhat, custom, auto)
     #[arg(long, default_value_t = BuilderType::Auto)]
