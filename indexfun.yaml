@@ -1,0 +1,51 @@
+# AI Agent Audit Configuration for IndexFun Order Book Contest
+# Repository: https://github.com/sherlock-audit/2025-10-index-fun-order-book-contest-chainshieldai.git
+
+# Git repository URL
+repo: "https://github.com/sherlock-audit/2025-10-index-fun-order-book-contest-chainshieldai.git"
+
+# Project is in a subfolder
+subfolder: "orderbook-solidity"
+
+# Custom documentation file (should be in current directory)
+custom_doc: "indexfun-docs.md"
+
+# Scoped files list (should be in current directory)
+scoped_files: "indexfun-scope.txt"
+
+# Audit scope documentation (should be in current directory)
+audit_scope: "indexfun-scope.md"
+
+# Source code folders (required field with default)
+code_folders:
+  - "src"
+
+# Builder configuration (use PascalCase for enum values)
+builder: "Custom"
+build_cmd: "make install && make build"
+
+# Boolean flags (required fields with defaults)
+via_ir: false
+force_rebuild: false
+
+# Optional: Source code folders (defaults to "src")
+# code_folders:
+#   - "src"
+#   - "contracts"
+
+# Optional: Exclude folders from analysis
+# exclude_folders:
+#   - "test"
+#   - "script"
+
+# Optional: PoC configuration
+# poc_instructions: "poc-instructions.md"
+# poc_template: "poc-template.sol"
+# test_folder: "test"
+
+# Optional: Foundry via-ir flag
+# via_ir: false
+
+# Optional: Force rebuild even if cached
+# force_rebuild: false
+

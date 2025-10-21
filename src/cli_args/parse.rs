@@ -1,9 +1,11 @@
 use core::fmt;
+use std::fs;
 
 use crate::config::audit_config;
 use clap::{Parser, ValueEnum};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Debug, Clone, ValueEnum, Deserialize, strum_macros::EnumString)]
 #[clap(rename_all = "kebab-case")]
 pub enum BuilderType {
     Foundry,
@@ -13,9 +15,13 @@ pub enum BuilderType {
     Auto,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Clone, Debug, Deserialize)]
 #[command(author, version, about)]
 pub struct Cli {
+    /// Path to config file (optional)
+    #[arg(long)]
+    config: Option<String>,
+
     /// git repo for security audit
     #[arg(value_parser = validate_repo_url)]
     pub repo: String,
@@ -102,6 +108,23 @@ fn validate_repo_url(s: &str) -> std::result::Result<String, String> {
 }
 
 impl Cli {
+    pub fn parse_args() -> anyhow::Result<Self> {
+        let cli = Cli::parse();
+
+        // Load yaml if present (--config config.yaml)
+        let mut config_cli = cli.clone();
+
+        if let Some(config_ymal) = &cli.config {
+            let yaml_str = fs::read_to_string(config_ymal)?;
+            let config_values: Cli = serde_yaml::from_str(&yaml_str)?;
+
+            // override command line args with values from yaml
+            config_cli = config_values;
+        }
+
+        Ok(config_cli)
+    }
+
     pub fn generate_build_command(&self) -> String {
         let base_forge = "forge install && forge build --build-info --skip test --skip script";
 
