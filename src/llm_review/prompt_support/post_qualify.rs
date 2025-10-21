@@ -1,13 +1,15 @@
 use crate::{
-    config::{AUDIT_TYPE, AuditType},
+    config::AuditType,
     llm_review::prompt_support::severity_rubics::{
-        CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
+        CANTINA_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
     },
+    prepare_code::git_clone::RepoPaths,
 };
 
-pub fn generate_post_qualify() -> String {
-    let severity_rubic = match AUDIT_TYPE {
+pub fn generate_post_qualify(repo: &RepoPaths) -> String {
+    let severity_rubic = match repo.audit_type {
         AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
+        AuditType::Cantina => CANTINA_SEVERITY_RUBRIC,
         _ => CODE4RENA_SEVERITY_RUBRIC,
     };
     format!(

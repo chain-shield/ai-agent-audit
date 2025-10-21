@@ -17,7 +17,6 @@ use ai_agent_audit::{
         contract_data, save_file,
     },
 };
-use clap::Parser;
 use dotenvy::dotenv;
 use log::info;
 /// The main entry point for the AI Agent Audit tool.

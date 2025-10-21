@@ -1,16 +1,44 @@
 //! Integration tests that print dynamic prompt outputs for visual review
 
-use ai_agent_audit::llm_review::{
-    dynamic_prompts::{
-        findings_template as ft, inv_findings as inv_to_find, invariants as inv_prompts,
-        pattern_findings as pat_to_find, patterns as pat_prompts,
+use ai_agent_audit::{
+    config::AuditType,
+    llm_review::{
+        dynamic_prompts::{
+            findings_template as ft, inv_findings as inv_to_find, invariants as inv_prompts,
+            pattern_findings as pat_to_find, patterns as pat_prompts,
+        },
+        enums::EnumData,
+        findings::PrivilegeLevel,
+        invariants::{InvariantFinding, InvariantStatus, InvariantType},
+        pattern_category::PatternCategory,
+        patterns::{Pattern, VulnerabilityPattern},
     },
-    enums::EnumData,
-    findings::PrivilegeLevel,
-    invariants::{InvariantFinding, InvariantStatus, InvariantType},
-    pattern_category::PatternCategory,
-    patterns::{Pattern, VulnerabilityPattern},
+    prepare_code::git_clone::{PocConfig, RepoPaths},
 };
+use std::path::PathBuf;
+
+/// Helper to create a mock RepoPaths for testing
+fn mock_repo_paths() -> RepoPaths {
+    RepoPaths {
+        project_id: "test-project".to_string(),
+        root: PathBuf::from("/tmp/test"),
+        sol_files: vec![],
+        test_files: vec![],
+        script_files: vec![],
+        config_files: vec![],
+        lib_config_files: vec![],
+        source_code_folders: vec![],
+        docs: vec![],
+        repo_name: "test-repo".to_string(),
+        audit_scope: None,
+        excluded_folders: None,
+        scoped_files: None,
+        monorepo_folders: None,
+        commit_hash: "test-commit-hash".to_string(),
+        audit_type: AuditType::Code4rena,
+        poc: PocConfig::default(),
+    }
+}
 
 fn sample_invariant_finding() -> InvariantFinding {
     InvariantFinding {
@@ -70,7 +98,8 @@ fn print_invariant_prompts() {
         inv_verify_json
     );
 
-    let inv_to_findings = inv_to_find::generate_invariant_to_findings(&inv_finding);
+    let repo = mock_repo_paths();
+    let inv_to_findings = inv_to_find::generate_invariant_to_findings(&inv_finding, &repo);
     println!(
         "\n===== Invariant -> Findings Prompt =====\n{}\n",
         inv_to_findings
@@ -104,7 +133,8 @@ fn print_pattern_prompts() {
         verify_schema
     );
 
-    let pat_to_findings = pat_to_find::generate_pattern_to_findings_prompt(&pattern);
+    let repo = mock_repo_paths();
+    let pat_to_findings = pat_to_find::generate_pattern_to_findings_prompt(&pattern, &repo);
     println!(
         "\n===== Pattern -> Findings Prompt =====\n{}\n",
         pat_to_findings
@@ -125,14 +155,20 @@ fn print_findings_template_prompts() {
     let issue_full_spec =
         ai_agent_audit::llm_review::utils::prompt_context::generate_formatted_pattern(&pattern);
 
-    let templated =
-        ft::generate_findings_prompt(issue_title, issue_definition, &issue_full_spec, &issue_type);
+    let repo = mock_repo_paths();
+    let templated = ft::generate_findings_prompt(
+        issue_title,
+        issue_definition,
+        &issue_full_spec,
+        &issue_type,
+        &repo,
+    );
     println!(
         "\n===== Findings Template with VulnerabilityPattern =====\n{}\n",
         templated
     );
 
-    let findings_json = ft::get_findings_json_requirement(&issue_type, issue_definition);
+    let findings_json = ft::get_findings_json_requirement(&issue_type, issue_definition, &repo);
     println!(
         "\n===== Findings JSON (from VulnerabilityPattern) =====\n{}\n",
         findings_json

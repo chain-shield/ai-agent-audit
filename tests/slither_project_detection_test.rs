@@ -1,5 +1,7 @@
-use ai_agent_audit::build_brain::slither_ffi::build_slither_args;
-use ai_agent_audit::prepare_code::git_clone::RepoPaths;
+use ai_agent_audit::{
+    build_brain::slither_ffi::build_slither_args, config::AuditType,
+    prepare_code::git_clone::RepoPaths,
+};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
@@ -34,6 +36,7 @@ fn make_repo_layout(root: &Path, repo_name: &str, files: &[&str], dirs: &[&str])
         excluded_folders: None,
         scoped_files: None,
         commit_hash: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
+        audit_type: AuditType::Code4rena,
         poc: ai_agent_audit::prepare_code::git_clone::PocConfig::default(),
     }
 }

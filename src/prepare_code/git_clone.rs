@@ -18,7 +18,7 @@ use std::{
 use walkdir::WalkDir;
 
 use crate::cli_args::parse::Cli;
-use crate::config::audit_config;
+use crate::config::{audit_config, AuditType};
 use crate::utils::check_folder_name::{
     is_library_package_json, is_monorepo_config_file, is_root_config_file, is_script_file,
     is_test_file,
@@ -69,6 +69,8 @@ pub struct RepoPaths {
     pub monorepo_folders: Option<PathBuf>,
     /// full 40-char SHA, e.g. `"1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t"`
     pub commit_hash: String,
+    /// audit type
+    pub audit_type: AuditType,
     /// instructions, template, and folder location for PoCs
     pub poc: PocConfig,
 }
@@ -358,6 +360,7 @@ pub fn clone_and_filter_git_repo(
         },
         repo_name,
         audit_scope,
+        audit_type: cli.audit_type.clone(),
         excluded_folders,
         scoped_files,
         monorepo_folders,

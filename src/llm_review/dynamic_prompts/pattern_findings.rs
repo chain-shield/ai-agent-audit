@@ -1,11 +1,14 @@
-use crate::llm_review::{
-    dynamic_prompts::findings_template::generate_findings_prompt,
-    enums::EnumData,
-    patterns::{Pattern, VulnerabilityPatternSpec},
-    utils::prompt_context::generate_formatted_pattern,
+use crate::{
+    llm_review::{
+        dynamic_prompts::findings_template::generate_findings_prompt,
+        enums::EnumData,
+        patterns::{Pattern, VulnerabilityPatternSpec},
+        utils::prompt_context::generate_formatted_pattern,
+    },
+    prepare_code::git_clone::RepoPaths,
 };
 
-pub fn generate_pattern_to_findings_prompt(pattern: &Pattern) -> String {
+pub fn generate_pattern_to_findings_prompt(pattern: &Pattern, repo: &RepoPaths) -> String {
     let pattern_data: VulnerabilityPatternSpec = pattern.issue_type.get_spec();
     let pattern_full_spec = generate_formatted_pattern(pattern);
     let pattern_type = "Security Vulnerability Pattern";
@@ -15,6 +18,6 @@ pub fn generate_pattern_to_findings_prompt(pattern: &Pattern) -> String {
         &pattern_data.definition,
         &pattern_full_spec,
         &pattern.issue_type,
-        // &pattern.title,
+        &repo,
     )
 }

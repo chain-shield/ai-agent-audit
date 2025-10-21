@@ -1,30 +1,26 @@
 use std::process::Command;
 
-use ai_agent_audit::cli_args::parse::{BuilderType, Cli};
 use ai_agent_audit::prepare_code::git_clone::clone_and_filter_git_repo;
 use ignore::gitignore::GitignoreBuilder;
 use walkdir::WalkDir;
 
-fn build_test_cli() -> Cli {
-    Cli {
-        repo: "https://github.com/sherlock-audit/2025-09-summer-fi-governance-v2-chainshieldai.git"
-            .to_string(),
-        subfolder: Some("summer-earn-protocol".to_string()),
-        code_folders: vec!["packages".to_string()],
-        audit_scope: Some("summer-scope.md".to_string()),
-        doc_folder: None,
-        monorepo_folders: Some("summer-monorepos.txt".to_string()),
-        custom_doc: Some("summer-docs.md".to_string()),
-        exclude_folders: None,
-        scoped_files: Some("summer-scope.txt".to_string()),
-        builder: BuilderType::Custom,
-        via_ir: false,
-        force_rebuild: false,
-        build_cmd: Some("npm -v".to_string()),
-        poc_instructions: None,
-        poc_template: None,
-        test_folder: None,
-    }
+// Helper to build test CLI args using YAML deserialization (since Cli has private fields)
+fn build_test_cli_yaml() -> String {
+    r#"
+repo: "https://github.com/sherlock-audit/2025-09-summer-fi-governance-v2-chainshieldai.git"
+subfolder: "summer-earn-protocol"
+code_folders:
+  - "packages"
+audit_scope: "summer-scope.md"
+monorepo_folders: "summer-monorepos.txt"
+custom_doc: "summer-docs.md"
+scoped_files: "summer-scope.txt"
+builder: "Custom"
+via_ir: false
+force_rebuild: false
+build_cmd: "npm -v"
+"#
+    .to_string()
 }
 
 fn repo_root_from_url(url: &str) -> String {
@@ -39,7 +35,9 @@ fn repo_root_from_url(url: &str) -> String {
 #[ignore] // Network + git clone + large repo; run explicitly with `cargo test -- --ignored`
 fn test_clone_and_filter_git_repo_counts_all_files() {
     // 1) Prepare a local workspace with a shallow git clone
-    let cli = build_test_cli();
+    let yaml_str = build_test_cli_yaml();
+    let cli: ai_agent_audit::cli_args::parse::Cli =
+        serde_yaml::from_str(&yaml_str).expect("Failed to parse test CLI YAML");
     let repo_root = repo_root_from_url(&cli.repo);
 
     let ws = std::env::temp_dir().join(format!(

@@ -3,7 +3,6 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    config::AUDIT_TYPE,
     error::Result,
     llm_review::{
         context_state::{generate_audit_scope, get_metadata_context},
@@ -13,7 +12,7 @@ use crate::{
             post_verify::POST_VERIFY, pre_verify::PRE_VERIFY, verify_prompt::generate_verify_prompt,
         },
         semaphore::VERIFY_SEM,
-        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
+        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -160,7 +159,7 @@ pub async fn execute(
 
     let audit_scope = generate_audit_scope(repo).await?;
 
-    let verify_prompt = generate_verify_prompt(AUDIT_TYPE);
+    let verify_prompt = generate_verify_prompt(&repo.audit_type);
 
     let updated_verify_prompt = if audit_scope.is_empty() {
         Arc::new(verify_prompt.to_string())

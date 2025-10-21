@@ -1,5 +1,4 @@
 use crate::llm_review::invariants::InvariantType;
-use log::info;
 /// AI agent and vulnerability type enumerations.
 ///
 /// This module defines the core enums for multi-LLM support and vulnerability
@@ -11,29 +10,14 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 use crate::{
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     invariant_prompts::{
         arithmetic::ARITHMETIC, balance::BALANCE, permission::PERMISSION, referential::REFERENTIAL,
         state_machine::STATE_MACHINE, temporal::TEMPORAL,
-    },
-    master_prompts::master_prompt::MASTER_SECURITY_PROMPT,
-    prepare_code::git_clone::RepoPaths,
-    prompts::{
-        access_control::ACCESS_CONTROL, array_limits::ACCESS_OUTSIDE_ARRAY_LIMITS,
-        confidential_data::SAVING_CONFIDENTIAL_DATA, default_visibility::DEFAULT_VISIBILITIES,
-        dos::DOS, inheritance::WRONG_INHERITANCE, integer_overflow::INTEGER_OVERFLOW, mev::MEV,
-        oracle::ORACLE_MANIPULATION, pragma::FLOATING_PRAGMA, randomness::RANDOMNESS,
-        reentrancy::REENTRANCY, replay_attack::REPLAY_SIGNATURES_ATTACK,
-        self_destruct::SELF_DESTRUCT, short_address_attack::SHORT_ADDRESS_ATTACK,
-        storage_variables::STORAGE_VARIABLE, tx_origin::TX_ORIGIN,
-        unchecked_return_value::UNCHECK_RETURN_VALUES, unexpected_eth::UNEXPECTED_ETH,
-        zero_code::CONTRACTS_WITH_ZERO_CODE,
     },
     utils::extract_retry::agent_extract_with_retry,
 };
 use rig::{
     agent::Agent,
-    completion::{CompletionModel, Prompt},
     extractor::Extractor,
     providers::{
         anthropic, deepseek, gemini,
@@ -42,11 +26,6 @@ use rig::{
 };
 
 use serde::de::DeserializeOwned;
-
-use super::{
-    agent_factory::{AgentConfig, AgentFactory},
-    prompt_support::{extractor_prompt::EXTRACTOR_AGENT, pre_prompt::PRE_PROMPT},
-};
 
 /// Configuration metadata for AI agents.
 /// Stores the original configuration used to create the agent for pricing calculations.
@@ -316,136 +295,6 @@ impl AIAgent {
             }
         }
     }
-    pub async fn get_prompt_then_extract_with_retry<T>(
-        &self,
-        prompt: &str,
-        repo: &RepoPaths,
-    ) -> anyhow::Result<T>
-    where
-        T: DeserializeOwned,
-    {
-        match self {
-            AIAgent::Anthropic { agent, .. } => {
-                self.run_analysis_and_extract(agent, prompt, repo).await
-            }
-
-            AIAgent::Openai { agent, .. } => {
-                self.run_analysis_and_extract(agent, prompt, repo).await
-            }
-            AIAgent::Gemini { agent, .. } => {
-                self.run_analysis_and_extract(agent, prompt, repo).await
-            }
-            AIAgent::Deepseek { agent, .. } => {
-                self.run_analysis_and_extract(agent, prompt, repo).await
-            }
-        }
-    }
-
-    async fn run_analysis_and_extract<T, M>(
-        &self,
-        model: &Agent<M>,
-        prompt: &str,
-        repo: &RepoPaths,
-    ) -> anyhow::Result<T>
-    where
-        T: DeserializeOwned,
-        M: CompletionModel, // whatever trait `model.prompt()` uses
-    {
-        // 🆕 Create extractor agent
-        let extractor_config = AgentConfig::new(Some(repo.clone()))
-            .with_model("gpt-5")
-            .with_preamble(
-                "You are an expert at extracting data and converting it into strict JSON.",
-            );
-        let extractor_agent = AgentFactory::create_openai_agent(&extractor_config)?;
-        let extractor = match extractor_agent {
-            AIAgent::Openai { agent, .. } => agent,
-            _ => anyhow::bail!("Unexpected agent type — expected OpenAI"),
-        };
-
-        // 🚀 Run the model
-        info!("submitting for analysis...");
-        log::debug!("Prompt length: {} characters", prompt.len());
-
-        // 📝 Track inference INPUT cost (MISSING!)
-        let metadata = match self {
-            AIAgent::Anthropic { metadata, .. } => metadata,
-            AIAgent::Openai { metadata, .. } => metadata,
-            AIAgent::Gemini { metadata, .. } => metadata,
-            AIAgent::Deepseek { metadata, .. } => metadata,
-        };
-        add_to_inference_cost_by_type(prompt, metadata, TokenType::Input).await;
-
-        let analysis = match model.prompt(prompt).await {
-            Ok(result) => result,
-            Err(e) => {
-                // ✅ Print the full error details
-                log::error!("Model prompt failed: {:?}", e);
-
-                // Print the error chain to get more details
-                let mut current_error: &dyn std::error::Error = &e;
-                while let Some(source) = current_error.source() {
-                    log::error!("Caused by: {}", source);
-                    current_error = source;
-                }
-
-                // Log additional context for debugging
-                log::error!("Error occurred during model prompt execution");
-                log::error!("This might be caused by:");
-                log::error!("1. Tool call arguments containing invalid JSON characters");
-                log::error!("2. LLM response containing malformed JSON");
-                log::error!("3. Tool output being too large or containing special characters");
-                log::error!("4. Network/API issues");
-
-                // Check if this is a JSON parsing error specifically
-                let error_string = format!("{:?}", e);
-                if error_string.contains("expected value") || error_string.contains("Decode") {
-                    log::error!("🚨 This appears to be a JSON parsing error!");
-                    log::error!("💡 Possible solutions:");
-                    log::error!("   - Reduce tool query complexity");
-                    log::error!("   - Check for special characters in tool arguments");
-                    log::error!("   - Verify tool output sanitization");
-                }
-
-                // Return the error as-is
-                return Err(e.into());
-            }
-        };
-
-        // 📝 Track inference output
-        let metadata = match self {
-            AIAgent::Anthropic { metadata, .. } => metadata,
-            AIAgent::Openai { metadata, .. } => metadata,
-            AIAgent::Gemini { metadata, .. } => metadata,
-            AIAgent::Deepseek { metadata, .. } => metadata,
-        };
-        add_to_inference_cost_by_type(&analysis, metadata, TokenType::Output).await;
-
-        // 📝 Build extractor prompt
-        let extract_prompt = format!(
-            "{}{}\n\n## SECURITY AUDIT FINDINGS TO CONVERT TO JSON\n\n{}",
-            PRE_PROMPT, EXTRACTOR_AGENT, analysis
-        );
-
-        // 📝 Track inference input
-        // Create metadata for extractor agent (OpenAI GPT-5)
-        let extractor_metadata = AgentMetadata {
-            model: "gpt-5".to_string(),
-            temperature: 0.3,
-            service_tier: None,     // Default service tier for extractor
-            reasoning_effort: None, // Default reasoning effort for extractor
-            file_picker_enabled: false,
-            file_retrieval_enabled: false,
-            dynamic_context_enabled: false,
-        };
-        add_to_inference_cost_by_type(&extract_prompt, &extractor_metadata, TokenType::Input).await;
-
-        // 🧠 Run extractor with retry
-        Ok(
-            agent_extract_with_retry::<_, T>(&extractor, &extract_prompt, &extractor_metadata)
-                .await?,
-        )
-    }
 
     // Getter methods for pricing calculations and configuration inspection
 
@@ -611,32 +460,6 @@ impl VulnerabilityType {
             VulnerabilityType::OracleHeartbeatFreshness => "Oracle Heartbeat Freshness",
             VulnerabilityType::TWAPWindowPinning => "TWAP Window Pinning",
             VulnerabilityType::ForcedAssetVsStrictEquality => "Forced Asset Vs Strict Equality",
-        }
-    }
-
-    pub fn prompt(self) -> &'static str {
-        match self {
-            VulnerabilityType::Oracle => ORACLE_MANIPULATION,
-            VulnerabilityType::AccessControl => ACCESS_CONTROL,
-            VulnerabilityType::FrontrunMev => MEV,
-            VulnerabilityType::UnexpectedEth => UNEXPECTED_ETH,
-            VulnerabilityType::Pragma => FLOATING_PRAGMA,
-            VulnerabilityType::Randomness => RANDOMNESS,
-            VulnerabilityType::TxOrigin => TX_ORIGIN,
-            VulnerabilityType::ZeroCode => CONTRACTS_WITH_ZERO_CODE,
-            VulnerabilityType::SelfDestruct => SELF_DESTRUCT,
-            VulnerabilityType::StorageLayout => STORAGE_VARIABLE,
-            VulnerabilityType::ReplayAttack => REPLAY_SIGNATURES_ATTACK,
-            VulnerabilityType::ShortAddress => SHORT_ADDRESS_ATTACK,
-            VulnerabilityType::IntegerMath => INTEGER_OVERFLOW,
-            VulnerabilityType::UncheckedReturn => UNCHECK_RETURN_VALUES,
-            VulnerabilityType::Dos => DOS,
-            VulnerabilityType::DefaultVisibility => DEFAULT_VISIBILITIES,
-            VulnerabilityType::Inheritance => WRONG_INHERITANCE,
-            VulnerabilityType::ConfidentialData => SAVING_CONFIDENTIAL_DATA,
-            VulnerabilityType::Reentrancy => REENTRANCY,
-            VulnerabilityType::ArrayLimits => ACCESS_OUTSIDE_ARRAY_LIMITS,
-            _ => MASTER_SECURITY_PROMPT,
         }
     }
 }
