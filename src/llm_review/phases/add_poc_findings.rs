@@ -14,7 +14,7 @@ use crate::{
             post_poc::POST_CREATE_POC,
         },
         utils::{
-            prompt_context::{generate_prompt_for_issue_check, FindingReportType},
+            prompt_context::{FindingReportType, generate_prompt_for_issue_check},
             save_run_poc::save_and_run_poc_test,
         },
     },
@@ -40,31 +40,10 @@ fn sanitize_filename(s: &str) -> String {
         .collect()
 }
 
-/// Extract test function names from Solidity code
-/// Returns the first test function found (function name starting with "test")
-fn extract_test_function_name(code: &str) -> Option<String> {
-    // Regex to match Solidity function declarations starting with "test"
-    // Matches: function testSomething() public { ... }
-    let re = regex::Regex::new(r"function\s+(test\w+)\s*\(").ok()?;
-
-    re.captures(code)
-        .and_then(|cap| cap.get(1))
-        .map(|m| m.as_str().to_string())
-}
-
-/// Build the forge test command programmatically
+/// Build the forge test command to run all tests in a specific file
 /// This ensures consistent command format and correct relative paths
-fn build_forge_test_command(
-    test_file_relative_path: &str,
-    test_function_name: Option<&str>,
-) -> String {
-    match test_function_name {
-        Some(name) => format!(
-            "forge test --match-path {} --match-test {} -vvv",
-            test_file_relative_path, name
-        ),
-        None => format!("forge test --match-path {} -vvv", test_file_relative_path),
-    }
+fn build_forge_test_command(test_file_relative_path: &str) -> String {
+    format!("forge test --match-path {} -vvv", test_file_relative_path)
 }
 
 #[cfg(test)]
@@ -99,60 +78,17 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_test_function_name() {
-        // Test basic function
-        let code = r#"
-            function testExploit() public {
-                // test code
-            }
-        "#;
-        assert_eq!(
-            extract_test_function_name(code),
-            Some("testExploit".to_string())
-        );
-
-        // Test function with parameters
-        let code = r#"
-            function testReentrancy(uint256 amount) public {
-                // test code
-            }
-        "#;
-        assert_eq!(
-            extract_test_function_name(code),
-            Some("testReentrancy".to_string())
-        );
-
-        // Test multiple functions (should return first)
-        let code = r#"
-            function setUp() public {}
-            function testAccessControl() public {}
-            function testAnother() public {}
-        "#;
-        assert_eq!(
-            extract_test_function_name(code),
-            Some("testAccessControl".to_string())
-        );
-
-        // Test no test function
-        let code = r#"
-            function setUp() public {}
-            function helper() internal {}
-        "#;
-        assert_eq!(extract_test_function_name(code), None);
-    }
-
-    #[test]
     fn test_build_forge_test_command() {
-        // With test function name
+        // Test command generation - runs all tests in the file
         assert_eq!(
-            build_forge_test_command("test/MyTest.t.sol", Some("testExploit")),
-            "forge test --match-path test/MyTest.t.sol --match-test testExploit -vvv"
+            build_forge_test_command("test/MyTest.t.sol"),
+            "forge test --match-path test/MyTest.t.sol -vvv"
         );
 
-        // Without test function name
+        // Test with different path
         assert_eq!(
-            build_forge_test_command("test/MyTest.t.sol", None),
-            "forge test --match-path test/MyTest.t.sol -vvv"
+            build_forge_test_command("test/exploits/Reentrancy.t.sol"),
+            "forge test --match-path test/exploits/Reentrancy.t.sol -vvv"
         );
     }
 }
@@ -241,7 +177,7 @@ pub async fn execute(
         let result: Result<()> = async {
             // Sanitize the title to create a safe filename
             let raw_filename = sanitize_filename(&finding.title);
-            let truncated_name: String = raw_filename.chars().take(20).collect();
+            let truncated_name: String = raw_filename.chars().take(40).collect();
             let filename = format!(
                 "{}-{}.t.sol",
                 finding.severity.as_initial(),
@@ -261,10 +197,8 @@ pub async fn execute(
             let poc_test_data: GeneratePocTest =
                 agent.extract_with_retry(&instruction_prompt).await?;
 
-            // Extract test function name from the generated code
-            let test_function_name = extract_test_function_name(&poc_test_data.poc_test_code);
-
             // Build the forge test command programmatically with relative path
+            // This will run ALL tests in the file (not just a specific test function)
             let code_root = repo.root.join(&repo.repo_name);
             let test_file_path = repo.poc.test_folder.join(&filename);
             let relative_path = test_file_path
@@ -272,8 +206,7 @@ pub async fn execute(
                 .unwrap_or(&test_file_path)
                 .to_string_lossy()
                 .to_string();
-            let command =
-                build_forge_test_command(&relative_path, test_function_name.as_deref());
+            let command = build_forge_test_command(&relative_path);
 
             let mut poc_test = PocTest {
                 finding_hash: finding.hash_derived(),
@@ -331,11 +264,7 @@ pub async fn execute(
                     // Update the PoC test with new code
                     poc_test.poc_test_code = updated_poc_test_data.poc_test_code;
 
-                    // Extract test function name from the updated code
-                    let test_function_name =
-                        extract_test_function_name(&poc_test.poc_test_code);
-
-                    // Rebuild the command with the new test function name
+                    // Rebuild the command (runs all tests in the file)
                     let code_root = repo.root.join(&repo.repo_name);
                     let relative_path = poc_test
                         .poc_test_file
@@ -343,8 +272,7 @@ pub async fn execute(
                         .unwrap_or(&poc_test.poc_test_file)
                         .to_string_lossy()
                         .to_string();
-                    poc_test.poc_test_command =
-                        build_forge_test_command(&relative_path, test_function_name.as_deref());
+                    poc_test.poc_test_command = build_forge_test_command(&relative_path);
 
                     // Save and run the updated PoC test
                     if let Err(e) = save_and_run_poc_test(&mut poc_test, repo) {

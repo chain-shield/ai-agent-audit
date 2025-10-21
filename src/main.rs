@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
 
     // parse command line args
     // Cli struct contains all info we need to execute audit
-    let cli = parse::Cli::parse();
+    let cli = parse::Cli::parse_args()?;
 
     // Clone repository in Docker container and build with Foundry/Hardhat
     let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli)?;
@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
     info!("repo docs => {:?}", &repo.docs);
     info!("excluded folders => {:?}", &repo.excluded_folders);
 
+    return Ok(());
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
     // ────────────────────────────────
