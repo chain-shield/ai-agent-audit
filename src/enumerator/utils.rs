@@ -1,5 +1,5 @@
-use anyhow::anyhow;
 use anyhow::Result;
+use anyhow::anyhow;
 use log::info;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -14,16 +14,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::Mutex;
 
+use crate::enumerator::libraries::ParsedLibrary;
 use crate::enumerator::libraries::generate_library_to_code_mapping;
 use crate::enumerator::libraries::get_library_code_for_library_calls;
-use crate::enumerator::libraries::ParsedLibrary;
 use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
 use crate::utils::get_fn_name::get_function_name_from_interface;
-use crate::utils::parse_library_file::parse_library_text;
 use crate::utils::parse_library_file::LibCall;
+use crate::utils::parse_library_file::parse_library_text;
 use crate::{
     build_brain::{
         self,

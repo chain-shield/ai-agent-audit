@@ -1,9 +1,9 @@
 use crate::llm_review::{
-    enums::{all_enum_variants, generate_enum_list, EnumString},
+    enums::{all_enum_variants, generate_enum_list},
     findings::PrivilegeLevel,
-    pattern_category::{get_category_library_spec, PatternCategory},
+    pattern_category::{PatternCategory, get_category_library_spec},
     patterns::{
-        Pattern, VulnerabilityPattern, VulnerabilityPatternSpec, VULNERABILITY_PATTERN_LIBRARY,
+        Pattern, VULNERABILITY_PATTERN_LIBRARY, VulnerabilityPattern, VulnerabilityPatternSpec,
     },
     utils::prompt_context::generate_formatted_pattern,
 };
@@ -126,7 +126,7 @@ pub fn generate_formated_list_from_pattern_data(
     for pattern in top_patterns_spec {
         top_patterns_list.push_str("\n\n");
         top_patterns_list.push_str("### Vulnerability Pattern\n");
-        top_patterns_list.push_str(&pattern.key.as_str());
+        top_patterns_list.push_str(&pattern.key.to_string());
         top_patterns_list.push_str("\n\n");
 
         top_patterns_list.push_str("### Definition\n");
@@ -142,7 +142,7 @@ pub fn generate_formated_list_from_pattern_data(
         top_patterns_list.push_str("\n\n");
 
         top_patterns_list.push_str("### Impact Hint\n");
-        top_patterns_list.push_str(&pattern.impact_hint.as_str());
+        top_patterns_list.push_str(&pattern.impact_hint.to_string());
         top_patterns_list.push_str("\n\n");
     }
 

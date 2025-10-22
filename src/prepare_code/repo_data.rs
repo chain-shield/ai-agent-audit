@@ -8,9 +8,9 @@ use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    config::{CHAINSHIELD_DB_FOLDER, REPO_DATA_DB},
+    config::{AuditType, CHAINSHIELD_DB_FOLDER, REPO_DATA_DB},
     llm_review::context_state::get_metadata_context,
-    prepare_code::git_clone::RepoPaths,
+    prepare_code::git_clone::{PocConfig, RepoPaths},
 };
 
 /// Represents complete repository data with all metadata
@@ -223,6 +223,8 @@ impl RepoData {
             .transpose()?;
 
         Ok(RepoPaths {
+            github_url: "".to_string(),
+            poc: PocConfig::default(),
             project_id: self.project_id.clone(),
             root: PathBuf::from(&self.root),
             sol_files,
@@ -234,6 +236,7 @@ impl RepoData {
             scoped_files: None,
             monorepo_folders: None,
             docs,
+            audit_type: AuditType::Code4rena,
             repo_name: self.repo_name.clone(),
             audit_scope: self.audit_scope.as_ref().map(PathBuf::from),
             excluded_folders,

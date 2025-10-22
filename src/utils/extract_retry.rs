@@ -58,6 +58,7 @@ where
     Err(ExtractionError::NoData)
 }
 
+// TODO: add method `agent_create_test_save_and_run(agent,input,file,metadata)`
 pub async fn agent_extract_with_retry<M, T>(
     agent: &Agent<M>,
     input: &str,
@@ -175,10 +176,16 @@ fn should_retry_prompt_err(e: &PromptError) -> bool {
             /* 2) Provider said “I’m busy / overloaded / rate-limited”  */
             CompletionError::ProviderError(msg) | CompletionError::ResponseError(msg) => {
                 let m = msg.to_lowercase();
+                // Transient provider-side issues we should retry
                 m.contains("overload")
                     || m.contains("rate limit")
                     || m.contains("busy")
                     || m.contains("try again later")
+                    || m.contains("server_error")
+                    || m.contains("server error")
+                    || m.contains("internal server error")
+                    || m.contains("error occurred while processing your request")
+                    || m.contains("help.openai.com")
             }
 
             /* 3) Anything else – usually not transient */

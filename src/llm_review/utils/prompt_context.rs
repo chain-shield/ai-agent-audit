@@ -1,8 +1,8 @@
 use crate::llm_review::{
-    enums::EnumString,
     findings::Finding,
     invariants::InvariantFinding,
     patterns::{ImpactHint, Pattern},
+    phases::verify_findings::{FindingConfidence, FindingStatus},
 };
 
 pub fn generate_prompt_for_issue_check(
@@ -10,18 +10,19 @@ pub fn generate_prompt_for_issue_check(
     finding: &Finding,
     instructions: &str,
     post_instructions: &str,
+    report_type: FindingReportType,
 ) -> String {
     let mut prompt = format!("{}{}", instructions, post_instructions);
 
     prompt.push_str("\n\n");
-    prompt.push_str("## REPORT FOR SECURITY ISSUE");
+    prompt.push_str("## REPORT FOR SECURITY FINDING");
     prompt.push_str("\n\n");
 
-    let report = get_finding_report(finding, None);
+    let report = get_finding_report(finding, None, report_type);
     prompt.push_str(&report);
     prompt.push_str("\n\n");
 
-    prompt.push_str("## CODEBASE WHERE ISSUE WAS FOUND");
+    prompt.push_str("## CODEBASE WHERE FINDING WAS FOUND");
     prompt.push_str("\n\n");
 
     prompt.push_str(code);
@@ -34,7 +35,7 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
 
     invariant_finding.push_str(&format!(
         "\n\n ### Invariant Type: {}\n",
-        &invariant.inv_type.as_str()
+        &invariant.inv_type.to_string()
     ));
 
     invariant_finding.push_str(&format!(
@@ -43,12 +44,15 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
     ));
 
     invariant_finding.push_str("\n ### Description/Code Snippet\n");
-    invariant_finding.push_str(&invariant.desc.as_str());
+    invariant_finding.push_str(&invariant.desc.to_string());
 
     invariant_finding.push_str("\n ### Checks\n");
     invariant_finding.push_str(&invariant.checks.join(", "));
 
-    invariant_finding.push_str(&format!("\n ### Status: {}\n", &invariant.status.as_str()));
+    invariant_finding.push_str(&format!(
+        "\n ### Status: {}\n",
+        &invariant.status.to_string()
+    ));
 
     invariant_finding.push_str("\n ### Pre-State\n");
     invariant_finding.push_str(&invariant.pre_state.clone().unwrap_or_default());
@@ -67,7 +71,7 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
 
     pattern_list.push_str(&format!(
         "\n\n ### Issue Type: {}\n",
-        &pattern.issue_type.as_str()
+        &pattern.issue_type.to_string()
     ));
 
     pattern_list.push_str(&format!(
@@ -76,10 +80,10 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
     ));
 
     pattern_list.push_str("\n ### Title\n");
-    pattern_list.push_str(&pattern.description.as_str());
+    pattern_list.push_str(&pattern.description.to_string());
 
     pattern_list.push_str("\n ### Description/Code Snippet\n");
-    pattern_list.push_str(&pattern.description.as_str());
+    pattern_list.push_str(&pattern.description.to_string());
 
     pattern_list.push_str("\n ### Static Signals\n");
     pattern_list.push_str(&pattern.static_signals.join(", "));
@@ -89,18 +93,29 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
 
     pattern_list.push_str(&format!(
         "\n ### Minimum Privilege Required to Exploit Vulnerability: {}\n",
-        &pattern.privilege.as_str()
+        &pattern.privilege.to_string()
     ));
 
     pattern_list.push_str(&format!(
         "\n ### Impact: {}\n",
-        &pattern.impact.unwrap_or(ImpactHint::Low).as_str()
+        &pattern.impact.unwrap_or(ImpactHint::Low).to_string()
     ));
 
     pattern_list
 }
 
-pub fn get_finding_report(finding: &Finding, index: Option<usize>) -> String {
+#[derive(PartialEq, Eq)]
+pub enum FindingReportType {
+    Standard,
+    Enhanced,
+    NoPoC,
+}
+
+pub fn get_finding_report(
+    finding: &Finding,
+    index: Option<usize>,
+    report_type: FindingReportType,
+) -> String {
     let mut findings_report = String::new();
 
     if let Some(inx) = index {
@@ -115,7 +130,7 @@ pub fn get_finding_report(finding: &Finding, index: Option<usize>) -> String {
         //title without index
         findings_report.push_str(&format!(
             "## [Severity-{}]. {}\n\n",
-            finding.severity.as_str(),
+            finding.severity.to_string(),
             finding.title
         ));
     }
@@ -125,7 +140,7 @@ pub fn get_finding_report(finding: &Finding, index: Option<usize>) -> String {
     findings_report.push_str("\n\n");
     //type
     findings_report.push_str("## Exploit Type\n");
-    findings_report.push_str(&finding.exploit_type.as_str());
+    findings_report.push_str(&finding.exploit_type.to_string());
     findings_report.push_str("\n\n");
 
     //location
@@ -133,9 +148,46 @@ pub fn get_finding_report(finding: &Finding, index: Option<usize>) -> String {
     findings_report.push_str(&format!("{}.{}", finding.contract, finding.function));
     findings_report.push_str("\n\n");
 
+    // for final report include status, confidence, and complexity
+    if report_type == FindingReportType::Enhanced {
+        findings_report.push_str(&format!(
+            "## Finding Status: {}\n",
+            finding.status.unwrap_or_default().to_string()
+        ));
+        if finding.status == Some(FindingStatus::NeedsMoreInfo) {
+            findings_report.push_str(&format!(
+                "### Finding Status Justification: {}\n",
+                finding.status_justification.clone().unwrap_or_default()
+            ));
+        }
+        findings_report.push_str(&format!(
+            "## Status Confidence: {}\n",
+            finding.status_confidence.unwrap_or_default().to_string()
+        ));
+        if finding.status_confidence == Some(FindingConfidence::SomeWhatConfident) {
+            findings_report.push_str(&format!(
+                "### Finding Confidence Justification: {}\n",
+                finding
+                    .status_confidence_justification
+                    .clone()
+                    .unwrap_or_default()
+            ));
+        }
+        findings_report.push_str(&format!(
+            "### Finding Complexity: {}\n",
+            finding.finding_complexity.unwrap_or_default()
+        ));
+        findings_report.push_str(&format!(
+            "### PoC Test Status: {}\n",
+            finding.poc_test_status.unwrap_or_default().to_string()
+        ));
+    }
+
     //privilege
-    findings_report.push_str("## Minimim Privilege Required\n");
-    findings_report.push_str(&finding.privilege.as_str());
+    findings_report.push_str(&format!(
+        "## Minimim Privilege Required:{}\n",
+        finding.privilege.to_string()
+    ));
     findings_report.push_str("\n\n");
 
     //description
@@ -148,15 +200,23 @@ pub fn get_finding_report(finding: &Finding, index: Option<usize>) -> String {
     findings_report.push_str(&finding.impact.clone().unwrap_or_default());
     findings_report.push_str("\n\n");
 
+    // for final report include status, confidence, and complexity
+    if report_type == FindingReportType::Enhanced {
+        findings_report.push_str("## Command to Run Test\n");
+        findings_report.push_str(&finding.poc_test_command.clone().unwrap_or_default());
+        findings_report.push_str("\n\n");
+    }
     //POC
     findings_report.push_str("## Proof of Concept\n");
     findings_report.push_str(&finding.proof_of_concept.clone().unwrap_or_default());
     findings_report.push_str("\n\n");
 
-    //Proof of Code
-    findings_report.push_str("## Proof of Code\n");
-    findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
-    findings_report.push_str("\n\n");
+    if report_type != FindingReportType::NoPoC {
+        //Proof of Code
+        findings_report.push_str("## Proof of Code\n");
+        findings_report.push_str(&finding.proof_of_code.clone().unwrap_or_default());
+        findings_report.push_str("\n\n");
+    }
 
     //Suggested Fix
     findings_report.push_str("## Suggested Mitigation\n");

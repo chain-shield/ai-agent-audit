@@ -1,0 +1,434 @@
+## Relevant Code Snippets
+https://github.com/Cyfrin/4-puppy-raffle-audit/blob/3ff0f0bfddf25fd0c160fe57388fa6ff2e0f0960/src/PuppyRaffle.sol#L133-L152
+https://github.com/Cyfrin/4-puppy-raffle-audit/blob/3ff0f0bfddf25fd0c160fe57388fa6ff2e0f0960/src/PuppyRaffle.sol#L155-L161
+https://github.com/Cyfrin/4-puppy-raffle-audit/blob/3ff0f0bfddf25fd0c160fe57388fa6ff2e0f0960/src/PuppyRaffle.sol#L89-L101
+https://github.com/Cyfrin/4-puppy-raffle-audit/blob/3ff0f0bfddf25fd0c160fe57388fa6ff2e0f0960/src/PuppyRaffle.sol#L34-L35
+
+
+# Fee Accounting Divergence After Refunds Permanently Bricks withdrawFees()
+
+**Severity:** High
+
+**Affected Contracts:** `PuppyRaffle.sol` — functions `selectWinner()` at lines 133-152, `withdrawFees()` at lines 155-161, and `refund()` at lines 89-101
+
+## Summary
+
+The `selectWinner()` function calculates fees and prize pool based on `players.length * entranceFee` rather than the actual balance collected. When players refund their tickets before winner selection, the contract balance decreases but `players.length` remains unchanged (refunded slots are set to `address(0)` but not removed). This causes `selectWinner()` to overpay the winner and overstate `totalFees`, creating a permanent accounting mismatch that prevents `withdrawFees()` from ever executing successfully.
+
+## Description
+
+The PuppyRaffle protocol contains a critical accounting flaw in how it tracks fees after player refunds. The vulnerability stems from the interaction between three functions: `refund()`, `selectWinner()`, and `withdrawFees()`.
+
+### Root Cause Analysis
+
+The root cause lies in the `selectWinner()` function's fee calculation logic:
+
+```solidity
+function selectWinner() external {
+    require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+    require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+    uint256 winnerIndex =
+        uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+    address winner = players[winnerIndex];
+    uint256 totalAmountCollected = players.length * entranceFee;  // @audit Uses players.length, not actual balance
+    uint256 prizePool = (totalAmountCollected * 80) / 100;
+    uint256 fee = (totalAmountCollected * 20) / 100;
+    totalFees = totalFees + uint64(fee);  // @audit Overstates fees when refunds occurred
+    // ... rest of function
+}
+```
+
+[View selectWinner() on GitHub](https://github.com/Cyfrin/4-puppy-raffle-audit/blob/3ff0f0bfddf25fd0c160fe57388fa6ff2e0f0960/src/PuppyRaffle.sol#L133-L152)
+
+The calculation `totalAmountCollected = players.length * entranceFee` assumes all player slots represent active, paid entries. However, when a player calls `refund()`, their entrance fee is returned but their slot in the `players` array is merely set to `address(0)` without removing the entry:
+
+```solidity
+function refund(uint256 playerIndex) public {
+    address playerAddress = players[playerIndex];
+    require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+    require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
+
+    payable(msg.sender).sendValue(entranceFee);  // @audit Balance decreases
+
+    players[playerIndex] = address(0);  // @audit Length unchanged, slot zeroed
+    emit RaffleRefunded(playerAddress);
+}
+```
+
+[View refund() on GitHub](https://github.com/Cyfrin/4-puppy-raffle-audit/blob/3ff0f0bfddf25fd0c160fe57388fa6ff2e0f0960/src/PuppyRaffle.sol#L89-L101)
+
+This creates a discrepancy:
+- **Actual balance**: `(players.length - refundCount) * entranceFee`
+- **Calculated totalAmountCollected**: `players.length * entranceFee`
+- **Overpayment**: `refundCount * entranceFee`
+
+When `selectWinner()` executes, it pays out `prizePool = 0.8 * (players.length * entranceFee)` and accrues `fee = 0.2 * (players.length * entranceFee)` to `totalFees`. If R players refunded, the contract only holds `(players.length - R) * entranceFee`, but pays out as if it held `players.length * entranceFee`. This depletes the balance by an extra `R * entranceFee`, leaving:
+
+```
+address(this).balance = totalFees - (R * entranceFee)
+```
+
+The `withdrawFees()` function enforces a strict equality check:
+
+```solidity
+function withdrawFees() external {
+    require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+    uint256 feesToWithdraw = totalFees;
+    totalFees = 0;
+    (bool success,) = feeAddress.call{value: feesToWithdraw}();
+    require(success, "PuppyRaffle: Failed to withdraw fees");
+}
+```
+
+[View withdrawFees() on GitHub](https://github.com/Cyfrin/4-puppy-raffle-audit/blob/3ff0f0bfddf25fd0c160fe57388fa6ff2e0f0960/src/PuppyRaffle.sol#L155-L161)
+
+Since `address(this).balance < totalFees` after any round with refunds, this require statement will always revert, permanently locking all accumulated fees in the contract.
+
+### Exploit Scenario
+
+Consider the following step-by-step scenario:
+
+1. **Initial State**: A new raffle round begins with `entranceFee = 1 ETH` and `raffleDuration = 1 day`.
+
+2. **Five Players Enter**: Players 1-5 each call `enterRaffle()` with 1 ETH.
+   - `players.length = 5`
+   - `address(this).balance = 5 ETH`
+   - `totalFees = 0`
+
+3. **Player 5 Refunds**: Before the raffle duration expires, Player 5 calls `refund(4)`.
+   - Player 5 receives 1 ETH back
+   - `players[4] = address(0)` (slot zeroed but not removed)
+   - `players.length = 5` (unchanged)
+   - `address(this).balance = 4 ETH`
+
+4. **Raffle Duration Expires**: Time advances past `raffleStartTime + raffleDuration`.
+
+5. **Winner Selection**: Anyone calls `selectWinner()`.
+   - Calculates: `totalAmountCollected = 5 * 1 ETH = 5 ETH` (incorrect, actual balance is 4 ETH)
+   - Calculates: `prizePool = 5 ETH * 80% = 4 ETH`
+   - Calculates: `fee = 5 ETH * 20% = 1 ETH`
+   - Increments: `totalFees = 0 + 1 ETH = 1 ETH`
+   - Transfers: 4 ETH to winner (depletes entire contract balance)
+   - Result: `address(this).balance = 0 ETH`, `totalFees = 1 ETH`
+
+6. **Fee Withdrawal Attempt**: Owner calls `withdrawFees()`.
+   - Check: `require(0 ETH == 1 ETH)` → **REVERTS**
+   - Error: "PuppyRaffle: There are currently players active!"
+
+7. **Permanent Lock**: The 1 ETH deficit persists across all future rounds. Even if subsequent rounds complete without refunds, the accumulated deficit from the first round means `address(this).balance` will always be less than `totalFees` by exactly `R * entranceFee` where R is the total number of refunds across all rounds.
+
+### Relevant Context
+
+This vulnerability is particularly insidious because:
+
+- **It compounds over time**: Each round with refunds adds to the deficit.
+- **It cannot self-heal**: Subsequent rounds without refunds do not correct the mismatch; they simply add correctly-calculated fees on top of the existing deficit.
+- **The error message is misleading**: The revert message "There are currently players active!" suggests players are still in the raffle, when in reality the issue is an accounting mismatch.
+- **No emergency recovery**: The contract has no owner function to reconcile the accounting or force-withdraw available balance.
+
+## Impact
+
+**Severity Justification: High**
+
+This vulnerability results in **permanent loss of protocol fees**, which constitutes a critical failure of the protocol's economic model. The impact includes:
+
+1. **Complete Loss of Fee Revenue**: All protocol fees become permanently locked in the contract after the first round with refunds. The owner/feeAddress can never withdraw accumulated fees, representing 20% of all entrance fees collected.
+
+2. **Cumulative Financial Damage**: The deficit grows with each refund across all rounds. If 10 players refund over the protocol's lifetime, 10 ETH worth of fees (at 1 ETH entrance fee) becomes permanently inaccessible, in addition to the correctly-calculated fees that also become locked.
+
+3. **Protocol Insolvency**: The contract holds user funds (fees) that cannot be accessed by their rightful owner, violating the fundamental trust model of the protocol.
+
+4. **Worst-Case Scenario**: 
+   - Assume 100 raffle rounds complete over the protocol's lifetime
+   - Average 10 players per round = 1,000 total entries
+   - Average 1 refund per round = 100 refunds total
+   - At 1 ETH entrance fee:
+     - Total fees collected: 1,000 ETH * 20% = 200 ETH
+     - Deficit from refunds: 100 ETH
+     - **Total locked funds: 200 ETH** (all fees become inaccessible due to the accounting check)
+
+5. **No Mitigation Path**: Without an upgrade mechanism or emergency withdrawal function, there is no way to recover the locked funds. The contract must be abandoned and redeployed, losing all historical fee accumulation.
+
+The vulnerability affects the core economic function of the protocol (fee collection) and results in permanent, unrecoverable loss of funds, justifying a **High** severity rating.
+
+## Recommended Mitigation
+
+Implement one of the following fixes to align fee calculations with actual collected funds:
+
+### Option 1: Calculate Fees from Actual Balance (Recommended)
+
+Modify `selectWinner()` to derive the prize pool from the actual contract balance minus already-accrued fees:
+
+```solidity
+function selectWinner() external {
+    require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+    require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+    
+    uint256 winnerIndex =
+        uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+    address winner = players[winnerIndex];
+    
+    // Calculate from actual balance, excluding already-accrued fees
+    uint256 currentRoundPot = address(this).balance - uint256(totalFees);
+    uint256 prizePool = (currentRoundPot * 80) / 100;
+    uint256 fee = (currentRoundPot * 20) / 100;
+    totalFees = totalFees + uint64(fee);
+    
+    // ... rest of function
+}
+```
+
+This ensures that fees are calculated based on funds actually present in the contract, automatically accounting for any refunds.
+
+### Option 2: Track Active Player Count
+
+Maintain a separate counter for active (non-refunded) players:
+
+```solidity
+uint256 public activePlayers;  // Add state variable
+
+function enterRaffle(address[] memory newPlayers) public payable {
+    require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
+    for (uint256 i = 0; i < newPlayers.length; i++) {
+        players.push(newPlayers[i]);
+        activePlayers++;  // Increment for each new player
+    }
+    // ... rest of function
+}
+
+function refund(uint256 playerIndex) public {
+    address playerAddress = players[playerIndex];
+    require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+    require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
+
+    payable(msg.sender).sendValue(entranceFee);
+    players[playerIndex] = address(0);
+    activePlayers--;  // Decrement when player refunds
+    emit RaffleRefunded(playerAddress);
+}
+
+function selectWinner() external {
+    require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+    require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+    
+    uint256 winnerIndex =
+        uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+    address winner = players[winnerIndex];
+    
+    // Use activePlayers instead of players.length
+    uint256 totalAmountCollected = activePlayers * entranceFee;
+    uint256 prizePool = (totalAmountCollected * 80) / 100;
+    uint256 fee = (totalAmountCollected * 20) / 100;
+    totalFees = totalFees + uint64(fee);
+    
+    delete players;
+    activePlayers = 0;  // Reset counter
+    raffleStartTime = block.timestamp;
+    // ... rest of function
+}
+```
+
+### Option 3: Relax withdrawFees() Check
+
+If maintaining the current fee calculation is desired for other reasons, modify `withdrawFees()` to withdraw available balance up to `totalFees`:
+
+```solidity
+function withdrawFees() external {
+    require(players.length == 0, "PuppyRaffle: There are currently players active!");
+    uint256 availableBalance = address(this).balance;
+    uint256 feesToWithdraw = availableBalance < uint256(totalFees) ? availableBalance : uint256(totalFees);
+    totalFees = totalFees - uint64(feesToWithdraw);  // Adjust totalFees to reflect actual withdrawal
+    (bool success,) = feeAddress.call{value: feesToWithdraw}();
+    require(success, "PuppyRaffle: Failed to withdraw fees");
+}
+```
+
+**Note**: Option 3 is a workaround that allows fee withdrawal but doesn't fix the underlying accounting issue. Options 1 or 2 are strongly preferred as they address the root cause.
+
+### Additional Recommendation
+
+Consider adding a view function to expose the accounting health:
+
+```solidity
+function getAccountingStatus() external view returns (uint256 balance, uint256 fees, int256 deficit) {
+    balance = address(this).balance;
+    fees = uint256(totalFees);
+    deficit = int256(balance) - int256(fees);
+}
+```
+
+This allows monitoring for accounting discrepancies and can serve as an early warning system.
+
+## References
+
+- **Similar Vulnerability Pattern**: This issue is analogous to the "stale accounting" class of vulnerabilities where cached values (like array length) diverge from actual state (like balance) after state-modifying operations.
+- **Solidity Best Practices**: Always derive financial calculations from actual balances rather than cached counters when funds can be withdrawn mid-cycle. See [ConsenSys Smart Contract Best Practices - Pull over Push](https://consensys.github.io/smart-contract-best-practices/development-recommendations/general/external-calls/).
+- **OpenZeppelin SafeMath**: While this contract uses Solidity 0.7.6 which has built-in overflow protection, the accounting logic itself is flawed independent of arithmetic safety.
+
+## Proof of Code
+
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.7.6;
+pragma abicoder v2;
+
+import "forge-std/Test.sol";
+import "../src/PuppyRaffle.sol";
+
+contract FeesAccountingDivergenceTest is Test {
+    PuppyRaffle public puppyRaffle;
+    address public feeAddress;
+    address public player1;
+    address public player2;
+    address public player3;
+    address public player4;
+    address public player5;
+    
+    uint256 public constant ENTRANCE_FEE = 1 ether;
+    uint256 public constant RAFFLE_DURATION = 1 days;
+    
+    function setUp() public {
+        feeAddress = address(uint160(uint256(keccak256("feeAddress"))));
+        player1 = address(uint160(uint256(keccak256("player1"))));
+        player2 = address(uint160(uint256(keccak256("player2"))));
+        player3 = address(uint160(uint256(keccak256("player3"))));
+        player4 = address(uint160(uint256(keccak256("player4"))));
+        player5 = address(uint160(uint256(keccak256("player5"))));
+        
+        puppyRaffle = new PuppyRaffle(ENTRANCE_FEE, feeAddress, RAFFLE_DURATION);
+        
+        // Fund players using hoax for 0.7.6 compatibility
+        vm.deal(player1, 10 ether);
+        vm.deal(player2, 10 ether);
+        vm.deal(player3, 10 ether);
+        vm.deal(player4, 10 ether);
+        vm.deal(player5, 10 ether);
+    }
+    
+    receive() external payable {}
+    
+    function testFeesAccountingDivergenceAfterRefunds() public {
+        // Step 1: Enter 5 players into the raffle
+        address[] memory p1 = new address[](1);
+        p1[0] = player1;
+        vm.prank(player1);
+        puppyRaffle.enterRaffle{value: ENTRANCE_FEE}(p1);
+        
+        address[] memory p2 = new address[](1);
+        p2[0] = player2;
+        vm.prank(player2);
+        puppyRaffle.enterRaffle{value: ENTRANCE_FEE}(p2);
+        
+        address[] memory p3 = new address[](1);
+        p3[0] = player3;
+        vm.prank(player3);
+        puppyRaffle.enterRaffle{value: ENTRANCE_FEE}(p3);
+        
+        address[] memory p4 = new address[](1);
+        p4[0] = player4;
+        vm.prank(player4);
+        puppyRaffle.enterRaffle{value: ENTRANCE_FEE}(p4);
+        
+        address[] memory p5 = new address[](1);
+        p5[0] = player5;
+        vm.prank(player5);
+        puppyRaffle.enterRaffle{value: ENTRANCE_FEE}(p5);
+        
+        // Verify 5 players entered and contract has 5 ETH
+        assertEq(address(puppyRaffle).balance, 5 ether);
+        
+        // Step 2: Player 5 refunds their ticket
+        uint256 player5Index = puppyRaffle.getActivePlayerIndex(player5);
+        vm.prank(player5);
+        puppyRaffle.refund(player5Index);
+        
+        // After refund, contract should have 4 ETH (5 - 1 refunded)
+        assertEq(address(puppyRaffle).balance, 4 ether);
+        
+        // Step 3: Fast forward time to allow winner selection
+        vm.warp(block.timestamp + RAFFLE_DURATION + 1);
+        
+        // Step 4: Select winner
+        // The contract will calculate fees based on players.length (5) not actual funds (4 ETH)
+        // totalAmountCollected = 5 * 1 ether = 5 ether
+        // fee = 5 ether * 20% = 1 ether
+        // prizePool = 5 ether * 80% = 4 ether
+        // But actual balance is only 4 ether!
+        
+        uint256 balanceBeforeWinner = address(puppyRaffle).balance;
+        uint64 totalFeesBeforeWinner = puppyRaffle.totalFees();
+        
+        puppyRaffle.selectWinner();
+        
+        // After selectWinner:
+        // - Winner receives 4 ether (80% of 5 ether calculated)
+        // - totalFees incremented by 1 ether (20% of 5 ether calculated)
+        // - But contract only had 4 ether, so balance is now 0
+        // - totalFees = 1 ether but balance = 0
+        
+        uint256 balanceAfterWinner = address(puppyRaffle).balance;
+        uint64 totalFeesAfterWinner = puppyRaffle.totalFees();
+        
+        // The accounting divergence:
+        // totalFees should equal balance when no active players, but it doesn't
+        assertEq(uint256(totalFeesAfterWinner), 1 ether, "totalFees should be 1 ether");
+        assertEq(balanceAfterWinner, 0 ether, "balance should be 0 ether after winner paid");
+        
+        // Step 5: Demonstrate withdrawFees is now permanently bricked
+        // withdrawFees requires: address(this).balance == uint256(totalFees)
+        // But balance (0) != totalFees (1 ether)
+        
+        vm.expectRevert(bytes("PuppyRaffle: There are currently players active!"));
+        puppyRaffle.withdrawFees();
+        
+        // Even in subsequent rounds, this mismatch persists
+        // Let's run another round to show the deficit carries forward
+        
+        // Enter 4 new players
+        address[] memory newP1 = new address[](1);
+        newP1[0] = player1;
+        vm.prank(player1);
+        puppyRaffle.enterRaffle{value: ENTRANCE_FEE}(newP1);
+        
+        address[] memory newP2 = new address[](1);
+        newP2[0] = player2;
+        vm.prank(player2);
+        puppyRaffle.enterRaffle{value: ENTRANCE_FEE}(newP2);
+        
+        address[] memory newP3 = new address[](1);
+        newP3[0] = player3;
+        vm.prank(player3);
+        puppyRaffle.enterRaffle{value: ENTRANCE_FEE}(newP3);
+        
+        address[] memory newP4 = new address[](1);
+        newP4[0] = player4;
+        vm.prank(player4);
+        puppyRaffle.enterRaffle{value: ENTRANCE_FEE}(newP4);
+        
+        // Contract now has 4 ether from new entries
+        assertEq(address(puppyRaffle).balance, 4 ether);
+        
+        // Fast forward and select winner again
+        vm.warp(block.timestamp + RAFFLE_DURATION + 1);
+        puppyRaffle.selectWinner();
+        
+        // After second round:
+        // - 4 ether pot: 3.2 ether to winner, 0.8 ether to fees
+        // - totalFees = 1 + 0.8 = 1.8 ether
+        // - balance = 0.8 ether
+        // - Still mismatched by 1 ether from the first round!
+        
+        uint64 finalTotalFees = puppyRaffle.totalFees();
+        uint256 finalBalance = address(puppyRaffle).balance;
+        
+        assertEq(uint256(finalTotalFees), 1.8 ether, "totalFees should be 1.8 ether after two rounds");
+        assertEq(finalBalance, 0.8 ether, "balance should be 0.8 ether");
+        
+        // The deficit persists: totalFees - balance = 1 ether (the refunded amount)
+        assertEq(uint256(finalTotalFees) - finalBalance, 1 ether, "Permanent 1 ether deficit from refund");
+        
+        // withdrawFees still reverts
+        vm.expectRevert(bytes("PuppyRaffle: There are currently players active!"));
+        puppyRaffle.withdrawFees();
+    }
+}

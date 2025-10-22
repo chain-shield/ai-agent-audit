@@ -1087,496 +1087,407 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IPermissionsRegistry {
-    function emergencyCouncil() external view returns(address);
-    function hybraTeamMultisig() external view returns(address);
-    function hasRole(bytes memory role, address caller) external view returns(bool);
-}
+library HybraTimeLibrary {
 
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
+    // for testnet
+    uint256 internal constant WEEK = 1800;
+    uint internal constant NO_VOTING_WINDOW = 300;
+    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
+    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
+    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
 
-import "./LowGasSafeMath.sol";
-import "./SafeCast.sol";
+    // uint256 internal constant WEEK = 7 * 86400;
+    // uint internal constant NO_VOTING_WINDOW = 3600;
+    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
+    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
+    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
 
-import "./FullMath.sol";
-import "./UnsafeMath.sol";
-import "./FixedPoint96.sol";
-
-/// @title Functions based on Q64.96 sqrt price and liquidity
-/// @notice Contains the math that uses square root of price as a Q64.96 and liquidity to compute deltas
-library SqrtPriceMath {
-    using LowGasSafeMath for uint256;
-    using SafeCast for uint256;
-
-    /// @notice Gets the next sqrt price given a delta of token0
-    /// @dev Always rounds up, because in the exact output case (increasing price) we need to move the price at least
-    /// far enough to get the desired output amount, and in the exact input case (decreasing price) we need to move the
-    /// price less in order to not send too much output.
-    /// The most precise formula for this is liquidity * sqrtPX96 / (liquidity +- amount * sqrtPX96),
-    /// if this is impossible because of overflow, we calculate liquidity / (liquidity / sqrtPX96 +- amount).
-    /// @param sqrtPX96 The starting price, i.e. before accounting for the token0 delta
-    /// @param liquidity The amount of usable liquidity
-    /// @param amount How much of token0 to add or remove from virtual reserves
-    /// @param add Whether to add or remove the amount of token0
-    /// @return The price after adding or removing amount, depending on add
-    function getNextSqrtPriceFromAmount0RoundingUp(uint160 sqrtPX96, uint128 liquidity, uint256 amount, bool add)
-        internal
-        pure
-        returns (uint160)
-    {
-        // we short circuit amount == 0 because the result is otherwise not guaranteed to equal the input price
-        if (amount == 0) return sqrtPX96;
-        uint256 numerator1 = uint256(liquidity) << FixedPoint96.RESOLUTION;
-
-        if (add) {
-            uint256 product;
-            if ((product = amount * sqrtPX96) / amount == sqrtPX96) {
-                uint256 denominator = numerator1 + product;
-                if (denominator >= numerator1) {
-                    // always fits in 160 bits
-                    return uint160(FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator));
-                }
-            }
-
-            return uint160(UnsafeMath.divRoundingUp(numerator1, (numerator1 / sqrtPX96).add(amount)));
-        } else {
-            uint256 product;
-            // if the product overflows, we know the denominator underflows
-            // in addition, we must check that the denominator does not underflow
-            require((product = amount * sqrtPX96) / amount == sqrtPX96 && numerator1 > product);
-            uint256 denominator = numerator1 - product;
-            return FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator).toUint160();
+    /// @dev Returns start of epoch based on current timestamp
+    function epochStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK);
         }
     }
 
-    /// @notice Gets the next sqrt price given a delta of token1
-    /// @dev Always rounds down, because in the exact output case (decreasing price) we need to move the price at least
-    /// far enough to get the desired output amount, and in the exact input case (increasing price) we need to move the
-    /// price less in order to not send too much output.
-    /// The formula we compute is within <1 wei of the lossless version: sqrtPX96 +- amount / liquidity
-    /// @param sqrtPX96 The starting price, i.e., before accounting for the token1 delta
-    /// @param liquidity The amount of usable liquidity
-    /// @param amount How much of token1 to add, or remove, from virtual reserves
-    /// @param add Whether to add, or remove, the amount of token1
-    /// @return The price after adding or removing `amount`
-    function getNextSqrtPriceFromAmount1RoundingDown(uint160 sqrtPX96, uint128 liquidity, uint256 amount, bool add)
-        internal
-        pure
-        returns (uint160)
-    {
-        // if we're adding (subtracting), rounding down requires rounding the quotient down (up)
-        // in both cases, avoid a mulDiv for most inputs
-        if (add) {
-            uint256 quotient = (
-                amount <= type(uint160).max
-                    ? (amount << FixedPoint96.RESOLUTION) / liquidity
-                    : FullMath.mulDiv(amount, FixedPoint96.Q96, liquidity)
-            );
-
-            return uint256(sqrtPX96).add(quotient).toUint160();
-        } else {
-            uint256 quotient = (
-                amount <= type(uint160).max
-                    ? UnsafeMath.divRoundingUp(amount << FixedPoint96.RESOLUTION, liquidity)
-                    : FullMath.mulDivRoundingUp(amount, FixedPoint96.Q96, liquidity)
-            );
-
-            require(sqrtPX96 > quotient);
-            // always fits 160 bits
-            return uint160(sqrtPX96 - quotient);
+    /// @dev Returns start of next epoch / end of current epoch
+    function epochNext(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK;
         }
     }
 
-    /// @notice Gets the next sqrt price given an input amount of token0 or token1
-    /// @dev Throws if price or liquidity are 0, or if the next price is out of bounds
-    /// @param sqrtPX96 The starting price, i.e., before accounting for the input amount
-    /// @param liquidity The amount of usable liquidity
-    /// @param amountIn How much of token0, or token1, is being swapped in
-    /// @param zeroForOne Whether the amount in is token0 or token1
-    /// @return sqrtQX96 The price after adding the input amount to token0 or token1
-    function getNextSqrtPriceFromInput(uint160 sqrtPX96, uint128 liquidity, uint256 amountIn, bool zeroForOne)
-        internal
-        pure
-        returns (uint160 sqrtQX96)
-    {
-        require(sqrtPX96 > 0);
-        require(liquidity > 0);
-
-        // round to make sure that we don't pass the target price
-        return zeroForOne
-            ? getNextSqrtPriceFromAmount0RoundingUp(sqrtPX96, liquidity, amountIn, true)
-            : getNextSqrtPriceFromAmount1RoundingDown(sqrtPX96, liquidity, amountIn, true);
+    /// @dev Returns start of voting window
+    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
+        }
     }
 
-    /// @notice Gets the next sqrt price given an output amount of token0 or token1
-    /// @dev Throws if price or liquidity are 0 or the next price is out of bounds
-    /// @param sqrtPX96 The starting price before accounting for the output amount
-    /// @param liquidity The amount of usable liquidity
-    /// @param amountOut How much of token0, or token1, is being swapped out
-    /// @param zeroForOne Whether the amount out is token0 or token1
-    /// @return sqrtQX96 The price after removing the output amount of token0 or token1
-    function getNextSqrtPriceFromOutput(uint160 sqrtPX96, uint128 liquidity, uint256 amountOut, bool zeroForOne)
-        internal
-        pure
-        returns (uint160 sqrtQX96)
-    {
-        require(sqrtPX96 > 0);
-        require(liquidity > 0);
-
-        // round to make sure that we pass the target price
-        return zeroForOne
-            ? getNextSqrtPriceFromAmount1RoundingDown(sqrtPX96, liquidity, amountOut, false)
-            : getNextSqrtPriceFromAmount0RoundingUp(sqrtPX96, liquidity, amountOut, false);
+    /// @dev Returns end of voting window / beginning of unrestricted voting window
+    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
+        }
     }
 
-    /// @notice Gets the amount0 delta between two prices
-    /// @dev Calculates liquidity / sqrt(lower) - liquidity / sqrt(upper),
-    /// i.e. liquidity * (sqrt(upper) - sqrt(lower)) / (sqrt(upper) * sqrt(lower))
-    /// @param sqrtRatioAX96 A sqrt price
-    /// @param sqrtRatioBX96 Another sqrt price
-    /// @param liquidity The amount of usable liquidity
-    /// @param roundUp Whether to round the amount up or down
-    /// @return amount0 Amount of token0 required to cover a position of size liquidity between the two passed prices
-    function getAmount0Delta(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity, bool roundUp)
-        internal
-        pure
-        returns (uint256 amount0)
-    {
-        if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
-
-        uint256 numerator1 = uint256(liquidity) << FixedPoint96.RESOLUTION;
-        uint256 numerator2 = sqrtRatioBX96 - sqrtRatioAX96;
-
-        require(sqrtRatioAX96 > 0);
-
-        return roundUp
-            ? UnsafeMath.divRoundingUp(FullMath.mulDivRoundingUp(numerator1, numerator2, sqrtRatioBX96), sqrtRatioAX96)
-            : FullMath.mulDiv(numerator1, numerator2, sqrtRatioBX96) / sqrtRatioAX96;
+    /// @dev Returns the status if it is the last hour of the epoch
+    function isLastHour(uint256 timestamp) internal pure returns (bool) {
+        // return block.timestamp % 7 days >= 6 days + 23 hours;
+        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
+        && timestamp < HybraTimeLibrary.epochNext(timestamp);
     }
 
-    /// @notice Gets the amount1 delta between two prices
-    /// @dev Calculates liquidity * (sqrt(upper) - sqrt(lower))
-    /// @param sqrtRatioAX96 A sqrt price
-    /// @param sqrtRatioBX96 Another sqrt price
-    /// @param liquidity The amount of usable liquidity
-    /// @param roundUp Whether to round the amount up, or down
-    /// @return amount1 Amount of token1 required to cover a position of size liquidity between the two passed prices
-    function getAmount1Delta(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity, bool roundUp)
-        internal
-        pure
-        returns (uint256 amount1)
-    {
-        if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
-
-        return roundUp
-            ? FullMath.mulDivRoundingUp(liquidity, sqrtRatioBX96 - sqrtRatioAX96, FixedPoint96.Q96)
-            : FullMath.mulDiv(liquidity, sqrtRatioBX96 - sqrtRatioAX96, FixedPoint96.Q96);
+    /// @dev Returns duration in multiples of epoch
+    function epochMultiples(uint256 duration) internal pure returns (uint256) {
+        unchecked {
+            return (duration / WEEK) * WEEK;
+        }
     }
 
-    /// @notice Helper that gets signed token0 delta
-    /// @param sqrtRatioAX96 A sqrt price
-    /// @param sqrtRatioBX96 Another sqrt price
-    /// @param liquidity The change in liquidity for which to compute the amount0 delta
-    /// @return amount0 Amount of token0 corresponding to the passed liquidityDelta between the two prices
-    function getAmount0Delta(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, int128 liquidity)
-        internal
-        pure
-        returns (int256 amount0)
-    {
-        return liquidity < 0
-            ? -getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, uint128(-liquidity), false).toInt256()
-            : getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, uint128(liquidity), true).toInt256();
+    /// @dev Returns duration in multiples of epoch
+    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
+        unchecked {
+            return  endTime - WEEK <= timestamp && timestamp < endTime;
+        }
     }
 
-    /// @notice Helper that gets signed token1 delta
-    /// @param sqrtRatioAX96 A sqrt price
-    /// @param sqrtRatioBX96 Another sqrt price
-    /// @param liquidity The change in liquidity for which to compute the amount1 delta
-    /// @return amount1 Amount of token1 corresponding to the passed liquidityDelta between the two prices
-    function getAmount1Delta(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, int128 liquidity)
-        internal
-        pure
-        returns (int256 amount1)
-    {
-        return liquidity < 0
-            ? -getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, uint128(-liquidity), false).toInt256()
-            : getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, uint128(liquidity), true).toInt256();
+    /// @dev Returns duration in multiples of epoch
+    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
     }
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
+pragma solidity =0.7.6;
 
-/// @title Callback for ICLPoolActions#mint
-/// @notice Any contract that calls ICLPoolActions#mint must implement this interface
-interface ICLMintCallback {
-    /// @notice Called to `msg.sender` after minting liquidity to a position from ICLPool#mint.
-    /// @dev In the implementation you must pay the pool tokens owed for the minted liquidity.
-    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
-    /// @param amount0Owed The amount of token0 due to the pool for the minted liquidity
-    /// @param amount1Owed The amount of token1 due to the pool for the minted liquidity
-    /// @param data Any data passed through by the caller via the ICLPoolActions#mint call
-    function uniswapV3MintCallback(uint256 amount0Owed, uint256 amount1Owed, bytes calldata data) external;
-}
+import "./interfaces/ICLFactory.sol";
+import "./interfaces/fees/IFeeModule.sol";
 
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
+import "./interfaces/IGaugeManager.sol";
+import "./interfaces/IFactoryRegistry.sol";
+import "@openzeppelin/contracts/proxy/Clones.sol";
+import "@nomad-xyz/src/ExcessivelySafeCall.sol";
+import "./CLPool.sol";
 
-/// @title Callback for ICLPoolActions#flash
-/// @notice Any contract that calls ICLPoolActions#flash must implement this interface
-interface ICLFlashCallback {
-    /// @notice Called to `msg.sender` after transferring to the recipient from ICLPool#flash.
-    /// @dev In the implementation you must repay the pool the tokens sent by flash plus the computed fee amounts.
-    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
-    /// @param fee0 The fee amount in token0 due to the pool by the end of the flash
-    /// @param fee1 The fee amount in token1 due to the pool by the end of the flash
-    /// @param data Any data passed through by the caller via the ICLPoolActions#flash call
-    function uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) external;
-}
+/// @title Canonical CL factory
+/// @notice Deploys CL pools and manages ownership and control over pool protocol fees
+contract CLFactory is ICLFactory {
+    using ExcessivelySafeCall for address;
 
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
+    /// @inheritdoc ICLFactory
+    IGaugeManager public override gaugeManager;
+    /// @inheritdoc ICLFactory
+    address public immutable override poolImplementation;
+    /// @inheritdoc ICLFactory
+    address public override owner;
+    /// @inheritdoc ICLFactory
+    address public override swapFeeManager;
+    /// @inheritdoc ICLFactory
+    address public override swapFeeModule;
+    /// @inheritdoc ICLFactory
+    address public override unstakedFeeManager;
+    /// @inheritdoc ICLFactory
+    address public override unstakedFeeModule;
+    /// @inheritdoc ICLFactory
+    uint24 public override defaultUnstakedFee;
+    /// @inheritdoc ICLFactory
 
-import {IVoter} from "contracts/core/interfaces/IVoter.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
-import {IGaugeManager} from "contracts/core/interfaces/IGaugeManager.sol";
+    address public override protocolFeeManager;
+    /// @inheritdoc ICLFactory
+    address public override protocolFeeModule;
+    /// @inheritdoc ICLFactory
+    uint24 public override defaultProtocolFee;
 
+    mapping(int24 => uint24) public override tickSpacingToFee;
+    /// @inheritdoc ICLFactory
+    mapping(address => mapping(address => mapping(int24 => address))) public override getPool;
+    /// @dev Used in VotingEscrow to determine if a contract is a valid pool
+    mapping(address => bool) private _isPool;
+    /// @inheritdoc ICLFactory
+    address[] public override allPools;
 
-/// @title The interface for the CL Factory
-/// @notice The CL Factory facilitates creation of CL pools and control over the protocol fees
-interface ICLFactory {
-    /// @notice Emitted when the owner of the factory is changed
-    /// @param oldOwner The owner before the owner was changed
-    /// @param newOwner The owner after the owner was changed
-    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
+    int24[] private _tickSpacings;
 
-    /// @notice Emitted when the swapFeeManager of the factory is changed
-    /// @param oldFeeManager The swapFeeManager before the swapFeeManager was changed
-    /// @param newFeeManager The swapFeeManager after the swapFeeManager was changed
-    event SwapFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
+    constructor(address _poolImplementation) {
+        owner = msg.sender;
+        swapFeeManager = msg.sender;
+        unstakedFeeManager = msg.sender;
+        protocolFeeManager = msg.sender;
+        poolImplementation = _poolImplementation;
+        defaultUnstakedFee = 100_000;
+        defaultProtocolFee = 250_000;
+        emit OwnerChanged(address(0), msg.sender);
+        emit SwapFeeManagerChanged(address(0), msg.sender);
+        emit UnstakedFeeManagerChanged(address(0), msg.sender);
+        emit DefaultUnstakedFeeChanged(0, 100_000);
 
-    /// @notice Emitted when the swapFeeModule of the factory is changed
-    /// @param oldFeeModule The swapFeeModule before the swapFeeModule was changed
-    /// @param newFeeModule The swapFeeModule after the swapFeeModule was changed
-    event SwapFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
+        enableTickSpacing(1, 100);
+        enableTickSpacing(50, 500);
+        enableTickSpacing(100, 500);
+        enableTickSpacing(200, 3_000);
+        enableTickSpacing(2_000, 10_000);
+    }
 
-    /// @notice Emitted when the unstakedFeeManager of the factory is changed
-    /// @param oldFeeManager The unstakedFeeManager before the unstakedFeeManager was changed
-    /// @param newFeeManager The unstakedFeeManager after the unstakedFeeManager was changed
-    event UnstakedFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
+    function setGaugeManager(address _gaugeManager) external {
+        require(msg.sender == owner);
+        gaugeManager = IGaugeManager(_gaugeManager);
+    }
 
-    /// @notice Emitted when the unstakedFeeModule of the factory is changed
-    /// @param oldFeeModule The unstakedFeeModule before the unstakedFeeModule was changed
-    /// @param newFeeModule The unstakedFeeModule after the unstakedFeeModule was changed
-    event UnstakedFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
-
-    /// @notice Emitted when the defaultUnstakedFee of the factory is changed
-    /// @param oldUnstakedFee The defaultUnstakedFee before the defaultUnstakedFee was changed
-    /// @param newUnstakedFee The defaultUnstakedFee after the unstakedFeeModule was changed
-    event DefaultUnstakedFeeChanged(uint24 indexed oldUnstakedFee, uint24 indexed newUnstakedFee);
-
-    /// @notice Emitted when a pool is created
-    /// @param token0 The first token of the pool by address sort order
-    /// @param token1 The second token of the pool by address sort order
-    /// @param tickSpacing The minimum number of ticks between initialized ticks
-    /// @param pool The address of the created pool
-    event PoolCreated(address indexed token0, address indexed token1, int24 indexed tickSpacing, address pool);
-
-    /// @notice Emitted when a new tick spacing is enabled for pool creation via the factory
-    /// @param tickSpacing The minimum number of ticks between initialized ticks for pools
-    /// @param fee The default fee for a pool created with a given tickSpacing
-    event TickSpacingEnabled(int24 indexed tickSpacing, uint24 indexed fee);
-
-
-
-    /// @notice The address of the pool implementation contract used to deploy proxies / clones
-    /// @return The address of the pool implementation contract
-    function poolImplementation() external view returns (address);
-
-    /// @notice Factory registry for valid pool / gauge / rewards factories
-    /// @return The address of the factory registry
-
-    function gaugeManager() external view returns (IGaugeManager);
-
-    /// @notice Returns the current owner of the factory
-    /// @dev Can be changed by the current owner via setOwner
-    /// @return The address of the factory owner
-    function owner() external view returns (address);
-
-    /// @notice Returns the current swapFeeManager of the factory
-    /// @dev Can be changed by the current swap fee manager via setSwapFeeManager
-    /// @return The address of the factory swapFeeManager
-    function swapFeeManager() external view returns (address);
-
-    /// @notice Returns the current protocolFeeManager of the factory
-    /// @dev Can be changed by the current protocol fee manager via setProtocolFeeManager
-    /// @return The address of the factory protocolFeeManager
-    function protocolFeeManager() external view returns (address);
-
-    /// @notice Returns the current swapFeeModule of the factory
-    /// @dev Can be changed by the current swap fee manager via setSwapFeeModule
-    /// @return The address of the factory swapFeeModule
-    function swapFeeModule() external view returns (address);
-
-    /// @notice Returns the current unstakedFeeManager of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeManager
-    /// @return The address of the factory unstakedFeeManager
-    function unstakedFeeManager() external view returns (address);
-
-    /// @notice Returns the current unstakedFeeModule of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeModule
-    /// @return The address of the factory unstakedFeeModule
-    function unstakedFeeModule() external view returns (address);
-
-
-    function protocolFeeModule() external view returns (address);
-
-    /// @notice Returns the current defaultUnstakedFee of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setDefaultUnstakedFee
-    /// @return The default Unstaked Fee of the factory
-    function defaultUnstakedFee() external view returns (uint24);
-
-
-    function defaultProtocolFee() external view returns (uint24);
-
-    /// @notice Returns a default fee for a tick spacing.
-    /// @dev Use getFee for the most up to date fee for a given pool.
-    /// A tick spacing can never be removed, so this value should be hard coded or cached in the calling context
-    /// @param tickSpacing The enabled tick spacing. Returns 0 if not enabled
-    /// @return fee The default fee for the given tick spacing
-    function tickSpacingToFee(int24 tickSpacing) external view returns (uint24 fee);
-
-    /// @notice Returns a list of enabled tick spacings. Used to iterate through pools created by the factory
-    /// @dev Tick spacings cannot be removed. Tick spacings are not ordered
-    /// @return List of enabled tick spacings
-    function tickSpacings() external view returns (int24[] memory);
-
-    /// @notice Returns the pool address for a given pair of tokens and a tick spacing, or address 0 if it does not exist
-    /// @dev tokenA and tokenB may be passed in either token0/token1 or token1/token0 order
-    /// @param tokenA The contract address of either token0 or token1
-    /// @param tokenB The contract address of the other token
-    /// @param tickSpacing The tick spacing of the pool
-    /// @return pool The pool address
-    function getPool(address tokenA, address tokenB, int24 tickSpacing) external view returns (address pool);
-
-    /// @notice Return address of pool created by this factory given its `index`
-    /// @param index Index of the pool
-    /// @return The pool address in the given index
-    function allPools(uint256 index) external view returns (address);
-
-    /// @notice Returns the number of pools created from this factory
-    /// @return Number of pools created from this factory
-    function allPoolsLength() external view returns (uint256);
-
-    /// @notice Used in VotingEscrow to determine if a contract is a valid pool of the factory
-    /// @param pool The address of the pool to check
-    /// @return Whether the pool is a valid pool of the factory
-    function isPool(address pool) external view returns (bool);
-
-    /// @notice Get swap & flash fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Swap & flash fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the swap & flash fee for
-    /// @return The swap & flash fee for the given pool
-    function getSwapFee(address pool) external view returns (uint24);
-
-    /// @notice Get unstaked fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Unstaked fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the unstaked fee for
-    /// @return The unstaked fee for the given pool
-    function getUnstakedFee(address pool) external view returns (uint24);
-
-    /// @notice Get protocol fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Protocol fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the protocol fee for
-    /// @return The protocol fee for the given pool
-    function getProtocolFee(address pool) external view returns (uint24);
-
-    /// @notice Creates a pool for the given two tokens and fee
-    /// @param tokenA One of the two tokens in the desired pool
-    /// @param tokenB The other of the two tokens in the desired pool
-    /// @param tickSpacing The desired tick spacing for the pool
-    /// @param sqrtPriceX96 The initial sqrt price of the pool, as a Q64.96
-    /// @dev tokenA and tokenB may be passed in either order: token0/token1 or token1/token0. The call will
-    /// revert if the pool already exists, the tick spacing is invalid, or the token arguments are invalid
-    /// @return pool The address of the newly created pool
+    /// @inheritdoc ICLFactory
     function createPool(address tokenA, address tokenB, int24 tickSpacing, uint160 sqrtPriceX96)
         external
-        returns (address pool);
+        override
+        returns (address pool)
+    {
+        require(tokenA != tokenB);
+        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        require(token0 != address(0));
+        require(tickSpacingToFee[tickSpacing] != 0);
+        require(getPool[token0][token1][tickSpacing] == address(0));
+        pool = Clones.cloneDeterministic({
+            master: poolImplementation,
+            salt: keccak256(abi.encode(token0, token1, tickSpacing))
+        });
+        CLPool(pool).initialize({
+            _factory: address(this),
+            _token0: token0,
+            _token1: token1,
+            _tickSpacing: tickSpacing,
+            _gaugeManager: address(gaugeManager),
+            _sqrtPriceX96: sqrtPriceX96
+        });
+        allPools.push(pool);
+        _isPool[pool] = true;
+        getPool[token0][token1][tickSpacing] = pool;
+        // populate mapping in the reverse direction, deliberate choice to avoid the cost of comparing addresses
+        getPool[token1][token0][tickSpacing] = pool;
+        emit PoolCreated(token0, token1, tickSpacing, pool);
+    }
 
-    /// @notice Updates the owner of the factory
-    /// @dev Must be called by the current owner
-    /// @param _owner The new owner of the factory
-    function setOwner(address _owner) external;
+    /// @inheritdoc ICLFactory
+    function setOwner(address _owner) external override {
+        address cachedOwner = owner;
+        require(msg.sender == cachedOwner);
+        require(_owner != address(0));
+        emit OwnerChanged(cachedOwner, _owner);
+        owner = _owner;
+    }
 
-    /// @notice Updates the swapFeeManager of the factory
-    /// @dev Must be called by the current swap fee manager
-    /// @param _swapFeeManager The new swapFeeManager of the factory
-    function setSwapFeeManager(address _swapFeeManager) external;
+    /// @inheritdoc ICLFactory
+    function setSwapFeeManager(address _swapFeeManager) external override {
+        address cachedSwapFeeManager = swapFeeManager;
+        require(msg.sender == cachedSwapFeeManager);
+        require(_swapFeeManager != address(0));
+        swapFeeManager = _swapFeeManager;
+        emit SwapFeeManagerChanged(cachedSwapFeeManager, _swapFeeManager);
+    }
 
-    /// @notice Updates the swapFeeModule of the factory
-    /// @dev Must be called by the current swap fee manager
-    /// @param _swapFeeModule The new swapFeeModule of the factory
-    function setSwapFeeModule(address _swapFeeModule) external;
+    /// @inheritdoc ICLFactory
+    function setUnstakedFeeManager(address _unstakedFeeManager) external override {
+        address cachedUnstakedFeeManager = unstakedFeeManager;
+        require(msg.sender == cachedUnstakedFeeManager);
+        require(_unstakedFeeManager != address(0));
+        unstakedFeeManager = _unstakedFeeManager;
+        emit UnstakedFeeManagerChanged(cachedUnstakedFeeManager, _unstakedFeeManager);
+    }
 
-    /// @notice Updates the unstakedFeeManager of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _unstakedFeeManager The new unstakedFeeManager of the factory
-    function setUnstakedFeeManager(address _unstakedFeeManager) external;
+    /// @inheritdoc ICLFactory
+    function setSwapFeeModule(address _swapFeeModule) external override {
+        require(msg.sender == swapFeeManager);
+        require(_swapFeeModule != address(0));
+        address oldFeeModule = swapFeeModule;
+        swapFeeModule = _swapFeeModule;
+        emit SwapFeeModuleChanged(oldFeeModule, _swapFeeModule);
+    }
 
-    /// @notice Updates the unstakedFeeModule of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _unstakedFeeModule The new unstakedFeeModule of the factory
-    function setUnstakedFeeModule(address _unstakedFeeModule) external;
+    /// @inheritdoc ICLFactory
+    function setUnstakedFeeModule(address _unstakedFeeModule) external override {
+        require(msg.sender == unstakedFeeManager);
+        require(_unstakedFeeModule != address(0));
+        address oldFeeModule = unstakedFeeModule;
+        unstakedFeeModule = _unstakedFeeModule;
+        emit UnstakedFeeModuleChanged(oldFeeModule, _unstakedFeeModule);
+    }
 
-    /// @notice Updates the protocolFeeManager of the factory
-    /// @dev Must be called by the current protocol fee manager
-    /// @param _protocolFeeManager The new protocolFeeManager of the factory
-    function setProtocolFeeManager(address _protocolFeeManager) external;
+    /// @inheritdoc ICLFactory
+    function setDefaultUnstakedFee(uint24 _defaultUnstakedFee) external override {
+        require(msg.sender == unstakedFeeManager);
+        require(_defaultUnstakedFee <= 500_000);
+        uint24 oldUnstakedFee = defaultUnstakedFee;
+        defaultUnstakedFee = _defaultUnstakedFee;
+        emit DefaultUnstakedFeeChanged(oldUnstakedFee, _defaultUnstakedFee);
+    }
 
-    /// @notice Updates the protocolFeeModule of the factory
-    /// @dev Must be called by the current protocol fee manager
-    /// @param _protocolFeeModule The new protocolFeeModule of the factory
-    function setProtocolFeeModule(address _protocolFeeModule) external;
 
-    /// @notice Updates the defaultUnstakedFee of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _defaultUnstakedFee The new defaultUnstakedFee of the factory
-    function setDefaultUnstakedFee(uint24 _defaultUnstakedFee) external;
+    function setProtocolFeeModule(address _protocolFeeModule) external override {
+        require(msg.sender == protocolFeeManager);
+        require(_protocolFeeModule != address(0));
+        protocolFeeModule = _protocolFeeModule;
+    }
 
-    /// @notice Enables a certain tickSpacing
-    /// @dev Tick spacings may never be removed once enabled
-    /// @param tickSpacing The spacing between ticks to be enforced in the pool
-    /// @param fee The default fee associated with a given tick spacing
-    function enableTickSpacing(int24 tickSpacing, uint24 fee) external;
+    function setProtocolFeeManager(address _protocolFeeManager) external override {
+        require(msg.sender == protocolFeeManager);
+        require(_protocolFeeManager != address(0));
+        protocolFeeManager = _protocolFeeManager;
+    }
+
+    /// @inheritdoc ICLFactory
+    function getSwapFee(address pool) external view override returns (uint24) {
+        if (swapFeeModule != address(0)) {
+            (bool success, bytes memory data) = swapFeeModule.excessivelySafeStaticCall(
+                200_000, 32, abi.encodeWithSelector(IFeeModule.getFee.selector, pool)
+            );
+            if (success) {
+                uint24 fee = abi.decode(data, (uint24));
+                if (fee <= 100_000) {
+                    return fee;
+                }
+            }
+        }
+        return tickSpacingToFee[CLPool(pool).tickSpacing()];
+    }
+
+    /// @inheritdoc ICLFactory
+    function getUnstakedFee(address pool) external view override returns (uint24) {
+        
+        if (!gaugeManager.isGaugeAliveForPool(pool)) {
+            return 0;
+        }
+        if (unstakedFeeModule != address(0)) {
+            (bool success, bytes memory data) = unstakedFeeModule.excessivelySafeStaticCall(
+                200_000, 32, abi.encodeWithSelector(IFeeModule.getFee.selector, pool)
+            );
+            if (success) {
+                uint24 fee = abi.decode(data, (uint24));
+                if (fee <= 1_000_000) {
+                    return fee;
+                }
+            }
+        }
+        return defaultUnstakedFee;
+    }
+
+    function getProtocolFee(address pool) external view override returns (uint24) {
+        // if the gauge is alive, return 0, protocol fee is only for inactive gauges
+        if (gaugeManager.isGaugeAliveForPool(pool)) {
+            return 0;
+        }
+
+        if (protocolFeeModule != address(0)) {
+            (bool success, bytes memory data) = protocolFeeModule.excessivelySafeStaticCall(
+                200_000, 32, abi.encodeWithSelector(IFeeModule.getFee.selector, pool)
+            );
+            if (success) {
+                uint24 fee = abi.decode(data, (uint24));
+                if (fee <= 500_000) {
+                    return fee;
+                }
+            }
+        }
+        return defaultProtocolFee;
+    }
+
+    /// @inheritdoc ICLFactory
+    function enableTickSpacing(int24 tickSpacing, uint24 fee) public override {
+        require(msg.sender == owner);
+        require(fee > 0 && fee <= 100_000);
+        // tick spacing is capped at 16384 to prevent the situation where tickSpacing is so large that
+        // TickBitmap#nextInitializedTickWithinOneWord overflows int24 container from a valid tick
+        // 16384 ticks represents a >5x price change with ticks of 1 bips
+        require(tickSpacing > 0 && tickSpacing < 16384);
+        require(tickSpacingToFee[tickSpacing] == 0);
+
+        tickSpacingToFee[tickSpacing] = fee;
+        _tickSpacings.push(tickSpacing);
+        emit TickSpacingEnabled(tickSpacing, fee);
+    }
+
+    function collectAllProtocolFees() external  {
+        require(msg.sender == owner);
+
+        for (uint256 i = 0; i < allPools.length; i++) {
+            CLPool(allPools[i]).collectProtocolFees(msg.sender);
+        }
+    }
+
+    function collectProtocolFees(address pool) external returns (uint128 amount0, uint128 amount1) {
+        require(msg.sender == owner);
+        (amount0, amount1) = CLPool(pool).collectProtocolFees(msg.sender);
+    }
+
+    /// @inheritdoc ICLFactory
+    function tickSpacings() external view override returns (int24[] memory) {
+        return _tickSpacings;
+    }
+
+    /// @inheritdoc ICLFactory
+    function allPoolsLength() external view override returns (uint256) {
+        return allPools.length;
+    }
+
+    /// @inheritdoc ICLFactory
+    function isPool(address pool) external view override returns (bool) {
+        return _isPool[pool];
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import "./pool/ICLPoolConstants.sol";
+import "./pool/ICLPoolState.sol";
+import "./pool/ICLPoolDerivedState.sol";
+import "./pool/ICLPoolActions.sol";
+import "./pool/ICLPoolOwnerActions.sol";
+import "./pool/ICLPoolEvents.sol";
+
+/// @title The interface for a CL Pool
+/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
+/// to the ERC20 specification
+/// @dev The pool interface is broken up into many smaller pieces
+interface ICLPool is
+    ICLPoolConstants,
+    ICLPoolState,
+    ICLPoolDerivedState,
+    ICLPoolActions,
+    ICLPoolEvents,
+    ICLPoolOwnerActions
+{}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+/// @title Math functions that do not check inputs or outputs
+/// @notice Contains methods that perform common math functions but do not do any overflow or underflow checks
+library UnsafeMath {
+    /// @notice Returns ceil(x / y)
+    /// @dev division by 0 has unspecified behavior, and must be checked externally
+    /// @param x The dividend
+    /// @param y The divisor
+    /// @return z The quotient, ceil(x / y)
+    function divRoundingUp(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            z := add(div(x, y), gt(mod(x, y), 0))
+        }
+    }
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface ITokenHandler {
-    function isWhitelisted(address token) external view returns (bool);
-    function isWhitelistedNFT(uint256 token) external view returns (bool);
-    function isConnector(address token) external view returns (bool);
-
-    function whitelistToken(address _token) external;
-    function blacklistToken(address _token) external;
-
-    function whiteListed(uint256 index) external returns (address);
-    function connectors(uint256 index) external returns (address);
-
-    function whiteListedTokensLength() external returns (uint256);
-    function connectorTokensLength() external returns (uint256);
-
-    function whiteListedTokens() external view returns(address[] memory tokens);
-    function connectorTokens() external view returns(address[] memory tokens);
-}
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity =0.7.6;
-interface IMinter {
-    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
-    /// @return _period Start of current epoch.
-    function updatePeriod() external returns (uint256 _period);
+interface IPermissionsRegistry {
+    function emergencyCouncil() external view returns(address);
+    function hybraTeamMultisig() external view returns(address);
+    function hasRole(bytes memory role, address caller) external view returns(bool);
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -1826,130 +1737,106 @@ library Tick {
     }
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPairFactory {
-    function allPairsLength() external view returns (uint);
-    function isPair(address pair) external view returns (bool);
-    function allPairs(uint index) external view returns (address);
-    function pairCodeHash() external view returns (bytes32);
-    function getPair(address tokenA, address token, bool stable) external view returns (address);
-    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
-    function isGenesis(address pair) external view returns (bool);
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity =0.7.6;
+interface IMinter {
+    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
+    /// @return _period Start of current epoch.
+    function updatePeriod() external returns (uint256 _period);
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
-import "./pool/ICLPoolConstants.sol";
-import "./pool/ICLPoolState.sol";
-import "./pool/ICLPoolDerivedState.sol";
-import "./pool/ICLPoolActions.sol";
-import "./pool/ICLPoolOwnerActions.sol";
-import "./pool/ICLPoolEvents.sol";
+/// @title BitMath
+/// @dev This library provides functionality for computing bit properties of an unsigned integer
+library BitMath {
+    /// @notice Returns the index of the most significant bit of the number,
+    ///     where the least significant bit is at index 0 and the most significant bit is at index 255
+    /// @dev The function satisfies the property:
+    ///     x >= 2**mostSignificantBit(x) and x < 2**(mostSignificantBit(x)+1)
+    /// @param x the value for which to compute the most significant bit, must be greater than 0
+    /// @return r the index of the most significant bit
+    function mostSignificantBit(uint256 x) internal pure returns (uint8 r) {
+        require(x > 0);
 
-/// @title The interface for a CL Pool
-/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
-/// to the ERC20 specification
-/// @dev The pool interface is broken up into many smaller pieces
-interface ICLPool is
-    ICLPoolConstants,
-    ICLPoolState,
-    ICLPoolDerivedState,
-    ICLPoolActions,
-    ICLPoolEvents,
-    ICLPoolOwnerActions
-{}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IBribeFactory {
-    function createInternalBribe(address[] memory) external returns (address);
-    function createExternalBribe(address[] memory) external returns (address);
-    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-library HybraTimeLibrary {
-
-    // for testnet
-    uint256 internal constant WEEK = 1800;
-    uint internal constant NO_VOTING_WINDOW = 300;
-    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
-    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
-    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
-
-    // uint256 internal constant WEEK = 7 * 86400;
-    // uint internal constant NO_VOTING_WINDOW = 3600;
-    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
-    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
-    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
-
-    /// @dev Returns start of epoch based on current timestamp
-    function epochStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK);
+        if (x >= 0x100000000000000000000000000000000) {
+            x >>= 128;
+            r += 128;
         }
+        if (x >= 0x10000000000000000) {
+            x >>= 64;
+            r += 64;
+        }
+        if (x >= 0x100000000) {
+            x >>= 32;
+            r += 32;
+        }
+        if (x >= 0x10000) {
+            x >>= 16;
+            r += 16;
+        }
+        if (x >= 0x100) {
+            x >>= 8;
+            r += 8;
+        }
+        if (x >= 0x10) {
+            x >>= 4;
+            r += 4;
+        }
+        if (x >= 0x4) {
+            x >>= 2;
+            r += 2;
+        }
+        if (x >= 0x2) r += 1;
     }
 
-    /// @dev Returns start of next epoch / end of current epoch
-    function epochNext(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK;
-        }
-    }
+    /// @notice Returns the index of the least significant bit of the number,
+    ///     where the least significant bit is at index 0 and the most significant bit is at index 255
+    /// @dev The function satisfies the property:
+    ///     (x & 2**leastSignificantBit(x)) != 0 and (x & (2**(leastSignificantBit(x)) - 1)) == 0)
+    /// @param x the value for which to compute the least significant bit, must be greater than 0
+    /// @return r the index of the least significant bit
+    function leastSignificantBit(uint256 x) internal pure returns (uint8 r) {
+        require(x > 0);
 
-    /// @dev Returns start of voting window
-    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
+        r = 255;
+        if (x & type(uint128).max > 0) {
+            r -= 128;
+        } else {
+            x >>= 128;
         }
-    }
-
-    /// @dev Returns end of voting window / beginning of unrestricted voting window
-    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
+        if (x & type(uint64).max > 0) {
+            r -= 64;
+        } else {
+            x >>= 64;
         }
-    }
-
-    /// @dev Returns the status if it is the last hour of the epoch
-    function isLastHour(uint256 timestamp) internal pure returns (bool) {
-        // return block.timestamp % 7 days >= 6 days + 23 hours;
-        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
-        && timestamp < HybraTimeLibrary.epochNext(timestamp);
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function epochMultiples(uint256 duration) internal pure returns (uint256) {
-        unchecked {
-            return (duration / WEEK) * WEEK;
+        if (x & type(uint32).max > 0) {
+            r -= 32;
+        } else {
+            x >>= 32;
         }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
-        unchecked {
-            return  endTime - WEEK <= timestamp && timestamp < endTime;
+        if (x & type(uint16).max > 0) {
+            r -= 16;
+        } else {
+            x >>= 16;
         }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        if (x & type(uint8).max > 0) {
+            r -= 8;
+        } else {
+            x >>= 8;
         }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        if (x & 0xf > 0) {
+            r -= 4;
+        } else {
+            x >>= 4;
         }
+        if (x & 0x3 > 0) {
+            r -= 2;
+        } else {
+            x >>= 2;
+        }
+        if (x & 0x1 > 0) r -= 1;
     }
 }
 
@@ -1963,63 +1850,120 @@ interface IGaugeFactory {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-pragma abicoder v2;
+pragma solidity >=0.4.0 <0.8.0;
 
-import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+/// @title Contains 512-bit math functions
+/// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision
+/// @dev Handles "phantom overflow" i.e., allows multiplication and division where an intermediate value overflows 256 bits
+library FullMath {
+    /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
+    /// @param a The multiplicand
+    /// @param b The multiplier
+    /// @param denominator The divisor
+    /// @return result The 256-bit result
+    /// @dev Credit to Remco Bloemen under MIT license https://xn--2-umb.com/21/muldiv
+    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        // 512-bit multiply [prod1 prod0] = a * b
+        // Compute the product mod 2**256 and mod 2**256 - 1
+        // then use the Chinese Remainder Theorem to reconstruct
+        // the 512 bit result. The result is stored in two 256
+        // variables such that product = prod1 * 2**256 + prod0
+        uint256 prod0; // Least significant 256 bits of the product
+        uint256 prod1; // Most significant 256 bits of the product
+        assembly {
+            let mm := mulmod(a, b, not(0))
+            prod0 := mul(a, b)
+            prod1 := sub(sub(mm, prod0), lt(mm, prod0))
+        }
 
-interface IVoter {
-    function ve() external view returns (IVotingEscrow);
+        // Handle non-overflow cases, 256 by 256 division
+        if (prod1 == 0) {
+            require(denominator > 0);
+            assembly {
+                result := div(prod0, denominator)
+            }
+            return result;
+        }
 
-    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
+        // Make sure the result is less than 2**256.
+        // Also prevents denominator == 0
+        require(denominator > prod1);
 
-    function gauges(address _pool) external view returns (address);
+        ///////////////////////////////////////////////
+        // 512 by 256 division.
+        ///////////////////////////////////////////////
 
-    function gaugeToFees(address _gauge) external view returns (address);
+        // Make division exact by subtracting the remainder from [prod1 prod0]
+        // Compute remainder using mulmod
+        uint256 remainder;
+        assembly {
+            remainder := mulmod(a, b, denominator)
+        }
+        // Subtract 256 bit number from 512 bit number
+        assembly {
+            prod1 := sub(prod1, gt(remainder, prod0))
+            prod0 := sub(prod0, remainder)
+        }
 
-    function gaugeToBribes(address _gauge) external view returns (address);
+        // Factor powers of two out of denominator
+        // Compute largest power of two divisor of denominator.
+        // Always >= 1.
+        uint256 twos = -denominator & denominator;
+        // Divide denominator by power of two
+        assembly {
+            denominator := div(denominator, twos)
+        }
 
-    function createGauge(address _poolFactory, address _pool) external returns (address);
+        // Divide [prod1 prod0] by the factors of two
+        assembly {
+            prod0 := div(prod0, twos)
+        }
+        // Shift in bits from prod1 into prod0. For this we need
+        // to flip `twos` such that it is 2**256 / twos.
+        // If twos is zero, then it becomes one
+        assembly {
+            twos := add(div(sub(0, twos), twos), 1)
+        }
+        prod0 |= prod1 * twos;
 
-    function distribute(address gauge) external;
+        // Invert denominator mod 2**256
+        // Now that denominator is an odd number, it has an inverse
+        // modulo 2**256 such that denominator * inv = 1 mod 2**256.
+        // Compute the inverse by starting with a seed that is correct
+        // correct for four bits. That is, denominator * inv = 1 mod 2**4
+        uint256 inv = (3 * denominator) ^ 2;
+        // Now use Newton-Raphson iteration to improve the precision.
+        // Thanks to Hensel's lifting lemma, this also works in modular
+        // arithmetic, doubling the correct bits in each step.
+        inv *= 2 - denominator * inv; // inverse mod 2**8
+        inv *= 2 - denominator * inv; // inverse mod 2**16
+        inv *= 2 - denominator * inv; // inverse mod 2**32
+        inv *= 2 - denominator * inv; // inverse mod 2**64
+        inv *= 2 - denominator * inv; // inverse mod 2**128
+        inv *= 2 - denominator * inv; // inverse mod 2**256
 
-    function factoryRegistry() external view returns (IFactoryRegistry);
+        // Because the division is now exact we can divide by multiplying
+        // with the modular inverse of denominator. This will give us the
+        // correct result modulo 2**256. Since the precoditions guarantee
+        // that the outcome is less than 2**256, this is the final result.
+        // We don't need to compute the high bits of the result and prod1
+        // is no longer required.
+        result = prod0 * inv;
+        return result;
+    }
 
-    /// @dev Utility to distribute to gauges of pools in array.
-    /// @param _gauges Array of gauges to distribute to.
-    function distribute(address[] memory _gauges) external;
-
-    function isAlive(address _gauge) external view returns (bool);
-
-    function killGauge(address _gauge) external;
-
-    function emergencyCouncil() external view returns (address);
-
-    /// @notice Claim emissions from gauges.
-    /// @param _gauges Array of gauges to collect emissions from.
-    function claimRewards(address[] memory _gauges) external;
-
-    /// @notice Claim fees for a given NFT.
-    /// @dev Utility to help batch fee claims.
-    /// @param _fees    Array of FeesVotingReward contracts to collect from.
-    /// @param _tokens  Array of tokens that are used as fees.
-    /// @param _tokenId Id of veNFT that you wish to claim fees for.
-    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPairInfo {
-
-    function token0() external view returns(address);
-    function reserve0() external view returns(uint);
-    function decimals0() external view returns(uint);
-    function token1() external view returns(address);
-    function reserve1() external view returns(uint);
-    function decimals1() external view returns(uint);
-    function isPair(address _pair) external view returns(bool);
+    /// @notice Calculates ceil(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
+    /// @param a The multiplicand
+    /// @param b The multiplier
+    /// @param denominator The divisor
+    /// @return result The 256-bit result
+    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        result = mulDiv(a, b, denominator);
+        if (mulmod(a, b, denominator) > 0) {
+            require(result < type(uint256).max);
+            result++;
+        }
+    }
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -2332,186 +2276,801 @@ library Oracle {
     }
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.4.0 <0.8.0;
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
 
-/// @title Contains 512-bit math functions
-/// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision
-/// @dev Handles "phantom overflow" i.e., allows multiplication and division where an intermediate value overflows 256 bits
-library FullMath {
-    /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
-    /// @param a The multiplicand
-    /// @param b The multiplier
-    /// @param denominator The divisor
-    /// @return result The 256-bit result
-    /// @dev Credit to Remco Bloemen under MIT license https://xn--2-umb.com/21/muldiv
-    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
-        // 512-bit multiply [prod1 prod0] = a * b
-        // Compute the product mod 2**256 and mod 2**256 - 1
-        // then use the Chinese Remainder Theorem to reconstruct
-        // the 512 bit result. The result is stored in two 256
-        // variables such that product = prod1 * 2**256 + prod0
-        uint256 prod0; // Least significant 256 bits of the product
-        uint256 prod1; // Most significant 256 bits of the product
-        assembly {
-            let mm := mulmod(a, b, not(0))
-            prod0 := mul(a, b)
-            prod1 := sub(sub(mm, prod0), lt(mm, prod0))
-        }
+/// @title Callback for ICLPoolActions#mint
+/// @notice Any contract that calls ICLPoolActions#mint must implement this interface
+interface ICLMintCallback {
+    /// @notice Called to `msg.sender` after minting liquidity to a position from ICLPool#mint.
+    /// @dev In the implementation you must pay the pool tokens owed for the minted liquidity.
+    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
+    /// @param amount0Owed The amount of token0 due to the pool for the minted liquidity
+    /// @param amount1Owed The amount of token1 due to the pool for the minted liquidity
+    /// @param data Any data passed through by the caller via the ICLPoolActions#mint call
+    function uniswapV3MintCallback(uint256 amount0Owed, uint256 amount1Owed, bytes calldata data) external;
+}
 
-        // Handle non-overflow cases, 256 by 256 division
-        if (prod1 == 0) {
-            require(denominator > 0);
-            assembly {
-                result := div(prod0, denominator)
-            }
-            return result;
-        }
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0 <0.8.0;
 
-        // Make sure the result is less than 2**256.
-        // Also prevents denominator == 0
-        require(denominator > prod1);
+import "./FullMath.sol";
+import "./FixedPoint128.sol";
+import "./LiquidityMath.sol";
 
-        ///////////////////////////////////////////////
-        // 512 by 256 division.
-        ///////////////////////////////////////////////
-
-        // Make division exact by subtracting the remainder from [prod1 prod0]
-        // Compute remainder using mulmod
-        uint256 remainder;
-        assembly {
-            remainder := mulmod(a, b, denominator)
-        }
-        // Subtract 256 bit number from 512 bit number
-        assembly {
-            prod1 := sub(prod1, gt(remainder, prod0))
-            prod0 := sub(prod0, remainder)
-        }
-
-        // Factor powers of two out of denominator
-        // Compute largest power of two divisor of denominator.
-        // Always >= 1.
-        uint256 twos = -denominator & denominator;
-        // Divide denominator by power of two
-        assembly {
-            denominator := div(denominator, twos)
-        }
-
-        // Divide [prod1 prod0] by the factors of two
-        assembly {
-            prod0 := div(prod0, twos)
-        }
-        // Shift in bits from prod1 into prod0. For this we need
-        // to flip `twos` such that it is 2**256 / twos.
-        // If twos is zero, then it becomes one
-        assembly {
-            twos := add(div(sub(0, twos), twos), 1)
-        }
-        prod0 |= prod1 * twos;
-
-        // Invert denominator mod 2**256
-        // Now that denominator is an odd number, it has an inverse
-        // modulo 2**256 such that denominator * inv = 1 mod 2**256.
-        // Compute the inverse by starting with a seed that is correct
-        // correct for four bits. That is, denominator * inv = 1 mod 2**4
-        uint256 inv = (3 * denominator) ^ 2;
-        // Now use Newton-Raphson iteration to improve the precision.
-        // Thanks to Hensel's lifting lemma, this also works in modular
-        // arithmetic, doubling the correct bits in each step.
-        inv *= 2 - denominator * inv; // inverse mod 2**8
-        inv *= 2 - denominator * inv; // inverse mod 2**16
-        inv *= 2 - denominator * inv; // inverse mod 2**32
-        inv *= 2 - denominator * inv; // inverse mod 2**64
-        inv *= 2 - denominator * inv; // inverse mod 2**128
-        inv *= 2 - denominator * inv; // inverse mod 2**256
-
-        // Because the division is now exact we can divide by multiplying
-        // with the modular inverse of denominator. This will give us the
-        // correct result modulo 2**256. Since the precoditions guarantee
-        // that the outcome is less than 2**256, this is the final result.
-        // We don't need to compute the high bits of the result and prod1
-        // is no longer required.
-        result = prod0 * inv;
-        return result;
+/// @title Position
+/// @notice Positions represent an owner address' liquidity between a lower and upper tick boundary
+/// @dev Positions store additional state for tracking fees owed to the position
+library Position {
+    // info stored for each user's position
+    struct Info {
+        // the amount of liquidity owned by this position
+        uint128 liquidity;
+        // fee growth per unit of liquidity as of the last update to liquidity or fees owed
+        uint256 feeGrowthInside0LastX128;
+        uint256 feeGrowthInside1LastX128;
+        // the fees owed to the position owner in token0/token1
+        uint128 tokensOwed0;
+        uint128 tokensOwed1;
     }
 
-    /// @notice Calculates ceil(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
-    /// @param a The multiplicand
-    /// @param b The multiplier
-    /// @param denominator The divisor
-    /// @return result The 256-bit result
-    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
-        result = mulDiv(a, b, denominator);
-        if (mulmod(a, b, denominator) > 0) {
-            require(result < type(uint256).max);
-            result++;
+    /// @notice Returns the Info struct of a position, given an owner and position boundaries
+    /// @param self The mapping containing all user positions
+    /// @param owner The address of the position owner
+    /// @param tickLower The lower tick boundary of the position
+    /// @param tickUpper The upper tick boundary of the position
+    /// @return position The position info struct of the given owners' position
+    function get(mapping(bytes32 => Info) storage self, address owner, int24 tickLower, int24 tickUpper)
+        internal
+        view
+        returns (Position.Info storage position)
+    {
+        position = self[keccak256(abi.encodePacked(owner, tickLower, tickUpper))];
+    }
+
+    /// @notice Credits accumulated fees to a user's position
+    /// @param self The individual position to update
+    /// @param liquidityDelta The change in pool liquidity as a result of the position update
+    /// @param feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
+    /// @param feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
+    /// @param staked Signifies if the position is staked in the gauge or not
+    function update(
+        Info storage self,
+        int128 liquidityDelta,
+        uint256 feeGrowthInside0X128,
+        uint256 feeGrowthInside1X128,
+        bool staked
+    ) internal {
+        Info memory _self = self;
+
+        uint128 liquidityNext;
+        if (liquidityDelta == 0) {
+            require(_self.liquidity > 0, "NP"); // disallow pokes for 0 liquidity positions
+            liquidityNext = _self.liquidity;
+        } else {
+            liquidityNext = LiquidityMath.addDelta(_self.liquidity, liquidityDelta);
+        }
+
+        uint128 tokensOwed0;
+        uint128 tokensOwed1;
+        if (!staked) {
+            // calculate accumulated fees
+            tokensOwed0 = uint128(
+                FullMath.mulDiv(
+                    feeGrowthInside0X128 - _self.feeGrowthInside0LastX128, _self.liquidity, FixedPoint128.Q128
+                )
+            );
+            tokensOwed1 = uint128(
+                FullMath.mulDiv(
+                    feeGrowthInside1X128 - _self.feeGrowthInside1LastX128, _self.liquidity, FixedPoint128.Q128
+                )
+            );
+        }
+
+        // update the position
+        if (liquidityDelta != 0) self.liquidity = liquidityNext;
+        self.feeGrowthInside0LastX128 = feeGrowthInside0X128;
+        self.feeGrowthInside1LastX128 = feeGrowthInside1X128;
+        if (tokensOwed0 > 0 || tokensOwed1 > 0) {
+            // overflow is acceptable, have to withdraw before you hit type(uint128).max fees
+            self.tokensOwed0 += tokensOwed0;
+            self.tokensOwed1 += tokensOwed1;
         }
     }
 }
 
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+
+interface IVotingEscrow {
+    function team() external returns (address);
+
+    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
+    /// @param _value Amount to deposit
+    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
+    /// @return TokenId of created veNFT
+    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
+}
+
+pragma solidity 0.8.13;
+
+library VoterFactoryLib {
+    struct Data {
+        address[] pairFactories;
+        address[] gaugeFactories;
+        mapping(address => bool) isFactory;
+        mapping(address => bool) isGaugeFactory;
+    }
+
+    event AddPairFactories(address indexed pairfactory);
+    event AddGaugeFactories(address indexed gaugefactory);
+    event SetGaugeFactory(address indexed old, address indexed latest);
+    event SetPairFactory(address indexed old, address indexed latest);
+
+
+    function addPairFactory(Data storage self, address _pairFactory) external {
+        require(_pairFactory != address(0) , 'addr0');
+        require(!self.isFactory[_pairFactory], "fact");
+        require(_pairFactory.code.length > 0, "!contract");
+        self.pairFactories.push(_pairFactory);
+        self.isFactory[_pairFactory] = true;
+        emit AddPairFactories(_pairFactory);
+    }
+
+    function addGaugeFactory(Data storage self, address _gaugeFactory) external {
+        require(_gaugeFactory != address(0) , 'addr0');
+        require(!self.isGaugeFactory[_gaugeFactory], "gFact");
+        require(_gaugeFactory.code.length > 0, "!contract");
+        self.gaugeFactories.push(_gaugeFactory);
+        self.isGaugeFactory[_gaugeFactory] = true;
+        emit AddGaugeFactories(_gaugeFactory);
+    }
+
+    function replacePairFactory(Data storage self, address _pairFactory, uint256 _pos) external {
+        require(_pairFactory != address(0), 'addr0');
+        require(!self.isFactory[_pairFactory], 'fact');
+        require(_pairFactory.code.length > 0, "!contract");
+        address oldPF = self.pairFactories[_pos];
+        self.isFactory[oldPF] = false;
+        self.pairFactories[_pos] = _pairFactory;
+        self.isFactory[_pairFactory] = true;
+
+        emit SetPairFactory(oldPF, _pairFactory);
+    }
+
+    function replaceGaugeFactory(Data storage self, address _gaugeFactory, uint256 _pos) external {
+        require(_gaugeFactory != address(0) , 'addr0');
+        require(!self.isGaugeFactory[_gaugeFactory], 'gFact');
+        require(_gaugeFactory.code.length > 0, "!contract");
+        address oldGF = self.gaugeFactories[_pos];
+        self.isGaugeFactory[oldGF] = false;
+        self.gaugeFactories[_pos] = _gaugeFactory;
+        self.isGaugeFactory[_gaugeFactory] = true;
+
+        emit SetGaugeFactory(oldGF, _gaugeFactory);
+    }
+
+    function removePairFactory(Data storage self, uint256 _pos) external {
+        address oldPF = self.pairFactories[_pos];
+        require(self.isFactory[oldPF], "!exists");
+        self.isFactory[oldPF] = false;
+        self.pairFactories[_pos] = address(0);
+        emit SetPairFactory(oldPF, address(0));
+    }
+
+    function removeGaugeFactory(Data storage self, uint256 _pos) external {
+        address oldGF = self.gaugeFactories[_pos];
+        require(self.isGaugeFactory[oldGF], "!exists");
+        self.isGaugeFactory[oldGF] = false;
+        self.gaugeFactories[_pos] = address(0);
+        emit SetGaugeFactory(oldGF, address(0));
+    }
+
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IPairInfo {
+
+    function token0() external view returns(address);
+    function reserve0() external view returns(uint);
+    function decimals0() external view returns(uint);
+    function token1() external view returns(address);
+    function reserve1() external view returns(uint);
+    function decimals1() external view returns(uint);
+    function isPair(address _pair) external view returns(bool);
+}
+
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.7.0;
+pragma solidity >=0.5.0;
 
-/// @title Optimized overflow and underflow safe math operations
-/// @notice Contains methods for doing math operations that revert on overflow or underflow for minimal gas cost
-library LowGasSafeMath {
-    /// @notice Returns x + y, reverts if sum overflows uint256
-    /// @param x The augend
-    /// @param y The addend
-    /// @return z The sum of x and y
-    function add(uint256 x, uint256 y) internal pure returns (uint256 z) {
-        require((z = x + y) >= x);
+import "./LowGasSafeMath.sol";
+import "./SafeCast.sol";
+
+import "./FullMath.sol";
+import "./UnsafeMath.sol";
+import "./FixedPoint96.sol";
+
+/// @title Functions based on Q64.96 sqrt price and liquidity
+/// @notice Contains the math that uses square root of price as a Q64.96 and liquidity to compute deltas
+library SqrtPriceMath {
+    using LowGasSafeMath for uint256;
+    using SafeCast for uint256;
+
+    /// @notice Gets the next sqrt price given a delta of token0
+    /// @dev Always rounds up, because in the exact output case (increasing price) we need to move the price at least
+    /// far enough to get the desired output amount, and in the exact input case (decreasing price) we need to move the
+    /// price less in order to not send too much output.
+    /// The most precise formula for this is liquidity * sqrtPX96 / (liquidity +- amount * sqrtPX96),
+    /// if this is impossible because of overflow, we calculate liquidity / (liquidity / sqrtPX96 +- amount).
+    /// @param sqrtPX96 The starting price, i.e. before accounting for the token0 delta
+    /// @param liquidity The amount of usable liquidity
+    /// @param amount How much of token0 to add or remove from virtual reserves
+    /// @param add Whether to add or remove the amount of token0
+    /// @return The price after adding or removing amount, depending on add
+    function getNextSqrtPriceFromAmount0RoundingUp(uint160 sqrtPX96, uint128 liquidity, uint256 amount, bool add)
+        internal
+        pure
+        returns (uint160)
+    {
+        // we short circuit amount == 0 because the result is otherwise not guaranteed to equal the input price
+        if (amount == 0) return sqrtPX96;
+        uint256 numerator1 = uint256(liquidity) << FixedPoint96.RESOLUTION;
+
+        if (add) {
+            uint256 product;
+            if ((product = amount * sqrtPX96) / amount == sqrtPX96) {
+                uint256 denominator = numerator1 + product;
+                if (denominator >= numerator1) {
+                    // always fits in 160 bits
+                    return uint160(FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator));
+                }
+            }
+
+            return uint160(UnsafeMath.divRoundingUp(numerator1, (numerator1 / sqrtPX96).add(amount)));
+        } else {
+            uint256 product;
+            // if the product overflows, we know the denominator underflows
+            // in addition, we must check that the denominator does not underflow
+            require((product = amount * sqrtPX96) / amount == sqrtPX96 && numerator1 > product);
+            uint256 denominator = numerator1 - product;
+            return FullMath.mulDivRoundingUp(numerator1, sqrtPX96, denominator).toUint160();
+        }
     }
 
-    /// @notice Returns x - y, reverts if underflows
-    /// @param x The minuend
-    /// @param y The subtrahend
-    /// @return z The difference of x and y
-    function sub(uint256 x, uint256 y) internal pure returns (uint256 z) {
-        require((z = x - y) <= x);
+    /// @notice Gets the next sqrt price given a delta of token1
+    /// @dev Always rounds down, because in the exact output case (decreasing price) we need to move the price at least
+    /// far enough to get the desired output amount, and in the exact input case (increasing price) we need to move the
+    /// price less in order to not send too much output.
+    /// The formula we compute is within <1 wei of the lossless version: sqrtPX96 +- amount / liquidity
+    /// @param sqrtPX96 The starting price, i.e., before accounting for the token1 delta
+    /// @param liquidity The amount of usable liquidity
+    /// @param amount How much of token1 to add, or remove, from virtual reserves
+    /// @param add Whether to add, or remove, the amount of token1
+    /// @return The price after adding or removing `amount`
+    function getNextSqrtPriceFromAmount1RoundingDown(uint160 sqrtPX96, uint128 liquidity, uint256 amount, bool add)
+        internal
+        pure
+        returns (uint160)
+    {
+        // if we're adding (subtracting), rounding down requires rounding the quotient down (up)
+        // in both cases, avoid a mulDiv for most inputs
+        if (add) {
+            uint256 quotient = (
+                amount <= type(uint160).max
+                    ? (amount << FixedPoint96.RESOLUTION) / liquidity
+                    : FullMath.mulDiv(amount, FixedPoint96.Q96, liquidity)
+            );
+
+            return uint256(sqrtPX96).add(quotient).toUint160();
+        } else {
+            uint256 quotient = (
+                amount <= type(uint160).max
+                    ? UnsafeMath.divRoundingUp(amount << FixedPoint96.RESOLUTION, liquidity)
+                    : FullMath.mulDivRoundingUp(amount, FixedPoint96.Q96, liquidity)
+            );
+
+            require(sqrtPX96 > quotient);
+            // always fits 160 bits
+            return uint160(sqrtPX96 - quotient);
+        }
     }
 
-    /// @notice Returns x * y, reverts if overflows
-    /// @param x The multiplicand
-    /// @param y The multiplier
-    /// @return z The product of x and y
-    function mul(uint256 x, uint256 y) internal pure returns (uint256 z) {
-        require(x == 0 || (z = x * y) / x == y);
+    /// @notice Gets the next sqrt price given an input amount of token0 or token1
+    /// @dev Throws if price or liquidity are 0, or if the next price is out of bounds
+    /// @param sqrtPX96 The starting price, i.e., before accounting for the input amount
+    /// @param liquidity The amount of usable liquidity
+    /// @param amountIn How much of token0, or token1, is being swapped in
+    /// @param zeroForOne Whether the amount in is token0 or token1
+    /// @return sqrtQX96 The price after adding the input amount to token0 or token1
+    function getNextSqrtPriceFromInput(uint160 sqrtPX96, uint128 liquidity, uint256 amountIn, bool zeroForOne)
+        internal
+        pure
+        returns (uint160 sqrtQX96)
+    {
+        require(sqrtPX96 > 0);
+        require(liquidity > 0);
+
+        // round to make sure that we don't pass the target price
+        return zeroForOne
+            ? getNextSqrtPriceFromAmount0RoundingUp(sqrtPX96, liquidity, amountIn, true)
+            : getNextSqrtPriceFromAmount1RoundingDown(sqrtPX96, liquidity, amountIn, true);
     }
 
-    /// @notice Returns x + y, reverts if overflows or underflows
-    /// @param x The augend
-    /// @param y The addend
-    /// @return z The sum of x and y
-    function add(int256 x, int256 y) internal pure returns (int256 z) {
-        require((z = x + y) >= x == (y >= 0));
+    /// @notice Gets the next sqrt price given an output amount of token0 or token1
+    /// @dev Throws if price or liquidity are 0 or the next price is out of bounds
+    /// @param sqrtPX96 The starting price before accounting for the output amount
+    /// @param liquidity The amount of usable liquidity
+    /// @param amountOut How much of token0, or token1, is being swapped out
+    /// @param zeroForOne Whether the amount out is token0 or token1
+    /// @return sqrtQX96 The price after removing the output amount of token0 or token1
+    function getNextSqrtPriceFromOutput(uint160 sqrtPX96, uint128 liquidity, uint256 amountOut, bool zeroForOne)
+        internal
+        pure
+        returns (uint160 sqrtQX96)
+    {
+        require(sqrtPX96 > 0);
+        require(liquidity > 0);
+
+        // round to make sure that we pass the target price
+        return zeroForOne
+            ? getNextSqrtPriceFromAmount1RoundingDown(sqrtPX96, liquidity, amountOut, false)
+            : getNextSqrtPriceFromAmount0RoundingUp(sqrtPX96, liquidity, amountOut, false);
     }
 
-    /// @notice Returns x - y, reverts if overflows or underflows
-    /// @param x The minuend
-    /// @param y The subtrahend
-    /// @return z The difference of x and y
-    function sub(int256 x, int256 y) internal pure returns (int256 z) {
-        require((z = x - y) <= x == (y >= 0));
+    /// @notice Gets the amount0 delta between two prices
+    /// @dev Calculates liquidity / sqrt(lower) - liquidity / sqrt(upper),
+    /// i.e. liquidity * (sqrt(upper) - sqrt(lower)) / (sqrt(upper) * sqrt(lower))
+    /// @param sqrtRatioAX96 A sqrt price
+    /// @param sqrtRatioBX96 Another sqrt price
+    /// @param liquidity The amount of usable liquidity
+    /// @param roundUp Whether to round the amount up or down
+    /// @return amount0 Amount of token0 required to cover a position of size liquidity between the two passed prices
+    function getAmount0Delta(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity, bool roundUp)
+        internal
+        pure
+        returns (uint256 amount0)
+    {
+        if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
+
+        uint256 numerator1 = uint256(liquidity) << FixedPoint96.RESOLUTION;
+        uint256 numerator2 = sqrtRatioBX96 - sqrtRatioAX96;
+
+        require(sqrtRatioAX96 > 0);
+
+        return roundUp
+            ? UnsafeMath.divRoundingUp(FullMath.mulDivRoundingUp(numerator1, numerator2, sqrtRatioBX96), sqrtRatioAX96)
+            : FullMath.mulDiv(numerator1, numerator2, sqrtRatioBX96) / sqrtRatioAX96;
+    }
+
+    /// @notice Gets the amount1 delta between two prices
+    /// @dev Calculates liquidity * (sqrt(upper) - sqrt(lower))
+    /// @param sqrtRatioAX96 A sqrt price
+    /// @param sqrtRatioBX96 Another sqrt price
+    /// @param liquidity The amount of usable liquidity
+    /// @param roundUp Whether to round the amount up, or down
+    /// @return amount1 Amount of token1 required to cover a position of size liquidity between the two passed prices
+    function getAmount1Delta(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, uint128 liquidity, bool roundUp)
+        internal
+        pure
+        returns (uint256 amount1)
+    {
+        if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
+
+        return roundUp
+            ? FullMath.mulDivRoundingUp(liquidity, sqrtRatioBX96 - sqrtRatioAX96, FixedPoint96.Q96)
+            : FullMath.mulDiv(liquidity, sqrtRatioBX96 - sqrtRatioAX96, FixedPoint96.Q96);
+    }
+
+    /// @notice Helper that gets signed token0 delta
+    /// @param sqrtRatioAX96 A sqrt price
+    /// @param sqrtRatioBX96 Another sqrt price
+    /// @param liquidity The change in liquidity for which to compute the amount0 delta
+    /// @return amount0 Amount of token0 corresponding to the passed liquidityDelta between the two prices
+    function getAmount0Delta(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, int128 liquidity)
+        internal
+        pure
+        returns (int256 amount0)
+    {
+        return liquidity < 0
+            ? -getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, uint128(-liquidity), false).toInt256()
+            : getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, uint128(liquidity), true).toInt256();
+    }
+
+    /// @notice Helper that gets signed token1 delta
+    /// @param sqrtRatioAX96 A sqrt price
+    /// @param sqrtRatioBX96 Another sqrt price
+    /// @param liquidity The change in liquidity for which to compute the amount1 delta
+    /// @return amount1 Amount of token1 corresponding to the passed liquidityDelta between the two prices
+    function getAmount1Delta(uint160 sqrtRatioAX96, uint160 sqrtRatioBX96, int128 liquidity)
+        internal
+        pure
+        returns (int256 amount1)
+    {
+        return liquidity < 0
+            ? -getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, uint128(-liquidity), false).toInt256()
+            : getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, uint128(liquidity), true).toInt256();
     }
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
-/// @title Callback for ICLPoolActions#swap
-/// @notice Any contract that calls ICLPoolActions#swap must implement this interface
-interface ICLSwapCallback {
-    /// @notice Called to `msg.sender` after executing a swap via ICLPool#swap.
-    /// @dev In the implementation you must pay the pool tokens owed for the swap.
-    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
-    /// amount0Delta and amount1Delta can both be 0 if no tokens were swapped.
-    /// @param amount0Delta The amount of token0 that was sent (negative) or must be received (positive) by the pool by
-    /// the end of the swap. If positive, the callback must send that amount of token0 to the pool.
-    /// @param amount1Delta The amount of token1 that was sent (negative) or must be received (positive) by the pool by
-    /// the end of the swap. If positive, the callback must send that amount of token1 to the pool.
-    /// @param data Any data passed through by the caller via the ICLPoolActions#swap call
-    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external;
+/// @title Math library for liquidity
+library LiquidityMath {
+    /// @notice Add a signed liquidity delta to liquidity and revert if it overflows or underflows
+    /// @param x The liquidity before change
+    /// @param y The delta by which liquidity should be changed
+    /// @return z The liquidity delta
+    function addDelta(uint128 x, int128 y) internal pure returns (uint128 z) {
+        if (y < 0) {
+            require((z = x - uint128(-y)) < x, "LS");
+        } else {
+            require((z = x + uint128(y)) >= x, "LA");
+        }
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0 <0.8.0;
+
+/// @title Math library for computing sqrt prices from ticks and vice versa
+/// @notice Computes sqrt price for ticks of size 1.0001, i.e. sqrt(1.0001^tick) as fixed point Q64.96 numbers. Supports
+/// prices between 2**-128 and 2**128
+library TickMath {
+    /// @dev The minimum tick that may be passed to #getSqrtRatioAtTick computed from log base 1.0001 of 2**-128
+    int24 internal constant MIN_TICK = -887272;
+    /// @dev The maximum tick that may be passed to #getSqrtRatioAtTick computed from log base 1.0001 of 2**128
+    int24 internal constant MAX_TICK = -MIN_TICK;
+
+    /// @dev The minimum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MIN_TICK)
+    uint160 internal constant MIN_SQRT_RATIO = 4295128739;
+    /// @dev The maximum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MAX_TICK)
+    uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
+
+    /// @notice Calculates sqrt(1.0001^tick) * 2^96
+    /// @dev Throws if |tick| > max tick
+    /// @param tick The input tick for the above formula
+    /// @return sqrtPriceX96 A Fixed point Q64.96 number representing the sqrt of the ratio of the two assets (token1/token0)
+    /// at the given tick
+    function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
+        uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
+        require(absTick <= uint256(MAX_TICK), "T");
+
+        uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
+        if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
+        if (absTick & 0x4 != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
+        if (absTick & 0x8 != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
+        if (absTick & 0x10 != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
+        if (absTick & 0x20 != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
+        if (absTick & 0x40 != 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128;
+        if (absTick & 0x80 != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
+        if (absTick & 0x100 != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
+        if (absTick & 0x200 != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
+        if (absTick & 0x400 != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
+        if (absTick & 0x800 != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
+        if (absTick & 0x1000 != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
+        if (absTick & 0x2000 != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
+        if (absTick & 0x4000 != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
+        if (absTick & 0x8000 != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
+        if (absTick & 0x10000 != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
+        if (absTick & 0x20000 != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
+        if (absTick & 0x40000 != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
+        if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
+
+        if (tick > 0) ratio = type(uint256).max / ratio;
+
+        // this divides by 1<<32 rounding up to go from a Q128.128 to a Q128.96.
+        // we then downcast because we know the result always fits within 160 bits due to our tick input constraint
+        // we round up in the division so getTickAtSqrtRatio of the output price is always consistent
+        sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
+    }
+
+    /// @notice Calculates the greatest tick value such that getRatioAtTick(tick) <= ratio
+    /// @dev Throws in case sqrtPriceX96 < MIN_SQRT_RATIO, as MIN_SQRT_RATIO is the lowest value getRatioAtTick may
+    /// ever return.
+    /// @param sqrtPriceX96 The sqrt ratio for which to compute the tick as a Q64.96
+    /// @return tick The greatest tick for which the ratio is less than or equal to the input ratio
+    function getTickAtSqrtRatio(uint160 sqrtPriceX96) internal pure returns (int24 tick) {
+        // second inequality must be < because the price can never reach the price at the max tick
+        require(sqrtPriceX96 >= MIN_SQRT_RATIO && sqrtPriceX96 < MAX_SQRT_RATIO, "R");
+        uint256 ratio = uint256(sqrtPriceX96) << 32;
+
+        uint256 r = ratio;
+        uint256 msb = 0;
+
+        assembly {
+            let f := shl(7, gt(r, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(6, gt(r, 0xFFFFFFFFFFFFFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(5, gt(r, 0xFFFFFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(4, gt(r, 0xFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(3, gt(r, 0xFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(2, gt(r, 0xF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(1, gt(r, 0x3))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := gt(r, 0x1)
+            msb := or(msb, f)
+        }
+
+        if (msb >= 128) r = ratio >> (msb - 127);
+        else r = ratio << (127 - msb);
+
+        int256 log_2 = (int256(msb) - 128) << 64;
+
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(63, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(62, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(61, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(60, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(59, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(58, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(57, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(56, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(55, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(54, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(53, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(52, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(51, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(50, f))
+        }
+
+        int256 log_sqrt10001 = log_2 * 255738958999603826347141; // 128.128 number
+
+        int24 tickLow = int24((log_sqrt10001 - 3402992956809132418596140100660247210) >> 128);
+        int24 tickHi = int24((log_sqrt10001 + 291339464771989622907027621153398088495) >> 128);
+
+        tick = tickLow == tickHi ? tickLow : getSqrtRatioAtTick(tickHi) <= sqrtPriceX96 ? tickHi : tickLow;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface ITokenHandler {
+    function isWhitelisted(address token) external view returns (bool);
+    function isWhitelistedNFT(uint256 token) external view returns (bool);
+    function isConnector(address token) external view returns (bool);
+
+    function whitelistToken(address _token) external;
+    function blacklistToken(address _token) external;
+
+    function whiteListed(uint256 index) external returns (address);
+    function connectors(uint256 index) external returns (address);
+
+    function whiteListedTokensLength() external returns (uint256);
+    function connectorTokensLength() external returns (uint256);
+
+    function whiteListedTokens() external view returns(address[] memory tokens);
+    function connectorTokens() external view returns(address[] memory tokens);
+}
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.6.0;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+library TransferHelper {
+    /// @notice Transfers tokens from the targeted address to the given destination
+    /// @notice Errors with 'STF' if transfer fails
+    /// @param token The contract address of the token to be transferred
+    /// @param from The originating address from which the tokens will be transferred
+    /// @param to The destination address of the transfer
+    /// @param value The amount to be transferred
+    function safeTransferFrom(address token, address from, address to, uint256 value) internal {
+        (bool success, bytes memory data) =
+            token.call(abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value));
+        require(success && (data.length == 0 || abi.decode(data, (bool))), "STF");
+    }
+
+    /// @notice Transfers tokens from msg.sender to a recipient
+    /// @dev Errors with ST if transfer fails
+    /// @param token The contract address of the token which will be transferred
+    /// @param to The recipient of the transfer
+    /// @param value The value of the transfer
+    function safeTransfer(address token, address to, uint256 value) internal {
+        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transfer.selector, to, value));
+        require(success && (data.length == 0 || abi.decode(data, (bool))), "ST");
+    }
+
+    /// @notice Approves the stipulated contract to spend the given allowance in the given token
+    /// @dev Errors with 'SA' if transfer fails
+    /// @param token The contract address of the token to be approved
+    /// @param to The target of the approval
+    /// @param value The amount of the given token the target will be allowed to spend
+    function safeApprove(address token, address to, uint256 value) internal {
+        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.approve.selector, to, value));
+        require(success && (data.length == 0 || abi.decode(data, (bool))), "SA");
+    }
+
+    /// @notice Transfers ETH to the recipient address
+    /// @dev Fails with `STE`
+    /// @param to The destination of the transfer
+    /// @param value The value to be transferred
+    function safeTransferETH(address to, uint256 value) internal {
+        (bool success,) = to.call{value: value}(new bytes(0));
+        require(success, "STE");
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import "./FullMath.sol";
+import "./SqrtPriceMath.sol";
+
+/// @title Computes the result of a swap within ticks
+/// @notice Contains methods for computing the result of a swap within a single tick price range, i.e., a single tick.
+library SwapMath {
+    /// @notice Computes the result of swapping some amount in, or amount out, given the parameters of the swap
+    /// @dev The fee, plus the amount in, will never exceed the amount remaining if the swap's `amountSpecified` is positive
+    /// @param sqrtRatioCurrentX96 The current sqrt price of the pool
+    /// @param sqrtRatioTargetX96 The price that cannot be exceeded, from which the direction of the swap is inferred
+    /// @param liquidity The usable liquidity
+    /// @param amountRemaining How much input or output amount is remaining to be swapped in/out
+    /// @param feePips The fee taken from the input amount, expressed in pips
+    /// @return sqrtRatioNextX96 The price after swapping the amount in/out, not to exceed the price target
+    /// @return amountIn The amount to be swapped in, of either token0 or token1, based on the direction of the swap
+    /// @return amountOut The amount to be received, of either token0 or token1, based on the direction of the swap
+    /// @return feeAmount The amount of input that will be taken as a fee
+    function computeSwapStep(
+        uint160 sqrtRatioCurrentX96,
+        uint160 sqrtRatioTargetX96,
+        uint128 liquidity,
+        int256 amountRemaining,
+        uint24 feePips
+    ) internal pure returns (uint160 sqrtRatioNextX96, uint256 amountIn, uint256 amountOut, uint256 feeAmount) {
+        bool zeroForOne = sqrtRatioCurrentX96 >= sqrtRatioTargetX96;
+        bool exactIn = amountRemaining >= 0;
+
+        if (exactIn) {
+            uint256 amountRemainingLessFee = FullMath.mulDiv(uint256(amountRemaining), 1e6 - feePips, 1e6);
+            amountIn = zeroForOne
+                ? SqrtPriceMath.getAmount0Delta(sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, true)
+                : SqrtPriceMath.getAmount1Delta(sqrtRatioCurrentX96, sqrtRatioTargetX96, liquidity, true);
+            if (amountRemainingLessFee >= amountIn) {
+                sqrtRatioNextX96 = sqrtRatioTargetX96;
+            } else {
+                sqrtRatioNextX96 = SqrtPriceMath.getNextSqrtPriceFromInput(
+                    sqrtRatioCurrentX96, liquidity, amountRemainingLessFee, zeroForOne
+                );
+            }
+        } else {
+            amountOut = zeroForOne
+                ? SqrtPriceMath.getAmount1Delta(sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, false)
+                : SqrtPriceMath.getAmount0Delta(sqrtRatioCurrentX96, sqrtRatioTargetX96, liquidity, false);
+            if (uint256(-amountRemaining) >= amountOut) {
+                sqrtRatioNextX96 = sqrtRatioTargetX96;
+            } else {
+                sqrtRatioNextX96 = SqrtPriceMath.getNextSqrtPriceFromOutput(
+                    sqrtRatioCurrentX96, liquidity, uint256(-amountRemaining), zeroForOne
+                );
+            }
+        }
+
+        bool max = sqrtRatioTargetX96 == sqrtRatioNextX96;
+
+        // get the input/output amounts
+        if (zeroForOne) {
+            amountIn = max && exactIn
+                ? amountIn
+                : SqrtPriceMath.getAmount0Delta(sqrtRatioNextX96, sqrtRatioCurrentX96, liquidity, true);
+            amountOut = max && !exactIn
+                ? amountOut
+                : SqrtPriceMath.getAmount1Delta(sqrtRatioNextX96, sqrtRatioCurrentX96, liquidity, false);
+        } else {
+            amountIn = max && exactIn
+                ? amountIn
+                : SqrtPriceMath.getAmount1Delta(sqrtRatioCurrentX96, sqrtRatioNextX96, liquidity, true);
+            amountOut = max && !exactIn
+                ? amountOut
+                : SqrtPriceMath.getAmount0Delta(sqrtRatioCurrentX96, sqrtRatioNextX96, liquidity, false);
+        }
+
+        // cap the output amount to not exceed the remaining output amount
+        if (!exactIn && amountOut > uint256(-amountRemaining)) {
+            amountOut = uint256(-amountRemaining);
+        }
+
+        if (exactIn && sqrtRatioNextX96 != sqrtRatioTargetX96) {
+            // we didn't reach the target, so take the remainder of the maximum input as fee
+            feeAmount = uint256(amountRemaining) - amountIn;
+        } else {
+            feeAmount = FullMath.mulDivRoundingUp(amountIn, feePips, 1e6 - feePips);
+        }
+    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -3071,128 +3630,285 @@ contract GaugeManager is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 
 }
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.6.0;
+pragma solidity >=0.5.0;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-library TransferHelper {
-    /// @notice Transfers tokens from the targeted address to the given destination
-    /// @notice Errors with 'STF' if transfer fails
-    /// @param token The contract address of the token to be transferred
-    /// @param from The originating address from which the tokens will be transferred
-    /// @param to The destination address of the transfer
-    /// @param value The amount to be transferred
-    function safeTransferFrom(address token, address from, address to, uint256 value) internal {
-        (bool success, bytes memory data) =
-            token.call(abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))), "STF");
-    }
-
-    /// @notice Transfers tokens from msg.sender to a recipient
-    /// @dev Errors with ST if transfer fails
-    /// @param token The contract address of the token which will be transferred
-    /// @param to The recipient of the transfer
-    /// @param value The value of the transfer
-    function safeTransfer(address token, address to, uint256 value) internal {
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transfer.selector, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))), "ST");
-    }
-
-    /// @notice Approves the stipulated contract to spend the given allowance in the given token
-    /// @dev Errors with 'SA' if transfer fails
-    /// @param token The contract address of the token to be approved
-    /// @param to The target of the approval
-    /// @param value The amount of the given token the target will be allowed to spend
-    function safeApprove(address token, address to, uint256 value) internal {
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.approve.selector, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))), "SA");
-    }
-
-    /// @notice Transfers ETH to the recipient address
-    /// @dev Fails with `STE`
-    /// @param to The destination of the transfer
-    /// @param value The value to be transferred
-    function safeTransferETH(address to, uint256 value) internal {
-        (bool success,) = to.call{value: value}(new bytes(0));
-        require(success, "STE");
-    }
+/// @title Callback for ICLPoolActions#swap
+/// @notice Any contract that calls ICLPoolActions#swap must implement this interface
+interface ICLSwapCallback {
+    /// @notice Called to `msg.sender` after executing a swap via ICLPool#swap.
+    /// @dev In the implementation you must pay the pool tokens owed for the swap.
+    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
+    /// amount0Delta and amount1Delta can both be 0 if no tokens were swapped.
+    /// @param amount0Delta The amount of token0 that was sent (negative) or must be received (positive) by the pool by
+    /// the end of the swap. If positive, the callback must send that amount of token0 to the pool.
+    /// @param amount1Delta The amount of token1 that was sent (negative) or must be received (positive) by the pool by
+    /// the end of the swap. If positive, the callback must send that amount of token1 to the pool.
+    /// @param data Any data passed through by the caller via the ICLPoolActions#swap call
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external;
 }
 
-pragma solidity 0.8.13;
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
 
-library VoterFactoryLib {
-    struct Data {
-        address[] pairFactories;
-        address[] gaugeFactories;
-        mapping(address => bool) isFactory;
-        mapping(address => bool) isGaugeFactory;
-    }
-
-    event AddPairFactories(address indexed pairfactory);
-    event AddGaugeFactories(address indexed gaugefactory);
-    event SetGaugeFactory(address indexed old, address indexed latest);
-    event SetPairFactory(address indexed old, address indexed latest);
+import {IVoter} from "contracts/core/interfaces/IVoter.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+import {IGaugeManager} from "contracts/core/interfaces/IGaugeManager.sol";
 
 
-    function addPairFactory(Data storage self, address _pairFactory) external {
-        require(_pairFactory != address(0) , 'addr0');
-        require(!self.isFactory[_pairFactory], "fact");
-        require(_pairFactory.code.length > 0, "!contract");
-        self.pairFactories.push(_pairFactory);
-        self.isFactory[_pairFactory] = true;
-        emit AddPairFactories(_pairFactory);
-    }
+/// @title The interface for the CL Factory
+/// @notice The CL Factory facilitates creation of CL pools and control over the protocol fees
+interface ICLFactory {
+    /// @notice Emitted when the owner of the factory is changed
+    /// @param oldOwner The owner before the owner was changed
+    /// @param newOwner The owner after the owner was changed
+    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
 
-    function addGaugeFactory(Data storage self, address _gaugeFactory) external {
-        require(_gaugeFactory != address(0) , 'addr0');
-        require(!self.isGaugeFactory[_gaugeFactory], "gFact");
-        require(_gaugeFactory.code.length > 0, "!contract");
-        self.gaugeFactories.push(_gaugeFactory);
-        self.isGaugeFactory[_gaugeFactory] = true;
-        emit AddGaugeFactories(_gaugeFactory);
-    }
+    /// @notice Emitted when the swapFeeManager of the factory is changed
+    /// @param oldFeeManager The swapFeeManager before the swapFeeManager was changed
+    /// @param newFeeManager The swapFeeManager after the swapFeeManager was changed
+    event SwapFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
 
-    function replacePairFactory(Data storage self, address _pairFactory, uint256 _pos) external {
-        require(_pairFactory != address(0), 'addr0');
-        require(!self.isFactory[_pairFactory], 'fact');
-        require(_pairFactory.code.length > 0, "!contract");
-        address oldPF = self.pairFactories[_pos];
-        self.isFactory[oldPF] = false;
-        self.pairFactories[_pos] = _pairFactory;
-        self.isFactory[_pairFactory] = true;
+    /// @notice Emitted when the swapFeeModule of the factory is changed
+    /// @param oldFeeModule The swapFeeModule before the swapFeeModule was changed
+    /// @param newFeeModule The swapFeeModule after the swapFeeModule was changed
+    event SwapFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
 
-        emit SetPairFactory(oldPF, _pairFactory);
-    }
+    /// @notice Emitted when the unstakedFeeManager of the factory is changed
+    /// @param oldFeeManager The unstakedFeeManager before the unstakedFeeManager was changed
+    /// @param newFeeManager The unstakedFeeManager after the unstakedFeeManager was changed
+    event UnstakedFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
 
-    function replaceGaugeFactory(Data storage self, address _gaugeFactory, uint256 _pos) external {
-        require(_gaugeFactory != address(0) , 'addr0');
-        require(!self.isGaugeFactory[_gaugeFactory], 'gFact');
-        require(_gaugeFactory.code.length > 0, "!contract");
-        address oldGF = self.gaugeFactories[_pos];
-        self.isGaugeFactory[oldGF] = false;
-        self.gaugeFactories[_pos] = _gaugeFactory;
-        self.isGaugeFactory[_gaugeFactory] = true;
+    /// @notice Emitted when the unstakedFeeModule of the factory is changed
+    /// @param oldFeeModule The unstakedFeeModule before the unstakedFeeModule was changed
+    /// @param newFeeModule The unstakedFeeModule after the unstakedFeeModule was changed
+    event UnstakedFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
 
-        emit SetGaugeFactory(oldGF, _gaugeFactory);
-    }
+    /// @notice Emitted when the defaultUnstakedFee of the factory is changed
+    /// @param oldUnstakedFee The defaultUnstakedFee before the defaultUnstakedFee was changed
+    /// @param newUnstakedFee The defaultUnstakedFee after the unstakedFeeModule was changed
+    event DefaultUnstakedFeeChanged(uint24 indexed oldUnstakedFee, uint24 indexed newUnstakedFee);
 
-    function removePairFactory(Data storage self, uint256 _pos) external {
-        address oldPF = self.pairFactories[_pos];
-        require(self.isFactory[oldPF], "!exists");
-        self.isFactory[oldPF] = false;
-        self.pairFactories[_pos] = address(0);
-        emit SetPairFactory(oldPF, address(0));
-    }
+    /// @notice Emitted when a pool is created
+    /// @param token0 The first token of the pool by address sort order
+    /// @param token1 The second token of the pool by address sort order
+    /// @param tickSpacing The minimum number of ticks between initialized ticks
+    /// @param pool The address of the created pool
+    event PoolCreated(address indexed token0, address indexed token1, int24 indexed tickSpacing, address pool);
 
-    function removeGaugeFactory(Data storage self, uint256 _pos) external {
-        address oldGF = self.gaugeFactories[_pos];
-        require(self.isGaugeFactory[oldGF], "!exists");
-        self.isGaugeFactory[oldGF] = false;
-        self.gaugeFactories[_pos] = address(0);
-        emit SetGaugeFactory(oldGF, address(0));
-    }
+    /// @notice Emitted when a new tick spacing is enabled for pool creation via the factory
+    /// @param tickSpacing The minimum number of ticks between initialized ticks for pools
+    /// @param fee The default fee for a pool created with a given tickSpacing
+    event TickSpacingEnabled(int24 indexed tickSpacing, uint24 indexed fee);
 
+
+
+    /// @notice The address of the pool implementation contract used to deploy proxies / clones
+    /// @return The address of the pool implementation contract
+    function poolImplementation() external view returns (address);
+
+    /// @notice Factory registry for valid pool / gauge / rewards factories
+    /// @return The address of the factory registry
+
+    function gaugeManager() external view returns (IGaugeManager);
+
+    /// @notice Returns the current owner of the factory
+    /// @dev Can be changed by the current owner via setOwner
+    /// @return The address of the factory owner
+    function owner() external view returns (address);
+
+    /// @notice Returns the current swapFeeManager of the factory
+    /// @dev Can be changed by the current swap fee manager via setSwapFeeManager
+    /// @return The address of the factory swapFeeManager
+    function swapFeeManager() external view returns (address);
+
+    /// @notice Returns the current protocolFeeManager of the factory
+    /// @dev Can be changed by the current protocol fee manager via setProtocolFeeManager
+    /// @return The address of the factory protocolFeeManager
+    function protocolFeeManager() external view returns (address);
+
+    /// @notice Returns the current swapFeeModule of the factory
+    /// @dev Can be changed by the current swap fee manager via setSwapFeeModule
+    /// @return The address of the factory swapFeeModule
+    function swapFeeModule() external view returns (address);
+
+    /// @notice Returns the current unstakedFeeManager of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeManager
+    /// @return The address of the factory unstakedFeeManager
+    function unstakedFeeManager() external view returns (address);
+
+    /// @notice Returns the current unstakedFeeModule of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeModule
+    /// @return The address of the factory unstakedFeeModule
+    function unstakedFeeModule() external view returns (address);
+
+
+    function protocolFeeModule() external view returns (address);
+
+    /// @notice Returns the current defaultUnstakedFee of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setDefaultUnstakedFee
+    /// @return The default Unstaked Fee of the factory
+    function defaultUnstakedFee() external view returns (uint24);
+
+
+    function defaultProtocolFee() external view returns (uint24);
+
+    /// @notice Returns a default fee for a tick spacing.
+    /// @dev Use getFee for the most up to date fee for a given pool.
+    /// A tick spacing can never be removed, so this value should be hard coded or cached in the calling context
+    /// @param tickSpacing The enabled tick spacing. Returns 0 if not enabled
+    /// @return fee The default fee for the given tick spacing
+    function tickSpacingToFee(int24 tickSpacing) external view returns (uint24 fee);
+
+    /// @notice Returns a list of enabled tick spacings. Used to iterate through pools created by the factory
+    /// @dev Tick spacings cannot be removed. Tick spacings are not ordered
+    /// @return List of enabled tick spacings
+    function tickSpacings() external view returns (int24[] memory);
+
+    /// @notice Returns the pool address for a given pair of tokens and a tick spacing, or address 0 if it does not exist
+    /// @dev tokenA and tokenB may be passed in either token0/token1 or token1/token0 order
+    /// @param tokenA The contract address of either token0 or token1
+    /// @param tokenB The contract address of the other token
+    /// @param tickSpacing The tick spacing of the pool
+    /// @return pool The pool address
+    function getPool(address tokenA, address tokenB, int24 tickSpacing) external view returns (address pool);
+
+    /// @notice Return address of pool created by this factory given its `index`
+    /// @param index Index of the pool
+    /// @return The pool address in the given index
+    function allPools(uint256 index) external view returns (address);
+
+    /// @notice Returns the number of pools created from this factory
+    /// @return Number of pools created from this factory
+    function allPoolsLength() external view returns (uint256);
+
+    /// @notice Used in VotingEscrow to determine if a contract is a valid pool of the factory
+    /// @param pool The address of the pool to check
+    /// @return Whether the pool is a valid pool of the factory
+    function isPool(address pool) external view returns (bool);
+
+    /// @notice Get swap & flash fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Swap & flash fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the swap & flash fee for
+    /// @return The swap & flash fee for the given pool
+    function getSwapFee(address pool) external view returns (uint24);
+
+    /// @notice Get unstaked fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Unstaked fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the unstaked fee for
+    /// @return The unstaked fee for the given pool
+    function getUnstakedFee(address pool) external view returns (uint24);
+
+    /// @notice Get protocol fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Protocol fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the protocol fee for
+    /// @return The protocol fee for the given pool
+    function getProtocolFee(address pool) external view returns (uint24);
+
+    /// @notice Creates a pool for the given two tokens and fee
+    /// @param tokenA One of the two tokens in the desired pool
+    /// @param tokenB The other of the two tokens in the desired pool
+    /// @param tickSpacing The desired tick spacing for the pool
+    /// @param sqrtPriceX96 The initial sqrt price of the pool, as a Q64.96
+    /// @dev tokenA and tokenB may be passed in either order: token0/token1 or token1/token0. The call will
+    /// revert if the pool already exists, the tick spacing is invalid, or the token arguments are invalid
+    /// @return pool The address of the newly created pool
+    function createPool(address tokenA, address tokenB, int24 tickSpacing, uint160 sqrtPriceX96)
+        external
+        returns (address pool);
+
+    /// @notice Updates the owner of the factory
+    /// @dev Must be called by the current owner
+    /// @param _owner The new owner of the factory
+    function setOwner(address _owner) external;
+
+    /// @notice Updates the swapFeeManager of the factory
+    /// @dev Must be called by the current swap fee manager
+    /// @param _swapFeeManager The new swapFeeManager of the factory
+    function setSwapFeeManager(address _swapFeeManager) external;
+
+    /// @notice Updates the swapFeeModule of the factory
+    /// @dev Must be called by the current swap fee manager
+    /// @param _swapFeeModule The new swapFeeModule of the factory
+    function setSwapFeeModule(address _swapFeeModule) external;
+
+    /// @notice Updates the unstakedFeeManager of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _unstakedFeeManager The new unstakedFeeManager of the factory
+    function setUnstakedFeeManager(address _unstakedFeeManager) external;
+
+    /// @notice Updates the unstakedFeeModule of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _unstakedFeeModule The new unstakedFeeModule of the factory
+    function setUnstakedFeeModule(address _unstakedFeeModule) external;
+
+    /// @notice Updates the protocolFeeManager of the factory
+    /// @dev Must be called by the current protocol fee manager
+    /// @param _protocolFeeManager The new protocolFeeManager of the factory
+    function setProtocolFeeManager(address _protocolFeeManager) external;
+
+    /// @notice Updates the protocolFeeModule of the factory
+    /// @dev Must be called by the current protocol fee manager
+    /// @param _protocolFeeModule The new protocolFeeModule of the factory
+    function setProtocolFeeModule(address _protocolFeeModule) external;
+
+    /// @notice Updates the defaultUnstakedFee of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _defaultUnstakedFee The new defaultUnstakedFee of the factory
+    function setDefaultUnstakedFee(uint24 _defaultUnstakedFee) external;
+
+    /// @notice Enables a certain tickSpacing
+    /// @dev Tick spacings may never be removed once enabled
+    /// @param tickSpacing The spacing between ticks to be enforced in the pool
+    /// @param fee The default fee associated with a given tick spacing
+    function enableTickSpacing(int24 tickSpacing, uint24 fee) external;
 }
+
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+pragma abicoder v2;
+
+import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+
+interface IVoter {
+    function ve() external view returns (IVotingEscrow);
+
+    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
+
+    function gauges(address _pool) external view returns (address);
+
+    function gaugeToFees(address _gauge) external view returns (address);
+
+    function gaugeToBribes(address _gauge) external view returns (address);
+
+    function createGauge(address _poolFactory, address _pool) external returns (address);
+
+    function distribute(address gauge) external;
+
+    function factoryRegistry() external view returns (IFactoryRegistry);
+
+    /// @dev Utility to distribute to gauges of pools in array.
+    /// @param _gauges Array of gauges to distribute to.
+    function distribute(address[] memory _gauges) external;
+
+    function isAlive(address _gauge) external view returns (bool);
+
+    function killGauge(address _gauge) external;
+
+    function emergencyCouncil() external view returns (address);
+
+    /// @notice Claim emissions from gauges.
+    /// @param _gauges Array of gauges to collect emissions from.
+    function claimRewards(address[] memory _gauges) external;
+
+    /// @notice Claim fees for a given NFT.
+    /// @dev Utility to help batch fee claims.
+    /// @param _fees    Array of FeesVotingReward contracts to collect from.
+    /// @param _tokens  Array of tokens that are used as fees.
+    /// @param _tokenId Id of veNFT that you wish to claim fees for.
+    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
+}
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
@@ -3208,6 +3924,82 @@ interface IBribe {
     function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
 }
 
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGaugeCL {
+    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
+    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function balanceOf(uint256 tokenId) external view returns (uint256); 
+    function emergency() external returns (bool);
+    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
+    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
+    function totalSupply() external view returns (uint);
+    function rewardRate() external view returns (uint);
+    function rewardForDuration() external view returns (uint256);
+    function stakedFees() external view returns (uint256, uint256);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGauge {
+    function notifyRewardAmount(address token, uint amount) external;
+    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
+    function getReward(address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function left(address token) external view returns (uint);
+    function rewardRate(address _pair) external view returns (uint);
+    function balanceOf(address _account) external view returns (uint);
+    function isForPair() external view returns (bool);
+    function totalSupply() external view returns (uint);
+    function earned(address token, address account) external view returns (uint);
+    function setGenesisPool(address genesisPool) external;
+    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
+    function emergency() external returns (bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.7.6;
+
+interface IGaugeManager {
+    
+    struct FarmingParam {
+        address farmingCenter;
+        address algebraEternalFarming;
+        address nfpm;
+    }
+
+    function isGaugeAliveForPool(address _pool) external view returns (bool);
+    function gauges(address _pair) external view returns (address);
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
+}
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+/// @title Callback for ICLPoolActions#flash
+/// @notice Any contract that calls ICLPoolActions#flash must implement this interface
+interface ICLFlashCallback {
+    /// @notice Called to `msg.sender` after transferring to the recipient from ICLPool#flash.
+    /// @dev In the implementation you must repay the pool the tokens sent by flash plus the computed fee amounts.
+    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
+    /// @param fee0 The fee amount in token0 due to the pool by the end of the flash
+    /// @param fee1 The fee amount in token1 due to the pool by the end of the flash
+    /// @param data Any data passed through by the caller via the ICLPoolActions#flash call
+    function uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "./IGaugeManager.sol";
+
+interface IGaugeFactoryCL {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
+}
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
@@ -3284,864 +4076,72 @@ library TickBitmap {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
+pragma solidity 0.8.13;
 
-interface IGaugeManager {
-    
-    struct FarmingParam {
-        address farmingCenter;
-        address algebraEternalFarming;
-        address nfpm;
-    }
-
-    function isGaugeAliveForPool(address _pool) external view returns (bool);
-    function gauges(address _pair) external view returns (address);
-    function isGauge(address _gauge) external view returns (bool);
-    function poolForGauge(address _gauge) external view returns (address);
-}
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0 <0.8.0;
-
-/// @title Math library for computing sqrt prices from ticks and vice versa
-/// @notice Computes sqrt price for ticks of size 1.0001, i.e. sqrt(1.0001^tick) as fixed point Q64.96 numbers. Supports
-/// prices between 2**-128 and 2**128
-library TickMath {
-    /// @dev The minimum tick that may be passed to #getSqrtRatioAtTick computed from log base 1.0001 of 2**-128
-    int24 internal constant MIN_TICK = -887272;
-    /// @dev The maximum tick that may be passed to #getSqrtRatioAtTick computed from log base 1.0001 of 2**128
-    int24 internal constant MAX_TICK = -MIN_TICK;
-
-    /// @dev The minimum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MIN_TICK)
-    uint160 internal constant MIN_SQRT_RATIO = 4295128739;
-    /// @dev The maximum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MAX_TICK)
-    uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
-
-    /// @notice Calculates sqrt(1.0001^tick) * 2^96
-    /// @dev Throws if |tick| > max tick
-    /// @param tick The input tick for the above formula
-    /// @return sqrtPriceX96 A Fixed point Q64.96 number representing the sqrt of the ratio of the two assets (token1/token0)
-    /// at the given tick
-    function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
-        uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
-        require(absTick <= uint256(MAX_TICK), "T");
-
-        uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
-        if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
-        if (absTick & 0x4 != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
-        if (absTick & 0x8 != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
-        if (absTick & 0x10 != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
-        if (absTick & 0x20 != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
-        if (absTick & 0x40 != 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128;
-        if (absTick & 0x80 != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
-        if (absTick & 0x100 != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
-        if (absTick & 0x200 != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
-        if (absTick & 0x400 != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
-        if (absTick & 0x800 != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
-        if (absTick & 0x1000 != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
-        if (absTick & 0x2000 != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
-        if (absTick & 0x4000 != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
-        if (absTick & 0x8000 != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
-        if (absTick & 0x10000 != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
-        if (absTick & 0x20000 != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
-        if (absTick & 0x40000 != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
-        if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
-
-        if (tick > 0) ratio = type(uint256).max / ratio;
-
-        // this divides by 1<<32 rounding up to go from a Q128.128 to a Q128.96.
-        // we then downcast because we know the result always fits within 160 bits due to our tick input constraint
-        // we round up in the division so getTickAtSqrtRatio of the output price is always consistent
-        sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
-    }
-
-    /// @notice Calculates the greatest tick value such that getRatioAtTick(tick) <= ratio
-    /// @dev Throws in case sqrtPriceX96 < MIN_SQRT_RATIO, as MIN_SQRT_RATIO is the lowest value getRatioAtTick may
-    /// ever return.
-    /// @param sqrtPriceX96 The sqrt ratio for which to compute the tick as a Q64.96
-    /// @return tick The greatest tick for which the ratio is less than or equal to the input ratio
-    function getTickAtSqrtRatio(uint160 sqrtPriceX96) internal pure returns (int24 tick) {
-        // second inequality must be < because the price can never reach the price at the max tick
-        require(sqrtPriceX96 >= MIN_SQRT_RATIO && sqrtPriceX96 < MAX_SQRT_RATIO, "R");
-        uint256 ratio = uint256(sqrtPriceX96) << 32;
-
-        uint256 r = ratio;
-        uint256 msb = 0;
-
-        assembly {
-            let f := shl(7, gt(r, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(6, gt(r, 0xFFFFFFFFFFFFFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(5, gt(r, 0xFFFFFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(4, gt(r, 0xFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(3, gt(r, 0xFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(2, gt(r, 0xF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(1, gt(r, 0x3))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := gt(r, 0x1)
-            msb := or(msb, f)
-        }
-
-        if (msb >= 128) r = ratio >> (msb - 127);
-        else r = ratio << (127 - msb);
-
-        int256 log_2 = (int256(msb) - 128) << 64;
-
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(63, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(62, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(61, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(60, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(59, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(58, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(57, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(56, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(55, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(54, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(53, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(52, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(51, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(50, f))
-        }
-
-        int256 log_sqrt10001 = log_2 * 255738958999603826347141; // 128.128 number
-
-        int24 tickLow = int24((log_sqrt10001 - 3402992956809132418596140100660247210) >> 128);
-        int24 tickHi = int24((log_sqrt10001 + 291339464771989622907027621153398088495) >> 128);
-
-        tick = tickLow == tickHi ? tickLow : getSqrtRatioAtTick(tickHi) <= sqrtPriceX96 ? tickHi : tickLow;
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-import "./FullMath.sol";
-import "./SqrtPriceMath.sol";
-
-/// @title Computes the result of a swap within ticks
-/// @notice Contains methods for computing the result of a swap within a single tick price range, i.e., a single tick.
-library SwapMath {
-    /// @notice Computes the result of swapping some amount in, or amount out, given the parameters of the swap
-    /// @dev The fee, plus the amount in, will never exceed the amount remaining if the swap's `amountSpecified` is positive
-    /// @param sqrtRatioCurrentX96 The current sqrt price of the pool
-    /// @param sqrtRatioTargetX96 The price that cannot be exceeded, from which the direction of the swap is inferred
-    /// @param liquidity The usable liquidity
-    /// @param amountRemaining How much input or output amount is remaining to be swapped in/out
-    /// @param feePips The fee taken from the input amount, expressed in pips
-    /// @return sqrtRatioNextX96 The price after swapping the amount in/out, not to exceed the price target
-    /// @return amountIn The amount to be swapped in, of either token0 or token1, based on the direction of the swap
-    /// @return amountOut The amount to be received, of either token0 or token1, based on the direction of the swap
-    /// @return feeAmount The amount of input that will be taken as a fee
-    function computeSwapStep(
-        uint160 sqrtRatioCurrentX96,
-        uint160 sqrtRatioTargetX96,
-        uint128 liquidity,
-        int256 amountRemaining,
-        uint24 feePips
-    ) internal pure returns (uint160 sqrtRatioNextX96, uint256 amountIn, uint256 amountOut, uint256 feeAmount) {
-        bool zeroForOne = sqrtRatioCurrentX96 >= sqrtRatioTargetX96;
-        bool exactIn = amountRemaining >= 0;
-
-        if (exactIn) {
-            uint256 amountRemainingLessFee = FullMath.mulDiv(uint256(amountRemaining), 1e6 - feePips, 1e6);
-            amountIn = zeroForOne
-                ? SqrtPriceMath.getAmount0Delta(sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, true)
-                : SqrtPriceMath.getAmount1Delta(sqrtRatioCurrentX96, sqrtRatioTargetX96, liquidity, true);
-            if (amountRemainingLessFee >= amountIn) {
-                sqrtRatioNextX96 = sqrtRatioTargetX96;
-            } else {
-                sqrtRatioNextX96 = SqrtPriceMath.getNextSqrtPriceFromInput(
-                    sqrtRatioCurrentX96, liquidity, amountRemainingLessFee, zeroForOne
-                );
-            }
-        } else {
-            amountOut = zeroForOne
-                ? SqrtPriceMath.getAmount1Delta(sqrtRatioTargetX96, sqrtRatioCurrentX96, liquidity, false)
-                : SqrtPriceMath.getAmount0Delta(sqrtRatioCurrentX96, sqrtRatioTargetX96, liquidity, false);
-            if (uint256(-amountRemaining) >= amountOut) {
-                sqrtRatioNextX96 = sqrtRatioTargetX96;
-            } else {
-                sqrtRatioNextX96 = SqrtPriceMath.getNextSqrtPriceFromOutput(
-                    sqrtRatioCurrentX96, liquidity, uint256(-amountRemaining), zeroForOne
-                );
-            }
-        }
-
-        bool max = sqrtRatioTargetX96 == sqrtRatioNextX96;
-
-        // get the input/output amounts
-        if (zeroForOne) {
-            amountIn = max && exactIn
-                ? amountIn
-                : SqrtPriceMath.getAmount0Delta(sqrtRatioNextX96, sqrtRatioCurrentX96, liquidity, true);
-            amountOut = max && !exactIn
-                ? amountOut
-                : SqrtPriceMath.getAmount1Delta(sqrtRatioNextX96, sqrtRatioCurrentX96, liquidity, false);
-        } else {
-            amountIn = max && exactIn
-                ? amountIn
-                : SqrtPriceMath.getAmount1Delta(sqrtRatioCurrentX96, sqrtRatioNextX96, liquidity, true);
-            amountOut = max && !exactIn
-                ? amountOut
-                : SqrtPriceMath.getAmount0Delta(sqrtRatioCurrentX96, sqrtRatioNextX96, liquidity, false);
-        }
-
-        // cap the output amount to not exceed the remaining output amount
-        if (!exactIn && amountOut > uint256(-amountRemaining)) {
-            amountOut = uint256(-amountRemaining);
-        }
-
-        if (exactIn && sqrtRatioNextX96 != sqrtRatioTargetX96) {
-            // we didn't reach the target, so take the remainder of the maximum input as fee
-            feeAmount = uint256(amountRemaining) - amountIn;
-        } else {
-            feeAmount = FullMath.mulDivRoundingUp(amountIn, feePips, 1e6 - feePips);
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-/// @title Math functions that do not check inputs or outputs
-/// @notice Contains methods that perform common math functions but do not do any overflow or underflow checks
-library UnsafeMath {
-    /// @notice Returns ceil(x / y)
-    /// @dev division by 0 has unspecified behavior, and must be checked externally
-    /// @param x The dividend
-    /// @param y The divisor
-    /// @return z The quotient, ceil(x / y)
-    function divRoundingUp(uint256 x, uint256 y) internal pure returns (uint256 z) {
-        assembly {
-            z := add(div(x, y), gt(mod(x, y), 0))
-        }
-    }
+interface IBribeFactory {
+    function createInternalBribe(address[] memory) external returns (address);
+    function createExternalBribe(address[] memory) external returns (address);
+    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-import "./IGaugeManager.sol";
-
-interface IGaugeFactoryCL {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
-}
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0 <0.8.0;
-
-import "./FullMath.sol";
-import "./FixedPoint128.sol";
-import "./LiquidityMath.sol";
-
-/// @title Position
-/// @notice Positions represent an owner address' liquidity between a lower and upper tick boundary
-/// @dev Positions store additional state for tracking fees owed to the position
-library Position {
-    // info stored for each user's position
-    struct Info {
-        // the amount of liquidity owned by this position
-        uint128 liquidity;
-        // fee growth per unit of liquidity as of the last update to liquidity or fees owed
-        uint256 feeGrowthInside0LastX128;
-        uint256 feeGrowthInside1LastX128;
-        // the fees owed to the position owner in token0/token1
-        uint128 tokensOwed0;
-        uint128 tokensOwed1;
-    }
-
-    /// @notice Returns the Info struct of a position, given an owner and position boundaries
-    /// @param self The mapping containing all user positions
-    /// @param owner The address of the position owner
-    /// @param tickLower The lower tick boundary of the position
-    /// @param tickUpper The upper tick boundary of the position
-    /// @return position The position info struct of the given owners' position
-    function get(mapping(bytes32 => Info) storage self, address owner, int24 tickLower, int24 tickUpper)
-        internal
-        view
-        returns (Position.Info storage position)
-    {
-        position = self[keccak256(abi.encodePacked(owner, tickLower, tickUpper))];
-    }
-
-    /// @notice Credits accumulated fees to a user's position
-    /// @param self The individual position to update
-    /// @param liquidityDelta The change in pool liquidity as a result of the position update
-    /// @param feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
-    /// @param feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
-    /// @param staked Signifies if the position is staked in the gauge or not
-    function update(
-        Info storage self,
-        int128 liquidityDelta,
-        uint256 feeGrowthInside0X128,
-        uint256 feeGrowthInside1X128,
-        bool staked
-    ) internal {
-        Info memory _self = self;
-
-        uint128 liquidityNext;
-        if (liquidityDelta == 0) {
-            require(_self.liquidity > 0, "NP"); // disallow pokes for 0 liquidity positions
-            liquidityNext = _self.liquidity;
-        } else {
-            liquidityNext = LiquidityMath.addDelta(_self.liquidity, liquidityDelta);
-        }
-
-        uint128 tokensOwed0;
-        uint128 tokensOwed1;
-        if (!staked) {
-            // calculate accumulated fees
-            tokensOwed0 = uint128(
-                FullMath.mulDiv(
-                    feeGrowthInside0X128 - _self.feeGrowthInside0LastX128, _self.liquidity, FixedPoint128.Q128
-                )
-            );
-            tokensOwed1 = uint128(
-                FullMath.mulDiv(
-                    feeGrowthInside1X128 - _self.feeGrowthInside1LastX128, _self.liquidity, FixedPoint128.Q128
-                )
-            );
-        }
-
-        // update the position
-        if (liquidityDelta != 0) self.liquidity = liquidityNext;
-        self.feeGrowthInside0LastX128 = feeGrowthInside0X128;
-        self.feeGrowthInside1LastX128 = feeGrowthInside1X128;
-        if (tokensOwed0 > 0 || tokensOwed1 > 0) {
-            // overflow is acceptable, have to withdraw before you hit type(uint128).max fees
-            self.tokensOwed0 += tokensOwed0;
-            self.tokensOwed1 += tokensOwed1;
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IGauge {
-    function notifyRewardAmount(address token, uint amount) external;
-    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
-    function getReward(address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function left(address token) external view returns (uint);
-    function rewardRate(address _pair) external view returns (uint);
-    function balanceOf(address _account) external view returns (uint);
-    function isForPair() external view returns (bool);
-    function totalSupply() external view returns (uint);
-    function earned(address token, address account) external view returns (uint);
-    function setGenesisPool(address genesisPool) external;
-    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
-    function emergency() external returns (bool);
+interface IPairFactory {
+    function allPairsLength() external view returns (uint);
+    function isPair(address pair) external view returns (bool);
+    function allPairs(uint index) external view returns (address);
+    function pairCodeHash() external view returns (bytes32);
+    function getPair(address tokenA, address token, bool stable) external view returns (address);
+    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
+    function isGenesis(address pair) external view returns (bool);
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity =0.7.6;
+pragma solidity >=0.7.0;
 
-import "./interfaces/ICLFactory.sol";
-import "./interfaces/fees/IFeeModule.sol";
-
-import "./interfaces/IGaugeManager.sol";
-import "./interfaces/IFactoryRegistry.sol";
-import "@openzeppelin/contracts/proxy/Clones.sol";
-import "@nomad-xyz/src/ExcessivelySafeCall.sol";
-import "./CLPool.sol";
-
-/// @title Canonical CL factory
-/// @notice Deploys CL pools and manages ownership and control over pool protocol fees
-contract CLFactory is ICLFactory {
-    using ExcessivelySafeCall for address;
-
-    /// @inheritdoc ICLFactory
-    IGaugeManager public override gaugeManager;
-    /// @inheritdoc ICLFactory
-    address public immutable override poolImplementation;
-    /// @inheritdoc ICLFactory
-    address public override owner;
-    /// @inheritdoc ICLFactory
-    address public override swapFeeManager;
-    /// @inheritdoc ICLFactory
-    address public override swapFeeModule;
-    /// @inheritdoc ICLFactory
-    address public override unstakedFeeManager;
-    /// @inheritdoc ICLFactory
-    address public override unstakedFeeModule;
-    /// @inheritdoc ICLFactory
-    uint24 public override defaultUnstakedFee;
-    /// @inheritdoc ICLFactory
-
-    address public override protocolFeeManager;
-    /// @inheritdoc ICLFactory
-    address public override protocolFeeModule;
-    /// @inheritdoc ICLFactory
-    uint24 public override defaultProtocolFee;
-
-    mapping(int24 => uint24) public override tickSpacingToFee;
-    /// @inheritdoc ICLFactory
-    mapping(address => mapping(address => mapping(int24 => address))) public override getPool;
-    /// @dev Used in VotingEscrow to determine if a contract is a valid pool
-    mapping(address => bool) private _isPool;
-    /// @inheritdoc ICLFactory
-    address[] public override allPools;
-
-    int24[] private _tickSpacings;
-
-    constructor(address _poolImplementation) {
-        owner = msg.sender;
-        swapFeeManager = msg.sender;
-        unstakedFeeManager = msg.sender;
-        protocolFeeManager = msg.sender;
-        poolImplementation = _poolImplementation;
-        defaultUnstakedFee = 100_000;
-        defaultProtocolFee = 250_000;
-        emit OwnerChanged(address(0), msg.sender);
-        emit SwapFeeManagerChanged(address(0), msg.sender);
-        emit UnstakedFeeManagerChanged(address(0), msg.sender);
-        emit DefaultUnstakedFeeChanged(0, 100_000);
-
-        enableTickSpacing(1, 100);
-        enableTickSpacing(50, 500);
-        enableTickSpacing(100, 500);
-        enableTickSpacing(200, 3_000);
-        enableTickSpacing(2_000, 10_000);
+/// @title Optimized overflow and underflow safe math operations
+/// @notice Contains methods for doing math operations that revert on overflow or underflow for minimal gas cost
+library LowGasSafeMath {
+    /// @notice Returns x + y, reverts if sum overflows uint256
+    /// @param x The augend
+    /// @param y The addend
+    /// @return z The sum of x and y
+    function add(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        require((z = x + y) >= x);
     }
 
-    function setGaugeManager(address _gaugeManager) external {
-        require(msg.sender == owner);
-        gaugeManager = IGaugeManager(_gaugeManager);
+    /// @notice Returns x - y, reverts if underflows
+    /// @param x The minuend
+    /// @param y The subtrahend
+    /// @return z The difference of x and y
+    function sub(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        require((z = x - y) <= x);
     }
 
-    /// @inheritdoc ICLFactory
-    function createPool(address tokenA, address tokenB, int24 tickSpacing, uint160 sqrtPriceX96)
-        external
-        override
-        returns (address pool)
-    {
-        require(tokenA != tokenB);
-        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-        require(token0 != address(0));
-        require(tickSpacingToFee[tickSpacing] != 0);
-        require(getPool[token0][token1][tickSpacing] == address(0));
-        pool = Clones.cloneDeterministic({
-            master: poolImplementation,
-            salt: keccak256(abi.encode(token0, token1, tickSpacing))
-        });
-        CLPool(pool).initialize({
-            _factory: address(this),
-            _token0: token0,
-            _token1: token1,
-            _tickSpacing: tickSpacing,
-            _gaugeManager: address(gaugeManager),
-            _sqrtPriceX96: sqrtPriceX96
-        });
-        allPools.push(pool);
-        _isPool[pool] = true;
-        getPool[token0][token1][tickSpacing] = pool;
-        // populate mapping in the reverse direction, deliberate choice to avoid the cost of comparing addresses
-        getPool[token1][token0][tickSpacing] = pool;
-        emit PoolCreated(token0, token1, tickSpacing, pool);
+    /// @notice Returns x * y, reverts if overflows
+    /// @param x The multiplicand
+    /// @param y The multiplier
+    /// @return z The product of x and y
+    function mul(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        require(x == 0 || (z = x * y) / x == y);
     }
 
-    /// @inheritdoc ICLFactory
-    function setOwner(address _owner) external override {
-        address cachedOwner = owner;
-        require(msg.sender == cachedOwner);
-        require(_owner != address(0));
-        emit OwnerChanged(cachedOwner, _owner);
-        owner = _owner;
+    /// @notice Returns x + y, reverts if overflows or underflows
+    /// @param x The augend
+    /// @param y The addend
+    /// @return z The sum of x and y
+    function add(int256 x, int256 y) internal pure returns (int256 z) {
+        require((z = x + y) >= x == (y >= 0));
     }
 
-    /// @inheritdoc ICLFactory
-    function setSwapFeeManager(address _swapFeeManager) external override {
-        address cachedSwapFeeManager = swapFeeManager;
-        require(msg.sender == cachedSwapFeeManager);
-        require(_swapFeeManager != address(0));
-        swapFeeManager = _swapFeeManager;
-        emit SwapFeeManagerChanged(cachedSwapFeeManager, _swapFeeManager);
+    /// @notice Returns x - y, reverts if overflows or underflows
+    /// @param x The minuend
+    /// @param y The subtrahend
+    /// @return z The difference of x and y
+    function sub(int256 x, int256 y) internal pure returns (int256 z) {
+        require((z = x - y) <= x == (y >= 0));
     }
-
-    /// @inheritdoc ICLFactory
-    function setUnstakedFeeManager(address _unstakedFeeManager) external override {
-        address cachedUnstakedFeeManager = unstakedFeeManager;
-        require(msg.sender == cachedUnstakedFeeManager);
-        require(_unstakedFeeManager != address(0));
-        unstakedFeeManager = _unstakedFeeManager;
-        emit UnstakedFeeManagerChanged(cachedUnstakedFeeManager, _unstakedFeeManager);
-    }
-
-    /// @inheritdoc ICLFactory
-    function setSwapFeeModule(address _swapFeeModule) external override {
-        require(msg.sender == swapFeeManager);
-        require(_swapFeeModule != address(0));
-        address oldFeeModule = swapFeeModule;
-        swapFeeModule = _swapFeeModule;
-        emit SwapFeeModuleChanged(oldFeeModule, _swapFeeModule);
-    }
-
-    /// @inheritdoc ICLFactory
-    function setUnstakedFeeModule(address _unstakedFeeModule) external override {
-        require(msg.sender == unstakedFeeManager);
-        require(_unstakedFeeModule != address(0));
-        address oldFeeModule = unstakedFeeModule;
-        unstakedFeeModule = _unstakedFeeModule;
-        emit UnstakedFeeModuleChanged(oldFeeModule, _unstakedFeeModule);
-    }
-
-    /// @inheritdoc ICLFactory
-    function setDefaultUnstakedFee(uint24 _defaultUnstakedFee) external override {
-        require(msg.sender == unstakedFeeManager);
-        require(_defaultUnstakedFee <= 500_000);
-        uint24 oldUnstakedFee = defaultUnstakedFee;
-        defaultUnstakedFee = _defaultUnstakedFee;
-        emit DefaultUnstakedFeeChanged(oldUnstakedFee, _defaultUnstakedFee);
-    }
-
-
-    function setProtocolFeeModule(address _protocolFeeModule) external override {
-        require(msg.sender == protocolFeeManager);
-        require(_protocolFeeModule != address(0));
-        protocolFeeModule = _protocolFeeModule;
-    }
-
-    function setProtocolFeeManager(address _protocolFeeManager) external override {
-        require(msg.sender == protocolFeeManager);
-        require(_protocolFeeManager != address(0));
-        protocolFeeManager = _protocolFeeManager;
-    }
-
-    /// @inheritdoc ICLFactory
-    function getSwapFee(address pool) external view override returns (uint24) {
-        if (swapFeeModule != address(0)) {
-            (bool success, bytes memory data) = swapFeeModule.excessivelySafeStaticCall(
-                200_000, 32, abi.encodeWithSelector(IFeeModule.getFee.selector, pool)
-            );
-            if (success) {
-                uint24 fee = abi.decode(data, (uint24));
-                if (fee <= 100_000) {
-                    return fee;
-                }
-            }
-        }
-        return tickSpacingToFee[CLPool(pool).tickSpacing()];
-    }
-
-    /// @inheritdoc ICLFactory
-    function getUnstakedFee(address pool) external view override returns (uint24) {
-        
-        if (!gaugeManager.isGaugeAliveForPool(pool)) {
-            return 0;
-        }
-        if (unstakedFeeModule != address(0)) {
-            (bool success, bytes memory data) = unstakedFeeModule.excessivelySafeStaticCall(
-                200_000, 32, abi.encodeWithSelector(IFeeModule.getFee.selector, pool)
-            );
-            if (success) {
-                uint24 fee = abi.decode(data, (uint24));
-                if (fee <= 1_000_000) {
-                    return fee;
-                }
-            }
-        }
-        return defaultUnstakedFee;
-    }
-
-    function getProtocolFee(address pool) external view override returns (uint24) {
-        // if the gauge is alive, return 0, protocol fee is only for inactive gauges
-        if (gaugeManager.isGaugeAliveForPool(pool)) {
-            return 0;
-        }
-
-        if (protocolFeeModule != address(0)) {
-            (bool success, bytes memory data) = protocolFeeModule.excessivelySafeStaticCall(
-                200_000, 32, abi.encodeWithSelector(IFeeModule.getFee.selector, pool)
-            );
-            if (success) {
-                uint24 fee = abi.decode(data, (uint24));
-                if (fee <= 500_000) {
-                    return fee;
-                }
-            }
-        }
-        return defaultProtocolFee;
-    }
-
-    /// @inheritdoc ICLFactory
-    function enableTickSpacing(int24 tickSpacing, uint24 fee) public override {
-        require(msg.sender == owner);
-        require(fee > 0 && fee <= 100_000);
-        // tick spacing is capped at 16384 to prevent the situation where tickSpacing is so large that
-        // TickBitmap#nextInitializedTickWithinOneWord overflows int24 container from a valid tick
-        // 16384 ticks represents a >5x price change with ticks of 1 bips
-        require(tickSpacing > 0 && tickSpacing < 16384);
-        require(tickSpacingToFee[tickSpacing] == 0);
-
-        tickSpacingToFee[tickSpacing] = fee;
-        _tickSpacings.push(tickSpacing);
-        emit TickSpacingEnabled(tickSpacing, fee);
-    }
-
-    function collectAllProtocolFees() external  {
-        require(msg.sender == owner);
-
-        for (uint256 i = 0; i < allPools.length; i++) {
-            CLPool(allPools[i]).collectProtocolFees(msg.sender);
-        }
-    }
-
-    function collectProtocolFees(address pool) external returns (uint128 amount0, uint128 amount1) {
-        require(msg.sender == owner);
-        (amount0, amount1) = CLPool(pool).collectProtocolFees(msg.sender);
-    }
-
-    /// @inheritdoc ICLFactory
-    function tickSpacings() external view override returns (int24[] memory) {
-        return _tickSpacings;
-    }
-
-    /// @inheritdoc ICLFactory
-    function allPoolsLength() external view override returns (uint256) {
-        return allPools.length;
-    }
-
-    /// @inheritdoc ICLFactory
-    function isPool(address pool) external view override returns (bool) {
-        return _isPool[pool];
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-/// @title BitMath
-/// @dev This library provides functionality for computing bit properties of an unsigned integer
-library BitMath {
-    /// @notice Returns the index of the most significant bit of the number,
-    ///     where the least significant bit is at index 0 and the most significant bit is at index 255
-    /// @dev The function satisfies the property:
-    ///     x >= 2**mostSignificantBit(x) and x < 2**(mostSignificantBit(x)+1)
-    /// @param x the value for which to compute the most significant bit, must be greater than 0
-    /// @return r the index of the most significant bit
-    function mostSignificantBit(uint256 x) internal pure returns (uint8 r) {
-        require(x > 0);
-
-        if (x >= 0x100000000000000000000000000000000) {
-            x >>= 128;
-            r += 128;
-        }
-        if (x >= 0x10000000000000000) {
-            x >>= 64;
-            r += 64;
-        }
-        if (x >= 0x100000000) {
-            x >>= 32;
-            r += 32;
-        }
-        if (x >= 0x10000) {
-            x >>= 16;
-            r += 16;
-        }
-        if (x >= 0x100) {
-            x >>= 8;
-            r += 8;
-        }
-        if (x >= 0x10) {
-            x >>= 4;
-            r += 4;
-        }
-        if (x >= 0x4) {
-            x >>= 2;
-            r += 2;
-        }
-        if (x >= 0x2) r += 1;
-    }
-
-    /// @notice Returns the index of the least significant bit of the number,
-    ///     where the least significant bit is at index 0 and the most significant bit is at index 255
-    /// @dev The function satisfies the property:
-    ///     (x & 2**leastSignificantBit(x)) != 0 and (x & (2**(leastSignificantBit(x)) - 1)) == 0)
-    /// @param x the value for which to compute the least significant bit, must be greater than 0
-    /// @return r the index of the least significant bit
-    function leastSignificantBit(uint256 x) internal pure returns (uint8 r) {
-        require(x > 0);
-
-        r = 255;
-        if (x & type(uint128).max > 0) {
-            r -= 128;
-        } else {
-            x >>= 128;
-        }
-        if (x & type(uint64).max > 0) {
-            r -= 64;
-        } else {
-            x >>= 64;
-        }
-        if (x & type(uint32).max > 0) {
-            r -= 32;
-        } else {
-            x >>= 32;
-        }
-        if (x & type(uint16).max > 0) {
-            r -= 16;
-        } else {
-            x >>= 16;
-        }
-        if (x & type(uint8).max > 0) {
-            r -= 8;
-        } else {
-            x >>= 8;
-        }
-        if (x & 0xf > 0) {
-            r -= 4;
-        } else {
-            x >>= 4;
-        }
-        if (x & 0x3 > 0) {
-            r -= 2;
-        } else {
-            x >>= 2;
-        }
-        if (x & 0x1 > 0) r -= 1;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IGaugeCL {
-    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
-    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function balanceOf(uint256 tokenId) external view returns (uint256); 
-    function emergency() external returns (bool);
-    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
-    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
-    function totalSupply() external view returns (uint);
-    function rewardRate() external view returns (uint);
-    function rewardForDuration() external view returns (uint256);
-    function stakedFees() external view returns (uint256, uint256);
-}
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-/// @title Math library for liquidity
-library LiquidityMath {
-    /// @notice Add a signed liquidity delta to liquidity and revert if it overflows or underflows
-    /// @param x The liquidity before change
-    /// @param y The delta by which liquidity should be changed
-    /// @return z The liquidity delta
-    function addDelta(uint128 x, int128 y) internal pure returns (uint128 z) {
-        if (y < 0) {
-            require((z = x - uint128(-y)) < x, "LS");
-        } else {
-            require((z = x + uint128(y)) >= x, "LA");
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IVotingEscrow {
-    function team() external returns (address);
-
-    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
-    /// @param _value Amount to deposit
-    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
-    /// @return TokenId of created veNFT
-    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
 }
 
 

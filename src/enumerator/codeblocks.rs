@@ -164,30 +164,30 @@ pub async fn generate_codeblock_from_codebase(
         let mut main_source_contracts =
             detect_source_code_dependencies(&main_contract, repo).await?;
 
-        info!(
-            "🔍 DEBUG: Source dependencies for main contract '{}': {} contracts",
-            main_contract,
-            main_source_contracts.len()
-        );
-        info!(
-            "🔍 DEBUG: contracts_with_depth has {} contracts",
-            contracts_with_depth.len()
-        );
+        // info!(
+        //     "🔍 DEBUG: Source dependencies for main contract '{}': {} contracts",
+        //     main_contract,
+        //     main_source_contracts.len()
+        // );
+        // info!(
+        //     "🔍 DEBUG: contracts_with_depth has {} contracts",
+        //     contracts_with_depth.len()
+        // );
 
         for contract in &contracts_with_depth {
             let source = detect_source_code_dependencies(contract, repo).await?;
-            info!(
-                "🔍 DEBUG: Source dependencies for '{}': {} contracts",
-                contract,
-                source.len()
-            );
+            // info!(
+            //     "🔍 DEBUG: Source dependencies for '{}': {} contracts",
+            //     contract,
+            //     source.len()
+            // );
             main_source_contracts.extend(source);
         }
 
-        info!(
-            "🔍 DEBUG: Total source dependencies after analyzing depth contracts: {}",
-            main_source_contracts.len()
-        );
+        // info!(
+        //     "🔍 DEBUG: Total source dependencies after analyzing depth contracts: {}",
+        //     main_source_contracts.len()
+        // );
 
         for contract_name in &main_source_contracts {
             info!(
@@ -249,16 +249,16 @@ pub async fn generate_codeblock_from_codebase(
         }
 
         // DEBUG: Log what contracts were detected
-        info!("🔍 DEBUG: Total contracts detected: {}", contracts.len());
-        info!("🔍 DEBUG: contracts = {:?}", contracts);
-        info!(
-            "🔍 DEBUG: contracts_with_parents = {:?}",
-            contracts_with_parents
-        );
-        info!(
-            "🔍 DEBUG: contracts_with_depth = {:?}",
-            contracts_with_depth
-        );
+        // info!("🔍 DEBUG: Total contracts detected: {}", contracts.len());
+        // info!("🔍 DEBUG: contracts = {:?}", contracts);
+        // info!(
+        //     "🔍 DEBUG: contracts_with_parents = {:?}",
+        //     contracts_with_parents
+        // );
+        // info!(
+        //     "🔍 DEBUG: contracts_with_depth = {:?}",
+        //     contracts_with_depth
+        // );
 
         // Process contracts in priority order (called → parents)
         // The prioritized_contracts vector is already ordered correctly from above

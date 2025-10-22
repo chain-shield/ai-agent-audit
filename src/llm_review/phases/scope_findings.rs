@@ -15,7 +15,7 @@ use crate::{
             post_verify::POST_IN_SCOPE_VERIFY, verify_prompt::VERIFY_IN_SCOPE_PROMPT,
         },
         semaphore::VERIFY_SEM,
-        utils::prompt_context::generate_prompt_for_issue_check,
+        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -91,6 +91,7 @@ pub async fn execute(
                     &arc_findings[i],
                     &verify_prompt_and_scope,
                     POST_IN_SCOPE_VERIFY,
+                    FindingReportType::NoPoC,
                 );
 
                 // add to cost

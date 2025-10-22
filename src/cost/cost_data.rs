@@ -79,10 +79,10 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "o3" => 2.00,
 
             // Anthropic models
-            "claude-3.5-sonnet" | "claude-3-5-sonnet" => 3.00,
-            "claude-3.7-sonnet" | "claude-3-7-sonnet" => 3.00,
-            "claude-4.0-sonnet" | "claude-4-0-sonnet" => 3.00,
-            "claude-4.5-sonnet" | "claude-4-5-sonnet" => 3.00,
+            "claude-3.5-sonnet" | "claude-sonnet-3-5" => 3.00,
+            "claude-3.7-sonnet" | "claude-sonnet-3-7" => 3.00,
+            "claude-4.0-sonnet" | "claude-sonnet-4-0" => 3.00,
+            "claude-4.5-sonnet" | "claude-sonnet-4-5" => 3.00,
             "claude-4" => 3.00,
 
             // Gemini models
@@ -109,10 +109,10 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "o3" => 8.00,
 
             // Anthropic models
-            "claude-3.5-sonnet" | "claude-3-5-sonnet" => 15.00,
-            "claude-3.7-sonnet" | "claude-3-7-sonnet" => 15.00,
-            "claude-4.0-sonnet" | "claude-4-0-sonnet" => 15.00,
-            "claude-4.5-sonnet" | "claude-4-5-sonnet" => 15.00,
+            "claude-3.5-sonnet" | "claude-sonnet-3-5" => 15.00,
+            "claude-3.7-sonnet" | "claude-sonnet-3-7" => 15.00,
+            "claude-4.0-sonnet" | "claude-sonnet-4-0" => 15.00,
+            "claude-4.5-sonnet" | "claude-sonnet-4-5" => 15.00,
             "claude-4" => 15.00,
 
             // Gemini models
@@ -303,7 +303,7 @@ mod tests {
     #[tokio::test]
     async fn test_cost_calculation_vs_openai_api() {
         use reqwest::Client;
-        use serde_json::{json, Value};
+        use serde_json::{Value, json};
 
         // Skip test if no API key
         let api_key = match std::env::var("OPENAI_API_KEY") {

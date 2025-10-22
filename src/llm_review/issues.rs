@@ -11,10 +11,11 @@ use crate::{
             pattern_findings::generate_pattern_to_findings_prompt,
             patterns::generate_pattern_verify_prompt,
         },
-        enums::{AIAgent, EnumString},
+        enums::AIAgent,
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
         utils::prompt_context::{generate_formatted_invariant_finding, generate_formatted_pattern},
     },
+    prepare_code::git_clone::RepoPaths,
     utils::semantic_compare,
 };
 
@@ -54,8 +55,8 @@ pub trait IssueTrait: Send + Sync {
     fn title_str(&self) -> String;
     fn description(&self) -> String;
     fn generate_verify_prompt(&self) -> String;
-    fn pattern_to_findings_prompt(&self) -> String;
-    fn findings_json_required_prompt(&self) -> String;
+    fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String;
+    fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String;
 }
 
 #[async_trait]
@@ -63,10 +64,10 @@ impl IssueTrait for InvariantFinding {
     fn hash(&self) -> String {
         format!(
             "{}-{}-{}-{}",
-            self.inv_type.as_str(),
+            self.inv_type.to_string(),
             self.contract,
             self.function,
-            self.status.as_str()
+            self.status.to_string()
         )
     }
     async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
@@ -81,7 +82,7 @@ impl IssueTrait for InvariantFinding {
     fn title_str(&self) -> String {
         format!(
             "{} - {}.{}",
-            self.inv_type.as_str(),
+            self.inv_type.to_string(),
             self.contract,
             self.function
         )
@@ -89,11 +90,11 @@ impl IssueTrait for InvariantFinding {
     fn generate_verify_prompt(&self) -> String {
         generate_invariant_verify_prompt(&self)
     }
-    fn pattern_to_findings_prompt(&self) -> String {
-        generate_invariant_to_findings(self)
+    fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String {
+        generate_invariant_to_findings(self, repo)
     }
-    fn findings_json_required_prompt(&self) -> String {
-        get_findings_json_requirement(&self.inv_type, &self.predicate)
+    fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
+        get_findings_json_requirement(&self.inv_type, &self.predicate, repo)
     }
 }
 
@@ -102,7 +103,7 @@ impl IssueTrait for Pattern {
     fn hash(&self) -> String {
         format!(
             "{}-{}-{}",
-            self.issue_type.as_str(),
+            self.issue_type.to_string(),
             self.contract,
             self.function,
         )
@@ -116,7 +117,7 @@ impl IssueTrait for Pattern {
     fn title_str(&self) -> String {
         format!(
             "{} - {}.{}",
-            self.issue_type.as_str(),
+            self.issue_type.to_string(),
             self.contract,
             self.function
         )
@@ -127,11 +128,11 @@ impl IssueTrait for Pattern {
     fn description(&self) -> String {
         self.description.clone()
     }
-    fn pattern_to_findings_prompt(&self) -> String {
-        generate_pattern_to_findings_prompt(self)
+    fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String {
+        generate_pattern_to_findings_prompt(self, repo)
     }
-    fn findings_json_required_prompt(&self) -> String {
-        get_findings_json_requirement(&self.issue_type, &self.title)
+    fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
+        get_findings_json_requirement(&self.issue_type, &self.title, repo)
     }
 }
 
