@@ -19,6 +19,10 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 * **Dust amounts** (rounding errors, marginal fee variations) → QA/Low.
 * **Real amounts** → Severity depends on conditions and likelihood.
 
+## Finding Likelihood
+* A High Impact Low Likelihood Finding = Medium or High
+* However, Low Likelihood Finding that is NOT High Impact -> QA/Low
+
 ### Loss of Yield
 
 * **Matured yield** loss = High (same as capital).
@@ -265,5 +269,72 @@ If the original report does not include a Proof of Concept (PoC), it will be con
 20. **Non-Standard tokens:** Issues related to tokens with non-standard behaviors, such as [weird-tokens](https://github.com/d-xo/weird-erc20) are not considered valid by default unless these tokens are explicitly mentioned in the README. Tokens with decimals between 6 and 18 are not considered weird.
 21. Using Solidity versions that support **EVM opcodes that don't work** on networks on which the protocol is deployed is not a valid issue beacause one can manage compilation flags to compile for past EVM versions on newer Solidity versions.
 22. **Sequencers** are assumed to operate reliably without misbehavior or downtime. Vulnerabilities or attacks that rely on sequencers going offline or malfunctioning are invalid.
+
+"#;
+
+pub const CANTINA_SEVERITY_RUBRIC: &str = r#"
+
+# Finding Severity Criteria
+
+## Severity Matrix
+
+The severity of a bug is determined based on two factors: **impact** and **likelihood**. The impact relates to the potential damage of an issue, and the likelihood to how likely it is to happen.
+
+| **Severity**           | **Impact: High** | **Impact: Medium** | **Impact: Low** |
+|-------------------------|------------------|--------------------|-----------------|
+| **Likelihood: High**    | High             | High               | Medium          |
+| **Likelihood: Medium**  | High             | Medium             | Low             |
+| **Likelihood: Low**     | Medium           | Low                | Informational   |
+
+**Note:** This matrix is a guideline, not an absolute rule. Severity assessments require context—not just checkboxes.
+
+### Contextual Criteria for Severity
+
+#### **Impact**
+
+* **High:**
+  * **Loss of User Funds**: A vulnerability that could lead to a significant amount of funds being stolen or lost.
+  * **Breaks Core Functionality**: Causes a failure in fundamental protocol operations.
+* **Medium:**
+  * **Temporary Disruption or DoS**: A bug that leads to temporary downtime or a denial of service (DoS). This may cause users to experience disruptions, but doesn’t necessarily compromise the security of the protocol.
+  * **Minor Fund Loss or Exposure**: A scenario where funds could be exposed or small amounts could be stolen. This could happen in edge cases, like token price manipulation, but isn’t a widespread risk.
+  * **Breaks Non-Core Functionality**
+* **Low:**
+  * **No Assets at Risk**: Issues affecting state handling, incorrect function implementation, or logic errors that do not threaten assets.
+
+#### **Likelihood**
+
+* **High**
+  * Issues that can be triggered by any user, without significant constraints
+  * Issues that will generate outsized returns to the exploiter
+* **Medium**
+  * Issues with significant constraints, such as capital requirement, previous planning, or actions by other users
+* **Low**
+  * Unusual scenarios, such as paused or exception state
+  * Issues that require admin actions
+  * Issues that have many constraints that cannot be induced by the user
+  * Issues that cause a significant loss to the user
+  * (When explicitly included in scope): external upgradability issues
+
+### **Exceptions to the severity matrix**
+
+**Unless explicitly mentioned in the contest details, or otherwise critical for the protocol**, the classes of issues listed below will have their severity capped to the respective severity
+
+* **Issues that will be considered at most low severity**
+  * **Minimal Loss**: Loss of small amounts due to rounding errors or minor fee discrepancies, even if it can be repeated infinite times.
+  * **Weird ERC20 Tokens**: Issues related to non-compliant or [weird](https://github.com/d-xo/weird-erc20) ERC20 tokens.
+  * **View functions**: Errors in view functions that are not used within the protocol.
+* **Issues that will be considered at most informational severity**
+  * **Admin errors**: Issues based on admin errors, such as calling a function with wrong parameters
+    * Note: Issues based on a wrong implementation of admin functions will have the severity defined based on the severity matrix
+  * **Malicious admin:** Issues based on a malicious or compromised admin, unless explicitly included in the contest scope.
+  * **User errors**: Issues based on a user error, without significant impact on other users
+  * **Issues related to the design philosophy of the protocol**: for example, issues related to trade-offs made on permissionless protocols
+  * **Missing basic validation**
+  * **Second-order effects**: issues that arise based on the fix of another issue
+* **Issues that are invalid and should not be submitted**
+  * **Speculation on Future Code/Integrations**: Issues based on future changes, integrations, or upgrades should not be submitted unless the finding directly relates to the current code and behavior.
+  * **Known Issues**: If a bug has already been reported in LightChaser, it will be marked as **invalid**.
+  * **Public Fixes:** If a public fix is made during the competition, any *duplicate findings* after that point will be considered **out of scope**.. Please note that this scenario is extremely rare and typically only occurs if the sponsor unintentionally releases a fix during the competition.
 
 "#;

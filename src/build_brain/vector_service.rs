@@ -8,11 +8,11 @@ use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use log::info;
 use qdrant_client::{
-    qdrant::{
-        vectors_config::Config, CreateCollection, Distance, PointStruct, UpsertPointsBuilder,
-        VectorParams, VectorsConfig,
-    },
     Payload, Qdrant,
+    qdrant::{
+        CreateCollection, Distance, PointStruct, UpsertPointsBuilder, VectorParams, VectorsConfig,
+        vectors_config::Config,
+    },
 };
 use std::sync::Arc;
 

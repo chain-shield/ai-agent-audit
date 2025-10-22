@@ -563,289 +563,459 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-import "./IGaugeManager.sol";
-
-interface IGaugeFactoryCL {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
 interface IPermissionsRegistry {
     function emergencyCouncil() external view returns(address);
     function hybraTeamMultisig() external view returns(address);
     function hasRole(bytes memory role, address caller) external view returns(bool);
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-
-interface IGaugeManager {
-    
-    struct FarmingParam {
-        address farmingCenter;
-        address algebraEternalFarming;
-        address nfpm;
-    }
-
-    function isGaugeAliveForPool(address _pool) external view returns (bool);
-    function gauges(address _pair) external view returns (address);
-    function isGauge(address _gauge) external view returns (bool);
-    function poolForGauge(address _gauge) external view returns (address);
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity =0.7.6;
+interface IMinter {
+    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
+    /// @return _period Start of current epoch.
+    function updatePeriod() external returns (uint256 _period);
 }
-// SPDX-License-Identifier: None
-// HybraHole Foundation 2025
 
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
-
-interface IHybraVotes is IVotes{
+interface IGaugeFactory {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
 }
+
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.13;
 
-import {IVotingEscrow} from "../interfaces/IVotingEscrow.sol";
-import {HybraTimeLibrary} from "./HybraTimeLibrary.sol";
-
-library VotingBalanceLogic {
-
-    struct Data {
-        mapping(uint => IVotingEscrow.Point) point_history;
-        mapping(uint => uint) user_point_epoch;
-        mapping(uint => IVotingEscrow.Point[1000000000]) user_point_history; // user -> Point[user_epoch]
-    }
-
-    /// @notice Get the current voting power for `_tokenId`
-    /// @dev Adheres to the ERC20 `balanceOf` interface for Aragon compatibility
-    /// @param _tokenId NFT for lock
-    /// @param _t Epoch time to return voting power at
-    /// @return User voting power
-    function balanceOfNFT(uint _tokenId, uint _t, 
-        Data storage VotingBalanceLogicData
-        ) external view returns (uint) {
-        uint _epoch = VotingBalanceLogicData.user_point_epoch[_tokenId];
-        if (_epoch == 0) {
-            return 0;
-        } else {
-            uint userEpoch = getPastUserPointIndex(_epoch, _tokenId, _t, VotingBalanceLogicData);
-            IVotingEscrow.Point memory last_point = VotingBalanceLogicData.user_point_history[_tokenId][userEpoch];
-            if (last_point.permanent != 0) {
-                return last_point.permanent;
-            }
-            else {
-                last_point.bias -= last_point.slope * int128(int256(_t) - int256(last_point.ts));
-                if (last_point.bias < 0) {
-                    last_point.bias = 0;
-                }
-                return uint(int256(last_point.bias));
-            }
-        }
-    }
-
-
-    function getPastUserPointIndex(uint _epoch, 
-    uint _tokenId,
-    uint _t,
-    Data storage votingBalanceLogicData
-    ) internal view returns (uint256){
-        uint lower = 0;
-        uint upper = _epoch;
-        while (upper > lower) {
-            uint center = upper - (upper - lower) / 2; // ceil, avoiding overflow
-            IVotingEscrow.Point memory userPoint = votingBalanceLogicData.user_point_history[_tokenId][center];
-            if (userPoint.ts == _t) {
-                return center;
-            } else if (userPoint.ts < _t) {
-                lower = center;
-            } else {
-                upper = center - 1;
-            }
-        }
-        return lower;
-    }
-
-    /// @notice Measure voting power of `_tokenId` at block height `_block`
-    /// @dev Adheres to MiniMe `balanceOfAt` interface: https://github.com/Giveth/minime
-    /// @param _tokenId User's wallet NFT
-    /// @param _block Block to calculate the voting power at
-    /// @return Voting power
-    function balanceOfAtNFT(uint _tokenId, 
-        uint _block,
-        Data storage VotingBalanceLogicData,
-        uint epoch
-        ) external view returns (uint) {
-        // Copying and pasting totalSupply code because Vyper cannot pass by
-        // reference yet
-        assert(_block <= block.number);
-
-        // Binary search
-        uint _min = 0;
-        uint _max = VotingBalanceLogicData.user_point_epoch[_tokenId];
-        for (uint i = 0; i < 128; ++i) {
-            // Will be always enough for 128-bit numbers
-            if (_min >= _max) {
-                break;
-            }
-            uint _mid = (_min + _max + 1) / 2;
-            if (VotingBalanceLogicData.user_point_history[_tokenId][_mid].blk <= _block) {
-                _min = _mid;
-            } else {
-                _max = _mid - 1;
-            }
-        }
-
-        IVotingEscrow.Point memory upoint = VotingBalanceLogicData.user_point_history[_tokenId][_min];
-
-        if (upoint.permanent > 0){
-            return upoint.permanent;
-        }
-
-        uint max_epoch = epoch;
-        uint _epoch = _find_block_epoch(_block, max_epoch, VotingBalanceLogicData);
-        IVotingEscrow.Point memory point_0 = VotingBalanceLogicData.point_history[_epoch];
-        uint d_block = 0;
-        uint d_t = 0;
-        if (_epoch < max_epoch) {
-            IVotingEscrow.Point memory point_1 = VotingBalanceLogicData.point_history[_epoch + 1];
-            d_block = point_1.blk - point_0.blk;
-            d_t = point_1.ts - point_0.ts;
-        } else {
-            d_block = block.number - point_0.blk;
-            d_t = block.timestamp - point_0.ts;
-        }
-        uint block_time = point_0.ts;
-        if (d_block != 0) {
-            block_time += (d_t * (_block - point_0.blk)) / d_block;
-        }
-
-        upoint.bias -= upoint.slope * int128(int256(block_time - upoint.ts));
-        if (upoint.bias >= 0) {
-            return uint(uint128(upoint.bias));
-        } else {
-            return 0;
-        }
-    }
-
-    function totalSupplyAt(uint _block, uint epoch,
-        Data storage VotingBalanceLogicData,
-        mapping(uint => int128) storage slope_changes) public view returns (uint) {
-        assert(_block <= block.number);
-        uint _epoch = epoch;
-        uint target_epoch = _find_block_epoch(_block, _epoch, VotingBalanceLogicData);
-
-        IVotingEscrow.Point memory point = VotingBalanceLogicData.point_history[target_epoch];
-        uint dt = 0;
-        if (target_epoch < _epoch) {
-            IVotingEscrow.Point memory point_next = VotingBalanceLogicData.point_history[target_epoch + 1];
-            if (point.blk != point_next.blk) {
-                dt = ((_block - point.blk) * (point_next.ts - point.ts)) / (point_next.blk - point.blk);
-            }
-        } else {
-            if (point.blk != block.number) {
-                dt = ((_block - point.blk) * (block.timestamp - point.ts)) / (block.number - point.blk);
-            }
-        }
-        // Now dt contains info on how far are we beyond point
-        return _supply_at(point, point.ts + dt, slope_changes);
-
-    }
-
-         /// @notice Binary search to estimate timestamp for block number
-    /// @param _block Block to find
-    /// @param max_epoch Don't go beyond this epoch
-    /// @return Approximate timestamp for block
-    function _find_block_epoch(uint _block, 
-        uint max_epoch,
-        Data storage VotingBalanceLogicData
-        ) internal view returns (uint) {
-        // Binary search
-        uint _min = 0;
-        uint _max = max_epoch;
-        for (uint i = 0; i < 128; ++i) {
-            // Will be always enough for 128-bit numbers
-            if (_min >= _max) {
-                break;
-            }
-            uint _mid = (_min + _max + 1) / 2;
-            if (VotingBalanceLogicData.point_history[_mid].blk <= _block) {
-                _min = _mid;
-            } else {
-                _max = _mid - 1;
-            }
-        }
-        return _min;
-    }
-
-    /// @notice Calculate total voting power at some point in the past
-    /// @param point The point (bias/slope) to start search from
-    /// @param t Time to calculate the total voting power at
-    /// @return Total voting power at that time
-    function _supply_at(IVotingEscrow.Point memory point, 
-        uint t,
-        mapping(uint => int128) storage slope_changes) internal view returns (uint) {
-        uint WEEK = HybraTimeLibrary.WEEK;
-        IVotingEscrow.Point memory last_point = point;
-        uint t_i = (last_point.ts / WEEK) * WEEK;
-        for (uint i = 0; i < 255; ++i) {
-            t_i += WEEK;
-            int128 d_slope = 0;
-            if (t_i > t) {
-                t_i = t;
-            } else {
-                d_slope = slope_changes[t_i];
-            }
-            last_point.bias -= last_point.slope * int128(int256(t_i - last_point.ts));
-            if (t_i == t) {
-                break;
-            }
-            last_point.slope += d_slope;
-            last_point.ts = t_i;
-        }
-
-        if (last_point.bias < 0) {
-            last_point.bias = 0;
-        }
-        return uint(uint128(last_point.bias)) + last_point.permanent;
-    }
-
-    function getPastGlobalPointIndex(uint _epoch,
-        uint _t,
-        Data storage VotingBalanceLogicData) internal view returns (uint256){
-        uint lower = 0;
-        uint upper = _epoch;
-        while (upper > lower) {
-            uint center = upper - (upper - lower) / 2; // ceil, avoiding overflow
-            IVotingEscrow.Point memory point = VotingBalanceLogicData.point_history[center];
-            if (point.ts == _t) {
-                return center;
-            } else if (point.ts < _t) {
-                lower = center;
-            } else {
-                upper = center - 1;
-            }
-        }
-        return lower;
-    }
-
-        /// @notice Calculate total voting power
-    /// @dev Adheres to the ERC20 `totalSupply` interface for Aragon compatibility
-    /// @return Total voting power
-    function totalSupplyAtT(uint t, uint epoch,
-        mapping(uint => int128) storage slope_changes,
-        Data storage VotingBalanceLogicData) external view returns (uint) {
-        uint _epoch = epoch;
-        if(_epoch == 0) {
-            return 0;
-        } else {
-            uint globalEpoch = getPastGlobalPointIndex(_epoch, t, VotingBalanceLogicData);
-            IVotingEscrow.Point memory last_point = VotingBalanceLogicData.point_history[globalEpoch];
-            return _supply_at(last_point, t, slope_changes);
-        }
-    }
+interface IGauge {
+    function notifyRewardAmount(address token, uint amount) external;
+    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
+    function getReward(address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function left(address token) external view returns (uint);
+    function rewardRate(address _pair) external view returns (uint);
+    function balanceOf(address _account) external view returns (uint);
+    function isForPair() external view returns (bool);
+    function totalSupply() external view returns (uint);
+    function earned(address token, address account) external view returns (uint);
+    function setGenesisPool(address genesisPool) external;
+    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
+    function emergency() external returns (bool);
 }
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+import './interfaces/IPair.sol';
+import './interfaces/IBribe.sol';
+import "./libraries/Math.sol";
+
+import {HybraTimeLibrary} from "./libraries/HybraTimeLibrary.sol";
+import './interfaces/IRHYBR.sol';
+interface IRewarder {
+    function onReward(
+        address user,
+        address recipient,
+        uint256 userBalance
+    ) external;
+}
+
+
+contract GaugeV2 is ReentrancyGuard, Ownable {
+
+    using SafeERC20 for IERC20;
+
+    bool public immutable isForPair;
+    bool public emergency;
+
+
+    IERC20 public immutable rewardToken;
+    IERC20 public immutable TOKEN;
+    address public immutable rHYBR;
+    address public VE;
+    address public DISTRIBUTION;
+    address public gaugeRewarder;
+    address public internal_bribe;
+    address public external_bribe;
+
+    uint256 public DURATION;
+    uint256 internal _periodFinish;
+    uint256 public rewardRate;
+    uint256 public lastUpdateTime;
+    uint256 public rewardPerTokenStored;
+
+   
+
+    mapping(address => uint256) public userRewardPerTokenPaid;
+    mapping(address => uint256) public rewards;
+
+    uint256 internal _totalSupply;
+    mapping(address => uint256) internal _balances;
+    mapping(address => uint256) public maturityTime;
+
+    event RewardAdded(uint256 reward);
+    event Deposit(address indexed user, uint256 amount);
+    event Withdraw(address indexed user, uint256 amount);
+    event Harvest(address indexed user, uint256 reward);
+
+    event ClaimFees(address indexed from, uint256 claimed0, uint256 claimed1);
+    event EmergencyActivated(address indexed gauge, uint256 timestamp);
+    event EmergencyDeactivated(address indexed gauge, uint256 timestamp);
+
+    modifier updateReward(address account) {
+        rewardPerTokenStored = rewardPerToken();
+        lastUpdateTime = lastTimeRewardApplicable();
+        if (account != address(0)) {
+            rewards[account] = earned(account);
+            userRewardPerTokenPaid[account] = rewardPerTokenStored;
+        }
+        _;
+    }
+
+    modifier onlyDistribution() {
+        require(msg.sender == DISTRIBUTION, "NA");
+        _;
+    }
+
+  
+
+  
+
+    modifier isNotEmergency() {
+        require(emergency == false, "EMER");
+        _;
+    }
+
+    constructor(address _rewardToken,address _rHYBR,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isForPair) {
+        rewardToken = IERC20(_rewardToken);     // main reward
+        rHYBR = _rHYBR;
+        VE = _ve;                               // vested
+        TOKEN = IERC20(_token);                 // underlying (LP)
+        DISTRIBUTION = _distribution;           // distro address (GaugeManager)
+        DURATION = HybraTimeLibrary.WEEK;                   
+
+        internal_bribe = _internal_bribe;       // lp fees goes here
+        external_bribe = _external_bribe;       // bribe fees goes here
+
+
+        isForPair = _isForPair;                 // pair boolean, if false no claim_fees
+
+        emergency = false;                      // emergency flag
+
+    }
+
+
+    /* -----------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+                                    ONLY OWNER
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    ----------------------------------------------------------------------------- */
+
+    ///@notice set distribution address (should be GaugeManager)
+    function setDistribution(address _distribution) external onlyOwner {
+        require(_distribution != address(0), "ZA");
+        require(_distribution != DISTRIBUTION, "SAME_ADDR");
+        DISTRIBUTION = _distribution;
+    }
+
+    ///@notice set gauge rewarder address
+    function setGaugeRewarder(address _gaugeRewarder) external onlyOwner {
+        require(_gaugeRewarder != gaugeRewarder, "SAME_ADDR");
+        gaugeRewarder = _gaugeRewarder;
+    }
+
+
+    ///@notice set new internal bribe contract (where to send fees)
+    function setInternalBribe(address _int) external onlyOwner {
+        require(_int >= address(0), "ZA");
+        internal_bribe = _int;
+    }
+
+    function activateEmergencyMode() external onlyOwner {
+        require(emergency == false, "EMER");
+        emergency = true;
+        emit EmergencyActivated(address(this), block.timestamp);
+    }
+
+    function stopEmergencyMode() external onlyOwner {
+
+        require(emergency == true,"EMER");
+
+        emergency = false;
+        emit EmergencyDeactivated(address(this), block.timestamp);
+    }
+
+
+    /* -----------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+                                    VIEW FUNCTIONS
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    ----------------------------------------------------------------------------- */
+
+    ///@notice total supply held
+    function totalSupply() public view returns (uint256) {
+        return _totalSupply;
+    }
+
+    ///@notice balance of a user
+    function balanceOf(address account) external view returns (uint256) {
+        return _balanceOf(account);
+    }
+
+    function _balanceOf(address account) internal view returns (uint256) {
+       
+        return _balances[account];
+    }
+
+    ///@notice last time reward
+    function lastTimeRewardApplicable() public view returns (uint256) {
+        return Math.min(block.timestamp, _periodFinish);
+    }
+
+    ///@notice  reward for a sinle token
+    function rewardPerToken() public view returns (uint256) {
+        if (_totalSupply == 0) {
+            return rewardPerTokenStored;
+        } else {
+            return rewardPerTokenStored + (lastTimeRewardApplicable() - lastUpdateTime) * rewardRate * 1e18 / _totalSupply; 
+        }
+    }
+
+    ///@notice see earned rewards for user
+    function earned(address account) public view returns (uint256) {
+        return rewards[account] + _balanceOf(account) * (rewardPerToken() - userRewardPerTokenPaid[account]) / 1e18;  
+    }
+
+    ///@notice get total reward for the duration
+    function rewardForDuration() external view returns (uint256) {
+        return rewardRate * DURATION;
+    }
+
+    function periodFinish() external view returns (uint256) {
+        return _periodFinish;
+    }
+
+
+
+    /* -----------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+                                    USER INTERACTION
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    ----------------------------------------------------------------------------- */
+
+
+
+    // send whole liquidity as additional param
+
+
+    ///@notice deposit all TOKEN of msg.sender
+    function depositAll() external {
+        _deposit(TOKEN.balanceOf(msg.sender), msg.sender);
+    }
+
+    ///@notice deposit amount TOKEN
+    function deposit(uint256 amount) external {
+        _deposit(amount, msg.sender);
+    }
+
+    ///@notice deposit internal
+    function _deposit(uint256 amount, address account) internal nonReentrant isNotEmergency updateReward(account) {
+        require(amount > 0, "ZV");
+
+        _balances[account] = _balances[account] + amount;
+        _totalSupply = _totalSupply + amount;
+        if (address(gaugeRewarder) != address(0)) {
+            IRewarder(gaugeRewarder).onReward(account, account, _balanceOf(account));
+        }
+
+        TOKEN.safeTransferFrom(account, address(this), amount);
+
+        emit Deposit(account, amount);
+    }
+
+    ///@notice withdraw all token
+    function withdrawAll() external {
+        _withdraw(_balanceOf(msg.sender));
+    }
+
+    ///@notice withdraw a certain amount of TOKEN
+    function withdraw(uint256 amount) external {
+        _withdraw(amount);
+    }
+
+    ///@notice withdraw internal
+    function _withdraw(uint256 amount) internal nonReentrant isNotEmergency updateReward(msg.sender) {
+        require(amount > 0, "ZV");
+        require(_balanceOf(msg.sender) > 0, "ZV");
+        require(block.timestamp >= maturityTime[msg.sender], "!MATURE");
+
+        _totalSupply = _totalSupply - amount;
+        _balances[msg.sender] = _balances[msg.sender] - amount;
+
+        if (address(gaugeRewarder) != address(0)) {
+            IRewarder(gaugeRewarder).onReward(msg.sender, msg.sender,_balanceOf(msg.sender));
+        }
+
+        TOKEN.safeTransfer(msg.sender, amount);
+
+        emit Withdraw(msg.sender, amount);
+    }
+
+    function emergencyWithdraw() external nonReentrant {
+        require(emergency, "EMER");
+        uint256 _amount = _balanceOf(msg.sender);
+        require(_amount > 0, "ZV");
+        _totalSupply = _totalSupply - _amount;
+
+        _balances[msg.sender] = 0;
+   
+
+        TOKEN.safeTransfer(msg.sender, _amount);
+        emit Withdraw(msg.sender, _amount);
+    }
+
+    function emergencyWithdrawAmount(uint256 _amount) external nonReentrant {
+
+        require(emergency, "EMER");
+        _totalSupply = _totalSupply - _amount;
+
+        _balances[msg.sender] = _balances[msg.sender] - _amount;
+
+        TOKEN.safeTransfer(msg.sender, _amount);
+        emit Withdraw(msg.sender, _amount);
+    }
+
+  
+
+    ///@notice withdraw all TOKEN and harvest rewardToken
+    function withdrawAllAndHarvest(uint8 _redeemType) external {
+        _withdraw(_balanceOf(msg.sender));
+        getReward(_redeemType);
+    }
+
+ 
+    ///@notice User harvest function called from distribution (GaugeManager allows harvest on multiple gauges)
+    function getReward(address _user, uint8 _redeemType) public nonReentrant onlyDistribution updateReward(_user) {
+        uint256 reward = rewards[_user];
+        if (reward > 0) {
+            rewards[_user] = 0;
+            IERC20(rewardToken).safeApprove(rHYBR, reward);
+            IRHYBR(rHYBR).depostionEmissionsToken(reward);
+            IRHYBR(rHYBR).redeemFor(reward, _redeemType, _user);
+            emit Harvest(_user, reward);
+        }
+
+        if (gaugeRewarder != address(0)) {
+            IRewarder(gaugeRewarder).onReward(_user, _user, _balanceOf(_user));
+        }
+    }
+
+    ///@notice User harvest function
+    function getReward(uint8 _redeemType) public nonReentrant updateReward(msg.sender) {
+        uint256 reward = rewards[msg.sender];
+        if (reward > 0) {
+            rewards[msg.sender] = 0;
+            IERC20(rewardToken).safeApprove(rHYBR, reward);
+            IRHYBR(rHYBR).depostionEmissionsToken(reward);
+            IRHYBR(rHYBR).redeemFor(reward, _redeemType, msg.sender);
+            emit Harvest(msg.sender, reward);
+        }
+
+        if (gaugeRewarder != address(0)) {
+            IRewarder(gaugeRewarder).onReward(msg.sender, msg.sender, _balanceOf(msg.sender));
+        }
+    }
+
+
+
+
+
+
+
+
+    /* -----------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+                                    DISTRIBUTION
+    --------------------------------------------------------------------------------
+    --------------------------------------------------------------------------------
+    ----------------------------------------------------------------------------- */
+
+
+    /// @dev Receive rewards from distribution
+
+    function notifyRewardAmount(address token, uint256 reward) external nonReentrant isNotEmergency onlyDistribution updateReward(address(0)) {
+        require(token == address(rewardToken), "IA");
+        rewardToken.safeTransferFrom(DISTRIBUTION, address(this), reward);
+
+        if (block.timestamp >= _periodFinish) {
+            rewardRate = reward / DURATION;
+        } else {
+            uint256 remaining = _periodFinish - block.timestamp;
+            uint256 leftover = remaining * rewardRate;
+            rewardRate = (reward + leftover) / DURATION;
+        }
+
+        // Ensure the provided reward amount is not more than the balance in the contract.
+        // This keeps the reward rate in the right range, preventing overflows due to
+        // very high values of rewardRate in the earned and rewardsPerToken functions;
+        // Reward + leftover must be less than 2^256 / 10^18 to avoid overflow.
+        uint256 balance = rewardToken.balanceOf(address(this));
+        require(rewardRate <= balance / DURATION, "REWARD_HIGH");
+
+        lastUpdateTime = block.timestamp;
+        _periodFinish = block.timestamp + DURATION;
+        emit RewardAdded(reward);
+    }
+
+
+    function claimFees() external nonReentrant returns (uint256 claimed0, uint256 claimed1) {
+        return _claimFees();
+    }
+
+     function _claimFees() internal returns (uint256 claimed0, uint256 claimed1) {
+        if (!isForPair) {
+            return (0, 0);
+        }
+        address _token = address(TOKEN);
+        (claimed0, claimed1) = IPair(_token).claimFees();
+        if (claimed0 > 0 || claimed1 > 0) {
+
+            uint256 _fees0 = claimed0;
+            uint256 _fees1 = claimed1;
+
+            (address _token0, address _token1) = IPair(_token).tokens();
+
+            if (_fees0  > 0) {
+                IERC20(_token0).safeApprove(internal_bribe, 0);
+                IERC20(_token0).safeApprove(internal_bribe, _fees0);
+                IBribe(internal_bribe).notifyRewardAmount(_token0, _fees0);
+            } 
+            if (_fees1  > 0) {
+                IERC20(_token1).safeApprove(internal_bribe, 0);
+                IERC20(_token1).safeApprove(internal_bribe, _fees1);
+                IBribe(internal_bribe).notifyRewardAmount(_token1, _fees1);
+            } 
+            emit ClaimFees(msg.sender, claimed0, claimed1);
+        }
+    }
+
+  
+}
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
@@ -860,6 +1030,136 @@ interface IPairInfo {
     function isPair(address _pair) external view returns(bool);
 }
 
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity =0.7.6;
+
+import "../interfaces/IPeripheryImmutableState.sol";
+
+/// @title Immutable state
+/// @notice Immutable state used by periphery contracts
+abstract contract PeripheryImmutableState is IPeripheryImmutableState {
+    /// @inheritdoc IPeripheryImmutableState
+    address public immutable override factory;
+    /// @inheritdoc IPeripheryImmutableState
+    address public immutable override WETH9;
+
+    constructor(address _factory, address _WETH9) {
+        factory = _factory;
+        WETH9 = _WETH9;
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.4.0;
+
+/// @title FixedPoint128
+/// @notice A library for handling binary fixed point numbers, see https://en.wikipedia.org/wiki/Q_(number_format)
+library FixedPoint128 {
+    uint256 internal constant Q128 = 0x100000000000000000000000000000000;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import '../interfaces/IPermissionsRegistry.sol';
+import '../interfaces/IGaugeFactoryCL.sol';
+import './GaugeCL.sol';
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {HybraTimeLibrary} from "../libraries/HybraTimeLibrary.sol";
+
+
+interface IGaugeCL {
+    function activateEmergencyMode() external;
+    function stopEmergencyMode() external;
+    function setInternalBribe(address intbribe) external;
+}
+
+contract GaugeFactoryCL is IGaugeFactoryCL, OwnableUpgradeable {
+
+    using SafeERC20 for IERC20;
+
+    address public last_gauge;
+    address public permissionsRegistry;
+
+    address[] internal __gauges;
+    address internal rHYBR;
+
+    
+    constructor() {}
+
+    function initialize(address _permissionRegistry) initializer  public {
+        __Ownable_init();   //after deploy ownership to multisig
+        permissionsRegistry = _permissionRegistry;
+    }
+
+    function setRHYBR(address _rHYBR) external {
+        require(owner() == msg.sender, 'not owner');
+        rHYBR = _rHYBR;
+    }
+
+ 
+
+    modifier onlyAllowed() {
+        require(owner() == msg.sender || IPermissionsRegistry(permissionsRegistry).hasRole("GAUGE_ADMIN",msg.sender), 'ERR: GAUGE_ADMIN');
+        _;
+    }
+
+    function setRegistry(address _registry) external {
+        require(owner() == msg.sender, 'not owner');
+        permissionsRegistry = _registry;
+    }
+
+
+    function createGauge(address _rewardToken,address _ve,address _pool,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, 
+                        address nfpm) external returns (address) {
+        
+
+        last_gauge = address(new GaugeCL(_rewardToken,rHYBR,_ve,_pool,_distribution,_internal_bribe,_external_bribe,_isPair, nfpm, address(this)));
+        __gauges.push(last_gauge);
+        return last_gauge;
+    }
+
+
+
+    function gauges(uint256 i) external view returns(address) {
+        return __gauges[i];
+    }
+
+    modifier EmergencyCouncil() {
+        require( msg.sender == IPermissionsRegistry(permissionsRegistry).emergencyCouncil() );
+        _;
+    }
+
+    function activateEmergencyMode( address[] memory _gauges) external EmergencyCouncil {
+        uint i = 0;
+        for ( i ; i < _gauges.length; i++){
+            IGaugeCL(_gauges[i]).activateEmergencyMode();
+        }
+    }
+
+    function stopEmergencyMode( address[] memory _gauges) external EmergencyCouncil {
+        uint i = 0;
+        for ( i ; i < _gauges.length; i++){
+            IGaugeCL(_gauges[i]).stopEmergencyMode();
+        }
+    }
+
+    function setInternalBribe(address[] memory _gauges,  address[] memory int_bribe) external onlyAllowed {
+        require(_gauges.length == int_bribe.length);
+        uint i = 0;
+        for ( i ; i < _gauges.length; i++){
+            IGaugeCL(_gauges[i]).setInternalBribe(int_bribe[i]);
+        }
+    }
+
+    function length() external view returns(uint) {
+        return __gauges.length;
+    }
+
+    
+}
 pragma solidity 0.8.13;
 
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -1234,88 +1534,104 @@ contract GaugeCL is ReentrancyGuard, Ownable, IERC721Receiver {
 
 
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPairFactory {
-    function allPairsLength() external view returns (uint);
-    function isPair(address pair) external view returns (bool);
-    function allPairs(uint index) external view returns (address);
-    function pairCodeHash() external view returns (bytes32);
-    function getPair(address tokenA, address token, bool stable) external view returns (address);
-    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
-    function isGenesis(address pair) external view returns (bool);
-}
-
 // SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.7.5;
+pragma solidity =0.7.6;
 pragma abicoder v2;
 
-import "@openzeppelin/contracts/token/ERC721/IERC721Metadata.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721Enumerable.sol";
+import "contracts/core/interfaces/ICLPool.sol";
+import "contracts/core/libraries/FixedPoint128.sol";
+import "contracts/core/libraries/FullMath.sol";
 
-import "./IERC721Permit.sol";
-import "./IERC4906.sol";
-import "./IPeripheryPayments.sol";
-import "./IPeripheryImmutableState.sol";
-import "../libraries/PoolAddress.sol";
+import "./interfaces/INonfungiblePositionManager.sol";
+import "./interfaces/INonfungibleTokenPositionDescriptor.sol";
+import "./libraries/PositionKey.sol";
+import "./libraries/PoolAddress.sol";
+import "./base/LiquidityManagement.sol";
+import "./base/PeripheryImmutableState.sol";
+import "./base/Multicall.sol";
+import "./base/ERC721Permit.sol";
+import "./base/PeripheryValidation.sol";
+import "./base/SelfPermit.sol";
 
-/// @title Non-fungible token for positions
-/// @notice Wraps CL positions in a non-fungible token interface which allows for them to be transferred
-/// and authorized.
-interface INonfungiblePositionManager is
-    IPeripheryPayments,
-    IPeripheryImmutableState,
-    IERC721Metadata,
-    IERC721Enumerable,
-    IERC721Permit,
-    IERC4906
+/// @title NFT positions
+/// @notice Wraps CL positions in the ERC721 non-fungible token interface
+contract NonfungiblePositionManager is
+    INonfungiblePositionManager,
+    Multicall,
+    ERC721Permit,
+    PeripheryImmutableState,
+    LiquidityManagement,
+    PeripheryValidation,
+    SelfPermit
 {
-    /// @notice Emitted when liquidity is increased for a position NFT
-    /// @dev Also emitted when a token is minted
-    /// @param tokenId The ID of the token for which liquidity was increased
-    /// @param liquidity The amount by which liquidity for the NFT position was increased
-    /// @param amount0 The amount of token0 that was paid for the increase in liquidity
-    /// @param amount1 The amount of token1 that was paid for the increase in liquidity
-    event IncreaseLiquidity(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
-    /// @notice Emitted when liquidity is decreased for a position NFT
-    /// @param tokenId The ID of the token for which liquidity was decreased
-    /// @param liquidity The amount by which liquidity for the NFT position was decreased
-    /// @param amount0 The amount of token0 that was accounted for the decrease in liquidity
-    /// @param amount1 The amount of token1 that was accounted for the decrease in liquidity
-    event DecreaseLiquidity(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
-    /// @notice Emitted when tokens are collected for a position NFT
-    /// @dev The amounts reported may not be exactly equivalent to the amounts transferred, due to rounding behavior
-    /// @param tokenId The ID of the token for which underlying tokens were collected
-    /// @param recipient The address of the account that received the collected tokens
-    /// @param amount0 The amount of token0 owed to the position that was collected
-    /// @param amount1 The amount of token1 owed to the position that was collected
-    event Collect(uint256 indexed tokenId, address recipient, uint256 amount0, uint256 amount1);
-    /// @notice Emitted when a new Token Descriptor is set
-    /// @param tokenDescriptor Address of the new Token Descriptor
-    event TokenDescriptorChanged(address indexed tokenDescriptor);
-    /// @notice Emitted when a new Owner is set
-    /// @param owner Address of the new Owner
-    event TransferOwnership(address indexed owner);
+    // details about the cl position
+    struct Position {
+        // the nonce for permits
+        uint96 nonce;
+        // the address that is approved for spending this token
+        address operator;
+        // the ID of the pool with which this token is connected
+        uint80 poolId;
+        // the tick range of the position
+        int24 tickLower;
+        int24 tickUpper;
+        // the liquidity of the position
+        uint128 liquidity;
+        // the fee growth of the aggregate position as of the last action on the individual position
+        uint256 feeGrowthInside0LastX128;
+        uint256 feeGrowthInside1LastX128;
+        // how many uncollected tokens are owed to the position, as of the last computation
+        uint128 tokensOwed0;
+        uint128 tokensOwed1;
+    }
+    /// @dev Revert String Annotations:
+    /// NE - ERC721: approved query for nonexistent token
+    /// PS - Price slippage check
+    /// ID - Invalid token ID
+    /// ZA - Zero Address
+    /// NA - Not approved
+    /// NC - Not cleared
+    /// NO - Not Owner
 
-    /// @notice Returns the position information associated with a given token ID.
-    /// @dev Throws if the token ID is not valid.
-    /// @param tokenId The ID of the token that represents the position
-    /// @return nonce The nonce for permits
-    /// @return operator The address that is approved for spending
-    /// @return token0 The address of the token0 for a specific pool
-    /// @return token1 The address of the token1 for a specific pool
-    /// @return tickSpacing The tick spacing associated with the pool
-    /// @return tickLower The lower end of the tick range for the position
-    /// @return tickUpper The higher end of the tick range for the position
-    /// @return liquidity The liquidity of the position
-    /// @return feeGrowthInside0LastX128 The fee growth of token0 as of the last action on the individual position
-    /// @return feeGrowthInside1LastX128 The fee growth of token1 as of the last action on the individual position
-    /// @return tokensOwed0 The uncollected amount of token0 owed to the position as of the last computation
-    /// @return tokensOwed1 The uncollected amount of token1 owed to the position as of the last computation
+    /// @dev IDs of pools assigned by this contract
+    mapping(address => uint80) private _poolIds;
+
+    /// @dev Pool keys by pool ID, to save on SSTOREs for position data
+    mapping(uint80 => PoolAddress.PoolKey) private _poolIdToPoolKey;
+
+    /// @dev The token ID position data
+    mapping(uint256 => Position) private _positions;
+
+    /// @dev The ID of the next token that will be minted. Skips 0
+    uint176 private _nextId = 1;
+    /// @dev The ID of the next pool that is used for the first time. Skips 0
+    uint80 private _nextPoolId = 1;
+
+    /// @inheritdoc INonfungiblePositionManager
+    address public override owner;
+
+    /// @inheritdoc INonfungiblePositionManager
+    address public override tokenDescriptor;
+
+    /// @dev Prevents calling a function from anyone except owner
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
+    constructor(address _factory, address _WETH9, address _tokenDescriptor, string memory name, string memory symbol)
+        ERC721Permit(name, symbol, "1")
+        PeripheryImmutableState(_factory, _WETH9)
+    {
+        owner = msg.sender;
+        tokenDescriptor = _tokenDescriptor;
+    }
+
+    /// @inheritdoc INonfungiblePositionManager
     function positions(uint256 tokenId)
         external
         view
+        override
         returns (
             uint96 nonce,
             address operator,
@@ -1329,224 +1645,365 @@ interface INonfungiblePositionManager is
             uint256 feeGrowthInside1LastX128,
             uint128 tokensOwed0,
             uint128 tokensOwed1
+        )
+    {
+        Position memory position = _positions[tokenId];
+        require(position.poolId != 0, "ID");
+        PoolAddress.PoolKey memory poolKey = _poolIdToPoolKey[position.poolId];
+        return (
+            position.nonce,
+            position.operator,
+            poolKey.token0,
+            poolKey.token1,
+            poolKey.tickSpacing,
+            position.tickLower,
+            position.tickUpper,
+            position.liquidity,
+            position.feeGrowthInside0LastX128,
+            position.feeGrowthInside1LastX128,
+            position.tokensOwed0,
+            position.tokensOwed1
         );
-
-    /// @notice Returns the address of the Token Descriptor, that handles generating token URIs for Positions
-    function tokenDescriptor() external view returns (address);
-
-    /// @notice Returns the address of the Owner, that is allowed to set a new TokenDescriptor
-    function owner() external view returns (address);
-
-    struct MintParams {
-        address token0;
-        address token1;
-        int24 tickSpacing;
-        int24 tickLower;
-        int24 tickUpper;
-        uint256 amount0Desired;
-        uint256 amount1Desired;
-        uint256 amount0Min;
-        uint256 amount1Min;
-        address recipient;
-        uint256 deadline;
-        uint160 sqrtPriceX96;
     }
 
-    /// @notice Creates a new position wrapped in a NFT
-    /// @dev Call this when the pool does exist and is initialized. Note that if the pool is created but not initialized
-    /// a method does not exist, i.e. the pool is assumed to be initialized.
-    /// @param params The params necessary to mint a position, encoded as `MintParams` in calldata
-    /// @return tokenId The ID of the token that represents the minted position
-    /// @return liquidity The amount of liquidity for this position
-    /// @return amount0 The amount of token0
-    /// @return amount1 The amount of token1
+    /// @dev Caches a pool key
+    function cachePoolKey(address pool, PoolAddress.PoolKey memory poolKey) private returns (uint80 poolId) {
+        poolId = _poolIds[pool];
+        if (poolId == 0) {
+            _poolIds[pool] = (poolId = _nextPoolId++);
+            _poolIdToPoolKey[poolId] = poolKey;
+        }
+    }
+
+    /// @inheritdoc INonfungiblePositionManager
     function mint(MintParams calldata params)
         external
         payable
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+        override
+        checkDeadline(params.deadline)
+        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
+    {
+        if (params.sqrtPriceX96 != 0) {
+            ICLFactory(factory).createPool({
+                tokenA: params.token0,
+                tokenB: params.token1,
+                tickSpacing: params.tickSpacing,
+                sqrtPriceX96: params.sqrtPriceX96
+            });
+        }
+        PoolAddress.PoolKey memory poolKey =
+            PoolAddress.PoolKey({token0: params.token0, token1: params.token1, tickSpacing: params.tickSpacing});
 
-    struct IncreaseLiquidityParams {
-        uint256 tokenId;
-        uint256 amount0Desired;
-        uint256 amount1Desired;
-        uint256 amount0Min;
-        uint256 amount1Min;
-        uint256 deadline;
+        ICLPool pool = ICLPool(PoolAddress.computeAddress(factory, poolKey));
+
+        (liquidity, amount0, amount1) = addLiquidity(
+            AddLiquidityParams({
+                poolAddress: address(pool),
+                poolKey: poolKey,
+                recipient: address(this),
+                tickLower: params.tickLower,
+                tickUpper: params.tickUpper,
+                amount0Desired: params.amount0Desired,
+                amount1Desired: params.amount1Desired,
+                amount0Min: params.amount0Min,
+                amount1Min: params.amount1Min
+            })
+        );
+
+        _mint(params.recipient, (tokenId = _nextId++));
+
+        bytes32 positionKey = PositionKey.compute(address(this), params.tickLower, params.tickUpper);
+        (, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128,,) = pool.positions(positionKey);
+
+        // idempotent set
+        uint80 poolId = cachePoolKey(address(pool), poolKey);
+
+        _positions[tokenId] = Position({
+            nonce: 0,
+            operator: address(0),
+            poolId: poolId,
+            tickLower: params.tickLower,
+            tickUpper: params.tickUpper,
+            liquidity: liquidity,
+            feeGrowthInside0LastX128: feeGrowthInside0LastX128,
+            feeGrowthInside1LastX128: feeGrowthInside1LastX128,
+            tokensOwed0: 0,
+            tokensOwed1: 0
+        });
+
+        refundETH();
+
+        emit IncreaseLiquidity(tokenId, liquidity, amount0, amount1);
     }
 
-    /// @notice Increases the amount of liquidity in a position, with tokens paid by the `msg.sender`
-    /// @param params tokenId The ID of the token for which liquidity is being increased,
-    /// amount0Desired The desired amount of token0 to be spent,
-    /// amount1Desired The desired amount of token1 to be spent,
-    /// amount0Min The minimum amount of token0 to spend, which serves as a slippage check,
-    /// amount1Min The minimum amount of token1 to spend, which serves as a slippage check,
-    /// deadline The time by which the transaction must be included to effect the change
-    /// @return liquidity The new liquidity amount as a result of the increase
-    /// @return amount0 The amount of token0 to acheive resulting liquidity
-    /// @return amount1 The amount of token1 to acheive resulting liquidity
+    modifier isAuthorizedForToken(uint256 tokenId) {
+        require(_isApprovedOrOwner(msg.sender, tokenId));
+        _;
+    }
+
+    function tokenURI(uint256 tokenId) public view override(ERC721, IERC721Metadata) returns (string memory) {
+        require(_exists(tokenId));
+        return INonfungibleTokenPositionDescriptor(tokenDescriptor).tokenURI(this, tokenId);
+    }
+
+    // save bytecode by removing implementation of unused method
+    function baseURI() public pure override returns (string memory) {}
+
+    /// @inheritdoc INonfungiblePositionManager
     function increaseLiquidity(IncreaseLiquidityParams calldata params)
         external
         payable
-        returns (uint128 liquidity, uint256 amount0, uint256 amount1);
+        override
+        checkDeadline(params.deadline)
+        returns (uint128 liquidity, uint256 amount0, uint256 amount1)
+    {
+        Position storage position = _positions[params.tokenId];
 
-    struct DecreaseLiquidityParams {
-        uint256 tokenId;
-        uint128 liquidity;
-        uint256 amount0Min;
-        uint256 amount1Min;
-        uint256 deadline;
+        PoolAddress.PoolKey memory poolKey = _poolIdToPoolKey[position.poolId];
+
+        ICLPool pool = ICLPool(PoolAddress.computeAddress(factory, poolKey));
+
+        address gauge = pool.gauge();
+        bool isStaked = ownerOf(params.tokenId) == gauge;
+        if (isStaked) require(msg.sender == gauge, "NG");
+
+        (liquidity, amount0, amount1) = addLiquidity(
+            AddLiquidityParams({
+                poolAddress: address(pool),
+                poolKey: poolKey,
+                tickLower: position.tickLower,
+                tickUpper: position.tickUpper,
+                amount0Desired: params.amount0Desired,
+                amount1Desired: params.amount1Desired,
+                amount0Min: params.amount0Min,
+                amount1Min: params.amount1Min,
+                recipient: isStaked ? gauge : address(this)
+            })
+        );
+
+        bytes32 positionKey =
+            PositionKey.compute(isStaked ? gauge : address(this), position.tickLower, position.tickUpper);
+
+        // this is now updated to the current transaction
+        (, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128,,) = pool.positions(positionKey);
+
+        if (!isStaked) {
+            position.tokensOwed0 += uint128(
+                FullMath.mulDiv(
+                    feeGrowthInside0LastX128 - position.feeGrowthInside0LastX128, position.liquidity, FixedPoint128.Q128
+                )
+            );
+            position.tokensOwed1 += uint128(
+                FullMath.mulDiv(
+                    feeGrowthInside1LastX128 - position.feeGrowthInside1LastX128, position.liquidity, FixedPoint128.Q128
+                )
+            );
+        }
+
+        position.feeGrowthInside0LastX128 = feeGrowthInside0LastX128;
+        position.feeGrowthInside1LastX128 = feeGrowthInside1LastX128;
+        position.liquidity += liquidity;
+
+        refundETH();
+
+        emit MetadataUpdate(params.tokenId);
+        emit IncreaseLiquidity(params.tokenId, liquidity, amount0, amount1);
     }
 
-    /// @notice Decreases the amount of liquidity in a position and accounts it to the position
-    /// @param params tokenId The ID of the token for which liquidity is being decreased,
-    /// amount The amount by which liquidity will be decreased,
-    /// amount0Min The minimum amount of token0 that should be accounted for the burned liquidity,
-    /// amount1Min The minimum amount of token1 that should be accounted for the burned liquidity,
-    /// deadline The time by which the transaction must be included to effect the change
-    /// @return amount0 The amount of token0 accounted to the position's tokens owed
-    /// @return amount1 The amount of token1 accounted to the position's tokens owed
-    /// @dev The use of this function can cause a loss to users of the NonfungiblePositionManager
-    /// @dev for tokens that have very high decimals.
-    /// @dev The amount of tokens necessary for the loss is: 3.4028237e+38.
-    /// @dev This is equivalent to 1e20 value with 18 decimals.
+    /// @inheritdoc INonfungiblePositionManager
     function decreaseLiquidity(DecreaseLiquidityParams calldata params)
         external
         payable
-        returns (uint256 amount0, uint256 amount1);
+        override
+        isAuthorizedForToken(params.tokenId)
+        checkDeadline(params.deadline)
+        returns (uint256 amount0, uint256 amount1)
+    {
+        require(params.liquidity > 0);
+        Position storage position = _positions[params.tokenId];
 
-    struct CollectParams {
-        uint256 tokenId;
-        address recipient;
-        uint128 amount0Max;
-        uint128 amount1Max;
+        uint128 positionLiquidity = position.liquidity;
+        require(positionLiquidity >= params.liquidity);
+
+        PoolAddress.PoolKey memory poolKey = _poolIdToPoolKey[position.poolId];
+        ICLPool pool = ICLPool(PoolAddress.computeAddress(factory, poolKey));
+
+        address gauge = pool.gauge();
+        bool isStaked = ownerOf(params.tokenId) == gauge;
+        if (!isStaked) {
+            (amount0, amount1) = pool.burn(position.tickLower, position.tickUpper, params.liquidity);
+        } else {
+            (amount0, amount1) = pool.burn(position.tickLower, position.tickUpper, params.liquidity, gauge);
+        }
+
+        require(amount0 >= params.amount0Min && amount1 >= params.amount1Min, "PS");
+
+        bytes32 positionKey =
+            PositionKey.compute(isStaked ? gauge : address(this), position.tickLower, position.tickUpper);
+        // this is now updated to the current transaction
+        (, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128,,) = pool.positions(positionKey);
+
+        /// @dev Casting to u128 and the sum of tokensOwed overflow can cause a loss to users.
+        /// @dev This is more probable for tokens that have very high decimals.
+        /// @dev The amount of tokens necessary for the loss is: 3.4028237e+38.
+        position.tokensOwed0 += uint128(amount0);
+        position.tokensOwed1 += uint128(amount1);
+
+        if (!isStaked) {
+            position.tokensOwed0 += uint128(
+                FullMath.mulDiv(
+                    feeGrowthInside0LastX128 - position.feeGrowthInside0LastX128, positionLiquidity, FixedPoint128.Q128
+                )
+            );
+            position.tokensOwed1 += uint128(
+                FullMath.mulDiv(
+                    feeGrowthInside1LastX128 - position.feeGrowthInside1LastX128, positionLiquidity, FixedPoint128.Q128
+                )
+            );
+        }
+
+        position.feeGrowthInside0LastX128 = feeGrowthInside0LastX128;
+        position.feeGrowthInside1LastX128 = feeGrowthInside1LastX128;
+        // subtraction is safe because we checked positionLiquidity is gte params.liquidity
+        position.liquidity = positionLiquidity - params.liquidity;
+
+        emit MetadataUpdate(params.tokenId);
+        emit DecreaseLiquidity(params.tokenId, params.liquidity, amount0, amount1);
     }
 
-    /// @notice Collects up to a maximum amount of fees owed to a specific position to the recipient
-    /// @notice Used to update staked positions before deposit and withdraw
-    /// @param params tokenId The ID of the NFT for which tokens are being collected,
-    /// recipient The account that should receive the tokens,
-    /// amount0Max The maximum amount of token0 to collect,
-    /// amount1Max The maximum amount of token1 to collect
-    /// @return amount0 The amount of fees collected in token0
-    /// @return amount1 The amount of fees collected in token1
-    function collect(CollectParams calldata params) external payable returns (uint256 amount0, uint256 amount1);
-
-    /// @notice Burns a token ID, which deletes it from the NFT contract. The token must have 0 liquidity and all tokens
-    /// must be collected first.
-    /// @param tokenId The ID of the token that is being burned
-    function burn(uint256 tokenId) external payable;
-
-    /// @notice Sets a new Token Descriptor
-    /// @param _tokenDescriptor Address of the new Token Descriptor to be chosen
-    function setTokenDescriptor(address _tokenDescriptor) external;
-
-    /// @notice Sets a new Owner address
-    /// @param _owner Address of the new Owner to be chosen
-    function setOwner(address _owner) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IFactoryRegistry {
-    function approve(address poolFactory, address votingRewardsFactory, address gaugeFactory) external;
-
-    function isPoolFactoryApproved(address poolFactory) external returns (bool);
-
-    function factoriesToPoolFactory(address poolFactory)
+    /// @inheritdoc INonfungiblePositionManager
+    function collect(CollectParams calldata params)
         external
-        returns (address votingRewardsFactory, address gaugeFactory);
+        payable
+        override
+        isAuthorizedForToken(params.tokenId)
+        returns (uint256 amount0, uint256 amount1)
+    {
+        require(params.amount0Max > 0 || params.amount1Max > 0);
+        // allow collecting to the nft position manager address with address 0
+        address recipient = params.recipient == address(0) ? address(this) : params.recipient;
+
+        Position storage position = _positions[params.tokenId];
+
+        PoolAddress.PoolKey memory poolKey = _poolIdToPoolKey[position.poolId];
+
+        ICLPool pool = ICLPool(PoolAddress.computeAddress(factory, poolKey));
+
+        (uint128 tokensOwed0, uint128 tokensOwed1) = (position.tokensOwed0, position.tokensOwed1);
+
+        address gauge = pool.gauge();
+        bool isStaked = ownerOf(params.tokenId) == gauge;
+
+        // trigger an update of the position fees owed and fee growth snapshots if it has any liquidity
+        if (position.liquidity > 0) {
+            uint256 feeGrowthInside0LastX128;
+            uint256 feeGrowthInside1LastX128;
+            if (!isStaked) {
+                pool.burn(position.tickLower, position.tickUpper, 0);
+
+                (, feeGrowthInside0LastX128, feeGrowthInside1LastX128,,) =
+                    pool.positions(PositionKey.compute(address(this), position.tickLower, position.tickUpper));
+
+                tokensOwed0 += uint128(
+                    FullMath.mulDiv(
+                        feeGrowthInside0LastX128 - position.feeGrowthInside0LastX128,
+                        position.liquidity,
+                        FixedPoint128.Q128
+                    )
+                );
+                tokensOwed1 += uint128(
+                    FullMath.mulDiv(
+                        feeGrowthInside1LastX128 - position.feeGrowthInside1LastX128,
+                        position.liquidity,
+                        FixedPoint128.Q128
+                    )
+                );
+            } else {
+                pool.burn(position.tickLower, position.tickUpper, 0, gauge);
+
+                (, feeGrowthInside0LastX128, feeGrowthInside1LastX128,,) =
+                    pool.positions(PositionKey.compute(gauge, position.tickLower, position.tickUpper));
+            }
+
+            position.feeGrowthInside0LastX128 = feeGrowthInside0LastX128;
+            position.feeGrowthInside1LastX128 = feeGrowthInside1LastX128;
+        }
+
+        // compute the arguments to give to the pool#collect method
+        (uint128 amount0Collect, uint128 amount1Collect) = (
+            params.amount0Max > tokensOwed0 ? tokensOwed0 : params.amount0Max,
+            params.amount1Max > tokensOwed1 ? tokensOwed1 : params.amount1Max
+        );
+
+        // the actual amounts collected are returned
+        if (!isStaked) {
+            (amount0, amount1) =
+                pool.collect(recipient, position.tickLower, position.tickUpper, amount0Collect, amount1Collect);
+        } else {
+            (amount0, amount1) =
+                pool.collect(recipient, position.tickLower, position.tickUpper, amount0Collect, amount1Collect, gauge);
+        }
+
+        // sometimes there will be a few less wei than expected due to rounding down in core, but we just subtract the full amount expected
+        // instead of the actual amount so we can burn the token
+        (position.tokensOwed0, position.tokensOwed1) = (tokensOwed0 - amount0Collect, tokensOwed1 - amount1Collect);
+
+        emit MetadataUpdate(params.tokenId);
+        emit Collect(params.tokenId, recipient, amount0Collect, amount1Collect);
+    }
+
+    /// @inheritdoc INonfungiblePositionManager
+    function burn(uint256 tokenId) external payable override isAuthorizedForToken(tokenId) {
+        Position storage position = _positions[tokenId];
+        require(position.liquidity == 0 && position.tokensOwed0 == 0 && position.tokensOwed1 == 0, "NC");
+        delete _positions[tokenId];
+        _burn(tokenId);
+    }
+
+    function _getAndIncrementNonce(uint256 tokenId) internal override returns (uint256) {
+        return uint256(_positions[tokenId].nonce++);
+    }
+
+    /// @inheritdoc IERC721
+    function getApproved(uint256 tokenId) public view override(ERC721, IERC721) returns (address) {
+        require(_exists(tokenId), "NE");
+
+        return _positions[tokenId].operator;
+    }
+
+    /// @dev Overrides _approve to use the operator in the position, which is packed with the position permit nonce
+    function _approve(address to, uint256 tokenId) internal override(ERC721) {
+        _positions[tokenId].operator = to;
+        emit Approval(ownerOf(tokenId), to, tokenId);
+    }
+
+    /// @inheritdoc INonfungiblePositionManager
+    function setTokenDescriptor(address _tokenDescriptor) external override onlyOwner {
+        require(_tokenDescriptor != address(0));
+        tokenDescriptor = _tokenDescriptor;
+        emit BatchMetadataUpdate(0, type(uint256).max);
+        emit TokenDescriptorChanged(_tokenDescriptor);
+    }
+
+    /// @inheritdoc INonfungiblePositionManager
+    function setOwner(address _owner) external override onlyOwner {
+        require(_owner != address(0));
+        owner = _owner;
+        emit TransferOwnership(_owner);
+    }
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IGaugeFactory {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
-}
-
-pragma solidity 0.8.13;
-
-library VoterFactoryLib {
-    struct Data {
-        address[] pairFactories;
-        address[] gaugeFactories;
-        mapping(address => bool) isFactory;
-        mapping(address => bool) isGaugeFactory;
-    }
-
-    event AddPairFactories(address indexed pairfactory);
-    event AddGaugeFactories(address indexed gaugefactory);
-    event SetGaugeFactory(address indexed old, address indexed latest);
-    event SetPairFactory(address indexed old, address indexed latest);
-
-
-    function addPairFactory(Data storage self, address _pairFactory) external {
-        require(_pairFactory != address(0) , 'addr0');
-        require(!self.isFactory[_pairFactory], "fact");
-        require(_pairFactory.code.length > 0, "!contract");
-        self.pairFactories.push(_pairFactory);
-        self.isFactory[_pairFactory] = true;
-        emit AddPairFactories(_pairFactory);
-    }
-
-    function addGaugeFactory(Data storage self, address _gaugeFactory) external {
-        require(_gaugeFactory != address(0) , 'addr0');
-        require(!self.isGaugeFactory[_gaugeFactory], "gFact");
-        require(_gaugeFactory.code.length > 0, "!contract");
-        self.gaugeFactories.push(_gaugeFactory);
-        self.isGaugeFactory[_gaugeFactory] = true;
-        emit AddGaugeFactories(_gaugeFactory);
-    }
-
-    function replacePairFactory(Data storage self, address _pairFactory, uint256 _pos) external {
-        require(_pairFactory != address(0), 'addr0');
-        require(!self.isFactory[_pairFactory], 'fact');
-        require(_pairFactory.code.length > 0, "!contract");
-        address oldPF = self.pairFactories[_pos];
-        self.isFactory[oldPF] = false;
-        self.pairFactories[_pos] = _pairFactory;
-        self.isFactory[_pairFactory] = true;
-
-        emit SetPairFactory(oldPF, _pairFactory);
-    }
-
-    function replaceGaugeFactory(Data storage self, address _gaugeFactory, uint256 _pos) external {
-        require(_gaugeFactory != address(0) , 'addr0');
-        require(!self.isGaugeFactory[_gaugeFactory], 'gFact');
-        require(_gaugeFactory.code.length > 0, "!contract");
-        address oldGF = self.gaugeFactories[_pos];
-        self.isGaugeFactory[oldGF] = false;
-        self.gaugeFactories[_pos] = _gaugeFactory;
-        self.isGaugeFactory[_gaugeFactory] = true;
-
-        emit SetGaugeFactory(oldGF, _gaugeFactory);
-    }
-
-    function removePairFactory(Data storage self, uint256 _pos) external {
-        address oldPF = self.pairFactories[_pos];
-        require(self.isFactory[oldPF], "!exists");
-        self.isFactory[oldPF] = false;
-        self.pairFactories[_pos] = address(0);
-        emit SetPairFactory(oldPF, address(0));
-    }
-
-    function removeGaugeFactory(Data storage self, uint256 _pos) external {
-        address oldGF = self.gaugeFactories[_pos];
-        require(self.isGaugeFactory[oldGF], "!exists");
-        self.isGaugeFactory[oldGF] = false;
-        self.gaugeFactories[_pos] = address(0);
-        emit SetGaugeFactory(oldGF, address(0));
-    }
-
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IVeArtProxy {
-    function _tokenURI(uint _tokenId, uint _balanceOf, uint _locked_end, uint _value) external pure returns (string memory output);
+interface IPairFactory {
+    function allPairsLength() external view returns (uint);
+    function isPair(address pair) external view returns (bool);
+    function allPairs(uint index) external view returns (address);
+    function pairCodeHash() external view returns (bytes32);
+    function getPair(address tokenA, address token, bool stable) external view returns (address);
+    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
+    function isGenesis(address pair) external view returns (bool);
 }
 
 // SPDX-License-Identifier: MIT
@@ -1913,6 +2370,94 @@ contract Bribe is ReentrancyGuard {
     event Recovered(address indexed token, uint256 amount);
 }
 
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0 <0.8.0;
+
+import "./FullMath.sol";
+import "./FixedPoint128.sol";
+import "./LiquidityMath.sol";
+
+/// @title Position
+/// @notice Positions represent an owner address' liquidity between a lower and upper tick boundary
+/// @dev Positions store additional state for tracking fees owed to the position
+library Position {
+    // info stored for each user's position
+    struct Info {
+        // the amount of liquidity owned by this position
+        uint128 liquidity;
+        // fee growth per unit of liquidity as of the last update to liquidity or fees owed
+        uint256 feeGrowthInside0LastX128;
+        uint256 feeGrowthInside1LastX128;
+        // the fees owed to the position owner in token0/token1
+        uint128 tokensOwed0;
+        uint128 tokensOwed1;
+    }
+
+    /// @notice Returns the Info struct of a position, given an owner and position boundaries
+    /// @param self The mapping containing all user positions
+    /// @param owner The address of the position owner
+    /// @param tickLower The lower tick boundary of the position
+    /// @param tickUpper The upper tick boundary of the position
+    /// @return position The position info struct of the given owners' position
+    function get(mapping(bytes32 => Info) storage self, address owner, int24 tickLower, int24 tickUpper)
+        internal
+        view
+        returns (Position.Info storage position)
+    {
+        position = self[keccak256(abi.encodePacked(owner, tickLower, tickUpper))];
+    }
+
+    /// @notice Credits accumulated fees to a user's position
+    /// @param self The individual position to update
+    /// @param liquidityDelta The change in pool liquidity as a result of the position update
+    /// @param feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
+    /// @param feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
+    /// @param staked Signifies if the position is staked in the gauge or not
+    function update(
+        Info storage self,
+        int128 liquidityDelta,
+        uint256 feeGrowthInside0X128,
+        uint256 feeGrowthInside1X128,
+        bool staked
+    ) internal {
+        Info memory _self = self;
+
+        uint128 liquidityNext;
+        if (liquidityDelta == 0) {
+            require(_self.liquidity > 0, "NP"); // disallow pokes for 0 liquidity positions
+            liquidityNext = _self.liquidity;
+        } else {
+            liquidityNext = LiquidityMath.addDelta(_self.liquidity, liquidityDelta);
+        }
+
+        uint128 tokensOwed0;
+        uint128 tokensOwed1;
+        if (!staked) {
+            // calculate accumulated fees
+            tokensOwed0 = uint128(
+                FullMath.mulDiv(
+                    feeGrowthInside0X128 - _self.feeGrowthInside0LastX128, _self.liquidity, FixedPoint128.Q128
+                )
+            );
+            tokensOwed1 = uint128(
+                FullMath.mulDiv(
+                    feeGrowthInside1X128 - _self.feeGrowthInside1LastX128, _self.liquidity, FixedPoint128.Q128
+                )
+            );
+        }
+
+        // update the position
+        if (liquidityDelta != 0) self.liquidity = liquidityNext;
+        self.feeGrowthInside0LastX128 = feeGrowthInside0X128;
+        self.feeGrowthInside1LastX128 = feeGrowthInside1X128;
+        if (tokensOwed0 > 0 || tokensOwed1 > 0) {
+            // overflow is acceptable, have to withdraw before you hit type(uint128).max fees
+            self.tokensOwed0 += tokensOwed0;
+            self.tokensOwed1 += tokensOwed1;
+        }
+    }
+}
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
@@ -1933,88 +2478,6 @@ interface ITokenHandler {
     function whiteListedTokens() external view returns(address[] memory tokens);
     function connectorTokens() external view returns(address[] memory tokens);
 }
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-library HybraTimeLibrary {
-
-    // for testnet
-    uint256 internal constant WEEK = 1800;
-    uint internal constant NO_VOTING_WINDOW = 300;
-    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
-    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
-    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
-
-    // uint256 internal constant WEEK = 7 * 86400;
-    // uint internal constant NO_VOTING_WINDOW = 3600;
-    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
-    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
-    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
-
-    /// @dev Returns start of epoch based on current timestamp
-    function epochStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK);
-        }
-    }
-
-    /// @dev Returns start of next epoch / end of current epoch
-    function epochNext(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK;
-        }
-    }
-
-    /// @dev Returns start of voting window
-    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
-        }
-    }
-
-    /// @dev Returns end of voting window / beginning of unrestricted voting window
-    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
-        }
-    }
-
-    /// @dev Returns the status if it is the last hour of the epoch
-    function isLastHour(uint256 timestamp) internal pure returns (bool) {
-        // return block.timestamp % 7 days >= 6 days + 23 hours;
-        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
-        && timestamp < HybraTimeLibrary.epochNext(timestamp);
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function epochMultiples(uint256 duration) internal pure returns (uint256) {
-        unchecked {
-            return (duration / WEEK) * WEEK;
-        }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
-        unchecked {
-            return  endTime - WEEK <= timestamp && timestamp < endTime;
-        }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
-        }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
-        }
-    }
-}
-
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
@@ -2099,6 +2562,804 @@ interface IRHYBR {
     function rebase() external;
 }
 // SPDX-License-Identifier: MIT
+pragma solidity >=0.4.0 <0.8.0;
+
+/// @title Contains 512-bit math functions
+/// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision
+/// @dev Handles "phantom overflow" i.e., allows multiplication and division where an intermediate value overflows 256 bits
+library FullMath {
+    /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
+    /// @param a The multiplicand
+    /// @param b The multiplier
+    /// @param denominator The divisor
+    /// @return result The 256-bit result
+    /// @dev Credit to Remco Bloemen under MIT license https://xn--2-umb.com/21/muldiv
+    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        // 512-bit multiply [prod1 prod0] = a * b
+        // Compute the product mod 2**256 and mod 2**256 - 1
+        // then use the Chinese Remainder Theorem to reconstruct
+        // the 512 bit result. The result is stored in two 256
+        // variables such that product = prod1 * 2**256 + prod0
+        uint256 prod0; // Least significant 256 bits of the product
+        uint256 prod1; // Most significant 256 bits of the product
+        assembly {
+            let mm := mulmod(a, b, not(0))
+            prod0 := mul(a, b)
+            prod1 := sub(sub(mm, prod0), lt(mm, prod0))
+        }
+
+        // Handle non-overflow cases, 256 by 256 division
+        if (prod1 == 0) {
+            require(denominator > 0);
+            assembly {
+                result := div(prod0, denominator)
+            }
+            return result;
+        }
+
+        // Make sure the result is less than 2**256.
+        // Also prevents denominator == 0
+        require(denominator > prod1);
+
+        ///////////////////////////////////////////////
+        // 512 by 256 division.
+        ///////////////////////////////////////////////
+
+        // Make division exact by subtracting the remainder from [prod1 prod0]
+        // Compute remainder using mulmod
+        uint256 remainder;
+        assembly {
+            remainder := mulmod(a, b, denominator)
+        }
+        // Subtract 256 bit number from 512 bit number
+        assembly {
+            prod1 := sub(prod1, gt(remainder, prod0))
+            prod0 := sub(prod0, remainder)
+        }
+
+        // Factor powers of two out of denominator
+        // Compute largest power of two divisor of denominator.
+        // Always >= 1.
+        uint256 twos = -denominator & denominator;
+        // Divide denominator by power of two
+        assembly {
+            denominator := div(denominator, twos)
+        }
+
+        // Divide [prod1 prod0] by the factors of two
+        assembly {
+            prod0 := div(prod0, twos)
+        }
+        // Shift in bits from prod1 into prod0. For this we need
+        // to flip `twos` such that it is 2**256 / twos.
+        // If twos is zero, then it becomes one
+        assembly {
+            twos := add(div(sub(0, twos), twos), 1)
+        }
+        prod0 |= prod1 * twos;
+
+        // Invert denominator mod 2**256
+        // Now that denominator is an odd number, it has an inverse
+        // modulo 2**256 such that denominator * inv = 1 mod 2**256.
+        // Compute the inverse by starting with a seed that is correct
+        // correct for four bits. That is, denominator * inv = 1 mod 2**4
+        uint256 inv = (3 * denominator) ^ 2;
+        // Now use Newton-Raphson iteration to improve the precision.
+        // Thanks to Hensel's lifting lemma, this also works in modular
+        // arithmetic, doubling the correct bits in each step.
+        inv *= 2 - denominator * inv; // inverse mod 2**8
+        inv *= 2 - denominator * inv; // inverse mod 2**16
+        inv *= 2 - denominator * inv; // inverse mod 2**32
+        inv *= 2 - denominator * inv; // inverse mod 2**64
+        inv *= 2 - denominator * inv; // inverse mod 2**128
+        inv *= 2 - denominator * inv; // inverse mod 2**256
+
+        // Because the division is now exact we can divide by multiplying
+        // with the modular inverse of denominator. This will give us the
+        // correct result modulo 2**256. Since the precoditions guarantee
+        // that the outcome is less than 2**256, this is the final result.
+        // We don't need to compute the high bits of the result and prod1
+        // is no longer required.
+        result = prod0 * inv;
+        return result;
+    }
+
+    /// @notice Calculates ceil(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
+    /// @param a The multiplicand
+    /// @param b The multiplier
+    /// @param denominator The divisor
+    /// @return result The 256-bit result
+    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
+        result = mulDiv(a, b, denominator);
+        if (mulmod(a, b, denominator) > 0) {
+            require(result < type(uint256).max);
+            result++;
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "./IGaugeManager.sol";
+
+interface IGaugeFactoryCL {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
+}
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.7.5;
+pragma abicoder v2;
+
+import "@openzeppelin/contracts/token/ERC721/IERC721Metadata.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Enumerable.sol";
+
+import "./IERC721Permit.sol";
+import "./IERC4906.sol";
+import "./IPeripheryPayments.sol";
+import "./IPeripheryImmutableState.sol";
+import "../libraries/PoolAddress.sol";
+
+/// @title Non-fungible token for positions
+/// @notice Wraps CL positions in a non-fungible token interface which allows for them to be transferred
+/// and authorized.
+interface INonfungiblePositionManager is
+    IPeripheryPayments,
+    IPeripheryImmutableState,
+    IERC721Metadata,
+    IERC721Enumerable,
+    IERC721Permit,
+    IERC4906
+{
+    /// @notice Emitted when liquidity is increased for a position NFT
+    /// @dev Also emitted when a token is minted
+    /// @param tokenId The ID of the token for which liquidity was increased
+    /// @param liquidity The amount by which liquidity for the NFT position was increased
+    /// @param amount0 The amount of token0 that was paid for the increase in liquidity
+    /// @param amount1 The amount of token1 that was paid for the increase in liquidity
+    event IncreaseLiquidity(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    /// @notice Emitted when liquidity is decreased for a position NFT
+    /// @param tokenId The ID of the token for which liquidity was decreased
+    /// @param liquidity The amount by which liquidity for the NFT position was decreased
+    /// @param amount0 The amount of token0 that was accounted for the decrease in liquidity
+    /// @param amount1 The amount of token1 that was accounted for the decrease in liquidity
+    event DecreaseLiquidity(uint256 indexed tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    /// @notice Emitted when tokens are collected for a position NFT
+    /// @dev The amounts reported may not be exactly equivalent to the amounts transferred, due to rounding behavior
+    /// @param tokenId The ID of the token for which underlying tokens were collected
+    /// @param recipient The address of the account that received the collected tokens
+    /// @param amount0 The amount of token0 owed to the position that was collected
+    /// @param amount1 The amount of token1 owed to the position that was collected
+    event Collect(uint256 indexed tokenId, address recipient, uint256 amount0, uint256 amount1);
+    /// @notice Emitted when a new Token Descriptor is set
+    /// @param tokenDescriptor Address of the new Token Descriptor
+    event TokenDescriptorChanged(address indexed tokenDescriptor);
+    /// @notice Emitted when a new Owner is set
+    /// @param owner Address of the new Owner
+    event TransferOwnership(address indexed owner);
+
+    /// @notice Returns the position information associated with a given token ID.
+    /// @dev Throws if the token ID is not valid.
+    /// @param tokenId The ID of the token that represents the position
+    /// @return nonce The nonce for permits
+    /// @return operator The address that is approved for spending
+    /// @return token0 The address of the token0 for a specific pool
+    /// @return token1 The address of the token1 for a specific pool
+    /// @return tickSpacing The tick spacing associated with the pool
+    /// @return tickLower The lower end of the tick range for the position
+    /// @return tickUpper The higher end of the tick range for the position
+    /// @return liquidity The liquidity of the position
+    /// @return feeGrowthInside0LastX128 The fee growth of token0 as of the last action on the individual position
+    /// @return feeGrowthInside1LastX128 The fee growth of token1 as of the last action on the individual position
+    /// @return tokensOwed0 The uncollected amount of token0 owed to the position as of the last computation
+    /// @return tokensOwed1 The uncollected amount of token1 owed to the position as of the last computation
+    function positions(uint256 tokenId)
+        external
+        view
+        returns (
+            uint96 nonce,
+            address operator,
+            address token0,
+            address token1,
+            int24 tickSpacing,
+            int24 tickLower,
+            int24 tickUpper,
+            uint128 liquidity,
+            uint256 feeGrowthInside0LastX128,
+            uint256 feeGrowthInside1LastX128,
+            uint128 tokensOwed0,
+            uint128 tokensOwed1
+        );
+
+    /// @notice Returns the address of the Token Descriptor, that handles generating token URIs for Positions
+    function tokenDescriptor() external view returns (address);
+
+    /// @notice Returns the address of the Owner, that is allowed to set a new TokenDescriptor
+    function owner() external view returns (address);
+
+    struct MintParams {
+        address token0;
+        address token1;
+        int24 tickSpacing;
+        int24 tickLower;
+        int24 tickUpper;
+        uint256 amount0Desired;
+        uint256 amount1Desired;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        address recipient;
+        uint256 deadline;
+        uint160 sqrtPriceX96;
+    }
+
+    /// @notice Creates a new position wrapped in a NFT
+    /// @dev Call this when the pool does exist and is initialized. Note that if the pool is created but not initialized
+    /// a method does not exist, i.e. the pool is assumed to be initialized.
+    /// @param params The params necessary to mint a position, encoded as `MintParams` in calldata
+    /// @return tokenId The ID of the token that represents the minted position
+    /// @return liquidity The amount of liquidity for this position
+    /// @return amount0 The amount of token0
+    /// @return amount1 The amount of token1
+    function mint(MintParams calldata params)
+        external
+        payable
+        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    struct IncreaseLiquidityParams {
+        uint256 tokenId;
+        uint256 amount0Desired;
+        uint256 amount1Desired;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        uint256 deadline;
+    }
+
+    /// @notice Increases the amount of liquidity in a position, with tokens paid by the `msg.sender`
+    /// @param params tokenId The ID of the token for which liquidity is being increased,
+    /// amount0Desired The desired amount of token0 to be spent,
+    /// amount1Desired The desired amount of token1 to be spent,
+    /// amount0Min The minimum amount of token0 to spend, which serves as a slippage check,
+    /// amount1Min The minimum amount of token1 to spend, which serves as a slippage check,
+    /// deadline The time by which the transaction must be included to effect the change
+    /// @return liquidity The new liquidity amount as a result of the increase
+    /// @return amount0 The amount of token0 to acheive resulting liquidity
+    /// @return amount1 The amount of token1 to acheive resulting liquidity
+    function increaseLiquidity(IncreaseLiquidityParams calldata params)
+        external
+        payable
+        returns (uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    struct DecreaseLiquidityParams {
+        uint256 tokenId;
+        uint128 liquidity;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        uint256 deadline;
+    }
+
+    /// @notice Decreases the amount of liquidity in a position and accounts it to the position
+    /// @param params tokenId The ID of the token for which liquidity is being decreased,
+    /// amount The amount by which liquidity will be decreased,
+    /// amount0Min The minimum amount of token0 that should be accounted for the burned liquidity,
+    /// amount1Min The minimum amount of token1 that should be accounted for the burned liquidity,
+    /// deadline The time by which the transaction must be included to effect the change
+    /// @return amount0 The amount of token0 accounted to the position's tokens owed
+    /// @return amount1 The amount of token1 accounted to the position's tokens owed
+    /// @dev The use of this function can cause a loss to users of the NonfungiblePositionManager
+    /// @dev for tokens that have very high decimals.
+    /// @dev The amount of tokens necessary for the loss is: 3.4028237e+38.
+    /// @dev This is equivalent to 1e20 value with 18 decimals.
+    function decreaseLiquidity(DecreaseLiquidityParams calldata params)
+        external
+        payable
+        returns (uint256 amount0, uint256 amount1);
+
+    struct CollectParams {
+        uint256 tokenId;
+        address recipient;
+        uint128 amount0Max;
+        uint128 amount1Max;
+    }
+
+    /// @notice Collects up to a maximum amount of fees owed to a specific position to the recipient
+    /// @notice Used to update staked positions before deposit and withdraw
+    /// @param params tokenId The ID of the NFT for which tokens are being collected,
+    /// recipient The account that should receive the tokens,
+    /// amount0Max The maximum amount of token0 to collect,
+    /// amount1Max The maximum amount of token1 to collect
+    /// @return amount0 The amount of fees collected in token0
+    /// @return amount1 The amount of fees collected in token1
+    function collect(CollectParams calldata params) external payable returns (uint256 amount0, uint256 amount1);
+
+    /// @notice Burns a token ID, which deletes it from the NFT contract. The token must have 0 liquidity and all tokens
+    /// must be collected first.
+    /// @param tokenId The ID of the token that is being burned
+    function burn(uint256 tokenId) external payable;
+
+    /// @notice Sets a new Token Descriptor
+    /// @param _tokenDescriptor Address of the new Token Descriptor to be chosen
+    function setTokenDescriptor(address _tokenDescriptor) external;
+
+    /// @notice Sets a new Owner address
+    /// @param _owner Address of the new Owner to be chosen
+    function setOwner(address _owner) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+
+library VotingDelegationLib {
+    /// @notice A checkpoint for marking delegated tokenIds from a given timestamp
+    struct Checkpoint {
+        uint timestamp;
+        uint[] tokenIds;
+    }
+
+    // A struct that holds all checkpoint data for different accounts.
+    // The calling contract will include one instance of this struct in storage.
+    struct Data {
+        // For each account, store a mapping from checkpoint index to Checkpoint.
+        mapping(address => mapping(uint32 => Checkpoint)) checkpoints;
+        // For each account, store the number of checkpoints.
+        mapping(address => uint32) numCheckpoints;
+    }
+
+    struct TokenHelpers {
+        function(uint) view returns (address) ownerOfFn;
+        function(address) view returns (uint) ownerToNFTokenCountFn;
+        function(address, uint) view returns (uint) tokenOfOwnerByIndex;
+    }
+
+    uint public constant MAX_DELEGATES = 1024; // avoid too much gas
+    /**
+     * @notice Returns the checkpoint index to write for an account.
+     * If the most recent checkpoint was created in the current timestamp, returns that index.
+     * Otherwise, returns the current number of checkpoints (i.e. a new checkpoint index).
+     */
+    function findCheckpointToWrite(
+        Data storage self,
+        address account,
+        uint256 currentTimestamp
+    ) internal view returns (uint32) {
+        uint32 n = self.numCheckpoints[account];
+        if (n > 0 && self.checkpoints[account][n - 1].timestamp == currentTimestamp) {
+            return n - 1;
+        } else {
+            return n;
+        }
+    }
+
+    function moveTokenDelegates(
+        Data storage self,
+        address srcRep,
+        address dstRep,
+        uint _tokenId,
+        function(uint) view returns (address) ownerOfFn
+    ) internal {
+        if (srcRep != dstRep && _tokenId > 0) {
+            if (srcRep != address(0)) {
+                uint32 srcRepNum = self.numCheckpoints[srcRep];
+                uint[] storage srcRepOld = srcRepNum > 0
+                    ? self.checkpoints[srcRep][srcRepNum - 1].tokenIds
+                    : self.checkpoints[srcRep][0].tokenIds;
+                uint32 nextSrcRepNum = findCheckpointToWrite(self, srcRep, block.timestamp);
+                bool _isCheckpointInNewBlock = (srcRepNum > 0) ? (nextSrcRepNum != srcRepNum - 1) : true;
+                Checkpoint storage cpSrcRep = self.checkpoints[srcRep][nextSrcRepNum];
+                uint[] storage srcRepNew = cpSrcRep.tokenIds;
+                cpSrcRep.timestamp = block.timestamp;
+                // All the same except _tokenId
+                uint256 length = srcRepOld.length;
+                for (uint i = 0; i < length;) {
+                    uint tId = srcRepOld[i];
+                    if(_isCheckpointInNewBlock) {
+                        if(ownerOfFn(tId) == srcRep) {
+                            srcRepNew.push(tId);
+                        }
+                        i++;
+                    } else {
+                        if(ownerOfFn(tId) != srcRep) {
+                            srcRepNew[i] = srcRepNew[length -1];
+                            srcRepNew.pop();
+                            length--;
+                        } else {
+                            i++;
+                        }
+                    }
+                }
+                self.numCheckpoints[srcRep] = nextSrcRepNum + 1;   
+            }
+
+            if (dstRep != address(0)) {
+                uint32 dstRepNum = self.numCheckpoints[dstRep];
+                uint[] storage dstRepOld = dstRepNum > 0
+                    ? self.checkpoints[dstRep][dstRepNum - 1].tokenIds
+                    : self.checkpoints[dstRep][0].tokenIds;
+                uint32 nextDstRepNum = findCheckpointToWrite(self, dstRep, block.timestamp);
+                bool _isCheckpointInNewBlock = (dstRepNum > 0) ? (nextDstRepNum != dstRepNum - 1) : true;
+                Checkpoint storage cpDstRep = self.checkpoints[dstRep][nextDstRepNum];
+                uint[] storage dstRepNew = cpDstRep.tokenIds;
+                cpDstRep.timestamp = block.timestamp;
+                require(
+                    dstRepOld.length + 1 <= MAX_DELEGATES,
+                    "tokens>1"
+                );
+                if(_isCheckpointInNewBlock) {
+                    for (uint i = 0; i < dstRepOld.length; i++) {
+                        uint tId = dstRepOld[i];
+                        dstRepNew.push(tId);
+                    }
+                }
+                dstRepNew.push(_tokenId);
+                self.numCheckpoints[dstRep] = nextDstRepNum + 1;
+            }
+        }
+    }
+
+    function _moveAllDelegates(
+        Data storage self,
+        address owner,
+        address srcRep,
+        address dstRep,
+        TokenHelpers memory tokenHelpers
+    ) internal {
+        // You can only redelegate what you own
+        address _owner = owner;
+        Data storage _self = self;
+        address _srcRep = srcRep;
+        address _dstRep = dstRep;
+        TokenHelpers memory _tokenHelper = tokenHelpers;
+        if (_srcRep != _dstRep) {
+            if (_srcRep != address(0)) {
+                uint32 srcRepNum = _self.numCheckpoints[_srcRep];
+                uint[] storage srcRepOld = srcRepNum > 0
+                    ? _self.checkpoints[_srcRep][srcRepNum - 1].tokenIds
+                    : _self.checkpoints[_srcRep][0].tokenIds;
+                uint32 nextSrcRepNum = findCheckpointToWrite(_self,_srcRep, block.timestamp);
+                bool _isCheckpointInNewBlock = (srcRepNum > 0) ? (nextSrcRepNum != srcRepNum - 1) : true;
+                // if(_isCheckpointInNewBlock) {
+                Checkpoint storage cpSrcRep = _self.checkpoints[_srcRep][nextSrcRepNum];
+                uint[] storage srcRepNew = cpSrcRep.tokenIds;
+                cpSrcRep.timestamp = block.timestamp;
+
+                uint256 length = srcRepOld.length;
+                for (uint i = 0; i < length;) {
+                    uint tId = srcRepOld[i];
+                    if(_isCheckpointInNewBlock) {
+                        if(_tokenHelper.ownerOfFn(tId) != _owner) {
+                            srcRepNew.push(tId);
+                        }
+                        i++;
+                    } else {
+                        if(_tokenHelper.ownerOfFn(tId) == _owner) {
+                            srcRepNew[i] = srcRepNew[length -1];
+                            srcRepNew.pop();
+                            length--;
+                        } else {
+                            i++;
+                        }
+                    }
+                }
+                _self.numCheckpoints[_srcRep] = nextSrcRepNum + 1;
+            }
+
+
+            if (_dstRep != address(0)) {
+                uint32 dstRepNum = _self.numCheckpoints[_dstRep];
+                uint[] storage dstRepOld = dstRepNum > 0
+                    ? _self.checkpoints[_dstRep][dstRepNum - 1].tokenIds
+                    : _self.checkpoints[_dstRep][0].tokenIds;
+                uint32 nextDstRepNum = findCheckpointToWrite(_self,_dstRep, block.timestamp);
+                bool _isCheckpointInNewBlock = (dstRepNum > 0) ? (nextDstRepNum != dstRepNum - 1) : true;
+                Checkpoint storage cpDstRep = _self.checkpoints[_dstRep][nextDstRepNum];
+                uint[] storage dstRepNew = cpDstRep.tokenIds;
+                cpDstRep.timestamp = block.timestamp;
+                uint ownerTokenCount = _tokenHelper.ownerToNFTokenCountFn(_owner);
+                require(
+                    dstRepOld.length + ownerTokenCount <= MAX_DELEGATES,
+                    "tokens>1"
+                );
+                if(_isCheckpointInNewBlock) {
+                    for (uint i = 0; i < dstRepOld.length; i++) {
+                        uint tId = dstRepOld[i];
+                        dstRepNew.push(tId);
+                    }
+                }
+                // Plus all that's owned
+                for (uint i = 0; i < ownerTokenCount; i++) {
+                    uint tId = _tokenHelper.tokenOfOwnerByIndex(_owner,i);
+                    dstRepNew.push(tId);
+                }
+                _self.numCheckpoints[_dstRep] = nextDstRepNum + 1;   
+            }
+        }
+    }
+
+    function getPastVotesIndex(Data storage data, address account, uint timestamp) internal view returns (uint32) {
+        uint32 nCheckpoints = data.numCheckpoints[account];
+        if (nCheckpoints == 0) {
+            return 0;
+        }
+        // First check most recent balance
+        if (data.checkpoints[account][nCheckpoints - 1].timestamp <= timestamp) {
+            return (nCheckpoints - 1);
+        }
+
+        // Next check implicit zero balance
+        if (data.checkpoints[account][0].timestamp > timestamp) {
+            return 0;
+        }
+
+        uint32 lower = 0;
+        uint32 upper = nCheckpoints - 1;
+        while (upper > lower) {
+            uint32 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
+            VotingDelegationLib.Checkpoint storage cp = data.checkpoints[account][center];
+            if (cp.timestamp == timestamp) {
+                return center;
+            } else if (cp.timestamp < timestamp) {
+                lower = center;
+            } else {
+                upper = center - 1;
+            }
+        }
+        return lower;
+    }
+
+}
+// SPDX-License-Identifier: None
+// HybraHole Foundation 2025
+
+pragma solidity 0.8.13;
+
+import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
+
+interface IHybraVotes is IVotes{
+}
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import {IVotingEscrow} from "../interfaces/IVotingEscrow.sol";
+import {HybraTimeLibrary} from "./HybraTimeLibrary.sol";
+
+library VotingBalanceLogic {
+
+    struct Data {
+        mapping(uint => IVotingEscrow.Point) point_history;
+        mapping(uint => uint) user_point_epoch;
+        mapping(uint => IVotingEscrow.Point[1000000000]) user_point_history; // user -> Point[user_epoch]
+    }
+
+    /// @notice Get the current voting power for `_tokenId`
+    /// @dev Adheres to the ERC20 `balanceOf` interface for Aragon compatibility
+    /// @param _tokenId NFT for lock
+    /// @param _t Epoch time to return voting power at
+    /// @return User voting power
+    function balanceOfNFT(uint _tokenId, uint _t, 
+        Data storage VotingBalanceLogicData
+        ) external view returns (uint) {
+        uint _epoch = VotingBalanceLogicData.user_point_epoch[_tokenId];
+        if (_epoch == 0) {
+            return 0;
+        } else {
+            uint userEpoch = getPastUserPointIndex(_epoch, _tokenId, _t, VotingBalanceLogicData);
+            IVotingEscrow.Point memory last_point = VotingBalanceLogicData.user_point_history[_tokenId][userEpoch];
+            if (last_point.permanent != 0) {
+                return last_point.permanent;
+            }
+            else {
+                last_point.bias -= last_point.slope * int128(int256(_t) - int256(last_point.ts));
+                if (last_point.bias < 0) {
+                    last_point.bias = 0;
+                }
+                return uint(int256(last_point.bias));
+            }
+        }
+    }
+
+
+    function getPastUserPointIndex(uint _epoch, 
+    uint _tokenId,
+    uint _t,
+    Data storage votingBalanceLogicData
+    ) internal view returns (uint256){
+        uint lower = 0;
+        uint upper = _epoch;
+        while (upper > lower) {
+            uint center = upper - (upper - lower) / 2; // ceil, avoiding overflow
+            IVotingEscrow.Point memory userPoint = votingBalanceLogicData.user_point_history[_tokenId][center];
+            if (userPoint.ts == _t) {
+                return center;
+            } else if (userPoint.ts < _t) {
+                lower = center;
+            } else {
+                upper = center - 1;
+            }
+        }
+        return lower;
+    }
+
+    /// @notice Measure voting power of `_tokenId` at block height `_block`
+    /// @dev Adheres to MiniMe `balanceOfAt` interface: https://github.com/Giveth/minime
+    /// @param _tokenId User's wallet NFT
+    /// @param _block Block to calculate the voting power at
+    /// @return Voting power
+    function balanceOfAtNFT(uint _tokenId, 
+        uint _block,
+        Data storage VotingBalanceLogicData,
+        uint epoch
+        ) external view returns (uint) {
+        // Copying and pasting totalSupply code because Vyper cannot pass by
+        // reference yet
+        assert(_block <= block.number);
+
+        // Binary search
+        uint _min = 0;
+        uint _max = VotingBalanceLogicData.user_point_epoch[_tokenId];
+        for (uint i = 0; i < 128; ++i) {
+            // Will be always enough for 128-bit numbers
+            if (_min >= _max) {
+                break;
+            }
+            uint _mid = (_min + _max + 1) / 2;
+            if (VotingBalanceLogicData.user_point_history[_tokenId][_mid].blk <= _block) {
+                _min = _mid;
+            } else {
+                _max = _mid - 1;
+            }
+        }
+
+        IVotingEscrow.Point memory upoint = VotingBalanceLogicData.user_point_history[_tokenId][_min];
+
+        if (upoint.permanent > 0){
+            return upoint.permanent;
+        }
+
+        uint max_epoch = epoch;
+        uint _epoch = _find_block_epoch(_block, max_epoch, VotingBalanceLogicData);
+        IVotingEscrow.Point memory point_0 = VotingBalanceLogicData.point_history[_epoch];
+        uint d_block = 0;
+        uint d_t = 0;
+        if (_epoch < max_epoch) {
+            IVotingEscrow.Point memory point_1 = VotingBalanceLogicData.point_history[_epoch + 1];
+            d_block = point_1.blk - point_0.blk;
+            d_t = point_1.ts - point_0.ts;
+        } else {
+            d_block = block.number - point_0.blk;
+            d_t = block.timestamp - point_0.ts;
+        }
+        uint block_time = point_0.ts;
+        if (d_block != 0) {
+            block_time += (d_t * (_block - point_0.blk)) / d_block;
+        }
+
+        upoint.bias -= upoint.slope * int128(int256(block_time - upoint.ts));
+        if (upoint.bias >= 0) {
+            return uint(uint128(upoint.bias));
+        } else {
+            return 0;
+        }
+    }
+
+    function totalSupplyAt(uint _block, uint epoch,
+        Data storage VotingBalanceLogicData,
+        mapping(uint => int128) storage slope_changes) public view returns (uint) {
+        assert(_block <= block.number);
+        uint _epoch = epoch;
+        uint target_epoch = _find_block_epoch(_block, _epoch, VotingBalanceLogicData);
+
+        IVotingEscrow.Point memory point = VotingBalanceLogicData.point_history[target_epoch];
+        uint dt = 0;
+        if (target_epoch < _epoch) {
+            IVotingEscrow.Point memory point_next = VotingBalanceLogicData.point_history[target_epoch + 1];
+            if (point.blk != point_next.blk) {
+                dt = ((_block - point.blk) * (point_next.ts - point.ts)) / (point_next.blk - point.blk);
+            }
+        } else {
+            if (point.blk != block.number) {
+                dt = ((_block - point.blk) * (block.timestamp - point.ts)) / (block.number - point.blk);
+            }
+        }
+        // Now dt contains info on how far are we beyond point
+        return _supply_at(point, point.ts + dt, slope_changes);
+
+    }
+
+         /// @notice Binary search to estimate timestamp for block number
+    /// @param _block Block to find
+    /// @param max_epoch Don't go beyond this epoch
+    /// @return Approximate timestamp for block
+    function _find_block_epoch(uint _block, 
+        uint max_epoch,
+        Data storage VotingBalanceLogicData
+        ) internal view returns (uint) {
+        // Binary search
+        uint _min = 0;
+        uint _max = max_epoch;
+        for (uint i = 0; i < 128; ++i) {
+            // Will be always enough for 128-bit numbers
+            if (_min >= _max) {
+                break;
+            }
+            uint _mid = (_min + _max + 1) / 2;
+            if (VotingBalanceLogicData.point_history[_mid].blk <= _block) {
+                _min = _mid;
+            } else {
+                _max = _mid - 1;
+            }
+        }
+        return _min;
+    }
+
+    /// @notice Calculate total voting power at some point in the past
+    /// @param point The point (bias/slope) to start search from
+    /// @param t Time to calculate the total voting power at
+    /// @return Total voting power at that time
+    function _supply_at(IVotingEscrow.Point memory point, 
+        uint t,
+        mapping(uint => int128) storage slope_changes) internal view returns (uint) {
+        uint WEEK = HybraTimeLibrary.WEEK;
+        IVotingEscrow.Point memory last_point = point;
+        uint t_i = (last_point.ts / WEEK) * WEEK;
+        for (uint i = 0; i < 255; ++i) {
+            t_i += WEEK;
+            int128 d_slope = 0;
+            if (t_i > t) {
+                t_i = t;
+            } else {
+                d_slope = slope_changes[t_i];
+            }
+            last_point.bias -= last_point.slope * int128(int256(t_i - last_point.ts));
+            if (t_i == t) {
+                break;
+            }
+            last_point.slope += d_slope;
+            last_point.ts = t_i;
+        }
+
+        if (last_point.bias < 0) {
+            last_point.bias = 0;
+        }
+        return uint(uint128(last_point.bias)) + last_point.permanent;
+    }
+
+    function getPastGlobalPointIndex(uint _epoch,
+        uint _t,
+        Data storage VotingBalanceLogicData) internal view returns (uint256){
+        uint lower = 0;
+        uint upper = _epoch;
+        while (upper > lower) {
+            uint center = upper - (upper - lower) / 2; // ceil, avoiding overflow
+            IVotingEscrow.Point memory point = VotingBalanceLogicData.point_history[center];
+            if (point.ts == _t) {
+                return center;
+            } else if (point.ts < _t) {
+                lower = center;
+            } else {
+                upper = center - 1;
+            }
+        }
+        return lower;
+    }
+
+        /// @notice Calculate total voting power
+    /// @dev Adheres to the ERC20 `totalSupply` interface for Aragon compatibility
+    /// @return Total voting power
+    function totalSupplyAtT(uint t, uint epoch,
+        mapping(uint => int128) storage slope_changes,
+        Data storage VotingBalanceLogicData) external view returns (uint) {
+        uint _epoch = epoch;
+        if(_epoch == 0) {
+            return 0;
+        } else {
+            uint globalEpoch = getPastGlobalPointIndex(_epoch, t, VotingBalanceLogicData);
+            IVotingEscrow.Point memory last_point = VotingBalanceLogicData.point_history[globalEpoch];
+            return _supply_at(last_point, t, slope_changes);
+        }
+    }
+}
+// SPDX-License-Identifier: MIT
 pragma solidity =0.7.6;
 pragma abicoder v2;
 
@@ -2144,6 +3405,22 @@ interface IVoter {
     function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
 }
 
+// SPDX-License-Identifier: MIT
+pragma solidity 0.7.6;
+
+interface IGaugeManager {
+    
+    struct FarmingParam {
+        address farmingCenter;
+        address algebraEternalFarming;
+        address nfpm;
+    }
+
+    function isGaugeAliveForPool(address _pool) external view returns (bool);
+    function gauges(address _pair) external view returns (address);
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
+}
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
@@ -2183,6 +3460,245 @@ interface INonfungibleTokenPositionDescriptor {
         external
         view
         returns (string memory);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGaugeCL {
+    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
+    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function balanceOf(uint256 tokenId) external view returns (uint256); 
+    function emergency() external returns (bool);
+    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
+    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
+    function totalSupply() external view returns (uint);
+    function rewardRate() external view returns (uint);
+    function rewardForDuration() external view returns (uint256);
+    function stakedFees() external view returns (uint256, uint256);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IVeArtProxy {
+    function _tokenURI(uint _tokenId, uint _balanceOf, uint _locked_end, uint _value) external pure returns (string memory output);
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import {IVoter} from "contracts/core/interfaces/IVoter.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+import {IGaugeManager} from "contracts/core/interfaces/IGaugeManager.sol";
+
+
+/// @title The interface for the CL Factory
+/// @notice The CL Factory facilitates creation of CL pools and control over the protocol fees
+interface ICLFactory {
+    /// @notice Emitted when the owner of the factory is changed
+    /// @param oldOwner The owner before the owner was changed
+    /// @param newOwner The owner after the owner was changed
+    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
+
+    /// @notice Emitted when the swapFeeManager of the factory is changed
+    /// @param oldFeeManager The swapFeeManager before the swapFeeManager was changed
+    /// @param newFeeManager The swapFeeManager after the swapFeeManager was changed
+    event SwapFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
+
+    /// @notice Emitted when the swapFeeModule of the factory is changed
+    /// @param oldFeeModule The swapFeeModule before the swapFeeModule was changed
+    /// @param newFeeModule The swapFeeModule after the swapFeeModule was changed
+    event SwapFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
+
+    /// @notice Emitted when the unstakedFeeManager of the factory is changed
+    /// @param oldFeeManager The unstakedFeeManager before the unstakedFeeManager was changed
+    /// @param newFeeManager The unstakedFeeManager after the unstakedFeeManager was changed
+    event UnstakedFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
+
+    /// @notice Emitted when the unstakedFeeModule of the factory is changed
+    /// @param oldFeeModule The unstakedFeeModule before the unstakedFeeModule was changed
+    /// @param newFeeModule The unstakedFeeModule after the unstakedFeeModule was changed
+    event UnstakedFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
+
+    /// @notice Emitted when the defaultUnstakedFee of the factory is changed
+    /// @param oldUnstakedFee The defaultUnstakedFee before the defaultUnstakedFee was changed
+    /// @param newUnstakedFee The defaultUnstakedFee after the unstakedFeeModule was changed
+    event DefaultUnstakedFeeChanged(uint24 indexed oldUnstakedFee, uint24 indexed newUnstakedFee);
+
+    /// @notice Emitted when a pool is created
+    /// @param token0 The first token of the pool by address sort order
+    /// @param token1 The second token of the pool by address sort order
+    /// @param tickSpacing The minimum number of ticks between initialized ticks
+    /// @param pool The address of the created pool
+    event PoolCreated(address indexed token0, address indexed token1, int24 indexed tickSpacing, address pool);
+
+    /// @notice Emitted when a new tick spacing is enabled for pool creation via the factory
+    /// @param tickSpacing The minimum number of ticks between initialized ticks for pools
+    /// @param fee The default fee for a pool created with a given tickSpacing
+    event TickSpacingEnabled(int24 indexed tickSpacing, uint24 indexed fee);
+
+
+
+    /// @notice The address of the pool implementation contract used to deploy proxies / clones
+    /// @return The address of the pool implementation contract
+    function poolImplementation() external view returns (address);
+
+    /// @notice Factory registry for valid pool / gauge / rewards factories
+    /// @return The address of the factory registry
+
+    function gaugeManager() external view returns (IGaugeManager);
+
+    /// @notice Returns the current owner of the factory
+    /// @dev Can be changed by the current owner via setOwner
+    /// @return The address of the factory owner
+    function owner() external view returns (address);
+
+    /// @notice Returns the current swapFeeManager of the factory
+    /// @dev Can be changed by the current swap fee manager via setSwapFeeManager
+    /// @return The address of the factory swapFeeManager
+    function swapFeeManager() external view returns (address);
+
+    /// @notice Returns the current protocolFeeManager of the factory
+    /// @dev Can be changed by the current protocol fee manager via setProtocolFeeManager
+    /// @return The address of the factory protocolFeeManager
+    function protocolFeeManager() external view returns (address);
+
+    /// @notice Returns the current swapFeeModule of the factory
+    /// @dev Can be changed by the current swap fee manager via setSwapFeeModule
+    /// @return The address of the factory swapFeeModule
+    function swapFeeModule() external view returns (address);
+
+    /// @notice Returns the current unstakedFeeManager of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeManager
+    /// @return The address of the factory unstakedFeeManager
+    function unstakedFeeManager() external view returns (address);
+
+    /// @notice Returns the current unstakedFeeModule of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeModule
+    /// @return The address of the factory unstakedFeeModule
+    function unstakedFeeModule() external view returns (address);
+
+
+    function protocolFeeModule() external view returns (address);
+
+    /// @notice Returns the current defaultUnstakedFee of the factory
+    /// @dev Can be changed by the current unstaked fee manager via setDefaultUnstakedFee
+    /// @return The default Unstaked Fee of the factory
+    function defaultUnstakedFee() external view returns (uint24);
+
+
+    function defaultProtocolFee() external view returns (uint24);
+
+    /// @notice Returns a default fee for a tick spacing.
+    /// @dev Use getFee for the most up to date fee for a given pool.
+    /// A tick spacing can never be removed, so this value should be hard coded or cached in the calling context
+    /// @param tickSpacing The enabled tick spacing. Returns 0 if not enabled
+    /// @return fee The default fee for the given tick spacing
+    function tickSpacingToFee(int24 tickSpacing) external view returns (uint24 fee);
+
+    /// @notice Returns a list of enabled tick spacings. Used to iterate through pools created by the factory
+    /// @dev Tick spacings cannot be removed. Tick spacings are not ordered
+    /// @return List of enabled tick spacings
+    function tickSpacings() external view returns (int24[] memory);
+
+    /// @notice Returns the pool address for a given pair of tokens and a tick spacing, or address 0 if it does not exist
+    /// @dev tokenA and tokenB may be passed in either token0/token1 or token1/token0 order
+    /// @param tokenA The contract address of either token0 or token1
+    /// @param tokenB The contract address of the other token
+    /// @param tickSpacing The tick spacing of the pool
+    /// @return pool The pool address
+    function getPool(address tokenA, address tokenB, int24 tickSpacing) external view returns (address pool);
+
+    /// @notice Return address of pool created by this factory given its `index`
+    /// @param index Index of the pool
+    /// @return The pool address in the given index
+    function allPools(uint256 index) external view returns (address);
+
+    /// @notice Returns the number of pools created from this factory
+    /// @return Number of pools created from this factory
+    function allPoolsLength() external view returns (uint256);
+
+    /// @notice Used in VotingEscrow to determine if a contract is a valid pool of the factory
+    /// @param pool The address of the pool to check
+    /// @return Whether the pool is a valid pool of the factory
+    function isPool(address pool) external view returns (bool);
+
+    /// @notice Get swap & flash fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Swap & flash fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the swap & flash fee for
+    /// @return The swap & flash fee for the given pool
+    function getSwapFee(address pool) external view returns (uint24);
+
+    /// @notice Get unstaked fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Unstaked fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the unstaked fee for
+    /// @return The unstaked fee for the given pool
+    function getUnstakedFee(address pool) external view returns (uint24);
+
+    /// @notice Get protocol fee for a given pool. Accounts for default and dynamic fees
+    /// @dev Protocol fee is denominated in pips. i.e. 1e-6
+    /// @param pool The pool to get the protocol fee for
+    /// @return The protocol fee for the given pool
+    function getProtocolFee(address pool) external view returns (uint24);
+
+    /// @notice Creates a pool for the given two tokens and fee
+    /// @param tokenA One of the two tokens in the desired pool
+    /// @param tokenB The other of the two tokens in the desired pool
+    /// @param tickSpacing The desired tick spacing for the pool
+    /// @param sqrtPriceX96 The initial sqrt price of the pool, as a Q64.96
+    /// @dev tokenA and tokenB may be passed in either order: token0/token1 or token1/token0. The call will
+    /// revert if the pool already exists, the tick spacing is invalid, or the token arguments are invalid
+    /// @return pool The address of the newly created pool
+    function createPool(address tokenA, address tokenB, int24 tickSpacing, uint160 sqrtPriceX96)
+        external
+        returns (address pool);
+
+    /// @notice Updates the owner of the factory
+    /// @dev Must be called by the current owner
+    /// @param _owner The new owner of the factory
+    function setOwner(address _owner) external;
+
+    /// @notice Updates the swapFeeManager of the factory
+    /// @dev Must be called by the current swap fee manager
+    /// @param _swapFeeManager The new swapFeeManager of the factory
+    function setSwapFeeManager(address _swapFeeManager) external;
+
+    /// @notice Updates the swapFeeModule of the factory
+    /// @dev Must be called by the current swap fee manager
+    /// @param _swapFeeModule The new swapFeeModule of the factory
+    function setSwapFeeModule(address _swapFeeModule) external;
+
+    /// @notice Updates the unstakedFeeManager of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _unstakedFeeManager The new unstakedFeeManager of the factory
+    function setUnstakedFeeManager(address _unstakedFeeManager) external;
+
+    /// @notice Updates the unstakedFeeModule of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _unstakedFeeModule The new unstakedFeeModule of the factory
+    function setUnstakedFeeModule(address _unstakedFeeModule) external;
+
+    /// @notice Updates the protocolFeeManager of the factory
+    /// @dev Must be called by the current protocol fee manager
+    /// @param _protocolFeeManager The new protocolFeeManager of the factory
+    function setProtocolFeeManager(address _protocolFeeManager) external;
+
+    /// @notice Updates the protocolFeeModule of the factory
+    /// @dev Must be called by the current protocol fee manager
+    /// @param _protocolFeeModule The new protocolFeeModule of the factory
+    function setProtocolFeeModule(address _protocolFeeModule) external;
+
+    /// @notice Updates the defaultUnstakedFee of the factory
+    /// @dev Must be called by the current unstaked fee manager
+    /// @param _defaultUnstakedFee The new defaultUnstakedFee of the factory
+    function setDefaultUnstakedFee(uint24 _defaultUnstakedFee) external;
+
+    /// @notice Enables a certain tickSpacing
+    /// @dev Tick spacings may never be removed once enabled
+    /// @param tickSpacing The spacing between ticks to be enforced in the pool
+    /// @param fee The default fee associated with a given tick spacing
+    function enableTickSpacing(int24 tickSpacing, uint24 fee) external;
 }
 
 // SPDX-License-Identifier: MIT
@@ -3542,1690 +5058,6 @@ contract VotingEscrow is IERC721, IERC721Metadata, IHybraVotes {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-import './interfaces/IPair.sol';
-import './interfaces/IBribe.sol';
-import "./libraries/Math.sol";
-
-import {HybraTimeLibrary} from "./libraries/HybraTimeLibrary.sol";
-import './interfaces/IRHYBR.sol';
-interface IRewarder {
-    function onReward(
-        address user,
-        address recipient,
-        uint256 userBalance
-    ) external;
-}
-
-
-contract GaugeV2 is ReentrancyGuard, Ownable {
-
-    using SafeERC20 for IERC20;
-
-    bool public immutable isForPair;
-    bool public emergency;
-
-
-    IERC20 public immutable rewardToken;
-    IERC20 public immutable TOKEN;
-    address public immutable rHYBR;
-    address public VE;
-    address public DISTRIBUTION;
-    address public gaugeRewarder;
-    address public internal_bribe;
-    address public external_bribe;
-
-    uint256 public DURATION;
-    uint256 internal _periodFinish;
-    uint256 public rewardRate;
-    uint256 public lastUpdateTime;
-    uint256 public rewardPerTokenStored;
-
-   
-
-    mapping(address => uint256) public userRewardPerTokenPaid;
-    mapping(address => uint256) public rewards;
-
-    uint256 internal _totalSupply;
-    mapping(address => uint256) internal _balances;
-    mapping(address => uint256) public maturityTime;
-
-    event RewardAdded(uint256 reward);
-    event Deposit(address indexed user, uint256 amount);
-    event Withdraw(address indexed user, uint256 amount);
-    event Harvest(address indexed user, uint256 reward);
-
-    event ClaimFees(address indexed from, uint256 claimed0, uint256 claimed1);
-    event EmergencyActivated(address indexed gauge, uint256 timestamp);
-    event EmergencyDeactivated(address indexed gauge, uint256 timestamp);
-
-    modifier updateReward(address account) {
-        rewardPerTokenStored = rewardPerToken();
-        lastUpdateTime = lastTimeRewardApplicable();
-        if (account != address(0)) {
-            rewards[account] = earned(account);
-            userRewardPerTokenPaid[account] = rewardPerTokenStored;
-        }
-        _;
-    }
-
-    modifier onlyDistribution() {
-        require(msg.sender == DISTRIBUTION, "NA");
-        _;
-    }
-
-  
-
-  
-
-    modifier isNotEmergency() {
-        require(emergency == false, "EMER");
-        _;
-    }
-
-    constructor(address _rewardToken,address _rHYBR,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isForPair) {
-        rewardToken = IERC20(_rewardToken);     // main reward
-        rHYBR = _rHYBR;
-        VE = _ve;                               // vested
-        TOKEN = IERC20(_token);                 // underlying (LP)
-        DISTRIBUTION = _distribution;           // distro address (GaugeManager)
-        DURATION = HybraTimeLibrary.WEEK;                   
-
-        internal_bribe = _internal_bribe;       // lp fees goes here
-        external_bribe = _external_bribe;       // bribe fees goes here
-
-
-        isForPair = _isForPair;                 // pair boolean, if false no claim_fees
-
-        emergency = false;                      // emergency flag
-
-    }
-
-
-    /* -----------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-                                    ONLY OWNER
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    ----------------------------------------------------------------------------- */
-
-    ///@notice set distribution address (should be GaugeManager)
-    function setDistribution(address _distribution) external onlyOwner {
-        require(_distribution != address(0), "ZA");
-        require(_distribution != DISTRIBUTION, "SAME_ADDR");
-        DISTRIBUTION = _distribution;
-    }
-
-    ///@notice set gauge rewarder address
-    function setGaugeRewarder(address _gaugeRewarder) external onlyOwner {
-        require(_gaugeRewarder != gaugeRewarder, "SAME_ADDR");
-        gaugeRewarder = _gaugeRewarder;
-    }
-
-
-    ///@notice set new internal bribe contract (where to send fees)
-    function setInternalBribe(address _int) external onlyOwner {
-        require(_int >= address(0), "ZA");
-        internal_bribe = _int;
-    }
-
-    function activateEmergencyMode() external onlyOwner {
-        require(emergency == false, "EMER");
-        emergency = true;
-        emit EmergencyActivated(address(this), block.timestamp);
-    }
-
-    function stopEmergencyMode() external onlyOwner {
-
-        require(emergency == true,"EMER");
-
-        emergency = false;
-        emit EmergencyDeactivated(address(this), block.timestamp);
-    }
-
-
-    /* -----------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-                                    VIEW FUNCTIONS
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    ----------------------------------------------------------------------------- */
-
-    ///@notice total supply held
-    function totalSupply() public view returns (uint256) {
-        return _totalSupply;
-    }
-
-    ///@notice balance of a user
-    function balanceOf(address account) external view returns (uint256) {
-        return _balanceOf(account);
-    }
-
-    function _balanceOf(address account) internal view returns (uint256) {
-       
-        return _balances[account];
-    }
-
-    ///@notice last time reward
-    function lastTimeRewardApplicable() public view returns (uint256) {
-        return Math.min(block.timestamp, _periodFinish);
-    }
-
-    ///@notice  reward for a sinle token
-    function rewardPerToken() public view returns (uint256) {
-        if (_totalSupply == 0) {
-            return rewardPerTokenStored;
-        } else {
-            return rewardPerTokenStored + (lastTimeRewardApplicable() - lastUpdateTime) * rewardRate * 1e18 / _totalSupply; 
-        }
-    }
-
-    ///@notice see earned rewards for user
-    function earned(address account) public view returns (uint256) {
-        return rewards[account] + _balanceOf(account) * (rewardPerToken() - userRewardPerTokenPaid[account]) / 1e18;  
-    }
-
-    ///@notice get total reward for the duration
-    function rewardForDuration() external view returns (uint256) {
-        return rewardRate * DURATION;
-    }
-
-    function periodFinish() external view returns (uint256) {
-        return _periodFinish;
-    }
-
-
-
-    /* -----------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-                                    USER INTERACTION
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    ----------------------------------------------------------------------------- */
-
-
-
-    // send whole liquidity as additional param
-
-
-    ///@notice deposit all TOKEN of msg.sender
-    function depositAll() external {
-        _deposit(TOKEN.balanceOf(msg.sender), msg.sender);
-    }
-
-    ///@notice deposit amount TOKEN
-    function deposit(uint256 amount) external {
-        _deposit(amount, msg.sender);
-    }
-
-    ///@notice deposit internal
-    function _deposit(uint256 amount, address account) internal nonReentrant isNotEmergency updateReward(account) {
-        require(amount > 0, "ZV");
-
-        _balances[account] = _balances[account] + amount;
-        _totalSupply = _totalSupply + amount;
-        if (address(gaugeRewarder) != address(0)) {
-            IRewarder(gaugeRewarder).onReward(account, account, _balanceOf(account));
-        }
-
-        TOKEN.safeTransferFrom(account, address(this), amount);
-
-        emit Deposit(account, amount);
-    }
-
-    ///@notice withdraw all token
-    function withdrawAll() external {
-        _withdraw(_balanceOf(msg.sender));
-    }
-
-    ///@notice withdraw a certain amount of TOKEN
-    function withdraw(uint256 amount) external {
-        _withdraw(amount);
-    }
-
-    ///@notice withdraw internal
-    function _withdraw(uint256 amount) internal nonReentrant isNotEmergency updateReward(msg.sender) {
-        require(amount > 0, "ZV");
-        require(_balanceOf(msg.sender) > 0, "ZV");
-        require(block.timestamp >= maturityTime[msg.sender], "!MATURE");
-
-        _totalSupply = _totalSupply - amount;
-        _balances[msg.sender] = _balances[msg.sender] - amount;
-
-        if (address(gaugeRewarder) != address(0)) {
-            IRewarder(gaugeRewarder).onReward(msg.sender, msg.sender,_balanceOf(msg.sender));
-        }
-
-        TOKEN.safeTransfer(msg.sender, amount);
-
-        emit Withdraw(msg.sender, amount);
-    }
-
-    function emergencyWithdraw() external nonReentrant {
-        require(emergency, "EMER");
-        uint256 _amount = _balanceOf(msg.sender);
-        require(_amount > 0, "ZV");
-        _totalSupply = _totalSupply - _amount;
-
-        _balances[msg.sender] = 0;
-   
-
-        TOKEN.safeTransfer(msg.sender, _amount);
-        emit Withdraw(msg.sender, _amount);
-    }
-
-    function emergencyWithdrawAmount(uint256 _amount) external nonReentrant {
-
-        require(emergency, "EMER");
-        _totalSupply = _totalSupply - _amount;
-
-        _balances[msg.sender] = _balances[msg.sender] - _amount;
-
-        TOKEN.safeTransfer(msg.sender, _amount);
-        emit Withdraw(msg.sender, _amount);
-    }
-
-  
-
-    ///@notice withdraw all TOKEN and harvest rewardToken
-    function withdrawAllAndHarvest(uint8 _redeemType) external {
-        _withdraw(_balanceOf(msg.sender));
-        getReward(_redeemType);
-    }
-
- 
-    ///@notice User harvest function called from distribution (GaugeManager allows harvest on multiple gauges)
-    function getReward(address _user, uint8 _redeemType) public nonReentrant onlyDistribution updateReward(_user) {
-        uint256 reward = rewards[_user];
-        if (reward > 0) {
-            rewards[_user] = 0;
-            IERC20(rewardToken).safeApprove(rHYBR, reward);
-            IRHYBR(rHYBR).depostionEmissionsToken(reward);
-            IRHYBR(rHYBR).redeemFor(reward, _redeemType, _user);
-            emit Harvest(_user, reward);
-        }
-
-        if (gaugeRewarder != address(0)) {
-            IRewarder(gaugeRewarder).onReward(_user, _user, _balanceOf(_user));
-        }
-    }
-
-    ///@notice User harvest function
-    function getReward(uint8 _redeemType) public nonReentrant updateReward(msg.sender) {
-        uint256 reward = rewards[msg.sender];
-        if (reward > 0) {
-            rewards[msg.sender] = 0;
-            IERC20(rewardToken).safeApprove(rHYBR, reward);
-            IRHYBR(rHYBR).depostionEmissionsToken(reward);
-            IRHYBR(rHYBR).redeemFor(reward, _redeemType, msg.sender);
-            emit Harvest(msg.sender, reward);
-        }
-
-        if (gaugeRewarder != address(0)) {
-            IRewarder(gaugeRewarder).onReward(msg.sender, msg.sender, _balanceOf(msg.sender));
-        }
-    }
-
-
-
-
-
-
-
-
-    /* -----------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-                                    DISTRIBUTION
-    --------------------------------------------------------------------------------
-    --------------------------------------------------------------------------------
-    ----------------------------------------------------------------------------- */
-
-
-    /// @dev Receive rewards from distribution
-
-    function notifyRewardAmount(address token, uint256 reward) external nonReentrant isNotEmergency onlyDistribution updateReward(address(0)) {
-        require(token == address(rewardToken), "IA");
-        rewardToken.safeTransferFrom(DISTRIBUTION, address(this), reward);
-
-        if (block.timestamp >= _periodFinish) {
-            rewardRate = reward / DURATION;
-        } else {
-            uint256 remaining = _periodFinish - block.timestamp;
-            uint256 leftover = remaining * rewardRate;
-            rewardRate = (reward + leftover) / DURATION;
-        }
-
-        // Ensure the provided reward amount is not more than the balance in the contract.
-        // This keeps the reward rate in the right range, preventing overflows due to
-        // very high values of rewardRate in the earned and rewardsPerToken functions;
-        // Reward + leftover must be less than 2^256 / 10^18 to avoid overflow.
-        uint256 balance = rewardToken.balanceOf(address(this));
-        require(rewardRate <= balance / DURATION, "REWARD_HIGH");
-
-        lastUpdateTime = block.timestamp;
-        _periodFinish = block.timestamp + DURATION;
-        emit RewardAdded(reward);
-    }
-
-
-    function claimFees() external nonReentrant returns (uint256 claimed0, uint256 claimed1) {
-        return _claimFees();
-    }
-
-     function _claimFees() internal returns (uint256 claimed0, uint256 claimed1) {
-        if (!isForPair) {
-            return (0, 0);
-        }
-        address _token = address(TOKEN);
-        (claimed0, claimed1) = IPair(_token).claimFees();
-        if (claimed0 > 0 || claimed1 > 0) {
-
-            uint256 _fees0 = claimed0;
-            uint256 _fees1 = claimed1;
-
-            (address _token0, address _token1) = IPair(_token).tokens();
-
-            if (_fees0  > 0) {
-                IERC20(_token0).safeApprove(internal_bribe, 0);
-                IERC20(_token0).safeApprove(internal_bribe, _fees0);
-                IBribe(internal_bribe).notifyRewardAmount(_token0, _fees0);
-            } 
-            if (_fees1  > 0) {
-                IERC20(_token1).safeApprove(internal_bribe, 0);
-                IERC20(_token1).safeApprove(internal_bribe, _fees1);
-                IBribe(internal_bribe).notifyRewardAmount(_token1, _fees1);
-            } 
-            emit ClaimFees(msg.sender, claimed0, claimed1);
-        }
-    }
-
-  
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IGaugeCL {
-    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
-    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function balanceOf(uint256 tokenId) external view returns (uint256); 
-    function emergency() external returns (bool);
-    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
-    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
-    function totalSupply() external view returns (uint);
-    function rewardRate() external view returns (uint);
-    function rewardForDuration() external view returns (uint256);
-    function stakedFees() external view returns (uint256, uint256);
-}
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity =0.7.6;
-pragma abicoder v2;
-
-import "contracts/core/interfaces/ICLPool.sol";
-import "contracts/core/libraries/FixedPoint128.sol";
-import "contracts/core/libraries/FullMath.sol";
-
-import "./interfaces/INonfungiblePositionManager.sol";
-import "./interfaces/INonfungibleTokenPositionDescriptor.sol";
-import "./libraries/PositionKey.sol";
-import "./libraries/PoolAddress.sol";
-import "./base/LiquidityManagement.sol";
-import "./base/PeripheryImmutableState.sol";
-import "./base/Multicall.sol";
-import "./base/ERC721Permit.sol";
-import "./base/PeripheryValidation.sol";
-import "./base/SelfPermit.sol";
-
-/// @title NFT positions
-/// @notice Wraps CL positions in the ERC721 non-fungible token interface
-contract NonfungiblePositionManager is
-    INonfungiblePositionManager,
-    Multicall,
-    ERC721Permit,
-    PeripheryImmutableState,
-    LiquidityManagement,
-    PeripheryValidation,
-    SelfPermit
-{
-    // details about the cl position
-    struct Position {
-        // the nonce for permits
-        uint96 nonce;
-        // the address that is approved for spending this token
-        address operator;
-        // the ID of the pool with which this token is connected
-        uint80 poolId;
-        // the tick range of the position
-        int24 tickLower;
-        int24 tickUpper;
-        // the liquidity of the position
-        uint128 liquidity;
-        // the fee growth of the aggregate position as of the last action on the individual position
-        uint256 feeGrowthInside0LastX128;
-        uint256 feeGrowthInside1LastX128;
-        // how many uncollected tokens are owed to the position, as of the last computation
-        uint128 tokensOwed0;
-        uint128 tokensOwed1;
-    }
-    /// @dev Revert String Annotations:
-    /// NE - ERC721: approved query for nonexistent token
-    /// PS - Price slippage check
-    /// ID - Invalid token ID
-    /// ZA - Zero Address
-    /// NA - Not approved
-    /// NC - Not cleared
-    /// NO - Not Owner
-
-    /// @dev IDs of pools assigned by this contract
-    mapping(address => uint80) private _poolIds;
-
-    /// @dev Pool keys by pool ID, to save on SSTOREs for position data
-    mapping(uint80 => PoolAddress.PoolKey) private _poolIdToPoolKey;
-
-    /// @dev The token ID position data
-    mapping(uint256 => Position) private _positions;
-
-    /// @dev The ID of the next token that will be minted. Skips 0
-    uint176 private _nextId = 1;
-    /// @dev The ID of the next pool that is used for the first time. Skips 0
-    uint80 private _nextPoolId = 1;
-
-    /// @inheritdoc INonfungiblePositionManager
-    address public override owner;
-
-    /// @inheritdoc INonfungiblePositionManager
-    address public override tokenDescriptor;
-
-    /// @dev Prevents calling a function from anyone except owner
-    modifier onlyOwner() {
-        require(msg.sender == owner);
-        _;
-    }
-
-    constructor(address _factory, address _WETH9, address _tokenDescriptor, string memory name, string memory symbol)
-        ERC721Permit(name, symbol, "1")
-        PeripheryImmutableState(_factory, _WETH9)
-    {
-        owner = msg.sender;
-        tokenDescriptor = _tokenDescriptor;
-    }
-
-    /// @inheritdoc INonfungiblePositionManager
-    function positions(uint256 tokenId)
-        external
-        view
-        override
-        returns (
-            uint96 nonce,
-            address operator,
-            address token0,
-            address token1,
-            int24 tickSpacing,
-            int24 tickLower,
-            int24 tickUpper,
-            uint128 liquidity,
-            uint256 feeGrowthInside0LastX128,
-            uint256 feeGrowthInside1LastX128,
-            uint128 tokensOwed0,
-            uint128 tokensOwed1
-        )
-    {
-        Position memory position = _positions[tokenId];
-        require(position.poolId != 0, "ID");
-        PoolAddress.PoolKey memory poolKey = _poolIdToPoolKey[position.poolId];
-        return (
-            position.nonce,
-            position.operator,
-            poolKey.token0,
-            poolKey.token1,
-            poolKey.tickSpacing,
-            position.tickLower,
-            position.tickUpper,
-            position.liquidity,
-            position.feeGrowthInside0LastX128,
-            position.feeGrowthInside1LastX128,
-            position.tokensOwed0,
-            position.tokensOwed1
-        );
-    }
-
-    /// @dev Caches a pool key
-    function cachePoolKey(address pool, PoolAddress.PoolKey memory poolKey) private returns (uint80 poolId) {
-        poolId = _poolIds[pool];
-        if (poolId == 0) {
-            _poolIds[pool] = (poolId = _nextPoolId++);
-            _poolIdToPoolKey[poolId] = poolKey;
-        }
-    }
-
-    /// @inheritdoc INonfungiblePositionManager
-    function mint(MintParams calldata params)
-        external
-        payable
-        override
-        checkDeadline(params.deadline)
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
-    {
-        if (params.sqrtPriceX96 != 0) {
-            ICLFactory(factory).createPool({
-                tokenA: params.token0,
-                tokenB: params.token1,
-                tickSpacing: params.tickSpacing,
-                sqrtPriceX96: params.sqrtPriceX96
-            });
-        }
-        PoolAddress.PoolKey memory poolKey =
-            PoolAddress.PoolKey({token0: params.token0, token1: params.token1, tickSpacing: params.tickSpacing});
-
-        ICLPool pool = ICLPool(PoolAddress.computeAddress(factory, poolKey));
-
-        (liquidity, amount0, amount1) = addLiquidity(
-            AddLiquidityParams({
-                poolAddress: address(pool),
-                poolKey: poolKey,
-                recipient: address(this),
-                tickLower: params.tickLower,
-                tickUpper: params.tickUpper,
-                amount0Desired: params.amount0Desired,
-                amount1Desired: params.amount1Desired,
-                amount0Min: params.amount0Min,
-                amount1Min: params.amount1Min
-            })
-        );
-
-        _mint(params.recipient, (tokenId = _nextId++));
-
-        bytes32 positionKey = PositionKey.compute(address(this), params.tickLower, params.tickUpper);
-        (, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128,,) = pool.positions(positionKey);
-
-        // idempotent set
-        uint80 poolId = cachePoolKey(address(pool), poolKey);
-
-        _positions[tokenId] = Position({
-            nonce: 0,
-            operator: address(0),
-            poolId: poolId,
-            tickLower: params.tickLower,
-            tickUpper: params.tickUpper,
-            liquidity: liquidity,
-            feeGrowthInside0LastX128: feeGrowthInside0LastX128,
-            feeGrowthInside1LastX128: feeGrowthInside1LastX128,
-            tokensOwed0: 0,
-            tokensOwed1: 0
-        });
-
-        refundETH();
-
-        emit IncreaseLiquidity(tokenId, liquidity, amount0, amount1);
-    }
-
-    modifier isAuthorizedForToken(uint256 tokenId) {
-        require(_isApprovedOrOwner(msg.sender, tokenId));
-        _;
-    }
-
-    function tokenURI(uint256 tokenId) public view override(ERC721, IERC721Metadata) returns (string memory) {
-        require(_exists(tokenId));
-        return INonfungibleTokenPositionDescriptor(tokenDescriptor).tokenURI(this, tokenId);
-    }
-
-    // save bytecode by removing implementation of unused method
-    function baseURI() public pure override returns (string memory) {}
-
-    /// @inheritdoc INonfungiblePositionManager
-    function increaseLiquidity(IncreaseLiquidityParams calldata params)
-        external
-        payable
-        override
-        checkDeadline(params.deadline)
-        returns (uint128 liquidity, uint256 amount0, uint256 amount1)
-    {
-        Position storage position = _positions[params.tokenId];
-
-        PoolAddress.PoolKey memory poolKey = _poolIdToPoolKey[position.poolId];
-
-        ICLPool pool = ICLPool(PoolAddress.computeAddress(factory, poolKey));
-
-        address gauge = pool.gauge();
-        bool isStaked = ownerOf(params.tokenId) == gauge;
-        if (isStaked) require(msg.sender == gauge, "NG");
-
-        (liquidity, amount0, amount1) = addLiquidity(
-            AddLiquidityParams({
-                poolAddress: address(pool),
-                poolKey: poolKey,
-                tickLower: position.tickLower,
-                tickUpper: position.tickUpper,
-                amount0Desired: params.amount0Desired,
-                amount1Desired: params.amount1Desired,
-                amount0Min: params.amount0Min,
-                amount1Min: params.amount1Min,
-                recipient: isStaked ? gauge : address(this)
-            })
-        );
-
-        bytes32 positionKey =
-            PositionKey.compute(isStaked ? gauge : address(this), position.tickLower, position.tickUpper);
-
-        // this is now updated to the current transaction
-        (, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128,,) = pool.positions(positionKey);
-
-        if (!isStaked) {
-            position.tokensOwed0 += uint128(
-                FullMath.mulDiv(
-                    feeGrowthInside0LastX128 - position.feeGrowthInside0LastX128, position.liquidity, FixedPoint128.Q128
-                )
-            );
-            position.tokensOwed1 += uint128(
-                FullMath.mulDiv(
-                    feeGrowthInside1LastX128 - position.feeGrowthInside1LastX128, position.liquidity, FixedPoint128.Q128
-                )
-            );
-        }
-
-        position.feeGrowthInside0LastX128 = feeGrowthInside0LastX128;
-        position.feeGrowthInside1LastX128 = feeGrowthInside1LastX128;
-        position.liquidity += liquidity;
-
-        refundETH();
-
-        emit MetadataUpdate(params.tokenId);
-        emit IncreaseLiquidity(params.tokenId, liquidity, amount0, amount1);
-    }
-
-    /// @inheritdoc INonfungiblePositionManager
-    function decreaseLiquidity(DecreaseLiquidityParams calldata params)
-        external
-        payable
-        override
-        isAuthorizedForToken(params.tokenId)
-        checkDeadline(params.deadline)
-        returns (uint256 amount0, uint256 amount1)
-    {
-        require(params.liquidity > 0);
-        Position storage position = _positions[params.tokenId];
-
-        uint128 positionLiquidity = position.liquidity;
-        require(positionLiquidity >= params.liquidity);
-
-        PoolAddress.PoolKey memory poolKey = _poolIdToPoolKey[position.poolId];
-        ICLPool pool = ICLPool(PoolAddress.computeAddress(factory, poolKey));
-
-        address gauge = pool.gauge();
-        bool isStaked = ownerOf(params.tokenId) == gauge;
-        if (!isStaked) {
-            (amount0, amount1) = pool.burn(position.tickLower, position.tickUpper, params.liquidity);
-        } else {
-            (amount0, amount1) = pool.burn(position.tickLower, position.tickUpper, params.liquidity, gauge);
-        }
-
-        require(amount0 >= params.amount0Min && amount1 >= params.amount1Min, "PS");
-
-        bytes32 positionKey =
-            PositionKey.compute(isStaked ? gauge : address(this), position.tickLower, position.tickUpper);
-        // this is now updated to the current transaction
-        (, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128,,) = pool.positions(positionKey);
-
-        /// @dev Casting to u128 and the sum of tokensOwed overflow can cause a loss to users.
-        /// @dev This is more probable for tokens that have very high decimals.
-        /// @dev The amount of tokens necessary for the loss is: 3.4028237e+38.
-        position.tokensOwed0 += uint128(amount0);
-        position.tokensOwed1 += uint128(amount1);
-
-        if (!isStaked) {
-            position.tokensOwed0 += uint128(
-                FullMath.mulDiv(
-                    feeGrowthInside0LastX128 - position.feeGrowthInside0LastX128, positionLiquidity, FixedPoint128.Q128
-                )
-            );
-            position.tokensOwed1 += uint128(
-                FullMath.mulDiv(
-                    feeGrowthInside1LastX128 - position.feeGrowthInside1LastX128, positionLiquidity, FixedPoint128.Q128
-                )
-            );
-        }
-
-        position.feeGrowthInside0LastX128 = feeGrowthInside0LastX128;
-        position.feeGrowthInside1LastX128 = feeGrowthInside1LastX128;
-        // subtraction is safe because we checked positionLiquidity is gte params.liquidity
-        position.liquidity = positionLiquidity - params.liquidity;
-
-        emit MetadataUpdate(params.tokenId);
-        emit DecreaseLiquidity(params.tokenId, params.liquidity, amount0, amount1);
-    }
-
-    /// @inheritdoc INonfungiblePositionManager
-    function collect(CollectParams calldata params)
-        external
-        payable
-        override
-        isAuthorizedForToken(params.tokenId)
-        returns (uint256 amount0, uint256 amount1)
-    {
-        require(params.amount0Max > 0 || params.amount1Max > 0);
-        // allow collecting to the nft position manager address with address 0
-        address recipient = params.recipient == address(0) ? address(this) : params.recipient;
-
-        Position storage position = _positions[params.tokenId];
-
-        PoolAddress.PoolKey memory poolKey = _poolIdToPoolKey[position.poolId];
-
-        ICLPool pool = ICLPool(PoolAddress.computeAddress(factory, poolKey));
-
-        (uint128 tokensOwed0, uint128 tokensOwed1) = (position.tokensOwed0, position.tokensOwed1);
-
-        address gauge = pool.gauge();
-        bool isStaked = ownerOf(params.tokenId) == gauge;
-
-        // trigger an update of the position fees owed and fee growth snapshots if it has any liquidity
-        if (position.liquidity > 0) {
-            uint256 feeGrowthInside0LastX128;
-            uint256 feeGrowthInside1LastX128;
-            if (!isStaked) {
-                pool.burn(position.tickLower, position.tickUpper, 0);
-
-                (, feeGrowthInside0LastX128, feeGrowthInside1LastX128,,) =
-                    pool.positions(PositionKey.compute(address(this), position.tickLower, position.tickUpper));
-
-                tokensOwed0 += uint128(
-                    FullMath.mulDiv(
-                        feeGrowthInside0LastX128 - position.feeGrowthInside0LastX128,
-                        position.liquidity,
-                        FixedPoint128.Q128
-                    )
-                );
-                tokensOwed1 += uint128(
-                    FullMath.mulDiv(
-                        feeGrowthInside1LastX128 - position.feeGrowthInside1LastX128,
-                        position.liquidity,
-                        FixedPoint128.Q128
-                    )
-                );
-            } else {
-                pool.burn(position.tickLower, position.tickUpper, 0, gauge);
-
-                (, feeGrowthInside0LastX128, feeGrowthInside1LastX128,,) =
-                    pool.positions(PositionKey.compute(gauge, position.tickLower, position.tickUpper));
-            }
-
-            position.feeGrowthInside0LastX128 = feeGrowthInside0LastX128;
-            position.feeGrowthInside1LastX128 = feeGrowthInside1LastX128;
-        }
-
-        // compute the arguments to give to the pool#collect method
-        (uint128 amount0Collect, uint128 amount1Collect) = (
-            params.amount0Max > tokensOwed0 ? tokensOwed0 : params.amount0Max,
-            params.amount1Max > tokensOwed1 ? tokensOwed1 : params.amount1Max
-        );
-
-        // the actual amounts collected are returned
-        if (!isStaked) {
-            (amount0, amount1) =
-                pool.collect(recipient, position.tickLower, position.tickUpper, amount0Collect, amount1Collect);
-        } else {
-            (amount0, amount1) =
-                pool.collect(recipient, position.tickLower, position.tickUpper, amount0Collect, amount1Collect, gauge);
-        }
-
-        // sometimes there will be a few less wei than expected due to rounding down in core, but we just subtract the full amount expected
-        // instead of the actual amount so we can burn the token
-        (position.tokensOwed0, position.tokensOwed1) = (tokensOwed0 - amount0Collect, tokensOwed1 - amount1Collect);
-
-        emit MetadataUpdate(params.tokenId);
-        emit Collect(params.tokenId, recipient, amount0Collect, amount1Collect);
-    }
-
-    /// @inheritdoc INonfungiblePositionManager
-    function burn(uint256 tokenId) external payable override isAuthorizedForToken(tokenId) {
-        Position storage position = _positions[tokenId];
-        require(position.liquidity == 0 && position.tokensOwed0 == 0 && position.tokensOwed1 == 0, "NC");
-        delete _positions[tokenId];
-        _burn(tokenId);
-    }
-
-    function _getAndIncrementNonce(uint256 tokenId) internal override returns (uint256) {
-        return uint256(_positions[tokenId].nonce++);
-    }
-
-    /// @inheritdoc IERC721
-    function getApproved(uint256 tokenId) public view override(ERC721, IERC721) returns (address) {
-        require(_exists(tokenId), "NE");
-
-        return _positions[tokenId].operator;
-    }
-
-    /// @dev Overrides _approve to use the operator in the position, which is packed with the position permit nonce
-    function _approve(address to, uint256 tokenId) internal override(ERC721) {
-        _positions[tokenId].operator = to;
-        emit Approval(ownerOf(tokenId), to, tokenId);
-    }
-
-    /// @inheritdoc INonfungiblePositionManager
-    function setTokenDescriptor(address _tokenDescriptor) external override onlyOwner {
-        require(_tokenDescriptor != address(0));
-        tokenDescriptor = _tokenDescriptor;
-        emit BatchMetadataUpdate(0, type(uint256).max);
-        emit TokenDescriptorChanged(_tokenDescriptor);
-    }
-
-    /// @inheritdoc INonfungiblePositionManager
-    function setOwner(address _owner) external override onlyOwner {
-        require(_owner != address(0));
-        owner = _owner;
-        emit TransferOwnership(_owner);
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity =0.7.6;
-
-import "../interfaces/IPeripheryImmutableState.sol";
-
-/// @title Immutable state
-/// @notice Immutable state used by periphery contracts
-abstract contract PeripheryImmutableState is IPeripheryImmutableState {
-    /// @inheritdoc IPeripheryImmutableState
-    address public immutable override factory;
-    /// @inheritdoc IPeripheryImmutableState
-    address public immutable override WETH9;
-
-    constructor(address _factory, address _WETH9) {
-        factory = _factory;
-        WETH9 = _WETH9;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.4.0 <0.8.0;
-
-/// @title Contains 512-bit math functions
-/// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision
-/// @dev Handles "phantom overflow" i.e., allows multiplication and division where an intermediate value overflows 256 bits
-library FullMath {
-    /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
-    /// @param a The multiplicand
-    /// @param b The multiplier
-    /// @param denominator The divisor
-    /// @return result The 256-bit result
-    /// @dev Credit to Remco Bloemen under MIT license https://xn--2-umb.com/21/muldiv
-    function mulDiv(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
-        // 512-bit multiply [prod1 prod0] = a * b
-        // Compute the product mod 2**256 and mod 2**256 - 1
-        // then use the Chinese Remainder Theorem to reconstruct
-        // the 512 bit result. The result is stored in two 256
-        // variables such that product = prod1 * 2**256 + prod0
-        uint256 prod0; // Least significant 256 bits of the product
-        uint256 prod1; // Most significant 256 bits of the product
-        assembly {
-            let mm := mulmod(a, b, not(0))
-            prod0 := mul(a, b)
-            prod1 := sub(sub(mm, prod0), lt(mm, prod0))
-        }
-
-        // Handle non-overflow cases, 256 by 256 division
-        if (prod1 == 0) {
-            require(denominator > 0);
-            assembly {
-                result := div(prod0, denominator)
-            }
-            return result;
-        }
-
-        // Make sure the result is less than 2**256.
-        // Also prevents denominator == 0
-        require(denominator > prod1);
-
-        ///////////////////////////////////////////////
-        // 512 by 256 division.
-        ///////////////////////////////////////////////
-
-        // Make division exact by subtracting the remainder from [prod1 prod0]
-        // Compute remainder using mulmod
-        uint256 remainder;
-        assembly {
-            remainder := mulmod(a, b, denominator)
-        }
-        // Subtract 256 bit number from 512 bit number
-        assembly {
-            prod1 := sub(prod1, gt(remainder, prod0))
-            prod0 := sub(prod0, remainder)
-        }
-
-        // Factor powers of two out of denominator
-        // Compute largest power of two divisor of denominator.
-        // Always >= 1.
-        uint256 twos = -denominator & denominator;
-        // Divide denominator by power of two
-        assembly {
-            denominator := div(denominator, twos)
-        }
-
-        // Divide [prod1 prod0] by the factors of two
-        assembly {
-            prod0 := div(prod0, twos)
-        }
-        // Shift in bits from prod1 into prod0. For this we need
-        // to flip `twos` such that it is 2**256 / twos.
-        // If twos is zero, then it becomes one
-        assembly {
-            twos := add(div(sub(0, twos), twos), 1)
-        }
-        prod0 |= prod1 * twos;
-
-        // Invert denominator mod 2**256
-        // Now that denominator is an odd number, it has an inverse
-        // modulo 2**256 such that denominator * inv = 1 mod 2**256.
-        // Compute the inverse by starting with a seed that is correct
-        // correct for four bits. That is, denominator * inv = 1 mod 2**4
-        uint256 inv = (3 * denominator) ^ 2;
-        // Now use Newton-Raphson iteration to improve the precision.
-        // Thanks to Hensel's lifting lemma, this also works in modular
-        // arithmetic, doubling the correct bits in each step.
-        inv *= 2 - denominator * inv; // inverse mod 2**8
-        inv *= 2 - denominator * inv; // inverse mod 2**16
-        inv *= 2 - denominator * inv; // inverse mod 2**32
-        inv *= 2 - denominator * inv; // inverse mod 2**64
-        inv *= 2 - denominator * inv; // inverse mod 2**128
-        inv *= 2 - denominator * inv; // inverse mod 2**256
-
-        // Because the division is now exact we can divide by multiplying
-        // with the modular inverse of denominator. This will give us the
-        // correct result modulo 2**256. Since the precoditions guarantee
-        // that the outcome is less than 2**256, this is the final result.
-        // We don't need to compute the high bits of the result and prod1
-        // is no longer required.
-        result = prod0 * inv;
-        return result;
-    }
-
-    /// @notice Calculates ceil(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
-    /// @param a The multiplicand
-    /// @param b The multiplier
-    /// @param denominator The divisor
-    /// @return result The 256-bit result
-    function mulDivRoundingUp(uint256 a, uint256 b, uint256 denominator) internal pure returns (uint256 result) {
-        result = mulDiv(a, b, denominator);
-        if (mulmod(a, b, denominator) > 0) {
-            require(result < type(uint256).max);
-            result++;
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0 <0.8.0;
-
-import "./FullMath.sol";
-import "./FixedPoint128.sol";
-import "./LiquidityMath.sol";
-
-/// @title Position
-/// @notice Positions represent an owner address' liquidity between a lower and upper tick boundary
-/// @dev Positions store additional state for tracking fees owed to the position
-library Position {
-    // info stored for each user's position
-    struct Info {
-        // the amount of liquidity owned by this position
-        uint128 liquidity;
-        // fee growth per unit of liquidity as of the last update to liquidity or fees owed
-        uint256 feeGrowthInside0LastX128;
-        uint256 feeGrowthInside1LastX128;
-        // the fees owed to the position owner in token0/token1
-        uint128 tokensOwed0;
-        uint128 tokensOwed1;
-    }
-
-    /// @notice Returns the Info struct of a position, given an owner and position boundaries
-    /// @param self The mapping containing all user positions
-    /// @param owner The address of the position owner
-    /// @param tickLower The lower tick boundary of the position
-    /// @param tickUpper The upper tick boundary of the position
-    /// @return position The position info struct of the given owners' position
-    function get(mapping(bytes32 => Info) storage self, address owner, int24 tickLower, int24 tickUpper)
-        internal
-        view
-        returns (Position.Info storage position)
-    {
-        position = self[keccak256(abi.encodePacked(owner, tickLower, tickUpper))];
-    }
-
-    /// @notice Credits accumulated fees to a user's position
-    /// @param self The individual position to update
-    /// @param liquidityDelta The change in pool liquidity as a result of the position update
-    /// @param feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
-    /// @param feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
-    /// @param staked Signifies if the position is staked in the gauge or not
-    function update(
-        Info storage self,
-        int128 liquidityDelta,
-        uint256 feeGrowthInside0X128,
-        uint256 feeGrowthInside1X128,
-        bool staked
-    ) internal {
-        Info memory _self = self;
-
-        uint128 liquidityNext;
-        if (liquidityDelta == 0) {
-            require(_self.liquidity > 0, "NP"); // disallow pokes for 0 liquidity positions
-            liquidityNext = _self.liquidity;
-        } else {
-            liquidityNext = LiquidityMath.addDelta(_self.liquidity, liquidityDelta);
-        }
-
-        uint128 tokensOwed0;
-        uint128 tokensOwed1;
-        if (!staked) {
-            // calculate accumulated fees
-            tokensOwed0 = uint128(
-                FullMath.mulDiv(
-                    feeGrowthInside0X128 - _self.feeGrowthInside0LastX128, _self.liquidity, FixedPoint128.Q128
-                )
-            );
-            tokensOwed1 = uint128(
-                FullMath.mulDiv(
-                    feeGrowthInside1X128 - _self.feeGrowthInside1LastX128, _self.liquidity, FixedPoint128.Q128
-                )
-            );
-        }
-
-        // update the position
-        if (liquidityDelta != 0) self.liquidity = liquidityNext;
-        self.feeGrowthInside0LastX128 = feeGrowthInside0X128;
-        self.feeGrowthInside1LastX128 = feeGrowthInside1X128;
-        if (tokensOwed0 > 0 || tokensOwed1 > 0) {
-            // overflow is acceptable, have to withdraw before you hit type(uint128).max fees
-            self.tokensOwed0 += tokensOwed0;
-            self.tokensOwed1 += tokensOwed1;
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IHybra {
-    function totalSupply() external view returns (uint);
-    function balanceOf(address) external view returns (uint);
-    function approve(address spender, uint value) external returns (bool);
-    function transfer(address, uint) external returns (bool);
-    function transferFrom(address,address,uint) external returns (bool);
-    function mint(address, uint) external returns (bool);
-    function minter() external returns (address);
-    function burn(uint) external returns (bool);
-    function burnFrom(address, uint) external returns (bool);
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-import {IVoter} from "contracts/core/interfaces/IVoter.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
-import {IGaugeManager} from "contracts/core/interfaces/IGaugeManager.sol";
-
-
-/// @title The interface for the CL Factory
-/// @notice The CL Factory facilitates creation of CL pools and control over the protocol fees
-interface ICLFactory {
-    /// @notice Emitted when the owner of the factory is changed
-    /// @param oldOwner The owner before the owner was changed
-    /// @param newOwner The owner after the owner was changed
-    event OwnerChanged(address indexed oldOwner, address indexed newOwner);
-
-    /// @notice Emitted when the swapFeeManager of the factory is changed
-    /// @param oldFeeManager The swapFeeManager before the swapFeeManager was changed
-    /// @param newFeeManager The swapFeeManager after the swapFeeManager was changed
-    event SwapFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
-
-    /// @notice Emitted when the swapFeeModule of the factory is changed
-    /// @param oldFeeModule The swapFeeModule before the swapFeeModule was changed
-    /// @param newFeeModule The swapFeeModule after the swapFeeModule was changed
-    event SwapFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
-
-    /// @notice Emitted when the unstakedFeeManager of the factory is changed
-    /// @param oldFeeManager The unstakedFeeManager before the unstakedFeeManager was changed
-    /// @param newFeeManager The unstakedFeeManager after the unstakedFeeManager was changed
-    event UnstakedFeeManagerChanged(address indexed oldFeeManager, address indexed newFeeManager);
-
-    /// @notice Emitted when the unstakedFeeModule of the factory is changed
-    /// @param oldFeeModule The unstakedFeeModule before the unstakedFeeModule was changed
-    /// @param newFeeModule The unstakedFeeModule after the unstakedFeeModule was changed
-    event UnstakedFeeModuleChanged(address indexed oldFeeModule, address indexed newFeeModule);
-
-    /// @notice Emitted when the defaultUnstakedFee of the factory is changed
-    /// @param oldUnstakedFee The defaultUnstakedFee before the defaultUnstakedFee was changed
-    /// @param newUnstakedFee The defaultUnstakedFee after the unstakedFeeModule was changed
-    event DefaultUnstakedFeeChanged(uint24 indexed oldUnstakedFee, uint24 indexed newUnstakedFee);
-
-    /// @notice Emitted when a pool is created
-    /// @param token0 The first token of the pool by address sort order
-    /// @param token1 The second token of the pool by address sort order
-    /// @param tickSpacing The minimum number of ticks between initialized ticks
-    /// @param pool The address of the created pool
-    event PoolCreated(address indexed token0, address indexed token1, int24 indexed tickSpacing, address pool);
-
-    /// @notice Emitted when a new tick spacing is enabled for pool creation via the factory
-    /// @param tickSpacing The minimum number of ticks between initialized ticks for pools
-    /// @param fee The default fee for a pool created with a given tickSpacing
-    event TickSpacingEnabled(int24 indexed tickSpacing, uint24 indexed fee);
-
-
-
-    /// @notice The address of the pool implementation contract used to deploy proxies / clones
-    /// @return The address of the pool implementation contract
-    function poolImplementation() external view returns (address);
-
-    /// @notice Factory registry for valid pool / gauge / rewards factories
-    /// @return The address of the factory registry
-
-    function gaugeManager() external view returns (IGaugeManager);
-
-    /// @notice Returns the current owner of the factory
-    /// @dev Can be changed by the current owner via setOwner
-    /// @return The address of the factory owner
-    function owner() external view returns (address);
-
-    /// @notice Returns the current swapFeeManager of the factory
-    /// @dev Can be changed by the current swap fee manager via setSwapFeeManager
-    /// @return The address of the factory swapFeeManager
-    function swapFeeManager() external view returns (address);
-
-    /// @notice Returns the current protocolFeeManager of the factory
-    /// @dev Can be changed by the current protocol fee manager via setProtocolFeeManager
-    /// @return The address of the factory protocolFeeManager
-    function protocolFeeManager() external view returns (address);
-
-    /// @notice Returns the current swapFeeModule of the factory
-    /// @dev Can be changed by the current swap fee manager via setSwapFeeModule
-    /// @return The address of the factory swapFeeModule
-    function swapFeeModule() external view returns (address);
-
-    /// @notice Returns the current unstakedFeeManager of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeManager
-    /// @return The address of the factory unstakedFeeManager
-    function unstakedFeeManager() external view returns (address);
-
-    /// @notice Returns the current unstakedFeeModule of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setUnstakedFeeModule
-    /// @return The address of the factory unstakedFeeModule
-    function unstakedFeeModule() external view returns (address);
-
-
-    function protocolFeeModule() external view returns (address);
-
-    /// @notice Returns the current defaultUnstakedFee of the factory
-    /// @dev Can be changed by the current unstaked fee manager via setDefaultUnstakedFee
-    /// @return The default Unstaked Fee of the factory
-    function defaultUnstakedFee() external view returns (uint24);
-
-
-    function defaultProtocolFee() external view returns (uint24);
-
-    /// @notice Returns a default fee for a tick spacing.
-    /// @dev Use getFee for the most up to date fee for a given pool.
-    /// A tick spacing can never be removed, so this value should be hard coded or cached in the calling context
-    /// @param tickSpacing The enabled tick spacing. Returns 0 if not enabled
-    /// @return fee The default fee for the given tick spacing
-    function tickSpacingToFee(int24 tickSpacing) external view returns (uint24 fee);
-
-    /// @notice Returns a list of enabled tick spacings. Used to iterate through pools created by the factory
-    /// @dev Tick spacings cannot be removed. Tick spacings are not ordered
-    /// @return List of enabled tick spacings
-    function tickSpacings() external view returns (int24[] memory);
-
-    /// @notice Returns the pool address for a given pair of tokens and a tick spacing, or address 0 if it does not exist
-    /// @dev tokenA and tokenB may be passed in either token0/token1 or token1/token0 order
-    /// @param tokenA The contract address of either token0 or token1
-    /// @param tokenB The contract address of the other token
-    /// @param tickSpacing The tick spacing of the pool
-    /// @return pool The pool address
-    function getPool(address tokenA, address tokenB, int24 tickSpacing) external view returns (address pool);
-
-    /// @notice Return address of pool created by this factory given its `index`
-    /// @param index Index of the pool
-    /// @return The pool address in the given index
-    function allPools(uint256 index) external view returns (address);
-
-    /// @notice Returns the number of pools created from this factory
-    /// @return Number of pools created from this factory
-    function allPoolsLength() external view returns (uint256);
-
-    /// @notice Used in VotingEscrow to determine if a contract is a valid pool of the factory
-    /// @param pool The address of the pool to check
-    /// @return Whether the pool is a valid pool of the factory
-    function isPool(address pool) external view returns (bool);
-
-    /// @notice Get swap & flash fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Swap & flash fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the swap & flash fee for
-    /// @return The swap & flash fee for the given pool
-    function getSwapFee(address pool) external view returns (uint24);
-
-    /// @notice Get unstaked fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Unstaked fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the unstaked fee for
-    /// @return The unstaked fee for the given pool
-    function getUnstakedFee(address pool) external view returns (uint24);
-
-    /// @notice Get protocol fee for a given pool. Accounts for default and dynamic fees
-    /// @dev Protocol fee is denominated in pips. i.e. 1e-6
-    /// @param pool The pool to get the protocol fee for
-    /// @return The protocol fee for the given pool
-    function getProtocolFee(address pool) external view returns (uint24);
-
-    /// @notice Creates a pool for the given two tokens and fee
-    /// @param tokenA One of the two tokens in the desired pool
-    /// @param tokenB The other of the two tokens in the desired pool
-    /// @param tickSpacing The desired tick spacing for the pool
-    /// @param sqrtPriceX96 The initial sqrt price of the pool, as a Q64.96
-    /// @dev tokenA and tokenB may be passed in either order: token0/token1 or token1/token0. The call will
-    /// revert if the pool already exists, the tick spacing is invalid, or the token arguments are invalid
-    /// @return pool The address of the newly created pool
-    function createPool(address tokenA, address tokenB, int24 tickSpacing, uint160 sqrtPriceX96)
-        external
-        returns (address pool);
-
-    /// @notice Updates the owner of the factory
-    /// @dev Must be called by the current owner
-    /// @param _owner The new owner of the factory
-    function setOwner(address _owner) external;
-
-    /// @notice Updates the swapFeeManager of the factory
-    /// @dev Must be called by the current swap fee manager
-    /// @param _swapFeeManager The new swapFeeManager of the factory
-    function setSwapFeeManager(address _swapFeeManager) external;
-
-    /// @notice Updates the swapFeeModule of the factory
-    /// @dev Must be called by the current swap fee manager
-    /// @param _swapFeeModule The new swapFeeModule of the factory
-    function setSwapFeeModule(address _swapFeeModule) external;
-
-    /// @notice Updates the unstakedFeeManager of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _unstakedFeeManager The new unstakedFeeManager of the factory
-    function setUnstakedFeeManager(address _unstakedFeeManager) external;
-
-    /// @notice Updates the unstakedFeeModule of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _unstakedFeeModule The new unstakedFeeModule of the factory
-    function setUnstakedFeeModule(address _unstakedFeeModule) external;
-
-    /// @notice Updates the protocolFeeManager of the factory
-    /// @dev Must be called by the current protocol fee manager
-    /// @param _protocolFeeManager The new protocolFeeManager of the factory
-    function setProtocolFeeManager(address _protocolFeeManager) external;
-
-    /// @notice Updates the protocolFeeModule of the factory
-    /// @dev Must be called by the current protocol fee manager
-    /// @param _protocolFeeModule The new protocolFeeModule of the factory
-    function setProtocolFeeModule(address _protocolFeeModule) external;
-
-    /// @notice Updates the defaultUnstakedFee of the factory
-    /// @dev Must be called by the current unstaked fee manager
-    /// @param _defaultUnstakedFee The new defaultUnstakedFee of the factory
-    function setDefaultUnstakedFee(uint24 _defaultUnstakedFee) external;
-
-    /// @notice Enables a certain tickSpacing
-    /// @dev Tick spacings may never be removed once enabled
-    /// @param tickSpacing The spacing between ticks to be enforced in the pool
-    /// @param fee The default fee associated with a given tick spacing
-    function enableTickSpacing(int24 tickSpacing, uint24 fee) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IGauge {
-    function notifyRewardAmount(address token, uint amount) external;
-    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
-    function getReward(address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function left(address token) external view returns (uint);
-    function rewardRate(address _pair) external view returns (uint);
-    function balanceOf(address _account) external view returns (uint);
-    function isForPair() external view returns (bool);
-    function totalSupply() external view returns (uint);
-    function earned(address token, address account) external view returns (uint);
-    function setGenesisPool(address genesisPool) external;
-    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
-    function emergency() external returns (bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
-
-
-library VotingDelegationLib {
-    /// @notice A checkpoint for marking delegated tokenIds from a given timestamp
-    struct Checkpoint {
-        uint timestamp;
-        uint[] tokenIds;
-    }
-
-    // A struct that holds all checkpoint data for different accounts.
-    // The calling contract will include one instance of this struct in storage.
-    struct Data {
-        // For each account, store a mapping from checkpoint index to Checkpoint.
-        mapping(address => mapping(uint32 => Checkpoint)) checkpoints;
-        // For each account, store the number of checkpoints.
-        mapping(address => uint32) numCheckpoints;
-    }
-
-    struct TokenHelpers {
-        function(uint) view returns (address) ownerOfFn;
-        function(address) view returns (uint) ownerToNFTokenCountFn;
-        function(address, uint) view returns (uint) tokenOfOwnerByIndex;
-    }
-
-    uint public constant MAX_DELEGATES = 1024; // avoid too much gas
-    /**
-     * @notice Returns the checkpoint index to write for an account.
-     * If the most recent checkpoint was created in the current timestamp, returns that index.
-     * Otherwise, returns the current number of checkpoints (i.e. a new checkpoint index).
-     */
-    function findCheckpointToWrite(
-        Data storage self,
-        address account,
-        uint256 currentTimestamp
-    ) internal view returns (uint32) {
-        uint32 n = self.numCheckpoints[account];
-        if (n > 0 && self.checkpoints[account][n - 1].timestamp == currentTimestamp) {
-            return n - 1;
-        } else {
-            return n;
-        }
-    }
-
-    function moveTokenDelegates(
-        Data storage self,
-        address srcRep,
-        address dstRep,
-        uint _tokenId,
-        function(uint) view returns (address) ownerOfFn
-    ) internal {
-        if (srcRep != dstRep && _tokenId > 0) {
-            if (srcRep != address(0)) {
-                uint32 srcRepNum = self.numCheckpoints[srcRep];
-                uint[] storage srcRepOld = srcRepNum > 0
-                    ? self.checkpoints[srcRep][srcRepNum - 1].tokenIds
-                    : self.checkpoints[srcRep][0].tokenIds;
-                uint32 nextSrcRepNum = findCheckpointToWrite(self, srcRep, block.timestamp);
-                bool _isCheckpointInNewBlock = (srcRepNum > 0) ? (nextSrcRepNum != srcRepNum - 1) : true;
-                Checkpoint storage cpSrcRep = self.checkpoints[srcRep][nextSrcRepNum];
-                uint[] storage srcRepNew = cpSrcRep.tokenIds;
-                cpSrcRep.timestamp = block.timestamp;
-                // All the same except _tokenId
-                uint256 length = srcRepOld.length;
-                for (uint i = 0; i < length;) {
-                    uint tId = srcRepOld[i];
-                    if(_isCheckpointInNewBlock) {
-                        if(ownerOfFn(tId) == srcRep) {
-                            srcRepNew.push(tId);
-                        }
-                        i++;
-                    } else {
-                        if(ownerOfFn(tId) != srcRep) {
-                            srcRepNew[i] = srcRepNew[length -1];
-                            srcRepNew.pop();
-                            length--;
-                        } else {
-                            i++;
-                        }
-                    }
-                }
-                self.numCheckpoints[srcRep] = nextSrcRepNum + 1;   
-            }
-
-            if (dstRep != address(0)) {
-                uint32 dstRepNum = self.numCheckpoints[dstRep];
-                uint[] storage dstRepOld = dstRepNum > 0
-                    ? self.checkpoints[dstRep][dstRepNum - 1].tokenIds
-                    : self.checkpoints[dstRep][0].tokenIds;
-                uint32 nextDstRepNum = findCheckpointToWrite(self, dstRep, block.timestamp);
-                bool _isCheckpointInNewBlock = (dstRepNum > 0) ? (nextDstRepNum != dstRepNum - 1) : true;
-                Checkpoint storage cpDstRep = self.checkpoints[dstRep][nextDstRepNum];
-                uint[] storage dstRepNew = cpDstRep.tokenIds;
-                cpDstRep.timestamp = block.timestamp;
-                require(
-                    dstRepOld.length + 1 <= MAX_DELEGATES,
-                    "tokens>1"
-                );
-                if(_isCheckpointInNewBlock) {
-                    for (uint i = 0; i < dstRepOld.length; i++) {
-                        uint tId = dstRepOld[i];
-                        dstRepNew.push(tId);
-                    }
-                }
-                dstRepNew.push(_tokenId);
-                self.numCheckpoints[dstRep] = nextDstRepNum + 1;
-            }
-        }
-    }
-
-    function _moveAllDelegates(
-        Data storage self,
-        address owner,
-        address srcRep,
-        address dstRep,
-        TokenHelpers memory tokenHelpers
-    ) internal {
-        // You can only redelegate what you own
-        address _owner = owner;
-        Data storage _self = self;
-        address _srcRep = srcRep;
-        address _dstRep = dstRep;
-        TokenHelpers memory _tokenHelper = tokenHelpers;
-        if (_srcRep != _dstRep) {
-            if (_srcRep != address(0)) {
-                uint32 srcRepNum = _self.numCheckpoints[_srcRep];
-                uint[] storage srcRepOld = srcRepNum > 0
-                    ? _self.checkpoints[_srcRep][srcRepNum - 1].tokenIds
-                    : _self.checkpoints[_srcRep][0].tokenIds;
-                uint32 nextSrcRepNum = findCheckpointToWrite(_self,_srcRep, block.timestamp);
-                bool _isCheckpointInNewBlock = (srcRepNum > 0) ? (nextSrcRepNum != srcRepNum - 1) : true;
-                // if(_isCheckpointInNewBlock) {
-                Checkpoint storage cpSrcRep = _self.checkpoints[_srcRep][nextSrcRepNum];
-                uint[] storage srcRepNew = cpSrcRep.tokenIds;
-                cpSrcRep.timestamp = block.timestamp;
-
-                uint256 length = srcRepOld.length;
-                for (uint i = 0; i < length;) {
-                    uint tId = srcRepOld[i];
-                    if(_isCheckpointInNewBlock) {
-                        if(_tokenHelper.ownerOfFn(tId) != _owner) {
-                            srcRepNew.push(tId);
-                        }
-                        i++;
-                    } else {
-                        if(_tokenHelper.ownerOfFn(tId) == _owner) {
-                            srcRepNew[i] = srcRepNew[length -1];
-                            srcRepNew.pop();
-                            length--;
-                        } else {
-                            i++;
-                        }
-                    }
-                }
-                _self.numCheckpoints[_srcRep] = nextSrcRepNum + 1;
-            }
-
-
-            if (_dstRep != address(0)) {
-                uint32 dstRepNum = _self.numCheckpoints[_dstRep];
-                uint[] storage dstRepOld = dstRepNum > 0
-                    ? _self.checkpoints[_dstRep][dstRepNum - 1].tokenIds
-                    : _self.checkpoints[_dstRep][0].tokenIds;
-                uint32 nextDstRepNum = findCheckpointToWrite(_self,_dstRep, block.timestamp);
-                bool _isCheckpointInNewBlock = (dstRepNum > 0) ? (nextDstRepNum != dstRepNum - 1) : true;
-                Checkpoint storage cpDstRep = _self.checkpoints[_dstRep][nextDstRepNum];
-                uint[] storage dstRepNew = cpDstRep.tokenIds;
-                cpDstRep.timestamp = block.timestamp;
-                uint ownerTokenCount = _tokenHelper.ownerToNFTokenCountFn(_owner);
-                require(
-                    dstRepOld.length + ownerTokenCount <= MAX_DELEGATES,
-                    "tokens>1"
-                );
-                if(_isCheckpointInNewBlock) {
-                    for (uint i = 0; i < dstRepOld.length; i++) {
-                        uint tId = dstRepOld[i];
-                        dstRepNew.push(tId);
-                    }
-                }
-                // Plus all that's owned
-                for (uint i = 0; i < ownerTokenCount; i++) {
-                    uint tId = _tokenHelper.tokenOfOwnerByIndex(_owner,i);
-                    dstRepNew.push(tId);
-                }
-                _self.numCheckpoints[_dstRep] = nextDstRepNum + 1;   
-            }
-        }
-    }
-
-    function getPastVotesIndex(Data storage data, address account, uint timestamp) internal view returns (uint32) {
-        uint32 nCheckpoints = data.numCheckpoints[account];
-        if (nCheckpoints == 0) {
-            return 0;
-        }
-        // First check most recent balance
-        if (data.checkpoints[account][nCheckpoints - 1].timestamp <= timestamp) {
-            return (nCheckpoints - 1);
-        }
-
-        // Next check implicit zero balance
-        if (data.checkpoints[account][0].timestamp > timestamp) {
-            return 0;
-        }
-
-        uint32 lower = 0;
-        uint32 upper = nCheckpoints - 1;
-        while (upper > lower) {
-            uint32 center = upper - (upper - lower) / 2; // ceil, avoiding overflow
-            VotingDelegationLib.Checkpoint storage cp = data.checkpoints[account][center];
-            if (cp.timestamp == timestamp) {
-                return center;
-            } else if (cp.timestamp < timestamp) {
-                lower = center;
-            } else {
-                upper = center - 1;
-            }
-        }
-        return lower;
-    }
-
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import '../interfaces/IPermissionsRegistry.sol';
-import '../interfaces/IGaugeFactoryCL.sol';
-import './GaugeCL.sol';
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {HybraTimeLibrary} from "../libraries/HybraTimeLibrary.sol";
-
-
-interface IGaugeCL {
-    function activateEmergencyMode() external;
-    function stopEmergencyMode() external;
-    function setInternalBribe(address intbribe) external;
-}
-
-contract GaugeFactoryCL is IGaugeFactoryCL, OwnableUpgradeable {
-
-    using SafeERC20 for IERC20;
-
-    address public last_gauge;
-    address public permissionsRegistry;
-
-    address[] internal __gauges;
-    address internal rHYBR;
-
-    
-    constructor() {}
-
-    function initialize(address _permissionRegistry) initializer  public {
-        __Ownable_init();   //after deploy ownership to multisig
-        permissionsRegistry = _permissionRegistry;
-    }
-
-    function setRHYBR(address _rHYBR) external {
-        require(owner() == msg.sender, 'not owner');
-        rHYBR = _rHYBR;
-    }
-
- 
-
-    modifier onlyAllowed() {
-        require(owner() == msg.sender || IPermissionsRegistry(permissionsRegistry).hasRole("GAUGE_ADMIN",msg.sender), 'ERR: GAUGE_ADMIN');
-        _;
-    }
-
-    function setRegistry(address _registry) external {
-        require(owner() == msg.sender, 'not owner');
-        permissionsRegistry = _registry;
-    }
-
-
-    function createGauge(address _rewardToken,address _ve,address _pool,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, 
-                        address nfpm) external returns (address) {
-        
-
-        last_gauge = address(new GaugeCL(_rewardToken,rHYBR,_ve,_pool,_distribution,_internal_bribe,_external_bribe,_isPair, nfpm, address(this)));
-        __gauges.push(last_gauge);
-        return last_gauge;
-    }
-
-
-
-    function gauges(uint256 i) external view returns(address) {
-        return __gauges[i];
-    }
-
-    modifier EmergencyCouncil() {
-        require( msg.sender == IPermissionsRegistry(permissionsRegistry).emergencyCouncil() );
-        _;
-    }
-
-    function activateEmergencyMode( address[] memory _gauges) external EmergencyCouncil {
-        uint i = 0;
-        for ( i ; i < _gauges.length; i++){
-            IGaugeCL(_gauges[i]).activateEmergencyMode();
-        }
-    }
-
-    function stopEmergencyMode( address[] memory _gauges) external EmergencyCouncil {
-        uint i = 0;
-        for ( i ; i < _gauges.length; i++){
-            IGaugeCL(_gauges[i]).stopEmergencyMode();
-        }
-    }
-
-    function setInternalBribe(address[] memory _gauges,  address[] memory int_bribe) external onlyAllowed {
-        require(_gauges.length == int_bribe.length);
-        uint i = 0;
-        for ( i ; i < _gauges.length; i++){
-            IGaugeCL(_gauges[i]).setInternalBribe(int_bribe[i]);
-        }
-    }
-
-    function length() external view returns(uint) {
-        return __gauges.length;
-    }
-
-    
-}
-// SPDX-License-Identifier: MIT
 pragma solidity =0.7.6;
 
 interface IVotingEscrow {
@@ -5241,33 +5073,83 @@ interface IVotingEscrow {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IBribe {
-    function deposit(uint amount, uint tokenId) external;
-    function withdraw(uint amount, uint tokenId) external;
-    function getRewardForAddress(address _owner, address[] memory tokens) external;
-    function notifyRewardAmount(address token, uint amount) external;
-    function left(address token) external view returns (uint);
-    function getReward(uint tokenId, address[] memory tokens) external;
-    function bribeTokens(uint256 i) external view returns(address); 
-    function rewardsListLength() external view returns (uint256);
-    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
-}
+library HybraTimeLibrary {
 
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity =0.7.6;
-interface IMinter {
-    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
-    /// @return _period Start of current epoch.
-    function updatePeriod() external returns (uint256 _period);
-}
+    // for testnet
+    uint256 internal constant WEEK = 1800;
+    uint internal constant NO_VOTING_WINDOW = 300;
+    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
+    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
+    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+    // uint256 internal constant WEEK = 7 * 86400;
+    // uint internal constant NO_VOTING_WINDOW = 3600;
+    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
+    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
+    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
 
-interface IBribeFactory {
-    function createInternalBribe(address[] memory) external returns (address);
-    function createExternalBribe(address[] memory) external returns (address);
-    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
+    /// @dev Returns start of epoch based on current timestamp
+    function epochStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK);
+        }
+    }
+
+    /// @dev Returns start of next epoch / end of current epoch
+    function epochNext(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK;
+        }
+    }
+
+    /// @dev Returns start of voting window
+    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
+        }
+    }
+
+    /// @dev Returns end of voting window / beginning of unrestricted voting window
+    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
+        }
+    }
+
+    /// @dev Returns the status if it is the last hour of the epoch
+    function isLastHour(uint256 timestamp) internal pure returns (bool) {
+        // return block.timestamp % 7 days >= 6 days + 23 hours;
+        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
+        && timestamp < HybraTimeLibrary.epochNext(timestamp);
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function epochMultiples(uint256 duration) internal pure returns (uint256) {
+        unchecked {
+            return (duration / WEEK) * WEEK;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
+        unchecked {
+            return  endTime - WEEK <= timestamp && timestamp < endTime;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -5383,42 +5265,131 @@ contract GaugeFactory is IGaugeFactory, OwnableUpgradeable {
     }
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.4.0;
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
 
-/// @title FixedPoint128
-/// @notice A library for handling binary fixed point numbers, see https://en.wikipedia.org/wiki/Q_(number_format)
-library FixedPoint128 {
-    uint256 internal constant Q128 = 0x100000000000000000000000000000000;
+interface IBribe {
+    function deposit(uint amount, uint tokenId) external;
+    function withdraw(uint amount, uint tokenId) external;
+    function getRewardForAddress(address _owner, address[] memory tokens) external;
+    function notifyRewardAmount(address token, uint amount) external;
+    function left(address token) external view returns (uint);
+    function getReward(uint tokenId, address[] memory tokens) external;
+    function bribeTokens(uint256 i) external view returns(address); 
+    function rewardsListLength() external view returns (uint256);
+    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: MIT
 pragma solidity =0.7.6;
-pragma abicoder v2;
 
-import "../interfaces/IMulticall.sol";
+interface IFactoryRegistry {
+    function approve(address poolFactory, address votingRewardsFactory, address gaugeFactory) external;
 
-/// @title Multicall
-/// @notice Enables calling multiple methods in a single call to the contract
-abstract contract Multicall is IMulticall {
-    /// @inheritdoc IMulticall
-    function multicall(bytes[] calldata data) public payable override returns (bytes[] memory results) {
-        results = new bytes[](data.length);
-        for (uint256 i = 0; i < data.length; i++) {
-            (bool success, bytes memory result) = address(this).delegatecall(data[i]);
+    function isPoolFactoryApproved(address poolFactory) external returns (bool);
 
-            if (!success) {
-                // Next 5 lines from https://ethereum.stackexchange.com/a/83577
-                if (result.length < 68) revert();
-                assembly {
-                    result := add(result, 0x04)
-                }
-                revert(abi.decode(result, (string)));
-            }
+    function factoriesToPoolFactory(address poolFactory)
+        external
+        returns (address votingRewardsFactory, address gaugeFactory);
+}
 
-            results[i] = result;
-        }
+pragma solidity 0.8.13;
+
+library VoterFactoryLib {
+    struct Data {
+        address[] pairFactories;
+        address[] gaugeFactories;
+        mapping(address => bool) isFactory;
+        mapping(address => bool) isGaugeFactory;
     }
+
+    event AddPairFactories(address indexed pairfactory);
+    event AddGaugeFactories(address indexed gaugefactory);
+    event SetGaugeFactory(address indexed old, address indexed latest);
+    event SetPairFactory(address indexed old, address indexed latest);
+
+
+    function addPairFactory(Data storage self, address _pairFactory) external {
+        require(_pairFactory != address(0) , 'addr0');
+        require(!self.isFactory[_pairFactory], "fact");
+        require(_pairFactory.code.length > 0, "!contract");
+        self.pairFactories.push(_pairFactory);
+        self.isFactory[_pairFactory] = true;
+        emit AddPairFactories(_pairFactory);
+    }
+
+    function addGaugeFactory(Data storage self, address _gaugeFactory) external {
+        require(_gaugeFactory != address(0) , 'addr0');
+        require(!self.isGaugeFactory[_gaugeFactory], "gFact");
+        require(_gaugeFactory.code.length > 0, "!contract");
+        self.gaugeFactories.push(_gaugeFactory);
+        self.isGaugeFactory[_gaugeFactory] = true;
+        emit AddGaugeFactories(_gaugeFactory);
+    }
+
+    function replacePairFactory(Data storage self, address _pairFactory, uint256 _pos) external {
+        require(_pairFactory != address(0), 'addr0');
+        require(!self.isFactory[_pairFactory], 'fact');
+        require(_pairFactory.code.length > 0, "!contract");
+        address oldPF = self.pairFactories[_pos];
+        self.isFactory[oldPF] = false;
+        self.pairFactories[_pos] = _pairFactory;
+        self.isFactory[_pairFactory] = true;
+
+        emit SetPairFactory(oldPF, _pairFactory);
+    }
+
+    function replaceGaugeFactory(Data storage self, address _gaugeFactory, uint256 _pos) external {
+        require(_gaugeFactory != address(0) , 'addr0');
+        require(!self.isGaugeFactory[_gaugeFactory], 'gFact');
+        require(_gaugeFactory.code.length > 0, "!contract");
+        address oldGF = self.gaugeFactories[_pos];
+        self.isGaugeFactory[oldGF] = false;
+        self.gaugeFactories[_pos] = _gaugeFactory;
+        self.isGaugeFactory[_gaugeFactory] = true;
+
+        emit SetGaugeFactory(oldGF, _gaugeFactory);
+    }
+
+    function removePairFactory(Data storage self, uint256 _pos) external {
+        address oldPF = self.pairFactories[_pos];
+        require(self.isFactory[oldPF], "!exists");
+        self.isFactory[oldPF] = false;
+        self.pairFactories[_pos] = address(0);
+        emit SetPairFactory(oldPF, address(0));
+    }
+
+    function removeGaugeFactory(Data storage self, uint256 _pos) external {
+        address oldGF = self.gaugeFactories[_pos];
+        require(self.isGaugeFactory[oldGF], "!exists");
+        self.isGaugeFactory[oldGF] = false;
+        self.gaugeFactories[_pos] = address(0);
+        emit SetGaugeFactory(oldGF, address(0));
+    }
+
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IHybra {
+    function totalSupply() external view returns (uint);
+    function balanceOf(address) external view returns (uint);
+    function approve(address spender, uint value) external returns (bool);
+    function transfer(address, uint) external returns (bool);
+    function transferFrom(address,address,uint) external returns (bool);
+    function mint(address, uint) external returns (bool);
+    function minter() external returns (address);
+    function burn(uint) external returns (bool);
+    function burnFrom(address, uint) external returns (bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IBribeFactory {
+    function createInternalBribe(address[] memory) external returns (address);
+    function createExternalBribe(address[] memory) external returns (address);
+    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
 }
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -5560,12 +5531,114 @@ abstract contract LiquidityManagement is ICLMintCallback, PeripheryImmutableStat
     }
 }
 
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity =0.7.6;
+pragma abicoder v2;
+
+import "../interfaces/IMulticall.sol";
+
+/// @title Multicall
+/// @notice Enables calling multiple methods in a single call to the contract
+abstract contract Multicall is IMulticall {
+    /// @inheritdoc IMulticall
+    function multicall(bytes[] calldata data) public payable override returns (bytes[] memory results) {
+        results = new bytes[](data.length);
+        for (uint256 i = 0; i < data.length; i++) {
+            (bool success, bytes memory result) = address(this).delegatecall(data[i]);
+
+            if (!success) {
+                // Next 5 lines from https://ethereum.stackexchange.com/a/83577
+                if (result.length < 68) revert();
+                assembly {
+                    result := add(result, 0x04)
+                }
+                revert(abi.decode(result, (string)));
+            }
+
+            results[i] = result;
+        }
+    }
+}
+
 
 END OF SUPPORTING CONTRACTS AND INTERFACES
 
 
 DEPLOYMENT SCRIPTS
 
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "forge-std/Script.sol";
+import "forge-std/StdJson.sol";
+import "./BaseDeployScript.sol";
+
+import {MinterUpgradeable} from "../contracts/MinterUpgradeable.sol";
+import {RewardsDistributor} from "../contracts/RewardsDistributor.sol";
+import {GaugeManager} from "../contracts/GaugeManager.sol";
+import {GrowthHYBR} from "../contracts/GovernanceHYBR.sol";
+
+contract Deploy3a2_SetupConnections is BaseDeployScript {
+    using stdJson for string;
+    
+    function run() external {
+        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.rememberKey(deployerKey);
+        
+        // Load previous deployments
+        string memory tokenPath = getInputPath("Deploy2_TokenSystem");
+        string memory factoriesPath = getInputPath("Deploy3a_GaugeFactories");
+        string memory minterPath = getInputPath("Deploy3b1_MinterRewards");
+        
+        string memory tokenJson = vm.readFile(tokenPath);
+        string memory factoriesJson = vm.readFile(factoriesPath);
+        string memory minterJson = vm.readFile(minterPath);
+        
+        // Load addresses
+        address gHybr = abi.decode(vm.parseJson(tokenJson, ".GrowthHYBR"), (address));
+        address gaugeManager = abi.decode(vm.parseJson(factoriesJson, ".GaugeManager"), (address));
+        address minter = abi.decode(vm.parseJson(minterJson, ".Minter"), (address));
+        address rewardsDistributor = abi.decode(vm.parseJson(minterJson, ".RewardsDistributor"), (address));
+        
+        console.log("=== Step 2: Setup Contract Connections ===");
+        console.log("Deployer:", deployer);
+        console.log("Using GrowthHYBR:", gHybr);
+        console.log("Using GaugeManager:", gaugeManager);
+        console.log("Using Minter:", minter);
+        console.log("Using RewardsDistributor:", rewardsDistributor);
+        
+        vm.startBroadcast(deployer);
+        
+        // 1. Set Minter on GaugeManager
+        console.log("Setting Minter on GaugeManager...");
+        GaugeManager(gaugeManager).setMinter(minter);
+        console.log("Minter set on GaugeManager");
+        
+        // 2. Set Minter as depositor on RewardsDistributor
+        console.log("Setting Minter as depositor on RewardsDistributor...");
+        RewardsDistributor(rewardsDistributor).setDepositor(minter);
+        console.log("Minter set as depositor on RewardsDistributor");
+        
+        // 3. Set RewardsDistributor on GrowthHYBR
+        console.log("Setting RewardsDistributor on GovernanceHYBR...");
+        GrowthHYBR(gHybr).setRewardsDistributor(rewardsDistributor);
+        console.log("RewardsDistributor set on GovernanceHYBR");
+        
+        // 4. Set GaugeManager on GrowthHYBR
+        console.log("Setting GaugeManager on GovernanceHYBR...");
+        GrowthHYBR(gHybr).setGaugeManager(gaugeManager);
+        console.log("GaugeManager set on GovernanceHYBR");
+        
+        vm.stopBroadcast();
+        
+        console.log("=== All Contract Connections Complete ===");
+        
+        // Create final combined output
+       
+
+        console.log("Final addresses saved to:");
+    }
+}
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
@@ -5734,176 +5807,6 @@ pragma solidity 0.8.13;
 
 import "forge-std/Script.sol";
 import "forge-std/StdJson.sol";
-import "./BaseDeployScript.sol";
-
-import {MinterUpgradeable} from "../contracts/MinterUpgradeable.sol";
-import {RewardsDistributor} from "../contracts/RewardsDistributor.sol";
-import {GaugeManager} from "../contracts/GaugeManager.sol";
-import {GrowthHYBR} from "../contracts/GovernanceHYBR.sol";
-
-contract Deploy3a2_SetupConnections is BaseDeployScript {
-    using stdJson for string;
-    
-    function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.rememberKey(deployerKey);
-        
-        // Load previous deployments
-        string memory tokenPath = getInputPath("Deploy2_TokenSystem");
-        string memory factoriesPath = getInputPath("Deploy3a_GaugeFactories");
-        string memory minterPath = getInputPath("Deploy3b1_MinterRewards");
-        
-        string memory tokenJson = vm.readFile(tokenPath);
-        string memory factoriesJson = vm.readFile(factoriesPath);
-        string memory minterJson = vm.readFile(minterPath);
-        
-        // Load addresses
-        address gHybr = abi.decode(vm.parseJson(tokenJson, ".GrowthHYBR"), (address));
-        address gaugeManager = abi.decode(vm.parseJson(factoriesJson, ".GaugeManager"), (address));
-        address minter = abi.decode(vm.parseJson(minterJson, ".Minter"), (address));
-        address rewardsDistributor = abi.decode(vm.parseJson(minterJson, ".RewardsDistributor"), (address));
-        
-        console.log("=== Step 2: Setup Contract Connections ===");
-        console.log("Deployer:", deployer);
-        console.log("Using GrowthHYBR:", gHybr);
-        console.log("Using GaugeManager:", gaugeManager);
-        console.log("Using Minter:", minter);
-        console.log("Using RewardsDistributor:", rewardsDistributor);
-        
-        vm.startBroadcast(deployer);
-        
-        // 1. Set Minter on GaugeManager
-        console.log("Setting Minter on GaugeManager...");
-        GaugeManager(gaugeManager).setMinter(minter);
-        console.log("Minter set on GaugeManager");
-        
-        // 2. Set Minter as depositor on RewardsDistributor
-        console.log("Setting Minter as depositor on RewardsDistributor...");
-        RewardsDistributor(rewardsDistributor).setDepositor(minter);
-        console.log("Minter set as depositor on RewardsDistributor");
-        
-        // 3. Set RewardsDistributor on GrowthHYBR
-        console.log("Setting RewardsDistributor on GovernanceHYBR...");
-        GrowthHYBR(gHybr).setRewardsDistributor(rewardsDistributor);
-        console.log("RewardsDistributor set on GovernanceHYBR");
-        
-        // 4. Set GaugeManager on GrowthHYBR
-        console.log("Setting GaugeManager on GovernanceHYBR...");
-        GrowthHYBR(gHybr).setGaugeManager(gaugeManager);
-        console.log("GaugeManager set on GovernanceHYBR");
-        
-        vm.stopBroadcast();
-        
-        console.log("=== All Contract Connections Complete ===");
-        
-        // Create final combined output
-       
-
-        console.log("Final addresses saved to:");
-    }
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-import "forge-std/Script.sol";
-import "forge-std/StdJson.sol";
-import "./BaseDeployScript.sol";
-
-import {GaugeManager} from "../contracts/GaugeManager.sol";
-import {BribeFactoryV3} from "../contracts/factories/BribeFactoryV3.sol";
-import {PermissionsRegistry} from "../contracts/PermissionsRegistry.sol";
-
-import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-
-contract Deploy3a2_GaugeManagerAndBribes is BaseDeployScript {
-    using stdJson for string;
-    
-    function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.rememberKey(deployerKey);
-        
-        // Load previous deployments
-        string memory infraPath = getInputPath("Deploy1_Infrastructure");
-        string memory tokenPath = getInputPath("Deploy2_TokenSystem");
-        string memory gaugeFactoriesPath = getInputPath("Deploy3a1_GaugeFactories");
-        string memory configPath = getConfigPath();
-        
-        string memory infraJson = vm.readFile(infraPath);
-        string memory tokenJson = vm.readFile(tokenPath);
-        string memory gaugeFactoriesJson = vm.readFile(gaugeFactoriesPath);
-        string memory configJson = vm.readFile(configPath);
-        
-        address proxyAdmin = abi.decode(vm.parseJson(infraJson, ".ProxyAdmin"), (address));
-        address permissionsRegistry = abi.decode(vm.parseJson(infraJson, ".PermissionsRegistry"), (address));
-        address tokenHandler = abi.decode(vm.parseJson(infraJson, ".TokenHandler"), (address));
-        address pairFactory = abi.decode(vm.parseJson(configJson, ".v2Factory"), (address));
-        address votingEscrow = abi.decode(vm.parseJson(tokenJson, ".VotingEscrow"), (address));
-        address clFactory = abi.decode(vm.parseJson(configJson, ".clFactory"), (address));
-        address nfpm = abi.decode(vm.parseJson(configJson, ".nonfungiblePositionManager"), (address));
-        address gaugeFactory = abi.decode(vm.parseJson(gaugeFactoriesJson, ".GaugeFactory"), (address));
-        address gaugeFactoryCL = abi.decode(vm.parseJson(gaugeFactoriesJson, ".GaugeFactoryCL"), (address));
-        
-        console.log("=== Deploy GaugeManager and BribeFactory ===");
-        console.log("Deployer:", deployer);
-        console.log("Using VotingEscrow:", votingEscrow);
-        console.log("Using GaugeFactory:", gaugeFactory);
-        console.log("Using GaugeFactoryCL:", gaugeFactoryCL);
-        
-        vm.startBroadcast(deployer);
-        
-        // 1. Deploy GaugeManager
-        console.log("Deploying GaugeManager...");
-        GaugeManager gaugeManagerImpl = new GaugeManager();
-        TransparentUpgradeableProxy gaugeManagerProxy = new TransparentUpgradeableProxy(
-            address(gaugeManagerImpl),
-            proxyAdmin,
-            ""
-        );
-        GaugeManager gaugeManager = GaugeManager(address(gaugeManagerProxy));
-        console.log("GaugeManager:", address(gaugeManager));
-        
-        // Initialize GaugeManager
-        console.log("Initializing GaugeManager...");
-        gaugeManager.initialize(
-            votingEscrow,                    // __ve
-            tokenHandler,                    // _tokenHandler
-            gaugeFactory,                    // _gaugeFactory
-            gaugeFactoryCL,                  // _gaugeFactoryCL
-            pairFactory,                     // _pairFactory
-            clFactory,                       // _pairFactoryCL (external Algebra CL factory)
-            permissionsRegistry,             // _permissionRegistory
-            nfpm                            // _nfpm (external NonFungible Position Manager)
-        );
-        
-        // 2. Deploy BribeFactoryV3
-        console.log("Deploying BribeFactoryV3...");
-        BribeFactoryV3 bribeFactoryV3Impl = new BribeFactoryV3();
-        TransparentUpgradeableProxy bribeFactoryV3Proxy = new TransparentUpgradeableProxy(
-            address(bribeFactoryV3Impl),
-            proxyAdmin,
-            ""
-        );
-        BribeFactoryV3 bribeFactoryV3 = BribeFactoryV3(address(bribeFactoryV3Proxy));
-        console.log("BribeFactoryV3:", address(bribeFactoryV3));
-        
-        vm.stopBroadcast();
-        
-        // Save to JSON
-        string memory path = getOutputPath("Deploy3a2_GaugeManagerAndBribes");
-        
-        string memory json = "";
-        json = vm.serializeAddress("deployment", "GaugeManager", address(gaugeManager));
-        json = vm.serializeAddress("deployment", "BribeFactoryV3", address(bribeFactoryV3));
-        
-        vm.writeJson(json, path);
-        console.log("Addresses saved to:", path);
-    }
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-import "forge-std/Script.sol";
-import "forge-std/StdJson.sol";
 
 import {BribeFactoryV3} from "../contracts/factories/BribeFactoryV3.sol";
 import {GaugeManager} from "../contracts/GaugeManager.sol";
@@ -6015,5 +5918,102 @@ contract DeployBribeFactoryV3 is Script {
         console.log("  - TokenHandler:", tokenHandler);
         console.log("Dependencies configured:");
         console.log("  - BribeFactory set on GaugeManager");
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "forge-std/Script.sol";
+import "forge-std/StdJson.sol";
+import "./BaseDeployScript.sol";
+
+import {GaugeManager} from "../contracts/GaugeManager.sol";
+import {BribeFactoryV3} from "../contracts/factories/BribeFactoryV3.sol";
+import {PermissionsRegistry} from "../contracts/PermissionsRegistry.sol";
+
+import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+
+contract Deploy3a2_GaugeManagerAndBribes is BaseDeployScript {
+    using stdJson for string;
+    
+    function run() external {
+        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.rememberKey(deployerKey);
+        
+        // Load previous deployments
+        string memory infraPath = getInputPath("Deploy1_Infrastructure");
+        string memory tokenPath = getInputPath("Deploy2_TokenSystem");
+        string memory gaugeFactoriesPath = getInputPath("Deploy3a1_GaugeFactories");
+        string memory configPath = getConfigPath();
+        
+        string memory infraJson = vm.readFile(infraPath);
+        string memory tokenJson = vm.readFile(tokenPath);
+        string memory gaugeFactoriesJson = vm.readFile(gaugeFactoriesPath);
+        string memory configJson = vm.readFile(configPath);
+        
+        address proxyAdmin = abi.decode(vm.parseJson(infraJson, ".ProxyAdmin"), (address));
+        address permissionsRegistry = abi.decode(vm.parseJson(infraJson, ".PermissionsRegistry"), (address));
+        address tokenHandler = abi.decode(vm.parseJson(infraJson, ".TokenHandler"), (address));
+        address pairFactory = abi.decode(vm.parseJson(configJson, ".v2Factory"), (address));
+        address votingEscrow = abi.decode(vm.parseJson(tokenJson, ".VotingEscrow"), (address));
+        address clFactory = abi.decode(vm.parseJson(configJson, ".clFactory"), (address));
+        address nfpm = abi.decode(vm.parseJson(configJson, ".nonfungiblePositionManager"), (address));
+        address gaugeFactory = abi.decode(vm.parseJson(gaugeFactoriesJson, ".GaugeFactory"), (address));
+        address gaugeFactoryCL = abi.decode(vm.parseJson(gaugeFactoriesJson, ".GaugeFactoryCL"), (address));
+        
+        console.log("=== Deploy GaugeManager and BribeFactory ===");
+        console.log("Deployer:", deployer);
+        console.log("Using VotingEscrow:", votingEscrow);
+        console.log("Using GaugeFactory:", gaugeFactory);
+        console.log("Using GaugeFactoryCL:", gaugeFactoryCL);
+        
+        vm.startBroadcast(deployer);
+        
+        // 1. Deploy GaugeManager
+        console.log("Deploying GaugeManager...");
+        GaugeManager gaugeManagerImpl = new GaugeManager();
+        TransparentUpgradeableProxy gaugeManagerProxy = new TransparentUpgradeableProxy(
+            address(gaugeManagerImpl),
+            proxyAdmin,
+            ""
+        );
+        GaugeManager gaugeManager = GaugeManager(address(gaugeManagerProxy));
+        console.log("GaugeManager:", address(gaugeManager));
+        
+        // Initialize GaugeManager
+        console.log("Initializing GaugeManager...");
+        gaugeManager.initialize(
+            votingEscrow,                    // __ve
+            tokenHandler,                    // _tokenHandler
+            gaugeFactory,                    // _gaugeFactory
+            gaugeFactoryCL,                  // _gaugeFactoryCL
+            pairFactory,                     // _pairFactory
+            clFactory,                       // _pairFactoryCL (external Algebra CL factory)
+            permissionsRegistry,             // _permissionRegistory
+            nfpm                            // _nfpm (external NonFungible Position Manager)
+        );
+        
+        // 2. Deploy BribeFactoryV3
+        console.log("Deploying BribeFactoryV3...");
+        BribeFactoryV3 bribeFactoryV3Impl = new BribeFactoryV3();
+        TransparentUpgradeableProxy bribeFactoryV3Proxy = new TransparentUpgradeableProxy(
+            address(bribeFactoryV3Impl),
+            proxyAdmin,
+            ""
+        );
+        BribeFactoryV3 bribeFactoryV3 = BribeFactoryV3(address(bribeFactoryV3Proxy));
+        console.log("BribeFactoryV3:", address(bribeFactoryV3));
+        
+        vm.stopBroadcast();
+        
+        // Save to JSON
+        string memory path = getOutputPath("Deploy3a2_GaugeManagerAndBribes");
+        
+        string memory json = "";
+        json = vm.serializeAddress("deployment", "GaugeManager", address(gaugeManager));
+        json = vm.serializeAddress("deployment", "BribeFactoryV3", address(bribeFactoryV3));
+        
+        vm.writeJson(json, path);
+        console.log("Addresses saved to:", path);
     }
 }

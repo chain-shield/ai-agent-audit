@@ -281,6 +281,22 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
+interface IGaugeCL {
+    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
+    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function balanceOf(uint256 tokenId) external view returns (uint256); 
+    function emergency() external returns (bool);
+    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
+    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
+    function totalSupply() external view returns (uint);
+    function rewardRate() external view returns (uint);
+    function rewardForDuration() external view returns (uint256);
+    function stakedFees() external view returns (uint256, uint256);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
 import './libraries/Math.sol';
 import './interfaces/IVoter.sol';
 import './interfaces/ITokenHandler.sol';
@@ -837,612 +853,6 @@ contract GaugeManager is OwnableUpgradeable, ReentrancyGuardUpgradeable {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IGauge {
-    function notifyRewardAmount(address token, uint amount) external;
-    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
-    function getReward(address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function left(address token) external view returns (uint);
-    function rewardRate(address _pair) external view returns (uint);
-    function balanceOf(address _account) external view returns (uint);
-    function isForPair() external view returns (bool);
-    function totalSupply() external view returns (uint);
-    function earned(address token, address account) external view returns (uint);
-    function setGenesisPool(address genesisPool) external;
-    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
-    function emergency() external returns (bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IVotingEscrow {
-    function team() external returns (address);
-
-    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
-    /// @param _value Amount to deposit
-    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
-    /// @return TokenId of created veNFT
-    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0 <0.8.0;
-
-import "./LowGasSafeMath.sol";
-import "./SafeCast.sol";
-
-import "./TickMath.sol";
-import "./LiquidityMath.sol";
-
-/// @title Tick
-/// @notice Contains functions for managing tick processes and relevant calculations
-library Tick {
-    using LowGasSafeMath for int256;
-    using SafeCast for int256;
-
-    // info stored for each initialized individual tick
-    struct Info {
-        // the total position liquidity that references this tick
-        // includes both staked and unstaked liquidity
-        uint128 liquidityGross;
-        // amount of net liquidity added (subtracted) when tick is crossed from left to right (right to left)
-        // includes both staked and unstaked liquidity
-        int128 liquidityNet;
-        // amount of net staked liquidity added (subtracted) when tick is crossed from left to right (right to left)
-        int128 stakedLiquidityNet;
-        // fee growth per unit of liquidity on the _other_ side of this tick (relative to the current tick)
-        // only has relative meaning, not absolute — the value depends on when the tick is initialized
-        uint256 feeGrowthOutside0X128;
-        uint256 feeGrowthOutside1X128;
-        // reward growth per unit of liquidity on the _other_ side of this tick (relative to the current tick)
-        // only has relative meaning, not absolute — the value depends on when the tick is initialized
-        uint256 rewardGrowthOutsideX128;
-        // the cumulative tick value on the other side of the tick
-        int56 tickCumulativeOutside;
-        // the seconds per unit of liquidity on the _other_ side of this tick (relative to the current tick)
-        // only has relative meaning, not absolute — the value depends on when the tick is initialized
-        uint160 secondsPerLiquidityOutsideX128;
-        // the seconds spent on the other side of the tick (relative to the current tick)
-        // only has relative meaning, not absolute — the value depends on when the tick is initialized
-        uint32 secondsOutside;
-        // true iff the tick is initialized, i.e. the value is exactly equivalent to the expression liquidityGross != 0
-        // these 8 bits are set to prevent fresh sstores when crossing newly initialized ticks
-        bool initialized;
-    }
-
-    struct LiquidityNets {
-        int128 liquidityNet;
-        int128 stakedLiquidityNet;
-    }
-
-    /// @notice Derives max liquidity per tick from given tick spacing
-    /// @dev Executed within the pool constructor
-    /// @param tickSpacing The amount of required tick separation, realized in multiples of `tickSpacing`
-    ///     e.g., a tickSpacing of 3 requires ticks to be initialized every 3rd tick i.e., ..., -6, -3, 0, 3, 6, ...
-    /// @return The max liquidity per tick
-    function tickSpacingToMaxLiquidityPerTick(int24 tickSpacing) internal pure returns (uint128) {
-        int24 minTick = (TickMath.MIN_TICK / tickSpacing) * tickSpacing;
-        int24 maxTick = (TickMath.MAX_TICK / tickSpacing) * tickSpacing;
-        uint24 numTicks = uint24((maxTick - minTick) / tickSpacing) + 1;
-        return type(uint128).max / numTicks;
-    }
-
-    /// @notice Retrieves fee growth data
-    /// @param self The mapping containing all tick information for initialized ticks
-    /// @param tickLower The lower tick boundary of the position
-    /// @param tickUpper The upper tick boundary of the position
-    /// @param tickCurrent The current tick
-    /// @param feeGrowthGlobal0X128 The all-time global fee growth, per unit of liquidity, in token0
-    /// @param feeGrowthGlobal1X128 The all-time global fee growth, per unit of liquidity, in token1
-    /// @return feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
-    /// @return feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
-    function getFeeGrowthInside(
-        mapping(int24 => Tick.Info) storage self,
-        int24 tickLower,
-        int24 tickUpper,
-        int24 tickCurrent,
-        uint256 feeGrowthGlobal0X128,
-        uint256 feeGrowthGlobal1X128
-    ) internal view returns (uint256 feeGrowthInside0X128, uint256 feeGrowthInside1X128) {
-        Info storage lower = self[tickLower];
-        Info storage upper = self[tickUpper];
-
-        // calculate fee growth below
-        uint256 feeGrowthBelow0X128;
-        uint256 feeGrowthBelow1X128;
-        if (tickCurrent >= tickLower) {
-            feeGrowthBelow0X128 = lower.feeGrowthOutside0X128;
-            feeGrowthBelow1X128 = lower.feeGrowthOutside1X128;
-        } else {
-            feeGrowthBelow0X128 = feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128;
-            feeGrowthBelow1X128 = feeGrowthGlobal1X128 - lower.feeGrowthOutside1X128;
-        }
-
-        // calculate fee growth above
-        uint256 feeGrowthAbove0X128;
-        uint256 feeGrowthAbove1X128;
-        if (tickCurrent < tickUpper) {
-            feeGrowthAbove0X128 = upper.feeGrowthOutside0X128;
-            feeGrowthAbove1X128 = upper.feeGrowthOutside1X128;
-        } else {
-            feeGrowthAbove0X128 = feeGrowthGlobal0X128 - upper.feeGrowthOutside0X128;
-            feeGrowthAbove1X128 = feeGrowthGlobal1X128 - upper.feeGrowthOutside1X128;
-        }
-
-        feeGrowthInside0X128 = feeGrowthGlobal0X128 - feeGrowthBelow0X128 - feeGrowthAbove0X128;
-        feeGrowthInside1X128 = feeGrowthGlobal1X128 - feeGrowthBelow1X128 - feeGrowthAbove1X128;
-    }
-
-    function getRewardGrowthInside(
-        mapping(int24 => Tick.Info) storage self,
-        int24 tickLower,
-        int24 tickUpper,
-        int24 tickCurrent,
-        uint256 rewardGrowthGlobalX128
-    ) internal view returns (uint256 rewardGrowthInsideX128) {
-        Info storage lower = self[tickLower];
-        Info storage upper = self[tickUpper];
-
-        // calculate reward growth below
-        uint256 rewardGrowthBelowX128;
-        if (tickCurrent >= tickLower) {
-            rewardGrowthBelowX128 = lower.rewardGrowthOutsideX128;
-        } else {
-            rewardGrowthBelowX128 = rewardGrowthGlobalX128 - lower.rewardGrowthOutsideX128;
-        }
-
-        // calculate reward growth above
-        uint256 rewardGrowthAboveX128;
-        if (tickCurrent < tickUpper) {
-            rewardGrowthAboveX128 = upper.rewardGrowthOutsideX128;
-        } else {
-            rewardGrowthAboveX128 = rewardGrowthGlobalX128 - upper.rewardGrowthOutsideX128;
-        }
-
-        rewardGrowthInsideX128 = rewardGrowthGlobalX128 - rewardGrowthBelowX128 - rewardGrowthAboveX128;
-    }
-
-    /// @notice Updates a tick and returns true if the tick was flipped from initialized to uninitialized, or vice versa
-    /// @param self The mapping containing all tick information for initialized ticks
-    /// @param tick The tick that will be updated
-    /// @param tickCurrent The current tick
-    /// @param liquidityDelta A new amount of liquidity to be added (subtracted) when tick is crossed from left to right (right to left)
-    /// @param feeGrowthGlobal0X128 The all-time global fee growth, per unit of liquidity, in token0
-    /// @param feeGrowthGlobal1X128 The all-time global fee growth, per unit of liquidity, in token1
-    /// @param secondsPerLiquidityCumulativeX128 The all-time seconds per max(1, liquidity) of the pool
-    /// @param tickCumulative The tick * time elapsed since the pool was first initialized
-    /// @param time The current block timestamp cast to a uint32
-    /// @param upper true for updating a position's upper tick, or false for updating a position's lower tick
-    /// @param maxLiquidity The maximum liquidity allocation for a single tick
-    /// @return flipped Whether the tick was flipped from initialized to uninitialized, or vice versa
-    function update(
-        mapping(int24 => Tick.Info) storage self,
-        int24 tick,
-        int24 tickCurrent,
-        int128 liquidityDelta,
-        uint256 feeGrowthGlobal0X128,
-        uint256 feeGrowthGlobal1X128,
-        uint160 secondsPerLiquidityCumulativeX128,
-        int56 tickCumulative,
-        uint32 time,
-        bool upper,
-        uint128 maxLiquidity
-    ) internal returns (bool flipped) {
-        Tick.Info storage info = self[tick];
-
-        uint128 liquidityGrossBefore = info.liquidityGross;
-        uint128 liquidityGrossAfter = LiquidityMath.addDelta(liquidityGrossBefore, liquidityDelta);
-
-        require(liquidityGrossAfter <= maxLiquidity, "LO");
-
-        flipped = (liquidityGrossAfter == 0) != (liquidityGrossBefore == 0);
-
-        if (liquidityGrossBefore == 0) {
-            // by convention, we assume that all growth before a tick was initialized happened _below_ the tick
-            if (tick <= tickCurrent) {
-                info.feeGrowthOutside0X128 = feeGrowthGlobal0X128;
-                info.feeGrowthOutside1X128 = feeGrowthGlobal1X128;
-                info.secondsPerLiquidityOutsideX128 = secondsPerLiquidityCumulativeX128;
-                info.tickCumulativeOutside = tickCumulative;
-                info.secondsOutside = time;
-            }
-            info.initialized = true;
-        }
-
-        info.liquidityGross = liquidityGrossAfter;
-
-        // when the lower (upper) tick is crossed left to right (right to left), liquidity must be added (removed)
-        info.liquidityNet = upper
-            ? int256(info.liquidityNet).sub(liquidityDelta).toInt128()
-            : int256(info.liquidityNet).add(liquidityDelta).toInt128();
-    }
-
-    /// @notice Updates the staked liquidity component of a tick. Assumes tick is already initialized with an existing position.
-    /// @notice We reuse existing liquidity for staking, so there is no change in liquidity
-    /// @param self The mapping containing all tick information for initialized ticks
-    /// @param tick The tick that will be updated
-    /// @param stakedLiquidityDelta The amount of staked liquidity to be added (subtracted) when tick is crossed from left to right (right to left)
-    /// @param upper true for updating a position's upper tick, or false for updating a position's lower tick
-    function updateStake(mapping(int24 => Tick.Info) storage self, int24 tick, int128 stakedLiquidityDelta, bool upper)
-        internal
-    {
-        Tick.Info storage info = self[tick];
-        // when the lower (upper) tick is crossed left to right (right to left), staked liquidity must be added (removed)
-        info.stakedLiquidityNet = upper
-            ? int256(info.stakedLiquidityNet).sub(stakedLiquidityDelta).toInt128()
-            : int256(info.stakedLiquidityNet).add(stakedLiquidityDelta).toInt128();
-    }
-
-    /// @notice Clears tick data
-    /// @param self The mapping containing all initialized tick information for initialized ticks
-    /// @param tick The tick that will be cleared
-    function clear(mapping(int24 => Tick.Info) storage self, int24 tick) internal {
-        delete self[tick];
-    }
-
-    /// @notice Transitions to next tick as needed by price movement
-    /// @param self The mapping containing all tick information for initialized ticks
-    /// @param tick The destination tick of the transition
-    /// @param feeGrowthGlobal0X128 The all-time global fee growth, per unit of liquidity, in token0
-    /// @param feeGrowthGlobal1X128 The all-time global fee growth, per unit of liquidity, in token1
-    /// @param secondsPerLiquidityCumulativeX128 The current seconds per liquidity
-    /// @param tickCumulative The tick * time elapsed since the pool was first initialized
-    /// @param time The current block.timestamp
-    /// @param rewardGrowthGlobalX128 The all-time global reward growth, per unit of liquidity
-    /// @return nets The amount of liquidity and staked liquidity added (subtracted) when tick is crossed from left to right (right to left)
-    function cross(
-        mapping(int24 => Tick.Info) storage self,
-        int24 tick,
-        uint256 feeGrowthGlobal0X128,
-        uint256 feeGrowthGlobal1X128,
-        uint160 secondsPerLiquidityCumulativeX128,
-        int56 tickCumulative,
-        uint32 time,
-        uint256 rewardGrowthGlobalX128
-    ) internal returns (LiquidityNets memory nets) {
-        Tick.Info storage info = self[tick];
-        info.feeGrowthOutside0X128 = feeGrowthGlobal0X128 - info.feeGrowthOutside0X128;
-        info.feeGrowthOutside1X128 = feeGrowthGlobal1X128 - info.feeGrowthOutside1X128;
-        info.rewardGrowthOutsideX128 = rewardGrowthGlobalX128 - info.rewardGrowthOutsideX128;
-        info.secondsPerLiquidityOutsideX128 = secondsPerLiquidityCumulativeX128 - info.secondsPerLiquidityOutsideX128;
-        info.tickCumulativeOutside = tickCumulative - info.tickCumulativeOutside;
-        info.secondsOutside = time - info.secondsOutside;
-        nets.liquidityNet = info.liquidityNet;
-        nets.stakedLiquidityNet = info.stakedLiquidityNet;
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0 <0.8.0;
-
-/// @title Math library for computing sqrt prices from ticks and vice versa
-/// @notice Computes sqrt price for ticks of size 1.0001, i.e. sqrt(1.0001^tick) as fixed point Q64.96 numbers. Supports
-/// prices between 2**-128 and 2**128
-library TickMath {
-    /// @dev The minimum tick that may be passed to #getSqrtRatioAtTick computed from log base 1.0001 of 2**-128
-    int24 internal constant MIN_TICK = -887272;
-    /// @dev The maximum tick that may be passed to #getSqrtRatioAtTick computed from log base 1.0001 of 2**128
-    int24 internal constant MAX_TICK = -MIN_TICK;
-
-    /// @dev The minimum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MIN_TICK)
-    uint160 internal constant MIN_SQRT_RATIO = 4295128739;
-    /// @dev The maximum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MAX_TICK)
-    uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
-
-    /// @notice Calculates sqrt(1.0001^tick) * 2^96
-    /// @dev Throws if |tick| > max tick
-    /// @param tick The input tick for the above formula
-    /// @return sqrtPriceX96 A Fixed point Q64.96 number representing the sqrt of the ratio of the two assets (token1/token0)
-    /// at the given tick
-    function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
-        uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
-        require(absTick <= uint256(MAX_TICK), "T");
-
-        uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
-        if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
-        if (absTick & 0x4 != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
-        if (absTick & 0x8 != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
-        if (absTick & 0x10 != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
-        if (absTick & 0x20 != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
-        if (absTick & 0x40 != 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128;
-        if (absTick & 0x80 != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
-        if (absTick & 0x100 != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
-        if (absTick & 0x200 != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
-        if (absTick & 0x400 != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
-        if (absTick & 0x800 != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
-        if (absTick & 0x1000 != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
-        if (absTick & 0x2000 != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
-        if (absTick & 0x4000 != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
-        if (absTick & 0x8000 != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
-        if (absTick & 0x10000 != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
-        if (absTick & 0x20000 != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
-        if (absTick & 0x40000 != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
-        if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
-
-        if (tick > 0) ratio = type(uint256).max / ratio;
-
-        // this divides by 1<<32 rounding up to go from a Q128.128 to a Q128.96.
-        // we then downcast because we know the result always fits within 160 bits due to our tick input constraint
-        // we round up in the division so getTickAtSqrtRatio of the output price is always consistent
-        sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
-    }
-
-    /// @notice Calculates the greatest tick value such that getRatioAtTick(tick) <= ratio
-    /// @dev Throws in case sqrtPriceX96 < MIN_SQRT_RATIO, as MIN_SQRT_RATIO is the lowest value getRatioAtTick may
-    /// ever return.
-    /// @param sqrtPriceX96 The sqrt ratio for which to compute the tick as a Q64.96
-    /// @return tick The greatest tick for which the ratio is less than or equal to the input ratio
-    function getTickAtSqrtRatio(uint160 sqrtPriceX96) internal pure returns (int24 tick) {
-        // second inequality must be < because the price can never reach the price at the max tick
-        require(sqrtPriceX96 >= MIN_SQRT_RATIO && sqrtPriceX96 < MAX_SQRT_RATIO, "R");
-        uint256 ratio = uint256(sqrtPriceX96) << 32;
-
-        uint256 r = ratio;
-        uint256 msb = 0;
-
-        assembly {
-            let f := shl(7, gt(r, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(6, gt(r, 0xFFFFFFFFFFFFFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(5, gt(r, 0xFFFFFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(4, gt(r, 0xFFFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(3, gt(r, 0xFF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(2, gt(r, 0xF))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := shl(1, gt(r, 0x3))
-            msb := or(msb, f)
-            r := shr(f, r)
-        }
-        assembly {
-            let f := gt(r, 0x1)
-            msb := or(msb, f)
-        }
-
-        if (msb >= 128) r = ratio >> (msb - 127);
-        else r = ratio << (127 - msb);
-
-        int256 log_2 = (int256(msb) - 128) << 64;
-
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(63, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(62, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(61, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(60, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(59, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(58, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(57, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(56, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(55, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(54, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(53, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(52, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(51, f))
-            r := shr(f, r)
-        }
-        assembly {
-            r := shr(127, mul(r, r))
-            let f := shr(128, r)
-            log_2 := or(log_2, shl(50, f))
-        }
-
-        int256 log_sqrt10001 = log_2 * 255738958999603826347141; // 128.128 number
-
-        int24 tickLow = int24((log_sqrt10001 - 3402992956809132418596140100660247210) >> 128);
-        int24 tickHi = int24((log_sqrt10001 + 291339464771989622907027621153398088495) >> 128);
-
-        tick = tickLow == tickHi ? tickLow : getSqrtRatioAtTick(tickHi) <= sqrtPriceX96 ? tickHi : tickLow;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-library HybraTimeLibrary {
-
-    // for testnet
-    uint256 internal constant WEEK = 1800;
-    uint internal constant NO_VOTING_WINDOW = 300;
-    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
-    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
-    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
-
-    // uint256 internal constant WEEK = 7 * 86400;
-    // uint internal constant NO_VOTING_WINDOW = 3600;
-    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
-    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
-    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
-
-    /// @dev Returns start of epoch based on current timestamp
-    function epochStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK);
-        }
-    }
-
-    /// @dev Returns start of next epoch / end of current epoch
-    function epochNext(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK;
-        }
-    }
-
-    /// @dev Returns start of voting window
-    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
-        }
-    }
-
-    /// @dev Returns end of voting window / beginning of unrestricted voting window
-    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
-        }
-    }
-
-    /// @dev Returns the status if it is the last hour of the epoch
-    function isLastHour(uint256 timestamp) internal pure returns (bool) {
-        // return block.timestamp % 7 days >= 6 days + 23 hours;
-        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
-        && timestamp < HybraTimeLibrary.epochNext(timestamp);
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function epochMultiples(uint256 duration) internal pure returns (uint256) {
-        unchecked {
-            return (duration / WEEK) * WEEK;
-        }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
-        unchecked {
-            return  endTime - WEEK <= timestamp && timestamp < endTime;
-        }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
-        }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-/// @title Callback for ICLPoolActions#flash
-/// @notice Any contract that calls ICLPoolActions#flash must implement this interface
-interface ICLFlashCallback {
-    /// @notice Called to `msg.sender` after transferring to the recipient from ICLPool#flash.
-    /// @dev In the implementation you must repay the pool the tokens sent by flash plus the computed fee amounts.
-    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
-    /// @param fee0 The fee amount in token0 due to the pool by the end of the flash
-    /// @param fee1 The fee amount in token1 due to the pool by the end of the flash
-    /// @param data Any data passed through by the caller via the ICLPoolActions#flash call
-    function uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IBribeFactory {
-    function createInternalBribe(address[] memory) external returns (address);
-    function createExternalBribe(address[] memory) external returns (address);
-    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IBribe {
-    function deposit(uint amount, uint tokenId) external;
-    function withdraw(uint amount, uint tokenId) external;
-    function getRewardForAddress(address _owner, address[] memory tokens) external;
-    function notifyRewardAmount(address token, uint amount) external;
-    function left(address token) external view returns (uint);
-    function getReward(uint tokenId, address[] memory tokens) external;
-    function bribeTokens(uint256 i) external view returns(address); 
-    function rewardsListLength() external view returns (uint256);
-    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
 interface ITokenHandler {
     function isWhitelisted(address token) external view returns (bool);
     function isWhitelistedNFT(uint256 token) external view returns (bool);
@@ -1460,88 +870,6 @@ interface ITokenHandler {
     function whiteListedTokens() external view returns(address[] memory tokens);
     function connectorTokens() external view returns(address[] memory tokens);
 }
-// SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-
-interface IGaugeManager {
-    
-    struct FarmingParam {
-        address farmingCenter;
-        address algebraEternalFarming;
-        address nfpm;
-    }
-
-    function isGaugeAliveForPool(address _pool) external view returns (bool);
-    function gauges(address _pair) external view returns (address);
-    function isGauge(address _gauge) external view returns (bool);
-    function poolForGauge(address _gauge) external view returns (address);
-}
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-/// @title Callback for ICLPoolActions#swap
-/// @notice Any contract that calls ICLPoolActions#swap must implement this interface
-interface ICLSwapCallback {
-    /// @notice Called to `msg.sender` after executing a swap via ICLPool#swap.
-    /// @dev In the implementation you must pay the pool tokens owed for the swap.
-    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
-    /// amount0Delta and amount1Delta can both be 0 if no tokens were swapped.
-    /// @param amount0Delta The amount of token0 that was sent (negative) or must be received (positive) by the pool by
-    /// the end of the swap. If positive, the callback must send that amount of token0 to the pool.
-    /// @param amount1Delta The amount of token1 that was sent (negative) or must be received (positive) by the pool by
-    /// the end of the swap. If positive, the callback must send that amount of token1 to the pool.
-    /// @param data Any data passed through by the caller via the ICLPoolActions#swap call
-    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external;
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.6.0;
-
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-library TransferHelper {
-    /// @notice Transfers tokens from the targeted address to the given destination
-    /// @notice Errors with 'STF' if transfer fails
-    /// @param token The contract address of the token to be transferred
-    /// @param from The originating address from which the tokens will be transferred
-    /// @param to The destination address of the transfer
-    /// @param value The amount to be transferred
-    function safeTransferFrom(address token, address from, address to, uint256 value) internal {
-        (bool success, bytes memory data) =
-            token.call(abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))), "STF");
-    }
-
-    /// @notice Transfers tokens from msg.sender to a recipient
-    /// @dev Errors with ST if transfer fails
-    /// @param token The contract address of the token which will be transferred
-    /// @param to The recipient of the transfer
-    /// @param value The value of the transfer
-    function safeTransfer(address token, address to, uint256 value) internal {
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transfer.selector, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))), "ST");
-    }
-
-    /// @notice Approves the stipulated contract to spend the given allowance in the given token
-    /// @dev Errors with 'SA' if transfer fails
-    /// @param token The contract address of the token to be approved
-    /// @param to The target of the approval
-    /// @param value The amount of the given token the target will be allowed to spend
-    function safeApprove(address token, address to, uint256 value) internal {
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.approve.selector, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))), "SA");
-    }
-
-    /// @notice Transfers ETH to the recipient address
-    /// @dev Fails with `STE`
-    /// @param to The destination of the transfer
-    /// @param value The value to be transferred
-    function safeTransferETH(address to, uint256 value) internal {
-        (bool success,) = to.call{value: value}(new bytes(0));
-        require(success, "STE");
-    }
-}
-
 // SPDX-License-Identifier: MIT
 pragma solidity =0.7.6;
 pragma abicoder v2;
@@ -1591,359 +919,109 @@ interface IVoter {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-import "./IGaugeManager.sol";
-
-interface IGaugeFactoryCL {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
+interface IBribe {
+    function deposit(uint amount, uint tokenId) external;
+    function withdraw(uint amount, uint tokenId) external;
+    function getRewardForAddress(address _owner, address[] memory tokens) external;
+    function notifyRewardAmount(address token, uint amount) external;
+    function left(address token) external view returns (uint);
+    function getReward(uint tokenId, address[] memory tokens) external;
+    function bribeTokens(uint256 i) external view returns(address); 
+    function rewardsListLength() external view returns (uint256);
+    function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
 }
-// SPDX-License-Identifier: MIT
+
 pragma solidity 0.8.13;
 
-interface IGaugeFactory {
-    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair) external returns (address) ;
-    function gauges(uint256 i) external view returns(address);
-    function length() external view returns(uint);
+library VoterFactoryLib {
+    struct Data {
+        address[] pairFactories;
+        address[] gaugeFactories;
+        mapping(address => bool) isFactory;
+        mapping(address => bool) isGaugeFactory;
+    }
+
+    event AddPairFactories(address indexed pairfactory);
+    event AddGaugeFactories(address indexed gaugefactory);
+    event SetGaugeFactory(address indexed old, address indexed latest);
+    event SetPairFactory(address indexed old, address indexed latest);
+
+
+    function addPairFactory(Data storage self, address _pairFactory) external {
+        require(_pairFactory != address(0) , 'addr0');
+        require(!self.isFactory[_pairFactory], "fact");
+        require(_pairFactory.code.length > 0, "!contract");
+        self.pairFactories.push(_pairFactory);
+        self.isFactory[_pairFactory] = true;
+        emit AddPairFactories(_pairFactory);
+    }
+
+    function addGaugeFactory(Data storage self, address _gaugeFactory) external {
+        require(_gaugeFactory != address(0) , 'addr0');
+        require(!self.isGaugeFactory[_gaugeFactory], "gFact");
+        require(_gaugeFactory.code.length > 0, "!contract");
+        self.gaugeFactories.push(_gaugeFactory);
+        self.isGaugeFactory[_gaugeFactory] = true;
+        emit AddGaugeFactories(_gaugeFactory);
+    }
+
+    function replacePairFactory(Data storage self, address _pairFactory, uint256 _pos) external {
+        require(_pairFactory != address(0), 'addr0');
+        require(!self.isFactory[_pairFactory], 'fact');
+        require(_pairFactory.code.length > 0, "!contract");
+        address oldPF = self.pairFactories[_pos];
+        self.isFactory[oldPF] = false;
+        self.pairFactories[_pos] = _pairFactory;
+        self.isFactory[_pairFactory] = true;
+
+        emit SetPairFactory(oldPF, _pairFactory);
+    }
+
+    function replaceGaugeFactory(Data storage self, address _gaugeFactory, uint256 _pos) external {
+        require(_gaugeFactory != address(0) , 'addr0');
+        require(!self.isGaugeFactory[_gaugeFactory], 'gFact');
+        require(_gaugeFactory.code.length > 0, "!contract");
+        address oldGF = self.gaugeFactories[_pos];
+        self.isGaugeFactory[oldGF] = false;
+        self.gaugeFactories[_pos] = _gaugeFactory;
+        self.isGaugeFactory[_gaugeFactory] = true;
+
+        emit SetGaugeFactory(oldGF, _gaugeFactory);
+    }
+
+    function removePairFactory(Data storage self, uint256 _pos) external {
+        address oldPF = self.pairFactories[_pos];
+        require(self.isFactory[oldPF], "!exists");
+        self.isFactory[oldPF] = false;
+        self.pairFactories[_pos] = address(0);
+        emit SetPairFactory(oldPF, address(0));
+    }
+
+    function removeGaugeFactory(Data storage self, uint256 _pos) external {
+        address oldGF = self.gaugeFactories[_pos];
+        require(self.isGaugeFactory[oldGF], "!exists");
+        self.isGaugeFactory[oldGF] = false;
+        self.gaugeFactories[_pos] = address(0);
+        emit SetGaugeFactory(oldGF, address(0));
+    }
+
 }
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0 <0.8.0;
-
-/// @title Oracle
-/// @notice Provides price and liquidity data useful for a wide variety of system designs
-/// @dev Instances of stored oracle data, "observations", are collected in the oracle array
-/// Every pool is initialized with an oracle array length of 1. Anyone can pay the SSTOREs to increase the
-/// maximum length of the oracle array. New slots will be added when the array is fully populated.
-/// Observations are overwritten when the full length of the oracle array is populated.
-/// The most recent observation is available, independent of the length of the oracle array, by passing 0 to observe()
-library Oracle {
-    struct Observation {
-        // the block timestamp of the observation
-        uint32 blockTimestamp;
-        // the tick accumulator, i.e. tick * time elapsed since the pool was first initialized
-        int56 tickCumulative;
-        // the seconds per liquidity, i.e. seconds elapsed / max(1, liquidity) since the pool was first initialized
-        uint160 secondsPerLiquidityCumulativeX128;
-        // whether or not the observation is initialized
-        bool initialized;
-    }
-
-    /// @notice Transforms a previous observation into a new observation, given the passage of time and the current tick and liquidity values
-    /// @dev blockTimestamp _must_ be chronologically equal to or greater than last.blockTimestamp, safe for 0 or 1 overflows
-    /// @param last The specified observation to be transformed
-    /// @param blockTimestamp The timestamp of the new observation
-    /// @param tick The active tick at the time of the new observation
-    /// @param liquidity The total in-range liquidity at the time of the new observation
-    /// @return Observation The newly populated observation
-    function transform(Observation memory last, uint32 blockTimestamp, int24 tick, uint128 liquidity)
-        private
-        pure
-        returns (Observation memory)
-    {
-        uint32 delta = blockTimestamp - last.blockTimestamp;
-        return Observation({
-            blockTimestamp: blockTimestamp,
-            tickCumulative: last.tickCumulative + int56(tick) * delta,
-            secondsPerLiquidityCumulativeX128: last.secondsPerLiquidityCumulativeX128
-                + ((uint160(delta) << 128) / (liquidity > 0 ? liquidity : 1)),
-            initialized: true
-        });
-    }
-
-    /// @notice Initialize the oracle array by writing the first slot. Called once for the lifecycle of the observations array
-    /// @param self The stored oracle array
-    /// @param time The time of the oracle initialization, via block.timestamp truncated to uint32
-    /// @return cardinality The number of populated elements in the oracle array
-    /// @return cardinalityNext The new length of the oracle array, independent of population
-    function initialize(Observation[65535] storage self, uint32 time)
-        internal
-        returns (uint16 cardinality, uint16 cardinalityNext)
-    {
-        self[0] = Observation({
-            blockTimestamp: time,
-            tickCumulative: 0,
-            secondsPerLiquidityCumulativeX128: 0,
-            initialized: true
-        });
-        return (1, 1);
-    }
-
-    /// @notice Writes an oracle observation to the array
-    /// @dev Writable at most once per block. Index represents the most recently written element. cardinality and index must be tracked externally.
-    /// If the index is at the end of the allowable array length (according to cardinality), and the next cardinality
-    /// is greater than the current one, cardinality may be increased. This restriction is created to preserve ordering.
-    /// @param self The stored oracle array
-    /// @param index The index of the observation that was most recently written to the observations array
-    /// @param blockTimestamp The timestamp of the new observation
-    /// @param tick The active tick at the time of the new observation
-    /// @param liquidity The total in-range liquidity at the time of the new observation
-    /// @param cardinality The number of populated elements in the oracle array
-    /// @param cardinalityNext The new length of the oracle array, independent of population
-    /// @return indexUpdated The new index of the most recently written element in the oracle array
-    /// @return cardinalityUpdated The new cardinality of the oracle array
-    function write(
-        Observation[65535] storage self,
-        uint16 index,
-        uint32 blockTimestamp,
-        int24 tick,
-        uint128 liquidity,
-        uint16 cardinality,
-        uint16 cardinalityNext
-    ) internal returns (uint16 indexUpdated, uint16 cardinalityUpdated) {
-        Observation memory last = self[index];
-
-        // early return if we've already written an observation this block
-        if (last.blockTimestamp == blockTimestamp) return (index, cardinality);
-
-        // if the conditions are right, we can bump the cardinality
-        if (cardinalityNext > cardinality && index == (cardinality - 1)) {
-            cardinalityUpdated = cardinalityNext;
-        } else {
-            cardinalityUpdated = cardinality;
-        }
-
-        indexUpdated = (index + 1) % cardinalityUpdated;
-        self[indexUpdated] = transform(last, blockTimestamp, tick, liquidity);
-    }
-
-    /// @notice Prepares the oracle array to store up to `next` observations
-    /// @param self The stored oracle array
-    /// @param current The current next cardinality of the oracle array
-    /// @param next The proposed next cardinality which will be populated in the oracle array
-    /// @return next The next cardinality which will be populated in the oracle array
-    function grow(Observation[65535] storage self, uint16 current, uint16 next) internal returns (uint16) {
-        require(current > 0, "I");
-        // no-op if the passed next value isn't greater than the current next value
-        if (next <= current) return current;
-        // store in each slot to prevent fresh SSTOREs in swaps
-        // this data will not be used because the initialized boolean is still false
-        for (uint16 i = current; i < next; i++) {
-            self[i].blockTimestamp = 1;
-        }
-        return next;
-    }
-
-    /// @notice comparator for 32-bit timestamps
-    /// @dev safe for 0 or 1 overflows, a and b _must_ be chronologically before or equal to time
-    /// @param time A timestamp truncated to 32 bits
-    /// @param a A comparison timestamp from which to determine the relative position of `time`
-    /// @param b From which to determine the relative position of `time`
-    /// @return bool Whether `a` is chronologically <= `b`
-    function lte(uint32 time, uint32 a, uint32 b) private pure returns (bool) {
-        // if there hasn't been overflow, no need to adjust
-        if (a <= time && b <= time) return a <= b;
-
-        uint256 aAdjusted = a > time ? a : a + 2 ** 32;
-        uint256 bAdjusted = b > time ? b : b + 2 ** 32;
-
-        return aAdjusted <= bAdjusted;
-    }
-
-    /// @notice Fetches the observations beforeOrAt and atOrAfter a target, i.e. where [beforeOrAt, atOrAfter] is satisfied.
-    /// The result may be the same observation, or adjacent observations.
-    /// @dev The answer must be contained in the array, used when the target is located within the stored observation
-    /// boundaries: older than the most recent observation and younger, or the same age as, the oldest observation
-    /// @param self The stored oracle array
-    /// @param time The current block.timestamp
-    /// @param target The timestamp at which the reserved observation should be for
-    /// @param index The index of the observation that was most recently written to the observations array
-    /// @param cardinality The number of populated elements in the oracle array
-    /// @return beforeOrAt The observation recorded before, or at, the target
-    /// @return atOrAfter The observation recorded at, or after, the target
-    function binarySearch(Observation[65535] storage self, uint32 time, uint32 target, uint16 index, uint16 cardinality)
-        private
-        view
-        returns (Observation memory beforeOrAt, Observation memory atOrAfter)
-    {
-        uint256 l = (index + 1) % cardinality; // oldest observation
-        uint256 r = l + cardinality - 1; // newest observation
-        uint256 i;
-        while (true) {
-            i = (l + r) / 2;
-
-            beforeOrAt = self[i % cardinality];
-
-            // we've landed on an uninitialized tick, keep searching higher (more recently)
-            if (!beforeOrAt.initialized) {
-                l = i + 1;
-                continue;
-            }
-
-            atOrAfter = self[(i + 1) % cardinality];
-
-            bool targetAtOrAfter = lte(time, beforeOrAt.blockTimestamp, target);
-
-            // check if we've found the answer!
-            if (targetAtOrAfter && lte(time, target, atOrAfter.blockTimestamp)) break;
-
-            if (!targetAtOrAfter) r = i - 1;
-            else l = i + 1;
-        }
-    }
-
-    /// @notice Fetches the observations beforeOrAt and atOrAfter a given target, i.e. where [beforeOrAt, atOrAfter] is satisfied
-    /// @dev Assumes there is at least 1 initialized observation.
-    /// Used by observeSingle() to compute the counterfactual accumulator values as of a given block timestamp.
-    /// @param self The stored oracle array
-    /// @param time The current block.timestamp
-    /// @param target The timestamp at which the reserved observation should be for
-    /// @param tick The active tick at the time of the returned or simulated observation
-    /// @param index The index of the observation that was most recently written to the observations array
-    /// @param liquidity The total pool liquidity at the time of the call
-    /// @param cardinality The number of populated elements in the oracle array
-    /// @return beforeOrAt The observation which occurred at, or before, the given timestamp
-    /// @return atOrAfter The observation which occurred at, or after, the given timestamp
-    function getSurroundingObservations(
-        Observation[65535] storage self,
-        uint32 time,
-        uint32 target,
-        int24 tick,
-        uint16 index,
-        uint128 liquidity,
-        uint16 cardinality
-    ) private view returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
-        // optimistically set before to the newest observation
-        beforeOrAt = self[index];
-
-        // if the target is chronologically at or after the newest observation, we can early return
-        if (lte(time, beforeOrAt.blockTimestamp, target)) {
-            if (beforeOrAt.blockTimestamp == target) {
-                // if newest observation equals target, we're in the same block, so we can ignore atOrAfter
-                return (beforeOrAt, atOrAfter);
-            } else {
-                // otherwise, we need to transform
-                return (beforeOrAt, transform(beforeOrAt, target, tick, liquidity));
-            }
-        }
-
-        // now, set before to the oldest observation
-        beforeOrAt = self[(index + 1) % cardinality];
-        if (!beforeOrAt.initialized) beforeOrAt = self[0];
-
-        // ensure that the target is chronologically at or after the oldest observation
-        require(lte(time, beforeOrAt.blockTimestamp, target), "OLD");
-
-        // if we've reached this point, we have to binary search
-        return binarySearch(self, time, target, index, cardinality);
-    }
-
-    /// @dev Reverts if an observation at or before the desired observation timestamp does not exist.
-    /// 0 may be passed as `secondsAgo' to return the current cumulative values.
-    /// If called with a timestamp falling between two observations, returns the counterfactual accumulator values
-    /// at exactly the timestamp between the two observations.
-    /// @param self The stored oracle array
-    /// @param time The current block timestamp
-    /// @param secondsAgo The amount of time to look back, in seconds, at which point to return an observation
-    /// @param tick The current tick
-    /// @param index The index of the observation that was most recently written to the observations array
-    /// @param liquidity The current in-range pool liquidity
-    /// @param cardinality The number of populated elements in the oracle array
-    /// @return tickCumulative The tick * time elapsed since the pool was first initialized, as of `secondsAgo`
-    /// @return secondsPerLiquidityCumulativeX128 The time elapsed / max(1, liquidity) since the pool was first initialized, as of `secondsAgo`
-    function observeSingle(
-        Observation[65535] storage self,
-        uint32 time,
-        uint32 secondsAgo,
-        int24 tick,
-        uint16 index,
-        uint128 liquidity,
-        uint16 cardinality
-    ) internal view returns (int56 tickCumulative, uint160 secondsPerLiquidityCumulativeX128) {
-        if (secondsAgo == 0) {
-            Observation memory last = self[index];
-            if (last.blockTimestamp != time) last = transform(last, time, tick, liquidity);
-            return (last.tickCumulative, last.secondsPerLiquidityCumulativeX128);
-        }
-
-        uint32 target = time - secondsAgo;
-
-        (Observation memory beforeOrAt, Observation memory atOrAfter) =
-            getSurroundingObservations(self, time, target, tick, index, liquidity, cardinality);
-
-        if (target == beforeOrAt.blockTimestamp) {
-            // we're at the left boundary
-            return (beforeOrAt.tickCumulative, beforeOrAt.secondsPerLiquidityCumulativeX128);
-        } else if (target == atOrAfter.blockTimestamp) {
-            // we're at the right boundary
-            return (atOrAfter.tickCumulative, atOrAfter.secondsPerLiquidityCumulativeX128);
-        } else {
-            // we're in the middle
-            uint32 observationTimeDelta = atOrAfter.blockTimestamp - beforeOrAt.blockTimestamp;
-            uint32 targetDelta = target - beforeOrAt.blockTimestamp;
-            return (
-                beforeOrAt.tickCumulative
-                    + ((atOrAfter.tickCumulative - beforeOrAt.tickCumulative) / observationTimeDelta) * targetDelta,
-                beforeOrAt.secondsPerLiquidityCumulativeX128
-                    + uint160(
-                        (
-                            uint256(
-                                atOrAfter.secondsPerLiquidityCumulativeX128 - beforeOrAt.secondsPerLiquidityCumulativeX128
-                            ) * targetDelta
-                        ) / observationTimeDelta
-                    )
-            );
-        }
-    }
-
-    /// @notice Returns the accumulator values as of each time seconds ago from the given time in the array of `secondsAgos`
-    /// @dev Reverts if `secondsAgos` > oldest observation
-    /// @param self The stored oracle array
-    /// @param time The current block.timestamp
-    /// @param secondsAgos Each amount of time to look back, in seconds, at which point to return an observation
-    /// @param tick The current tick
-    /// @param index The index of the observation that was most recently written to the observations array
-    /// @param liquidity The current in-range pool liquidity
-    /// @param cardinality The number of populated elements in the oracle array
-    /// @return tickCumulatives The tick * time elapsed since the pool was first initialized, as of each `secondsAgo`
-    /// @return secondsPerLiquidityCumulativeX128s The cumulative seconds / max(1, liquidity) since the pool was first initialized, as of each `secondsAgo`
-    function observe(
-        Observation[65535] storage self,
-        uint32 time,
-        uint32[] memory secondsAgos,
-        int24 tick,
-        uint16 index,
-        uint128 liquidity,
-        uint16 cardinality
-    ) internal view returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) {
-        require(cardinality > 0, "I");
-
-        tickCumulatives = new int56[](secondsAgos.length);
-        secondsPerLiquidityCumulativeX128s = new uint160[](secondsAgos.length);
-        for (uint256 i = 0; i < secondsAgos.length; i++) {
-            (tickCumulatives[i], secondsPerLiquidityCumulativeX128s[i]) =
-                observeSingle(self, time, secondsAgos[i], tick, index, liquidity, cardinality);
-        }
-    }
-}
-
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+pragma solidity 0.7.6;
 
-interface IPairFactory {
-    function allPairsLength() external view returns (uint);
-    function isPair(address pair) external view returns (bool);
-    function allPairs(uint index) external view returns (address);
-    function pairCodeHash() external view returns (bytes32);
-    function getPair(address tokenA, address token, bool stable) external view returns (address);
-    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
-    function isGenesis(address pair) external view returns (bool);
+interface IGaugeManager {
+    
+    struct FarmingParam {
+        address farmingCenter;
+        address algebraEternalFarming;
+        address nfpm;
+    }
+
+    function isGaugeAliveForPool(address _pool) external view returns (bool);
+    function gauges(address _pair) external view returns (address);
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
 }
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPairInfo {
-
-    function token0() external view returns(address);
-    function reserve0() external view returns(uint);
-    function decimals0() external view returns(uint);
-    function token1() external view returns(address);
-    function reserve1() external view returns(uint);
-    function decimals1() external view returns(uint);
-    function isPair(address _pair) external view returns(bool);
-}
-
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity =0.7.6;
 
@@ -3033,81 +2111,1041 @@ interface IPermissionsRegistry {
     function hasRole(bytes memory role, address caller) external view returns(bool);
 }
 
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0 <0.8.0;
+
+import "./LowGasSafeMath.sol";
+import "./SafeCast.sol";
+
+import "./TickMath.sol";
+import "./LiquidityMath.sol";
+
+/// @title Tick
+/// @notice Contains functions for managing tick processes and relevant calculations
+library Tick {
+    using LowGasSafeMath for int256;
+    using SafeCast for int256;
+
+    // info stored for each initialized individual tick
+    struct Info {
+        // the total position liquidity that references this tick
+        // includes both staked and unstaked liquidity
+        uint128 liquidityGross;
+        // amount of net liquidity added (subtracted) when tick is crossed from left to right (right to left)
+        // includes both staked and unstaked liquidity
+        int128 liquidityNet;
+        // amount of net staked liquidity added (subtracted) when tick is crossed from left to right (right to left)
+        int128 stakedLiquidityNet;
+        // fee growth per unit of liquidity on the _other_ side of this tick (relative to the current tick)
+        // only has relative meaning, not absolute — the value depends on when the tick is initialized
+        uint256 feeGrowthOutside0X128;
+        uint256 feeGrowthOutside1X128;
+        // reward growth per unit of liquidity on the _other_ side of this tick (relative to the current tick)
+        // only has relative meaning, not absolute — the value depends on when the tick is initialized
+        uint256 rewardGrowthOutsideX128;
+        // the cumulative tick value on the other side of the tick
+        int56 tickCumulativeOutside;
+        // the seconds per unit of liquidity on the _other_ side of this tick (relative to the current tick)
+        // only has relative meaning, not absolute — the value depends on when the tick is initialized
+        uint160 secondsPerLiquidityOutsideX128;
+        // the seconds spent on the other side of the tick (relative to the current tick)
+        // only has relative meaning, not absolute — the value depends on when the tick is initialized
+        uint32 secondsOutside;
+        // true iff the tick is initialized, i.e. the value is exactly equivalent to the expression liquidityGross != 0
+        // these 8 bits are set to prevent fresh sstores when crossing newly initialized ticks
+        bool initialized;
+    }
+
+    struct LiquidityNets {
+        int128 liquidityNet;
+        int128 stakedLiquidityNet;
+    }
+
+    /// @notice Derives max liquidity per tick from given tick spacing
+    /// @dev Executed within the pool constructor
+    /// @param tickSpacing The amount of required tick separation, realized in multiples of `tickSpacing`
+    ///     e.g., a tickSpacing of 3 requires ticks to be initialized every 3rd tick i.e., ..., -6, -3, 0, 3, 6, ...
+    /// @return The max liquidity per tick
+    function tickSpacingToMaxLiquidityPerTick(int24 tickSpacing) internal pure returns (uint128) {
+        int24 minTick = (TickMath.MIN_TICK / tickSpacing) * tickSpacing;
+        int24 maxTick = (TickMath.MAX_TICK / tickSpacing) * tickSpacing;
+        uint24 numTicks = uint24((maxTick - minTick) / tickSpacing) + 1;
+        return type(uint128).max / numTicks;
+    }
+
+    /// @notice Retrieves fee growth data
+    /// @param self The mapping containing all tick information for initialized ticks
+    /// @param tickLower The lower tick boundary of the position
+    /// @param tickUpper The upper tick boundary of the position
+    /// @param tickCurrent The current tick
+    /// @param feeGrowthGlobal0X128 The all-time global fee growth, per unit of liquidity, in token0
+    /// @param feeGrowthGlobal1X128 The all-time global fee growth, per unit of liquidity, in token1
+    /// @return feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
+    /// @return feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
+    function getFeeGrowthInside(
+        mapping(int24 => Tick.Info) storage self,
+        int24 tickLower,
+        int24 tickUpper,
+        int24 tickCurrent,
+        uint256 feeGrowthGlobal0X128,
+        uint256 feeGrowthGlobal1X128
+    ) internal view returns (uint256 feeGrowthInside0X128, uint256 feeGrowthInside1X128) {
+        Info storage lower = self[tickLower];
+        Info storage upper = self[tickUpper];
+
+        // calculate fee growth below
+        uint256 feeGrowthBelow0X128;
+        uint256 feeGrowthBelow1X128;
+        if (tickCurrent >= tickLower) {
+            feeGrowthBelow0X128 = lower.feeGrowthOutside0X128;
+            feeGrowthBelow1X128 = lower.feeGrowthOutside1X128;
+        } else {
+            feeGrowthBelow0X128 = feeGrowthGlobal0X128 - lower.feeGrowthOutside0X128;
+            feeGrowthBelow1X128 = feeGrowthGlobal1X128 - lower.feeGrowthOutside1X128;
+        }
+
+        // calculate fee growth above
+        uint256 feeGrowthAbove0X128;
+        uint256 feeGrowthAbove1X128;
+        if (tickCurrent < tickUpper) {
+            feeGrowthAbove0X128 = upper.feeGrowthOutside0X128;
+            feeGrowthAbove1X128 = upper.feeGrowthOutside1X128;
+        } else {
+            feeGrowthAbove0X128 = feeGrowthGlobal0X128 - upper.feeGrowthOutside0X128;
+            feeGrowthAbove1X128 = feeGrowthGlobal1X128 - upper.feeGrowthOutside1X128;
+        }
+
+        feeGrowthInside0X128 = feeGrowthGlobal0X128 - feeGrowthBelow0X128 - feeGrowthAbove0X128;
+        feeGrowthInside1X128 = feeGrowthGlobal1X128 - feeGrowthBelow1X128 - feeGrowthAbove1X128;
+    }
+
+    function getRewardGrowthInside(
+        mapping(int24 => Tick.Info) storage self,
+        int24 tickLower,
+        int24 tickUpper,
+        int24 tickCurrent,
+        uint256 rewardGrowthGlobalX128
+    ) internal view returns (uint256 rewardGrowthInsideX128) {
+        Info storage lower = self[tickLower];
+        Info storage upper = self[tickUpper];
+
+        // calculate reward growth below
+        uint256 rewardGrowthBelowX128;
+        if (tickCurrent >= tickLower) {
+            rewardGrowthBelowX128 = lower.rewardGrowthOutsideX128;
+        } else {
+            rewardGrowthBelowX128 = rewardGrowthGlobalX128 - lower.rewardGrowthOutsideX128;
+        }
+
+        // calculate reward growth above
+        uint256 rewardGrowthAboveX128;
+        if (tickCurrent < tickUpper) {
+            rewardGrowthAboveX128 = upper.rewardGrowthOutsideX128;
+        } else {
+            rewardGrowthAboveX128 = rewardGrowthGlobalX128 - upper.rewardGrowthOutsideX128;
+        }
+
+        rewardGrowthInsideX128 = rewardGrowthGlobalX128 - rewardGrowthBelowX128 - rewardGrowthAboveX128;
+    }
+
+    /// @notice Updates a tick and returns true if the tick was flipped from initialized to uninitialized, or vice versa
+    /// @param self The mapping containing all tick information for initialized ticks
+    /// @param tick The tick that will be updated
+    /// @param tickCurrent The current tick
+    /// @param liquidityDelta A new amount of liquidity to be added (subtracted) when tick is crossed from left to right (right to left)
+    /// @param feeGrowthGlobal0X128 The all-time global fee growth, per unit of liquidity, in token0
+    /// @param feeGrowthGlobal1X128 The all-time global fee growth, per unit of liquidity, in token1
+    /// @param secondsPerLiquidityCumulativeX128 The all-time seconds per max(1, liquidity) of the pool
+    /// @param tickCumulative The tick * time elapsed since the pool was first initialized
+    /// @param time The current block timestamp cast to a uint32
+    /// @param upper true for updating a position's upper tick, or false for updating a position's lower tick
+    /// @param maxLiquidity The maximum liquidity allocation for a single tick
+    /// @return flipped Whether the tick was flipped from initialized to uninitialized, or vice versa
+    function update(
+        mapping(int24 => Tick.Info) storage self,
+        int24 tick,
+        int24 tickCurrent,
+        int128 liquidityDelta,
+        uint256 feeGrowthGlobal0X128,
+        uint256 feeGrowthGlobal1X128,
+        uint160 secondsPerLiquidityCumulativeX128,
+        int56 tickCumulative,
+        uint32 time,
+        bool upper,
+        uint128 maxLiquidity
+    ) internal returns (bool flipped) {
+        Tick.Info storage info = self[tick];
+
+        uint128 liquidityGrossBefore = info.liquidityGross;
+        uint128 liquidityGrossAfter = LiquidityMath.addDelta(liquidityGrossBefore, liquidityDelta);
+
+        require(liquidityGrossAfter <= maxLiquidity, "LO");
+
+        flipped = (liquidityGrossAfter == 0) != (liquidityGrossBefore == 0);
+
+        if (liquidityGrossBefore == 0) {
+            // by convention, we assume that all growth before a tick was initialized happened _below_ the tick
+            if (tick <= tickCurrent) {
+                info.feeGrowthOutside0X128 = feeGrowthGlobal0X128;
+                info.feeGrowthOutside1X128 = feeGrowthGlobal1X128;
+                info.secondsPerLiquidityOutsideX128 = secondsPerLiquidityCumulativeX128;
+                info.tickCumulativeOutside = tickCumulative;
+                info.secondsOutside = time;
+            }
+            info.initialized = true;
+        }
+
+        info.liquidityGross = liquidityGrossAfter;
+
+        // when the lower (upper) tick is crossed left to right (right to left), liquidity must be added (removed)
+        info.liquidityNet = upper
+            ? int256(info.liquidityNet).sub(liquidityDelta).toInt128()
+            : int256(info.liquidityNet).add(liquidityDelta).toInt128();
+    }
+
+    /// @notice Updates the staked liquidity component of a tick. Assumes tick is already initialized with an existing position.
+    /// @notice We reuse existing liquidity for staking, so there is no change in liquidity
+    /// @param self The mapping containing all tick information for initialized ticks
+    /// @param tick The tick that will be updated
+    /// @param stakedLiquidityDelta The amount of staked liquidity to be added (subtracted) when tick is crossed from left to right (right to left)
+    /// @param upper true for updating a position's upper tick, or false for updating a position's lower tick
+    function updateStake(mapping(int24 => Tick.Info) storage self, int24 tick, int128 stakedLiquidityDelta, bool upper)
+        internal
+    {
+        Tick.Info storage info = self[tick];
+        // when the lower (upper) tick is crossed left to right (right to left), staked liquidity must be added (removed)
+        info.stakedLiquidityNet = upper
+            ? int256(info.stakedLiquidityNet).sub(stakedLiquidityDelta).toInt128()
+            : int256(info.stakedLiquidityNet).add(stakedLiquidityDelta).toInt128();
+    }
+
+    /// @notice Clears tick data
+    /// @param self The mapping containing all initialized tick information for initialized ticks
+    /// @param tick The tick that will be cleared
+    function clear(mapping(int24 => Tick.Info) storage self, int24 tick) internal {
+        delete self[tick];
+    }
+
+    /// @notice Transitions to next tick as needed by price movement
+    /// @param self The mapping containing all tick information for initialized ticks
+    /// @param tick The destination tick of the transition
+    /// @param feeGrowthGlobal0X128 The all-time global fee growth, per unit of liquidity, in token0
+    /// @param feeGrowthGlobal1X128 The all-time global fee growth, per unit of liquidity, in token1
+    /// @param secondsPerLiquidityCumulativeX128 The current seconds per liquidity
+    /// @param tickCumulative The tick * time elapsed since the pool was first initialized
+    /// @param time The current block.timestamp
+    /// @param rewardGrowthGlobalX128 The all-time global reward growth, per unit of liquidity
+    /// @return nets The amount of liquidity and staked liquidity added (subtracted) when tick is crossed from left to right (right to left)
+    function cross(
+        mapping(int24 => Tick.Info) storage self,
+        int24 tick,
+        uint256 feeGrowthGlobal0X128,
+        uint256 feeGrowthGlobal1X128,
+        uint160 secondsPerLiquidityCumulativeX128,
+        int56 tickCumulative,
+        uint32 time,
+        uint256 rewardGrowthGlobalX128
+    ) internal returns (LiquidityNets memory nets) {
+        Tick.Info storage info = self[tick];
+        info.feeGrowthOutside0X128 = feeGrowthGlobal0X128 - info.feeGrowthOutside0X128;
+        info.feeGrowthOutside1X128 = feeGrowthGlobal1X128 - info.feeGrowthOutside1X128;
+        info.rewardGrowthOutsideX128 = rewardGrowthGlobalX128 - info.rewardGrowthOutsideX128;
+        info.secondsPerLiquidityOutsideX128 = secondsPerLiquidityCumulativeX128 - info.secondsPerLiquidityOutsideX128;
+        info.tickCumulativeOutside = tickCumulative - info.tickCumulativeOutside;
+        info.secondsOutside = time - info.secondsOutside;
+        nets.liquidityNet = info.liquidityNet;
+        nets.stakedLiquidityNet = info.stakedLiquidityNet;
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+/// @title Callback for ICLPoolActions#flash
+/// @notice Any contract that calls ICLPoolActions#flash must implement this interface
+interface ICLFlashCallback {
+    /// @notice Called to `msg.sender` after transferring to the recipient from ICLPool#flash.
+    /// @dev In the implementation you must repay the pool the tokens sent by flash plus the computed fee amounts.
+    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
+    /// @param fee0 The fee amount in token0 due to the pool by the end of the flash
+    /// @param fee1 The fee amount in token1 due to the pool by the end of the flash
+    /// @param data Any data passed through by the caller via the ICLPoolActions#flash call
+    function uniswapV3FlashCallback(uint256 fee0, uint256 fee1, bytes calldata data) external;
+}
+
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-library VoterFactoryLib {
-    struct Data {
-        address[] pairFactories;
-        address[] gaugeFactories;
-        mapping(address => bool) isFactory;
-        mapping(address => bool) isGaugeFactory;
-    }
-
-    event AddPairFactories(address indexed pairfactory);
-    event AddGaugeFactories(address indexed gaugefactory);
-    event SetGaugeFactory(address indexed old, address indexed latest);
-    event SetPairFactory(address indexed old, address indexed latest);
-
-
-    function addPairFactory(Data storage self, address _pairFactory) external {
-        require(_pairFactory != address(0) , 'addr0');
-        require(!self.isFactory[_pairFactory], "fact");
-        require(_pairFactory.code.length > 0, "!contract");
-        self.pairFactories.push(_pairFactory);
-        self.isFactory[_pairFactory] = true;
-        emit AddPairFactories(_pairFactory);
-    }
-
-    function addGaugeFactory(Data storage self, address _gaugeFactory) external {
-        require(_gaugeFactory != address(0) , 'addr0');
-        require(!self.isGaugeFactory[_gaugeFactory], "gFact");
-        require(_gaugeFactory.code.length > 0, "!contract");
-        self.gaugeFactories.push(_gaugeFactory);
-        self.isGaugeFactory[_gaugeFactory] = true;
-        emit AddGaugeFactories(_gaugeFactory);
-    }
-
-    function replacePairFactory(Data storage self, address _pairFactory, uint256 _pos) external {
-        require(_pairFactory != address(0), 'addr0');
-        require(!self.isFactory[_pairFactory], 'fact');
-        require(_pairFactory.code.length > 0, "!contract");
-        address oldPF = self.pairFactories[_pos];
-        self.isFactory[oldPF] = false;
-        self.pairFactories[_pos] = _pairFactory;
-        self.isFactory[_pairFactory] = true;
-
-        emit SetPairFactory(oldPF, _pairFactory);
-    }
-
-    function replaceGaugeFactory(Data storage self, address _gaugeFactory, uint256 _pos) external {
-        require(_gaugeFactory != address(0) , 'addr0');
-        require(!self.isGaugeFactory[_gaugeFactory], 'gFact');
-        require(_gaugeFactory.code.length > 0, "!contract");
-        address oldGF = self.gaugeFactories[_pos];
-        self.isGaugeFactory[oldGF] = false;
-        self.gaugeFactories[_pos] = _gaugeFactory;
-        self.isGaugeFactory[_gaugeFactory] = true;
-
-        emit SetGaugeFactory(oldGF, _gaugeFactory);
-    }
-
-    function removePairFactory(Data storage self, uint256 _pos) external {
-        address oldPF = self.pairFactories[_pos];
-        require(self.isFactory[oldPF], "!exists");
-        self.isFactory[oldPF] = false;
-        self.pairFactories[_pos] = address(0);
-        emit SetPairFactory(oldPF, address(0));
-    }
-
-    function removeGaugeFactory(Data storage self, uint256 _pos) external {
-        address oldGF = self.gaugeFactories[_pos];
-        require(self.isGaugeFactory[oldGF], "!exists");
-        self.isGaugeFactory[oldGF] = false;
-        self.gaugeFactories[_pos] = address(0);
-        emit SetGaugeFactory(oldGF, address(0));
-    }
-
+interface IBribeFactory {
+    function createInternalBribe(address[] memory) external returns (address);
+    function createExternalBribe(address[] memory) external returns (address);
+    function createBribe(address _owner,address _token0,address _token1, string memory _type) external returns (address);
 }
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0 <0.8.0;
+
+/// @title Oracle
+/// @notice Provides price and liquidity data useful for a wide variety of system designs
+/// @dev Instances of stored oracle data, "observations", are collected in the oracle array
+/// Every pool is initialized with an oracle array length of 1. Anyone can pay the SSTOREs to increase the
+/// maximum length of the oracle array. New slots will be added when the array is fully populated.
+/// Observations are overwritten when the full length of the oracle array is populated.
+/// The most recent observation is available, independent of the length of the oracle array, by passing 0 to observe()
+library Oracle {
+    struct Observation {
+        // the block timestamp of the observation
+        uint32 blockTimestamp;
+        // the tick accumulator, i.e. tick * time elapsed since the pool was first initialized
+        int56 tickCumulative;
+        // the seconds per liquidity, i.e. seconds elapsed / max(1, liquidity) since the pool was first initialized
+        uint160 secondsPerLiquidityCumulativeX128;
+        // whether or not the observation is initialized
+        bool initialized;
+    }
+
+    /// @notice Transforms a previous observation into a new observation, given the passage of time and the current tick and liquidity values
+    /// @dev blockTimestamp _must_ be chronologically equal to or greater than last.blockTimestamp, safe for 0 or 1 overflows
+    /// @param last The specified observation to be transformed
+    /// @param blockTimestamp The timestamp of the new observation
+    /// @param tick The active tick at the time of the new observation
+    /// @param liquidity The total in-range liquidity at the time of the new observation
+    /// @return Observation The newly populated observation
+    function transform(Observation memory last, uint32 blockTimestamp, int24 tick, uint128 liquidity)
+        private
+        pure
+        returns (Observation memory)
+    {
+        uint32 delta = blockTimestamp - last.blockTimestamp;
+        return Observation({
+            blockTimestamp: blockTimestamp,
+            tickCumulative: last.tickCumulative + int56(tick) * delta,
+            secondsPerLiquidityCumulativeX128: last.secondsPerLiquidityCumulativeX128
+                + ((uint160(delta) << 128) / (liquidity > 0 ? liquidity : 1)),
+            initialized: true
+        });
+    }
+
+    /// @notice Initialize the oracle array by writing the first slot. Called once for the lifecycle of the observations array
+    /// @param self The stored oracle array
+    /// @param time The time of the oracle initialization, via block.timestamp truncated to uint32
+    /// @return cardinality The number of populated elements in the oracle array
+    /// @return cardinalityNext The new length of the oracle array, independent of population
+    function initialize(Observation[65535] storage self, uint32 time)
+        internal
+        returns (uint16 cardinality, uint16 cardinalityNext)
+    {
+        self[0] = Observation({
+            blockTimestamp: time,
+            tickCumulative: 0,
+            secondsPerLiquidityCumulativeX128: 0,
+            initialized: true
+        });
+        return (1, 1);
+    }
+
+    /// @notice Writes an oracle observation to the array
+    /// @dev Writable at most once per block. Index represents the most recently written element. cardinality and index must be tracked externally.
+    /// If the index is at the end of the allowable array length (according to cardinality), and the next cardinality
+    /// is greater than the current one, cardinality may be increased. This restriction is created to preserve ordering.
+    /// @param self The stored oracle array
+    /// @param index The index of the observation that was most recently written to the observations array
+    /// @param blockTimestamp The timestamp of the new observation
+    /// @param tick The active tick at the time of the new observation
+    /// @param liquidity The total in-range liquidity at the time of the new observation
+    /// @param cardinality The number of populated elements in the oracle array
+    /// @param cardinalityNext The new length of the oracle array, independent of population
+    /// @return indexUpdated The new index of the most recently written element in the oracle array
+    /// @return cardinalityUpdated The new cardinality of the oracle array
+    function write(
+        Observation[65535] storage self,
+        uint16 index,
+        uint32 blockTimestamp,
+        int24 tick,
+        uint128 liquidity,
+        uint16 cardinality,
+        uint16 cardinalityNext
+    ) internal returns (uint16 indexUpdated, uint16 cardinalityUpdated) {
+        Observation memory last = self[index];
+
+        // early return if we've already written an observation this block
+        if (last.blockTimestamp == blockTimestamp) return (index, cardinality);
+
+        // if the conditions are right, we can bump the cardinality
+        if (cardinalityNext > cardinality && index == (cardinality - 1)) {
+            cardinalityUpdated = cardinalityNext;
+        } else {
+            cardinalityUpdated = cardinality;
+        }
+
+        indexUpdated = (index + 1) % cardinalityUpdated;
+        self[indexUpdated] = transform(last, blockTimestamp, tick, liquidity);
+    }
+
+    /// @notice Prepares the oracle array to store up to `next` observations
+    /// @param self The stored oracle array
+    /// @param current The current next cardinality of the oracle array
+    /// @param next The proposed next cardinality which will be populated in the oracle array
+    /// @return next The next cardinality which will be populated in the oracle array
+    function grow(Observation[65535] storage self, uint16 current, uint16 next) internal returns (uint16) {
+        require(current > 0, "I");
+        // no-op if the passed next value isn't greater than the current next value
+        if (next <= current) return current;
+        // store in each slot to prevent fresh SSTOREs in swaps
+        // this data will not be used because the initialized boolean is still false
+        for (uint16 i = current; i < next; i++) {
+            self[i].blockTimestamp = 1;
+        }
+        return next;
+    }
+
+    /// @notice comparator for 32-bit timestamps
+    /// @dev safe for 0 or 1 overflows, a and b _must_ be chronologically before or equal to time
+    /// @param time A timestamp truncated to 32 bits
+    /// @param a A comparison timestamp from which to determine the relative position of `time`
+    /// @param b From which to determine the relative position of `time`
+    /// @return bool Whether `a` is chronologically <= `b`
+    function lte(uint32 time, uint32 a, uint32 b) private pure returns (bool) {
+        // if there hasn't been overflow, no need to adjust
+        if (a <= time && b <= time) return a <= b;
+
+        uint256 aAdjusted = a > time ? a : a + 2 ** 32;
+        uint256 bAdjusted = b > time ? b : b + 2 ** 32;
+
+        return aAdjusted <= bAdjusted;
+    }
+
+    /// @notice Fetches the observations beforeOrAt and atOrAfter a target, i.e. where [beforeOrAt, atOrAfter] is satisfied.
+    /// The result may be the same observation, or adjacent observations.
+    /// @dev The answer must be contained in the array, used when the target is located within the stored observation
+    /// boundaries: older than the most recent observation and younger, or the same age as, the oldest observation
+    /// @param self The stored oracle array
+    /// @param time The current block.timestamp
+    /// @param target The timestamp at which the reserved observation should be for
+    /// @param index The index of the observation that was most recently written to the observations array
+    /// @param cardinality The number of populated elements in the oracle array
+    /// @return beforeOrAt The observation recorded before, or at, the target
+    /// @return atOrAfter The observation recorded at, or after, the target
+    function binarySearch(Observation[65535] storage self, uint32 time, uint32 target, uint16 index, uint16 cardinality)
+        private
+        view
+        returns (Observation memory beforeOrAt, Observation memory atOrAfter)
+    {
+        uint256 l = (index + 1) % cardinality; // oldest observation
+        uint256 r = l + cardinality - 1; // newest observation
+        uint256 i;
+        while (true) {
+            i = (l + r) / 2;
+
+            beforeOrAt = self[i % cardinality];
+
+            // we've landed on an uninitialized tick, keep searching higher (more recently)
+            if (!beforeOrAt.initialized) {
+                l = i + 1;
+                continue;
+            }
+
+            atOrAfter = self[(i + 1) % cardinality];
+
+            bool targetAtOrAfter = lte(time, beforeOrAt.blockTimestamp, target);
+
+            // check if we've found the answer!
+            if (targetAtOrAfter && lte(time, target, atOrAfter.blockTimestamp)) break;
+
+            if (!targetAtOrAfter) r = i - 1;
+            else l = i + 1;
+        }
+    }
+
+    /// @notice Fetches the observations beforeOrAt and atOrAfter a given target, i.e. where [beforeOrAt, atOrAfter] is satisfied
+    /// @dev Assumes there is at least 1 initialized observation.
+    /// Used by observeSingle() to compute the counterfactual accumulator values as of a given block timestamp.
+    /// @param self The stored oracle array
+    /// @param time The current block.timestamp
+    /// @param target The timestamp at which the reserved observation should be for
+    /// @param tick The active tick at the time of the returned or simulated observation
+    /// @param index The index of the observation that was most recently written to the observations array
+    /// @param liquidity The total pool liquidity at the time of the call
+    /// @param cardinality The number of populated elements in the oracle array
+    /// @return beforeOrAt The observation which occurred at, or before, the given timestamp
+    /// @return atOrAfter The observation which occurred at, or after, the given timestamp
+    function getSurroundingObservations(
+        Observation[65535] storage self,
+        uint32 time,
+        uint32 target,
+        int24 tick,
+        uint16 index,
+        uint128 liquidity,
+        uint16 cardinality
+    ) private view returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
+        // optimistically set before to the newest observation
+        beforeOrAt = self[index];
+
+        // if the target is chronologically at or after the newest observation, we can early return
+        if (lte(time, beforeOrAt.blockTimestamp, target)) {
+            if (beforeOrAt.blockTimestamp == target) {
+                // if newest observation equals target, we're in the same block, so we can ignore atOrAfter
+                return (beforeOrAt, atOrAfter);
+            } else {
+                // otherwise, we need to transform
+                return (beforeOrAt, transform(beforeOrAt, target, tick, liquidity));
+            }
+        }
+
+        // now, set before to the oldest observation
+        beforeOrAt = self[(index + 1) % cardinality];
+        if (!beforeOrAt.initialized) beforeOrAt = self[0];
+
+        // ensure that the target is chronologically at or after the oldest observation
+        require(lte(time, beforeOrAt.blockTimestamp, target), "OLD");
+
+        // if we've reached this point, we have to binary search
+        return binarySearch(self, time, target, index, cardinality);
+    }
+
+    /// @dev Reverts if an observation at or before the desired observation timestamp does not exist.
+    /// 0 may be passed as `secondsAgo' to return the current cumulative values.
+    /// If called with a timestamp falling between two observations, returns the counterfactual accumulator values
+    /// at exactly the timestamp between the two observations.
+    /// @param self The stored oracle array
+    /// @param time The current block timestamp
+    /// @param secondsAgo The amount of time to look back, in seconds, at which point to return an observation
+    /// @param tick The current tick
+    /// @param index The index of the observation that was most recently written to the observations array
+    /// @param liquidity The current in-range pool liquidity
+    /// @param cardinality The number of populated elements in the oracle array
+    /// @return tickCumulative The tick * time elapsed since the pool was first initialized, as of `secondsAgo`
+    /// @return secondsPerLiquidityCumulativeX128 The time elapsed / max(1, liquidity) since the pool was first initialized, as of `secondsAgo`
+    function observeSingle(
+        Observation[65535] storage self,
+        uint32 time,
+        uint32 secondsAgo,
+        int24 tick,
+        uint16 index,
+        uint128 liquidity,
+        uint16 cardinality
+    ) internal view returns (int56 tickCumulative, uint160 secondsPerLiquidityCumulativeX128) {
+        if (secondsAgo == 0) {
+            Observation memory last = self[index];
+            if (last.blockTimestamp != time) last = transform(last, time, tick, liquidity);
+            return (last.tickCumulative, last.secondsPerLiquidityCumulativeX128);
+        }
+
+        uint32 target = time - secondsAgo;
+
+        (Observation memory beforeOrAt, Observation memory atOrAfter) =
+            getSurroundingObservations(self, time, target, tick, index, liquidity, cardinality);
+
+        if (target == beforeOrAt.blockTimestamp) {
+            // we're at the left boundary
+            return (beforeOrAt.tickCumulative, beforeOrAt.secondsPerLiquidityCumulativeX128);
+        } else if (target == atOrAfter.blockTimestamp) {
+            // we're at the right boundary
+            return (atOrAfter.tickCumulative, atOrAfter.secondsPerLiquidityCumulativeX128);
+        } else {
+            // we're in the middle
+            uint32 observationTimeDelta = atOrAfter.blockTimestamp - beforeOrAt.blockTimestamp;
+            uint32 targetDelta = target - beforeOrAt.blockTimestamp;
+            return (
+                beforeOrAt.tickCumulative
+                    + ((atOrAfter.tickCumulative - beforeOrAt.tickCumulative) / observationTimeDelta) * targetDelta,
+                beforeOrAt.secondsPerLiquidityCumulativeX128
+                    + uint160(
+                        (
+                            uint256(
+                                atOrAfter.secondsPerLiquidityCumulativeX128 - beforeOrAt.secondsPerLiquidityCumulativeX128
+                            ) * targetDelta
+                        ) / observationTimeDelta
+                    )
+            );
+        }
+    }
+
+    /// @notice Returns the accumulator values as of each time seconds ago from the given time in the array of `secondsAgos`
+    /// @dev Reverts if `secondsAgos` > oldest observation
+    /// @param self The stored oracle array
+    /// @param time The current block.timestamp
+    /// @param secondsAgos Each amount of time to look back, in seconds, at which point to return an observation
+    /// @param tick The current tick
+    /// @param index The index of the observation that was most recently written to the observations array
+    /// @param liquidity The current in-range pool liquidity
+    /// @param cardinality The number of populated elements in the oracle array
+    /// @return tickCumulatives The tick * time elapsed since the pool was first initialized, as of each `secondsAgo`
+    /// @return secondsPerLiquidityCumulativeX128s The cumulative seconds / max(1, liquidity) since the pool was first initialized, as of each `secondsAgo`
+    function observe(
+        Observation[65535] storage self,
+        uint32 time,
+        uint32[] memory secondsAgos,
+        int24 tick,
+        uint16 index,
+        uint128 liquidity,
+        uint16 cardinality
+    ) internal view returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) {
+        require(cardinality > 0, "I");
+
+        tickCumulatives = new int56[](secondsAgos.length);
+        secondsPerLiquidityCumulativeX128s = new uint160[](secondsAgos.length);
+        for (uint256 i = 0; i < secondsAgos.length; i++) {
+            (tickCumulatives[i], secondsPerLiquidityCumulativeX128s[i]) =
+                observeSingle(self, time, secondsAgos[i], tick, index, liquidity, cardinality);
+        }
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+import "./pool/ICLPoolConstants.sol";
+import "./pool/ICLPoolState.sol";
+import "./pool/ICLPoolDerivedState.sol";
+import "./pool/ICLPoolActions.sol";
+import "./pool/ICLPoolOwnerActions.sol";
+import "./pool/ICLPoolEvents.sol";
+
+/// @title The interface for a CL Pool
+/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
+/// to the ERC20 specification
+/// @dev The pool interface is broken up into many smaller pieces
+interface ICLPool is
+    ICLPoolConstants,
+    ICLPoolState,
+    ICLPoolDerivedState,
+    ICLPoolActions,
+    ICLPoolEvents,
+    ICLPoolOwnerActions
+{}
+
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+
+interface IVotingEscrow {
+    function team() external returns (address);
+
+    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
+    /// @param _value Amount to deposit
+    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
+    /// @return TokenId of created veNFT
+    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IPairInfo {
+
+    function token0() external view returns(address);
+    function reserve0() external view returns(uint);
+    function decimals0() external view returns(uint);
+    function token1() external view returns(address);
+    function reserve1() external view returns(uint);
+    function decimals1() external view returns(uint);
+    function isPair(address _pair) external view returns(bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "./IGaugeManager.sol";
+
+interface IGaugeFactoryCL {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair, address nfpm) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
+}
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.6.0;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+library TransferHelper {
+    /// @notice Transfers tokens from the targeted address to the given destination
+    /// @notice Errors with 'STF' if transfer fails
+    /// @param token The contract address of the token to be transferred
+    /// @param from The originating address from which the tokens will be transferred
+    /// @param to The destination address of the transfer
+    /// @param value The amount to be transferred
+    function safeTransferFrom(address token, address from, address to, uint256 value) internal {
+        (bool success, bytes memory data) =
+            token.call(abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value));
+        require(success && (data.length == 0 || abi.decode(data, (bool))), "STF");
+    }
+
+    /// @notice Transfers tokens from msg.sender to a recipient
+    /// @dev Errors with ST if transfer fails
+    /// @param token The contract address of the token which will be transferred
+    /// @param to The recipient of the transfer
+    /// @param value The value of the transfer
+    function safeTransfer(address token, address to, uint256 value) internal {
+        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transfer.selector, to, value));
+        require(success && (data.length == 0 || abi.decode(data, (bool))), "ST");
+    }
+
+    /// @notice Approves the stipulated contract to spend the given allowance in the given token
+    /// @dev Errors with 'SA' if transfer fails
+    /// @param token The contract address of the token to be approved
+    /// @param to The target of the approval
+    /// @param value The amount of the given token the target will be allowed to spend
+    function safeApprove(address token, address to, uint256 value) internal {
+        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.approve.selector, to, value));
+        require(success && (data.length == 0 || abi.decode(data, (bool))), "SA");
+    }
+
+    /// @notice Transfers ETH to the recipient address
+    /// @dev Fails with `STE`
+    /// @param to The destination of the transfer
+    /// @param value The value to be transferred
+    function safeTransferETH(address to, uint256 value) internal {
+        (bool success,) = to.call{value: value}(new bytes(0));
+        require(success, "STE");
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGauge {
+    function notifyRewardAmount(address token, uint amount) external;
+    function getReward(address account, address[] memory tokens, uint8 redeemType) external;
+    function getReward(address account, uint8 redeemType) external;
+    function claimFees() external returns (uint claimed0, uint claimed1);
+    function left(address token) external view returns (uint);
+    function rewardRate(address _pair) external view returns (uint);
+    function balanceOf(address _account) external view returns (uint);
+    function isForPair() external view returns (bool);
+    function totalSupply() external view returns (uint);
+    function earned(address token, address account) external view returns (uint);
+    function setGenesisPool(address genesisPool) external;
+    function depositsForGenesis(address tokenOwner, uint256 timestamp, uint256 liquidity) external;
+    function emergency() external returns (bool);
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0;
+
+/// @title Callback for ICLPoolActions#swap
+/// @notice Any contract that calls ICLPoolActions#swap must implement this interface
+interface ICLSwapCallback {
+    /// @notice Called to `msg.sender` after executing a swap via ICLPool#swap.
+    /// @dev In the implementation you must pay the pool tokens owed for the swap.
+    /// The caller of this method must be checked to be a CLPool deployed by the canonical CLFactory.
+    /// amount0Delta and amount1Delta can both be 0 if no tokens were swapped.
+    /// @param amount0Delta The amount of token0 that was sent (negative) or must be received (positive) by the pool by
+    /// the end of the swap. If positive, the callback must send that amount of token0 to the pool.
+    /// @param amount1Delta The amount of token1 that was sent (negative) or must be received (positive) by the pool by
+    /// the end of the swap. If positive, the callback must send that amount of token1 to the pool.
+    /// @param data Any data passed through by the caller via the ICLPoolActions#swap call
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external;
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.5.0 <0.8.0;
+
+/// @title Math library for computing sqrt prices from ticks and vice versa
+/// @notice Computes sqrt price for ticks of size 1.0001, i.e. sqrt(1.0001^tick) as fixed point Q64.96 numbers. Supports
+/// prices between 2**-128 and 2**128
+library TickMath {
+    /// @dev The minimum tick that may be passed to #getSqrtRatioAtTick computed from log base 1.0001 of 2**-128
+    int24 internal constant MIN_TICK = -887272;
+    /// @dev The maximum tick that may be passed to #getSqrtRatioAtTick computed from log base 1.0001 of 2**128
+    int24 internal constant MAX_TICK = -MIN_TICK;
+
+    /// @dev The minimum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MIN_TICK)
+    uint160 internal constant MIN_SQRT_RATIO = 4295128739;
+    /// @dev The maximum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MAX_TICK)
+    uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
+
+    /// @notice Calculates sqrt(1.0001^tick) * 2^96
+    /// @dev Throws if |tick| > max tick
+    /// @param tick The input tick for the above formula
+    /// @return sqrtPriceX96 A Fixed point Q64.96 number representing the sqrt of the ratio of the two assets (token1/token0)
+    /// at the given tick
+    function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
+        uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
+        require(absTick <= uint256(MAX_TICK), "T");
+
+        uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
+        if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
+        if (absTick & 0x4 != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
+        if (absTick & 0x8 != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
+        if (absTick & 0x10 != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
+        if (absTick & 0x20 != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
+        if (absTick & 0x40 != 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128;
+        if (absTick & 0x80 != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
+        if (absTick & 0x100 != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
+        if (absTick & 0x200 != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
+        if (absTick & 0x400 != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
+        if (absTick & 0x800 != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
+        if (absTick & 0x1000 != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
+        if (absTick & 0x2000 != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
+        if (absTick & 0x4000 != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
+        if (absTick & 0x8000 != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
+        if (absTick & 0x10000 != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
+        if (absTick & 0x20000 != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
+        if (absTick & 0x40000 != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
+        if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
+
+        if (tick > 0) ratio = type(uint256).max / ratio;
+
+        // this divides by 1<<32 rounding up to go from a Q128.128 to a Q128.96.
+        // we then downcast because we know the result always fits within 160 bits due to our tick input constraint
+        // we round up in the division so getTickAtSqrtRatio of the output price is always consistent
+        sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
+    }
+
+    /// @notice Calculates the greatest tick value such that getRatioAtTick(tick) <= ratio
+    /// @dev Throws in case sqrtPriceX96 < MIN_SQRT_RATIO, as MIN_SQRT_RATIO is the lowest value getRatioAtTick may
+    /// ever return.
+    /// @param sqrtPriceX96 The sqrt ratio for which to compute the tick as a Q64.96
+    /// @return tick The greatest tick for which the ratio is less than or equal to the input ratio
+    function getTickAtSqrtRatio(uint160 sqrtPriceX96) internal pure returns (int24 tick) {
+        // second inequality must be < because the price can never reach the price at the max tick
+        require(sqrtPriceX96 >= MIN_SQRT_RATIO && sqrtPriceX96 < MAX_SQRT_RATIO, "R");
+        uint256 ratio = uint256(sqrtPriceX96) << 32;
+
+        uint256 r = ratio;
+        uint256 msb = 0;
+
+        assembly {
+            let f := shl(7, gt(r, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(6, gt(r, 0xFFFFFFFFFFFFFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(5, gt(r, 0xFFFFFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(4, gt(r, 0xFFFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(3, gt(r, 0xFF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(2, gt(r, 0xF))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := shl(1, gt(r, 0x3))
+            msb := or(msb, f)
+            r := shr(f, r)
+        }
+        assembly {
+            let f := gt(r, 0x1)
+            msb := or(msb, f)
+        }
+
+        if (msb >= 128) r = ratio >> (msb - 127);
+        else r = ratio << (127 - msb);
+
+        int256 log_2 = (int256(msb) - 128) << 64;
+
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(63, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(62, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(61, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(60, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(59, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(58, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(57, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(56, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(55, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(54, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(53, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(52, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(51, f))
+            r := shr(f, r)
+        }
+        assembly {
+            r := shr(127, mul(r, r))
+            let f := shr(128, r)
+            log_2 := or(log_2, shl(50, f))
+        }
+
+        int256 log_sqrt10001 = log_2 * 255738958999603826347141; // 128.128 number
+
+        int24 tickLow = int24((log_sqrt10001 - 3402992956809132418596140100660247210) >> 128);
+        int24 tickHi = int24((log_sqrt10001 + 291339464771989622907027621153398088495) >> 128);
+
+        tick = tickLow == tickHi ? tickLow : getSqrtRatioAtTick(tickHi) <= sqrtPriceX96 ? tickHi : tickLow;
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity =0.7.6;
+interface IMinter {
+    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
+    /// @return _period Start of current epoch.
+    function updatePeriod() external returns (uint256 _period);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IPairFactory {
+    function allPairsLength() external view returns (uint);
+    function isPair(address pair) external view returns (bool);
+    function allPairs(uint index) external view returns (address);
+    function pairCodeHash() external view returns (bytes32);
+    function getPair(address tokenA, address token, bool stable) external view returns (address);
+    function createPair(address tokenA, address tokenB, bool stable) external returns (address pair);
+    function isGenesis(address pair) external view returns (bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+library HybraTimeLibrary {
+
+    // for testnet
+    uint256 internal constant WEEK = 1800;
+    uint internal constant NO_VOTING_WINDOW = 300;
+    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
+    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
+    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
+
+    // uint256 internal constant WEEK = 7 * 86400;
+    // uint internal constant NO_VOTING_WINDOW = 3600;
+    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
+    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
+    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
+
+    /// @dev Returns start of epoch based on current timestamp
+    function epochStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK);
+        }
+    }
+
+    /// @dev Returns start of next epoch / end of current epoch
+    function epochNext(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK;
+        }
+    }
+
+    /// @dev Returns start of voting window
+    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
+        }
+    }
+
+    /// @dev Returns end of voting window / beginning of unrestricted voting window
+    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
+        }
+    }
+
+    /// @dev Returns the status if it is the last hour of the epoch
+    function isLastHour(uint256 timestamp) internal pure returns (bool) {
+        // return block.timestamp % 7 days >= 6 days + 23 hours;
+        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
+        && timestamp < HybraTimeLibrary.epochNext(timestamp);
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function epochMultiples(uint256 duration) internal pure returns (uint256) {
+        unchecked {
+            return (duration / WEEK) * WEEK;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
+        unchecked {
+            return  endTime - WEEK <= timestamp && timestamp < endTime;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
+}
+
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity >=0.5.0;
 
@@ -3324,51 +3362,13 @@ interface ICLFactory {
     function enableTickSpacing(int24 tickSpacing, uint24 fee) external;
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.5.0;
-
-import "./pool/ICLPoolConstants.sol";
-import "./pool/ICLPoolState.sol";
-import "./pool/ICLPoolDerivedState.sol";
-import "./pool/ICLPoolActions.sol";
-import "./pool/ICLPoolOwnerActions.sol";
-import "./pool/ICLPoolEvents.sol";
-
-/// @title The interface for a CL Pool
-/// @notice A CL pool facilitates swapping and automated market making between any two assets that strictly conform
-/// to the ERC20 specification
-/// @dev The pool interface is broken up into many smaller pieces
-interface ICLPool is
-    ICLPoolConstants,
-    ICLPoolState,
-    ICLPoolDerivedState,
-    ICLPoolActions,
-    ICLPoolEvents,
-    ICLPoolOwnerActions
-{}
-
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface IGaugeCL {
-    function notifyRewardAmount(address token, uint amount) external returns ( uint256 rewardRate);
-    function getReward(uint256 tokenId, address account, uint8 redeemType) external;
-    function claimFees() external returns (uint claimed0, uint claimed1);
-    function balanceOf(uint256 tokenId) external view returns (uint256); 
-    function emergency() external returns (bool);
-    function gaugeBalances() external view returns (uint256 token0, uint256 token1);
-    function earned(uint256 tokenId) external view returns (uint256 reward, uint256 bonusReward);   
-    function totalSupply() external view returns (uint);
-    function rewardRate() external view returns (uint);
-    function rewardForDuration() external view returns (uint256);
-    function stakedFees() external view returns (uint256, uint256);
-}
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity =0.7.6;
-interface IMinter {
-    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
-    /// @return _period Start of current epoch.
-    function updatePeriod() external returns (uint256 _period);
+interface IGaugeFactory {
+    function createGauge(address _rewardToken,address _ve,address _token,address _distribution, address _internal_bribe, address _external_bribe, bool _isPair) external returns (address) ;
+    function gauges(uint256 i) external view returns(address);
+    function length() external view returns(uint);
 }
 
 

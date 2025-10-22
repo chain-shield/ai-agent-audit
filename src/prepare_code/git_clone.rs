@@ -18,7 +18,7 @@ use std::{
 use walkdir::WalkDir;
 
 use crate::cli_args::parse::Cli;
-use crate::config::audit_config;
+use crate::config::{AuditType, audit_config};
 use crate::utils::check_folder_name::{
     is_library_package_json, is_monorepo_config_file, is_root_config_file, is_script_file,
     is_test_file,
@@ -34,11 +34,19 @@ pub enum BuildFlags {
     ViaIr,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PocConfig {
+    pub instructions: String,
+    pub test_folder: PathBuf,
+    pub template: String,
+}
+
 /// Contains paths to the repository root and relevant files.
 /// This struct organizes the paths to Solidity files and documentation
 /// that will be processed for analysis.
 #[derive(Debug, Clone)]
 pub struct RepoPaths {
+    pub github_url: String,
     /// uniquely indentifies this project by protocol name and commit hash
     pub project_id: String,
     /// Path to the repository root directory
@@ -62,6 +70,10 @@ pub struct RepoPaths {
     pub monorepo_folders: Option<PathBuf>,
     /// full 40-char SHA, e.g. `"1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t"`
     pub commit_hash: String,
+    /// audit type
+    pub audit_type: AuditType,
+    /// instructions, template, and folder location for PoCs
+    pub poc: PocConfig,
 }
 
 /// Clones a repository and builds it in a secure Docker environment.
@@ -90,26 +102,30 @@ pub fn clone_and_filter_git_repo(
     // build_flags: BuildFlags,
     cli: &Cli,
 ) -> Result<RepoPaths> {
+    let repo_url = cli.get_repo();
+
     // 🔐 Validate the repository URL for safety
-    validate_repo_url(&cli.repo)?;
+    validate_repo_url(repo_url)?;
+
+    // 1. Read HEAD and get the first 6 chars of the commit SHA
+    let commit_hash = get_commit_hash(repo_url)?;
 
     // 2. Extract & sanitize the repo name
-    let mut repo_name = cli
-        .repo
-        .trim_end_matches(".git")
+    let base_github_url = repo_url.trim_end_matches(".git");
+
+    let mut repo_name = base_github_url
         .rsplit('/')
         .next()
         .unwrap_or("repo")
         .to_string();
+
+    let github_url = format!("{}/blob/{}", base_github_url, commit_hash);
 
     // Append subfolder to repo_name if specified
     if let Some(sf) = &cli.subfolder {
         repo_name = format!("{}/{}", repo_name, sf);
     }
     info!("repo_name ==> {}", repo_name);
-
-    // 4. Read HEAD and get the first 6 chars of the commit SHA
-    let commit_hash = get_commit_hash(&cli.repo)?;
 
     // 5. git clone, install, and build in secure docker container
     // returns dierctory where files are located
@@ -127,7 +143,7 @@ pub fn clone_and_filter_git_repo(
 
     // Determine the search root - if subfolder is specified, search within that subdirectory
     let search_root = root.join(&repo_name);
-    // info!("search_root => {}", search_root.display());
+    info!("search_root => {}", search_root.display());
 
     let source_code_folders = cli
         .code_folders
@@ -166,7 +182,7 @@ pub fn clone_and_filter_git_repo(
                 docs.push(doc_path);
                 true
             } else {
-                false
+                panic!("invalid custom docs");
             }
         }
         None => false,
@@ -261,17 +277,79 @@ pub fn clone_and_filter_git_repo(
     }
 
     let audit_scope = match &cli.audit_scope {
-        Some(scope) => Some(Path::new(scope).to_path_buf()),
+        Some(scope) => {
+            let audit_scope_file = Path::new(scope).to_path_buf();
+
+            if !audit_scope_file.exists() {
+                panic!("invalid audit scope file md - does not exist");
+            }
+
+            Some(audit_scope_file)
+        }
         None => None,
     };
 
     let scoped_files = match &cli.scoped_files {
-        Some(scope) => Some(Path::new(scope).to_path_buf()),
+        Some(scope) => {
+            let scope_file = Path::new(scope).to_path_buf();
+
+            if !scope_file.exists() {
+                panic!("invalid scope files txt - does not exist");
+            }
+
+            Some(scope_file)
+        }
         None => None,
+    };
+
+    let poc_instructions = cli.poc_instructions.clone().unwrap_or_default();
+    let poc_instructions_content = if !poc_instructions.is_empty() {
+        let poc_instructions_file = Path::new(&poc_instructions).to_path_buf();
+
+        if poc_instructions_file.exists() {
+            fs::read_to_string(poc_instructions_file)?
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    let poc_template = cli.poc_instructions.clone().unwrap_or_default();
+    let poc_template_content = if !poc_template.is_empty() {
+        let poc_template_file = Path::new(&poc_template).to_path_buf();
+
+        if poc_template_file.exists() {
+            fs::read_to_string(poc_template_file)?
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    let test_folder = match &cli.test_folder {
+        Some(folder) => {
+            let folder = search_root.join(folder);
+
+            if !folder.exists() {
+                panic!("invalid test folder - does not exist");
+            }
+            folder
+        }
+        None => {
+            let folder = search_root.join("test");
+
+            if !folder.exists() {
+                log::warn!("invalid test folder - does not exist: {}", folder.display());
+            }
+            folder
+        }
     };
 
     // Return the collected paths
     Ok(RepoPaths {
+        github_url,
         project_id,
         root,
         sol_files,
@@ -281,8 +359,14 @@ pub fn clone_and_filter_git_repo(
         lib_config_files,
         source_code_folders,
         docs,
+        poc: PocConfig {
+            instructions: poc_instructions_content,
+            template: poc_template_content,
+            test_folder,
+        },
         repo_name,
         audit_scope,
+        audit_type: cli.audit_type.clone(),
         excluded_folders,
         scoped_files,
         monorepo_folders,
@@ -320,33 +404,53 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
 
     let build_stamp = docker_path.join(".chainshield_build_ok");
 
-    // If we already have a valid workspace and not forcing rebuild, reuse it
-    if docker_path.exists()
+    // Check if build artifacts exist (foundry uses 'out', hardhat uses 'artifacts')
+    let has_build_artifacts = workspace_root.join("out").exists()
+        || workspace_root.join("artifacts").exists()
+        || workspace_root.join("build").exists(); // Some projects use 'build'
+
+    // Determine if we should reuse the existing workspace
+    let should_reuse = docker_path.exists()
         && build_stamp.exists()
         && workspace_root.exists()
-        // && (workspace_root.join("out").exists() || workspace_root.join("artifacts").exists())
-        && !cli.force_rebuild
-    {
+        && has_build_artifacts
+        && !cli.force_rebuild;
+
+    if should_reuse {
         log::info!(
-            "Reusing existing workspace (stamp found): {}",
+            "✅ Reusing existing workspace (build artifacts found): {}",
             docker_path.display()
         );
         return Ok(PathBuf::from(docker_volume));
     }
 
-    // Otherwise, ensure a clean workspace
+    // Log the reason for rebuild
     if docker_path.exists() {
+        let mut reasons = Vec::new();
+        if cli.force_rebuild {
+            reasons.push("--force-rebuild flag set");
+        }
+        if !build_stamp.exists() {
+            reasons.push("build stamp missing");
+        }
+        if !has_build_artifacts {
+            reasons.push("build artifacts (out/artifacts/build) not found");
+        }
+
         log::warn!(
-            "Rebuilding workspace at {} (force-rebuild={} or invalid stamp)",
+            "🔄 Rebuilding workspace at {} (reason: {})",
             docker_path.display(),
-            cli.force_rebuild
+            reasons.join(", ")
         );
+
         fs::remove_dir_all(&docker_path).with_context(|| {
             format!(
                 "Failed to remove existing docker volume {}",
                 docker_path.display()
             )
         })?;
+    } else {
+        log::info!("📦 Creating new workspace at {}", docker_path.display());
     }
     fs::create_dir_all(&docker_path)?;
 
@@ -354,7 +458,7 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
     log::info!("git cloning repo...");
 
     let build_command = cli.generate_build_command();
-    let repo_url = add_github_auth(&cli.repo);
+    let repo_url = add_github_auth(cli.get_repo());
 
     // Install build tools if using custom builder (needed for native node modules)
     let setup_build_tools = if matches!(cli.builder, crate::cli_args::parse::BuilderType::Custom) {
@@ -403,8 +507,8 @@ pub fn clone_and_build_repo(cli: &Cli, repo_name: &str, project_id: &str) -> Res
         format!(
             "project_id={}\nrepo={}\ncommit={}\n",
             project_id,
-            &cli.repo,
-            &get_commit_hash(&cli.repo)?[..6]
+            cli.get_repo(),
+            &get_commit_hash(cli.get_repo())?[..6]
         ),
     )?;
 
@@ -434,6 +538,12 @@ fn get_commit_hash(repo_url: &str) -> Result<String> {
         .to_string();
 
     Ok(commit_hash)
+}
+
+impl AsRef<RepoPaths> for RepoPaths {
+    fn as_ref(&self) -> &RepoPaths {
+        self
+    }
 }
 
 impl RepoPaths {

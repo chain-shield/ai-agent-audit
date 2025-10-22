@@ -418,163 +418,6 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-import "./interfaces/IPairFactory.sol";
-import "./Pair.sol";
-
-contract PairFactory is IPairFactory {
-    bool public isPaused;
-    address public pauser;
-    address public pendingPauser;
-
-    uint256 public stableFee;
-    uint256 public volatileFee;
-    uint256 public stakingNFTFee;
-    uint256 public MAX_REFERRAL_FEE = 1200; // 12%
-    uint256 public constant MAX_FEE = 25; // 0.25%
-
-    address public feeManager;
-    address public pendingFeeManager;
-    address public dibs; // referral fee handler
-    address public stakingFeeHandler; // staking fee handler
-
-    mapping(address => mapping(address => mapping(bool => address)))
-        public getPair;
-    address[] public allPairs;
-    mapping(address => bool) public isPair; // simplified check if its a pair, given that `stable` flag might not be available in peripherals
-
-    address internal _temp0;
-    address internal _temp1;
-    bool internal _temp;
-
-    event PairCreated(
-        address indexed token0,
-        address indexed token1,
-        bool stable,
-        address pair,
-        uint
-    );
-
-    constructor() {
-        pauser = msg.sender;
-        isPaused = false;
-        feeManager = msg.sender;
-        stableFee = 4; // 0.04%
-        volatileFee = 18; // 0.18%
-        stakingNFTFee = 3000; // 30% of stable/volatileFee
-    }
-
-    function allPairsLength() external view returns (uint) {
-        return allPairs.length;
-    }
-
-    function pairs() external view returns (address[] memory) {
-        return allPairs;
-    }
-
-    function setPauser(address _pauser) external {
-        require(msg.sender == pauser);
-        pendingPauser = _pauser;
-    }
-
-    function acceptPauser() external {
-        require(msg.sender == pendingPauser);
-        pauser = pendingPauser;
-    }
-
-    function setPause(bool _state) external {
-        require(msg.sender == pauser);
-        isPaused = _state;
-    }
-
-    function setFeeManager(address _feeManager) external {
-        require(msg.sender == feeManager, "not fee manager");
-        pendingFeeManager = _feeManager;
-    }
-
-    function acceptFeeManager() external {
-        require(msg.sender == pendingFeeManager, "not pending fee manager");
-        feeManager = pendingFeeManager;
-    }
-
-    function setStakingFees(uint256 _newFee) external {
-        require(msg.sender == feeManager, "not fee manager");
-        require(_newFee <= 3000);
-        stakingNFTFee = _newFee;
-    }
-
-    function setStakingFeeAddress(address _feehandler) external {
-        require(msg.sender == feeManager, "not fee manager");
-        require(_feehandler != address(0), "addr 0");
-        stakingFeeHandler = _feehandler;
-    }
-
-    function setDibs(address _dibs) external {
-        require(msg.sender == feeManager, "not fee manager");
-        require(_dibs != address(0), "address zero");
-        dibs = _dibs;
-    }
-
-    function setReferralFee(uint256 _refFee) external {
-        require(msg.sender == feeManager, "not fee manager");
-        MAX_REFERRAL_FEE = _refFee;
-    }
-
-    function setFee(bool _stable, uint256 _fee) external {
-        require(msg.sender == feeManager, "not fee manager");
-        require(_fee <= MAX_FEE, "fee too high");
-        require(_fee != 0, "fee must be nonzero");
-        if (_stable) {
-            stableFee = _fee;
-        } else {
-            volatileFee = _fee;
-        }
-    }
-
-    function getFee(bool _stable) public view returns (uint256) {
-        return _stable ? stableFee : volatileFee;
-    }
-
-    function pairCodeHash() external pure returns (bytes32) {
-        return keccak256(type(Pair).creationCode);
-    }
-
-    function getInitializable() external view returns (address, address, bool) {
-        return (_temp0, _temp1, _temp);
-    }
-
-    function createPair(
-        address tokenA,
-        address tokenB,
-        bool stable
-    ) external returns (address pair) {
-        require(tokenA != tokenB, "IA"); // Pair: IDENTICAL_ADDRESSES
-        (address token0, address token1) = tokenA < tokenB
-            ? (tokenA, tokenB)
-            : (tokenB, tokenA);
-        require(token0 != address(0), "ZA"); // Pair: ZERO_ADDRESS
-        require(getPair[token0][token1][stable] == address(0), "PE"); // Pair: PAIR_EXISTS - single check is sufficient
-        bytes32 salt = keccak256(abi.encodePacked(token0, token1, stable)); // notice salt includes stable as well, 3 parameters
-        (_temp0, _temp1, _temp) = (token0, token1, stable);
-        pair = address(new Pair{salt: salt}());
-        getPair[token0][token1][stable] = pair;
-        getPair[token1][token0][stable] = pair; // populate mapping in the reverse direction
-        allPairs.push(pair);
-        isPair[pair] = true;
-        emit PairCreated(token0, token1, stable, pair, allPairs.length);
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity =0.7.6;
-interface IMinter {
-    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
-    /// @return _period Start of current epoch.
-    function updatePeriod() external returns (uint256 _period);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
 library HybraTimeLibrary {
 
     // for testnet
@@ -651,229 +494,6 @@ library HybraTimeLibrary {
         unchecked {
             return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
         }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-
-interface IGaugeManager {
-    
-    struct FarmingParam {
-        address farmingCenter;
-        address algebraEternalFarming;
-        address nfpm;
-    }
-
-    function isGaugeAliveForPool(address _pool) external view returns (bool);
-    function gauges(address _pair) external view returns (address);
-    function isGauge(address _gauge) external view returns (bool);
-    function poolForGauge(address _gauge) external view returns (address);
-}
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IVotingEscrow {
-    function team() external returns (address);
-
-    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
-    /// @param _value Amount to deposit
-    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
-    /// @return TokenId of created veNFT
-    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IPair {
-    function metadata() external view returns (uint dec0, uint dec1, uint r0, uint r1, bool st, address t0, address t1);
-    function claimFees() external returns (uint, uint);
-    function tokens() external view returns (address, address);
-    function token0() external view returns (address);
-    function token1() external view returns (address);
-    function transferFrom(address src, address dst, uint amount) external returns (bool);
-    function permit(address owner, address spender, uint value, uint deadline, uint8 v, bytes32 r, bytes32 s) external;
-    function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
-    function burn(address to) external returns (uint amount0, uint amount1);
-    function mint(address to) external returns (uint liquidity);
-    function getReserves() external view returns (uint _reserve0, uint _reserve1, uint _blockTimestampLast);
-    function getAmountOut(uint, address) external view returns (uint);
-
-    function name() external view returns(string memory);
-    function symbol() external view returns(string memory);
-    function totalSupply() external view returns (uint);
-    function decimals() external view returns (uint8);
-
-    function claimable0(address _user) external view returns (uint);
-    function claimable1(address _user) external view returns (uint);
-
-    function isStable() external view returns(bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-import "./interfaces/IERC20.sol";
-
-// Pair Fees contract is used as a 1:1 pair relationship to split out fees, this ensures that the curve does not need to be modified for LP shares
-contract PairFees {
-    address internal immutable pair; // The pair it is bonded to
-    address internal immutable token0; // token0 of pair, saved localy and statically for gas optimization
-    address internal immutable token1; // Token1 of pair, saved localy and statically for gas optimization
-
-    uint256 public toStake0;
-    uint256 public toStake1;
-
-    constructor(address _token0, address _token1) {
-        pair = msg.sender;
-        token0 = _token0;
-        token1 = _token1;
-    }
-
-    function _safeTransfer(address token, address to, uint256 value) internal {
-        require(token.code.length > 0);
-        (bool success, bytes memory data) = token.call(
-            abi.encodeWithSelector(IERC20.transfer.selector, to, value)
-        );
-        require(success && (data.length == 0 || abi.decode(data, (bool))));
-    }
-
-    // Allow the pair to transfer fees to users
-    function claimFeesFor(
-        address recipient,
-        uint amount0,
-        uint amount1
-    ) external {
-        require(msg.sender == pair);
-        if (amount0 > 0) _safeTransfer(token0, recipient, amount0);
-        if (amount1 > 0) _safeTransfer(token1, recipient, amount1);
-    }
-
-    function processStakingFees(uint amount, bool isTokenZero) external {
-        require(msg.sender == pair);
-        if (amount > 0 && isTokenZero) {
-            toStake0 += amount;
-        }
-
-        if (amount > 0 && !isTokenZero) {
-            toStake1 += amount;
-        }
-    }
-
-    function withdrawStakingFees(address recipient) external {
-        require(msg.sender == pair);
-        if (toStake0 > 0) {
-            _safeTransfer(token0, recipient, toStake0);
-            toStake0 = 0;
-        }
-        if (toStake1 > 0) {
-            _safeTransfer(token1, recipient, toStake1);
-            toStake1 = 0;
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity 0.8.13;
-
-import "./interfaces/IHybra.sol";
-
-contract HYBR is IHybra {
-
-    string public constant name = "HYBR";
-    string public constant symbol = "HYBR";
-    uint8 public constant decimals = 18;
-    uint public totalSupply = 0;
-
-    mapping(address => uint) public balanceOf;
-    mapping(address => mapping(address => uint)) public allowance;
-
-    bool public initialMinted;
-    address public minter;
-
-    event Transfer(address indexed from, address indexed to, uint value);
-    event Approval(address indexed owner, address indexed spender, uint value);
-
-    constructor() {
-        minter = msg.sender;
-        _mint(msg.sender, 0);
-    }
-
-    // No checks as its meant to be once off to set minting rights to BaseV1 Minter
-    function setMinter(address _minter) external {
-        require(msg.sender == minter);
-        minter = _minter;
-    }
-
-    // Initial mint: total 50M    
-    function initialMint(address _recipient) external {
-        require(msg.sender == minter && !initialMinted);
-        initialMinted = true;
-        _mint(_recipient, 500 * 1e6 * 1e18);
-    }
-
-    function approve(address _spender, uint _value) external returns (bool) {
-        allowance[msg.sender][_spender] = _value;
-        emit Approval(msg.sender, _spender, _value);
-        return true;
-    }
-
-    function _mint(address _to, uint _amount) internal returns (bool) {
-        totalSupply += _amount;
-        unchecked {
-            balanceOf[_to] += _amount;
-        }
-        emit Transfer(address(0x0), _to, _amount);
-        return true;
-    }
-
-    function _transfer(address _from, address _to, uint _value) internal returns (bool) {
-        balanceOf[_from] -= _value;
-        unchecked {
-            balanceOf[_to] += _value;
-        }
-        emit Transfer(_from, _to, _value);
-        return true;
-    }
-
-    function transfer(address _to, uint _value) external returns (bool) {
-        return _transfer(msg.sender, _to, _value);
-    }
-
-    function transferFrom(address _from, address _to, uint _value) external returns (bool) {
-        uint allowed_from = allowance[_from][msg.sender];
-        if (allowed_from != type(uint).max) {
-            allowance[_from][msg.sender] -= _value;
-        }
-        return _transfer(_from, _to, _value);
-    }
-
-    function mint(address account, uint amount) external returns (bool) {
-        require(msg.sender == minter, 'not allowed');
-        _mint(account, amount);
-        return true;
-    }
-
-    function burn(uint256 value) external returns (bool) {
-        _burn(msg.sender, value);
-        return true;
-    }
-
-    function burnFrom(address _from, uint _value) external returns (bool) {
-        uint allowed_from = allowance[_from][msg.sender];
-        if (allowed_from != type(uint).max) {
-            allowance[_from][msg.sender] -= _value;
-        }
-        _burn(_from, _value);
-        return true;
-    }
-
-    function _burn(address _from, uint _amount) internal returns (bool) {
-        totalSupply -= _amount;
-        balanceOf[_from] -= _amount;
-        emit Transfer(_from, address(0x0), _amount);
-        return true;
     }
 }
 
@@ -1291,113 +911,152 @@ contract GaugeV2 is ReentrancyGuard, Ownable {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-interface ITokenHandler {
-    function isWhitelisted(address token) external view returns (bool);
-    function isWhitelistedNFT(uint256 token) external view returns (bool);
-    function isConnector(address token) external view returns (bool);
+import "./interfaces/IPairFactory.sol";
+import "./Pair.sol";
 
-    function whitelistToken(address _token) external;
-    function blacklistToken(address _token) external;
+contract PairFactory is IPairFactory {
+    bool public isPaused;
+    address public pauser;
+    address public pendingPauser;
 
-    function whiteListed(uint256 index) external returns (address);
-    function connectors(uint256 index) external returns (address);
+    uint256 public stableFee;
+    uint256 public volatileFee;
+    uint256 public stakingNFTFee;
+    uint256 public MAX_REFERRAL_FEE = 1200; // 12%
+    uint256 public constant MAX_FEE = 25; // 0.25%
 
-    function whiteListedTokensLength() external returns (uint256);
-    function connectorTokensLength() external returns (uint256);
+    address public feeManager;
+    address public pendingFeeManager;
+    address public dibs; // referral fee handler
+    address public stakingFeeHandler; // staking fee handler
 
-    function whiteListedTokens() external view returns(address[] memory tokens);
-    function connectorTokens() external view returns(address[] memory tokens);
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+    mapping(address => mapping(address => mapping(bool => address)))
+        public getPair;
+    address[] public allPairs;
+    mapping(address => bool) public isPair; // simplified check if its a pair, given that `stable` flag might not be available in peripherals
 
-interface IPairCallee {
-    function hook(address sender, uint amount0, uint amount1, bytes calldata data) external;
-}
+    address internal _temp0;
+    address internal _temp1;
+    bool internal _temp;
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+    event PairCreated(
+        address indexed token0,
+        address indexed token1,
+        bool stable,
+        address pair,
+        uint
+    );
 
-interface IRHYBR {
-    // Enums
-    enum RedeemType {
-        TO_HYBR,        // 0: Convert to HYBR with penalty (70%-90% rate)
-        TO_VEHYBR,      // 1: Convert to veHYBR 1:1 (max lock, new NFT)
-        TO_GHYBR        // 2: Convert to gHYBR at current ratio
+    constructor() {
+        pauser = msg.sender;
+        isPaused = false;
+        feeManager = msg.sender;
+        stableFee = 4; // 0.04%
+        volatileFee = 18; // 0.18%
+        stakingNFTFee = 3000; // 30% of stable/volatileFee
     }
 
-    // Events
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event ConvertToHYBR(address indexed user, uint256 rHYBRAmount, uint256 HYBRReceived, uint256 penalty);
-    event ConvertToGHYBR(address indexed user, uint256 rHYBRAmount, uint256 gHYBRReceived);
-    event ConvertToVeHYBR(address indexed user, uint256 rHYBRAmount, uint256 tokenId, uint256 lockTime);
-    event RateUpdated(uint256 oldRate, uint256 newRate);
-    event MinterSet(address indexed oldMinter, address indexed newMinter);
-    event GHYBRSet(address indexed gHYBR);
-    event ConversionRateBoundsUpdated(uint256 oldMinRate, uint256 oldMaxRate, uint256 newMinRate, uint256 newMaxRate);
-    event Converted(address indexed user, uint256 amount);
+    function allPairsLength() external view returns (uint) {
+        return allPairs.length;
+    }
 
-    // View functions
-    function name() external pure returns (string memory);
-    function symbol() external pure returns (string memory);
-    function decimals() external pure returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    
-    // Conversion rate parameters
-    function minConversionRate() external view returns (uint256);
-    function maxConversionRate() external view returns (uint256);
-    function RATE_PRECISION() external pure returns (uint256);
-    function RATE_INCREASE_PER_HOUR() external pure returns (uint256);
-    function RATE_DECREASE_PER_CONVERSION() external pure returns (uint256);
-    function MIN_DECREASE_PER_CONVERSION() external pure returns (uint256);
-    
-    // Dynamic rate state
-    function currentConversionRate() external view returns (uint256);
-    function lastConversionTime() external view returns (uint256);
-    function lastRateUpdateTime() external view returns (uint256);
-    
-    // External contracts
-    function HYBR() external view returns (address);
-    function gHYBR() external view returns (address);
-    function votingEscrow() external view returns (address);
-    function minter() external view returns (address);
-    function gaugeManager() external view returns (address);
+    function pairs() external view returns (address[] memory) {
+        return allPairs;
+    }
 
-    // Core functions
-    function updateConversionRate() external;
-    function depostionEmissionsToken(uint256 _amount) external;
-    function withdraw(uint256 amount) external;
-    function redeem(uint256 amount, uint8 redeemType) external;
-    function redeemFor(uint256 amount, uint8 redeemType, address recipient) external;
-    function mint(address to, uint256 amount) external;
-    
-    // Transfer functions
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function approve(address spender, uint256 amount) external pure returns (bool);
-    function allowance(address owner, address spender) external pure returns (uint256);
-    
-    // Admin functions
-    function setMinter(address _minter) external;
-    function setGHYBR(address _gHYBR) external;
-    function setConversionRateBounds(uint256 _minRate, uint256 _maxRate) external;
-    function emergencyWithdraw(address token, uint256 amount) external;
-    
-    // Whitelist management
-    function addExempt(address account) external;
-    function removeExempt(address account) external;
-    function addExemptTo(address account) external;
-    function removeExemptTo(address account) external;
-    function setGaugeManager(address _gaugeManager) external;
-    function isExempt(address account) external view returns (bool);
-    function isExemptTo(address account) external view returns (bool);
+    function setPauser(address _pauser) external {
+        require(msg.sender == pauser);
+        pendingPauser = _pauser;
+    }
 
-    // gHYBR interface functions (for compatibility)
-    function deposit(uint256 amount, address recipient) external;
-    function getPenaltyReward(uint256 amount) external;
-    function rebase() external;
+    function acceptPauser() external {
+        require(msg.sender == pendingPauser);
+        pauser = pendingPauser;
+    }
+
+    function setPause(bool _state) external {
+        require(msg.sender == pauser);
+        isPaused = _state;
+    }
+
+    function setFeeManager(address _feeManager) external {
+        require(msg.sender == feeManager, "not fee manager");
+        pendingFeeManager = _feeManager;
+    }
+
+    function acceptFeeManager() external {
+        require(msg.sender == pendingFeeManager, "not pending fee manager");
+        feeManager = pendingFeeManager;
+    }
+
+    function setStakingFees(uint256 _newFee) external {
+        require(msg.sender == feeManager, "not fee manager");
+        require(_newFee <= 3000);
+        stakingNFTFee = _newFee;
+    }
+
+    function setStakingFeeAddress(address _feehandler) external {
+        require(msg.sender == feeManager, "not fee manager");
+        require(_feehandler != address(0), "addr 0");
+        stakingFeeHandler = _feehandler;
+    }
+
+    function setDibs(address _dibs) external {
+        require(msg.sender == feeManager, "not fee manager");
+        require(_dibs != address(0), "address zero");
+        dibs = _dibs;
+    }
+
+    function setReferralFee(uint256 _refFee) external {
+        require(msg.sender == feeManager, "not fee manager");
+        MAX_REFERRAL_FEE = _refFee;
+    }
+
+    function setFee(bool _stable, uint256 _fee) external {
+        require(msg.sender == feeManager, "not fee manager");
+        require(_fee <= MAX_FEE, "fee too high");
+        require(_fee != 0, "fee must be nonzero");
+        if (_stable) {
+            stableFee = _fee;
+        } else {
+            volatileFee = _fee;
+        }
+    }
+
+    function getFee(bool _stable) public view returns (uint256) {
+        return _stable ? stableFee : volatileFee;
+    }
+
+    function pairCodeHash() external pure returns (bytes32) {
+        return keccak256(type(Pair).creationCode);
+    }
+
+    function getInitializable() external view returns (address, address, bool) {
+        return (_temp0, _temp1, _temp);
+    }
+
+    function createPair(
+        address tokenA,
+        address tokenB,
+        bool stable
+    ) external returns (address pair) {
+        require(tokenA != tokenB, "IA"); // Pair: IDENTICAL_ADDRESSES
+        (address token0, address token1) = tokenA < tokenB
+            ? (tokenA, tokenB)
+            : (tokenB, tokenA);
+        require(token0 != address(0), "ZA"); // Pair: ZERO_ADDRESS
+        require(getPair[token0][token1][stable] == address(0), "PE"); // Pair: PAIR_EXISTS - single check is sufficient
+        bytes32 salt = keccak256(abi.encodePacked(token0, token1, stable)); // notice salt includes stable as well, 3 parameters
+        (_temp0, _temp1, _temp) = (token0, token1, stable);
+        pair = address(new Pair{salt: salt}());
+        getPair[token0][token1][stable] = pair;
+        getPair[token1][token0][stable] = pair; // populate mapping in the reverse direction
+        allPairs.push(pair);
+        isPair[pair] = true;
+        emit PairCreated(token0, token1, stable, pair, allPairs.length);
+    }
 }
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
@@ -2192,52 +1851,6 @@ contract Pair is IPair {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-pragma abicoder v2;
-
-import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
-
-interface IVoter {
-    function ve() external view returns (IVotingEscrow);
-
-    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
-
-    function gauges(address _pool) external view returns (address);
-
-    function gaugeToFees(address _gauge) external view returns (address);
-
-    function gaugeToBribes(address _gauge) external view returns (address);
-
-    function createGauge(address _poolFactory, address _pool) external returns (address);
-
-    function distribute(address gauge) external;
-
-    function factoryRegistry() external view returns (IFactoryRegistry);
-
-    /// @dev Utility to distribute to gauges of pools in array.
-    /// @param _gauges Array of gauges to distribute to.
-    function distribute(address[] memory _gauges) external;
-
-    function isAlive(address _gauge) external view returns (bool);
-
-    function killGauge(address _gauge) external;
-
-    function emergencyCouncil() external view returns (address);
-
-    /// @notice Claim emissions from gauges.
-    /// @param _gauges Array of gauges to collect emissions from.
-    function claimRewards(address[] memory _gauges) external;
-
-    /// @notice Claim fees for a given NFT.
-    /// @dev Utility to help batch fee claims.
-    /// @param _fees    Array of FeesVotingReward contracts to collect from.
-    /// @param _tokens  Array of tokens that are used as fees.
-    /// @param _tokenId Id of veNFT that you wish to claim fees for.
-    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
-}
-
-// SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
 interface IBribe {
@@ -2250,6 +1863,97 @@ interface IBribe {
     function bribeTokens(uint256 i) external view returns(address); 
     function rewardsListLength() external view returns (uint256);
     function tokenRewardsPerEpoch(address _token, uint256 epochStart) external view returns(uint256);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IRHYBR {
+    // Enums
+    enum RedeemType {
+        TO_HYBR,        // 0: Convert to HYBR with penalty (70%-90% rate)
+        TO_VEHYBR,      // 1: Convert to veHYBR 1:1 (max lock, new NFT)
+        TO_GHYBR        // 2: Convert to gHYBR at current ratio
+    }
+
+    // Events
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event ConvertToHYBR(address indexed user, uint256 rHYBRAmount, uint256 HYBRReceived, uint256 penalty);
+    event ConvertToGHYBR(address indexed user, uint256 rHYBRAmount, uint256 gHYBRReceived);
+    event ConvertToVeHYBR(address indexed user, uint256 rHYBRAmount, uint256 tokenId, uint256 lockTime);
+    event RateUpdated(uint256 oldRate, uint256 newRate);
+    event MinterSet(address indexed oldMinter, address indexed newMinter);
+    event GHYBRSet(address indexed gHYBR);
+    event ConversionRateBoundsUpdated(uint256 oldMinRate, uint256 oldMaxRate, uint256 newMinRate, uint256 newMaxRate);
+    event Converted(address indexed user, uint256 amount);
+
+    // View functions
+    function name() external pure returns (string memory);
+    function symbol() external pure returns (string memory);
+    function decimals() external pure returns (uint8);
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    
+    // Conversion rate parameters
+    function minConversionRate() external view returns (uint256);
+    function maxConversionRate() external view returns (uint256);
+    function RATE_PRECISION() external pure returns (uint256);
+    function RATE_INCREASE_PER_HOUR() external pure returns (uint256);
+    function RATE_DECREASE_PER_CONVERSION() external pure returns (uint256);
+    function MIN_DECREASE_PER_CONVERSION() external pure returns (uint256);
+    
+    // Dynamic rate state
+    function currentConversionRate() external view returns (uint256);
+    function lastConversionTime() external view returns (uint256);
+    function lastRateUpdateTime() external view returns (uint256);
+    
+    // External contracts
+    function HYBR() external view returns (address);
+    function gHYBR() external view returns (address);
+    function votingEscrow() external view returns (address);
+    function minter() external view returns (address);
+    function gaugeManager() external view returns (address);
+
+    // Core functions
+    function updateConversionRate() external;
+    function depostionEmissionsToken(uint256 _amount) external;
+    function withdraw(uint256 amount) external;
+    function redeem(uint256 amount, uint8 redeemType) external;
+    function redeemFor(uint256 amount, uint8 redeemType, address recipient) external;
+    function mint(address to, uint256 amount) external;
+    
+    // Transfer functions
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function approve(address spender, uint256 amount) external pure returns (bool);
+    function allowance(address owner, address spender) external pure returns (uint256);
+    
+    // Admin functions
+    function setMinter(address _minter) external;
+    function setGHYBR(address _gHYBR) external;
+    function setConversionRateBounds(uint256 _minRate, uint256 _maxRate) external;
+    function emergencyWithdraw(address token, uint256 amount) external;
+    
+    // Whitelist management
+    function addExempt(address account) external;
+    function removeExempt(address account) external;
+    function addExemptTo(address account) external;
+    function removeExemptTo(address account) external;
+    function setGaugeManager(address _gaugeManager) external;
+    function isExempt(address account) external view returns (bool);
+    function isExemptTo(address account) external view returns (bool);
+
+    // gHYBR interface functions (for compatibility)
+    function deposit(uint256 amount, address recipient) external;
+    function getPenaltyReward(uint256 amount) external;
+    function rebase() external;
+}
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity =0.7.6;
+interface IMinter {
+    /// @notice Processes emissions and rebases. Callable once per epoch (1 week).
+    /// @return _period Start of current epoch.
+    function updatePeriod() external returns (uint256 _period);
 }
 
 // SPDX-License-Identifier: MIT
@@ -2614,6 +2318,302 @@ contract Bribe is ReentrancyGuard {
     event Withdrawn(uint256 indexed tokenId, uint256 amount);
     event RewardPaid(address indexed user,address indexed rewardsToken,uint256 reward);
     event Recovered(address indexed token, uint256 amount);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface ITokenHandler {
+    function isWhitelisted(address token) external view returns (bool);
+    function isWhitelistedNFT(uint256 token) external view returns (bool);
+    function isConnector(address token) external view returns (bool);
+
+    function whitelistToken(address _token) external;
+    function blacklistToken(address _token) external;
+
+    function whiteListed(uint256 index) external returns (address);
+    function connectors(uint256 index) external returns (address);
+
+    function whiteListedTokensLength() external returns (uint256);
+    function connectorTokensLength() external returns (uint256);
+
+    function whiteListedTokens() external view returns(address[] memory tokens);
+    function connectorTokens() external view returns(address[] memory tokens);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+pragma abicoder v2;
+
+import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
+
+interface IVoter {
+    function ve() external view returns (IVotingEscrow);
+
+    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
+
+    function gauges(address _pool) external view returns (address);
+
+    function gaugeToFees(address _gauge) external view returns (address);
+
+    function gaugeToBribes(address _gauge) external view returns (address);
+
+    function createGauge(address _poolFactory, address _pool) external returns (address);
+
+    function distribute(address gauge) external;
+
+    function factoryRegistry() external view returns (IFactoryRegistry);
+
+    /// @dev Utility to distribute to gauges of pools in array.
+    /// @param _gauges Array of gauges to distribute to.
+    function distribute(address[] memory _gauges) external;
+
+    function isAlive(address _gauge) external view returns (bool);
+
+    function killGauge(address _gauge) external;
+
+    function emergencyCouncil() external view returns (address);
+
+    /// @notice Claim emissions from gauges.
+    /// @param _gauges Array of gauges to collect emissions from.
+    function claimRewards(address[] memory _gauges) external;
+
+    /// @notice Claim fees for a given NFT.
+    /// @dev Utility to help batch fee claims.
+    /// @param _fees    Array of FeesVotingReward contracts to collect from.
+    /// @param _tokens  Array of tokens that are used as fees.
+    /// @param _tokenId Id of veNFT that you wish to claim fees for.
+    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IPair {
+    function metadata() external view returns (uint dec0, uint dec1, uint r0, uint r1, bool st, address t0, address t1);
+    function claimFees() external returns (uint, uint);
+    function tokens() external view returns (address, address);
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+    function transferFrom(address src, address dst, uint amount) external returns (bool);
+    function permit(address owner, address spender, uint value, uint deadline, uint8 v, bytes32 r, bytes32 s) external;
+    function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
+    function burn(address to) external returns (uint amount0, uint amount1);
+    function mint(address to) external returns (uint liquidity);
+    function getReserves() external view returns (uint _reserve0, uint _reserve1, uint _blockTimestampLast);
+    function getAmountOut(uint, address) external view returns (uint);
+
+    function name() external view returns(string memory);
+    function symbol() external view returns(string memory);
+    function totalSupply() external view returns (uint);
+    function decimals() external view returns (uint8);
+
+    function claimable0(address _user) external view returns (uint);
+    function claimable1(address _user) external view returns (uint);
+
+    function isStable() external view returns(bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "./interfaces/IERC20.sol";
+
+// Pair Fees contract is used as a 1:1 pair relationship to split out fees, this ensures that the curve does not need to be modified for LP shares
+contract PairFees {
+    address internal immutable pair; // The pair it is bonded to
+    address internal immutable token0; // token0 of pair, saved localy and statically for gas optimization
+    address internal immutable token1; // Token1 of pair, saved localy and statically for gas optimization
+
+    uint256 public toStake0;
+    uint256 public toStake1;
+
+    constructor(address _token0, address _token1) {
+        pair = msg.sender;
+        token0 = _token0;
+        token1 = _token1;
+    }
+
+    function _safeTransfer(address token, address to, uint256 value) internal {
+        require(token.code.length > 0);
+        (bool success, bytes memory data) = token.call(
+            abi.encodeWithSelector(IERC20.transfer.selector, to, value)
+        );
+        require(success && (data.length == 0 || abi.decode(data, (bool))));
+    }
+
+    // Allow the pair to transfer fees to users
+    function claimFeesFor(
+        address recipient,
+        uint amount0,
+        uint amount1
+    ) external {
+        require(msg.sender == pair);
+        if (amount0 > 0) _safeTransfer(token0, recipient, amount0);
+        if (amount1 > 0) _safeTransfer(token1, recipient, amount1);
+    }
+
+    function processStakingFees(uint amount, bool isTokenZero) external {
+        require(msg.sender == pair);
+        if (amount > 0 && isTokenZero) {
+            toStake0 += amount;
+        }
+
+        if (amount > 0 && !isTokenZero) {
+            toStake1 += amount;
+        }
+    }
+
+    function withdrawStakingFees(address recipient) external {
+        require(msg.sender == pair);
+        if (toStake0 > 0) {
+            _safeTransfer(token0, recipient, toStake0);
+            toStake0 = 0;
+        }
+        if (toStake1 > 0) {
+            _safeTransfer(token1, recipient, toStake1);
+            toStake1 = 0;
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+
+interface IVotingEscrow {
+    function team() external returns (address);
+
+    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
+    /// @param _value Amount to deposit
+    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
+    /// @return TokenId of created veNFT
+    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IPairCallee {
+    function hook(address sender, uint amount0, uint amount1, bytes calldata data) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.7.6;
+
+interface IGaugeManager {
+    
+    struct FarmingParam {
+        address farmingCenter;
+        address algebraEternalFarming;
+        address nfpm;
+    }
+
+    function isGaugeAliveForPool(address _pool) external view returns (bool);
+    function gauges(address _pair) external view returns (address);
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
+}
+// SPDX-License-Identifier: GPL-3.0-or-later
+pragma solidity 0.8.13;
+
+import "./interfaces/IHybra.sol";
+
+contract HYBR is IHybra {
+
+    string public constant name = "HYBR";
+    string public constant symbol = "HYBR";
+    uint8 public constant decimals = 18;
+    uint public totalSupply = 0;
+
+    mapping(address => uint) public balanceOf;
+    mapping(address => mapping(address => uint)) public allowance;
+
+    bool public initialMinted;
+    address public minter;
+
+    event Transfer(address indexed from, address indexed to, uint value);
+    event Approval(address indexed owner, address indexed spender, uint value);
+
+    constructor() {
+        minter = msg.sender;
+        _mint(msg.sender, 0);
+    }
+
+    // No checks as its meant to be once off to set minting rights to BaseV1 Minter
+    function setMinter(address _minter) external {
+        require(msg.sender == minter);
+        minter = _minter;
+    }
+
+    // Initial mint: total 50M    
+    function initialMint(address _recipient) external {
+        require(msg.sender == minter && !initialMinted);
+        initialMinted = true;
+        _mint(_recipient, 500 * 1e6 * 1e18);
+    }
+
+    function approve(address _spender, uint _value) external returns (bool) {
+        allowance[msg.sender][_spender] = _value;
+        emit Approval(msg.sender, _spender, _value);
+        return true;
+    }
+
+    function _mint(address _to, uint _amount) internal returns (bool) {
+        totalSupply += _amount;
+        unchecked {
+            balanceOf[_to] += _amount;
+        }
+        emit Transfer(address(0x0), _to, _amount);
+        return true;
+    }
+
+    function _transfer(address _from, address _to, uint _value) internal returns (bool) {
+        balanceOf[_from] -= _value;
+        unchecked {
+            balanceOf[_to] += _value;
+        }
+        emit Transfer(_from, _to, _value);
+        return true;
+    }
+
+    function transfer(address _to, uint _value) external returns (bool) {
+        return _transfer(msg.sender, _to, _value);
+    }
+
+    function transferFrom(address _from, address _to, uint _value) external returns (bool) {
+        uint allowed_from = allowance[_from][msg.sender];
+        if (allowed_from != type(uint).max) {
+            allowance[_from][msg.sender] -= _value;
+        }
+        return _transfer(_from, _to, _value);
+    }
+
+    function mint(address account, uint amount) external returns (bool) {
+        require(msg.sender == minter, 'not allowed');
+        _mint(account, amount);
+        return true;
+    }
+
+    function burn(uint256 value) external returns (bool) {
+        _burn(msg.sender, value);
+        return true;
+    }
+
+    function burnFrom(address _from, uint _value) external returns (bool) {
+        uint allowed_from = allowance[_from][msg.sender];
+        if (allowed_from != type(uint).max) {
+            allowance[_from][msg.sender] -= _value;
+        }
+        _burn(_from, _value);
+        return true;
+    }
+
+    function _burn(address _from, uint _amount) internal returns (bool) {
+        totalSupply -= _amount;
+        balanceOf[_from] -= _amount;
+        emit Transfer(_from, address(0x0), _amount);
+        return true;
+    }
 }
 
 

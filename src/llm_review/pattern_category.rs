@@ -268,7 +268,7 @@ pub const RANDOMNESS: &[VulnerabilityPattern; 2] = &[
 //**************************************************
 //**************************************************
 
-pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 12] = &[
+pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 15] = &[
     VulnerabilityPattern::SlippageMissingOrInsufficient,
     VulnerabilityPattern::UnboundedLoops,
     VulnerabilityPattern::FeeOnTransferAssumption,
@@ -281,10 +281,14 @@ pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 12] = &[
     VulnerabilityPattern::EpochOrIndexMonotonicity,
     VulnerabilityPattern::TimestampOrBlockManipulation,
     VulnerabilityPattern::BlockhashOrPRNGWeakness,
+    // NEW:
+    VulnerabilityPattern::MulticallCrossPathReentrancy,
+    VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity,
+    VulnerabilityPattern::ForcedAssetVsStrictEquality,
 ];
 
 // TOP VULNERABILITY PATTERNS
-pub const TOP_PAID_PATTERNS: &[VulnerabilityPattern; 14] = &[
+pub const TOP_PAID_PATTERNS: &[VulnerabilityPattern; 16] = &[
     VulnerabilityPattern::AccessControlOrAuthByPass,
     VulnerabilityPattern::GovernanceDelegationFlaw,
     VulnerabilityPattern::DoubleExecutionOrReplay,
@@ -299,4 +303,7 @@ pub const TOP_PAID_PATTERNS: &[VulnerabilityPattern; 14] = &[
     VulnerabilityPattern::InitOrderOrUnintialized,
     VulnerabilityPattern::UpgradeAuthBypass,
     VulnerabilityPattern::StorageCollisionOrSelectorClash,
+    // NEW:
+    VulnerabilityPattern::BeaconOrFactoryAuthorityDrift,
+    VulnerabilityPattern::TimelockEdgeCase,
 ];

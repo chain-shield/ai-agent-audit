@@ -1,7 +1,7 @@
 use crate::llm_review::{
-    enums::{all_enum_variants, generate_enum_list, EnumString},
+    enums::{all_enum_variants, generate_enum_list},
     invariants::{
-        InvariantFinding, InvariantSpec, InvariantStatus, InvariantType, INVARIANT_LIBRARY,
+        INVARIANT_LIBRARY, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
     },
     utils::prompt_context::generate_formatted_invariant_finding,
 };
@@ -118,7 +118,7 @@ pub fn generate_formated_list_from_invariant_data(patterns_to_use: &[InvariantTy
     for pattern in top_invariant_spec {
         top_invariant_list.push_str("\n\n");
         top_invariant_list.push_str("### Invariant Type\n");
-        top_invariant_list.push_str(&pattern.key.as_str());
+        top_invariant_list.push_str(&pattern.key.to_string());
         top_invariant_list.push_str("\n\n");
 
         top_invariant_list.push_str("### Definition\n");
@@ -134,7 +134,7 @@ pub fn generate_formated_list_from_invariant_data(patterns_to_use: &[InvariantTy
         top_invariant_list.push_str("\n\n");
 
         top_invariant_list.push_str("### Impact Hint\n");
-        top_invariant_list.push_str(&pattern.impact_hint.as_str());
+        top_invariant_list.push_str(&pattern.impact_hint.to_string());
         top_invariant_list.push_str("\n\n");
     }
 
