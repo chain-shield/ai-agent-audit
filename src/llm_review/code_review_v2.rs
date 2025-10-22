@@ -49,7 +49,8 @@ pub async fn review_codebase_for_security_issues_v2(
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
-    let (ai_verify_agent, ai_discovery_agent) = generate_ai_agents(repo).await?;
+    let (ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent) =
+        generate_ai_agents(repo).await?;
 
     let findings_db = Arc::new(Mutex::new(FindingsDb::open()?));
 
@@ -67,6 +68,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
         // Clone shared state for the spawned task
         let verify_agent = Arc::clone(&ai_verify_agent);
+        let finding_verify_agent = Arc::clone(&finding_ai_verify_agent);
         let discovery_agent = Arc::clone(&ai_discovery_agent);
         // let scope = Arc::clone(&audit_scope);
         let results_db = Arc::clone(&findings_db);
@@ -81,18 +83,6 @@ pub async fn review_codebase_for_security_issues_v2(
         contract_handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async move {
-                // Generate enhanced codeblock (includes file context)
-                // let codeblock = enhance_codeblock(&contract_clone, &codeblock_clone, &repo_clone)
-                //     .await
-                //     .map_err(|e| {
-                //         use std::io::{Error as IoError, ErrorKind};
-                //         AuditError::file_system(
-                //             "enhance_codeblock",
-                //             format!("could not generate codeblock: {e}"),
-                //             IoError::new(ErrorKind::Other, e.to_string()),
-                //         )
-                //     })?;
-
                 // Run pattern and invariant analysis concurrently within this task
                 let (patterns_res, invariants_res) = tokio::join!(
                     process_patterns(&codeblock, &discovery_agent, &verify_agent, &repo_clone),
@@ -112,28 +102,17 @@ pub async fn review_codebase_for_security_issues_v2(
                 }
 
                 if !raw_findings.findings.is_empty() {
-                    // Phase 3: Verify findings and remove false positives
+                    // Phase 4: Verify findings and remove false positives
                     let verify_findings = phases::verify_findings::execute(
                         raw_findings,
                         &codeblock,
-                        &verify_agent,
+                        &finding_verify_agent,
                         &repo_clone,
                     )
                     .await?;
 
-                    // // Phase 3a: Scope findings (only if scope provided)
-                    // if !scope.is_empty() {
-                    //     verify_findings = phases::scope_findings::execute(
-                    //         verify_findings,
-                    //         &codeblock,
-                    //         &verify_agent,
-                    //         &repo_clone,
-                    //     )
-                    //     .await?;
-                    // }
-
-                    // Phase 4: Quality check and enhance findings
-                    let final_findings = phases::quality_check::execute(
+                    // Phase 5: Quality check and enhance findings
+                    let mut quality_findings = phases::quality_check::execute(
                         verify_findings,
                         &codeblock,
                         &verify_agent,
@@ -141,15 +120,76 @@ pub async fn review_codebase_for_security_issues_v2(
                     )
                     .await?;
 
+                    // Phase 6: PoC Generation for High-Severity Findings
+                    // REQUIREMENTS: instructions for writing PoC plus template PoC file (if applicable)
+                    // 1. Write runnable PoC for Critical, High, and Medium findings
+                    // 2. Save PoC to test folder of repo
+                    // 3. Run PoC and capture results
+                    // 4. Have LLM fix PoC if it fails (up to 5 attempts)
+                    // 5. Mark finding as invalid if PoC cannot be created
+
+                    // If instructions and test folder provided, create and run PoC tests
+                    if !repo_clone.poc.instructions.is_empty()
+                        && repo_clone.poc.test_folder.exists()
+                    {
+                        // Phase 6: Write PoC for each Critical, High, and Medium Finding
+                        // Acquire POC_SEM at contract level to prevent multiple contracts
+                        // from creating PoC tests concurrently in the same test folder
+                        use crate::llm_review::semaphore::POC_SEM;
+                        let poc_sem = Arc::clone(&POC_SEM);
+                        let _poc_permit =
+                            poc_sem.acquire_owned().await.expect("POC semaphore closed");
+
+                        match phases::add_poc_findings::execute(
+                            quality_findings.clone(),
+                            &codeblock,
+                            &finding_verify_agent,
+                            &repo_clone,
+                        )
+                        .await
+                        {
+                            Ok(findings_with_pocs) => {
+                                quality_findings = findings_with_pocs;
+                                log::info!("✅ Phase 6 completed successfully");
+                            }
+                            Err(e) => {
+                                log::error!("❌ Phase 6 (PoC generation) failed: {:?}", e);
+                                log::warn!("Continuing with findings without PoC tests");
+                                // Continue with existing findings without PoC tests
+                            }
+                        }
+                        // _poc_permit is dropped here, releasing the semaphore
+                    }
+
+                    // Phase 7: Create professional markdown report for EACH finding (only if PoC is passing)
+                    match phases::create_report::execute(
+                        quality_findings.clone(),
+                        &codeblock,
+                        &finding_verify_agent,
+                        &repo_clone,
+                    )
+                    .await
+                    {
+                        Ok(findings_with_reports) => {
+                            quality_findings = findings_with_reports;
+                            log::info!("✅ Phase 7 completed successfully");
+                        }
+                        Err(e) => {
+                            log::error!("❌ Phase 7 (Report generation) failed: {:?}", e);
+                            log::warn!("Continuing with findings without professional reports");
+                            // Continue with existing findings without reports
+                        }
+                    }
+
                     // Save findings to database before extending
                     let db = results_db.lock().await;
-                    if let Err(e) = db.insert_findings(&final_findings, &repo_clone) {
+                    if let Err(e) = db.insert_findings(&quality_findings, &repo_clone) {
                         log::warn!("Failed to save findings to database: {}", e);
                     }
 
                     // Extend the aggregate findings
                     let mut all_findings = all_issues.lock().await;
-                    all_findings.findings.extend(final_findings.findings);
+                    all_findings.findings.extend(quality_findings.findings);
                 }
                 Ok(())
             }
@@ -174,92 +214,41 @@ pub async fn review_codebase_for_security_issues_v2(
     Ok(deduped)
 }
 
-// combine codeblock with original file context (that codeblock came from)
-// this contains natspec and additional context
-// pub async fn enhance_codeblock(
-//     contract: &str,
-//     codeblock: &str,
-//     repo: &RepoPaths,
-// ) -> anyhow::Result<String> {
-//     let file = get_file_from_contract(contract, repo)
-//         .await
-//         .expect("cound not find file contract is from, contract not in scope");
-//
-//     let file_content = fs::read_to_string(&file).await?;
-//
-//     let filename = file.strip_prefix(&repo.root)?;
-//     info!("{} contains contract {}", filename.display(), contract);
-//
-//     // NOTE: calculate token count of full prompt to make sure does NOT exceed TOKEN_BUDGET
-//     let context = get_metadata_context(repo, &ContextType::Full)
-//         .await
-//         .expect("context could not be retrieved");
-//
-//     let full_prompt_with_enhancement = format!("{}{}{}", codeblock, &file_content, context);
-//     let full_prompt_size = get_token_count(&full_prompt_with_enhancement);
-//
-//     let enhanced_block = if full_prompt_size < TOKEN_BUDGET {
-//         format!(
-//             "{} \n\n {}: \n\n {}",
-//             codeblock,
-//             filename.display(),
-//             file_content
-//         )
-//     } else {
-//         info!(
-//             "NOTE: token limit exceeded ({} tokens > {} limit) for contract {} prompt with enhancement, skipping enhancement",
-//             full_prompt_size, TOKEN_BUDGET, contract
-//         );
-//         codeblock.to_string()
-//     };
-//
-//     Ok(enhanced_block)
-// }
-pub async fn generate_ai_agents(repo: &RepoPaths) -> Result<(Arc<AIAgent>, Arc<AIAgent>)> {
+pub async fn generate_ai_agents(
+    repo: &RepoPaths,
+) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Arc<AIAgent>)> {
     info!("setting up AI agents...");
 
     // Enhanced preamble for verification agent
     let verify_preamble = "
 
-You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
-*confirming* reported issues.";
-
-    // You have access to retrieve_file_content tool that can search through different types of code files:
-    // - 'source': Main application code and smart contracts
-    // - 'test': Test files and test cases
-    // - 'script': Deployment and build scripts
-    // - 'library': Library and utility code
-    //
-    // Use them to:
-    // 1. Check that a reported vulnerability exists in the *current* source code.
-    // 2. Check if vulnerability is accurately reported
-    // 3. Cross-reference with tests to understand intended behaviour.
-    // 4. Inspect deployment scripts for mis-configurations.
-    // 5. Verify library or inherited-contract logic.
-    //
-    // When formulating queries for the retrieve_file_content, keep them concise and focused (**under 1000 words**) to avoid exceeding embedding model context limits.
-    // ";
+You are **SoliditySec-Verifier**, a senior smart-contract auditor specializing on
+*confirming* reported findings, writing comprehensive reports of findings, and creating
+rigorous PoC tests that validate the findings.";
 
     // Create verification agent using OpenAI O3
-    let _ = AgentConfig::new(Some(repo.clone()))
+    let verify_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5")
         .with_preamble(verify_preamble)
         .with_file_picker(false); // Disabled to avoid rate limits
 
-    let verify_config = AgentConfig::new(Some(repo.clone()))
-        .with_temperature(1.0)
+    let finding_verify_config = AgentConfig::new(Some(repo.clone()))
+        .with_temperature(0.2)
         .with_model(CLAUDE_4_5_SONNET)
         .with_max_tokens(64_000)
         .with_preamble(verify_preamble)
         .with_file_picker(false) // Disabled to avoid rate limits
         .with_file_retrieval(false);
 
-    let ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(&verify_config)?);
+    let ai_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
+    let finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
+        &finding_verify_config,
+    )?);
 
     // Enhanced preamble for discovery agents
     let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases.";
 
-    let discovery_config = AgentConfig::new(Some(repo.clone()))
+    let _ = AgentConfig::new(Some(repo.clone()))
         .with_temperature(1.0)
         .with_model(CLAUDE_4_5_SONNET)
         .with_max_tokens(64_000)
@@ -267,7 +256,7 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
         .with_file_picker(false) // Disabled to avoid rate limits
         .with_file_retrieval(false);
 
-    let _ = AgentConfig::new(Some(repo.clone()))
+    let discovery_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
@@ -276,12 +265,12 @@ You are **SoliditySec-Verifier**, a senior smart-contract auditor focused on
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_dynamic_context(false);
     //
-    let ai_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(&discovery_config)?);
+    let ai_discovery_agent = Arc::new(AgentFactory::create_openai_agent(&discovery_config)?);
 
     // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
     // info!("Created {} discovery agents", ai_discovery_agents.len());
 
-    Ok((ai_verify_agent, ai_discovery_agent))
+    Ok((ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent))
 }
 
 /// Process pattern analysis: generate, verify, and convert to findings
@@ -349,7 +338,7 @@ async fn process_invariants(
 
     // Phase 1: Generate invariants
     info!("PHASE 1: GENERATE INVARIANTS");
-    let mut raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
+    let raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
         invariant_prompt,
         codeblock,
         ai_discovery_agent,
@@ -366,18 +355,15 @@ async fn process_invariants(
     let violations: Vec<InvariantFinding> = raw_invariants
         .issues()
         .iter()
-        .filter(|inv| inv.status == InvariantStatus::Holds)
+        .filter(|inv| inv.status == InvariantStatus::PossibleViolation)
         .map(|inv| inv.to_owned())
         .collect();
 
-    raw_invariants = ContractInvariants {
-        invariants: violations,
-    };
+    // raw_invariants = ContractInvariants {
+    //     invariants: violations,
+    // };
 
-    info!(
-        "{} invariant violations found!",
-        raw_invariants.invariants.len()
-    );
+    info!("{} invariant violations found!", violations.len());
 
     // Phase 2: Verify invariants
     info!("PHASE 2: VERIFY INVARIANTS");

@@ -1,5 +1,8 @@
 use crate::{
-    config::AuditType, llm_review::prompt_support::severity_rubics::SHERLOCK_SEVERITY_RUBRIC,
+    config::AuditType,
+    llm_review::prompt_support::severity_rubics::{
+        CANTINA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
+    },
 };
 
 use super::severity_rubics::CODE4RENA_SEVERITY_RUBRIC;
@@ -16,22 +19,33 @@ You should return `"true"` if the issue meets **any** of these criteria, otherwi
 
 "#;
 
-pub fn generate_verify_prompt(audit_type: AuditType) -> String {
+pub fn generate_verify_prompt(audit_type: &AuditType) -> String {
     let (severity_rubic, contest) = match audit_type {
         AuditType::Code4rena => (CODE4RENA_SEVERITY_RUBRIC, "Code4rena"),
         AuditType::Sherlock => (SHERLOCK_SEVERITY_RUBRIC, "Sherlock"),
+        AuditType::Cantina => (CANTINA_SEVERITY_RUBRIC, "Cantina"),
         _ => (CODE4RENA_SEVERITY_RUBRIC, "Private Audit"),
     };
     format!(
         r#"
-Your task: decide if a reported issue would likely receive **≥ Medium severity** in a {contest} contest.
+Your task: decide if a reported issue is valid and would likely receive **≥ Medium severity** in a {contest} contest.
 
-Consider these 2 Criteria:
-1. Is it a Legit Bug (and NOT a false positive AND in scope - if scope provided)
-2. Would it likely receive **≥ Medium severity** in a {contest} contest
+Consider the following Criteria:
+1. Is issue in scope? (see scope provided below)
+2. Is this issue valid? Does protocol have safeguards against it? Are there any external depedencies that cannot be seen and analyzed (creating uncertainly about validity of finding)?
+3. Would it likely receive **≥ Medium severity** in a {contest} contest
 
-You should return `"true"` ONLY if both of the above are TRUE - its a legit in scope vulnerability AND High or Medium severity. 
-Otherwise return `"false"`.
+Carefully trace the code to verify issue validity.
+
+Based on your assessment please provided the following:
+
+*Severity:* High | Medium | Low | Info  (only provide if finding is finding is NOT invalid and differs from listed severity)
+*Finding Severity Justification:* Explain why you assigned this severity. 
+*Finding Status:* Valid | Invalid | OutOfScope | NeedsMoreInfo
+*Status Justification:* if invalid, out of scope, or needs more info, please explain why.
+*Finding Status Confidence:* VeryConfident | Confident | SomewhatConfident 
+*Finding Status Confidence Justification:* if Somewhat Confident, please explain why. 
+*Finding Complexity:* How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty.
 
 ## {contest} Guidelines
 # {contest} Severity Rubric (What {contest} Actually Pays For)

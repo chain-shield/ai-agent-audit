@@ -1,5 +1,7 @@
-use ai_agent_audit::enumerator::parse_solidity::detect_scripts_connected_to_contract;
-use ai_agent_audit::prepare_code::git_clone::RepoPaths;
+use ai_agent_audit::{
+    config::AuditType, enumerator::parse_solidity::detect_scripts_connected_to_contract,
+    prepare_code::git_clone::RepoPaths,
+};
 use tempfile::TempDir;
 use tokio::fs;
 
@@ -36,6 +38,7 @@ async fn create_test_repo_with_scripts(
     }
 
     let repo_paths = RepoPaths {
+        github_url: format!("https://github.com/test/{}", repo_name),
         project_id: "test-project".to_string(),
         root: root.clone(),
         sol_files: vec![],
@@ -51,6 +54,8 @@ async fn create_test_repo_with_scripts(
         excluded_folders: None,
         repo_name,
         commit_hash,
+        audit_type: AuditType::Code4rena,
+        poc: ai_agent_audit::prepare_code::git_clone::PocConfig::default(),
     };
 
     (temp_dir, repo_paths)

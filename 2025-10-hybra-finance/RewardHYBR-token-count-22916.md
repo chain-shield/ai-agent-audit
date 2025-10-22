@@ -344,11 +344,146 @@ contract RewardHYBR is ERC20, Ownable, ReentrancyGuard, Pausable {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
+// SPDX-License-Identifier: None
+// HybraHole Foundation 2025
+
+pragma solidity 0.8.13;
+
+import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
+
+interface IHybraVotes is IVotes{
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.7.6;
+
+interface IGaugeManager {
+    
+    struct FarmingParam {
+        address farmingCenter;
+        address algebraEternalFarming;
+        address nfpm;
+    }
+
+    function isGaugeAliveForPool(address _pool) external view returns (bool);
+    function gauges(address _pair) external view returns (address);
+    function isGauge(address _gauge) external view returns (bool);
+    function poolForGauge(address _gauge) external view returns (address);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IGHYBR {
+    // Events
+    event Deposit(address indexed user, address indexed recipient, uint256 amount);
+    event Withdraw(address indexed user, uint256 amount);
+    event PenaltyReward(uint256 amount);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    // View functions
+    function name() external pure returns (string memory);
+    function symbol() external pure returns (string memory);
+    function decimals() external pure returns (uint8);
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    
+    // Core functions
+    function deposit(uint256 amount, address recipient) external;
+    function withdraw(uint256 amount) external;
+    function receivePenaltyReward(uint256 amount) external;
+    
+    // Transfer functions
+    function transfer(address to, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function approve(address spender, uint256 amount) external returns (bool);
+    function allowance(address owner, address spender) external view returns (uint256);
+}
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
 interface IVeArtProxy {
     function _tokenURI(uint _tokenId, uint _balanceOf, uint _locked_end, uint _value) external pure returns (string memory output);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+library HybraTimeLibrary {
+
+    // for testnet
+    uint256 internal constant WEEK = 1800;
+    uint internal constant NO_VOTING_WINDOW = 300;
+    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
+    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
+    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
+
+    // uint256 internal constant WEEK = 7 * 86400;
+    // uint internal constant NO_VOTING_WINDOW = 3600;
+    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
+    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
+    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
+
+    /// @dev Returns start of epoch based on current timestamp
+    function epochStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK);
+        }
+    }
+
+    /// @dev Returns start of next epoch / end of current epoch
+    function epochNext(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK;
+        }
+    }
+
+    /// @dev Returns start of voting window
+    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
+        }
+    }
+
+    /// @dev Returns end of voting window / beginning of unrestricted voting window
+    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
+        }
+    }
+
+    /// @dev Returns the status if it is the last hour of the epoch
+    function isLastHour(uint256 timestamp) internal pure returns (bool) {
+        // return block.timestamp % 7 days >= 6 days + 23 hours;
+        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
+        && timestamp < HybraTimeLibrary.epochNext(timestamp);
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function epochMultiples(uint256 duration) internal pure returns (uint256) {
+        unchecked {
+            return (duration / WEEK) * WEEK;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
+        unchecked {
+            return  endTime - WEEK <= timestamp && timestamp < endTime;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
+
+    /// @dev Returns duration in multiples of epoch
+    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
+        unchecked {
+            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
+        }
+    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -1708,68 +1843,6 @@ contract VotingEscrow is IERC721, IERC721Metadata, IHybraVotes {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity 0.7.6;
-
-interface IGaugeManager {
-    
-    struct FarmingParam {
-        address farmingCenter;
-        address algebraEternalFarming;
-        address nfpm;
-    }
-
-    function isGaugeAliveForPool(address _pool) external view returns (bool);
-    function gauges(address _pair) external view returns (address);
-    function isGauge(address _gauge) external view returns (bool);
-    function poolForGauge(address _gauge) external view returns (address);
-}
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-pragma abicoder v2;
-
-import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
-import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
-
-interface IVoter {
-    function ve() external view returns (IVotingEscrow);
-
-    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
-
-    function gauges(address _pool) external view returns (address);
-
-    function gaugeToFees(address _gauge) external view returns (address);
-
-    function gaugeToBribes(address _gauge) external view returns (address);
-
-    function createGauge(address _poolFactory, address _pool) external returns (address);
-
-    function distribute(address gauge) external;
-
-    function factoryRegistry() external view returns (IFactoryRegistry);
-
-    /// @dev Utility to distribute to gauges of pools in array.
-    /// @param _gauges Array of gauges to distribute to.
-    function distribute(address[] memory _gauges) external;
-
-    function isAlive(address _gauge) external view returns (bool);
-
-    function killGauge(address _gauge) external;
-
-    function emergencyCouncil() external view returns (address);
-
-    /// @notice Claim emissions from gauges.
-    /// @param _gauges Array of gauges to collect emissions from.
-    function claimRewards(address[] memory _gauges) external;
-
-    /// @notice Claim fees for a given NFT.
-    /// @dev Utility to help batch fee claims.
-    /// @param _fees    Array of FeesVotingReward contracts to collect from.
-    /// @param _tokens  Array of tokens that are used as fees.
-    /// @param _tokenId Id of veNFT that you wish to claim fees for.
-    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
-}
-
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
 import {IVotingEscrow} from "../interfaces/IVotingEscrow.sol";
@@ -2011,15 +2084,21 @@ library VotingBalanceLogic {
         }
     }
 }
-// SPDX-License-Identifier: None
-// HybraHole Foundation 2025
-
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
-
-interface IHybraVotes is IVotes{
+interface IHybra {
+    function totalSupply() external view returns (uint);
+    function balanceOf(address) external view returns (uint);
+    function approve(address spender, uint value) external returns (bool);
+    function transfer(address, uint) external returns (bool);
+    function transferFrom(address,address,uint) external returns (bool);
+    function mint(address, uint) external returns (bool);
+    function minter() external returns (address);
+    function burn(uint) external returns (bool);
+    function burnFrom(address, uint) external returns (bool);
 }
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
@@ -2243,128 +2322,49 @@ library VotingDelegationLib {
 
 }
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+pragma solidity =0.7.6;
+pragma abicoder v2;
 
-interface IHybra {
-    function totalSupply() external view returns (uint);
-    function balanceOf(address) external view returns (uint);
-    function approve(address spender, uint value) external returns (bool);
-    function transfer(address, uint) external returns (bool);
-    function transferFrom(address,address,uint) external returns (bool);
-    function mint(address, uint) external returns (bool);
-    function minter() external returns (address);
-    function burn(uint) external returns (bool);
-    function burnFrom(address, uint) external returns (bool);
-}
+import {IVotingEscrow} from "contracts/core/interfaces/IVotingEscrow.sol";
+import {IFactoryRegistry} from "contracts/core/interfaces/IFactoryRegistry.sol";
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+interface IVoter {
+    function ve() external view returns (IVotingEscrow);
 
-interface IGHYBR {
-    // Events
-    event Deposit(address indexed user, address indexed recipient, uint256 amount);
-    event Withdraw(address indexed user, uint256 amount);
-    event PenaltyReward(uint256 amount);
-    event Transfer(address indexed from, address indexed to, uint256 value);
+    function vote(uint256 _tokenId, address[] calldata _poolVote, uint256[] calldata _weights) external;
 
-    // View functions
-    function name() external pure returns (string memory);
-    function symbol() external pure returns (string memory);
-    function decimals() external pure returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    
-    // Core functions
-    function deposit(uint256 amount, address recipient) external;
-    function withdraw(uint256 amount) external;
-    function receivePenaltyReward(uint256 amount) external;
-    
-    // Transfer functions
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function allowance(address owner, address spender) external view returns (uint256);
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+    function gauges(address _pool) external view returns (address);
 
-library HybraTimeLibrary {
+    function gaugeToFees(address _gauge) external view returns (address);
 
-    // for testnet
-    uint256 internal constant WEEK = 1800;
-    uint internal constant NO_VOTING_WINDOW = 300;
-    uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 2;
-    uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 2 * 86400;
-    uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 600;
+    function gaugeToBribes(address _gauge) external view returns (address);
 
-    // uint256 internal constant WEEK = 7 * 86400;
-    // uint internal constant NO_VOTING_WINDOW = 3600;
-    // uint256 internal constant MAX_LOCK_DURATION = 86400 * 365 * 4;
-    // uint256 internal constant GENESIS_STAKING_MATURITY_TIME = 180 * 86400;
-    // uint256 internal constant NO_GENESIS_DEPOSIT_WINDOW = 3 * 3600;
+    function createGauge(address _poolFactory, address _pool) external returns (address);
 
-    /// @dev Returns start of epoch based on current timestamp
-    function epochStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK);
-        }
-    }
+    function distribute(address gauge) external;
 
-    /// @dev Returns start of next epoch / end of current epoch
-    function epochNext(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK;
-        }
-    }
+    function factoryRegistry() external view returns (IFactoryRegistry);
 
-    /// @dev Returns start of voting window
-    function epochVoteStart(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + NO_VOTING_WINDOW;
-        }
-    }
+    /// @dev Utility to distribute to gauges of pools in array.
+    /// @param _gauges Array of gauges to distribute to.
+    function distribute(address[] memory _gauges) external;
 
-    /// @dev Returns end of voting window / beginning of unrestricted voting window
-    function epochVoteEnd(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return timestamp - (timestamp % WEEK) + WEEK - NO_VOTING_WINDOW;
-        }
-    }
+    function isAlive(address _gauge) external view returns (bool);
 
-    /// @dev Returns the status if it is the last hour of the epoch
-    function isLastHour(uint256 timestamp) internal pure returns (bool) {
-        // return block.timestamp % 7 days >= 6 days + 23 hours;
-        return timestamp >= HybraTimeLibrary.epochVoteEnd(timestamp) 
-        && timestamp < HybraTimeLibrary.epochNext(timestamp);
-    }
+    function killGauge(address _gauge) external;
 
-    /// @dev Returns duration in multiples of epoch
-    function epochMultiples(uint256 duration) internal pure returns (uint256) {
-        unchecked {
-            return (duration / WEEK) * WEEK;
-        }
-    }
+    function emergencyCouncil() external view returns (address);
 
-    /// @dev Returns duration in multiples of epoch
-    function isLastEpoch(uint256 timestamp, uint256 endTime) internal pure returns (bool) {
-        unchecked {
-            return  endTime - WEEK <= timestamp && timestamp < endTime;
-        }
-    }
+    /// @notice Claim emissions from gauges.
+    /// @param _gauges Array of gauges to collect emissions from.
+    function claimRewards(address[] memory _gauges) external;
 
-    /// @dev Returns duration in multiples of epoch
-    function prevPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochStart(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
-        }
-    }
-
-    /// @dev Returns duration in multiples of epoch
-    function currPreEpoch(uint256 timestamp) internal pure returns (uint256) {
-        unchecked {
-            return  epochNext(timestamp) - NO_GENESIS_DEPOSIT_WINDOW;
-        }
-    }
+    /// @notice Claim fees for a given NFT.
+    /// @dev Utility to help batch fee claims.
+    /// @param _fees    Array of FeesVotingReward contracts to collect from.
+    /// @param _tokens  Array of tokens that are used as fees.
+    /// @param _tokenId Id of veNFT that you wish to claim fees for.
+    function claimFees(address[] memory _fees, address[][] memory _tokens, uint256 _tokenId) external;
 }
 
 // SPDX-License-Identifier: MIT
@@ -2386,6 +2386,77 @@ END OF SUPPORTING CONTRACTS AND INTERFACES
 
 DEPLOYMENT SCRIPTS
 
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+import "forge-std/Script.sol";
+import "forge-std/StdJson.sol";
+import "./BaseDeployScript.sol";
+
+import {HYBR} from "../contracts/HYBR.sol";
+import {RewardHYBR} from "../contracts/RewardHYBR.sol";
+import {GrowthHYBR} from "../contracts/GovernanceHYBR.sol";
+import {VotingEscrow} from "../contracts/VotingEscrow.sol";
+
+contract Deploy2_TokenSystem is BaseDeployScript {
+    using stdJson for string;
+    
+    function run() external {
+        uint256 deployPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployerAddress = vm.rememberKey(deployPrivateKey);
+        
+        // Load infrastructure addresses
+        string memory infraPath = getInputPath("Deploy1_Infrastructure");
+        string memory infraJson = vm.readFile(infraPath);
+        
+        address veArtProxy = abi.decode(vm.parseJson(infraJson, ".VeArtProxy"), (address));
+        
+        console.log("=== Phase 2: Deploy Token System ===");
+        console.log("Deployer:", deployerAddress);
+        console.log("Using VeArtProxy:", veArtProxy);
+        vm.startBroadcast(deployerAddress);
+        
+        // 1. Deploy HYBR Token
+        HYBR hybr = new HYBR();
+        console.log("HYBR:", address(hybr));
+        
+      
+      
+        
+        // 2. Deploy VotingEscrow
+        VotingEscrow votingEscrow = new VotingEscrow(
+            address(hybr),
+            veArtProxy
+        );
+        console.log("VotingEscrow:", address(votingEscrow));
+        
+          // 3. Deploy RewardHYBR Token
+        RewardHYBR rewardHybr = new RewardHYBR(address(hybr), address(votingEscrow));
+        console.log("RewardHYBR:", address(rewardHybr));
+        
+          // 4. Deploy GovernanceHYBR Token (will need additional addresses, deploy with placeholders for now)
+        GrowthHYBR gHybr = new GrowthHYBR(
+            address(hybr), 
+            address(votingEscrow)
+        );
+        console.log("GrowthHYBR:", address(gHybr));
+        vm.stopBroadcast();
+        
+        // Save to JSON
+        string memory path = getOutputPath("Deploy2_TokenSystem");
+        
+        string memory json = "";
+        json = vm.serializeAddress("tokenSystem", "HYBR", address(hybr));
+        json = vm.serializeAddress("tokenSystem", "RewardHYBR", address(rewardHybr));
+        json = vm.serializeAddress("tokenSystem", "GrowthHYBR", address(gHybr));
+        json = vm.serializeAddress("tokenSystem", "VotingEscrow", address(votingEscrow));
+        
+        vm.writeJson(json, path);
+        console.log("Addresses saved to:", path);
+        
+        console.log("\n=== Token System Deployment Complete ===");
+    }
+}
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
@@ -2480,76 +2551,5 @@ contract InitMinter is BaseDeployScript {
         address rHybrGHYBR = RewardHYBR(rewardHybr).gHYBR();
         console.log("RewardHYBR gHYBR:", rHybrGHYBR);
         console.log("Minter matches:", rHybrGHYBR == gHYBR);
-    }
-}
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-import "forge-std/Script.sol";
-import "forge-std/StdJson.sol";
-import "./BaseDeployScript.sol";
-
-import {HYBR} from "../contracts/HYBR.sol";
-import {RewardHYBR} from "../contracts/RewardHYBR.sol";
-import {GrowthHYBR} from "../contracts/GovernanceHYBR.sol";
-import {VotingEscrow} from "../contracts/VotingEscrow.sol";
-
-contract Deploy2_TokenSystem is BaseDeployScript {
-    using stdJson for string;
-    
-    function run() external {
-        uint256 deployPrivateKey = vm.envUint("PRIVATE_KEY");
-        address deployerAddress = vm.rememberKey(deployPrivateKey);
-        
-        // Load infrastructure addresses
-        string memory infraPath = getInputPath("Deploy1_Infrastructure");
-        string memory infraJson = vm.readFile(infraPath);
-        
-        address veArtProxy = abi.decode(vm.parseJson(infraJson, ".VeArtProxy"), (address));
-        
-        console.log("=== Phase 2: Deploy Token System ===");
-        console.log("Deployer:", deployerAddress);
-        console.log("Using VeArtProxy:", veArtProxy);
-        vm.startBroadcast(deployerAddress);
-        
-        // 1. Deploy HYBR Token
-        HYBR hybr = new HYBR();
-        console.log("HYBR:", address(hybr));
-        
-      
-      
-        
-        // 2. Deploy VotingEscrow
-        VotingEscrow votingEscrow = new VotingEscrow(
-            address(hybr),
-            veArtProxy
-        );
-        console.log("VotingEscrow:", address(votingEscrow));
-        
-          // 3. Deploy RewardHYBR Token
-        RewardHYBR rewardHybr = new RewardHYBR(address(hybr), address(votingEscrow));
-        console.log("RewardHYBR:", address(rewardHybr));
-        
-          // 4. Deploy GovernanceHYBR Token (will need additional addresses, deploy with placeholders for now)
-        GrowthHYBR gHybr = new GrowthHYBR(
-            address(hybr), 
-            address(votingEscrow)
-        );
-        console.log("GrowthHYBR:", address(gHybr));
-        vm.stopBroadcast();
-        
-        // Save to JSON
-        string memory path = getOutputPath("Deploy2_TokenSystem");
-        
-        string memory json = "";
-        json = vm.serializeAddress("tokenSystem", "HYBR", address(hybr));
-        json = vm.serializeAddress("tokenSystem", "RewardHYBR", address(rewardHybr));
-        json = vm.serializeAddress("tokenSystem", "GrowthHYBR", address(gHybr));
-        json = vm.serializeAddress("tokenSystem", "VotingEscrow", address(votingEscrow));
-        
-        vm.writeJson(json, path);
-        console.log("Addresses saved to:", path);
-        
-        console.log("\n=== Token System Deployment Complete ===");
     }
 }

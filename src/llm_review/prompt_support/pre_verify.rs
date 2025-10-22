@@ -7,8 +7,13 @@ Before instructions are provided on the task please note required output format:
 **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
 
 {
-    "is_legit_vulnerability": true|false,
-    "why_its_not_legit": "explain why NOT legit (OMIT if legit)"
+    "severity": "High | Medium | Low | Info", (only provide if finding is finding is NOT invalid and differs from listed severity)
+    "severity_justification": "Explain why you assigned this severity",
+    "status": "Valid | Invalid | OutOfScope | NeedsMoreInfo",
+    "status_justification": "if invalid, out of scope, or needs more info, please explain why",
+    "status_confidence": "VeryConfident | Confident | SomewhatConfident",
+    "status_confidence_justification": "if Somewhat Confident, please explain why",
+    "finding_complexity": How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty. This value is a number (NOT a string)
 }
 
 "#;

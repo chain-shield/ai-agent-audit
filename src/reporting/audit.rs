@@ -3,9 +3,10 @@ use std::sync::OnceLock;
 
 use crate::{
     llm_review::{
-        enums::{EnumString, Severity},
+        enums::Severity,
         findings::{Finding, Findings},
-        utils::prompt_context,
+        phases::verify_findings::{FindingConfidence, FindingStatus},
+        utils::prompt_context::{self, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -110,10 +111,14 @@ fn get_finding_report_by_severity(findings: &Findings, severity: Severity) -> St
     let mut findings_report = String::new();
 
     if !findings_by_severity.is_empty() {
-        findings_report.push_str(&format!("\n# {} Risk Findings\n\n", severity.as_str()));
+        findings_report.push_str(&format!("\n# {} Risk Findings\n\n", severity.to_string()));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
-            findings_report.push_str(&prompt_context::get_finding_report(finding, Some(i)));
+            findings_report.push_str(&prompt_context::get_finding_report(
+                finding,
+                Some(i),
+                FindingReportType::Enhanced,
+            ));
         }
     } else {
         return String::new();
@@ -153,7 +158,7 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
     let mut findings_summary = String::new();
 
     if !findings_by_severity.is_empty() {
-        findings_summary.push_str(&format!("## {} Risk Findings\n\n", severity.as_str()));
+        findings_summary.push_str(&format!("## {} Risk Findings\n\n", severity.to_string()));
 
         for (i, finding) in findings_by_severity.iter().enumerate() {
             findings_summary.push_str(&format!(
@@ -162,6 +167,38 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
                 i + 1,
                 finding.title,
                 &finding.derived_from.clone().unwrap_or_default()
+            ));
+            findings_summary.push_str(&format!(
+                "Finding Status: {}\n",
+                finding.status.unwrap_or_default().to_string()
+            ));
+            if finding.status == Some(FindingStatus::NeedsMoreInfo) {
+                findings_summary.push_str(&format!(
+                    "Finding Status Justification: {}\n",
+                    finding.status_justification.clone().unwrap_or_default()
+                ));
+            }
+            findings_summary.push_str(&format!(
+                "Status Confidence: {}\n",
+                finding.status_confidence.unwrap_or_default().to_string()
+            ));
+            if finding.status_confidence == Some(FindingConfidence::SomeWhatConfident) {
+                findings_summary.push_str(&format!(
+                    "Finding Confidence Justification: {}\n",
+                    finding
+                        .status_confidence_justification
+                        .clone()
+                        .unwrap_or_default()
+                ));
+            }
+            findings_summary.push_str(&format!(
+                "Finding Complexity: {}\n",
+                finding.finding_complexity.unwrap_or_default()
+            ));
+            findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.to_string()));
+            findings_summary.push_str(&format!(
+                "Poc Test Status: {}\n\n",
+                finding.poc_test_status.unwrap_or_default().to_string()
             ));
         }
     } else {
@@ -215,14 +252,52 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
         findings_summary.push_str(&format!("\n\n **Derived From** : {}\n\n", pattern));
         for f in findings_vec {
             match report_type {
-                ReportDataType::Summary => findings_summary.push_str(&format!(
-                    "[{}-{}]. {}\n",
-                    f.severity.as_initial(),
-                    num,
-                    f.title
-                )),
+                ReportDataType::Summary => {
+                    findings_summary.push_str(&format!(
+                        "[{}-{}]. {}\n",
+                        f.severity.as_initial(),
+                        num,
+                        f.title
+                    ));
+
+                    findings_summary.push_str(&format!(
+                        "Finding Status: {}\n",
+                        f.status.unwrap_or_default().to_string()
+                    ));
+                    if f.status == Some(FindingStatus::NeedsMoreInfo) {
+                        findings_summary.push_str(&format!(
+                            "Finding Status Justification: {}\n",
+                            f.status_justification.clone().unwrap_or_default()
+                        ));
+                    }
+                    findings_summary.push_str(&format!(
+                        "Status Confidence: {}\n",
+                        f.status_confidence.unwrap_or_default().to_string()
+                    ));
+                    if f.status_confidence == Some(FindingConfidence::SomeWhatConfident) {
+                        findings_summary.push_str(&format!(
+                            "Finding Confidence Justification: {}\n",
+                            f.status_confidence_justification
+                                .clone()
+                                .unwrap_or_default()
+                        ));
+                    }
+                    findings_summary.push_str(&format!(
+                        "Finding Complexity: {}\n",
+                        f.finding_complexity.unwrap_or_default()
+                    ));
+                    findings_summary.push_str(&format!("Privilege: {}\n", f.privilege.to_string()));
+                    findings_summary.push_str(&format!(
+                        "Poc Test Status: {}\n\n",
+                        f.poc_test_status.unwrap_or_default().to_string()
+                    ));
+                }
                 ReportDataType::Full => {
-                    findings_summary.push_str(&prompt_context::get_finding_report(f, Some(num - 1)))
+                    findings_summary.push_str(&prompt_context::get_finding_report(
+                        f,
+                        Some(num - 1),
+                        FindingReportType::Enhanced,
+                    ));
                 }
             }
             num += 1;
