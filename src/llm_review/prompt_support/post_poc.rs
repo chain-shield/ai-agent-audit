@@ -4,13 +4,11 @@ pub const POST_CREATE_POC: &str = r#"
 
 **Please respond with ONLY valid JSON in the following exact format:**
 
-```json
 {
     "poc_test_code": "fully runnable PoC code as a string (escape newlines and quotes properly). Test function MUST start with 'test' (e.g., testExploit, testReentrancy)",
     "commentary": "brief explanation of your PoC approach and what it demonstrates",
     "cannot_create_poc_because_finding_invalid": true|false
 }
-```
 
 **IMPORTANT:**
 - The `commentary` field should briefly explain your PoC approach, what it demonstrates, and any important notes.
@@ -23,12 +21,9 @@ pub const POST_CREATE_POC: &str = r#"
 
 **Example Response:**
 
-```json
 {
     "poc_test_code": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\nimport \"forge-std/Test.sol\";\n\ncontract ExploitTest is Test {\n    function testExploit() public {\n        // exploit code here\n    }\n}",
-    "command_to_run_test": "forge test --match-test testExploit -vvv",
     "commentary": "This PoC demonstrates reentrancy by calling refund() recursively before state update, draining the contract balance"
 }
-```
 
 "#;

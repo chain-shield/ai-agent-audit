@@ -4,9 +4,10 @@ use super::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::phases::{
         add_poc_findings::PocStatus,
+        create_report::CompetitionReport,
         verify_findings::{FindingConfidence, FindingStatus},
     },
     utils::semantic_compare,
@@ -49,6 +50,8 @@ pub struct Finding {
     pub status_justification: Option<String>,
     pub status_confidence: Option<FindingConfidence>,
     pub status_confidence_justification: Option<String>,
+    // competition ready report (C4, Sherlock,etc) for issue, only produced if All Tests Passed for PoC
+    pub competition_report: Option<CompetitionReport>,
     pub finding_complexity: Option<u8>,
 }
 
