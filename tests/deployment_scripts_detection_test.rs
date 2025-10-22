@@ -38,6 +38,7 @@ async fn create_test_repo_with_scripts(
     }
 
     let repo_paths = RepoPaths {
+        github_url: format!("https://github.com/test/{}", repo_name),
         project_id: "test-project".to_string(),
         root: root.clone(),
         sol_files: vec![],

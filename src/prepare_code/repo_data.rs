@@ -223,6 +223,7 @@ impl RepoData {
             .transpose()?;
 
         Ok(RepoPaths {
+            github_url: "".to_string(),
             poc: PocConfig::default(),
             project_id: self.project_id.clone(),
             root: PathBuf::from(&self.root),

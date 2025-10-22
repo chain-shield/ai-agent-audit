@@ -64,6 +64,7 @@ async fn test_clfactory_codeblock_generation() {
     ];
 
     let repo = RepoPaths {
+        github_url: format!("https://github.com/test/{}", repo_name),
         project_id: project_id.clone(),
         root: repo_root.parent().unwrap().to_path_buf(),
         sol_files: sol_files.clone(),

@@ -20,6 +20,7 @@ use std::path::PathBuf;
 /// Helper to create a mock RepoPaths for testing
 fn mock_repo_paths() -> RepoPaths {
     RepoPaths {
+        github_url: "https://github.com/test/test-repo".to_string(),
         project_id: "test-project".to_string(),
         root: PathBuf::from("/tmp/test"),
         sol_files: vec![],

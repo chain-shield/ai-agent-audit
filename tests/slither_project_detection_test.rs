@@ -21,6 +21,7 @@ fn make_repo_layout(root: &Path, repo_name: &str, files: &[&str], dirs: &[&str])
         let _ = file.write_all(b"\n");
     }
     RepoPaths {
+        github_url: format!("https://github.com/test/{}", repo_name),
         project_id: format!("{}-TEST", repo_name),
         root: root.to_path_buf(),
         sol_files: vec![],

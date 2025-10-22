@@ -38,7 +38,7 @@ fn test_clone_and_filter_git_repo_counts_all_files() {
     let yaml_str = build_test_cli_yaml();
     let cli: ai_agent_audit::cli_args::parse::Cli =
         serde_yaml::from_str(&yaml_str).expect("Failed to parse test CLI YAML");
-    let repo_root = repo_root_from_url(&cli.repo);
+    let repo_root = repo_root_from_url(cli.get_repo());
 
     let ws = std::env::temp_dir().join(format!(
         "aiaudit-test-ws-{}",
@@ -51,7 +51,7 @@ fn test_clone_and_filter_git_repo_counts_all_files() {
         .args([
             "clone",
             "--depth=1",
-            &cli.repo,
+            cli.get_repo(),
             clone_target.to_string_lossy().as_ref(),
         ])
         .status()

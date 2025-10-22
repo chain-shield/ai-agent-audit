@@ -1,7 +1,7 @@
 use ai_agent_audit::{
-    config::{AuditType, init_config},
+    config::{init_config, AuditType},
     llm_review::{
-        agent_factory::{AgentConfig, AgentFactory, init_llm_clients},
+        agent_factory::{init_llm_clients, AgentConfig, AgentFactory},
         enums::{Severity, VulnerabilityType},
         findings::{Finding, Findings, PrivilegeLevel},
         phases::add_poc_findings,
@@ -132,6 +132,7 @@ fn create_puppy_raffle_findings() -> Findings {
             status_justification: None,
             status_confidence: None,
             status_confidence_justification: None,
+            competition_report: None,
             finding_complexity: Some(4),
         },
         // H-3: Reentrancy
@@ -156,6 +157,7 @@ fn create_puppy_raffle_findings() -> Findings {
             status_justification: None,
             status_confidence: None,
             status_confidence_justification: None,
+            competition_report: None,
             finding_complexity: Some(3),
         },
     ];
@@ -184,6 +186,7 @@ fn create_puppy_raffle_repo_paths() -> RepoPaths {
     let puppy_raffle_contract = root.join(&repo_name).join("src").join("PuppyRaffle.sol");
 
     RepoPaths {
+        github_url: "https://github.com/Cyfrin/2023-10-Puppy-Raffle".to_string(),
         project_id: "puppy-raffle-test".to_string(),
         root: root.clone(),
         sol_files: vec![puppy_raffle_contract], // Include main contract for version detection

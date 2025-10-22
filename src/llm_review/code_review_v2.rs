@@ -143,7 +143,7 @@ pub async fn review_codebase_for_security_issues_v2(
                         match phases::add_poc_findings::execute(
                             quality_findings.clone(),
                             &codeblock,
-                            &verify_agent,
+                            &finding_verify_agent,
                             &repo_clone,
                         )
                         .await
@@ -159,6 +159,26 @@ pub async fn review_codebase_for_security_issues_v2(
                             }
                         }
                         // _poc_permit is dropped here, releasing the semaphore
+                    }
+
+                    // Phase 7: Create professional markdown report for EACH finding (only if PoC is passing)
+                    match phases::create_report::execute(
+                        quality_findings.clone(),
+                        &codeblock,
+                        &finding_verify_agent,
+                        &repo_clone,
+                    )
+                    .await
+                    {
+                        Ok(findings_with_reports) => {
+                            quality_findings = findings_with_reports;
+                            log::info!("✅ Phase 7 completed successfully");
+                        }
+                        Err(e) => {
+                            log::error!("❌ Phase 7 (Report generation) failed: {:?}", e);
+                            log::warn!("Continuing with findings without professional reports");
+                            // Continue with existing findings without reports
+                        }
                     }
 
                     // Save findings to database before extending

@@ -48,6 +48,7 @@ pub mod prepare_code {
 pub mod reporting {
     /// Audit report generation with findings
     pub mod audit;
+    pub mod competition_reports;
     /// Contract data export utilities
     pub mod contract_data;
     /// File saving and formatting
@@ -108,6 +109,8 @@ pub mod llm_review {
         pub mod scope_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_findings;
+        // Phase 7: Create professaionl competition-grade report
+        pub mod create_report;
     }
     pub mod pattern_phases {
         /// Phase 2: Parallel vulnerability detection across multiple AI agents
@@ -127,6 +130,7 @@ pub mod llm_review {
     }
     /// Prompt engineering modules for different analysis stages
     pub mod prompt_support {
+        pub mod create_report_prompt;
         /// Deduplication prompts
         pub mod dedup;
         pub mod extractor_prompt;
@@ -139,12 +143,14 @@ pub mod llm_review {
         /// Verification prompts
         pub mod post_verify;
         pub mod pre_file_select_prompt;
+        pub mod pre_poc;
         /// Pre-qualification prompts
         pub mod pre_qualify;
         /// Pre-verification prompts
         pub mod pre_verify;
         /// Quality assessment prompts
         pub mod qualify_prompt;
+        pub mod report_templates;
         pub mod severity_rubics;
         /// Verification prompts
         pub mod verify_prompt;

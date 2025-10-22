@@ -12,6 +12,7 @@ use crate::{
         prompt_support::{
             make_poc_prompt::{generate_poc_prompt, generate_rewrite_poc_prompt},
             post_poc::POST_CREATE_POC,
+            pre_poc::PRE_CREATE_POC,
         },
         utils::{
             prompt_context::{FindingReportType, generate_prompt_for_issue_check},
@@ -184,10 +185,14 @@ pub async fn execute(
                 truncated_name
             );
             let poc_prompt = generate_poc_prompt(&filename, repo)?;
+            let updated_poc_prompt = format!(
+                "{}\n{}\n\n",
+                PRE_CREATE_POC, &poc_prompt
+            );
             let instruction_prompt = generate_prompt_for_issue_check(
                 &code_and_context,
                 finding,
-                &poc_prompt,
+                &updated_poc_prompt,
                 POST_CREATE_POC,
                 FindingReportType::NoPoC,
             );

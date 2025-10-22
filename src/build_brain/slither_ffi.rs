@@ -244,20 +244,10 @@ pub fn build_slither_args(
     // Add project-specific arguments (collect flags first; add target last)
     match project_type {
         ProjectType::Foundry => {
-            // Check if out directory exists in the target path
-            if target_path.join("out").exists() {
-                args.extend([
-                    "--foundry-ignore-compile".to_string(),
-                    "--foundry-out-directory".to_string(),
-                    "out".to_string(),
-                ]);
-            } else {
-                // Fallback: let Slither try to compile
-                log::warn!(
-                    "Foundry project detected but no 'out' directory found at {:?}",
-                    target_path
-                );
-            }
+            // Let Slither handle compilation itself for better reliability
+            // The --foundry-ignore-compile flag can cause issues with build artifact parsing
+            // Slither will run 'forge clean' and 'forge build' automatically
+            log::debug!("Foundry project detected. Slither will handle compilation automatically.");
         }
         ProjectType::FoundryYarn => {
             // Let Slither compile from source (no ignore flags)
@@ -296,27 +286,11 @@ pub fn build_slither_args(
             }
         }
         ProjectType::Generic => {
-            // For generic projects, try to detect common build directories
-            if target_path.join("out").exists() {
-                args.extend([
-                    "--foundry-ignore-compile".to_string(),
-                    "--foundry-out-directory".to_string(),
-                    "out".to_string(),
-                ]);
-            } else if target_path.join("artifacts").exists() {
-                args.extend([
-                    "--hardhat-ignore-compile".to_string(),
-                    "--hardhat-artifacts-directory".to_string(),
-                    "artifacts".to_string(),
-                ]);
-            } else if target_path.join("build").exists() {
-                args.extend([
-                    "--truffle-ignore-compile".to_string(),
-                    "--truffle-build-directory".to_string(),
-                    "build".to_string(),
-                ]);
-            }
-            // If no build directory found, let Slither try to compile
+            // For generic projects, let Slither auto-detect and compile
+            // This is more reliable than trying to use pre-built artifacts
+            log::debug!(
+                "Generic project detected. Slither will auto-detect project type and compile."
+            );
         }
     }
 
