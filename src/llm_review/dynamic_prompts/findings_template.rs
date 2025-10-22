@@ -1,25 +1,29 @@
 use crate::{
-    config::{AuditType, AUDIT_TYPE},
+    config::AuditType,
     llm_review::{
         enums::{
-            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
-            EnumString, Severity,
+            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData, Severity,
         },
         findings::PrivilegeLevel,
-        prompt_support::severity_rubics::{CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC},
+        prompt_support::severity_rubics::{
+            CANTINA_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
+        },
     },
+    prepare_code::git_clone::RepoPaths,
 };
 
-pub fn generate_findings_prompt<T: EnumData + EnumString>(
+pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
     issue_type: &str,
     issue_definition: &str,
     issue_full_spec: &str,
     issue_enum: &T,
+    repo: &RepoPaths,
 ) -> String {
     let exploit_enums = issue_enum.to_types();
     let exploit_bullets = generate_enum_bulleted_list(exploit_enums); // "- Oracle\n- Reentrancy\n..."
-    let severity_rubic = match AUDIT_TYPE {
+    let severity_rubic = match repo.audit_type {
         AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
+        AuditType::Cantina => CANTINA_SEVERITY_RUBRIC,
         _ => CODE4RENA_SEVERITY_RUBRIC,
     };
 
@@ -54,7 +58,7 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
         "#,
         pattern_type = issue_type,
         rubric = severity_rubic,
-        pattern_name = issue_enum.as_str(),
+        pattern_name = issue_enum.to_string(),
         pattern_def = issue_definition,
         exploit_bullets = exploit_bullets,
         full_spec = issue_full_spec,
@@ -62,14 +66,20 @@ pub fn generate_findings_prompt<T: EnumData + EnumString>(
     )
 }
 
-pub fn get_findings_json_requirement<T>(pattern: &T, pattern_description: &str) -> String
+pub fn get_findings_json_requirement<T>(
+    pattern: &T,
+    pattern_description: &str,
+    repo: &RepoPaths,
+) -> String
 where
-    T: EnumString + EnumData,
+    T: std::fmt::Display + EnumData,
 {
     let issue_list = generate_enum_list(pattern.to_types());
     let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
-    let severity_list = match AUDIT_TYPE {
+    let severity_list = match repo.audit_type {
         AuditType::Code4rena => "High|Medium|Low|Info".to_string(),
+        AuditType::Sherlock => "High|Medium|Low|Info".to_string(),
+        AuditType::Cantina => "High|Medium|Low|Info".to_string(),
         _ => generate_enum_list(all_enum_variants::<Severity>().as_slice()),
     };
 

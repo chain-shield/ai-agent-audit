@@ -10,14 +10,14 @@ use crate::{
         invariants::ContractInvariants,
         issues::{IssueStructTrait, IssueTrait},
         patterns::Patterns,
-        semaphore::VERIFY_SEM,
+        semaphore::GENERAL_SEM,
     },
     prepare_code::git_clone::RepoPaths,
 };
 use log::info;
 
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -119,7 +119,7 @@ where
         let arc_patterns = Arc::clone(&deduped_patterns);
         let arc_agent = Arc::clone(&agent);
         let arc_legit_patterns_vec = Arc::clone(&is_legit_pattern_vec);
-        let sem = Arc::clone(&VERIFY_SEM);
+        let sem = Arc::clone(&GENERAL_SEM);
         let title = issue_title.clone();
 
         handles.push(tokio::spawn(async move {

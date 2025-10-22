@@ -48,6 +48,7 @@ pub mod prepare_code {
 pub mod reporting {
     /// Audit report generation with findings
     pub mod audit;
+    pub mod competition_reports;
     /// Contract data export utilities
     pub mod contract_data;
     /// File saving and formatting
@@ -99,6 +100,7 @@ pub mod llm_review {
         pub mod patterns;
     }
     pub mod phases {
+        pub mod add_poc_findings;
         /// Phase 1: AI-driven file selection and context prefetching
         pub mod prefetch_context;
         /// Phase 5: Quality assurance and final finding refinement
@@ -107,6 +109,8 @@ pub mod llm_review {
         pub mod scope_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_findings;
+        // Phase 7: Create professaionl competition-grade report
+        pub mod create_report;
     }
     pub mod pattern_phases {
         /// Phase 2: Parallel vulnerability detection across multiple AI agents
@@ -122,29 +126,31 @@ pub mod llm_review {
         pub mod prompt_context;
         /// AI agent builders and utilities
         pub mod review_utils;
+        pub mod save_run_poc;
     }
     /// Prompt engineering modules for different analysis stages
     pub mod prompt_support {
+        pub mod create_report_prompt;
         /// Deduplication prompts
         pub mod dedup;
         pub mod extractor_prompt;
+        pub mod make_poc_prompt;
         pub mod planner_prompt;
         pub mod post_file_select_prompt;
-        /// Post-analysis prompts
-        pub mod post_prompt;
+        pub mod post_poc;
         /// Quality check prompts
         pub mod post_qualify;
         /// Verification prompts
         pub mod post_verify;
         pub mod pre_file_select_prompt;
-        /// Pre-analysis prompts
-        pub mod pre_prompt;
+        pub mod pre_poc;
         /// Pre-qualification prompts
         pub mod pre_qualify;
         /// Pre-verification prompts
         pub mod pre_verify;
         /// Quality assessment prompts
         pub mod qualify_prompt;
+        pub mod report_templates;
         pub mod severity_rubics;
         /// Verification prompts
         pub mod verify_prompt;
@@ -184,50 +190,6 @@ pub mod master_prompts {
     pub mod prompt_3x_a;
     pub mod prompt_3x_b;
     pub mod prompt_3x_c;
-}
-
-/// Vulnerability-specific detection prompts (19 categories)
-pub mod prompts {
-    /// Access control vulnerabilities
-    pub mod access_control;
-    /// Array bounds checking issues
-    pub mod array_limits;
-    /// Confidential data exposure
-    pub mod confidential_data;
-    /// Default visibility issues
-    pub mod default_visibility;
-    /// Denial of service vulnerabilities
-    pub mod dos;
-    /// Inheritance-related issues
-    pub mod inheritance;
-    /// Integer overflow/underflow
-    pub mod integer_overflow;
-    /// MEV and front-running vulnerabilities
-    pub mod mev;
-    /// Oracle manipulation attacks
-    pub mod oracle;
-    /// Pragma-related issues
-    pub mod pragma;
-    /// Weak randomness vulnerabilities
-    pub mod randomness;
-    /// Reentrancy vulnerabilities
-    pub mod reentrancy;
-    /// Replay attack vulnerabilities
-    pub mod replay_attack;
-    /// Self-destruct related issues
-    pub mod self_destruct;
-    /// Short address attack vulnerabilities
-    pub mod short_address_attack;
-    /// Storage variable issues
-    pub mod storage_variables;
-    /// tx.origin usage vulnerabilities
-    pub mod tx_origin;
-    /// Unchecked return value issues
-    pub mod unchecked_return_value;
-    /// Unexpected ETH handling
-    pub mod unexpected_eth;
-    /// Zero-code contract issues
-    pub mod zero_code;
 }
 
 /// Protocol invariant analysis prompts

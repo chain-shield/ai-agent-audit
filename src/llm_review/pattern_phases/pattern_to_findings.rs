@@ -10,7 +10,7 @@ use crate::{
         enums::AIAgent,
         findings::Findings,
         issues::{IssueStructTrait, IssueTrait},
-        semaphore::VERIFY_SEM,
+        semaphore::GENERAL_SEM,
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -49,6 +49,7 @@ where
     let arc_code_context = Arc::new(code_and_context);
     let pattern_count = patterns.issues().len();
     let audit_scope = Arc::new(generate_audit_scope(repo).await?);
+    let arc_repo = Arc::new(repo.clone());
 
     for j in 0..pattern_count {
         let arc_pattern = Arc::new(patterns.issues()[j].clone());
@@ -56,7 +57,8 @@ where
             let codeblock_plus_context = Arc::clone(&arc_code_context);
             let arc_agent = Arc::clone(&agent);
             let pattern_clone = Arc::clone(&arc_pattern);
-            let sem = Arc::clone(&VERIFY_SEM);
+            let sem = Arc::clone(&GENERAL_SEM);
+            let repo_clone = Arc::clone(&arc_repo);
             let shared_findings = Arc::clone(&all_findings);
             let title = issue_title.clone();
             let scope = Arc::clone(&audit_scope);
@@ -71,7 +73,7 @@ where
                         title,
                         pattern_clone.title_str()
                     );
-                    let core_instructions = pattern_clone.pattern_to_findings_prompt();
+                    let core_instructions = pattern_clone.pattern_to_findings_prompt(&repo_clone);
                     // info!("core_instructions size: {}", core_instructions.len());
                     let instruction_prompt = if scope.is_empty() {
                         core_instructions
@@ -85,7 +87,8 @@ where
                     //     instruction_prompt.len()
                     // );
 
-                    let json_requirement_prompt = pattern_clone.findings_json_required_prompt();
+                    let json_requirement_prompt =
+                        pattern_clone.findings_json_required_prompt(&repo_clone);
                     let full_prompt = format!(
                         "{}{}{}",
                         instruction_prompt, codeblock_plus_context, json_requirement_prompt

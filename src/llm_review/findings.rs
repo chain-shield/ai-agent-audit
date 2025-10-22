@@ -5,15 +5,19 @@ use super::{
 };
 use crate::{
     cost::cost_data::{add_to_inference_cost_by_type, TokenType},
-    llm_review::enums::EnumString,
+    llm_review::phases::{
+        add_poc_findings::PocStatus,
+        create_report::CompetitionReport,
+        verify_findings::{FindingConfidence, FindingStatus},
+    },
     utils::semantic_compare,
 };
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::{collections::HashMap, path::PathBuf};
 use strum_macros::EnumIter;
 use tokio::sync::Mutex;
 
@@ -35,9 +39,20 @@ pub struct Finding {
     pub impact: Option<String>, // Impact of Issue
     pub proof_of_concept: Option<String>, // Demonstrate how issue can be exploited by hacker
     pub proof_of_code: Option<String>, // Write Foundry Unit test to prove issue exists
+    pub poc_test_file: Option<PathBuf>,
+    pub poc_test_command: Option<String>,
+    pub poc_test_status: Option<PocStatus>,
     #[schemars(description = "Severity level: Critical, High, Medium, Low, Info")]
     pub severity: Severity, //severity of issue
     pub mitigation: Option<String>,
+    pub severity_justification: Option<String>,
+    pub status: Option<FindingStatus>,
+    pub status_justification: Option<String>,
+    pub status_confidence: Option<FindingConfidence>,
+    pub status_confidence_justification: Option<String>,
+    // competition ready report (C4, Sherlock,etc) for issue, only produced if All Tests Passed for PoC
+    pub competition_report: Option<CompetitionReport>,
+    pub finding_complexity: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -45,7 +60,17 @@ pub struct Findings {
     pub findings: Vec<Finding>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, EnumIter)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    EnumIter,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
 #[serde(rename_all = "PascalCase")]
 pub enum PrivilegeLevel {
     Permissionless,   // any EOA
@@ -76,7 +101,7 @@ impl Finding {
             format!(
                 "{} issue found with {} severity",
                 self.exploit_type.as_fancy_str(),
-                self.severity.as_str()
+                self.severity.to_string()
             )
         } else {
             format!(
@@ -99,11 +124,18 @@ impl Finding {
         let fn_name = self.get_fn_name();
 
         if let Some(derived) = self.derived_from.clone() {
-            format!("{}-{}-{}", derived.to_string(), self.contract, fn_name)
+            format!(
+                "{}-{}-{}-{}",
+                self.title.replace(" ", "-"),
+                derived.to_string(),
+                self.contract,
+                fn_name
+            )
         } else {
             format!(
-                "{}-{}-{}",
-                self.exploit_type.as_str(),
+                "{}-{}-{}-{}",
+                self.title.replace(" ", "-"),
+                self.exploit_type.to_string(),
                 self.contract,
                 fn_name
             )
@@ -150,7 +182,7 @@ impl Finding {
         let prompt = DEDUP_PROMPT
             .replace("{contract}", &self.contract)
             .replace("{function}", &self.function)
-            .replace("{issue_type}", self.exploit_type.as_str())
+            .replace("{issue_type}", &self.exploit_type.to_string())
             .replace(
                 "{description_a}",
                 &self.description.clone().unwrap_or_default(),
@@ -176,15 +208,7 @@ impl Default for PrivilegeLevel {
     }
 }
 
-impl EnumString for PrivilegeLevel {
-    fn as_str(&self) -> &'static str {
-        match self {
-            PrivilegeLevel::Permissionless => "Permissionless",
-            PrivilegeLevel::RequiresRole => "RequiresRole",
-            PrivilegeLevel::RequireAdminRole => "RequireAdminRole",
-        }
-    }
-}
+// No longer needed! strum's Display trait provides to_string() for free
 
 impl Findings {
     pub async fn dedup(self) -> anyhow::Result<Findings> {
@@ -344,7 +368,12 @@ where
             cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
         }
 
-        cleaned.to_string()
+        let cleaned_str = cleaned.to_string();
+
+        // Fix numeric fields that are returned as strings (e.g., "finding_complexity": "5" -> "finding_complexity": 5)
+        // This regex finds patterns like "field_name": "123" and removes quotes around the number
+        let re = Regex::new(r#""(finding_complexity|[a-z_]*count)":\s*"(\d+)""#).unwrap();
+        re.replace_all(&cleaned_str, r#""$1": $2"#).to_string()
     }
 
     fn parse_from_llm_response(response: &str) -> Result<Self, Box<dyn std::error::Error>> {

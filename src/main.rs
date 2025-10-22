@@ -14,10 +14,9 @@ use ai_agent_audit::{
     prepare_code::{self},
     reporting::{
         audit::{self},
-        contract_data, save_file,
+        competition_reports, contract_data, save_file,
     },
 };
-use clap::Parser;
 use dotenvy::dotenv;
 use log::info;
 /// The main entry point for the AI Agent Audit tool.
@@ -46,12 +45,13 @@ async fn main() -> Result<()> {
 
     // parse command line args
     // Cli struct contains all info we need to execute audit
-    let cli = parse::Cli::parse();
+    let cli = parse::Cli::parse_args()?;
 
     // Clone repository in Docker container and build with Foundry/Hardhat
     let repo = prepare_code::git_clone::clone_and_filter_git_repo(&cli)?;
     info!("repo root => {:?}", &repo.root);
     info!("repo name => {:?}", &repo.repo_name);
+    info!("github url => {:?}", &repo.github_url);
     info!("repo source folder => {:?}", &repo.source_code_folders);
     info!("repo scoped_files => {:?}", &repo.scoped_files);
     info!("repo audit scope => {:?}", &repo.audit_scope);
@@ -101,12 +101,11 @@ async fn main() -> Result<()> {
     // save contract IR and metadata
     contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo).await?;
 
-    return Ok(());
     // ────────────────────────────────
     // 5. AI Security Analysis
     // ────────────────────────────────
     // Run multi-LLM security analysis across vulnerability categories
-    let security_issues =
+    let security_findings =
         code_review_v2::review_codebase_for_security_issues_v2(&codeblocks_db, &repo).await?;
 
     // ────────────────────────────────
@@ -114,13 +113,15 @@ async fn main() -> Result<()> {
     // ────────────────────────────────
     // Generate comprehensive audit report (paid version)
     let audit_report =
-        audit::generated_audit_report(&security_issues, &repo, audit::ReportType::Pattern).await?;
+        audit::generated_audit_report(&security_findings, &repo, audit::ReportType::Pattern)
+            .await?;
 
     // ────────────────────────────────
-    // 7. File Export & Cleanup
+    // 7. File Export
     // ────────────────────────────────
     // Save all reports and analysis data to markdown files
-    save_file::save_audit_report(&audit_report, &repo)?;
+    save_file::save_audit_report("audit-report.md", &audit_report, &repo)?;
+    competition_reports::generate_and_save_pro_reports(&security_findings, &repo)?;
 
     // Display total inference cost across all LLM providers
     let total_cost = get_total_inference_cost().await;

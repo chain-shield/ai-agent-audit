@@ -5,8 +5,21 @@ use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter, Default, strum_macros::Display,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    JsonSchema,
+    EnumIter,
+    Default,
+    Serialize,
+    Deserialize, // ✅ Use serde's derive - LLMs return exact PascalCase
+    strum_macros::Display,
+    strum_macros::EnumString,
 )]
+#[serde(rename_all = "PascalCase")]
 pub enum InvariantType {
     #[default]
     Arithmetic,
@@ -17,7 +30,21 @@ pub enum InvariantType {
     StateMachine,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsonSchema, EnumIter, strum_macros::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    JsonSchema,
+    EnumIter,
+    Serialize,
+    Deserialize, // ✅ Use serde's derive - LLMs return exact PascalCase
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[serde(rename_all = "PascalCase")]
 pub enum InvariantStatus {
     Holds,
     PossibleViolation,

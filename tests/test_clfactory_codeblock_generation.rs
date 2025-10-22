@@ -1,7 +1,9 @@
-use ai_agent_audit::build_brain::enrichment;
-use ai_agent_audit::enumerator::codeblock_db::CodeBlocksDb;
-use ai_agent_audit::enumerator::codeblocks::generate_codeblock_from_codebase;
-use ai_agent_audit::prepare_code::git_clone::RepoPaths;
+use ai_agent_audit::{
+    build_brain::enrichment,
+    config::AuditType,
+    enumerator::{codeblock_db::CodeBlocksDb, codeblocks::generate_codeblock_from_codebase},
+    prepare_code::git_clone::RepoPaths,
+};
 use std::path::PathBuf;
 
 /// Integration test for CLFactory codeblock generation
@@ -62,6 +64,7 @@ async fn test_clfactory_codeblock_generation() {
     ];
 
     let repo = RepoPaths {
+        github_url: format!("https://github.com/test/{}", repo_name),
         project_id: project_id.clone(),
         root: repo_root.parent().unwrap().to_path_buf(),
         sol_files: sol_files.clone(),
@@ -77,6 +80,8 @@ async fn test_clfactory_codeblock_generation() {
         scoped_files: None,
         monorepo_folders: None,
         commit_hash: commit_hash.clone(),
+        audit_type: AuditType::Code4rena,
+        poc: ai_agent_audit::prepare_code::git_clone::PocConfig::default(),
     };
 
     println!("\n📁 Repository structure:");

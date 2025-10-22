@@ -1361,6 +1361,50 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IVeArtProxy {
+    function _tokenURI(uint _tokenId, uint _balanceOf, uint _locked_end, uint _value) external pure returns (string memory output);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity =0.7.6;
+
+interface IVotingEscrow {
+    function team() external returns (address);
+
+    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
+    /// @param _value Amount to deposit
+    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
+    /// @return TokenId of created veNFT
+    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.13;
+
+interface IHybra {
+    function totalSupply() external view returns (uint);
+    function balanceOf(address) external view returns (uint);
+    function approve(address spender, uint value) external returns (bool);
+    function transfer(address, uint) external returns (bool);
+    function transferFrom(address,address,uint) external returns (bool);
+    function mint(address, uint) external returns (bool);
+    function minter() external returns (address);
+    function burn(uint) external returns (bool);
+    function burnFrom(address, uint) external returns (bool);
+}
+
+// SPDX-License-Identifier: None
+// HybraHole Foundation 2025
+
+pragma solidity 0.8.13;
+
+import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
+
+interface IHybraVotes is IVotes{
+}
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
 
@@ -1871,56 +1915,6 @@ interface IVoter {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IFactoryRegistry {
-    function approve(address poolFactory, address votingRewardsFactory, address gaugeFactory) external;
-
-    function isPoolFactoryApproved(address poolFactory) external returns (bool);
-
-    function factoriesToPoolFactory(address poolFactory)
-        external
-        returns (address votingRewardsFactory, address gaugeFactory);
-}
-
-// SPDX-License-Identifier: None
-// HybraHole Foundation 2025
-
-pragma solidity 0.8.13;
-
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
-
-interface IHybraVotes is IVotes{
-}
-// SPDX-License-Identifier: MIT
-pragma solidity =0.7.6;
-
-interface IVotingEscrow {
-    function team() external returns (address);
-
-    /// @notice Deposit `_value` tokens for `msg.sender` and lock for `_lockDuration`
-    /// @param _value Amount to deposit
-    /// @param _lockDuration Number of seconds to lock tokens for (rounded down to nearest week)
-    /// @return TokenId of created veNFT
-    function createLock(uint256 _value, uint256 _lockDuration) external returns (uint256);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
-
-interface IHybra {
-    function totalSupply() external view returns (uint);
-    function balanceOf(address) external view returns (uint);
-    function approve(address spender, uint value) external returns (bool);
-    function transfer(address, uint) external returns (bool);
-    function transferFrom(address,address,uint) external returns (bool);
-    function mint(address, uint) external returns (bool);
-    function minter() external returns (address);
-    function burn(uint) external returns (bool);
-    function burnFrom(address, uint) external returns (bool);
-}
-
-// SPDX-License-Identifier: MIT
 pragma solidity 0.8.13;
 
 library HybraTimeLibrary {
@@ -2003,10 +1997,16 @@ library HybraTimeLibrary {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.13;
+pragma solidity =0.7.6;
 
-interface IVeArtProxy {
-    function _tokenURI(uint _tokenId, uint _balanceOf, uint _locked_end, uint _value) external pure returns (string memory output);
+interface IFactoryRegistry {
+    function approve(address poolFactory, address votingRewardsFactory, address gaugeFactory) external;
+
+    function isPoolFactoryApproved(address poolFactory) external returns (bool);
+
+    function factoriesToPoolFactory(address poolFactory)
+        external
+        returns (address votingRewardsFactory, address gaugeFactory);
 }
 
 
@@ -2020,53 +2020,70 @@ pragma solidity 0.8.13;
 
 import "forge-std/Script.sol";
 import "forge-std/StdJson.sol";
+import "./BaseDeployScript.sol";
 
+import {HYBR} from "../contracts/HYBR.sol";
+import {RewardHYBR} from "../contracts/RewardHYBR.sol";
+import {GrowthHYBR} from "../contracts/GovernanceHYBR.sol";
 import {VotingEscrow} from "../contracts/VotingEscrow.sol";
 
-contract EnableSplitPermission is Script {
+contract Deploy2_TokenSystem is BaseDeployScript {
     using stdJson for string;
     
     function run() external {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.rememberKey(deployerKey);
+        uint256 deployPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployerAddress = vm.rememberKey(deployPrivateKey);
         
-        // Load VotingEscrow address
-        string memory root = vm.projectRoot();
-        string memory tokenPath = string.concat(root, "/script/constants/output/Deploy2_TokenSystem.json");
-        string memory tokenJson = vm.readFile(tokenPath);
+        // Load infrastructure addresses
+        string memory infraPath = getInputPath("Deploy1_Infrastructure");
+        string memory infraJson = vm.readFile(infraPath);
         
-        address votingEscrowAddress = abi.decode(vm.parseJson(tokenJson, ".VotingEscrow"), (address));
-        VotingEscrow votingEscrow = VotingEscrow(votingEscrowAddress);
+        address veArtProxy = abi.decode(vm.parseJson(infraJson, ".VeArtProxy"), (address));
         
-        console.log("=== Enable Split Permission ===");
-        console.log("VotingEscrow:", votingEscrowAddress);
-        console.log("Team address:", deployer);
+        console.log("=== Phase 2: Deploy Token System ===");
+        console.log("Deployer:", deployerAddress);
+        console.log("Using VeArtProxy:", veArtProxy);
+        vm.startBroadcast(deployerAddress);
         
-        vm.startBroadcast(deployer);
+        // 1. Deploy HYBR Token
+        HYBR hybr = new HYBR();
+        console.log("HYBR:", address(hybr));
         
-        // Enable global split permission (allow everyone to split)
-        console.log("Enabling global split permission...");
-        votingEscrow.toggleSplit(address(0), true);
-        console.log("Global split permission enabled");
+      
+      
         
-        // Also enable for deployer specifically
-        console.log("Enabling split permission for deployer...");
-        votingEscrow.toggleSplit(deployer, true);
-        console.log("Deployer split permission enabled");
+        // 2. Deploy VotingEscrow
+        VotingEscrow votingEscrow = new VotingEscrow(
+            address(hybr),
+            veArtProxy
+        );
+        console.log("VotingEscrow:", address(votingEscrow));
         
+          // 3. Deploy RewardHYBR Token
+        RewardHYBR rewardHybr = new RewardHYBR(address(hybr), address(votingEscrow));
+        console.log("RewardHYBR:", address(rewardHybr));
+        
+          // 4. Deploy GovernanceHYBR Token (will need additional addresses, deploy with placeholders for now)
+        GrowthHYBR gHybr = new GrowthHYBR(
+            address(hybr), 
+            address(votingEscrow)
+        );
+        console.log("GrowthHYBR:", address(gHybr));
         vm.stopBroadcast();
         
-        console.log("");
-        console.log("=== Verification ===");
+        // Save to JSON
+        string memory path = getOutputPath("Deploy2_TokenSystem");
         
-        // Verify permissions
-        bool globalPermission = votingEscrow.canSplit(address(0));
-        bool deployerPermission = votingEscrow.canSplit(deployer);
+        string memory json = "";
+        json = vm.serializeAddress("tokenSystem", "HYBR", address(hybr));
+        json = vm.serializeAddress("tokenSystem", "RewardHYBR", address(rewardHybr));
+        json = vm.serializeAddress("tokenSystem", "GrowthHYBR", address(gHybr));
+        json = vm.serializeAddress("tokenSystem", "VotingEscrow", address(votingEscrow));
         
-        console.log("Global split permission:", globalPermission);
-        console.log("Deployer split permission:", deployerPermission);
+        vm.writeJson(json, path);
+        console.log("Addresses saved to:", path);
         
-        console.log("=== Setup Complete ===");
+        console.log("\n=== Token System Deployment Complete ===");
     }
 }
 // SPDX-License-Identifier: MIT
@@ -2164,69 +2181,52 @@ pragma solidity 0.8.13;
 
 import "forge-std/Script.sol";
 import "forge-std/StdJson.sol";
-import "./BaseDeployScript.sol";
 
-import {HYBR} from "../contracts/HYBR.sol";
-import {RewardHYBR} from "../contracts/RewardHYBR.sol";
-import {GrowthHYBR} from "../contracts/GovernanceHYBR.sol";
 import {VotingEscrow} from "../contracts/VotingEscrow.sol";
 
-contract Deploy2_TokenSystem is BaseDeployScript {
+contract EnableSplitPermission is Script {
     using stdJson for string;
     
     function run() external {
-        uint256 deployPrivateKey = vm.envUint("PRIVATE_KEY");
-        address deployerAddress = vm.rememberKey(deployPrivateKey);
+        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.rememberKey(deployerKey);
         
-        // Load infrastructure addresses
-        string memory infraPath = getInputPath("Deploy1_Infrastructure");
-        string memory infraJson = vm.readFile(infraPath);
+        // Load VotingEscrow address
+        string memory root = vm.projectRoot();
+        string memory tokenPath = string.concat(root, "/script/constants/output/Deploy2_TokenSystem.json");
+        string memory tokenJson = vm.readFile(tokenPath);
         
-        address veArtProxy = abi.decode(vm.parseJson(infraJson, ".VeArtProxy"), (address));
+        address votingEscrowAddress = abi.decode(vm.parseJson(tokenJson, ".VotingEscrow"), (address));
+        VotingEscrow votingEscrow = VotingEscrow(votingEscrowAddress);
         
-        console.log("=== Phase 2: Deploy Token System ===");
-        console.log("Deployer:", deployerAddress);
-        console.log("Using VeArtProxy:", veArtProxy);
-        vm.startBroadcast(deployerAddress);
+        console.log("=== Enable Split Permission ===");
+        console.log("VotingEscrow:", votingEscrowAddress);
+        console.log("Team address:", deployer);
         
-        // 1. Deploy HYBR Token
-        HYBR hybr = new HYBR();
-        console.log("HYBR:", address(hybr));
+        vm.startBroadcast(deployer);
         
-      
-      
+        // Enable global split permission (allow everyone to split)
+        console.log("Enabling global split permission...");
+        votingEscrow.toggleSplit(address(0), true);
+        console.log("Global split permission enabled");
         
-        // 2. Deploy VotingEscrow
-        VotingEscrow votingEscrow = new VotingEscrow(
-            address(hybr),
-            veArtProxy
-        );
-        console.log("VotingEscrow:", address(votingEscrow));
+        // Also enable for deployer specifically
+        console.log("Enabling split permission for deployer...");
+        votingEscrow.toggleSplit(deployer, true);
+        console.log("Deployer split permission enabled");
         
-          // 3. Deploy RewardHYBR Token
-        RewardHYBR rewardHybr = new RewardHYBR(address(hybr), address(votingEscrow));
-        console.log("RewardHYBR:", address(rewardHybr));
-        
-          // 4. Deploy GovernanceHYBR Token (will need additional addresses, deploy with placeholders for now)
-        GrowthHYBR gHybr = new GrowthHYBR(
-            address(hybr), 
-            address(votingEscrow)
-        );
-        console.log("GrowthHYBR:", address(gHybr));
         vm.stopBroadcast();
         
-        // Save to JSON
-        string memory path = getOutputPath("Deploy2_TokenSystem");
+        console.log("");
+        console.log("=== Verification ===");
         
-        string memory json = "";
-        json = vm.serializeAddress("tokenSystem", "HYBR", address(hybr));
-        json = vm.serializeAddress("tokenSystem", "RewardHYBR", address(rewardHybr));
-        json = vm.serializeAddress("tokenSystem", "GrowthHYBR", address(gHybr));
-        json = vm.serializeAddress("tokenSystem", "VotingEscrow", address(votingEscrow));
+        // Verify permissions
+        bool globalPermission = votingEscrow.canSplit(address(0));
+        bool deployerPermission = votingEscrow.canSplit(deployer);
         
-        vm.writeJson(json, path);
-        console.log("Addresses saved to:", path);
+        console.log("Global split permission:", globalPermission);
+        console.log("Deployer split permission:", deployerPermission);
         
-        console.log("\n=== Token System Deployment Complete ===");
+        console.log("=== Setup Complete ===");
     }
 }

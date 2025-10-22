@@ -174,6 +174,7 @@ pub fn sanitize_repo_name(name: &str) -> String {
 pub fn sanitize_filename(filename: &str) -> String {
     filename
         .chars()
+        .map(|c| if c.is_whitespace() { '-' } else { c })
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
         .take(255) // Limit filename length
         .collect::<String>()
