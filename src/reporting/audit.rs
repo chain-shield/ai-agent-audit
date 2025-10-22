@@ -196,6 +196,10 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
                 finding.finding_complexity.unwrap_or_default()
             ));
             findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.to_string()));
+            findings_summary.push_str(&format!(
+                "Poc Test Status: {}\n\n",
+                finding.poc_test_status.unwrap_or_default().to_string()
+            ));
         }
     } else {
         return String::new();
@@ -284,7 +288,7 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
                     ));
                     findings_summary.push_str(&format!("Privilege: {}\n", f.privilege.to_string()));
                     findings_summary.push_str(&format!(
-                        "Poc Test Status: {}\n",
+                        "Poc Test Status: {}\n\n",
                         f.poc_test_status.unwrap_or_default().to_string()
                     ));
                 }

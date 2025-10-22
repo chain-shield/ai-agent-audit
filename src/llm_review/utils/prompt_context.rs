@@ -184,8 +184,10 @@ pub fn get_finding_report(
     }
 
     //privilege
-    findings_report.push_str("## Minimim Privilege Required\n");
-    findings_report.push_str(&finding.privilege.to_string());
+    findings_report.push_str(&format!(
+        "## Minimim Privilege Required:{}\n",
+        finding.privilege.to_string()
+    ));
     findings_report.push_str("\n\n");
 
     //description
