@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::fs;
 
 use crate::{
     llm_review::contract_file_map::get_file_from_contract, prepare_code::git_clone::RepoPaths,
