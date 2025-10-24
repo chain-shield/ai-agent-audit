@@ -232,6 +232,9 @@ pub mod utils {
     /// Logging utilities
     pub mod logging;
     pub mod parse_library_file;
+    pub mod read_file;
+    /// Solidity import remapping utilities
+    pub mod remapping;
     /// Text sanitization utilities
     pub mod sanitize;
     pub mod semantic_compare;

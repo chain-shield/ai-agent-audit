@@ -1,5 +1,5 @@
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use log::info;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -14,16 +14,18 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::Mutex;
 
-use crate::enumerator::libraries::ParsedLibrary;
 use crate::enumerator::libraries::generate_library_to_code_mapping;
 use crate::enumerator::libraries::get_library_code_for_library_calls;
+use crate::enumerator::libraries::ParsedLibrary;
 use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
+use crate::llm_review::contract_file_map::insert_lib_contract_to_file_mapping;
 use crate::prepare_code::git_clone::RepoPaths;
+use crate::utils::check_folder_name::is_library_file;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
 use crate::utils::get_fn_name::get_function_name_from_interface;
-use crate::utils::parse_library_file::LibCall;
 use crate::utils::parse_library_file::parse_library_text;
+use crate::utils::parse_library_file::LibCall;
 use crate::{
     build_brain::{
         self,
@@ -327,6 +329,12 @@ pub enum ContractScope {
     All,
     InScope,
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SolFileType {
+    Standard,
+    LibFolder, // file is coming from main /lib/ folder
+}
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
 pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>> {
@@ -344,9 +352,17 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
     let mut contracts = Vec::<String>::new();
 
     for file in &repo.sol_files {
-        if !repo.source_code_folders.iter().any(|f| file.starts_with(f)) {
+        // Determine file type: Standard (in source folder) or LibFolder (in lib/ but not nested)
+        let file_type = if is_library_file(file, &repo.root) {
+            // File is in a library folder (lib, library, or libraries) but NOT nested
+            SolFileType::LibFolder
+        } else if repo.source_code_folders.iter().any(|f| file.starts_with(f)) {
+            // File is in a source code folder
+            SolFileType::Standard
+        } else {
+            // File is neither in source nor in a valid library folder - skip it
             continue;
-        }
+        };
 
         // Skip directories and symlinks
         if fs::symlink_metadata(file)?.file_type().is_symlink() {
@@ -371,17 +387,21 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
         for cap in contract_or_library_regex.captures_iter(&content) {
             if let Some(contract_name) = cap.get(1) {
                 let contract = contract_name.as_str();
-                if !contract.to_ascii_lowercase().contains("mock") {
-                    contracts.push(contract.to_string());
-                    // info!(
-                    //     "adding contract {} and file {} to map",
-                    //     contract,
-                    //     file.display()
-                    // );
-                    // record in contract to file hashmap
+                if file_type == SolFileType::Standard {
+                    if !contract.to_ascii_lowercase().contains("mock") {
+                        contracts.push(contract.to_string());
+                        // info!(
+                        //     "adding contract {} and file {} to map",
+                        //     contract,
+                        //     file.display()
+                        // );
+                        // record in contract to file hashmap
+                    }
+                    // info!("inserting contract {} into file mapping", contract);
+                    insert_contract_to_file_mapping(contract, file, repo).await?;
+                } else {
+                    insert_lib_contract_to_file_mapping(contract, file, repo).await?;
                 }
-                // info!("inserting contract {} into file mapping", contract);
-                insert_contract_to_file_mapping(contract, file, repo).await?;
             }
         }
 

@@ -4,12 +4,25 @@ use anyhow::Result;
 
 use crate::prepare_code::git_clone::extract_list_of_files;
 
-fn path_has_any_segment(file: &Path, root: &Path, segments: &[&str]) -> bool {
+/// Returns true if the file path contains exactly ONE occurrence of any segment from the list.
+/// This prevents matching files in nested lib folders (e.g., /lib/.../lib/).
+///
+/// # Arguments
+/// * `file` - The file path to check
+/// * `root` - The repository root path
+/// * `segments` - List of directory names to match (e.g., ["lib", "library", "libraries"])
+///
+/// # Returns
+/// * `true` if exactly one segment is found in the path
+/// * `false` if zero segments, multiple segments, or if the path is a directory
+fn path_has_one_segment(file: &Path, root: &Path, segments: &[&str]) -> bool {
     if file.is_dir() {
         return false;
     }
     // Walk up ancestors and check if any directory name equals one of the segments
+    // then count how many times, should only happen once
     let mut cursor = file.parent();
+    let mut match_count = 0;
     while let Some(dir) = cursor {
         if dir == root {
             break;
@@ -17,12 +30,12 @@ fn path_has_any_segment(file: &Path, root: &Path, segments: &[&str]) -> bool {
         if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
             let lname = name.to_ascii_lowercase();
             if segments.iter().any(|s| lname == *s) {
-                return true;
+                match_count += 1;
             }
         }
         cursor = dir.parent();
     }
-    false
+    match_count == 1
 }
 
 fn path_has_parent_segment(file: &Path, segments: &[&str]) -> bool {
@@ -56,7 +69,7 @@ pub fn contains_build_config(dir: &PathBuf) -> bool {
 }
 
 pub fn is_test_file(file: &Path, root: &Path) -> bool {
-    path_has_any_segment(file, root, &["test", "tests"])
+    path_has_one_segment(file, root, &["test", "tests"])
 }
 
 pub fn is_script_file(file: &Path) -> bool {
@@ -117,5 +130,23 @@ pub fn is_library_package_json(file: &Path, root: &Path) -> bool {
         return false;
     }
 
-    path_has_any_segment(file, root, &["lib", "library"])
+    path_has_one_segment(file, root, &["lib", "library", "libraries"])
+}
+
+/// Returns true if the file is in a library folder (lib, library, or libraries)
+/// but NOT in a nested library folder (e.g., /lib/.../lib/).
+///
+/// This is used to include external dependencies from the main /lib/ folder
+/// while excluding nested dependencies.
+///
+/// # Arguments
+/// * `file` - The file path to check
+/// * `root` - The repository root path
+///
+/// # Returns
+/// * `true` if the file is in exactly ONE library folder segment
+/// * `false` if in nested library folders or not in a library folder at all
+pub fn is_library_file(file: &Path, root: &Path) -> bool {
+    (file.starts_with("/lib") || file.starts_with("lib"))
+        && path_has_one_segment(file, root, &["lib", "library", "libraries"])
 }

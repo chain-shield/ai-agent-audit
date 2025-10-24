@@ -9,7 +9,7 @@ use crate::{
         enums::{AIAgent, Severity},
         findings::{Finding, Findings},
         prompt_support::{post_qualify::generate_post_qualify, qualify_prompt::QUALIFY_PROMPT},
-        semaphore::{GENERAL_SEM, VERIFY_SEM},
+        semaphore::GENERAL_SEM,
         utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
