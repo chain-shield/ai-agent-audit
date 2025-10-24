@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use glob::glob;
 use ignore::gitignore::GitignoreBuilder;
 use log::info;
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::Command;
 use std::{
@@ -18,12 +19,13 @@ use std::{
 use walkdir::WalkDir;
 
 use crate::cli_args::parse::Cli;
-use crate::config::{AuditType, audit_config};
+use crate::config::{audit_config, AuditType};
 use crate::utils::check_folder_name::{
     is_library_package_json, is_monorepo_config_file, is_root_config_file, is_script_file,
     is_test_file,
 };
 use crate::utils::file_security::validate_repo_url;
+use crate::utils::remapping::parse_and_store_remappings;
 
 /// Build flags for forge compilation
 #[derive(Debug, Clone, Copy)]
@@ -242,6 +244,26 @@ pub fn clone_and_filter_git_repo(
             || fs::symlink_metadata(path)?.file_type().is_symlink()
         {
             continue;
+        }
+
+        // Parse remappings.txt and store in global cache
+        if (path.file_name() == Some(OsStr::new("remapping.txt"))
+            || path.file_name() == Some(OsStr::new("remappings.txt")))
+            && path.parent() == Some(&search_root)
+        {
+            info!("Found remapping file: {}", path.display());
+            match parse_and_store_remappings(path, &project_id) {
+                Ok(count) => {
+                    info!(
+                        "Successfully parsed {} remappings from {}",
+                        count,
+                        path.display()
+                    );
+                }
+                Err(e) => {
+                    log::warn!("Failed to parse remappings from {}: {}", path.display(), e);
+                }
+            }
         }
 
         //only get md docs from root folder /*.md

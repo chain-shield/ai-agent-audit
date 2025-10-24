@@ -1,4 +1,6 @@
 use crate::prepare_code::git_clone::RepoPaths;
+use crate::utils::logging::print_first_n_lines;
+use crate::utils::remapping::resolve_import_path;
 use crate::{
     llm_review::contract_file_map::get_file_from_contract,
     utils::contract_name_check::contains_contract_reference,
@@ -15,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 /// Global cache for source code dependency detection results.
 /// Key format: "repo_hash:contract_name"
 /// Value: (HashSet<contracts>, HashSet<interfaces>)
-static SOURCE_DEPENDENCY_CACHE: Lazy<Mutex<HashMap<String, HashSet<String>>>> =
+static SOURCE_DEPENDENCY_CACHE: Lazy<Mutex<HashMap<String, (HashSet<String>, HashSet<String>)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 static CONTRACT_TO_SCRIPT_CACHE: Lazy<Mutex<HashMap<String, HashSet<PathBuf>>>> =
@@ -26,7 +28,8 @@ static CONTRACT_TO_SCRIPT_CACHE: Lazy<Mutex<HashMap<String, HashSet<PathBuf>>>> 
 pub async fn detect_source_code_dependencies(
     contract: &str,
     repo: &RepoPaths,
-) -> Result<HashSet<String>> {
+) -> Result<(HashSet<String>, HashSet<String>)> {
+    // info!("SCANNING for SOURCE CODE DEPENDENCIES");
     // Create cache key: "repo_hash:contract_name"
     let cache_key = format!("{}:{}", repo.unique_repo_hash(), contract);
 
@@ -51,6 +54,7 @@ pub async fn detect_source_code_dependencies(
 
     let mut contracts = HashSet::new();
     let mut interfaces = HashSet::new();
+    let mut lib_files = HashSet::new();
 
     // Get the source file for this contract
     let file = match get_file_from_contract(contract, repo).await {
@@ -62,8 +66,8 @@ pub async fn detect_source_code_dependencies(
             );
             // Cache the empty result to avoid re-attempting failed lookups
             let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
-            cache.insert(cache_key, HashSet::new());
-            return Ok(HashSet::new());
+            cache.insert(cache_key, (HashSet::new(), HashSet::new()));
+            return Ok((HashSet::new(), HashSet::new()));
         }
     };
 
@@ -76,9 +80,103 @@ pub async fn detect_source_code_dependencies(
                 file.display(),
                 e
             );
-            return Ok(HashSet::new());
+            return Ok((HashSet::new(), HashSet::new()));
         }
     };
+
+    // Parse imports on raw source BEFORE stripping string literals
+    {
+        // 3. Import statements: import { ContractName } from "..."
+        // Note: Handles multiple comma-separated imports correctly via split(',')
+        // Supports aliasing: import { X as Y } → record X (ignore alias)
+        // If starts with 'I', could be interface OR contract → add to BOTH (defensive)
+        // Semicolon removed from regex to support multiline imports; allow no space after 'from'
+        let import_regex =
+            Regex::new(r#"import\s*\{([^}]+)\}\s*from\s*[\"']([^\"']+)[\"']"#).unwrap();
+        let import_item_regex =
+            Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:(?i:as)\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$")
+                .unwrap();
+        // info!("READING IMPORT PATH...");
+        for cap in import_regex.captures_iter(&source_code) {
+            if let Some(imports) = cap.get(1) {
+                let import_path = cap.get(2).unwrap().as_str();
+                // info!("IMPORT PATH: {}", import_path);
+                // Track external library files (imports starting with '@')
+                if import_path.starts_with("@") {
+                    info!("LIB DEP FOUND: {}", import_path);
+                    if let Some(resolved_path) = resolve_import_path(import_path, repo) {
+                        info!("RESOLVED PATH: {}", resolved_path);
+                        if !should_exclude_this_library(&resolved_path) {
+                            info!("ADDING RESOLVED PATH {} to LIB FILES", resolved_path);
+                            lib_files.insert(resolved_path);
+                        }
+                        continue; // We have the file path, skip name extraction
+                    } else {
+                        // No remapping found - log warning and fall through to extract names
+                        log::warn!(
+                            "No remapping found for external import '{}' in contract {}",
+                            import_path,
+                            contract
+                        );
+                    }
+                }
+
+                for import in imports.as_str().split(',') {
+                    let segment = import.trim();
+                    if segment.is_empty() {
+                        continue;
+                    }
+                    let name = if let Some(m) = import_item_regex.captures(segment) {
+                        m.get(1).unwrap().as_str()
+                    } else {
+                        // Fallback: use the trimmed segment as-is
+                        segment
+                    };
+                    if name.starts_with('I')
+                        && name.len() > 1
+                        && name.chars().nth(1).map_or(false, |c| c.is_uppercase())
+                    {
+                        // info!(
+                        //     "detected import (interface or contract): {} in {}",
+                        //     name, contract
+                        // );
+                        interfaces.insert(name.to_string()); // Try as interface
+                        contracts.insert(name.to_string()); // Also try as contract
+                    } else if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                        // info!("detected contract import: {} in {}", name, contract);
+                        contracts.insert(name.to_string());
+                    }
+                }
+            } else {
+                info!("cound not parse imports for");
+                print_first_n_lines(10, &source_code);
+            }
+        }
+
+        // Also handle simple import statements: import "path"; (no named imports)
+        let simple_import_regex = Regex::new(r#"import\s*[\"']([^\"']+)[\"']"#).unwrap();
+        for cap in simple_import_regex.captures_iter(&source_code) {
+            let import_path = cap.get(1).unwrap().as_str();
+            // info!("IMPORT PATH (simple): {}", import_path);
+            if import_path.starts_with("@") {
+                info!("LIB DEP FOUND (simple): {}", import_path);
+                if let Some(resolved_path) = resolve_import_path(import_path, repo) {
+                    info!("RESOLVED PATH (simple): {}", resolved_path);
+                    if !should_exclude_this_library(&resolved_path) {
+                        info!("ADDING RESOLVED PATH {} to LIB FILES", resolved_path);
+                        lib_files.insert(resolved_path);
+                    }
+                } else {
+                    log::warn!(
+                        "No remapping found for external import '{}' in contract {} (simple)",
+                        import_path,
+                        contract
+                    );
+                }
+            }
+        }
+    }
+
     // Strip comments and string literals to avoid false positives (e.g., "XOR (^)" in comments)
     let source_code = strip_comments_and_strings(&source_code);
 
@@ -153,31 +251,7 @@ pub async fn detect_source_code_dependencies(
         }
     }
 
-    // 3. Import statements: import { ContractName } from "..."
-    // Note: Handles multiple comma-separated imports correctly via split(',')
-    // If starts with 'I', could be interface OR contract → add to BOTH (defensive)
-    let import_regex = Regex::new(r#"import\s*\{([^}]+)\}\s*from"#).unwrap();
-    for cap in import_regex.captures_iter(&source_code) {
-        if let Some(imports) = cap.get(1) {
-            for import in imports.as_str().split(',') {
-                let name = import.trim();
-                if name.starts_with('I')
-                    && name.len() > 1
-                    && name.chars().nth(1).map_or(false, |c| c.is_uppercase())
-                {
-                    // info!(
-                    //     "detected import (interface or contract): {} in {}",
-                    //     name, contract
-                    // );
-                    interfaces.insert(name.to_string()); // Try as interface
-                    contracts.insert(name.to_string()); // Also try as contract
-                } else if name.chars().next().map_or(false, |c| c.is_uppercase()) {
-                    // info!("detected contract import: {} in {}", name, contract);
-                    contracts.insert(name.to_string());
-                }
-            }
-        }
-    }
+    // Imports already parsed earlier on raw source before stripping string literals
 
     // 4. Type declarations: ContractName/InterfaceName public/private/internal variable
     // Matches: IERC20 public token, TSwapPool private pool, ImmutableCreate2Factory immutable factory, etc.
@@ -462,10 +536,10 @@ pub async fn detect_source_code_dependencies(
     // Cache the result before returning
     {
         let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
-        cache.insert(cache_key, filtered_sources.clone());
+        cache.insert(cache_key, (filtered_sources.clone(), lib_files.clone()));
     }
 
-    Ok(filtered_sources)
+    Ok((filtered_sources, lib_files))
 }
 
 pub async fn detect_scripts_connected_to_contract(
@@ -532,6 +606,14 @@ fn strip_comments_and_strings(src: &str) -> String {
     out = RE_LINE.replace_all(&out, " ").into_owned();
 
     out
+}
+
+fn should_exclude_this_library(file_path: &str) -> bool {
+    file_path.contains("openzeppelin")
+        || file_path.contains("forge-std")
+        || file_path.contains("ds-test")
+        || file_path.contains("erc4626-tests")
+        || file_path.contains("halmos-cheatcodes")
 }
 
 /// Check if a type name is a Solidity built-in type or common library type
@@ -650,4 +732,635 @@ pub fn is_standard_interface_name(name: &str) -> bool {
 pub fn path_is_standard_lib(path: &std::path::Path) -> bool {
     let p = path.to_string_lossy().to_ascii_lowercase();
     p.contains("openzeppelin") || p.contains("solmate") || p.contains("forge-std")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper function to extract imports from source code using the same logic as detect_source_code_dependencies
+    fn extract_imports_from_source(source_code: &str) -> (HashSet<String>, HashSet<String>) {
+        let mut contracts = HashSet::new();
+        let mut interfaces = HashSet::new();
+
+        // Use same regex as production code (captures both names and path)
+        let import_regex = Regex::new(r#"import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']"#).unwrap();
+        let import_item_regex =
+            Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:(?i:as)\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$")
+                .unwrap();
+
+        for cap in import_regex.captures_iter(source_code) {
+            if let Some(imports) = cap.get(1) {
+                // cap.get(2) contains the import path, but we don't need it for name extraction tests
+                for import in imports.as_str().split(',') {
+                    let segment = import.trim();
+                    if segment.is_empty() {
+                        continue;
+                    }
+                    let name = if let Some(m) = import_item_regex.captures(segment) {
+                        m.get(1).unwrap().as_str()
+                    } else {
+                        segment
+                    };
+                    if name.starts_with('I')
+                        && name.len() > 1
+                        && name.chars().nth(1).map_or(false, |c| c.is_uppercase())
+                    {
+                        interfaces.insert(name.to_string());
+                        contracts.insert(name.to_string());
+                    } else if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                        contracts.insert(name.to_string());
+                    }
+                }
+            }
+        }
+
+        (contracts, interfaces)
+    }
+
+    /// Helper function to extract import paths from source code
+    fn extract_import_paths(source_code: &str) -> Vec<String> {
+        let mut paths = Vec::new();
+        // Named imports: import { ... } from "path"
+        let import_regex = Regex::new(r#"import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']"#).unwrap();
+        for cap in import_regex.captures_iter(source_code) {
+            if let Some(path) = cap.get(2) {
+                paths.push(path.as_str().to_string());
+            }
+        }
+        // Simple imports: import "path"
+        let simple_import_regex = Regex::new(r#"import\s*["']([^"']+)["']"#).unwrap();
+        for cap in simple_import_regex.captures_iter(source_code) {
+            if let Some(path) = cap.get(1) {
+                paths.push(path.as_str().to_string());
+            }
+        }
+        paths
+    }
+
+    #[test]
+    fn test_import_simple_contract() {
+        let source = r#"import { MyContract } from "./MyContract.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        assert!(contracts.contains("MyContract"));
+        assert!(!interfaces.contains("MyContract"));
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(interfaces.len(), 0);
+    }
+
+    #[test]
+    fn test_import_simple_interface() {
+        let source = r#"import { IMyInterface } from "./IMyInterface.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        // Interfaces starting with 'I' followed by uppercase are added to BOTH
+        assert!(contracts.contains("IMyInterface"));
+        assert!(interfaces.contains("IMyInterface"));
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(interfaces.len(), 1);
+    }
+
+    #[test]
+    fn test_import_with_alias_contract() {
+        let source = r#"import { MyContract as MC } from "./MyContract.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        // Should capture "MyContract", not "MC"
+        assert!(contracts.contains("MyContract"));
+        assert!(!contracts.contains("MC"));
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(interfaces.len(), 0);
+    }
+
+    #[test]
+    fn test_import_with_alias_interface() {
+        let source = r#"import { IToken as Token } from "./IToken.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        // Should capture "IToken", not "Token"
+        assert!(contracts.contains("IToken"));
+        assert!(interfaces.contains("IToken"));
+        assert!(!contracts.contains("Token"));
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(interfaces.len(), 1);
+    }
+
+    #[test]
+    fn test_import_multiple_no_alias() {
+        let source = r#"import { ContractA, ContractB, IInterface } from "./contracts.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        assert!(contracts.contains("ContractA"));
+        assert!(contracts.contains("ContractB"));
+        assert!(contracts.contains("IInterface"));
+        assert!(interfaces.contains("IInterface"));
+        assert_eq!(contracts.len(), 3);
+        assert_eq!(interfaces.len(), 1);
+    }
+
+    #[test]
+    fn test_import_multiple_with_aliases() {
+        let source =
+            r#"import { ContractA as CA, IToken as Token, ContractB } from "./contracts.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        // Should capture original names, not aliases
+        assert!(contracts.contains("ContractA"));
+        assert!(contracts.contains("IToken"));
+        assert!(contracts.contains("ContractB"));
+        assert!(!contracts.contains("CA"));
+        assert!(!contracts.contains("Token"));
+        assert!(interfaces.contains("IToken"));
+        assert_eq!(contracts.len(), 3);
+        assert_eq!(interfaces.len(), 1);
+    }
+
+    #[test]
+    fn test_import_mixed_case_as_keyword() {
+        // Test case-insensitive "as" keyword
+        let source1 = r#"import { MyContract AS MC } from "./MyContract.sol";"#;
+        let source2 = r#"import { MyContract As MC } from "./MyContract.sol";"#;
+        let source3 = r#"import { MyContract aS MC } from "./MyContract.sol";"#;
+
+        for source in &[source1, source2, source3] {
+            let (contracts, _) = extract_imports_from_source(source);
+            assert!(
+                contracts.contains("MyContract"),
+                "Failed for source: {}",
+                source
+            );
+            assert!(!contracts.contains("MC"), "Failed for source: {}", source);
+        }
+    }
+
+    #[test]
+    fn test_import_with_whitespace_variations() {
+        let sources = vec![
+            r#"import {MyContract} from "./MyContract.sol";"#,
+            r#"import { MyContract } from "./MyContract.sol";"#,
+            r#"import {  MyContract  } from "./MyContract.sol";"#,
+            r#"import { MyContract as MC } from "./MyContract.sol";"#,
+            r#"import {MyContract as MC} from "./MyContract.sol";"#,
+            r#"import {  MyContract  as  MC  } from "./MyContract.sol";"#,
+        ];
+
+        for source in sources {
+            let (contracts, _) = extract_imports_from_source(source);
+            assert!(
+                contracts.contains("MyContract"),
+                "Failed for source: {}",
+                source
+            );
+            assert!(!contracts.contains("MC"), "Failed for source: {}", source);
+        }
+    }
+
+    #[test]
+    fn test_import_empty_segments() {
+        // Edge case: extra commas or whitespace
+        let source = r#"import { ContractA, , ContractB } from "./contracts.sol";"#;
+        let (contracts, _) = extract_imports_from_source(source);
+
+        assert!(contracts.contains("ContractA"));
+        assert!(contracts.contains("ContractB"));
+        // Should handle empty segments gracefully
+        assert_eq!(contracts.len(), 2);
+    }
+
+    #[test]
+    fn test_import_lowercase_ignored() {
+        // Lowercase identifiers should be ignored (not contracts/interfaces)
+        let source = r#"import { myContract, anotherOne } from "./contracts.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        assert_eq!(contracts.len(), 0);
+        assert_eq!(interfaces.len(), 0);
+    }
+
+    #[test]
+    fn test_import_interface_not_starting_with_i() {
+        // Interface that doesn't start with 'I' should be treated as contract only
+        let source = r#"import { MyInterface } from "./MyInterface.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        assert!(contracts.contains("MyInterface"));
+        assert!(!interfaces.contains("MyInterface"));
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(interfaces.len(), 0);
+    }
+
+    #[test]
+    fn test_import_i_followed_by_lowercase() {
+        // "Ifoo" - 'I' followed by lowercase should be treated as regular contract
+        let source = r#"import { Ifoo } from "./Ifoo.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        assert!(contracts.contains("Ifoo"));
+        assert!(!interfaces.contains("Ifoo"));
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(interfaces.len(), 0);
+    }
+
+    #[test]
+    fn test_import_single_i() {
+        // Edge case: single letter "I"
+        let source = r#"import { I } from "./I.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        // Single 'I' doesn't meet the criteria (len > 1 && second char uppercase)
+        assert!(contracts.contains("I"));
+        assert!(!interfaces.contains("I"));
+        assert_eq!(contracts.len(), 1);
+        assert_eq!(interfaces.len(), 0);
+    }
+
+    #[test]
+    fn test_import_complex_real_world_example() {
+        let source = r#"
+            import { IERC20 as Token, IUniswapV2Router02 as Router } from "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
+            import { SafeERC20, Address } from "@openzeppelin/contracts/utils/Address.sol";
+            import { MyVault, IStrategy as Strategy } from "./MyVault.sol";
+        "#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        // Original names should be captured
+        assert!(contracts.contains("IERC20"));
+        assert!(contracts.contains("IUniswapV2Router02"));
+        assert!(contracts.contains("SafeERC20"));
+        assert!(contracts.contains("Address"));
+        assert!(contracts.contains("MyVault"));
+        assert!(contracts.contains("IStrategy"));
+
+        // Aliases should NOT be captured
+        assert!(!contracts.contains("Token"));
+        assert!(!contracts.contains("Router"));
+        assert!(!contracts.contains("Strategy"));
+
+        // Interfaces (I + uppercase)
+        assert!(interfaces.contains("IERC20"));
+        assert!(interfaces.contains("IUniswapV2Router02"));
+        assert!(interfaces.contains("IStrategy"));
+        assert!(!interfaces.contains("SafeERC20"));
+        assert!(!interfaces.contains("Address"));
+        assert!(!interfaces.contains("MyVault"));
+    }
+
+    #[test]
+    fn test_import_multiline() {
+        let source = r#"
+            import {
+                ContractA,
+                ITokenB as TokenB,
+                ContractC
+            } from "./contracts.sol";
+        "#;
+        let (contracts, _) = extract_imports_from_source(source);
+
+        assert!(contracts.contains("ContractA"));
+        assert!(contracts.contains("ITokenB"));
+        assert!(contracts.contains("ContractC"));
+        assert!(!contracts.contains("TokenB"));
+    }
+
+    #[test]
+    fn test_import_underscore_in_names() {
+        let source = r#"import { My_Contract, IToken_V2 as Token } from "./contracts.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        assert!(contracts.contains("My_Contract"));
+        assert!(contracts.contains("IToken_V2"));
+        assert!(interfaces.contains("IToken_V2"));
+        assert!(!contracts.contains("Token"));
+    }
+
+    #[test]
+    fn test_import_numbers_in_names() {
+        let source = r#"import { ERC20Token, IERC721A as NFT } from "./contracts.sol";"#;
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        assert!(contracts.contains("ERC20Token"));
+        assert!(contracts.contains("IERC721A"));
+        assert!(interfaces.contains("IERC721A"));
+        assert!(!contracts.contains("NFT"));
+    }
+
+    // ========== Import Path Extraction Tests ==========
+
+    #[test]
+    fn test_extract_import_path_simple() {
+        let source = r#"import { MyContract } from "./MyContract.sol";"#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], "./MyContract.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_external() {
+        let source = r#"import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";"#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], "@openzeppelin/contracts/token/ERC20/IERC20.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_multiple_imports() {
+        let source = r#"
+            import { ContractA } from "./ContractA.sol";
+            import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+            import { IUniswap } from "@uniswap/v3-core/interfaces/IUniswap.sol";
+        "#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 3);
+        assert_eq!(paths[0], "./ContractA.sol");
+        assert_eq!(paths[1], "@openzeppelin/contracts/token/ERC20/IERC20.sol");
+        assert_eq!(paths[2], "@uniswap/v3-core/interfaces/IUniswap.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_multiline_no_semicolon_on_same_line() {
+        // Test that semicolon on separate line doesn't break parsing
+        let source = r#"
+            import {
+                IERC20,
+                SafeERC20
+            } from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol"
+            ;
+        "#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(
+            paths[0],
+            "@openzeppelin/contracts/token/ERC20/SafeERC20.sol"
+        );
+    }
+
+    #[test]
+    fn test_extract_import_path_no_semicolon() {
+        // Edge case: missing semicolon (malformed but should still parse)
+        let source = r#"import { MyContract } from "./MyContract.sol""#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], "./MyContract.sol");
+    }
+
+    #[test]
+    fn test_import_no_space_between_from_and_quote() {
+        let source = r#"import{D}from"./D.sol";"#;
+        let paths = extract_import_paths(source);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], "./D.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_single_quotes() {
+        let source = r#"import { MyContract } from './MyContract.sol';"#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], "./MyContract.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_mixed_quotes() {
+        let source = r#"
+            import { ContractA } from "./ContractA.sol";
+            import { ContractB } from './ContractB.sol';
+        "#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], "./ContractA.sol");
+        assert_eq!(paths[1], "./ContractB.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_relative_paths() {
+        let source = r#"
+            import { A } from "./A.sol";
+            import { B } from "../B.sol";
+            import { C } from "../../C.sol";
+            import { D } from "./nested/D.sol";
+        "#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 4);
+        assert_eq!(paths[0], "./A.sol");
+        assert_eq!(paths[1], "../B.sol");
+        assert_eq!(paths[2], "../../C.sol");
+        assert_eq!(paths[3], "./nested/D.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_absolute_paths() {
+        let source = r#"
+            import { A } from "contracts/A.sol";
+            import { B } from "src/contracts/B.sol";
+        "#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], "contracts/A.sol");
+        assert_eq!(paths[1], "src/contracts/B.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_with_aliases() {
+        // Path extraction should work regardless of aliases
+        let source = r#"import { MyContract as MC, IToken as Token } from "./contracts.sol";"#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], "./contracts.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_multiline_complex() {
+        let source = r#"
+            import {
+                IERC20 as Token,
+                IUniswapV2Router02 as Router,
+                SafeERC20,
+                Address
+            } from "@openzeppelin/contracts/utils/Address.sol";
+        "#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], "@openzeppelin/contracts/utils/Address.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_external_providers() {
+        let source = r#"
+            import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+            import { IUniswapV2Router } from "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router.sol";
+            import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+            import { ENS } from "@ensdomains/ens-contracts/contracts/registry/ENS.sol";
+        "#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 4);
+        assert!(paths[0].starts_with("@openzeppelin/"));
+        assert!(paths[1].starts_with("@uniswap/"));
+        assert!(paths[2].starts_with("@chainlink/"));
+        assert!(paths[3].starts_with("@ensdomains/"));
+    }
+
+    #[test]
+    fn test_extract_import_path_whitespace_variations() {
+        // Note: Regex requires at least one whitespace between 'from' and the quote
+        let source = r#"
+            import  {  B  }  from  "./B.sol"  ;
+            import { C } from   "./C.sol";
+            import{D}from"./D.sol";
+        "#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 3);
+        assert_eq!(paths[0], "./B.sol");
+        assert_eq!(paths[1], "./C.sol");
+        assert_eq!(paths[2], "./D.sol");
+    }
+
+    #[test]
+    fn test_extract_import_path_empty_source() {
+        let source = "";
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 0);
+    }
+
+    #[test]
+    fn test_extract_import_path_no_imports() {
+        let source = r#"
+            contract MyContract {
+                function test() public {}
+            }
+        "#;
+        let paths = extract_import_paths(source);
+
+        assert_eq!(paths.len(), 0);
+    }
+    #[test]
+    fn test_user_sample_imports_paths() {
+        let source = r#"import {IERC4626} from "forge-std/interfaces/IERC4626.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin/access/Ownable2Step.sol";
+import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
+import {Errors} from "./lib/Errors.sol";
+
+import {BaseAdapter} from "./BaseAdapter.sol";
+import {IPriceOracle} from "../../interfaces/IPriceOracle.sol";
+import {ScaleUtils} from "@euler-price-oracle/lib/ScaleUtils.sol";
+import {Errors} from "../lib/Errors.sol";
+
+import {ICovenant, MarketId, MarketParams, MarketState, SwapParams, RedeemParams, MintParams, SynthTokens, TokenPrices, AssetType} from "./interfaces/ICovenant.sol";
+import {ILiquidExchangeModel} from "./interfaces/ILiquidExchangeModel.sol";
+import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin/access/Ownable2Step.sol";
+import {NoDelegateCall} from "./libraries/NoDelegateCall.sol";
+import {ValidationLogic} from "./libraries/ValidationLogic.sol";
+import {MarketParamsLib} from "./libraries/MarketParams.sol";
+import {MulticallLib} from "./libraries/Multicall.sol";
+import {Errors} from "./libraries/Errors.sol";
+import {Events} from "./libraries/Events.sol";"#;
+
+        let paths = extract_import_paths(source);
+        assert_eq!(paths.len(), 19);
+        assert_eq!(
+            paths,
+            vec![
+                "forge-std/interfaces/IERC4626.sol",
+                "@openzeppelin/access/Ownable2Step.sol",
+                "../interfaces/IPriceOracle.sol",
+                "./lib/Errors.sol",
+                "./BaseAdapter.sol",
+                "../../interfaces/IPriceOracle.sol",
+                "@euler-price-oracle/lib/ScaleUtils.sol",
+                "../lib/Errors.sol",
+                "./interfaces/ICovenant.sol",
+                "./interfaces/ILiquidExchangeModel.sol",
+                "@openzeppelin/token/ERC20/IERC20.sol",
+                "@openzeppelin/token/ERC20/utils/SafeERC20.sol",
+                "@openzeppelin/access/Ownable2Step.sol",
+                "./libraries/NoDelegateCall.sol",
+                "./libraries/ValidationLogic.sol",
+                "./libraries/MarketParams.sol",
+                "./libraries/Multicall.sol",
+                "./libraries/Errors.sol",
+                "./libraries/Events.sol",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_user_sample_imports_names() {
+        let source = r#"import {IERC4626} from "forge-std/interfaces/IERC4626.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin/access/Ownable2Step.sol";
+import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
+import {Errors} from "./lib/Errors.sol";
+
+import {BaseAdapter} from "./BaseAdapter.sol";
+import {IPriceOracle} from "../../interfaces/IPriceOracle.sol";
+import {ScaleUtils} from "@euler-price-oracle/lib/ScaleUtils.sol";
+import {Errors} from "../lib/Errors.sol";
+
+import {ICovenant, MarketId, MarketParams, MarketState, SwapParams, RedeemParams, MintParams, SynthTokens, TokenPrices, AssetType} from "./interfaces/ICovenant.sol";
+import {ILiquidExchangeModel} from "./interfaces/ILiquidExchangeModel.sol";
+import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin/access/Ownable2Step.sol";
+import {NoDelegateCall} from "./libraries/NoDelegateCall.sol";
+import {ValidationLogic} from "./libraries/ValidationLogic.sol";
+import {MarketParamsLib} from "./libraries/MarketParams.sol";
+import {MulticallLib} from "./libraries/Multicall.sol";
+import {Errors} from "./libraries/Errors.sol";
+import {Events} from "./libraries/Events.sol";"#;
+
+        let (contracts, interfaces) = extract_imports_from_source(source);
+
+        // Must appear in BOTH contracts and interfaces
+        for iface in [
+            "IERC4626",
+            "IPriceOracle",
+            "ICovenant",
+            "ILiquidExchangeModel",
+            "IERC20",
+        ] {
+            assert!(contracts.contains(iface), "contracts missing {}", iface);
+            assert!(interfaces.contains(iface), "interfaces missing {}", iface);
+        }
+
+        // Expected contracts (non-interfaces)
+        for name in [
+            "Ownable2Step",
+            "Ownable",
+            "Errors",
+            "BaseAdapter",
+            "ScaleUtils",
+            "MarketId",
+            "MarketParams",
+            "MarketState",
+            "SwapParams",
+            "RedeemParams",
+            "MintParams",
+            "SynthTokens",
+            "TokenPrices",
+            "AssetType",
+            "SafeERC20",
+            "NoDelegateCall",
+            "ValidationLogic",
+            "MarketParamsLib",
+            "MulticallLib",
+            "Events",
+        ] {
+            assert!(contracts.contains(name), "contracts missing {}", name);
+        }
+    }
 }

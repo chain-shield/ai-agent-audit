@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -436,7 +436,6 @@ pub async fn run_printer_monorepo(repo: &RepoPaths, printer: &str) -> Result<Str
     let folders = repo.extract_monorepo_folders()?;
 
     for folder in folders {
-        // TODO: handle edge where no build config (find sol files)
         if contains_build_config(&folder) {
             let output = run_printer(repo, printer, Some(folder)).await?;
             total_output.push_str(&format!("\n{}\n", output));

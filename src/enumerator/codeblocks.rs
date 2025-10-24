@@ -19,6 +19,7 @@ use crate::enumerator::utils::{
 use crate::llm_review::contract_file_map::get_file_from_contract;
 use crate::llm_review::utils::contract_in_scope::is_contract_in_scope;
 use crate::prepare_code::git_clone::RepoPaths;
+use crate::utils::read_file::read_project_file;
 use tokio::fs;
 
 use anyhow::Result;
@@ -161,7 +162,7 @@ pub async fn generate_codeblock_from_codebase(
         // We analyze BOTH the main contract AND all called contracts for comprehensive coverage
 
         // First, analyze the main contract
-        let mut main_source_contracts =
+        let (mut main_source_contracts, mut main_lib_files) =
             detect_source_code_dependencies(&main_contract, repo).await?;
 
         // info!(
@@ -175,13 +176,14 @@ pub async fn generate_codeblock_from_codebase(
         // );
 
         for contract in &contracts_with_depth {
-            let source = detect_source_code_dependencies(contract, repo).await?;
+            let (source, lib_files) = detect_source_code_dependencies(contract, repo).await?;
             // info!(
             //     "🔍 DEBUG: Source dependencies for '{}': {} contracts",
             //     contract,
             //     source.len()
             // );
             main_source_contracts.extend(source);
+            main_lib_files.extend(lib_files);
         }
 
         // info!(
@@ -319,6 +321,44 @@ pub async fn generate_codeblock_from_codebase(
             contracts_skipped_too_small,
             contracts_skipped_budget
         );
+
+        let supporting_lib_header = "\n## SUPPORTING CONTEXT: EXTERNAL LIBRARIES\n";
+        markdown_codeblock_for_llm.push_str(supporting_lib_header);
+        current_token_count += get_token_count(supporting_lib_header);
+
+        // add external libary filse
+        for lib_file in &main_lib_files {
+            info!("Adding External Library File: {}....", lib_file);
+            let lib_content = match read_project_file(lib_file, repo).await {
+                Ok(content) => content,
+                Err(e) => {
+                    info!(
+                        "could not read file {} for lib dependency detection: {}",
+                        lib_file, e
+                    );
+                    continue;
+                }
+            };
+
+            let lib_section = format!("{}\n", lib_content);
+            let lib_tokens = get_token_count(&lib_section);
+
+            let new_total = current_token_count + lib_tokens;
+
+            if new_total > token_budget {
+                info!(
+                    "⏭️ Skipping 'external lib: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
+                    lib_file, lib_tokens, new_total, token_budget
+                );
+            } else {
+                info!(
+                    "✅ Adding 'external lib: {}' ({} tokens) - total: {}/{} tokens",
+                    lib_file, lib_tokens, new_total, token_budget
+                );
+                markdown_codeblock_for_llm.push_str(&lib_section);
+                current_token_count = new_total;
+            }
+        }
 
         markdown_codeblock_for_llm.push_str("\nEND OF SUPPORTING CONTRACTS AND INTERFACES\n\n");
         markdown_codeblock_for_llm.push_str("\nDEPLOYMENT SCRIPTS\n\n");

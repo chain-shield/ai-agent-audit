@@ -74,7 +74,6 @@ pub async fn generate_call_graph_blobs(repo: &RepoPaths) -> Result<Vec<String>> 
     } else {
         let mut total_output = Vec::<String>::new();
         for folder in folders {
-            // TODO: handle edge where no build config (find sol files)
             if contains_build_config(&folder) {
                 let json = slither_ffi::run_printer_json(&repo, "call-graph", Some(folder)).await?;
                 let blobs = extract_dot_blobs(&json)?;
@@ -96,7 +95,6 @@ pub async fn generate_inheritance_edges(repo: &RepoPaths) -> Result<Vec<(String,
     } else {
         let mut total_output = Vec::<(String, String)>::new();
         for folder in folders {
-            // TODO: handle edge where no build config (find sol files)
             if contains_build_config(&folder) {
                 let json =
                     slither_ffi::run_printer_json(&repo, "inheritance", Some(folder)).await?;
