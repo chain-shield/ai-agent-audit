@@ -47,6 +47,48 @@ fn build_forge_test_command(test_file_relative_path: &str) -> String {
     format!("forge test --match-path {} -vvv", test_file_relative_path)
 }
 
+/// Build the forge test command for PoC runs with safe remapping overrides
+/// to handle common external libraries. We prefer explicit longest-prefix
+/// mappings (e.g., @openzeppelin/contracts) to avoid accidental double
+/// `contracts/contracts` resolution from misconfigured project remappings.
+fn build_poc_forge_test_command(repo: &RepoPaths, test_file_relative_path: &str) -> String {
+    let code_root = repo.root.join(&repo.repo_name);
+    let mut remap_args: Vec<String> = Vec::new();
+
+    // Prefer longest-prefix mapping for OZ to override any shorter @openzeppelin mapping
+    if code_root
+        .join("lib/openzeppelin-contracts/contracts")
+        .exists()
+    {
+        remap_args.push(
+            "--remappings @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
+                .to_string(),
+        );
+    }
+    if code_root
+        .join("lib/openzeppelin-contracts-upgradeable/contracts")
+        .exists()
+    {
+        remap_args.push(
+            "--remappings @openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/"
+                .to_string(),
+        );
+    }
+    if code_root.join("lib/forge-std/src").exists() {
+        remap_args.push("--remappings forge-std/=lib/forge-std/src/".to_string());
+    }
+
+    if remap_args.is_empty() {
+        build_forge_test_command(test_file_relative_path)
+    } else {
+        format!(
+            "forge test {} --match-path {} -vvv",
+            remap_args.join(" "),
+            test_file_relative_path
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,7 +253,7 @@ pub async fn execute(
                 .unwrap_or(&test_file_path)
                 .to_string_lossy()
                 .to_string();
-            let command = build_forge_test_command(&relative_path);
+            let command = build_poc_forge_test_command(repo, &relative_path);
 
             let mut poc_test = PocTest {
                 finding_hash: finding.hash_derived(),
@@ -277,7 +319,7 @@ pub async fn execute(
                         .unwrap_or(&poc_test.poc_test_file)
                         .to_string_lossy()
                         .to_string();
-                    poc_test.poc_test_command = build_forge_test_command(&relative_path);
+                    poc_test.poc_test_command = build_poc_forge_test_command(repo, &relative_path);
 
                     // Save and run the updated PoC test
                     if let Err(e) = save_and_run_poc_test(&mut poc_test, repo) {

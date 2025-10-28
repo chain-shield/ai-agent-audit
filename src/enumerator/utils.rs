@@ -1,5 +1,5 @@
-use anyhow::anyhow;
 use anyhow::Result;
+use anyhow::anyhow;
 use log::info;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -12,20 +12,23 @@ use rusqlite::{Connection, OptionalExtension};
 /// counting for optimal code slice generation within LLM context limits.
 use std::collections::HashMap;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::enumerator::libraries::ParsedLibrary;
 use crate::enumerator::libraries::generate_library_to_code_mapping;
 use crate::enumerator::libraries::get_library_code_for_library_calls;
-use crate::enumerator::libraries::ParsedLibrary;
+use crate::llm_review::contract_file_map::ContractType;
 use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
 use crate::llm_review::contract_file_map::insert_lib_contract_to_file_mapping;
+
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::check_folder_name::is_library_file;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
 use crate::utils::get_fn_name::get_function_name_from_interface;
-use crate::utils::parse_library_file::parse_library_text;
 use crate::utils::parse_library_file::LibCall;
+use crate::utils::parse_library_file::parse_library_text;
 use crate::{
     build_brain::{
         self,
@@ -330,25 +333,361 @@ pub enum ContractScope {
     InScope,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum SolFileType {
     Standard,
     LibFolder, // file is coming from main /lib/ folder
 }
+
+// ============================================================================
+// Regex Patterns (DRY - defined once, used multiple times)
+// ============================================================================
+
+/// Lazy-initialized regex patterns for Solidity parsing
+/// Made public so other modules can reuse these patterns (DRY principle)
+pub static SOLIDITY_REGEXES: Lazy<SolidityRegexes> = Lazy::new(|| {
+    SolidityRegexes {
+    contract_decl: Regex::new(
+        r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+    )
+    .unwrap(),
+    inheritance: Regex::new(
+        r"(?m)^\s*(?:abstract\s+)?(?:contract|interface|library)\s+([A-Za-z_][A-Za-z0-9_]*)\s+is\s+([^{]+)",
+    )
+    .unwrap(),
+    // Uses same regex as parse_solidity.rs for consistency
+    import_named: Regex::new(r#"import\s*\{([^}]+)\}\s*from\s*[\"']([^\"']+)[\"']"#).unwrap(),
+    import_item: Regex::new(
+        r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:(?i:as)\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$",
+    )
+    .unwrap(),
+}
+});
+
+pub struct SolidityRegexes {
+    pub contract_decl: Regex,
+    pub inheritance: Regex,
+    pub import_named: Regex,
+    pub import_item: Regex,
+}
+
+// ============================================================================
+// Helper Functions for Solidity Parsing
+// ============================================================================
+
+/// Parse import statements from Solidity source code and build a mapping
+/// of contract names (including aliases) to their import paths.
+///
+/// # Arguments
+/// * `content` - The Solidity source code
+///
+/// # Returns
+/// HashMap mapping contract names to import paths
+///
+/// # Example
+/// ```solidity
+/// import {BaseAdapter as EulerBaseAdapter} from "@euler-price-oracle/adapter/BaseAdapter.sol";
+/// ```
+/// Returns: `{"EulerBaseAdapter" => "@euler-price-oracle/adapter/BaseAdapter.sol"}`
+fn parse_import_map(content: &str) -> HashMap<String, String> {
+    let mut import_map = HashMap::new();
+
+    for cap in SOLIDITY_REGEXES.import_named.captures_iter(content) {
+        if let Some(imports) = cap.get(1) {
+            let import_path = cap.get(2).unwrap().as_str();
+
+            // Parse each imported name (handle aliases)
+            for import in imports.as_str().split(',') {
+                let segment = import.trim();
+                if segment.is_empty() {
+                    continue;
+                }
+
+                // Use import_item_regex to extract the actual contract name (before "as")
+                let name = if let Some(m) = SOLIDITY_REGEXES.import_item.captures(segment) {
+                    m.get(1).unwrap().as_str()
+                } else {
+                    segment
+                };
+
+                // Check if this is an alias: "OriginalName as Alias"
+                if let Some(as_pos) = segment.find(" as ") {
+                    // Use the alias (after "as") as the key
+                    let alias = segment[as_pos + 4..].trim();
+                    import_map.insert(alias.to_string(), import_path.to_string());
+                } else {
+                    // No alias, use the contract name directly
+                    import_map.insert(name.to_string(), import_path.to_string());
+                }
+            }
+        }
+    }
+
+    import_map
+}
+
+/// Normalize a path by removing `.` and `..` components without canonicalizing.
+///
+/// This function manually resolves `.` and `..` components in a path without
+/// calling `canonicalize()`, which would resolve symlinks and cause path mismatches
+/// on macOS where `/tmp` is a symlink to `/private/tmp`.
+///
+/// # Arguments
+/// * `path` - The path to normalize
+///
+/// # Returns
+/// Normalized PathBuf
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut components = Vec::new();
+
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {
+                // Skip "." components
+            }
+            std::path::Component::ParentDir => {
+                // Pop the last component for ".."
+                if !components.is_empty() {
+                    components.pop();
+                }
+            }
+            _ => {
+                // Keep all other components (Prefix, RootDir, Normal)
+                components.push(component);
+            }
+        }
+    }
+
+    // Rebuild the path from components
+    components.iter().collect()
+}
+
+/// Resolve an import path to an actual file path.
+///
+/// # Arguments
+/// * `import_path` - The import path from the Solidity source (e.g., "@euler-price-oracle/...")
+/// * `current_file` - The file containing the import statement
+/// * `repo` - Repository paths
+///
+/// # Returns
+/// Resolved PathBuf if successful, None otherwise
+fn resolve_import_to_file(
+    import_path: &str,
+    current_file: &Path,
+    repo: &RepoPaths,
+) -> Option<PathBuf> {
+    // 1. Try remapping resolution (for @euler-price-oracle, etc.)
+    let resolved_path =
+        if let Some(remapped) = crate::utils::remapping::resolve_import_path(import_path, repo) {
+            PathBuf::from(remapped)
+        }
+        // 2. Handle relative paths (../, ./)
+        else if import_path.starts_with("../") || import_path.starts_with("./") {
+            if let Some(parent_dir) = current_file.parent() {
+                parent_dir.join(import_path)
+            } else {
+                PathBuf::from(import_path)
+            }
+        }
+        // 3. Try as-is
+        else {
+            PathBuf::from(import_path)
+        };
+
+    // Normalize the path
+    let parent_file = if resolved_path.is_absolute() {
+        resolved_path
+    } else {
+        repo.root.join(&repo.repo_name).join(&resolved_path)
+    };
+
+    // Return the path without canonicalization to match the format in repo.sol_files
+    // This prevents path mismatches on macOS where /tmp is a symlink to /private/tmp
+    // However, we still need to normalize .. and . components manually
+    if parent_file.exists() {
+        // Manually normalize the path by removing .. and . components
+        // This is needed because paths like "src/curators/../interfaces/IPriceOracle.sol"
+        // need to be normalized to "src/interfaces/IPriceOracle.sol" to match repo.sol_files
+        let normalized = normalize_path(&parent_file);
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+/// Process contract declarations in a Solidity file and insert them into the appropriate mappings.
+///
+/// # Arguments
+/// * `content` - The Solidity source code
+/// * `file` - Path to the Solidity file
+/// * `file_type` - Whether this is a Standard or LibFolder file
+/// * `repo` - Repository paths
+/// * `contracts` - Mutable vector to collect contract names
+async fn process_contract_declarations(
+    content: &str,
+    file: &Path,
+    file_type: SolFileType,
+    repo: &RepoPaths,
+    contracts: &mut Vec<String>,
+) -> Result<()> {
+    for cap in SOLIDITY_REGEXES.contract_decl.captures_iter(content) {
+        let decl = cap.get(1).unwrap().as_str();
+        let contract = cap.get(2).unwrap().as_str();
+        let contract_type = match decl {
+            "abstract contract" => ContractType::AbstractContract,
+            "contract" => ContractType::Contract,
+            "interface" => ContractType::Interface,
+            "library" => ContractType::Library,
+            _ => ContractType::Contract,
+        };
+
+        if file_type == SolFileType::Standard {
+            if !contract.to_ascii_lowercase().contains("mock") {
+                contracts.push(contract.to_string());
+            }
+            insert_contract_to_file_mapping(contract, file, contract_type, repo).await?;
+        } else {
+            insert_lib_contract_to_file_mapping(contract, file, contract_type, repo).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Process inheritance relationships in a Solidity file and store them in the inheritance map.
+///
+/// # Arguments
+/// * `content` - The Solidity source code
+/// * `file` - Path to the Solidity file
+/// * `file_type` - Whether this is a Standard or LibFolder file
+/// * `repo` - Repository paths
+/// * `import_map` - Mapping of contract names to import paths
+async fn process_inheritance_relationships(
+    content: &str,
+    file: &Path,
+    _file_type: SolFileType,
+    repo: &RepoPaths,
+    import_map: &HashMap<String, String>,
+) -> Result<()> {
+    for cap in SOLIDITY_REGEXES.inheritance.captures_iter(content) {
+        let child_contract = cap.get(1).unwrap().as_str();
+        let parent_list = cap.get(2).unwrap().as_str();
+
+        // Parse parent list (split by comma, trim whitespace)
+        let parents: Vec<String> = parent_list
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        // Resolve each parent using the import map
+        for parent in parents {
+            if let Some(import_path) = import_map.get(&parent) {
+                if let Some(parent_file) = resolve_import_to_file(import_path, file, repo) {
+                    // Determine parent file type (unused but kept for potential future use)
+                    let _parent_file_type = if crate::utils::check_folder_name::is_library_file(
+                        &parent_file,
+                        &repo.root,
+                    ) {
+                        SolFileType::LibFolder
+                    } else {
+                        SolFileType::Standard
+                    };
+
+                    // Extract actual contract name from parent file
+                    // The `parent` variable might be an alias, so we need to get the real contract name
+                    let actual_parent_name =
+                        if let Ok(parent_content) = std::fs::read_to_string(&parent_file) {
+                            // Find ALL contract declarations in the parent file
+                            let mut found_name = None;
+                            for cap in SOLIDITY_REGEXES
+                                .contract_decl
+                                .captures_iter(&parent_content)
+                            {
+                                let contract_name = cap.get(2).unwrap().as_str();
+
+                                // If there's only one contract in the file, use it
+                                // If there are multiple, try to match by the import path's file name
+                                if found_name.is_none() {
+                                    found_name = Some(contract_name.to_string());
+                                }
+
+                                // Check if this contract name matches the file name
+                                // e.g., ChainlinkOracle.sol should contain contract ChainlinkOracle
+                                if let Some(file_stem) = parent_file.file_stem() {
+                                    if file_stem.to_string_lossy() == contract_name {
+                                        found_name = Some(contract_name.to_string());
+                                        break; // Found exact match, use it
+                                    }
+                                }
+                            }
+
+                            found_name.unwrap_or_else(|| parent.clone())
+                        } else {
+                            // Fallback to the alias name if we can't read the file
+                            parent.clone()
+                        };
+
+                    // Store inheritance edge: child inherits from parent
+                    if let Err(e) = crate::build_brain::inheritance_map::insert_inheritance_edge(
+                        (child_contract.to_string(), file.to_path_buf()),
+                        (actual_parent_name.clone(), parent_file.clone()),
+                        repo,
+                    )
+                    .await
+                    {
+                        log::warn!(
+                            "Failed to insert inheritance edge {} -> {}: {}",
+                            child_contract,
+                            actual_parent_name,
+                            e
+                        );
+                    }
+
+                    // else {
+                    //     log::info!(
+                    //         "Inheritance: {} ({:?}, {}) -> {} ({:?}, {})",
+                    //         child_contract,
+                    //         file_type,
+                    //         file.display(),
+                    //         actual_parent_name,
+                    //         parent_file_type,
+                    //         parent_file.display()
+                    //     );
+                    // }
+                } else {
+                    log::debug!(
+                        "Could not resolve import path '{}' for parent '{}' in {}",
+                        import_path,
+                        parent,
+                        file.display()
+                    );
+                }
+            } else {
+                // Parent not in import map - might be from same file or excluded library
+                log::debug!(
+                    "Parent '{}' not found in imports for '{}' in {} - might be in same file or excluded library",
+                    parent,
+                    child_contract,
+                    file.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
+// Main Function
+// ============================================================================
+
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
 pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>> {
     if !repo.source_code_folders.iter().any(|f| f.exists()) {
         anyhow::bail!("no src/ folder found at {:?},", repo.source_code_folders);
     }
-    // get exclusions if any
-    let mut libraries = Vec::<ParsedLibrary>::new();
 
-    // Regex matches `contract Foo`, or `library FooMath` ignores `interface`
-    let contract_or_library_regex = Regex::new(
-        r"(?m)^\s*(?:abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
-    )
-    .unwrap();
+    let mut libraries = Vec::<ParsedLibrary>::new();
     let mut contracts = Vec::<String>::new();
 
     for file in &repo.sol_files {
@@ -377,33 +716,19 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
                 continue;
             }
         };
-        // print_first_n_lines(20, &content);
-        // parse content for library
+        // Parse content for library functions
         if let Some(library_fn_calls) = parse_library_text(&content) {
-            // info!("parsed : {}", library_fn_calls.name);
             libraries.push(library_fn_calls)
         }
 
-        for cap in contract_or_library_regex.captures_iter(&content) {
-            if let Some(contract_name) = cap.get(1) {
-                let contract = contract_name.as_str();
-                if file_type == SolFileType::Standard {
-                    if !contract.to_ascii_lowercase().contains("mock") {
-                        contracts.push(contract.to_string());
-                        // info!(
-                        //     "adding contract {} and file {} to map",
-                        //     contract,
-                        //     file.display()
-                        // );
-                        // record in contract to file hashmap
-                    }
-                    // info!("inserting contract {} into file mapping", contract);
-                    insert_contract_to_file_mapping(contract, file, repo).await?;
-                } else {
-                    insert_lib_contract_to_file_mapping(contract, file, repo).await?;
-                }
-            }
-        }
+        // Process contract declarations and insert into mappings
+        process_contract_declarations(&content, file, file_type, repo, &mut contracts).await?;
+
+        // Parse import statements to build contract → file mapping
+        let import_map = parse_import_map(&content);
+
+        // Process inheritance relationships using the import map
+        process_inheritance_relationships(&content, file, file_type, repo, &import_map).await?;
 
         // generated library.fn -> code mapping
         generate_library_to_code_mapping(&libraries).await?;
@@ -477,4 +802,619 @@ pub fn get_function_metadata_from_contract_plus_fn(
                         .optional()?;
 
     Ok(fn_metadata)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use regex::Regex;
+
+    // ============================================================================
+    // Regex Pattern Tests
+    // ============================================================================
+
+    #[test]
+    fn test_contract_decl_regex_basic_contract() {
+        let source = "contract MyContract {";
+        let caps = SOLIDITY_REGEXES.contract_decl.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "MyContract");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_abstract_contract() {
+        let source = "abstract contract AbstractBase {";
+        let caps = SOLIDITY_REGEXES.contract_decl.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "abstract contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "AbstractBase");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_interface() {
+        let source = "interface IMyInterface {";
+        let caps = SOLIDITY_REGEXES.contract_decl.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "interface");
+        assert_eq!(caps.get(2).unwrap().as_str(), "IMyInterface");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_library() {
+        let source = "library SafeMath {";
+        let caps = SOLIDITY_REGEXES.contract_decl.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "library");
+        assert_eq!(caps.get(2).unwrap().as_str(), "SafeMath");
+    }
+
+    #[test]
+    fn test_inheritance_regex_single_parent() {
+        let source = "contract Child is Parent {";
+        let caps = SOLIDITY_REGEXES.inheritance.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "Child");
+        assert_eq!(caps.get(2).unwrap().as_str(), "Parent ");
+    }
+
+    #[test]
+    fn test_inheritance_regex_multiple_parents() {
+        let source = "contract Child is Parent1, Parent2, Parent3 {";
+        let caps = SOLIDITY_REGEXES.inheritance.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "Child");
+        assert_eq!(caps.get(2).unwrap().as_str(), "Parent1, Parent2, Parent3 ");
+    }
+
+    #[test]
+    fn test_inheritance_regex_abstract_contract() {
+        let source = "abstract contract AbstractChild is Parent {";
+        let caps = SOLIDITY_REGEXES.inheritance.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "AbstractChild");
+        assert_eq!(caps.get(2).unwrap().as_str(), "Parent ");
+    }
+
+    #[test]
+    fn test_inheritance_regex_interface() {
+        let source = "interface IChild is IParent1, IParent2 {";
+        let caps = SOLIDITY_REGEXES.inheritance.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "IChild");
+        assert_eq!(caps.get(2).unwrap().as_str(), "IParent1, IParent2 ");
+    }
+
+    #[test]
+    fn test_import_regex_single_import() {
+        let source = r#"import {MyContract} from "./MyContract.sol";"#;
+        let caps = SOLIDITY_REGEXES.import_named.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "MyContract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "./MyContract.sol");
+    }
+
+    #[test]
+    fn test_import_regex_multiple_imports() {
+        let source = r#"import {ContractA, ContractB, ContractC} from "./Contracts.sol";"#;
+        let caps = SOLIDITY_REGEXES.import_named.captures(source).unwrap();
+        assert_eq!(
+            caps.get(1).unwrap().as_str(),
+            "ContractA, ContractB, ContractC"
+        );
+        assert_eq!(caps.get(2).unwrap().as_str(), "./Contracts.sol");
+    }
+
+    #[test]
+    fn test_import_regex_with_alias() {
+        let source = r#"import {BaseAdapter as EulerBaseAdapter} from "@euler-price-oracle/adapter/BaseAdapter.sol";"#;
+        let caps = SOLIDITY_REGEXES.import_named.captures(source).unwrap();
+        assert_eq!(
+            caps.get(1).unwrap().as_str(),
+            "BaseAdapter as EulerBaseAdapter"
+        );
+        assert_eq!(
+            caps.get(2).unwrap().as_str(),
+            "@euler-price-oracle/adapter/BaseAdapter.sol"
+        );
+    }
+
+    #[test]
+    fn test_import_regex_multiline() {
+        let source = r#"import {
+            ContractA,
+            ContractB as AliasB,
+            ContractC
+        } from "./Contracts.sol";"#;
+        let caps = SOLIDITY_REGEXES.import_named.captures(source).unwrap();
+        assert!(caps.get(1).unwrap().as_str().contains("ContractA"));
+        assert!(
+            caps.get(1)
+                .unwrap()
+                .as_str()
+                .contains("ContractB as AliasB")
+        );
+        assert!(caps.get(1).unwrap().as_str().contains("ContractC"));
+    }
+
+    #[test]
+    fn test_import_item_regex_simple_name() {
+        let segment = "MyContract";
+        let caps = SOLIDITY_REGEXES.import_item.captures(segment).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "MyContract");
+    }
+
+    #[test]
+    fn test_import_item_regex_with_alias() {
+        let segment = "BaseAdapter as EulerBaseAdapter";
+        let caps = SOLIDITY_REGEXES.import_item.captures(segment).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "BaseAdapter");
+    }
+
+    #[test]
+    fn test_import_item_regex_with_whitespace() {
+        let segment = "  MyContract  ";
+        let caps = SOLIDITY_REGEXES.import_item.captures(segment).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "MyContract");
+    }
+
+    // ============================================================================
+    // Helper Function Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_import_map_single_import() {
+        let source = r#"import {MyContract} from "./MyContract.sol";"#;
+        let map = parse_import_map(source);
+        assert_eq!(map.get("MyContract"), Some(&"./MyContract.sol".to_string()));
+    }
+
+    #[test]
+    fn test_parse_import_map_multiple_imports() {
+        let source = r#"import {ContractA, ContractB} from "./Contracts.sol";"#;
+        let map = parse_import_map(source);
+        assert_eq!(map.get("ContractA"), Some(&"./Contracts.sol".to_string()));
+        assert_eq!(map.get("ContractB"), Some(&"./Contracts.sol".to_string()));
+    }
+
+    #[test]
+    fn test_parse_import_map_with_alias() {
+        let source = r#"import {BaseAdapter as EulerBaseAdapter} from "@euler-price-oracle/adapter/BaseAdapter.sol";"#;
+        let map = parse_import_map(source);
+        // The alias (EulerBaseAdapter) should be the key
+        assert_eq!(
+            map.get("EulerBaseAdapter"),
+            Some(&"@euler-price-oracle/adapter/BaseAdapter.sol".to_string())
+        );
+        // The original name should NOT be in the map
+        assert_eq!(map.get("BaseAdapter"), None);
+    }
+
+    #[test]
+    fn test_parse_import_map_mixed_aliases() {
+        let source = r#"
+            import {ContractA, ContractB as AliasB, ContractC} from "./Contracts.sol";
+        "#;
+        let map = parse_import_map(source);
+        assert_eq!(map.get("ContractA"), Some(&"./Contracts.sol".to_string()));
+        assert_eq!(map.get("AliasB"), Some(&"./Contracts.sol".to_string()));
+        assert_eq!(map.get("ContractC"), Some(&"./Contracts.sol".to_string()));
+        // Original name should NOT be in map
+        assert_eq!(map.get("ContractB"), None);
+    }
+
+    #[test]
+    fn test_parse_import_map_multiple_statements() {
+        let source = r#"
+            import {ContractA} from "./A.sol";
+            import {ContractB} from "./B.sol";
+            import {ContractC as AliasC} from "./C.sol";
+        "#;
+        let map = parse_import_map(source);
+        assert_eq!(map.get("ContractA"), Some(&"./A.sol".to_string()));
+        assert_eq!(map.get("ContractB"), Some(&"./B.sol".to_string()));
+        assert_eq!(map.get("AliasC"), Some(&"./C.sol".to_string()));
+    }
+
+    #[test]
+    fn test_parse_import_map_real_world_covenant() {
+        let source = r#"
+            import {IERC4626} from "forge-std/interfaces/IERC4626.sol";
+            import {Ownable2Step, Ownable} from "@openzeppelin/access/Ownable2Step.sol";
+            import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
+            import {Errors} from "./lib/Errors.sol";
+            import {BaseAdapter} from "./BaseAdapter.sol";
+            import {BaseAdapter as EulerBaseAdapter} from "@euler-price-oracle/adapter/BaseAdapter.sol";
+            import {ScaleUtils} from "@euler-price-oracle/lib/ScaleUtils.sol";
+        "#;
+        let map = parse_import_map(source);
+
+        assert_eq!(
+            map.get("IERC4626"),
+            Some(&"forge-std/interfaces/IERC4626.sol".to_string())
+        );
+        assert_eq!(
+            map.get("Ownable2Step"),
+            Some(&"@openzeppelin/access/Ownable2Step.sol".to_string())
+        );
+        assert_eq!(
+            map.get("Ownable"),
+            Some(&"@openzeppelin/access/Ownable2Step.sol".to_string())
+        );
+        assert_eq!(
+            map.get("IPriceOracle"),
+            Some(&"../interfaces/IPriceOracle.sol".to_string())
+        );
+        assert_eq!(map.get("Errors"), Some(&"./lib/Errors.sol".to_string()));
+        // Note: If there are two imports with same name, last one wins (or we could handle differently)
+        // For now, let's just check the alias is there
+        assert_eq!(
+            map.get("EulerBaseAdapter"),
+            Some(&"@euler-price-oracle/adapter/BaseAdapter.sol".to_string())
+        );
+        assert_eq!(
+            map.get("ScaleUtils"),
+            Some(&"@euler-price-oracle/lib/ScaleUtils.sol".to_string())
+        );
+    }
+
+    // ============================================================================
+    // Edge Case Tests
+    // ============================================================================
+
+    #[test]
+    fn test_contract_decl_regex_with_leading_whitespace() {
+        let source = "    contract IndentedContract {";
+        let caps = SOLIDITY_REGEXES.contract_decl.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "IndentedContract");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_with_tabs() {
+        let source = "\t\tinterface ITabbed {";
+        let caps = SOLIDITY_REGEXES.contract_decl.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "interface");
+        assert_eq!(caps.get(2).unwrap().as_str(), "ITabbed");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_underscore_prefix() {
+        let source = "contract _InternalContract {";
+        let caps = SOLIDITY_REGEXES.contract_decl.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "_InternalContract");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_numbers_in_name() {
+        let source = "library ERC721A {";
+        let caps = SOLIDITY_REGEXES.contract_decl.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "library");
+        assert_eq!(caps.get(2).unwrap().as_str(), "ERC721A");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_multiple_underscores() {
+        let source = "contract My_Complex_Contract_Name {";
+        let caps = SOLIDITY_REGEXES.contract_decl.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "My_Complex_Contract_Name");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_multiline_source() {
+        let source = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./IERC20.sol";
+
+contract Token {
+    string public name;
+}
+
+interface IVault {
+    function deposit() external;
+}
+
+library Math {
+    function add(uint a, uint b) internal pure returns (uint) {
+        return a + b;
+    }
+}
+
+abstract contract Base {
+    function foo() internal virtual;
+}
+"#;
+
+        let matches: Vec<_> = SOLIDITY_REGEXES
+            .contract_decl
+            .captures_iter(source)
+            .collect();
+        assert_eq!(matches.len(), 4);
+
+        assert_eq!(matches[0].get(1).unwrap().as_str(), "contract");
+        assert_eq!(matches[0].get(2).unwrap().as_str(), "Token");
+
+        assert_eq!(matches[1].get(1).unwrap().as_str(), "interface");
+        assert_eq!(matches[1].get(2).unwrap().as_str(), "IVault");
+
+        assert_eq!(matches[2].get(1).unwrap().as_str(), "library");
+        assert_eq!(matches[2].get(2).unwrap().as_str(), "Math");
+
+        assert_eq!(matches[3].get(1).unwrap().as_str(), "abstract contract");
+        assert_eq!(matches[3].get(2).unwrap().as_str(), "Base");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_no_match_inline() {
+        // Should NOT match - not at start of line
+        let source = "    function contract() public {}";
+        assert!(SOLIDITY_REGEXES.contract_decl.captures(source).is_none());
+    }
+
+    #[test]
+    fn test_contract_decl_regex_no_match_comment() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        // Should NOT match - inside comment
+        let source = "// contract MyContract";
+        assert!(contract_decl_regex.captures(source).is_none());
+    }
+
+    #[test]
+    fn test_contract_decl_regex_inheritance() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        let source = "contract MyToken is ERC20, Ownable {";
+        let caps = contract_decl_regex.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "MyToken");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_extra_spaces() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        // Multiple spaces between keyword and name
+        let source = "contract    SpacedContract {";
+        let caps = contract_decl_regex.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "SpacedContract");
+    }
+
+    #[test]
+    fn test_contract_type_mapping() {
+        // Test the match logic that maps declaration strings to ContractType
+        let test_cases = vec![
+            ("abstract contract", ContractType::AbstractContract),
+            ("contract", ContractType::Contract),
+            ("interface", ContractType::Interface),
+            ("library", ContractType::Library),
+        ];
+
+        for (decl, expected_type) in test_cases {
+            let contract_type = match decl {
+                "abstract contract" => ContractType::AbstractContract,
+                "contract" => ContractType::Contract,
+                "interface" => ContractType::Interface,
+                "library" => ContractType::Library,
+                _ => ContractType::Contract,
+            };
+            assert_eq!(
+                contract_type, expected_type,
+                "Failed for declaration: {}",
+                decl
+            );
+        }
+    }
+
+    #[test]
+    fn test_contract_decl_regex_real_world_openzeppelin() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        let source = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {IERC20} from "./IERC20.sol";
+
+abstract contract ERC20 is IERC20 {
+    mapping(address => uint256) private _balances;
+}
+"#;
+
+        let caps = contract_decl_regex.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "abstract contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "ERC20");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_real_world_uniswap() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        let source = r#"
+pragma solidity >=0.5.0;
+
+interface IUniswapV2Pair {
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+}
+"#;
+
+        let caps = contract_decl_regex.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "interface");
+        assert_eq!(caps.get(2).unwrap().as_str(), "IUniswapV2Pair");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_camelcase_variations() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        let test_cases = vec![
+            ("contract ALLCAPS {", "ALLCAPS"),
+            ("contract lowercase {", "lowercase"),
+            ("contract CamelCase {", "CamelCase"),
+            ("contract snake_case {", "snake_case"),
+            ("contract PascalCase {", "PascalCase"),
+            ("contract MixedCase123 {", "MixedCase123"),
+        ];
+
+        for (source, expected_name) in test_cases {
+            let caps = contract_decl_regex.captures(source).unwrap();
+            assert_eq!(
+                caps.get(2).unwrap().as_str(),
+                expected_name,
+                "Failed for source: {}",
+                source
+            );
+        }
+    }
+
+    #[test]
+    fn test_contract_decl_regex_no_match_starting_with_number() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        // Should NOT match - name starts with number (invalid Solidity)
+        let source = "contract 123Invalid {";
+        assert!(contract_decl_regex.captures(source).is_none());
+    }
+
+    #[test]
+    fn test_contract_decl_regex_abstract_with_extra_spaces() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        // Should match - single space between abstract and contract
+        let source = "abstract contract MyAbstract {";
+        let caps = contract_decl_regex.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "abstract contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "MyAbstract");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_double_space_in_abstract() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        // The regex uses \s+ which matches one or more whitespace, so this WILL match
+        // (the regex is lenient about whitespace between abstract and contract)
+        let source = "abstract  contract MyAbstract {";
+        // This actually matches because \s+ allows multiple spaces
+        // If we wanted to enforce single space, we'd use \s (single space literal)
+        assert!(contract_decl_regex.captures(source).is_some());
+    }
+
+    #[test]
+    fn test_contract_decl_regex_mixed_declarations() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        let source = r#"
+contract A {}
+library B {}
+interface C {}
+abstract contract D {}
+contract E is A, B {}
+"#;
+
+        let matches: Vec<_> = contract_decl_regex.captures_iter(source).collect();
+        assert_eq!(matches.len(), 5);
+
+        let expected = vec![
+            ("contract", "A"),
+            ("library", "B"),
+            ("interface", "C"),
+            ("abstract contract", "D"),
+            ("contract", "E"),
+        ];
+
+        for (i, (exp_type, exp_name)) in expected.iter().enumerate() {
+            assert_eq!(matches[i].get(1).unwrap().as_str(), *exp_type);
+            assert_eq!(matches[i].get(2).unwrap().as_str(), *exp_name);
+        }
+    }
+
+    #[test]
+    fn test_contract_decl_regex_with_natspec() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        let source = r#"
+/// @title My Contract
+/// @notice This is a test
+contract MyContract {
+    uint256 public value;
+}
+"#;
+
+        let caps = contract_decl_regex.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "MyContract");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_empty_contract() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        let source = "contract Empty {}";
+        let caps = contract_decl_regex.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "Empty");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_no_opening_brace() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        // Should still match - regex doesn't require opening brace
+        let source = "contract NoBrace";
+        let caps = contract_decl_regex.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "NoBrace");
+    }
+
+    #[test]
+    fn test_contract_decl_regex_newline_before_brace() {
+        let contract_decl_regex = Regex::new(
+            r"(?m)^\s*(abstract\s+contract|contract|library|interface)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap();
+
+        let source = r#"contract MyContract
+{
+    uint256 public value;
+}"#;
+
+        let caps = contract_decl_regex.captures(source).unwrap();
+        assert_eq!(caps.get(1).unwrap().as_str(), "contract");
+        assert_eq!(caps.get(2).unwrap().as_str(), "MyContract");
+    }
 }

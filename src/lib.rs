@@ -24,6 +24,8 @@ pub mod build_brain {
     pub mod graph_db;
     /// Contract inheritance analysis
     pub mod inheritance;
+    /// Inheritance relationship mapping with (contract, file) tuples
+    pub mod inheritance_map;
     /// Code parsing utilities
     pub mod parsers;
     /// Slither static analyzer interface
@@ -66,6 +68,8 @@ pub mod enumerator {
     pub mod codeblocks;
     /// Core code slicing functionality
     pub mod extract_ir;
+    /// Interface implementation detection
+    pub mod interface_implementations;
     pub mod libraries;
     pub mod parse_solidity;
     /// Enumeration utilities
@@ -221,6 +225,7 @@ pub mod utils {
     pub mod contract_name_check;
     /// Docker volume cleanup utilities
     pub mod delete_docker_volumes;
+    pub mod display_file;
     pub mod env_security;
     /// LLM extraction with retry logic
     pub mod extract_retry;

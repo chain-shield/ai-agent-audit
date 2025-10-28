@@ -147,6 +147,5 @@ pub fn is_library_package_json(file: &Path, root: &Path) -> bool {
 /// * `true` if the file is in exactly ONE library folder segment
 /// * `false` if in nested library folders or not in a library folder at all
 pub fn is_library_file(file: &Path, root: &Path) -> bool {
-    (file.starts_with("/lib") || file.starts_with("lib"))
-        && path_has_one_segment(file, root, &["lib", "library", "libraries"])
+    path_has_one_segment(file, root, &["lib", "library", "libraries"])
 }

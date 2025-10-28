@@ -1,8 +1,11 @@
+use crate::enumerator::interface_implementations::find_implementations_for_interfaces;
+use crate::enumerator::utils::SolFileType;
+use crate::llm_review::contract_file_map::ContractType;
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::utils::logging::print_first_n_lines;
+use crate::utils::check_folder_name::is_library_file;
 use crate::utils::remapping::resolve_import_path;
 use crate::{
-    llm_review::contract_file_map::get_file_from_contract,
+    llm_review::contract_file_map::{get_file_from_contract, get_file_from_lib_contract},
     utils::contract_name_check::contains_contract_reference,
 };
 use once_cell::sync::Lazy;
@@ -17,18 +20,267 @@ use std::collections::{HashMap, HashSet};
 /// Global cache for source code dependency detection results.
 /// Key format: "repo_hash:contract_name"
 /// Value: (HashSet<contracts>, HashSet<interfaces>)
-static SOURCE_DEPENDENCY_CACHE: Lazy<Mutex<HashMap<String, (HashSet<String>, HashSet<String>)>>> =
+static SOURCE_DEPENDENCY_CACHE: Lazy<Mutex<HashMap<String, ImportDependencies>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 static CONTRACT_TO_SCRIPT_CACHE: Lazy<Mutex<HashMap<String, HashSet<PathBuf>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Result of parsing all imports from a Solidity source file.
+///
+/// This struct contains all dependencies extracted from import statements,
+/// categorized by type and location.
+#[derive(Debug, Clone, Default)]
+pub struct ImportDependencies {
+    /// Library files (from imports starting with '@')
+    /// Example: "@openzeppelin/contracts/token/ERC20/ERC20.sol"
+    pub lib_files: HashSet<PathBuf>,
+
+    /// Source files (from relative imports like "./", "../")
+    /// Example: "./interfaces/ICovenant.sol"
+    pub source_files: HashSet<PathBuf>,
+
+    /// Interfaces with their file paths
+    /// Key: Interface name, Value: File path
+    /// Example: ("IPriceOracle", "/path/to/IPriceOracle.sol")
+    pub interfaces: HashSet<(String, PathBuf)>,
+
+    /// Interface implementations (contracts that implement detected interfaces)
+    /// Key: Contract name, Value: File path
+    /// Example: ("CovenantCurator", "/path/to/CovenantCurator.sol")
+    /// This is populated by searching the entire codebase for implementations
+    pub interface_implementations: HashMap<String, PathBuf>,
+}
+
+/// Parse all import statements from Solidity source code and extract dependencies.
+///
+/// This function provides a comprehensive analysis of all imports in a Solidity file,
+/// resolving paths and categorizing dependencies by type. It obviates the need for
+/// multiple regex searches by parsing all imports in a single pass.
+///
+/// # Algorithm
+/// 1. Parse all import statements (both named and simple imports)
+/// 2. For library imports (starting with '@'):
+///    - Resolve using remappings
+///    - Add to `lib_files` set
+/// 3. For each named import {X, Y, Z}:
+///    - Check if it's an interface using `get_file_from_contract`
+///    - If interface, add to `interfaces` map with file path
+/// 4. For non-library import paths:
+///    - Resolve relative paths (../, ./)
+///    - Use one of the imported names to get correct file path
+///    - Add to `source_files` set
+///
+/// # Arguments
+/// * `source_code` - The Solidity source code to parse
+/// * `current_file` - The file containing this source code (for relative path resolution)
+/// * `repo` - Repository paths for remapping and file resolution
+///
+/// # Returns
+/// * `Ok(ImportDependencies)` - All dependencies categorized by type
+/// * `Err` - If file reading or path resolution fails
+///
+/// # Example
+/// ```ignore
+/// let deps = parse_all_import_dependencies(&source_code, &file, &repo).await?;
+///
+/// // Add lib files to context
+/// for lib_file in deps.lib_files {
+///     context.add_file(lib_file);
+/// }
+///
+/// // Add source files to context
+/// for source_file in deps.source_files {
+///     context.add_file(source_file);
+/// }
+///
+/// // Find root implementations of interfaces
+/// for (interface_name, interface_file) in deps.interfaces {
+///     let children = get_children(&interface_name, &interface_file, &repo).await?;
+///     // Process children...
+/// }
+/// ```
+pub async fn parse_all_import_dependencies(
+    source_code: &str,
+    current_file: &PathBuf,
+    repo: &RepoPaths,
+) -> Result<ImportDependencies> {
+    let mut lib_files = HashSet::new();
+    let mut source_files = HashSet::new();
+    let mut interfaces: HashSet<(String, PathBuf)> = HashSet::new();
+
+    // Regex patterns for parsing imports
+    let import_regex = Regex::new(r#"import\s*\{([^}]+)\}\s*from\s*[\"']([^\"']+)[\"']"#).unwrap();
+    let import_item_regex =
+        Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:(?i:as)\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$")
+            .unwrap();
+    let simple_import_regex = Regex::new(r#"import\s*[\"']([^\"']+)[\"']"#).unwrap();
+
+    // Parse named imports: import { X, Y, Z } from "path"
+    for cap in import_regex.captures_iter(source_code) {
+        if let Some(imports) = cap.get(1) {
+            let import_path = cap.get(2).unwrap().as_str();
+
+            // Collect all imported names from this statement
+            let mut imported_names = Vec::new();
+            for import in imports.as_str().split(',') {
+                let segment = import.trim();
+                if segment.is_empty() {
+                    continue;
+                }
+
+                // Extract the actual contract name (before "as" if aliased)
+                let name = if let Some(m) = import_item_regex.captures(segment) {
+                    m.get(1).unwrap().as_str()
+                } else {
+                    segment
+                };
+
+                imported_names.push(name.to_string());
+            }
+
+            // Handle library imports (starting with '@')
+            if import_path.starts_with('@') {
+                if let Some(resolved_path) = resolve_import_path(import_path, repo) {
+                    if !should_exclude_this_library(&resolved_path) {
+                        let full_path = repo.root.join(&repo.repo_name).join(&resolved_path);
+                        if let Ok(canonical_path) = full_path.canonicalize() {
+                            lib_files.insert(canonical_path);
+                        }
+                    }
+                }
+                // For library imports, also check if any imported names are interfaces
+                for name in imported_names {
+                    // Check in lib contracts
+                    if let Some((file, contract_type)) =
+                        get_file_from_lib_contract(&name, repo).await
+                    {
+                        if contract_type == ContractType::Interface {
+                            interfaces.insert((name, file));
+                        }
+                    }
+                }
+            } else {
+                // Non-library import - resolve the file path
+                // Use the first imported name to get the correct file path
+                if let Some(first_name) = imported_names.first() {
+                    // Try source contracts first
+                    if let Some((file, _)) = get_file_from_contract(first_name, repo).await {
+                        source_files.insert(file.clone());
+
+                        // Check all imported names for interfaces
+                        for name in &imported_names {
+                            if let Some((name_file, contract_type)) =
+                                get_file_from_contract(name, repo).await
+                            {
+                                if contract_type == ContractType::Interface {
+                                    interfaces.insert((name.clone(), name_file));
+                                }
+                            }
+                        }
+                    } else {
+                        // Fallback: try to resolve path manually
+                        let resolved_path =
+                            if import_path.starts_with("../") || import_path.starts_with("./") {
+                                if let Some(parent_dir) = current_file.parent() {
+                                    parent_dir.join(import_path)
+                                } else {
+                                    PathBuf::from(import_path)
+                                }
+                            } else {
+                                repo.root.join(&repo.repo_name).join(import_path)
+                            };
+
+                        if let Ok(canonical_path) = resolved_path.canonicalize() {
+                            source_files.insert(canonical_path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Parse simple imports: import "path";
+    for cap in simple_import_regex.captures_iter(source_code) {
+        let import_path = cap.get(1).unwrap().as_str();
+
+        if import_path.starts_with('@') {
+            // Library import
+            if let Some(resolved_path) = resolve_import_path(import_path, repo) {
+                if !should_exclude_this_library(&resolved_path) {
+                    let full_path = repo.root.join(&repo.repo_name).join(&resolved_path);
+                    if let Ok(canonical_path) = full_path.canonicalize() {
+                        lib_files.insert(canonical_path);
+                    }
+                }
+            }
+        } else {
+            // Source import - resolve path
+            let resolved_path = if import_path.starts_with("../") || import_path.starts_with("./") {
+                if let Some(parent_dir) = current_file.parent() {
+                    parent_dir.join(import_path)
+                } else {
+                    PathBuf::from(import_path)
+                }
+            } else {
+                repo.root.join(&repo.repo_name).join(import_path)
+            };
+
+            if let Ok(canonical_path) = resolved_path.canonicalize() {
+                source_files.insert(canonical_path);
+            }
+        }
+    }
+
+    Ok(ImportDependencies {
+        lib_files,
+        source_files,
+        interfaces,
+        interface_implementations: HashMap::new(), // Will be populated by detect_source_code_dependencies
+    })
+}
+
+/// Detect source code dependencies from a file path (without caching).
+///
+/// This is a lower-level function that works directly with file paths.
+/// Use this when you already have the file path and want to analyze its dependencies.
+/// This function does NOT use caching and does NOT recursively analyze transitive dependencies.
+///
+/// # Arguments
+/// * `file` - The file path to analyze
+/// * `repo` - Repository paths
+///
+/// # Returns
+/// * `ImportDependencies` - The direct dependencies found in the file
+async fn detect_dependencies_from_file_internal(
+    file: &PathBuf,
+    repo: &RepoPaths,
+) -> Result<ImportDependencies> {
+    // Skip excluded libraries (OpenZeppelin, forge-std, etc.)
+    if let Some(file_str) = file.to_str() {
+        if should_exclude_this_library(file_str) {
+            return Ok(ImportDependencies::default());
+        }
+    }
+
+    // Read the source code
+    let source_code = match fs::read_to_string(file).await {
+        Ok(content) => content,
+        Err(_) => {
+            return Ok(ImportDependencies::default());
+        }
+    };
+
+    // Parse imports from this file
+    parse_all_import_dependencies(&source_code, file, repo).await
+}
 
 /// # Returns
 /// * `HashSet<String>` - contracts & interfaces found in source
 pub async fn detect_source_code_dependencies(
     contract: &str,
     repo: &RepoPaths,
-) -> Result<(HashSet<String>, HashSet<String>)> {
+) -> Result<ImportDependencies> {
     // info!("SCANNING for SOURCE CODE DEPENDENCIES");
     // Create cache key: "repo_hash:contract_name"
     let cache_key = format!("{}:{}", repo.unique_repo_hash(), contract);
@@ -46,30 +298,48 @@ pub async fn detect_source_code_dependencies(
         }
     }
 
-    // info!(
-    //     "cache miss for source dependencies of contract {} (repo: {}), analyzing...",
-    //     contract,
-    //     repo.unique_repo_hash()
-    // );
-
-    let mut contracts = HashSet::new();
-    let mut interfaces = HashSet::new();
-    let mut lib_files = HashSet::new();
+    info!(
+        "cache miss for source dependencies of contract {} (repo: {}), analyzing...",
+        contract,
+        repo.unique_repo_hash()
+    );
 
     // Get the source file for this contract
-    let file = match get_file_from_contract(contract, repo).await {
+    // Try source files first, then library files
+    let (file, _) = match get_file_from_contract(contract, repo).await {
         Some(f) => f,
         None => {
-            info!(
-                "could not find file for contract {} to detect dependencies",
-                contract
-            );
-            // Cache the empty result to avoid re-attempting failed lookups
-            let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
-            cache.insert(cache_key, (HashSet::new(), HashSet::new()));
-            return Ok((HashSet::new(), HashSet::new()));
+            // Try library files
+            match get_file_from_lib_contract(contract, repo).await {
+                Some(f) => f,
+                None => {
+                    info!(
+                        "could not find file for contract {} to detect dependencies (checked both source and lib files)",
+                        contract
+                    );
+                    // Cache the empty result to avoid re-attempting failed lookups
+                    let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
+                    cache.insert(cache_key, ImportDependencies::default());
+                    return Ok(ImportDependencies::default());
+                }
+            }
         }
     };
+
+    // Skip excluded libraries (OpenZeppelin, forge-std, etc.)
+    if let Some(file_str) = file.to_str() {
+        if should_exclude_this_library(file_str) {
+            info!(
+                "skipping excluded library contract {} at {}",
+                contract,
+                file.display()
+            );
+            // Cache the empty result to avoid re-processing excluded libraries
+            let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
+            cache.insert(cache_key, ImportDependencies::default());
+            return Ok(ImportDependencies::default());
+        }
+    }
 
     // Read the source code
     let source_code = match fs::read_to_string(&file).await {
@@ -80,468 +350,143 @@ pub async fn detect_source_code_dependencies(
                 file.display(),
                 e
             );
-            return Ok((HashSet::new(), HashSet::new()));
+            return Ok(ImportDependencies::default());
         }
     };
 
-    // Parse imports on raw source BEFORE stripping string literals
-    {
-        // 3. Import statements: import { ContractName } from "..."
-        // Note: Handles multiple comma-separated imports correctly via split(',')
-        // Supports aliasing: import { X as Y } → record X (ignore alias)
-        // If starts with 'I', could be interface OR contract → add to BOTH (defensive)
-        // Semicolon removed from regex to support multiline imports; allow no space after 'from'
-        let import_regex =
-            Regex::new(r#"import\s*\{([^}]+)\}\s*from\s*[\"']([^\"']+)[\"']"#).unwrap();
-        let import_item_regex =
-            Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:(?i:as)\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$")
-                .unwrap();
-        // info!("READING IMPORT PATH...");
-        for cap in import_regex.captures_iter(&source_code) {
-            if let Some(imports) = cap.get(1) {
-                let import_path = cap.get(2).unwrap().as_str();
-                // info!("IMPORT PATH: {}", import_path);
-                // Track external library files (imports starting with '@')
-                if import_path.starts_with("@") {
-                    info!("LIB DEP FOUND: {}", import_path);
-                    if let Some(resolved_path) = resolve_import_path(import_path, repo) {
-                        info!("RESOLVED PATH: {}", resolved_path);
-                        if !should_exclude_this_library(&resolved_path) {
-                            info!("ADDING RESOLVED PATH {} to LIB FILES", resolved_path);
-                            lib_files.insert(resolved_path);
-                        }
-                        continue; // We have the file path, skip name extraction
-                    } else {
-                        // No remapping found - log warning and fall through to extract names
-                        log::warn!(
-                            "No remapping found for external import '{}' in contract {}",
-                            import_path,
-                            contract
-                        );
-                    }
-                }
+    let mut import_deps = parse_all_import_dependencies(&source_code, &file, repo).await?;
 
-                for import in imports.as_str().split(',') {
-                    let segment = import.trim();
-                    if segment.is_empty() {
-                        continue;
-                    }
-                    let name = if let Some(m) = import_item_regex.captures(segment) {
-                        m.get(1).unwrap().as_str()
-                    } else {
-                        // Fallback: use the trimmed segment as-is
-                        segment
-                    };
-                    if name.starts_with('I')
-                        && name.len() > 1
-                        && name.chars().nth(1).map_or(false, |c| c.is_uppercase())
-                    {
-                        // info!(
-                        //     "detected import (interface or contract): {} in {}",
-                        //     name, contract
-                        // );
-                        interfaces.insert(name.to_string()); // Try as interface
-                        contracts.insert(name.to_string()); // Also try as contract
-                    } else if name.chars().next().map_or(false, |c| c.is_uppercase()) {
-                        // info!("detected contract import: {} in {}", name, contract);
-                        contracts.insert(name.to_string());
-                    }
-                }
-            } else {
-                info!("cound not parse imports for");
-                print_first_n_lines(10, &source_code);
-            }
-        }
+    // TRANSITIVE DEPENDENCIES: Analyze imports of imported source files (1 level deep)
+    // This catches cases like: SynthToken imports ISynthToken, which imports ICovenant
+    // We need ICovenant to understand the types used in ISynthToken
+    let mut transitive_source_files = HashSet::new();
+    let mut transitive_lib_files = HashSet::new();
+    let mut transitive_interfaces = HashSet::new();
 
-        // Also handle simple import statements: import "path"; (no named imports)
-        let simple_import_regex = Regex::new(r#"import\s*[\"']([^\"']+)[\"']"#).unwrap();
-        for cap in simple_import_regex.captures_iter(&source_code) {
-            let import_path = cap.get(1).unwrap().as_str();
-            // info!("IMPORT PATH (simple): {}", import_path);
-            if import_path.starts_with("@") {
-                info!("LIB DEP FOUND (simple): {}", import_path);
-                if let Some(resolved_path) = resolve_import_path(import_path, repo) {
-                    info!("RESOLVED PATH (simple): {}", resolved_path);
-                    if !should_exclude_this_library(&resolved_path) {
-                        info!("ADDING RESOLVED PATH {} to LIB FILES", resolved_path);
-                        lib_files.insert(resolved_path);
-                    }
-                } else {
-                    log::warn!(
-                        "No remapping found for external import '{}' in contract {} (simple)",
-                        import_path,
-                        contract
-                    );
-                }
-            }
-        }
+    // Analyze imports of source files
+    for source_file in &import_deps.source_files {
+        let transitive_deps = detect_dependencies_from_file_internal(source_file, repo).await?;
+        transitive_source_files.extend(transitive_deps.source_files);
+        transitive_lib_files.extend(transitive_deps.lib_files);
+        transitive_interfaces.extend(transitive_deps.interfaces);
     }
 
-    // Strip comments and string literals to avoid false positives (e.g., "XOR (^)" in comments)
-    let source_code = strip_comments_and_strings(&source_code);
-
-    // Collect event and error identifiers so we can exclude them from dependency candidates
-    let mut banned_identifiers: HashSet<String> = HashSet::new();
-
-    // Declarations
-    let event_decl_regex = Regex::new(r"\bevent\s+([A-Z][A-Za-z0-9_]*)\b").unwrap();
-    for cap in event_decl_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            banned_identifiers.insert(name.as_str().to_string());
-        }
-    }
-    let error_decl_regex = Regex::new(r"\berror\s+([A-Z][A-Za-z0-9_]*)\b").unwrap();
-    for cap in error_decl_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            banned_identifiers.insert(name.as_str().to_string());
-        }
+    // Analyze imports of interfaces (they can import types, other interfaces, etc.)
+    for (_, interface_file) in &import_deps.interfaces {
+        let transitive_deps = detect_dependencies_from_file_internal(interface_file, repo).await?;
+        transitive_source_files.extend(transitive_deps.source_files);
+        transitive_lib_files.extend(transitive_deps.lib_files);
+        transitive_interfaces.extend(transitive_deps.interfaces);
     }
 
-    // Usages (emit/revert) — capture event/error identifiers even if declared elsewhere
-    let emit_usage_regex = Regex::new(r"\bemit\s+([A-Z][A-Za-z0-9_]*)\s*\(").unwrap();
-    for cap in emit_usage_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            banned_identifiers.insert(name.as_str().to_string());
-        }
-    }
-    let revert_usage_regex = Regex::new(r"\brevert\s+([A-Z][A-Za-z0-9_]*)\s*\(").unwrap();
-    for cap in revert_usage_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            banned_identifiers.insert(name.as_str().to_string());
-        }
-    }
+    // Add transitive dependencies to the main import_deps
+    import_deps.source_files.extend(transitive_source_files);
+    import_deps.lib_files.extend(transitive_lib_files);
+    import_deps.interfaces.extend(transitive_interfaces);
 
-    // 1. Constructor calls: new ContractName(...)
-    let new_contract_regex = Regex::new(r"\bnew\s+([A-Z][A-Za-z0-9_]*)\s*\(").unwrap();
-    for cap in new_contract_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            let contract_name = name.as_str().to_string();
-            // info!(
-            //     "detected constructor call: new {}(...) in {}",
-            //     contract_name, contract
-            // );
-            contracts.insert(contract_name);
-        }
-    }
+    // INTERFACE IMPLEMENTATIONS: Find ALL contracts that implement detected interfaces
+    // This is critical for security analysis - when code uses an interface (e.g., IPriceOracle),
+    // we need to analyze ALL possible implementations (e.g., CovenantCurator, PythOracle, ChainlinkOracle)
+    // because any of them could be used at runtime (runtime polymorphism)
+    info!(
+        "🔍 Searching for implementations of {} interfaces",
+        import_deps.interfaces.len()
+    );
 
-    // 2. Interface/Contract casts: InterfaceName(address)
-    // Matches: IERC20(token), IUniswapV2Pair(pair), ImmutableCreate2Factory(addr), etc.
-    // If starts with 'I', could be interface OR contract → add to BOTH (defensive)
-    let type_cast_regex = Regex::new(r"\b([A-Z][A-Za-z0-9_]*)\s*\([^)]*\)").unwrap();
-    for cap in type_cast_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            let type_name = name.as_str();
-            // Filter out common Solidity keywords and built-in types
-            if !is_solidity_builtin(type_name) {
-                if type_name.starts_with('I')
-                    && type_name.len() > 1
-                    && type_name.chars().nth(1).map_or(false, |c| c.is_uppercase())
-                {
-                    // info!(
-                    //     "detected type cast (interface or contract): {}(...) in {}",
-                    //     type_name, contract
-                    // );
-                    interfaces.insert(type_name.to_string()); // Try as interface
-                    contracts.insert(type_name.to_string()); // Also try as contract
-                } else {
-                    // info!("detected contract cast: {}(...) in {}", type_name, contract);
-                    contracts.insert(type_name.to_string());
-                }
-            }
-        }
+    // Pass the full (interface_name, interface_file_path) tuples for accurate lookup
+    // This prevents collisions when multiple interfaces have the same name in different directories
+    let implementations =
+        find_implementations_for_interfaces(&import_deps.interfaces, repo).await?;
+
+    info!(
+        "📊 Found {} total implementations across all interfaces",
+        implementations.len()
+    );
+
+    // SECOND LEVEL TRANSITIVE: Analyze imports of interface implementations
+    // This catches cases like: Covenant uses ILiquidExchangeModel → LatentSwapLEX implements it → LatentSwapLEX uses IPriceOracle
+    // We need to find ALL implementations of IPriceOracle (CovenantCurator, ChainlinkOracle, PythOracle)
+    info!(
+        "🔍 Analyzing transitive dependencies of {} interface implementations",
+        implementations.len()
+    );
+
+    let mut implementation_interfaces = HashSet::new();
+    for (_, impl_file) in &implementations {
+        let impl_deps = detect_dependencies_from_file_internal(impl_file, repo).await?;
+        implementation_interfaces.extend(impl_deps.interfaces);
     }
 
-    // Imports already parsed earlier on raw source before stripping string literals
+    import_deps.interface_implementations = implementations;
 
-    // 4. Type declarations: ContractName/InterfaceName public/private/internal variable
-    // Matches: IERC20 public token, TSwapPool private pool, ImmutableCreate2Factory immutable factory, etc.
-    // Variable names: start with [a-zA-Z_], can contain [a-zA-Z0-9_]*
-    // If starts with 'I', could be interface OR contract → add to BOTH (defensive)
-    let type_decl_regex = Regex::new(
-        r"\b([A-Z][A-Za-z0-9_]*)\s+(?:public|private|internal|immutable|constant)\s+[a-zA-Z_][a-zA-Z0-9_]*",
-    )
-    .unwrap();
-    for cap in type_decl_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            let type_name = name.as_str();
-            if !is_solidity_builtin(type_name) {
-                if type_name.starts_with('I')
-                    && type_name.len() > 1
-                    && type_name.chars().nth(1).map_or(false, |c| c.is_uppercase())
-                {
-                    // info!(
-                    //     "detected type declaration (interface or contract): {} in {}",
-                    //     type_name, contract
-                    // );
-                    interfaces.insert(type_name.to_string()); // Try as interface
-                    contracts.insert(type_name.to_string()); // Also try as contract
-                } else {
-                    // info!(
-                    //     "detected contract type declaration: {} in {}",
-                    //     type_name, contract
-                    // );
-                    contracts.insert(type_name.to_string());
-                }
-            }
-        }
+    // Find implementations of these newly discovered interfaces
+    if !implementation_interfaces.is_empty() {
+        info!(
+            "🔍 Found {} additional interfaces from implementation analysis",
+            implementation_interfaces.len()
+        );
+
+        let additional_implementations =
+            find_implementations_for_interfaces(&implementation_interfaces, repo).await?;
+
+        info!(
+            "📊 Found {} additional implementations from transitive analysis",
+            additional_implementations.len()
+        );
+
+        // Merge with existing implementations
+        import_deps
+            .interface_implementations
+            .extend(additional_implementations);
     }
 
-    // 5. Array types: ContractName[] or InterfaceName[size]
-    // Matches: IVault[] public vaults, TSwapPool[10] pools, etc.
-    // Detects BOTH interfaces and contracts
-    let array_type_regex = Regex::new(r"\b([A-Z][A-Za-z0-9_]*)\s*\[\s*\d*\s*\]").unwrap();
-    for cap in array_type_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            let type_name = name.as_str();
-            if !is_solidity_builtin(type_name) {
-                if type_name.starts_with('I')
-                    && type_name.len() > 1
-                    && type_name.chars().nth(1).map_or(false, |c| c.is_uppercase())
-                {
-                    // info!(
-                    //     "detected array type (interface or contract): {}[] in {}",
-                    //     type_name, contract
-                    // );
-                    interfaces.insert(type_name.to_string()); // Try as interface
-                    contracts.insert(type_name.to_string()); // Also try as contract
-                } else {
-                    // info!(
-                    //     "detected contract array type: {}[] in {}",
-                    //     type_name, contract
-                    // );
-                    contracts.insert(type_name.to_string());
-                }
-            }
-        }
-    }
-
-    // 6. Mapping value types: mapping(... => ContractName/InterfaceName)
-    // Matches: mapping(address => IStrategy), mapping(uint => TSwapPool), etc.
-    // Detects BOTH interfaces and contracts
-    let mapping_value_regex =
-        Regex::new(r"mapping\s*\([^)]+\s*=>\s*([A-Z][A-Za-z0-9_]*)\s*\)").unwrap();
-    for cap in mapping_value_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            let type_name = name.as_str();
-            if !is_solidity_builtin(type_name) {
-                if type_name.starts_with('I')
-                    && type_name.len() > 1
-                    && type_name.chars().nth(1).map_or(false, |c| c.is_uppercase())
-                {
-                    // info!(
-                    //     "detected mapping value (interface or contract): mapping(...=> {}) in {}",
-                    //     type_name, contract
-                    // );
-                    interfaces.insert(type_name.to_string()); // Try as interface
-                    contracts.insert(type_name.to_string()); // Also try as contract
-                } else {
-                    // info!(
-                    //     "detected contract mapping value: mapping(...=> {}) in {}",
-                    //     type_name, contract
-                    // );
-                    contracts.insert(type_name.to_string());
-                }
-            }
-        }
-    }
-
-    // 7. Mapping key types: mapping(ContractName/InterfaceName => ...)
-    // Matches: mapping(IToken => uint256), mapping(TSwapPool => address), etc.
-    // Detects BOTH interfaces and contracts
-    let mapping_key_regex = Regex::new(r"mapping\s*\(\s*([A-Z][A-Za-z0-9_]*)\s*=>").unwrap();
-    for cap in mapping_key_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            let type_name = name.as_str();
-            if !is_solidity_builtin(type_name) {
-                if type_name.starts_with('I')
-                    && type_name.len() > 1
-                    && type_name.chars().nth(1).map_or(false, |c| c.is_uppercase())
-                {
-                    // info!(
-                    //     "detected mapping key (interface or contract): mapping({} => ...) in {}",
-                    //     type_name, contract
-                    // );
-                    interfaces.insert(type_name.to_string()); // Try as interface
-                    contracts.insert(type_name.to_string()); // Also try as contract
-                } else {
-                    // info!(
-                    //     "detected contract mapping key: mapping({} => ...) in {}",
-                    //     type_name, contract
-                    // );
-                    contracts.insert(type_name.to_string());
-                }
-            }
-        }
-    }
-
-    // 8. Function parameters: function foo(ContractName/InterfaceName param, ...)
-    // Matches ALL parameters: function swap(IERC20 tokenIn, IPool pool, TSwapPool factory)
-    // First extracts function signatures, then parses parameters within them
-    // This avoids false positives from variable declarations and struct fields
-    let function_sig_regex =
-        Regex::new(r"function\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\(([^)]*)\)").unwrap();
-    let param_type_regex = Regex::new(r"\b([A-Z][A-Za-z0-9_]*)\s+[a-zA-Z_][a-zA-Z0-9_]*").unwrap();
-
-    for func_match in function_sig_regex.captures_iter(&source_code) {
-        if let Some(params) = func_match.get(1) {
-            // Now parse parameter types within this function signature only
-            for param_cap in param_type_regex.captures_iter(params.as_str()) {
-                if let Some(name) = param_cap.get(1) {
-                    let type_name = name.as_str();
-                    if !is_solidity_builtin(type_name) {
-                        if type_name.starts_with('I')
-                            && type_name.len() > 1
-                            && type_name.chars().nth(1).map_or(false, |c| c.is_uppercase())
-                        {
-                            // info!(
-                            //     "detected function parameter (interface or contract): {} in {}",
-                            //     type_name, contract
-                            // );
-                            interfaces.insert(type_name.to_string()); // Try as interface
-                            contracts.insert(type_name.to_string()); // Also try as contract
-                        } else {
-                            // info!(
-                            //     "detected contract function parameter: {} in {}",
-                            //     type_name, contract
-                            // );
-                            contracts.insert(type_name.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 9. Function return types: returns (ContractName/InterfaceName)
-    // Matches: returns (IVault vault), returns (TSwapPool), etc.
-    // Detects BOTH interfaces and contracts
-    let return_type_regex = Regex::new(r"returns\s*\([^)]*\b([A-Z][A-Za-z0-9_]*)\b").unwrap();
-    for cap in return_type_regex.captures_iter(&source_code) {
-        if let Some(name) = cap.get(1) {
-            let type_name = name.as_str();
-            if !is_solidity_builtin(type_name) {
-                if type_name.starts_with('I')
-                    && type_name.len() > 1
-                    && type_name.chars().nth(1).map_or(false, |c| c.is_uppercase())
-                {
-                    // info!(
-                    //     "detected return type (interface or contract): {} in {}",
-                    //     type_name, contract
-                    // );
-                    interfaces.insert(type_name.to_string()); // Try as interface
-                    contracts.insert(type_name.to_string()); // Also try as contract
-                } else {
-                    // info!(
-                    //     "detected contract return type: {} in {}",
-                    //     type_name, contract
-                    // );
-                    contracts.insert(type_name.to_string());
-                }
-            }
-        }
-    }
-
-    // 10. Struct fields: struct Data { ContractName/InterfaceName field; }
-    // Matches ALL fields with semicolons: struct PoolData { IERC20 token; TSwapPool pool; }
-    // First extracts full struct definitions, then parses fields within them
-    // Uses semicolon to properly delimit field boundaries and handles multi-line structs
-    let struct_block_regex = Regex::new(r"struct\s+[A-Z][A-Za-z0-9_]*\s*\{([^}]+)\}").unwrap();
-    let struct_field_regex =
-        Regex::new(r"\b([A-Z][A-Za-z0-9_]*)\s+[a-zA-Z_][a-zA-Z0-9_]*\s*;").unwrap();
-    for struct_match in struct_block_regex.captures_iter(&source_code) {
-        if let Some(struct_body) = struct_match.get(1) {
-            // Now find all field types within this struct body
-            for field_cap in struct_field_regex.captures_iter(struct_body.as_str()) {
-                if let Some(name) = field_cap.get(1) {
-                    let type_name = name.as_str();
-                    if !is_solidity_builtin(type_name) {
-                        if type_name.starts_with('I')
-                            && type_name.len() > 1
-                            && type_name.chars().nth(1).map_or(false, |c| c.is_uppercase())
-                        {
-                            // info!(
-                            //     "detected struct field (interface or contract): {} in {}",
-                            //     type_name, contract
-                            // );
-                            interfaces.insert(type_name.to_string()); // Try as interface
-                            contracts.insert(type_name.to_string()); // Also try as contract
-                        } else {
-                            // info!(
-                            //     "detected contract struct field: {} in {}",
-                            //     type_name, contract
-                            // );
-                            contracts.insert(type_name.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Validate discovered names against known mappings to avoid false positives
-    let mut filtered_contracts: HashSet<String> = HashSet::new();
-    for c in &contracts {
-        // Exclude events and errors discovered by regex
-        if banned_identifiers.contains(c) {
-            continue;
-        }
-        if let Some(path) = get_file_from_contract(c, repo).await {
-            // Drop standard libraries by name or by path
-            if is_standard_library_contract_name(c)
-                || path_is_standard_lib(&path)
-                || is_standard_interface_name(c)
-            {
-                continue;
-            }
-            filtered_contracts.insert(c.clone());
-        } else {
-            info!(
-                "ignoring source dependency candidate '{}' (no contract file found)",
-                c
-            );
-        }
-    }
-
-    let mut filtered_interfaces: HashSet<String> = HashSet::new();
-    for i in &interfaces {
-        if is_standard_interface_name(i) {
-            continue;
-        }
-        // Exclude events and errors discovered by regex
-        if banned_identifiers.contains(i) {
-            continue;
-        }
-        if get_file_from_contract(i, repo).await.is_some() {
-            filtered_interfaces.insert(i.clone());
-        } else {
-            info!(
-                "ignoring source dependency candidate '{}' (no interface file found)",
-                i
-            );
-        }
-    }
-
-    // info!(
-    //     "cached source dependencies for contract {} (repo: {}): {} contracts, {} interfaces",
-    //     contract,
-    //     repo.unique_repo_hash(),
-    //     filtered_contracts.len(),
-    //     filtered_interfaces.len()
-    // );
-
-    let mut filtered_sources = HashSet::new();
-    filtered_sources.extend(filtered_contracts);
-    filtered_sources.extend(filtered_interfaces);
+    info!(
+        "cached source dependencies for contract {} (repo: {}): {} lib files, {} src files,\n 
+            {} interfaces + child contracts, {} interface implimentations",
+        contract,
+        repo.unique_repo_hash(),
+        import_deps.lib_files.len(),
+        import_deps.source_files.len(),
+        import_deps.interfaces.len(),
+        import_deps.interface_implementations.len()
+    );
 
     // Cache the result before returning
     {
         let mut cache = SOURCE_DEPENDENCY_CACHE.lock().unwrap();
-        cache.insert(cache_key, (filtered_sources.clone(), lib_files.clone()));
+        cache.insert(cache_key, import_deps.clone());
     }
 
-    Ok((filtered_sources, lib_files))
+    Ok(import_deps)
 }
 
+pub async fn get_contract_type(
+    contract: &str,
+    file: &PathBuf,
+    repo: &RepoPaths,
+) -> Option<ContractType> {
+    let file_type = get_file_type(file, repo);
+
+    let contract_info_option = match file_type {
+        SolFileType::Standard => get_file_from_contract(contract, repo).await,
+        SolFileType::LibFolder => get_file_from_lib_contract(contract, repo).await,
+    };
+
+    match contract_info_option {
+        Some((_, contract_type)) => Some(contract_type),
+        None => None,
+    }
+}
+
+pub fn get_file_type(file: &PathBuf, repo: &RepoPaths) -> SolFileType {
+    let file_type = if is_library_file(file, &repo.root) {
+        SolFileType::LibFolder
+    } else {
+        SolFileType::Standard
+    };
+
+    file_type
+}
 pub async fn detect_scripts_connected_to_contract(
     contract: &str,
     repo: &RepoPaths,
@@ -608,12 +553,15 @@ fn strip_comments_and_strings(src: &str) -> String {
     out
 }
 
-fn should_exclude_this_library(file_path: &str) -> bool {
+pub fn should_exclude_this_library(file_path: &str) -> bool {
     file_path.contains("openzeppelin")
         || file_path.contains("forge-std")
         || file_path.contains("ds-test")
         || file_path.contains("erc4626-tests")
         || file_path.contains("halmos-cheatcodes")
+        || file_path.contains("solmate")
+        || file_path.contains("prb-test")
+        || file_path.contains("solady")
 }
 
 /// Check if a type name is a Solidity built-in type or common library type
@@ -626,64 +574,64 @@ fn should_exclude_this_library(file_path: &str) -> bool {
 ///
 /// Note: Solidity built-in types are lowercase, but our regex captures PascalCase types.
 /// We filter by checking if the LOWERCASE version is a built-in type.
-fn is_solidity_builtin(name: &str) -> bool {
-    let name_lower = name.to_lowercase();
-
-    // Exact matches for common types (check lowercase version)
-    if matches!(
-        name_lower.as_str(),
-        // Solidity built-in types (always lowercase in actual code)
-        "string" | "bytes" | "address" | "uint" | "int" | "bool" |
-        // Memory location keywords
-        "memory" | "storage" | "calldata"
-    ) {
-        return true;
-    }
-
-    // Common OpenZeppelin/library names (PascalCase - check original name)
-    if matches!(
-        name,
-        "Math"
-            | "SafeMath"
-            | "Strings"
-            | "Arrays"
-            | "EnumerableSet"
-            | "EnumerableMap"
-            | "Counters"
-            | "SafeCast"
-            | "SignedMath"
-            | "Checkpoints"
-            | "Context"
-            | "Ownable"
-    ) {
-        return true;
-    }
-
-    // Pattern matches for sized types (check lowercase version)
-    // uint8, uint16, uint24, ..., uint256
-    if name_lower.starts_with("uint") && name_lower.len() > 4 {
-        if let Ok(_) = name_lower[4..].parse::<u16>() {
-            return true;
-        }
-    }
-
-    // int8, int16, int24, ..., int256
-    if name_lower.starts_with("int") && name_lower.len() > 3 {
-        if let Ok(_) = name_lower[3..].parse::<u16>() {
-            return true;
-        }
-    }
-
-    // bytes1, bytes2, ..., bytes32
-    if name_lower.starts_with("bytes") && name_lower.len() > 5 {
-        if let Ok(n) = name_lower[5..].parse::<u8>() {
-            return n >= 1 && n <= 32;
-        }
-    }
-
-    false
-}
-
+// fn is_solidity_builtin(name: &str) -> bool {
+//     let name_lower = name.to_lowercase();
+//
+//     // Exact matches for common types (check lowercase version)
+//     if matches!(
+//         name_lower.as_str(),
+//         // Solidity built-in types (always lowercase in actual code)
+//         "string" | "bytes" | "address" | "uint" | "int" | "bool" |
+//         // Memory location keywords
+//         "memory" | "storage" | "calldata"
+//     ) {
+//         return true;
+//     }
+//
+//     // Common OpenZeppelin/library names (PascalCase - check original name)
+//     if matches!(
+//         name,
+//         "Math"
+//             | "SafeMath"
+//             | "Strings"
+//             | "Arrays"
+//             | "EnumerableSet"
+//             | "EnumerableMap"
+//             | "Counters"
+//             | "SafeCast"
+//             | "SignedMath"
+//             | "Checkpoints"
+//             | "Context"
+//             | "Ownable"
+//     ) {
+//         return true;
+//     }
+//
+//     // Pattern matches for sized types (check lowercase version)
+//     // uint8, uint16, uint24, ..., uint256
+//     if name_lower.starts_with("uint") && name_lower.len() > 4 {
+//         if let Ok(_) = name_lower[4..].parse::<u16>() {
+//             return true;
+//         }
+//     }
+//
+//     // int8, int16, int24, ..., int256
+//     if name_lower.starts_with("int") && name_lower.len() > 3 {
+//         if let Ok(_) = name_lower[3..].parse::<u16>() {
+//             return true;
+//         }
+//     }
+//
+//     // bytes1, bytes2, ..., bytes32
+//     if name_lower.starts_with("bytes") && name_lower.len() > 5 {
+//         if let Ok(n) = name_lower[5..].parse::<u8>() {
+//             return n >= 1 && n <= 32;
+//         }
+//     }
+//
+//     false
+// }
+//
 /// Detect contracts and interfaces referenced in source code.
 ///
 /// Slither's call graph does NOT include:

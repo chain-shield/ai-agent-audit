@@ -40,8 +40,8 @@ build_cmd: "forge install && forge build"
 #   - "script"
 
 # Optional: PoC configuration
-poc_instructions: "covenant-test.md"
-poc_template: "covenant-poc-template.t.sol"
+poc_instructions: "audit-docs/covenant-test.md"
+poc_template: "audit-docs/covenant-poc-template.t.sol"
 test_folder: "test/poc"
 
 # Optional: Foundry via-ir flag

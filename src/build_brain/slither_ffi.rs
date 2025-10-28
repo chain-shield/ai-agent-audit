@@ -443,7 +443,111 @@ pub async fn run_printer_monorepo(repo: &RepoPaths, printer: &str) -> Result<Str
     }
     Ok(total_output)
 }
-// use for inheritance and call-graph
+
+/// Custom Slither runner for inheritance analysis with standard library filtering.
+///
+/// This function runs Slither's inheritance printer with explicit path filtering to:
+/// 1. Include all project code (including lib folders like euler-price-oracle)
+/// 2. Exclude only standard libraries and testing frameworks
+/// 3. Override any slither.config.json exclusions
+///
+/// Excluded libraries:
+/// - forge-std: Foundry standard library
+/// - openzeppelin-contracts: OpenZeppelin contracts
+/// - solady: Solady library
+/// - ds-test: DappTools testing framework
+/// - erc4626-tests: ERC4626 testing suite
+/// - halmos-cheatcodes: Halmos symbolic testing cheatcodes
+/// - solmate: Solmate library (includes testing utilities)
+/// - prb-test: PRBTest testing framework
+/// - node_modules: npm dependencies
+///
+/// This ensures we capture inheritance relationships for all project contracts,
+/// including those in lib/ folders that are part of the project scope.
+pub async fn run_printer_json_inheritance(
+    repo: &RepoPaths,
+    subfolder: Option<PathBuf>,
+) -> Result<String> {
+    let printer = "inheritance";
+    let key = format!(
+        "{}_filtered",
+        cache_key(&repo.root, printer, subfolder.clone())
+    );
+    let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
+    let mut printer_cache = cache.lock().await;
+
+    // Return cached output if exists
+    if let Some(cached) = printer_cache.get(&key) {
+        return Ok(cached.clone());
+    }
+
+    log::info!("Running Slither inheritance printer with standard library filtering");
+
+    // Build base args without the target directory
+    let mut args = build_slither_args(repo, Some(printer), subfolder.clone(), true);
+
+    // Remove the last argument (target directory) temporarily
+    let target_dir = args
+        .pop()
+        .expect("build_slither_args should always include target");
+
+    // Add filter-paths to exclude standard libraries and testing frameworks
+    // but include project lib folders. This overrides any slither.config.json exclusions
+    args.push("--filter-paths".to_string());
+    args.push(
+        "lib/forge-std|\
+         lib/openzeppelin-contracts|\
+         lib/solady|\
+         lib/ds-test|\
+         lib/erc4626-tests|\
+         lib/halmos-cheatcodes|\
+         lib/solmate|\
+         lib/prb-test|\
+         node_modules"
+            .to_string(),
+    );
+
+    // Add the target directory back at the end
+    args.push(target_dir);
+
+    // Log the full docker command for debugging
+    log::info!("Docker command: docker {}", args.join(" "));
+
+    let out = Command::new("docker").args(&args).output()?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        log::error!(
+            "Slither {} failed with exit code: {:?}",
+            printer,
+            out.status.code()
+        );
+        log::error!("Stdout: {}", stdout);
+        log::error!("Stderr: {}", stderr);
+        anyhow::bail!(
+            "slither {} failed with exit code {:?}\nStdout: {}\nStderr: {}",
+            printer,
+            out.status.code(),
+            stdout,
+            stderr
+        );
+    }
+
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+
+    // Save to cache and return
+    info!(
+        "{} print complete with token count: {}",
+        printer,
+        get_token_count(&text)
+    );
+    printer_cache.insert(key, text.clone());
+
+    Ok(text)
+}
+
+// use for call-graph (inheritance now uses run_printer_json_inheritance)
 pub async fn run_printer_json(
     repo: &RepoPaths,
     printer: &str,
@@ -551,7 +655,7 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
 
     // Use monorepo-aware functions for call graph and inheritance
     let (funcs, edges) = callgraph::get_dot_funcs_and_dot_edges(repo).await?;
-    let inheritance_edges = callgraph::generate_inheritance_edges(repo).await?;
+    // let inheritance_edges = callgraph::generate_inheritance_edges(repo).await?;
     let contract_summary = match repo.monorepo_folders {
         Some(_) => run_printer_monorepo(repo, "contract-summary").await?,
         None => run_printer(repo, "contract-summary", None).await?,
@@ -610,16 +714,16 @@ pub async fn save_code_metadata_and_analysis_to_txt_files(
         out_paths.push(p);
     }
 
-    info!("convert call graph edges to txt files");
-    for edge in &inheritance_edges {
-        let meta = format!("child::{}::parent::{}", edge.0, edge.1);
-        // info!("edges meta => {}", meta);
-        let body = format!("{} {}", edge.0, edge.1);
-        let p = dir.join(meta.replace("::", "_") + ".txt");
-        fs::write(&p, body)?;
-        out_paths.push(p);
-    }
-
+    // info!("convert call graph edges to txt files");
+    // for edge in &inheritance_edges {
+    //     let meta = format!("child::{}::parent::{}", edge.0, edge.1);
+    //     // info!("edges meta => {}", meta);
+    //     let body = format!("{} {}", edge.0, edge.1);
+    //     let p = dir.join(meta.replace("::", "_") + ".txt");
+    //     fs::write(&p, body)?;
+    //     out_paths.push(p);
+    // }
+    //
     info!("convert slither scan results to txt files");
     for (i, issue) in slither_scan_vec.iter().enumerate() {
         let meta = format!("{} slither code issue", i);
