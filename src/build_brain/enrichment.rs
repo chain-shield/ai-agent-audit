@@ -1,4 +1,5 @@
 use crate::build_brain::callgraph::DotFunc;
+use crate::build_brain::{inheritance, inheritance_map, slither_ffi};
 use crate::config::{CHAINSHIELD_DB_FOLDER, SEMANTIC_DB};
 use crate::enumerator::utils::get_code_ir_map;
 use crate::error::{AuditError, Result};
@@ -139,10 +140,8 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
         let result: Result<()> = async move {
             // Extract inheritance hierarchy from Slither
             info!("generating inheritance json");
-            // let inheritance_json =
-            //     slither_ffi::run_printer_json(&repo_inheritance, "inheritance", None).await?;
-            // let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
-            let inheritance_edges = callgraph::generate_inheritance_edges(&repo).await?;
+            let inheritance_json = slither_ffi::run_printer_json_inheritance(&repo, None).await?;
+            let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
             info!("{} inheritance edges", inheritance_edges.len());
 
             // Insert inheritance relationships into database

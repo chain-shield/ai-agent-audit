@@ -1,13 +1,19 @@
 use std::fs;
 
 use crate::{
-    llm_review::contract_file_map::get_file_from_contract, prepare_code::git_clone::RepoPaths,
+    llm_review::contract_file_map::{get_file_from_contract, ContractType},
+    prepare_code::git_clone::RepoPaths,
     utils::contract_name_check::has_non_mock_contract,
 };
 
 pub async fn is_contract_in_scope(contract: &str, repo: &RepoPaths) -> anyhow::Result<bool> {
     match get_file_from_contract(contract, repo).await {
-        Some(file) => {
+        Some((file, contract_type)) => {
+            // check type
+            if contract_type != ContractType::Contract {
+                return Ok(false);
+            }
+
             // check if file is in scoped_files
             let scoped_files = repo.extract_scoped_files()?;
 

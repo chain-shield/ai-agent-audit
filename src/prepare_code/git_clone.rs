@@ -324,31 +324,31 @@ pub fn clone_and_filter_git_repo(
         None => None,
     };
 
-    let poc_instructions = cli.poc_instructions.clone().unwrap_or_default();
-    let poc_instructions_content = if !poc_instructions.is_empty() {
-        let poc_instructions_file = Path::new(&poc_instructions).to_path_buf();
-
-        if poc_instructions_file.exists() {
-            fs::read_to_string(poc_instructions_file)?
-        } else {
-            String::new()
+    let poc_instructions_content = match &cli.poc_instructions {
+        Some(instructions_poc) => {
+            let poc_instructions_file = Path::new(&instructions_poc).to_path_buf();
+            if poc_instructions_file.exists() {
+                fs::read_to_string(poc_instructions_file)?
+            } else {
+                panic!("poc instructions file does not exist!");
+            }
         }
-    } else {
-        String::new()
+        None => String::new(),
     };
+    info!("PoC instructions size: {}", poc_instructions_content.len());
 
-    let poc_template = cli.poc_instructions.clone().unwrap_or_default();
-    let poc_template_content = if !poc_template.is_empty() {
-        let poc_template_file = Path::new(&poc_template).to_path_buf();
-
-        if poc_template_file.exists() {
-            fs::read_to_string(poc_template_file)?
-        } else {
-            String::new()
+    let poc_template_content = match &cli.poc_template {
+        Some(template_poc) => {
+            let poc_template_file = Path::new(&template_poc).to_path_buf();
+            if poc_template_file.exists() {
+                fs::read_to_string(poc_template_file)?
+            } else {
+                panic!("poc template file does not exist!");
+            }
         }
-    } else {
-        String::new()
+        None => String::new(),
     };
+    info!("PoC template size: {}", poc_template_content.len());
 
     let test_folder = match &cli.test_folder {
         Some(folder) => {
@@ -356,6 +356,8 @@ pub fn clone_and_filter_git_repo(
 
             if !folder.exists() {
                 panic!("invalid test folder - does not exist");
+            } else if poc_instructions_content.is_empty() {
+                panic!("valid test folder - however PoC instructions missing!");
             }
             folder
         }
@@ -364,6 +366,8 @@ pub fn clone_and_filter_git_repo(
 
             if !folder.exists() {
                 log::warn!("invalid test folder - does not exist: {}", folder.display());
+            } else if poc_instructions_content.is_empty() {
+                panic!("valid test folder - however PoC instructions missing!");
             }
             folder
         }

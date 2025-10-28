@@ -4,7 +4,7 @@ use ai_agent_audit::{
     cli_args::parse,
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
-    enumerator::codeblock_maker,
+    enumerator::{self, codeblock_maker},
     error::Result,
     llm_review::{
         agent_factory::init_llm_clients,
@@ -18,6 +18,7 @@ use ai_agent_audit::{
     },
 };
 use dotenvy::dotenv;
+use enumerator::interface_implementations;
 use log::info;
 /// The main entry point for the AI Agent Audit tool.
 ///
@@ -62,6 +63,8 @@ async fn main() -> Result<()> {
     info!("repo config files => {:#?}", &repo.config_files);
     info!("repo docs => {:?}", &repo.docs);
     info!("excluded folders => {:?}", &repo.excluded_folders);
+    info!("test folder => {:?}", &repo.poc.test_folder);
+    info!("test folder exist? => {:?}", &repo.poc.test_folder.exists());
 
     // ────────────────────────────────
     // 2. Static Analysis & Graph Generation
@@ -73,6 +76,19 @@ async fn main() -> Result<()> {
     // Generate and cache protocol metadata context for AI analysis
     info!("generating metadata context...");
     context_state::generate_and_save_metadata_context(&repo, &semantics_db).await?;
+
+    // ────────────────────────────────
+    // 2.5. Build Inheritance Map (Custom Solidity Parsing)
+    // ────────────────────────────────
+    // Parse all Solidity files to build inheritance map (child → parents)
+    // This populates the INHERITANCE_MAP which is needed for interface implementation detection
+    info!("building inheritance map from Solidity source...");
+    let _ = enumerator::utils::contracts_in_source_folder(&repo).await?;
+    info!("inheritance map built successfully");
+
+    // Build interface implementation index (requires inheritance map to be populated)
+    info!("building interface implementation index...");
+    let _ = interface_implementations::build_and_get_interface_implementation_index(&repo).await?;
 
     // save metadata
     contract_data::save_metadata(&repo).await?;

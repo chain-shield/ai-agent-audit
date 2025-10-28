@@ -49,6 +49,9 @@ pub fn parse_inheritance_json(json: &str) -> Result<Vec<(String, String)>> {
 
     for (child, parents) in child_parent_map.into_iter() {
         for parent in parents.immediate.iter() {
+            if child == "IPriceOracle" || parent == "IPriceOracle" {
+                log::warn!("Adding edge: child: {}, parent: {}", child, parent);
+            }
             edges.push((child.clone(), parent.to_string()));
         }
     }

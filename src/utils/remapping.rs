@@ -24,10 +24,11 @@ static REMAPPING_CACHE: OnceCell<Mutex<HashMap<String, HashMap<String, String>>>
 /// ```text
 /// @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
 /// forge-std/=lib/forge-std/src/
+/// euler-price-oracle/=lib/euler-price-oracle/src/
 /// @ensdomains/=node_modules/@ensdomains/
 /// ```
 ///
-/// Only remappings starting with '@' are stored (common convention for external dependencies).
+/// All remappings are stored, including both @ prefixed and non-@ prefixed remappings.
 ///
 /// # Arguments
 /// * `remapping_file` - Path to the remappings.txt file
@@ -58,17 +59,21 @@ pub fn parse_and_store_remappings(remapping_file: &Path, project_id: &str) -> Re
         // Parse remapping: "prefix=target" or "prefix/=target/"
         if let Some((prefix, target)) = line.split_once('=') {
             let prefix = prefix.trim();
-            let target = target.trim();
+            let mut target = target.trim().to_string();
 
-            // Only store remappings that start with '@' (common convention)
-            if prefix.starts_with('@') {
-                info!(
-                    "Parsed remapping: {} -> {} (project: {})",
-                    prefix, target, project_id
-                );
-                remappings.insert(prefix.to_string(), target.to_string());
-                count += 1;
+            // Ensure target has trailing slash if prefix has trailing slash
+            // This prevents issues like: @openzeppelin/ + lib/contracts -> lib/contractsaccess/
+            // Should be: @openzeppelin/ + lib/contracts/ -> lib/contracts/access/
+            if prefix.ends_with('/') && !target.ends_with('/') {
+                target.push('/');
             }
+
+            info!(
+                "Parsed remapping: {} -> {} (project: {})",
+                prefix, target, project_id
+            );
+            remappings.insert(prefix.to_string(), target);
+            count += 1;
         }
     }
 

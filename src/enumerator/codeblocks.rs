@@ -1,5 +1,5 @@
-use crate::build_brain::callgraph;
 use crate::build_brain::graph_db::SmartContractFunction;
+use crate::build_brain::inheritance_map;
 use crate::cost::cost_data::get_token_count;
 /// Intelligent code slicing for focused AI analysis.
 ///
@@ -11,21 +11,23 @@ use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::extract_ir::robust_extract_fn_metadata_from_func_id;
 use crate::enumerator::parse_solidity::{
     detect_scripts_connected_to_contract, detect_source_code_dependencies,
-    is_standard_interface_name, is_standard_library_contract_name,
+    is_standard_interface_name, is_standard_library_contract_name, should_exclude_this_library,
+    ImportDependencies,
 };
 use crate::enumerator::utils::{
-    get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
+    get_hashmap_of_contract_to_functions, get_token_count_of_function_ir, SolFileType,
 };
-use crate::llm_review::contract_file_map::get_file_from_contract;
+use crate::llm_review::contract_file_map::{get_file_from_contract, get_file_from_lib_contract};
 use crate::llm_review::utils::contract_in_scope::is_contract_in_scope;
 use crate::prepare_code::git_clone::RepoPaths;
-use crate::utils::read_file::read_project_file;
+use crate::utils::display_file::display_file;
 use tokio::fs;
 
 use anyhow::Result;
-use log::info;
+use log::{info, warn};
 use rusqlite::Connection;
 use std::collections::{HashSet, VecDeque};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::codeblock_db::CodeBlocksDb;
@@ -132,10 +134,25 @@ pub async fn generate_codeblock_from_codebase(
         let mut contracts_with_parents = HashSet::new();
 
         // Add parents of main contract (up to 1 level)
-        let parents_of_main = callgraph::get_parents(&main_contract, repo).await?;
-        for parent in &parents_of_main {
+        let parents_of_main = match inheritance_map::get_parents(
+            &main_contract,
+            SolFileType::Standard,
+            repo,
+        )
+        .await
+        {
+            Ok(parents) => parents,
+            Err(e) => {
+                warn!(
+                    "Could not find parents for main contract '{}': {}. Continuing without parents...",
+                    main_contract, e
+                );
+                Vec::new()
+            }
+        };
+        for (parent, file) in &parents_of_main {
             if !is_standard_interface_name(parent) && !is_standard_library_contract_name(parent) {
-                contracts_with_parents.insert(parent.clone());
+                contracts_with_parents.insert((parent.clone(), file.clone()));
             }
         }
 
@@ -147,12 +164,22 @@ pub async fn generate_codeblock_from_codebase(
             }
 
             // Add direct parents (1 level up) for called contracts
-            let parents = callgraph::get_parents(contract, repo).await?;
-            for parent in &parents {
+            let parents_plus_file =
+                match inheritance_map::get_parents(contract, SolFileType::Standard, repo).await {
+                    Ok(parents) => parents,
+                    Err(e) => {
+                        warn!(
+                            "Could not find parents for contract '{}': {}. Skipping parents...",
+                            contract, e
+                        );
+                        Vec::new()
+                    }
+                };
+            for (parent, file) in &parents_plus_file {
                 // info!("inserting {} (parent of {})", parent, contract);
                 if !is_standard_interface_name(parent) && !is_standard_library_contract_name(parent)
                 {
-                    contracts_with_parents.insert(parent.clone());
+                    contracts_with_parents.insert((parent.clone(), file.clone()));
                 }
             }
         }
@@ -162,49 +189,82 @@ pub async fn generate_codeblock_from_codebase(
         // We analyze BOTH the main contract AND all called contracts for comprehensive coverage
 
         // First, analyze the main contract
-        let (mut main_source_contracts, mut main_lib_files) =
-            detect_source_code_dependencies(&main_contract, repo).await?;
+        let ImportDependencies {
+            lib_files: mut main_lib_files,
+            source_files: mut main_source_files,
+            interfaces: mut main_interfaces,
+            interface_implementations: mut main_interface_implementations,
+        } = detect_source_code_dependencies(&main_contract, repo).await?;
 
-        // info!(
-        //     "🔍 DEBUG: Source dependencies for main contract '{}': {} contracts",
-        //     main_contract,
-        //     main_source_contracts.len()
-        // );
-        // info!(
+        // warn!(
         //     "🔍 DEBUG: contracts_with_depth has {} contracts",
         //     contracts_with_depth.len()
         // );
-
-        for contract in &contracts_with_depth {
-            let (source, lib_files) = detect_source_code_dependencies(contract, repo).await?;
-            // info!(
-            //     "🔍 DEBUG: Source dependencies for '{}': {} contracts",
-            //     contract,
-            //     source.len()
-            // );
-            main_source_contracts.extend(source);
-            main_lib_files.extend(lib_files);
-        }
-
-        // info!(
-        //     "🔍 DEBUG: Total source dependencies after analyzing depth contracts: {}",
-        //     main_source_contracts.len()
+        //
+        // warn!(
+        //     "🔍 DEBUG: Total source dependencies from main contract: {}",
+        //     main_source_files.len()
+        // );
+        // warn!(
+        //     "🔍 DEBUG: Total lib dependencies from main contract: {}",
+        //     main_lib_files.len()
+        // );
+        // warn!(
+        //     "🔍 DEBUG: Total interfaces from main contract: {}",
+        //     main_interfaces.len()
         // );
 
-        for contract_name in &main_source_contracts {
-            info!(
-                "adding source-detected contract {} into main and called contract",
-                contract_name,
+        for contract in &contracts_with_depth {
+            let ImportDependencies {
+                lib_files,
+                source_files,
+                interfaces,
+                interface_implementations,
+            } = detect_source_code_dependencies(contract, repo).await?;
+            main_source_files.extend(source_files);
+            main_lib_files.extend(lib_files);
+            main_interfaces.extend(interfaces);
+            main_interface_implementations.extend(interface_implementations);
+        }
+
+        // warn!(
+        //     "🔍 DEBUG: Total source dependencies after analyzing depth contracts: {}",
+        //     main_source_files.len()
+        // );
+        // warn!(
+        //     "🔍 DEBUG: Total lib dependencies after analyzing depth contracts: {}",
+        //     main_lib_files.len()
+        // );
+        // warn!(
+        //     "🔍 DEBUG: Total interfaces after analyzing depth contracts: {}",
+        //     main_interfaces.len()
+        // );
+        // warn!(
+        //     "🔍 DEBUG: Total interface implementations detected: {}",
+        //     main_interface_implementations.len()
+        // );
+
+        if !main_interface_implementations.is_empty() {
+            warn!(
+                "🔍 DEBUG: Interface implementations: {}",
+                main_interface_implementations
+                    .keys()
+                    .map(|k| k.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
-            contracts.insert(contract_name.clone());
         }
 
         // ── 3.  Assemble final Markdown body with TOKEN BUDGET ENFORCEMENT ────────────────────────────
         let mut markdown_codeblock_for_llm = String::new();
         let mut current_token_count = 0_usize;
 
+        // track files as they are added to codeblock, to prevent dups
+        let mut unique_files = HashSet::new();
+
         // Add main contract code (CRITICAL - always include)
-        let main_contract_code = get_contract_file_content(&main_contract, repo).await?;
+        let (main_contract_code, contract_file) =
+            get_contract_file_content(&main_contract, None, repo).await?;
         let main_section = format!(
             "\n## *MAIN TARGET CONTRACT* TO REVIEW\n\n{}",
             main_contract_code
@@ -217,6 +277,7 @@ pub async fn generate_codeblock_from_codebase(
         );
         markdown_codeblock_for_llm.push_str(&main_section);
         current_token_count += main_tokens;
+        unique_files.insert(contract_file);
 
         if current_token_count > token_budget {
             info!(
@@ -239,14 +300,14 @@ pub async fn generate_codeblock_from_codebase(
         // Priority 1: Add called contracts (HIGH PRIORITY - user flow, attack surface)
         for contract in &contracts {
             if *contract != main_contract {
-                prioritized_contracts.push((contract.clone(), "called"));
+                prioritized_contracts.push((contract.clone(), None, "called"));
             }
         }
 
         // Priority 2: Add parents (MEDIUM PRIORITY - usually standard libraries)
-        for parent in &contracts_with_parents {
+        for (parent, parent_file) in &contracts_with_parents {
             if *parent != main_contract && !contracts.contains(parent) {
-                prioritized_contracts.push((parent.clone(), "parent"));
+                prioritized_contracts.push((parent.clone(), Some(parent_file.clone()), "parent"));
             }
         }
 
@@ -256,6 +317,10 @@ pub async fn generate_codeblock_from_codebase(
         // info!(
         //     "🔍 DEBUG: contracts_with_parents = {:?}",
         //     contracts_with_parents
+        //         .iter()
+        //         .map(|(c, _)| c.to_string())
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
         // );
         // info!(
         //     "🔍 DEBUG: contracts_with_depth = {:?}",
@@ -269,10 +334,11 @@ pub async fn generate_codeblock_from_codebase(
         let mut contracts_skipped_too_small = 0;
         let mut contracts_skipped_budget = 0;
 
-        for (contract, contract_type) in prioritized_contracts {
-            let contract_code = get_contract_file_content(&contract, repo).await?;
+        for (contract, file_option, contract_type) in prioritized_contracts {
+            let (contract_code, contract_file) =
+                get_contract_file_content(&contract, file_option, repo).await?;
             // Skip if no content (could not resolve file)
-            if contract_code.trim().is_empty() {
+            if contract_code.trim().is_empty() || unique_files.contains(&contract_file) {
                 info!(
                     "⏭️ Skipping '{} contract: {}' - no file or empty content",
                     contract_type, contract
@@ -310,6 +376,7 @@ pub async fn generate_codeblock_from_codebase(
                 markdown_codeblock_for_llm.push_str(&contract_section);
                 current_token_count = new_total;
                 contracts_added += 1;
+                unique_files.insert(contract_file); // ✅ Insert only after successfully adding
             }
         }
 
@@ -322,19 +389,232 @@ pub async fn generate_codeblock_from_codebase(
             contracts_skipped_budget
         );
 
+        // Add source files (imported libraries, utility files, etc.)
+        let mut source_files_added = 0;
+        let mut source_files_skipped_dup = 0;
+        let mut source_files_skipped_read_error = 0;
+        let mut source_files_skipped_budget = 0;
+
+        for source_file in &main_source_files {
+            // Skip duplicates
+            if unique_files.contains(source_file) {
+                source_files_skipped_dup += 1;
+                continue;
+            }
+
+            // Read file content
+            let source_content = match fs::read_to_string(source_file).await {
+                Ok(content) => content,
+                Err(e) => {
+                    info!(
+                        "⏭️ Could not read source file {} for dependency: {}",
+                        display_file(source_file, repo),
+                        e
+                    );
+                    source_files_skipped_read_error += 1;
+                    continue;
+                }
+            };
+
+            let source_section = format!("{}\n", source_content);
+            let source_tokens = get_token_count(&source_section);
+
+            let new_total = current_token_count + source_tokens;
+
+            if new_total > token_budget {
+                info!(
+                    "⏭️ Skipping 'source file: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
+                    display_file(source_file, repo),
+                    source_tokens,
+                    new_total,
+                    token_budget
+                );
+                source_files_skipped_budget += 1;
+            } else {
+                info!(
+                    "✅ Adding 'source file: {}' ({} tokens) - total: {}/{} tokens",
+                    display_file(source_file, repo),
+                    source_tokens,
+                    new_total,
+                    token_budget
+                );
+                markdown_codeblock_for_llm.push_str(&source_section);
+                current_token_count = new_total;
+                unique_files.insert(source_file.clone());
+                source_files_added += 1;
+            }
+        }
+
+        info!(
+            "📊 Source files: {} added, {} skipped (duplicate: {}, read error: {}, budget: {})",
+            source_files_added,
+            source_files_skipped_dup
+                + source_files_skipped_read_error
+                + source_files_skipped_budget,
+            source_files_skipped_dup,
+            source_files_skipped_read_error,
+            source_files_skipped_budget
+        );
+
+        let supporting_lib_header =
+            "\n## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS\n";
+        markdown_codeblock_for_llm.push_str(supporting_lib_header);
+        current_token_count += get_token_count(supporting_lib_header);
+
+        // adding interfaces
+        for (interface_name, interface_file) in &main_interfaces {
+            if unique_files.contains(interface_file) {
+                continue;
+            }
+
+            // Skip excluded libraries (OpenZeppelin, forge-std, etc.)
+            if let Some(file_str) = interface_file.to_str() {
+                if should_exclude_this_library(file_str) {
+                    info!(
+                        "⏭️ Skipping excluded library interface '{}' at {}",
+                        interface_name,
+                        display_file(&interface_file, repo)
+                    );
+                    continue;
+                }
+            }
+
+            info!(
+                "Adding Interface (or root implimentation) File: {}....",
+                display_file(&interface_file, repo)
+            );
+            let interface_content = match fs::read_to_string(interface_file).await {
+                Ok(content) => content,
+                Err(e) => {
+                    info!(
+                        "could not read file {} for lib dependency detection: {}",
+                        display_file(&interface_file, repo),
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            let interface_section = format!("{}\n", interface_content);
+            let interface_tokens = get_token_count(&interface_section);
+
+            let new_total = current_token_count + interface_tokens;
+
+            if new_total > token_budget {
+                info!(
+                    "⏭️ Skipping 'interface/child: {} : {}' ({} tokens) - would exceed budget ({}/{} tokens)",
+                    interface_name,
+                    display_file(&interface_file, repo),
+                    interface_tokens,
+                    new_total,
+                    token_budget
+                );
+            } else {
+                info!(
+                    "✅ Adding 'interface/child: {}' ({} tokens) - total: {}/{} tokens",
+                    display_file(&interface_file, repo),
+                    interface_tokens,
+                    new_total,
+                    token_budget
+                );
+                markdown_codeblock_for_llm.push_str(&interface_section);
+                current_token_count = new_total;
+                unique_files.insert(interface_file.clone());
+            }
+        }
+
+        // Add interface implementations (contracts that implement detected interfaces)
+        // This is CRITICAL for security analysis - when code uses an interface (e.g., IPriceOracle),
+        // we need to analyze ALL possible implementations (e.g., CovenantCurator, PythOracle)
+        let mut impl_added = 0;
+        let mut impl_skipped_dup = 0;
+        let mut impl_skipped_read_error = 0;
+        let mut impl_skipped_budget = 0;
+
+        for (impl_name, impl_file) in &main_interface_implementations {
+            // Skip duplicates
+            if unique_files.contains(impl_file) {
+                impl_skipped_dup += 1;
+                continue;
+            }
+
+            // Read file content
+            let impl_content = match fs::read_to_string(impl_file).await {
+                Ok(content) => content,
+                Err(e) => {
+                    info!(
+                        "⏭️ Could not read interface implementation {}: {} for dependency: {}",
+                        impl_name,
+                        display_file(impl_file, repo),
+                        e
+                    );
+                    impl_skipped_read_error += 1;
+                    continue;
+                }
+            };
+
+            let impl_section = format!("{}\n", impl_content);
+            let impl_tokens = get_token_count(&impl_section);
+
+            let new_total = current_token_count + impl_tokens;
+
+            if new_total > token_budget {
+                info!(
+                    "⏭️ Skipping 'interface implementation: {}: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
+                    impl_name,
+                    display_file(impl_file, repo),
+                    impl_tokens,
+                    new_total,
+                    token_budget
+                );
+                impl_skipped_budget += 1;
+            } else {
+                info!(
+                    "✅ Adding 'interface implementation: {}: {}' ({} tokens) - total: {}/{} tokens",
+
+                    impl_name,
+                    display_file(impl_file, repo),
+                    impl_tokens,
+                    new_total,
+                    token_budget
+                );
+                markdown_codeblock_for_llm.push_str(&impl_section);
+                current_token_count = new_total;
+                unique_files.insert(impl_file.clone());
+                impl_added += 1;
+            }
+        }
+
+        info!(
+            "📊 Interface implementations: {} added, {} skipped (duplicate: {}, read error: {}, budget: {})",
+            impl_added,
+            impl_skipped_dup + impl_skipped_read_error + impl_skipped_budget,
+            impl_skipped_dup,
+            impl_skipped_read_error,
+            impl_skipped_budget
+        );
+
         let supporting_lib_header = "\n## SUPPORTING CONTEXT: EXTERNAL LIBRARIES\n";
         markdown_codeblock_for_llm.push_str(supporting_lib_header);
         current_token_count += get_token_count(supporting_lib_header);
 
         // add external libary filse
         for lib_file in &main_lib_files {
-            info!("Adding External Library File: {}....", lib_file);
-            let lib_content = match read_project_file(lib_file, repo).await {
+            if unique_files.contains(lib_file) {
+                continue;
+            }
+
+            info!(
+                "Adding External Library File: {}....",
+                display_file(&lib_file, repo),
+            );
+            let lib_content = match fs::read_to_string(lib_file).await {
                 Ok(content) => content,
                 Err(e) => {
                     info!(
                         "could not read file {} for lib dependency detection: {}",
-                        lib_file, e
+                        display_file(&lib_file, repo),
+                        e
                     );
                     continue;
                 }
@@ -348,15 +628,22 @@ pub async fn generate_codeblock_from_codebase(
             if new_total > token_budget {
                 info!(
                     "⏭️ Skipping 'external lib: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
-                    lib_file, lib_tokens, new_total, token_budget
+                    display_file(&lib_file, repo),
+                    lib_tokens,
+                    new_total,
+                    token_budget
                 );
             } else {
                 info!(
                     "✅ Adding 'external lib: {}' ({} tokens) - total: {}/{} tokens",
-                    lib_file, lib_tokens, new_total, token_budget
+                    display_file(&lib_file, repo),
+                    lib_tokens,
+                    new_total,
+                    token_budget
                 );
                 markdown_codeblock_for_llm.push_str(&lib_section);
                 current_token_count = new_total;
+                unique_files.insert(lib_file.clone());
             }
         }
 
@@ -372,7 +659,7 @@ pub async fn generate_codeblock_from_codebase(
                 Err(e) => {
                     info!(
                         "could not read file {} for dependency detection: {}",
-                        script.display(),
+                        display_file(&script, repo),
                         e
                     );
                     continue;
@@ -384,12 +671,10 @@ pub async fn generate_codeblock_from_codebase(
 
             let new_total = current_token_count + script_tokens;
 
-            let script_file_relative = script.strip_prefix(&repo.root.join(&repo.repo_name))?;
-
             if new_total > token_budget {
                 info!(
                     "⏭️ Skipping 'script: {}' ({} tokens) - would exceed budget ({}/{} tokens)",
-                    script_file_relative.display(),
+                    display_file(&script, repo),
                     script_tokens,
                     new_total,
                     token_budget
@@ -397,7 +682,7 @@ pub async fn generate_codeblock_from_codebase(
             } else {
                 info!(
                     "✅ Adding 'script: {}' ({} tokens) - total: {}/{} tokens",
-                    script_file_relative.display(),
+                    display_file(&script, repo),
                     script_tokens,
                     new_total,
                     token_budget
@@ -443,15 +728,32 @@ pub async fn generate_codeblock_from_codebase(
     Ok(())
 }
 
-pub async fn get_contract_file_content(contract: &str, repo: &RepoPaths) -> Result<String> {
-    let file = match get_file_from_contract(contract, repo).await {
-        Some(filename) => filename,
-        None => {
-            info!("could not find file for contract {}", contract);
-            return Ok(String::new());
-        }
-    };
+pub async fn get_contract_file_content(
+    contract: &str,
+    option_file: Option<PathBuf>,
+    repo: &RepoPaths,
+) -> Result<(String, PathBuf)> {
+    let file_path = option_file.unwrap_or({
+        // Try source files first, then library files
+        let file = match get_file_from_contract(contract, repo).await {
+            Some((filename, _)) => filename,
+            None => {
+                // Try library files
+                match get_file_from_lib_contract(contract, repo).await {
+                    Some((filename, _)) => filename,
+                    None => {
+                        info!("could not find file for contract {}", contract);
+                        PathBuf::new()
+                    }
+                }
+            }
+        };
+        file
+    });
 
-    let file_content = fs::read_to_string(&file).await?;
-    Ok(file_content)
+    if file_path.as_os_str().is_empty() {
+        return Ok((String::new(), PathBuf::new()));
+    }
+    let file_content = fs::read_to_string(&file_path).await?;
+    Ok((file_content, file_path))
 }
