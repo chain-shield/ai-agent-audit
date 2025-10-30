@@ -23,7 +23,8 @@ pub enum AuditType {
 pub const MAX_DEPTH: usize = 3;
 
 /// Maximum token budget per codeblock + context to stay within LLM context limits
-pub const TOKEN_BUDGET: usize = 115_000;
+pub const TOKEN_BUDGET: usize = 200_000;
+pub const CREATE_TESTS: bool = false;
 
 /// Number of discovery rounds per contract during analysis
 pub const DISCOVERY_RUNS: usize = 1;
