@@ -1,4 +1,5 @@
 use super::{enums::AIAgent, phases};
+use crate::config::CREATE_TESTS;
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
 use crate::llm_review::findings::CLAUDE_4_5_SONNET;
@@ -131,6 +132,7 @@ pub async fn review_codebase_for_security_issues_v2(
                     // If instructions and test folder provided, create and run PoC tests
                     if !repo_clone.poc.instructions.is_empty()
                         && repo_clone.poc.test_folder.exists()
+                        && CREATE_TESTS
                     {
                         // Phase 6: Write PoC for each Critical, High, and Medium Finding
                         // Acquire POC_SEM at contract level to prevent multiple contracts
@@ -246,17 +248,17 @@ rigorous PoC tests that validate the findings.";
     )?);
 
     // Enhanced preamble for discovery agents
-    let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases.";
+    let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases. You consistently land valid solo High and Medium findings in competitive audit contests.";
 
-    let _ = AgentConfig::new(Some(repo.clone()))
+    let discovery_config_claude = AgentConfig::new(Some(repo.clone()))
         .with_temperature(1.0)
         .with_model(CLAUDE_4_5_SONNET)
         .with_max_tokens(64_000)
-        .with_preamble(verify_preamble)
+        .with_preamble(solidity_auditor_preamble)
         .with_file_picker(false) // Disabled to avoid rate limits
         .with_file_retrieval(false);
 
-    let discovery_config = AgentConfig::new(Some(repo.clone()))
+    let _discovery_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
@@ -264,8 +266,11 @@ rigorous PoC tests that validate the findings.";
         .with_file_picker(false);
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_dynamic_context(false);
-    //
-    let ai_discovery_agent = Arc::new(AgentFactory::create_openai_agent(&discovery_config)?);
+
+    // let ai_discovery_agent = Arc::new(AgentFactory::create_openai_agent(&discovery_config)?);
+    let ai_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(
+        &discovery_config_claude,
+    )?);
 
     // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
     // info!("Created {} discovery agents", ai_discovery_agents.len());

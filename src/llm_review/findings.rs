@@ -73,9 +73,9 @@ pub struct Findings {
 )]
 #[serde(rename_all = "PascalCase")]
 pub enum PrivilegeLevel {
-    Permissionless,   // any EOA
-    RequiresRole,     // specific role
-    RequireAdminRole, // admin or owner
+    Permissionless,    // any EOA
+    RequiresRole,      // specific role
+    RequiresAdminRole, // admin or owner
 }
 
 pub fn generated_llm_prompt(

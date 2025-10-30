@@ -5,7 +5,7 @@ pub const POST_VERIFY: &str = r#"
 *Please respond with ONLY valid JSON in the following exact format:*
 
 {
-    "severity": "High | Medium | Low | informational",
+    "severity": "High | Medium | Low | Info",(OMIT if finding is Invalid and differs from listed severity)
     "severity_justification": "Explain why you assigned this severity",
     "status": "Valid | Invalid | OutOfScope | NeedsMoreInfo",
     "status_justification": "if invalid, out of scope, or needs more info, please explain why",
@@ -24,7 +24,7 @@ pub const POST_IN_SCOPE_VERIFY: &str = r#"
 *Please respond with ONLY valid JSON in the following exact format:*
 
 {
-    "severity": "High | Medium | Low | informational",
+    "severity": "High | Medium | Low | Info",(OPTIONAL - only provide if finding is NOT invalid and differs from listed severity)
     "severity_justification": "Explain why you assigned this severity",
     "status": "Valid | Invalid | OutOfScope | NeedsMoreInfo",
     "status_justification": "if invalid, out of scope, or needs more info, please explain why",
