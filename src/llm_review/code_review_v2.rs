@@ -250,15 +250,15 @@ rigorous PoC tests that validate the findings.";
     // Enhanced preamble for discovery agents
     let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases. You consistently land valid solo High and Medium findings in competitive audit contests.";
 
-    let discovery_config_claude = AgentConfig::new(Some(repo.clone()))
-        .with_temperature(1.0)
-        .with_model(CLAUDE_4_5_SONNET)
-        .with_max_tokens(64_000)
-        .with_preamble(solidity_auditor_preamble)
-        .with_file_picker(false) // Disabled to avoid rate limits
-        .with_file_retrieval(false);
+    // let _discovery_config_claude = AgentConfig::new(Some(repo.clone()))
+    //     .with_temperature(1.0)
+    //     .with_model(CLAUDE_4_5_SONNET)
+    //     .with_max_tokens(64_000)
+    //     .with_preamble(solidity_auditor_preamble)
+    //     .with_file_picker(false) // Disabled to avoid rate limits
+    //     .with_file_retrieval(false);
 
-    let _discovery_config = AgentConfig::new(Some(repo.clone()))
+    let discovery_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
@@ -267,10 +267,10 @@ rigorous PoC tests that validate the findings.";
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_dynamic_context(false);
 
-    // let ai_discovery_agent = Arc::new(AgentFactory::create_openai_agent(&discovery_config)?);
-    let ai_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(
-        &discovery_config_claude,
-    )?);
+    let ai_discovery_agent = Arc::new(AgentFactory::create_openai_agent(&discovery_config)?);
+    // let ai_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(
+    //     &discovery_config_claude,
+    // )?);
 
     // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
     // info!("Created {} discovery agents", ai_discovery_agents.len());
