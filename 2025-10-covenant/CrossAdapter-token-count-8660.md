@@ -362,96 +362,6 @@ interface ICovenantPriceOracle {
 
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
-pragma solidity ^0.8.30;
-
-import {ISynthToken, IERC20, MarketId, AssetType} from "../interfaces/ISynthToken.sol";
-import {ERC20} from "@openzeppelin/token/ERC20/ERC20.sol";
-
-/**
- * @title Synthetic asset
- * @author Covenant Labs
- * @dev ERC20, closely integrated with CovenantCore
- */
-contract SynthToken is ERC20, ISynthToken {
-    /////////////////////////////////////////////////////////////////////////////////////////////
-    // Errors
-    error E_Synth_OnlyLEXCoreCanCall();
-
-    /////////////////////////////////////////////////////////////////////////////////////////////
-    // Modifiers
-    modifier onlyLexCore() {
-        if (_lexCore != _msgSender()) revert E_Synth_OnlyLEXCoreCanCall();
-        _;
-    }
-
-    /////////////////////////////////////////////////////////////////////////////////////////////
-    // Immutables
-
-    address private immutable _covenantCore;
-    address private immutable _lexCore; // autharized lex for mint/burn actions
-    MarketId private immutable _marketId; // marketId associated with synth token
-    AssetType private immutable _synthType; // type of synth token
-    uint8 private immutable _decimals; // asset decimals
-
-    ////////////////////////////////////////////////////////////////////////////////////////
-    // Constructor
-    constructor(
-        address covenantCore_,
-        address lexCore_,
-        MarketId marketId_,
-        IERC20 baseAsset_,
-        AssetType synthType_,
-        string memory name_,
-        string memory symbol_,
-        uint8 decimals_
-    ) ERC20(name_, symbol_) {
-        _covenantCore = covenantCore_;
-        _lexCore = lexCore_;
-        _marketId = marketId_;
-        _synthType = synthType_;
-        _decimals = decimals_;
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////
-    // ERC20 Overrides
-
-    function decimals() public view override(ERC20) returns (uint8) {
-        return _decimals;
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////
-    // Public Getters (non ERC20)
-
-    function getCovenantCore() external view override returns (address) {
-        return _covenantCore;
-    }
-
-    function getMarketId() external view override returns (MarketId) {
-        return _marketId;
-    }
-
-    function getSynthType() external view override returns (AssetType) {
-        return _synthType;
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////////
-    // Covenant Liquid only functions (non ERC20)
-
-    /**
-     * @dev Expose share mint functionality to Covenant Liquid
-     */
-    function lexMint(address account, uint256 value) external onlyLexCore {
-        _mint(account, value);
-    }
-
-    /**
-     * @dev Expose share redeem functionality to Covenant Liquid
-     */
-    function lexBurn(address account, uint256 value) external onlyLexCore {
-        _burn(account, value);
-    }
-}
-
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
@@ -652,55 +562,98 @@ contract CovenantCurator is Ownable2Step, IPriceOracle {
     }
 }
 
+pragma solidity ^0.8.30;
 
-## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
+import {ISynthToken, IERC20, MarketId, AssetType} from "../interfaces/ISynthToken.sol";
+import {ERC20} from "@openzeppelin/token/ERC20/ERC20.sol";
 
-import {IERC20} from "forge-std/interfaces/IERC20.sol";
-import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
-import {Errors} from "../lib/Errors.sol";
+/**
+ * @title Synthetic asset
+ * @author Covenant Labs
+ * @dev ERC20, closely integrated with CovenantCore
+ */
+contract SynthToken is ERC20, ISynthToken {
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    // Errors
+    error E_Synth_OnlyLEXCoreCanCall();
 
-/// @title BaseAdapter
-/// @custom:security-contact security@euler.xyz
-/// @author Euler Labs (https://www.eulerlabs.com/)
-/// @notice Abstract adapter with virtual bid/ask pricing.
-abstract contract BaseAdapter is IPriceOracle {
-    // @dev Addresses <= 0x00..00ffffffff are considered to have 18 decimals without dispatching a call.
-    // This avoids collisions between ISO 4217 representations and (future) precompiles.
-    uint256 internal constant ADDRESS_RESERVED_RANGE = 0xffffffff;
-
-    /// @inheritdoc IPriceOracle
-    function getQuote(uint256 inAmount, address base, address quote) external view returns (uint256) {
-        return _getQuote(inAmount, base, quote);
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    // Modifiers
+    modifier onlyLexCore() {
+        if (_lexCore != _msgSender()) revert E_Synth_OnlyLEXCoreCanCall();
+        _;
     }
 
-    /// @inheritdoc IPriceOracle
-    /// @dev Does not support true bid/ask pricing.
-    function getQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
-        uint256 outAmount = _getQuote(inAmount, base, quote);
-        return (outAmount, outAmount);
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    // Immutables
+
+    address private immutable _covenantCore;
+    address private immutable _lexCore; // autharized lex for mint/burn actions
+    MarketId private immutable _marketId; // marketId associated with synth token
+    AssetType private immutable _synthType; // type of synth token
+    uint8 private immutable _decimals; // asset decimals
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    // Constructor
+    constructor(
+        address covenantCore_,
+        address lexCore_,
+        MarketId marketId_,
+        IERC20 baseAsset_,
+        AssetType synthType_,
+        string memory name_,
+        string memory symbol_,
+        uint8 decimals_
+    ) ERC20(name_, symbol_) {
+        _covenantCore = covenantCore_;
+        _lexCore = lexCore_;
+        _marketId = marketId_;
+        _synthType = synthType_;
+        _decimals = decimals_;
     }
 
-    /// @notice Determine the decimals of an asset.
-    /// @param asset ERC20 token address or other asset.
-    /// @dev Oracles can use ERC-7535, ISO 4217 or other conventions to represent non-ERC20 assets as addresses.
-    /// Integrator Note: `_getDecimals` will return 18 if `asset` is:
-    /// - any address <= 0x00000000000000000000000000000000ffffffff (4294967295)
-    /// - an EOA or a to-be-deployed contract (which may implement `decimals()` after deployment).
-    /// - a contract that does not implement `decimals()`.
-    /// @return The decimals of the asset.
-    function _getDecimals(address asset) internal view returns (uint8) {
-        if (uint160(asset) <= ADDRESS_RESERVED_RANGE) return 18;
-        (bool success, bytes memory data) = asset.staticcall(abi.encodeCall(IERC20.decimals, ()));
-        return success && data.length == 32 ? abi.decode(data, (uint8)) : 18;
+    ////////////////////////////////////////////////////////////////////////////////////////
+    // ERC20 Overrides
+
+    function decimals() public view override(ERC20) returns (uint8) {
+        return _decimals;
     }
 
-    /// @notice Return the quote for the given price query.
-    /// @dev Must be overridden in the inheriting contract.
-    function _getQuote(uint256, address, address) internal view virtual returns (uint256);
+    ////////////////////////////////////////////////////////////////////////////////////////
+    // Public Getters (non ERC20)
+
+    function getCovenantCore() external view override returns (address) {
+        return _covenantCore;
+    }
+
+    function getMarketId() external view override returns (MarketId) {
+        return _marketId;
+    }
+
+    function getSynthType() external view override returns (AssetType) {
+        return _synthType;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    // Covenant Liquid only functions (non ERC20)
+
+    /**
+     * @dev Expose share mint functionality to Covenant Liquid
+     */
+    function lexMint(address account, uint256 value) external onlyLexCore {
+        _mint(account, value);
+    }
+
+    /**
+     * @dev Expose share redeem functionality to Covenant Liquid
+     */
+    function lexBurn(address account, uint256 value) external onlyLexCore {
+        _burn(account, value);
+    }
 }
 
+
+## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
@@ -778,6 +731,53 @@ library ScaleUtils {
             return FixedPointMathLib.fullMulDiv(inAmount, priceScale * unitPrice, feedScale);
         }
     }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+import {IERC20} from "forge-std/interfaces/IERC20.sol";
+import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
+import {Errors} from "../lib/Errors.sol";
+
+/// @title BaseAdapter
+/// @custom:security-contact security@euler.xyz
+/// @author Euler Labs (https://www.eulerlabs.com/)
+/// @notice Abstract adapter with virtual bid/ask pricing.
+abstract contract BaseAdapter is IPriceOracle {
+    // @dev Addresses <= 0x00..00ffffffff are considered to have 18 decimals without dispatching a call.
+    // This avoids collisions between ISO 4217 representations and (future) precompiles.
+    uint256 internal constant ADDRESS_RESERVED_RANGE = 0xffffffff;
+
+    /// @inheritdoc IPriceOracle
+    function getQuote(uint256 inAmount, address base, address quote) external view returns (uint256) {
+        return _getQuote(inAmount, base, quote);
+    }
+
+    /// @inheritdoc IPriceOracle
+    /// @dev Does not support true bid/ask pricing.
+    function getQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
+        uint256 outAmount = _getQuote(inAmount, base, quote);
+        return (outAmount, outAmount);
+    }
+
+    /// @notice Determine the decimals of an asset.
+    /// @param asset ERC20 token address or other asset.
+    /// @dev Oracles can use ERC-7535, ISO 4217 or other conventions to represent non-ERC20 assets as addresses.
+    /// Integrator Note: `_getDecimals` will return 18 if `asset` is:
+    /// - any address <= 0x00000000000000000000000000000000ffffffff (4294967295)
+    /// - an EOA or a to-be-deployed contract (which may implement `decimals()` after deployment).
+    /// - a contract that does not implement `decimals()`.
+    /// @return The decimals of the asset.
+    function _getDecimals(address asset) internal view returns (uint8) {
+        if (uint160(asset) <= ADDRESS_RESERVED_RANGE) return 18;
+        (bool success, bytes memory data) = asset.staticcall(abi.encodeCall(IERC20.decimals, ()));
+        return success && data.length == 32 ? abi.decode(data, (uint8)) : 18;
+    }
+
+    /// @notice Return the quote for the given price query.
+    /// @dev Must be overridden in the inheriting contract.
+    function _getQuote(uint256, address, address) internal view virtual returns (uint256);
 }
 
 

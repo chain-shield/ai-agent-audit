@@ -566,37 +566,21 @@ contract Covenant is ICovenant, NoDelegateCall, Ownable2Step {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.3.0) (utils/MultiCall.sol)
-
-// CovenantLabs - modified to make contract payable
-// @dev - use with caution, all calls will get same msg.value and should not be relied on
-// @dev - cannot be used by ERC2771Contexts
-
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.30;
 
-import {Address} from "@openzeppelin/utils/Address.sol";
-import {Context} from "@openzeppelin/utils/Context.sol";
+import {MarketId, MarketParams} from "../interfaces/ICovenant.sol";
 
-/**
- * @dev Provides a function to batch together multiple calls in a single external call.
- *
- * Consider any assumption about calldata validation performed by the sender may be violated if it's not especially
- * careful about sending transactions invoking {multicall}. For example, a relay address that filters function
- * selectors won't filter calls nested within a {multicall} operation.
- *
- */
-library MulticallLib {
-    /**
-     * @dev Receives and executes a batch of function calls on this contract.
-     * @custom:oz-upgrades-unsafe-allow-reachable delegatecall
-     */
-    function multicall(bytes[] calldata data) internal returns (bytes[] memory results) {
-        results = new bytes[](data.length);
-        for (uint256 i = 0; i < data.length; i++) {
-            results[i] = Address.functionDelegateCall(address(this), data[i]);
-        }
-        return results;
+/// @title MarketParams Library
+/// @author Covenant Labs
+/// @notice Library to convert a market to its id.
+library MarketParamsLib {
+    /// @notice Returns the id of the market `marketParams`.
+    function id(MarketParams calldata p) internal pure returns (MarketId marketParamsId) {
+        return
+            MarketId.wrap(
+                bytes20(uint160(uint256(keccak256(abi.encodePacked(p.baseToken, p.quoteToken, p.curator, p.lex)))))
+            );
     }
 }
 
@@ -730,21 +714,37 @@ abstract contract Ownable is Context {
     }
 }
 
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.3.0) (utils/MultiCall.sol)
+
+// CovenantLabs - modified to make contract payable
+// @dev - use with caution, all calls will get same msg.value and should not be relied on
+// @dev - cannot be used by ERC2771Contexts
+
 pragma solidity ^0.8.30;
 
-import {MarketId, MarketParams} from "../interfaces/ICovenant.sol";
+import {Address} from "@openzeppelin/utils/Address.sol";
+import {Context} from "@openzeppelin/utils/Context.sol";
 
-/// @title MarketParams Library
-/// @author Covenant Labs
-/// @notice Library to convert a market to its id.
-library MarketParamsLib {
-    /// @notice Returns the id of the market `marketParams`.
-    function id(MarketParams calldata p) internal pure returns (MarketId marketParamsId) {
-        return
-            MarketId.wrap(
-                bytes20(uint160(uint256(keccak256(abi.encodePacked(p.baseToken, p.quoteToken, p.curator, p.lex)))))
-            );
+/**
+ * @dev Provides a function to batch together multiple calls in a single external call.
+ *
+ * Consider any assumption about calldata validation performed by the sender may be violated if it's not especially
+ * careful about sending transactions invoking {multicall}. For example, a relay address that filters function
+ * selectors won't filter calls nested within a {multicall} operation.
+ *
+ */
+library MulticallLib {
+    /**
+     * @dev Receives and executes a batch of function calls on this contract.
+     * @custom:oz-upgrades-unsafe-allow-reachable delegatecall
+     */
+    function multicall(bytes[] calldata data) internal returns (bytes[] memory results) {
+        results = new bytes[](data.length);
+        for (uint256 i = 0; i < data.length; i++) {
+            results[i] = Address.functionDelegateCall(address(this), data[i]);
+        }
+        return results;
     }
 }
 
@@ -1396,6 +1396,23 @@ interface ICovenant {
     function setMarketPauseAddress(MarketId marketId, address newPauseAddress) external;
 }
 
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.30;
+
+contract NoDelegateCall {
+    address private immutable originalAddress;
+    error E_DelegateCallNotAllowed();
+
+    constructor() {
+        originalAddress = address(this);
+    }
+
+    modifier noDelegateCall() {
+        if (address(this) != originalAddress) revert E_DelegateCallNotAllowed();
+        _;
+    }
+}
+
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
 
@@ -1464,21 +1481,394 @@ abstract contract Ownable2Step is Ownable {
     }
 }
 
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+import {Errors} from "./Errors.sol";
+import {MarketId, MarketParams, SwapParams, MintParams, RedeemParams, AssetType} from "../interfaces/ICovenant.sol";
+import {MarketParamsLib} from "./MarketParams.sol";
+import {UtilsLib} from "./Utils.sol";
+
+/**
+ * @title ValidationLogic library
+ * @author Covenant Labs
+ * @notice Implements functions to validate the different actions of the protocol
+ */
+library ValidationLogic {
+    using MarketParamsLib for MarketParams;
+
+    function checkUpdateParams(MarketId marketId, MarketParams calldata marketParams) internal pure {
+        // check marketParams
+        if (MarketId.unwrap(marketId) != MarketId.unwrap(marketParams.id())) revert Errors.E_IncorrectMarketParams();
+    }
+
+    function checkMintParams(MintParams calldata mintParams) internal pure {
+        // check marketParams
+        if (MarketId.unwrap(mintParams.marketId) != MarketId.unwrap(mintParams.marketParams.id()))
+            revert Errors.E_IncorrectMarketParams();
+
+        // check mintParams
+        if (mintParams.baseAmountIn == 0) revert Errors.E_ZeroAmount();
+        if (mintParams.to == address(0)) revert Errors.E_ZeroAddress();
+    }
+
+    function checkMintOutputs(
+        MintParams calldata mintParams,
+        uint256 aTokenAmountOut,
+        uint256 zTokenAmountOut
+    ) internal pure {
+        if (aTokenAmountOut < mintParams.minATokenAmountOut) revert Errors.E_CrossedLimit();
+        if (zTokenAmountOut < mintParams.minZTokenAmountOut) revert Errors.E_CrossedLimit();
+        if (zTokenAmountOut == 0 && aTokenAmountOut == 0) revert Errors.E_InsufficientAmount();
+    }
+
+    function checkRedeemParams(RedeemParams calldata redeemParams) internal pure {
+        // check marketParams
+        if (MarketId.unwrap(redeemParams.marketId) != MarketId.unwrap(redeemParams.marketParams.id()))
+            revert Errors.E_IncorrectMarketParams();
+
+        // check redeemParams
+        if (redeemParams.aTokenAmountIn == 0 && redeemParams.zTokenAmountIn == 0) revert Errors.E_ZeroAmount();
+        if (redeemParams.to == address(0)) revert Errors.E_ZeroAddress();
+    }
+
+    function checkRedeemOutputs(
+        RedeemParams calldata redeemParams,
+        uint256 baseSupply,
+        uint256 amountOut
+    ) internal pure {
+        if (amountOut < redeemParams.minAmountOut) revert Errors.E_CrossedLimit();
+        if (amountOut > baseSupply) revert Errors.E_InsufficientAmount();
+        if (amountOut == 0) revert Errors.E_InsufficientAmount();
+    }
+
+    function checkSwapParams(SwapParams calldata swapParams, uint256 baseSupply) internal pure {
+        // check marketParams
+        if (MarketId.unwrap(swapParams.marketId) != MarketId.unwrap(swapParams.marketParams.id()))
+            revert Errors.E_IncorrectMarketParams();
+
+        // check swapParams
+        if (swapParams.amountSpecified == 0) revert Errors.E_ZeroAmount();
+        if (swapParams.to == address(0)) revert Errors.E_ZeroAddress();
+        if (swapParams.assetOut == swapParams.assetIn) revert Errors.E_EqualSwapAssets();
+        if (
+            (uint8(swapParams.assetOut) >= uint8(AssetType.COUNT)) ||
+            (uint8(swapParams.assetIn) >= uint8(AssetType.COUNT))
+        ) revert Errors.E_IncorrectMarketAsset();
+
+        // check if requesting more base tokens than available
+        if (
+            !swapParams.isExactIn &&
+            (swapParams.assetOut == AssetType.BASE) &&
+            (swapParams.amountSpecified > baseSupply)
+        ) revert Errors.E_InsufficientAmount();
+    }
+
+    function checkSwapOutputs(
+        SwapParams calldata swapParams,
+        uint256 baseSupply,
+        uint256 amountCalculated,
+        uint256 protocolFees
+    ) internal pure {
+        if (amountCalculated == 0) {
+            if (!swapParams.isExactIn) revert Errors.E_InsufficientAmount();
+            // Do not allow 0 input if this is an exactOut swap
+            else if (swapParams.assetIn == AssetType.BASE) revert Errors.E_InsufficientAmount(); //  Do not allow zero out swaps with BASE token as input
+            // @dev - the above conditions allow exactIn swaps where a Synth token is donated in, but no Base tokens come out (0 output)
+            // This is to allow donation of valueless synth dust to the Covenant Protocol.
+        }
+
+        // check amounts do not surpass swapParam limits
+        if (swapParams.isExactIn) {
+            if (amountCalculated < swapParams.amountLimit) revert Errors.E_CrossedLimit(); // check minimum limit is coming out
+        } else {
+            if (amountCalculated > swapParams.amountLimit) revert Errors.E_CrossedLimit(); // check less than max limit is coming in
+        }
+
+        // if Base asset out check base supply limits
+        if (
+            (swapParams.assetOut == AssetType.BASE) &&
+            (((swapParams.isExactIn ? amountCalculated : swapParams.amountSpecified) + protocolFees) > baseSupply)
+        ) revert Errors.E_InsufficientAmount();
+    }
+
+    function checkMarketParams(
+        MarketParams calldata marketParams,
+        MarketParams storage storageMarketParams,
+        mapping(address LEXimplementation => bool) storage validLEX,
+        mapping(address Oracle => bool) storage validCurator
+    ) internal view {
+        // check whether lex is enabled
+        if (!validLEX[address(marketParams.lex)]) revert Errors.E_LEXimplementationNotAuthorized();
+
+        // check whether curator is enabled
+        if (!validCurator[address(marketParams.curator)]) revert Errors.E_CuratorNotAuthorized();
+
+        // check whether market already exists
+        if (address(storageMarketParams.baseToken) != address(0)) revert Errors.E_MarketAlreadyExists();
+    }
+
+    function checkProtocolFee(uint32 protocolFee) internal pure {
+        // split out fees
+        (uint16 yieldFee, uint16 tvlFee) = UtilsLib.decodeFee(protocolFee);
+
+        if (yieldFee > 3000) revert Errors.E_ProtocolFeeTooHigh(); // 30% max of yield as additional fee
+        if (tvlFee > 500) revert Errors.E_ProtocolFeeTooHigh(); // 5% max of tvl as yearly fee
+    }
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.3.0) (utils/MultiCall.sol)
+
+// CovenantLabs - modified to make contract payable
+// @dev - use with caution, all calls will get same msg.value and should not be relied on
+// @dev - cannot be used by ERC2771Contexts
+
+pragma solidity ^0.8.30;
+
+import {Address} from "@openzeppelin/utils/Address.sol";
+import {Context} from "@openzeppelin/utils/Context.sol";
+
+/**
+ * @dev Provides a function to batch together multiple calls in a single external call.
+ *
+ * Consider any assumption about calldata validation performed by the sender may be violated if it's not especially
+ * careful about sending transactions invoking {multicall}. For example, a relay address that filters function
+ * selectors won't filter calls nested within a {multicall} operation.
+ *
+ */
+library MulticallLib {
+    /**
+     * @dev Receives and executes a batch of function calls on this contract.
+     * @custom:oz-upgrades-unsafe-allow-reachable delegatecall
+     */
+    function multicall(bytes[] calldata data) internal returns (bytes[] memory results) {
+        results = new bytes[](data.length);
+        for (uint256 i = 0; i < data.length; i++) {
+            results[i] = Address.functionDelegateCall(address(this), data[i]);
+        }
+        return results;
+    }
+}
+
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.30;
 
-contract NoDelegateCall {
-    address private immutable originalAddress;
-    error E_DelegateCallNotAllowed();
+library Errors {
+    error E_ZeroAmount(); // 0xaf4935be
+    error E_ZeroAddress(); // 0x459f5f6e
+    error E_CrossedLimit(); // 0xb8775684
+    error E_InsufficientAmount(); // 0x9950c184
+    error E_IncorrectMarketAsset(); // 0x76ba676e
+    error E_EqualSwapAssets(); // 0x213a0fd0
+    error E_MarketLocked(); // 0x8a7ede1f
+    error E_MarketPaused(); // 0xed9c479e
+    error E_MarketNonExistent(); // 0xe2f65643
+    error E_LEXimplementationNotAuthorized(); // 0xb4ee3f59
+    error E_CuratorNotAuthorized(); // 0x808c99be
+    error E_MarketAlreadyExists(); // 0x601494a7
+    error E_IncorrectMarketParams(); // 0x7f6cd0c7
+    error E_Unauthorized(); // 0x08e2ce17
+    error E_IncorrectPayment(); // 0xa705df45
+    error E_ProtocolFeeTooHigh(); // 0xc886fec7
+}
 
-    constructor() {
-        originalAddress = address(this);
-    }
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.30;
 
-    modifier noDelegateCall() {
-        if (address(this) != originalAddress) revert E_DelegateCallNotAllowed();
-        _;
+import {MarketId, MarketParams, SynthTokens, TokenPrices, AssetType} from "../interfaces/ICovenant.sol";
+
+library Events {
+    /**
+     * @dev Emitted on market creation
+     * @param marketId the market ID
+     * @param marketParams the market params
+     * @param initData additional data passed to LEX during initialization
+     * @param lexData additional data returned by LEX during initialization (ABI encoded)
+     **/
+    event CreateMarket(
+        MarketId indexed marketId,
+        MarketParams marketParams,
+        SynthTokens synthTokens,
+        bytes initData,
+        bytes lexData
+    );
+
+    /**
+     * @dev Emitted on mint
+     * @notice Event incorporates minimal price information (from which all prices can be derived)
+     * @param marketId the market indicating the aTokens / zTokens to mint given baseToken (there could be more than one market for the same baseToken)
+     * @param baseAmountIn the amount of base token to deposit (and against which to mint a and z tokens)
+     * @param sender the supplier of base Tokens
+     * @param receiver the receiver of aTokens and zTokens
+     * @param aTokenAmountOut amount of aToken minted
+     * @param zTokenAmountOut amount of zToken minted
+     * @param tokenPrices Prices, in WADS, of baseToken, aToken and zToken after action (denominated in Quote tokens)
+     **/
+    event Mint(
+        MarketId indexed marketId,
+        uint256 baseAmountIn,
+        address indexed sender,
+        address indexed receiver,
+        uint256 aTokenAmountOut,
+        uint256 zTokenAmountOut,
+        uint128 protocolFees,
+        TokenPrices tokenPrices
+    );
+
+    /**
+     * @dev Emitted on redeem
+     * @param marketId the market for which the aTokens / zTokens will be redeemed for baseToken
+     * @param aTokenAmountIn the aTokenAmount being redeemed / burned (exact in)
+     * @param zTokenAmountIn the zTokenAmount being redeemed / burned (exact in)
+     * @param sender the supplier of a and z tokens
+     * @param receiver the receiver of base tokens
+     * @param amountOut amount of base tokens sent out to receiver
+     * @param tokenPrices Prices, in WADS, of baseToken, aToken and zToken after action (denominated in Quote tokens)
+     **/
+    event Redeem(
+        MarketId indexed marketId,
+        uint256 aTokenAmountIn,
+        uint256 zTokenAmountIn,
+        address indexed sender,
+        address indexed receiver,
+        uint256 amountOut,
+        uint128 protocolFees,
+        TokenPrices tokenPrices
+    );
+
+    /**
+     * @dev Emitted on swap
+     * @param marketId the market in which the swap is executed
+     * @param assetIn type of token swapped in
+     * @param assetOut type of token swapped out
+     * @param amountIn amount of tokenIn received and burned by market during swap
+     * @param amountOut amount of tokenOut minted and sent by market during swap
+     * @param sender the supplier of tokenIn
+     * @param receiver the receiver of tokenOut
+     * @param tokenPrices Prices, in WADS, of baseToken, aToken and zToken after action (denominated in Quote tokens)
+     **/
+    event Swap(
+        MarketId indexed marketId,
+        AssetType assetIn,
+        AssetType assetOut,
+        uint256 amountIn,
+        uint256 amountOut,
+        address indexed sender,
+        address indexed receiver,
+        uint128 protocolFees,
+        TokenPrices tokenPrices
+    );
+
+    /**
+     * @dev Emitted on LEX update
+     * @param LEXImplementationAddress address of lex logic implementation
+     * @param isEnabled whether the address is a valid implementation for new markets
+     **/
+    event UpdateEnabledLEX(address indexed LEXImplementationAddress, bool isEnabled);
+
+    /**
+     * @dev Emitted on Oracle update
+     * @param oracle address of oracle
+     * @param isEnabled whether the address is a valid oracle for new markets
+     **/
+    event UpdateEnabledOracle(address indexed oracle, bool isEnabled);
+
+    /**
+     * @dev Emitted on update of default protocol fee
+     * @param oldDefaultFee old default fee
+     * @param newDefaultFee new default fee
+     **/
+    event UpdateDefaultProtocolFee(uint32 oldDefaultFee, uint32 newDefaultFee);
+
+    /**
+     * @dev Emitted on update of a market protocol fee
+     * @param marketId market being updated
+     * @param oldMarketFee old default fee
+     * @param newMarketFee new default fee
+     **/
+    event UpdateMarketProtocolFee(MarketId indexed marketId, uint32 oldMarketFee, uint32 newMarketFee);
+
+    /**
+     * @dev Emitted when protocol fees are collected
+     * @param marketId market from which fees are being collected
+     * @param recipient recipient of collected fees
+     * @param asset asset in which fees are denominated
+     * @param amount amount collected
+     **/
+    event CollectProtocolFee(MarketId indexed marketId, address recipient, address asset, uint128 amount);
+
+    /**
+     * @dev Emitted when protocol is paused or unpaused
+     * @param marketId market from which fees are being collected
+     * @param isPaused whether the market is paused
+     **/
+    event MarketPaused(MarketId indexed marketId, bool isPaused);
+
+    /**
+     * @dev Emitted when default pause address is updated
+     * @param oldDefaultPauseAddress old default pause address
+     * @param newDefaultPauseAddress new default pause address
+     **/
+    event UpdateDefaultPauseAddress(address oldDefaultPauseAddress, address newDefaultPauseAddress);
+
+    /**
+     * @dev Emitted when authorized pause address for a market is updated
+     * @param marketId market from which pause address is being updated
+     * @param oldPauseAddress old authorized pause address
+     * @param newPauseAddress new authorized pause address
+     **/
+    event UpdateMarketPauseAddress(MarketId indexed marketId, address oldPauseAddress, address newPauseAddress);
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+import {MarketId, MarketParams} from "../interfaces/ICovenant.sol";
+
+/// @title MarketParams Library
+/// @author Covenant Labs
+/// @notice Library to convert a market to its id.
+library MarketParamsLib {
+    /// @notice Returns the id of the market `marketParams`.
+    function id(MarketParams calldata p) internal pure returns (MarketId marketParamsId) {
+        return
+            MarketId.wrap(
+                bytes20(uint160(uint256(keccak256(abi.encodePacked(p.baseToken, p.quoteToken, p.curator, p.lex)))))
+            );
     }
+}
+
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.0;
+
+import {MarketId, AssetType} from "../interfaces/ICovenant.sol";
+import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+
+/**
+ * @title ICovenant
+ * @author Amorphous
+ * @notice Defines the the core interface of Covenant Liquid markets.
+ **/
+interface ISynthToken is IERC20 {
+    // Notice - gets CovenantCore associated with the SynthToken
+    function getCovenantCore() external returns (address);
+
+    // Notice - gets marketId associated with the SynthToken
+    function getMarketId() external returns (MarketId);
+
+    // Notice - gets synthType associated with the SynthToken
+    function getSynthType() external returns (AssetType);
+
+    /**
+     * @dev Expose share mint functionality to Covenant Liquid
+     */
+    function lexMint(address account, uint256 value) external;
+
+    /**
+     * @dev Expose share redeem functionality to Covenant Liquid
+     */
+    function lexBurn(address account, uint256 value) external;
 }
 
 // SPDX-License-Identifier: AGPL-3.0
@@ -1790,73 +2180,18 @@ interface ICovenant {
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.30;
 
-import {MarketId, MarketParams} from "../interfaces/ICovenant.sol";
-
-/// @title MarketParams Library
+/// @title Utils Library
 /// @author Covenant Labs
 /// @notice Library to convert a market to its id.
-library MarketParamsLib {
-    /// @notice Returns the id of the market `marketParams`.
-    function id(MarketParams calldata p) internal pure returns (MarketId marketParamsId) {
-        return
-            MarketId.wrap(
-                bytes20(uint160(uint256(keccak256(abi.encodePacked(p.baseToken, p.quoteToken, p.curator, p.lex)))))
-            );
+library UtilsLib {
+    function encodeFee(uint16 yieldFee, uint16 tvlFee) internal pure returns (uint32 protocolFee) {
+        return ((uint32(yieldFee) << 16) | uint32(tvlFee));
     }
-}
 
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.0;
-
-import {MarketId, AssetType} from "../interfaces/ICovenant.sol";
-import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
-
-/**
- * @title ICovenant
- * @author Amorphous
- * @notice Defines the the core interface of Covenant Liquid markets.
- **/
-interface ISynthToken is IERC20 {
-    // Notice - gets CovenantCore associated with the SynthToken
-    function getCovenantCore() external returns (address);
-
-    // Notice - gets marketId associated with the SynthToken
-    function getMarketId() external returns (MarketId);
-
-    // Notice - gets synthType associated with the SynthToken
-    function getSynthType() external returns (AssetType);
-
-    /**
-     * @dev Expose share mint functionality to Covenant Liquid
-     */
-    function lexMint(address account, uint256 value) external;
-
-    /**
-     * @dev Expose share redeem functionality to Covenant Liquid
-     */
-    function lexBurn(address account, uint256 value) external;
-}
-
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.30;
-
-library Errors {
-    error E_ZeroAmount(); // 0xaf4935be
-    error E_ZeroAddress(); // 0x459f5f6e
-    error E_CrossedLimit(); // 0xb8775684
-    error E_InsufficientAmount(); // 0x9950c184
-    error E_IncorrectMarketAsset(); // 0x76ba676e
-    error E_EqualSwapAssets(); // 0x213a0fd0
-    error E_MarketLocked(); // 0x8a7ede1f
-    error E_MarketPaused(); // 0xed9c479e
-    error E_MarketNonExistent(); // 0xe2f65643
-    error E_LEXimplementationNotAuthorized(); // 0xb4ee3f59
-    error E_CuratorNotAuthorized(); // 0x808c99be
-    error E_MarketAlreadyExists(); // 0x601494a7
-    error E_IncorrectMarketParams(); // 0x7f6cd0c7
-    error E_Unauthorized(); // 0x08e2ce17
-    error E_IncorrectPayment(); // 0xa705df45
-    error E_ProtocolFeeTooHigh(); // 0xc886fec7
+    function decodeFee(uint32 protocolFee) internal pure returns (uint16 yieldFee, uint16 tvlFee) {
+        yieldFee = uint16(protocolFee >> 16);
+        tvlFee = uint16(protocolFee & 0xFFFF);
+    }
 }
 
 // SPDX-License-Identifier: AGPL-3.0
@@ -1876,543 +2211,8 @@ contract NoDelegateCall {
     }
 }
 
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.30;
-
-import {MarketId, MarketParams, SynthTokens, TokenPrices, AssetType} from "../interfaces/ICovenant.sol";
-
-library Events {
-    /**
-     * @dev Emitted on market creation
-     * @param marketId the market ID
-     * @param marketParams the market params
-     * @param initData additional data passed to LEX during initialization
-     * @param lexData additional data returned by LEX during initialization (ABI encoded)
-     **/
-    event CreateMarket(
-        MarketId indexed marketId,
-        MarketParams marketParams,
-        SynthTokens synthTokens,
-        bytes initData,
-        bytes lexData
-    );
-
-    /**
-     * @dev Emitted on mint
-     * @notice Event incorporates minimal price information (from which all prices can be derived)
-     * @param marketId the market indicating the aTokens / zTokens to mint given baseToken (there could be more than one market for the same baseToken)
-     * @param baseAmountIn the amount of base token to deposit (and against which to mint a and z tokens)
-     * @param sender the supplier of base Tokens
-     * @param receiver the receiver of aTokens and zTokens
-     * @param aTokenAmountOut amount of aToken minted
-     * @param zTokenAmountOut amount of zToken minted
-     * @param tokenPrices Prices, in WADS, of baseToken, aToken and zToken after action (denominated in Quote tokens)
-     **/
-    event Mint(
-        MarketId indexed marketId,
-        uint256 baseAmountIn,
-        address indexed sender,
-        address indexed receiver,
-        uint256 aTokenAmountOut,
-        uint256 zTokenAmountOut,
-        uint128 protocolFees,
-        TokenPrices tokenPrices
-    );
-
-    /**
-     * @dev Emitted on redeem
-     * @param marketId the market for which the aTokens / zTokens will be redeemed for baseToken
-     * @param aTokenAmountIn the aTokenAmount being redeemed / burned (exact in)
-     * @param zTokenAmountIn the zTokenAmount being redeemed / burned (exact in)
-     * @param sender the supplier of a and z tokens
-     * @param receiver the receiver of base tokens
-     * @param amountOut amount of base tokens sent out to receiver
-     * @param tokenPrices Prices, in WADS, of baseToken, aToken and zToken after action (denominated in Quote tokens)
-     **/
-    event Redeem(
-        MarketId indexed marketId,
-        uint256 aTokenAmountIn,
-        uint256 zTokenAmountIn,
-        address indexed sender,
-        address indexed receiver,
-        uint256 amountOut,
-        uint128 protocolFees,
-        TokenPrices tokenPrices
-    );
-
-    /**
-     * @dev Emitted on swap
-     * @param marketId the market in which the swap is executed
-     * @param assetIn type of token swapped in
-     * @param assetOut type of token swapped out
-     * @param amountIn amount of tokenIn received and burned by market during swap
-     * @param amountOut amount of tokenOut minted and sent by market during swap
-     * @param sender the supplier of tokenIn
-     * @param receiver the receiver of tokenOut
-     * @param tokenPrices Prices, in WADS, of baseToken, aToken and zToken after action (denominated in Quote tokens)
-     **/
-    event Swap(
-        MarketId indexed marketId,
-        AssetType assetIn,
-        AssetType assetOut,
-        uint256 amountIn,
-        uint256 amountOut,
-        address indexed sender,
-        address indexed receiver,
-        uint128 protocolFees,
-        TokenPrices tokenPrices
-    );
-
-    /**
-     * @dev Emitted on LEX update
-     * @param LEXImplementationAddress address of lex logic implementation
-     * @param isEnabled whether the address is a valid implementation for new markets
-     **/
-    event UpdateEnabledLEX(address indexed LEXImplementationAddress, bool isEnabled);
-
-    /**
-     * @dev Emitted on Oracle update
-     * @param oracle address of oracle
-     * @param isEnabled whether the address is a valid oracle for new markets
-     **/
-    event UpdateEnabledOracle(address indexed oracle, bool isEnabled);
-
-    /**
-     * @dev Emitted on update of default protocol fee
-     * @param oldDefaultFee old default fee
-     * @param newDefaultFee new default fee
-     **/
-    event UpdateDefaultProtocolFee(uint32 oldDefaultFee, uint32 newDefaultFee);
-
-    /**
-     * @dev Emitted on update of a market protocol fee
-     * @param marketId market being updated
-     * @param oldMarketFee old default fee
-     * @param newMarketFee new default fee
-     **/
-    event UpdateMarketProtocolFee(MarketId indexed marketId, uint32 oldMarketFee, uint32 newMarketFee);
-
-    /**
-     * @dev Emitted when protocol fees are collected
-     * @param marketId market from which fees are being collected
-     * @param recipient recipient of collected fees
-     * @param asset asset in which fees are denominated
-     * @param amount amount collected
-     **/
-    event CollectProtocolFee(MarketId indexed marketId, address recipient, address asset, uint128 amount);
-
-    /**
-     * @dev Emitted when protocol is paused or unpaused
-     * @param marketId market from which fees are being collected
-     * @param isPaused whether the market is paused
-     **/
-    event MarketPaused(MarketId indexed marketId, bool isPaused);
-
-    /**
-     * @dev Emitted when default pause address is updated
-     * @param oldDefaultPauseAddress old default pause address
-     * @param newDefaultPauseAddress new default pause address
-     **/
-    event UpdateDefaultPauseAddress(address oldDefaultPauseAddress, address newDefaultPauseAddress);
-
-    /**
-     * @dev Emitted when authorized pause address for a market is updated
-     * @param marketId market from which pause address is being updated
-     * @param oldPauseAddress old authorized pause address
-     * @param newPauseAddress new authorized pause address
-     **/
-    event UpdateMarketPauseAddress(MarketId indexed marketId, address oldPauseAddress, address newPauseAddress);
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-/// @title Utils Library
-/// @author Covenant Labs
-/// @notice Library to convert a market to its id.
-library UtilsLib {
-    function encodeFee(uint16 yieldFee, uint16 tvlFee) internal pure returns (uint32 protocolFee) {
-        return ((uint32(yieldFee) << 16) | uint32(tvlFee));
-    }
-
-    function decodeFee(uint32 protocolFee) internal pure returns (uint16 yieldFee, uint16 tvlFee) {
-        yieldFee = uint16(protocolFee >> 16);
-        tvlFee = uint16(protocolFee & 0xFFFF);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.3.0) (utils/MultiCall.sol)
-
-// CovenantLabs - modified to make contract payable
-// @dev - use with caution, all calls will get same msg.value and should not be relied on
-// @dev - cannot be used by ERC2771Contexts
-
-pragma solidity ^0.8.30;
-
-import {Address} from "@openzeppelin/utils/Address.sol";
-import {Context} from "@openzeppelin/utils/Context.sol";
-
-/**
- * @dev Provides a function to batch together multiple calls in a single external call.
- *
- * Consider any assumption about calldata validation performed by the sender may be violated if it's not especially
- * careful about sending transactions invoking {multicall}. For example, a relay address that filters function
- * selectors won't filter calls nested within a {multicall} operation.
- *
- */
-library MulticallLib {
-    /**
-     * @dev Receives and executes a batch of function calls on this contract.
-     * @custom:oz-upgrades-unsafe-allow-reachable delegatecall
-     */
-    function multicall(bytes[] calldata data) internal returns (bytes[] memory results) {
-        results = new bytes[](data.length);
-        for (uint256 i = 0; i < data.length; i++) {
-            results[i] = Address.functionDelegateCall(address(this), data[i]);
-        }
-        return results;
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-import {Errors} from "./Errors.sol";
-import {MarketId, MarketParams, SwapParams, MintParams, RedeemParams, AssetType} from "../interfaces/ICovenant.sol";
-import {MarketParamsLib} from "./MarketParams.sol";
-import {UtilsLib} from "./Utils.sol";
-
-/**
- * @title ValidationLogic library
- * @author Covenant Labs
- * @notice Implements functions to validate the different actions of the protocol
- */
-library ValidationLogic {
-    using MarketParamsLib for MarketParams;
-
-    function checkUpdateParams(MarketId marketId, MarketParams calldata marketParams) internal pure {
-        // check marketParams
-        if (MarketId.unwrap(marketId) != MarketId.unwrap(marketParams.id())) revert Errors.E_IncorrectMarketParams();
-    }
-
-    function checkMintParams(MintParams calldata mintParams) internal pure {
-        // check marketParams
-        if (MarketId.unwrap(mintParams.marketId) != MarketId.unwrap(mintParams.marketParams.id()))
-            revert Errors.E_IncorrectMarketParams();
-
-        // check mintParams
-        if (mintParams.baseAmountIn == 0) revert Errors.E_ZeroAmount();
-        if (mintParams.to == address(0)) revert Errors.E_ZeroAddress();
-    }
-
-    function checkMintOutputs(
-        MintParams calldata mintParams,
-        uint256 aTokenAmountOut,
-        uint256 zTokenAmountOut
-    ) internal pure {
-        if (aTokenAmountOut < mintParams.minATokenAmountOut) revert Errors.E_CrossedLimit();
-        if (zTokenAmountOut < mintParams.minZTokenAmountOut) revert Errors.E_CrossedLimit();
-        if (zTokenAmountOut == 0 && aTokenAmountOut == 0) revert Errors.E_InsufficientAmount();
-    }
-
-    function checkRedeemParams(RedeemParams calldata redeemParams) internal pure {
-        // check marketParams
-        if (MarketId.unwrap(redeemParams.marketId) != MarketId.unwrap(redeemParams.marketParams.id()))
-            revert Errors.E_IncorrectMarketParams();
-
-        // check redeemParams
-        if (redeemParams.aTokenAmountIn == 0 && redeemParams.zTokenAmountIn == 0) revert Errors.E_ZeroAmount();
-        if (redeemParams.to == address(0)) revert Errors.E_ZeroAddress();
-    }
-
-    function checkRedeemOutputs(
-        RedeemParams calldata redeemParams,
-        uint256 baseSupply,
-        uint256 amountOut
-    ) internal pure {
-        if (amountOut < redeemParams.minAmountOut) revert Errors.E_CrossedLimit();
-        if (amountOut > baseSupply) revert Errors.E_InsufficientAmount();
-        if (amountOut == 0) revert Errors.E_InsufficientAmount();
-    }
-
-    function checkSwapParams(SwapParams calldata swapParams, uint256 baseSupply) internal pure {
-        // check marketParams
-        if (MarketId.unwrap(swapParams.marketId) != MarketId.unwrap(swapParams.marketParams.id()))
-            revert Errors.E_IncorrectMarketParams();
-
-        // check swapParams
-        if (swapParams.amountSpecified == 0) revert Errors.E_ZeroAmount();
-        if (swapParams.to == address(0)) revert Errors.E_ZeroAddress();
-        if (swapParams.assetOut == swapParams.assetIn) revert Errors.E_EqualSwapAssets();
-        if (
-            (uint8(swapParams.assetOut) >= uint8(AssetType.COUNT)) ||
-            (uint8(swapParams.assetIn) >= uint8(AssetType.COUNT))
-        ) revert Errors.E_IncorrectMarketAsset();
-
-        // check if requesting more base tokens than available
-        if (
-            !swapParams.isExactIn &&
-            (swapParams.assetOut == AssetType.BASE) &&
-            (swapParams.amountSpecified > baseSupply)
-        ) revert Errors.E_InsufficientAmount();
-    }
-
-    function checkSwapOutputs(
-        SwapParams calldata swapParams,
-        uint256 baseSupply,
-        uint256 amountCalculated,
-        uint256 protocolFees
-    ) internal pure {
-        if (amountCalculated == 0) {
-            if (!swapParams.isExactIn) revert Errors.E_InsufficientAmount();
-            // Do not allow 0 input if this is an exactOut swap
-            else if (swapParams.assetIn == AssetType.BASE) revert Errors.E_InsufficientAmount(); //  Do not allow zero out swaps with BASE token as input
-            // @dev - the above conditions allow exactIn swaps where a Synth token is donated in, but no Base tokens come out (0 output)
-            // This is to allow donation of valueless synth dust to the Covenant Protocol.
-        }
-
-        // check amounts do not surpass swapParam limits
-        if (swapParams.isExactIn) {
-            if (amountCalculated < swapParams.amountLimit) revert Errors.E_CrossedLimit(); // check minimum limit is coming out
-        } else {
-            if (amountCalculated > swapParams.amountLimit) revert Errors.E_CrossedLimit(); // check less than max limit is coming in
-        }
-
-        // if Base asset out check base supply limits
-        if (
-            (swapParams.assetOut == AssetType.BASE) &&
-            (((swapParams.isExactIn ? amountCalculated : swapParams.amountSpecified) + protocolFees) > baseSupply)
-        ) revert Errors.E_InsufficientAmount();
-    }
-
-    function checkMarketParams(
-        MarketParams calldata marketParams,
-        MarketParams storage storageMarketParams,
-        mapping(address LEXimplementation => bool) storage validLEX,
-        mapping(address Oracle => bool) storage validCurator
-    ) internal view {
-        // check whether lex is enabled
-        if (!validLEX[address(marketParams.lex)]) revert Errors.E_LEXimplementationNotAuthorized();
-
-        // check whether curator is enabled
-        if (!validCurator[address(marketParams.curator)]) revert Errors.E_CuratorNotAuthorized();
-
-        // check whether market already exists
-        if (address(storageMarketParams.baseToken) != address(0)) revert Errors.E_MarketAlreadyExists();
-    }
-
-    function checkProtocolFee(uint32 protocolFee) internal pure {
-        // split out fees
-        (uint16 yieldFee, uint16 tvlFee) = UtilsLib.decodeFee(protocolFee);
-
-        if (yieldFee > 3000) revert Errors.E_ProtocolFeeTooHigh(); // 30% max of yield as additional fee
-        if (tvlFee > 500) revert Errors.E_ProtocolFeeTooHigh(); // 5% max of tvl as yearly fee
-    }
-}
-
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
-
-import {IERC4626} from "forge-std/interfaces/IERC4626.sol";
-import {Ownable2Step, Ownable} from "@openzeppelin/access/Ownable2Step.sol";
-import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
-import {Errors} from "./lib/Errors.sol";
-
-/// @title CovenantCurator
-/// @author Covenant Labs
-/// @notice Covenant Curator V1.0 is, among other things, an oracle router
-/// @notice The contract enables the curator to decide on oracle and ERC4626 to authorize
-/// @notice This is a very close copy to the oracle router contract in the euler-price-oracle library, adapted for Covenant under GPL.
-/// but extends logic to include pricePreviews and priceUpdates/getUpdateFee for pull oracles
-/// @notice All functions return a value.  if bid/ask price not implemented, then getQuotes returns bid = ask = getQuote()
-/// @dev Integration Note: The router supports pricing via `convertToAssets` for trusted `resolvedVaults`.
-/// By ERC4626 spec `convert*` ignores liquidity restrictions, fees, slippage and per-user restrictions.
-/// Therefore the reported price may not be realizable through `redeem` or `withdraw`.
-contract CovenantCurator is Ownable2Step, IPriceOracle {
-    /// @inheritdoc IPriceOracle
-    string public constant name = "CovenantCurator V1.0";
-    /// @notice The PriceOracle to call if this router is not configured for base/quote.
-    /// @dev If `address(0)` then there is no fallback.
-    address public fallbackOracle;
-    /// @notice ERC4626 vaults resolved using internal pricing (`convertToAssets`).
-    mapping(address vault => address asset) public resolvedVaults;
-    /// @notice PriceOracle configured per asset pair.
-    /// @dev The keys are lexicographically sorted (asset0 < asset1).
-    mapping(address asset0 => mapping(address asset1 => address oracle)) internal oracles;
-
-    /// @notice Configure a PriceOracle to resolve an asset pair.
-    /// @param asset0 The address first in lexicographic order.
-    /// @param asset1 The address second in lexicographic order.
-    /// @param oracle The address of the PriceOracle that resolves the pair.
-    /// @dev If `oracle` is `address(0)` then the configuration was removed.
-    /// The keys are lexicographically sorted (asset0 < asset1).
-    event ConfigSet(address indexed asset0, address indexed asset1, address indexed oracle);
-    /// @notice Set a PriceOracle as a fallback resolver.
-    /// @param fallbackOracle The address of the PriceOracle that is called when base/quote is not configured.
-    /// @dev If `fallbackOracle` is `address(0)` then there is no fallback resolver.
-    event FallbackOracleSet(address indexed fallbackOracle);
-    /// @notice Mark an ERC4626 vault to be resolved to its `asset` via its `convert*` methods.
-    /// @param vault The address of the ERC4626 vault.
-    /// @param asset The address of the vault's asset.
-    /// @dev If `asset` is `address(0)` then the configuration was removed.
-    event ResolvedVaultSet(address indexed vault, address indexed asset);
-
-    /// @notice Deploy CovenantRouter.
-    /// @param _governor The address of the governor.
-    constructor(address _governor) Ownable(_governor) {
-        if (_governor == address(0)) revert Errors.PriceOracle_InvalidConfiguration();
-    }
-
-    /// @notice Configure a PriceOracle to resolve base/quote and quote/base.
-    /// @param base The address of the base token.
-    /// @param quote The address of the quote token.
-    /// @param oracle The address of the PriceOracle to resolve the pair.
-    /// @dev Callable only by the governor.
-    function govSetConfig(address base, address quote, address oracle) external onlyOwner {
-        // This case is handled by `resolveOracle`.
-        if (base == quote) revert Errors.PriceOracle_InvalidConfiguration();
-        (address asset0, address asset1) = _sort(base, quote);
-        oracles[asset0][asset1] = oracle;
-        emit ConfigSet(asset0, asset1, oracle);
-    }
-
-    /// @notice Configure an ERC4626 vault to use internal pricing via `convert*` methods.
-    /// @param vault The address of the ERC4626 vault.
-    /// @param set True to configure the vault, false to clear the record.
-    /// @dev Callable only by the governor. Vault must implement ERC4626.
-    /// Note: Before configuring a vault verify that its `convertToAssets` is secure.
-    function govSetResolvedVault(address vault, bool set) external onlyOwner {
-        address asset = set ? IERC4626(vault).asset() : address(0);
-        resolvedVaults[vault] = asset;
-        emit ResolvedVaultSet(vault, asset);
-    }
-
-    /// @notice Set a PriceOracle as a fallback resolver.
-    /// @param _fallbackOracle The address of the PriceOracle that is called when base/quote is not configured.
-    /// @dev Callable only by the governor. `address(0)` removes the fallback.
-    function govSetFallbackOracle(address _fallbackOracle) external onlyOwner {
-        fallbackOracle = _fallbackOracle;
-        emit FallbackOracleSet(_fallbackOracle);
-    }
-
-    /// @inheritdoc IPriceOracle
-    function getQuote(uint256 inAmount, address base, address quote) external view returns (uint256) {
-        address oracle;
-        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
-        if (base == quote) return inAmount;
-        return IPriceOracle(oracle).getQuote(inAmount, base, quote);
-    }
-
-    /// @inheritdoc IPriceOracle
-    function getQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
-        address oracle;
-        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
-        if (base == quote) return (inAmount, inAmount);
-        return IPriceOracle(oracle).getQuotes(inAmount, base, quote);
-    }
-
-    /// @notice Get the PriceOracle configured for base/quote.
-    /// @param base The address of the base token.
-    /// @param quote The address of the quote token.
-    /// @return The configured `PriceOracle` for the pair or `address(0)` if no oracle is configured.
-    function getConfiguredOracle(address base, address quote) public view returns (address) {
-        (address asset0, address asset1) = _sort(base, quote);
-        return oracles[asset0][asset1];
-    }
-
-    /// @notice Resolve the PriceOracle to call for a given base/quote pair.
-    /// @param inAmount The amount of `base` to convert.
-    /// @param base The token that is being priced.
-    /// @param quote The token that is the unit of account.
-    /// @dev Implements the following resolution logic:
-    /// 1. Check the base case: `base == quote` and terminate if true.
-    /// 2. If a PriceOracle is configured for base/quote in the `oracles` mapping, return it.
-    /// 3. If `base` is configured as a resolved ERC4626 vault, call `convertToAssets(inAmount)`
-    /// and continue the recursion, substituting the ERC4626 `asset` for `base`.
-    /// 4. As a last resort, return the fallback oracle or revert if it is not set.
-    /// @return The resolved amount. This value may be different from the original `inAmount`
-    /// if the resolution path included an ERC4626 vault present in `resolvedVaults`.
-    /// @return The resolved base.
-    /// @return The resolved quote.
-    /// @return The resolved PriceOracle to call.
-    function resolveOracle(
-        uint256 inAmount,
-        address base,
-        address quote
-    )
-        public
-        view
-        returns (uint256, /* resolvedAmount */ address, /* base */ address, /* quote */ address /* oracle */)
-    {
-        // 1. Check the base case.
-        if (base == quote) return (inAmount, base, quote, address(0));
-        // 2. Check if there is a PriceOracle configured for base/quote.
-        address oracle = getConfiguredOracle(base, quote);
-        if (oracle != address(0)) return (inAmount, base, quote, oracle);
-        // 3. Recursively resolve `base`.
-        address baseAsset = resolvedVaults[base];
-        if (baseAsset != address(0)) {
-            inAmount = IERC4626(base).convertToAssets(inAmount);
-            return resolveOracle(inAmount, baseAsset, quote);
-        }
-        // 4. Return the fallback or revert if not configured.
-        oracle = fallbackOracle;
-        if (oracle == address(0)) revert Errors.PriceOracle_NotSupported(base, quote);
-        return (inAmount, base, quote, oracle);
-    }
-
-    /// @notice Lexicographically sort two addresses.
-    /// @param assetA One of the assets in the pair.
-    /// @param assetB The other asset in the pair.
-    /// @return The address first in lexicographic order.
-    /// @return The address second in lexicographic order.
-    function _sort(address assetA, address assetB) internal pure returns (address, address) {
-        return assetA < assetB ? (assetA, assetB) : (assetB, assetA);
-    }
-
-    /////////////////////////////////////////////////////////////////////////////////
-    // Additional functions for Covenant
-    /////////////////////////////////////////////////////////////////////////////////
-
-    /// @inheritdoc IPriceOracle
-    function previewGetQuote(uint256 inAmount, address base, address quote) external view returns (uint256) {
-        address oracle;
-        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
-        if (base == quote) return inAmount;
-        return IPriceOracle(oracle).previewGetQuote(inAmount, base, quote);
-    }
-
-    /// @inheritdoc IPriceOracle
-    function previewGetQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
-        address oracle;
-        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
-        if (base == quote) return (inAmount, inAmount);
-        return IPriceOracle(oracle).previewGetQuotes(inAmount, base, quote);
-    }
-
-    /// @inheritdoc IPriceOracle
-    function updatePriceFeeds(address base, address quote, bytes calldata updateData) external payable {
-        address oracle;
-        (, base, quote, oracle) = resolveOracle(0, base, quote);
-        if (base == quote) {
-            if (msg.value > 0) revert Errors.PriceOracle_IncorrectPayment();
-            return;
-        }
-        return IPriceOracle(oracle).updatePriceFeeds{value: msg.value}(base, quote, updateData);
-    }
-
-    /// @inheritdoc IPriceOracle
-    function getUpdateFee(address base, address quote, bytes calldata updateData) external view returns (uint128) {
-        address oracle;
-        (, base, quote, oracle) = resolveOracle(0, base, quote);
-        if (base == quote) return 0;
-        return IPriceOracle(oracle).getUpdateFee(base, quote, updateData);
-    }
-}
-
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.30;
 
@@ -2977,6 +2777,96 @@ contract LatentSwapLEX is ILatentSwapLEX, TokenData, Ownable2Step {
     }
 }
 
+pragma solidity ^0.8.30;
+
+import {ISynthToken, IERC20, MarketId, AssetType} from "../interfaces/ISynthToken.sol";
+import {ERC20} from "@openzeppelin/token/ERC20/ERC20.sol";
+
+/**
+ * @title Synthetic asset
+ * @author Covenant Labs
+ * @dev ERC20, closely integrated with CovenantCore
+ */
+contract SynthToken is ERC20, ISynthToken {
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    // Errors
+    error E_Synth_OnlyLEXCoreCanCall();
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    // Modifiers
+    modifier onlyLexCore() {
+        if (_lexCore != _msgSender()) revert E_Synth_OnlyLEXCoreCanCall();
+        _;
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    // Immutables
+
+    address private immutable _covenantCore;
+    address private immutable _lexCore; // autharized lex for mint/burn actions
+    MarketId private immutable _marketId; // marketId associated with synth token
+    AssetType private immutable _synthType; // type of synth token
+    uint8 private immutable _decimals; // asset decimals
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    // Constructor
+    constructor(
+        address covenantCore_,
+        address lexCore_,
+        MarketId marketId_,
+        IERC20 baseAsset_,
+        AssetType synthType_,
+        string memory name_,
+        string memory symbol_,
+        uint8 decimals_
+    ) ERC20(name_, symbol_) {
+        _covenantCore = covenantCore_;
+        _lexCore = lexCore_;
+        _marketId = marketId_;
+        _synthType = synthType_;
+        _decimals = decimals_;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    // ERC20 Overrides
+
+    function decimals() public view override(ERC20) returns (uint8) {
+        return _decimals;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    // Public Getters (non ERC20)
+
+    function getCovenantCore() external view override returns (address) {
+        return _covenantCore;
+    }
+
+    function getMarketId() external view override returns (MarketId) {
+        return _marketId;
+    }
+
+    function getSynthType() external view override returns (AssetType) {
+        return _synthType;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    // Covenant Liquid only functions (non ERC20)
+
+    /**
+     * @dev Expose share mint functionality to Covenant Liquid
+     */
+    function lexMint(address account, uint256 value) external onlyLexCore {
+        _mint(account, value);
+    }
+
+    /**
+     * @dev Expose share redeem functionality to Covenant Liquid
+     */
+    function lexBurn(address account, uint256 value) external onlyLexCore {
+        _burn(account, value);
+    }
+}
+
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
@@ -3088,93 +2978,203 @@ abstract contract TokenData is ITokenData {
     }
 }
 
-pragma solidity ^0.8.30;
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
 
-import {ISynthToken, IERC20, MarketId, AssetType} from "../interfaces/ISynthToken.sol";
-import {ERC20} from "@openzeppelin/token/ERC20/ERC20.sol";
+import {IERC4626} from "forge-std/interfaces/IERC4626.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin/access/Ownable2Step.sol";
+import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
+import {Errors} from "./lib/Errors.sol";
 
-/**
- * @title Synthetic asset
- * @author Covenant Labs
- * @dev ERC20, closely integrated with CovenantCore
- */
-contract SynthToken is ERC20, ISynthToken {
-    /////////////////////////////////////////////////////////////////////////////////////////////
-    // Errors
-    error E_Synth_OnlyLEXCoreCanCall();
+/// @title CovenantCurator
+/// @author Covenant Labs
+/// @notice Covenant Curator V1.0 is, among other things, an oracle router
+/// @notice The contract enables the curator to decide on oracle and ERC4626 to authorize
+/// @notice This is a very close copy to the oracle router contract in the euler-price-oracle library, adapted for Covenant under GPL.
+/// but extends logic to include pricePreviews and priceUpdates/getUpdateFee for pull oracles
+/// @notice All functions return a value.  if bid/ask price not implemented, then getQuotes returns bid = ask = getQuote()
+/// @dev Integration Note: The router supports pricing via `convertToAssets` for trusted `resolvedVaults`.
+/// By ERC4626 spec `convert*` ignores liquidity restrictions, fees, slippage and per-user restrictions.
+/// Therefore the reported price may not be realizable through `redeem` or `withdraw`.
+contract CovenantCurator is Ownable2Step, IPriceOracle {
+    /// @inheritdoc IPriceOracle
+    string public constant name = "CovenantCurator V1.0";
+    /// @notice The PriceOracle to call if this router is not configured for base/quote.
+    /// @dev If `address(0)` then there is no fallback.
+    address public fallbackOracle;
+    /// @notice ERC4626 vaults resolved using internal pricing (`convertToAssets`).
+    mapping(address vault => address asset) public resolvedVaults;
+    /// @notice PriceOracle configured per asset pair.
+    /// @dev The keys are lexicographically sorted (asset0 < asset1).
+    mapping(address asset0 => mapping(address asset1 => address oracle)) internal oracles;
 
-    /////////////////////////////////////////////////////////////////////////////////////////////
-    // Modifiers
-    modifier onlyLexCore() {
-        if (_lexCore != _msgSender()) revert E_Synth_OnlyLEXCoreCanCall();
-        _;
+    /// @notice Configure a PriceOracle to resolve an asset pair.
+    /// @param asset0 The address first in lexicographic order.
+    /// @param asset1 The address second in lexicographic order.
+    /// @param oracle The address of the PriceOracle that resolves the pair.
+    /// @dev If `oracle` is `address(0)` then the configuration was removed.
+    /// The keys are lexicographically sorted (asset0 < asset1).
+    event ConfigSet(address indexed asset0, address indexed asset1, address indexed oracle);
+    /// @notice Set a PriceOracle as a fallback resolver.
+    /// @param fallbackOracle The address of the PriceOracle that is called when base/quote is not configured.
+    /// @dev If `fallbackOracle` is `address(0)` then there is no fallback resolver.
+    event FallbackOracleSet(address indexed fallbackOracle);
+    /// @notice Mark an ERC4626 vault to be resolved to its `asset` via its `convert*` methods.
+    /// @param vault The address of the ERC4626 vault.
+    /// @param asset The address of the vault's asset.
+    /// @dev If `asset` is `address(0)` then the configuration was removed.
+    event ResolvedVaultSet(address indexed vault, address indexed asset);
+
+    /// @notice Deploy CovenantRouter.
+    /// @param _governor The address of the governor.
+    constructor(address _governor) Ownable(_governor) {
+        if (_governor == address(0)) revert Errors.PriceOracle_InvalidConfiguration();
     }
 
-    /////////////////////////////////////////////////////////////////////////////////////////////
-    // Immutables
-
-    address private immutable _covenantCore;
-    address private immutable _lexCore; // autharized lex for mint/burn actions
-    MarketId private immutable _marketId; // marketId associated with synth token
-    AssetType private immutable _synthType; // type of synth token
-    uint8 private immutable _decimals; // asset decimals
-
-    ////////////////////////////////////////////////////////////////////////////////////////
-    // Constructor
-    constructor(
-        address covenantCore_,
-        address lexCore_,
-        MarketId marketId_,
-        IERC20 baseAsset_,
-        AssetType synthType_,
-        string memory name_,
-        string memory symbol_,
-        uint8 decimals_
-    ) ERC20(name_, symbol_) {
-        _covenantCore = covenantCore_;
-        _lexCore = lexCore_;
-        _marketId = marketId_;
-        _synthType = synthType_;
-        _decimals = decimals_;
+    /// @notice Configure a PriceOracle to resolve base/quote and quote/base.
+    /// @param base The address of the base token.
+    /// @param quote The address of the quote token.
+    /// @param oracle The address of the PriceOracle to resolve the pair.
+    /// @dev Callable only by the governor.
+    function govSetConfig(address base, address quote, address oracle) external onlyOwner {
+        // This case is handled by `resolveOracle`.
+        if (base == quote) revert Errors.PriceOracle_InvalidConfiguration();
+        (address asset0, address asset1) = _sort(base, quote);
+        oracles[asset0][asset1] = oracle;
+        emit ConfigSet(asset0, asset1, oracle);
     }
 
-    ////////////////////////////////////////////////////////////////////////////////////////
-    // ERC20 Overrides
-
-    function decimals() public view override(ERC20) returns (uint8) {
-        return _decimals;
+    /// @notice Configure an ERC4626 vault to use internal pricing via `convert*` methods.
+    /// @param vault The address of the ERC4626 vault.
+    /// @param set True to configure the vault, false to clear the record.
+    /// @dev Callable only by the governor. Vault must implement ERC4626.
+    /// Note: Before configuring a vault verify that its `convertToAssets` is secure.
+    function govSetResolvedVault(address vault, bool set) external onlyOwner {
+        address asset = set ? IERC4626(vault).asset() : address(0);
+        resolvedVaults[vault] = asset;
+        emit ResolvedVaultSet(vault, asset);
     }
 
-    ////////////////////////////////////////////////////////////////////////////////////////
-    // Public Getters (non ERC20)
-
-    function getCovenantCore() external view override returns (address) {
-        return _covenantCore;
+    /// @notice Set a PriceOracle as a fallback resolver.
+    /// @param _fallbackOracle The address of the PriceOracle that is called when base/quote is not configured.
+    /// @dev Callable only by the governor. `address(0)` removes the fallback.
+    function govSetFallbackOracle(address _fallbackOracle) external onlyOwner {
+        fallbackOracle = _fallbackOracle;
+        emit FallbackOracleSet(_fallbackOracle);
     }
 
-    function getMarketId() external view override returns (MarketId) {
-        return _marketId;
+    /// @inheritdoc IPriceOracle
+    function getQuote(uint256 inAmount, address base, address quote) external view returns (uint256) {
+        address oracle;
+        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
+        if (base == quote) return inAmount;
+        return IPriceOracle(oracle).getQuote(inAmount, base, quote);
     }
 
-    function getSynthType() external view override returns (AssetType) {
-        return _synthType;
+    /// @inheritdoc IPriceOracle
+    function getQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
+        address oracle;
+        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
+        if (base == quote) return (inAmount, inAmount);
+        return IPriceOracle(oracle).getQuotes(inAmount, base, quote);
     }
 
-    ////////////////////////////////////////////////////////////////////////////////////////
-    // Covenant Liquid only functions (non ERC20)
-
-    /**
-     * @dev Expose share mint functionality to Covenant Liquid
-     */
-    function lexMint(address account, uint256 value) external onlyLexCore {
-        _mint(account, value);
+    /// @notice Get the PriceOracle configured for base/quote.
+    /// @param base The address of the base token.
+    /// @param quote The address of the quote token.
+    /// @return The configured `PriceOracle` for the pair or `address(0)` if no oracle is configured.
+    function getConfiguredOracle(address base, address quote) public view returns (address) {
+        (address asset0, address asset1) = _sort(base, quote);
+        return oracles[asset0][asset1];
     }
 
-    /**
-     * @dev Expose share redeem functionality to Covenant Liquid
-     */
-    function lexBurn(address account, uint256 value) external onlyLexCore {
-        _burn(account, value);
+    /// @notice Resolve the PriceOracle to call for a given base/quote pair.
+    /// @param inAmount The amount of `base` to convert.
+    /// @param base The token that is being priced.
+    /// @param quote The token that is the unit of account.
+    /// @dev Implements the following resolution logic:
+    /// 1. Check the base case: `base == quote` and terminate if true.
+    /// 2. If a PriceOracle is configured for base/quote in the `oracles` mapping, return it.
+    /// 3. If `base` is configured as a resolved ERC4626 vault, call `convertToAssets(inAmount)`
+    /// and continue the recursion, substituting the ERC4626 `asset` for `base`.
+    /// 4. As a last resort, return the fallback oracle or revert if it is not set.
+    /// @return The resolved amount. This value may be different from the original `inAmount`
+    /// if the resolution path included an ERC4626 vault present in `resolvedVaults`.
+    /// @return The resolved base.
+    /// @return The resolved quote.
+    /// @return The resolved PriceOracle to call.
+    function resolveOracle(
+        uint256 inAmount,
+        address base,
+        address quote
+    )
+        public
+        view
+        returns (uint256, /* resolvedAmount */ address, /* base */ address, /* quote */ address /* oracle */)
+    {
+        // 1. Check the base case.
+        if (base == quote) return (inAmount, base, quote, address(0));
+        // 2. Check if there is a PriceOracle configured for base/quote.
+        address oracle = getConfiguredOracle(base, quote);
+        if (oracle != address(0)) return (inAmount, base, quote, oracle);
+        // 3. Recursively resolve `base`.
+        address baseAsset = resolvedVaults[base];
+        if (baseAsset != address(0)) {
+            inAmount = IERC4626(base).convertToAssets(inAmount);
+            return resolveOracle(inAmount, baseAsset, quote);
+        }
+        // 4. Return the fallback or revert if not configured.
+        oracle = fallbackOracle;
+        if (oracle == address(0)) revert Errors.PriceOracle_NotSupported(base, quote);
+        return (inAmount, base, quote, oracle);
+    }
+
+    /// @notice Lexicographically sort two addresses.
+    /// @param assetA One of the assets in the pair.
+    /// @param assetB The other asset in the pair.
+    /// @return The address first in lexicographic order.
+    /// @return The address second in lexicographic order.
+    function _sort(address assetA, address assetB) internal pure returns (address, address) {
+        return assetA < assetB ? (assetA, assetB) : (assetB, assetA);
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////
+    // Additional functions for Covenant
+    /////////////////////////////////////////////////////////////////////////////////
+
+    /// @inheritdoc IPriceOracle
+    function previewGetQuote(uint256 inAmount, address base, address quote) external view returns (uint256) {
+        address oracle;
+        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
+        if (base == quote) return inAmount;
+        return IPriceOracle(oracle).previewGetQuote(inAmount, base, quote);
+    }
+
+    /// @inheritdoc IPriceOracle
+    function previewGetQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
+        address oracle;
+        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
+        if (base == quote) return (inAmount, inAmount);
+        return IPriceOracle(oracle).previewGetQuotes(inAmount, base, quote);
+    }
+
+    /// @inheritdoc IPriceOracle
+    function updatePriceFeeds(address base, address quote, bytes calldata updateData) external payable {
+        address oracle;
+        (, base, quote, oracle) = resolveOracle(0, base, quote);
+        if (base == quote) {
+            if (msg.value > 0) revert Errors.PriceOracle_IncorrectPayment();
+            return;
+        }
+        return IPriceOracle(oracle).updatePriceFeeds{value: msg.value}(base, quote, updateData);
+    }
+
+    /// @inheritdoc IPriceOracle
+    function getUpdateFee(address base, address quote, bytes calldata updateData) external view returns (uint128) {
+        address oracle;
+        (, base, quote, oracle) = resolveOracle(0, base, quote);
+        if (base == quote) return 0;
+        return IPriceOracle(oracle).getUpdateFee(base, quote, updateData);
     }
 }
 

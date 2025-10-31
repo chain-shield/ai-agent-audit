@@ -568,6 +568,276 @@ contract LatentSwapLEX is ILatentSwapLEX, TokenData, Ownable2Step {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+import {Math} from "@openzeppelin/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/utils/math/SafeCast.sol";
+
+/**
+ * @title SaturatingMath library
+ * @author Covenant Labs
+ * @notice Provides a saturating mulDiv operation
+ */
+library SaturatingMath {
+    // Returns a saturating mulDiv operation
+    // @dev - does not overflow, but instead returns type(uint256).max if so.
+    function saturatingMulDiv(
+        uint256 _numerator1,
+        uint256 _numerator2,
+        uint256 _denominator
+    ) internal pure returns (uint256) {
+        (uint256 high, uint256 low) = Math.mul512(_numerator1, _numerator2);
+
+        // @dev - below follows the logic of Math.mulDiv, but saturates instead of reverting.
+        if (high >= _denominator) {
+            // returns type(uint256).max for all overflow and _denominator == 0 conditions
+            return type(uint256).max;
+        } else if (high == 0) {
+            // @dev - execute 256 bit division here directly.
+            // already checked for denominator == 0
+            unchecked {
+                return low / _denominator;
+            }
+        } else {
+            // @dev - would be more efficient to do a 512 division here,
+            // but OpenZeppelin does not have a separate (already audited) function.
+            // So below recomputes Math.mul512 internally, and then performs the division.
+            // Does not revert given checks above.
+            return Math.mulDiv(_numerator1, _numerator2, _denominator);
+        }
+    }
+
+    function saturatingMulDiv(
+        uint256 x,
+        uint256 y,
+        uint256 denominator,
+        Math.Rounding rounding
+    ) internal pure returns (uint256 result) {
+        result = saturatingMulDiv(x, y, denominator);
+        return
+            result +
+            SafeCast.toUint(
+                Math.unsignedRoundsUp(rounding) && mulmod(x, y, denominator) > 0 && result < type(uint256).max
+            );
+    }
+
+    /**
+     * @dev Calculates floor(x * y >> n) with full precision. saturates instead of reverting.
+     * @dev Code copies @openzeppelin/utils/math/Math.sol:mulShr, but saturates instead of reverting.
+     */
+    function saturatingMulShr(uint256 x, uint256 y, uint8 n) internal pure returns (uint256 result) {
+        unchecked {
+            (uint256 high, uint256 low) = Math.mul512(x, y);
+            if (high >= 1 << n) {
+                return type(uint256).max; // @dev - saturates instead of reverting for overflow.
+            }
+            return (high << (256 - n)) | (low >> n);
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/token/ERC20/extensions/IERC20Metadata.sol";
+
+library SafeMetadata {
+    /**
+     * @dev Attempts to fetch the asset name as a string. A return value of false indicates that the attempt failed in some way.
+     */
+    function tryGetName(IERC20 token) internal view returns (bool ok, string memory out) {
+        return _tryStringOrBytes32(address(token), IERC20Metadata.name.selector);
+    }
+
+    /**
+     * @dev Attempts to fetch the asset symbol as a string. A return value of false indicates that the attempt failed in some way.
+     */
+    function tryGetSymbol(IERC20 token) internal view returns (bool ok, string memory out) {
+        return _tryStringOrBytes32(address(token), IERC20Metadata.symbol.selector);
+    }
+
+    /**
+     * @dev Attempts to fetch the asset decimals. A return value of false indicates that the attempt failed in some way.
+     */
+    function tryGetDecimals(IERC20 token) internal view returns (bool ok, uint8 assetDecimals) {
+        (bool success, bytes memory encodedDecimals) = address(token).staticcall(
+            abi.encodeCall(IERC20Metadata.decimals, ())
+        );
+        if (success && encodedDecimals.length >= 32) {
+            uint256 returnedDecimals = abi.decode(encodedDecimals, (uint256));
+            if (returnedDecimals <= type(uint8).max) {
+                return (true, uint8(returnedDecimals));
+            }
+        }
+        return (false, 0);
+    }
+
+    function _tryStringOrBytes32(address token, bytes4 selector) private view returns (bool ok, string memory out) {
+        // Enforce read-only
+        (bool success, bytes memory data) = token.staticcall(abi.encodeWithSelector(selector));
+        if (!success) return (false, "");
+
+        // Try standard (string).  Reverts on malformed data.
+        if (data.length >= 64) return (true, abi.decode(data, (string)));
+
+        // Fallback: bytes32 (older tokens)
+        if (data.length == 32) {
+            bytes32 raw = abi.decode(data, (bytes32));
+            return (true, _bytes32ToString(raw));
+        }
+
+        // Anything else: treat as failure
+        return (false, "");
+    }
+
+    // separate to allow try/catch
+    function _decodeString(bytes memory data) internal pure returns (string memory s) {
+        return abi.decode(data, (string));
+    }
+
+    function _bytes32ToString(bytes32 x) private pure returns (string memory) {
+        uint256 len = 32;
+        while (len > 0 && x[len - 1] == 0) {
+            unchecked {
+                len--;
+            }
+        }
+        bytes memory out = new bytes(len);
+        for (uint256 i = 0; i < len; ++i) out[i] = x[i];
+        return string(out);
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+import {SafeMetadata, IERC20} from "../../../libraries/SafeMetadata.sol";
+import {ITokenData} from "../interfaces/ITokenData.sol";
+
+/// @title TokenData
+/// @author Covenant Labs
+/// @notice sets symbol, decimals and name overrides for a token
+/// @dev each item can be set independently, and will override existing ERC20 values for the respecitve token
+/// @dev if both symbol and decimals are overriden, a quote token need not be an actual ERC20
+/// @dev this gives the flexibility to use currency ISO addresses and symbols for quote tokens.
+/// @dev Oracles can use ERC-7535, ISO 4217 or other conventions to represent non-ERC20 assets as addresses.
+/// @dev e.g., EIP7528 would set address = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", symbol = "ETH", decimals = 18.
+abstract contract TokenData is ITokenData {
+    using SafeMetadata for IERC20;
+
+    // mapping of decimal overrides for specific assets
+    mapping(address => uint8) _decimals;
+
+    // mapping of symbol overrides for specific assets
+    mapping(address => string) _symbol;
+
+    // mapping of name overrides for specific assets
+    mapping(address => string) _name;
+
+    error TokenData_InvalidDecimals();
+
+    event SetTokenDecimals(address indexed token, uint8 oldDecimals, uint8 newDecimals);
+    event SetTokenSymbol(address indexed token, string oldSymbol, string newSymbol);
+    event SetTokenName(address indexed token, string oldName, string newName);
+
+    function assetDecimals(address asset) public view returns (uint8 decimals_) {
+        return _assetDecimals(asset);
+    }
+
+    function assetSymbol(address asset) public view returns (string memory symbol_) {
+        return _assetSymbol(asset);
+    }
+
+    function assetName(address asset) public view returns (string memory name_) {
+        return _assetName(asset);
+    }
+
+    //////////////////////////////////////////////////////////////////////////
+
+    // @dev - Stored decimals are an override.
+    // if stored decimals is 0, try and get ERC20 decimals
+    function _assetDecimals(address asset) internal view returns (uint8 decimals_) {
+        decimals_ = _decimals[asset]; //check if there is an override for this asset
+        if (decimals_ > 0) return decimals_;
+        else {
+            // try and read from asset itself
+            bool success;
+            (success, decimals_) = IERC20(asset).tryGetDecimals();
+            return success ? decimals_ : 18;
+        }
+    }
+
+    // @dev - Stored symbol are an override.
+    // @dev - if stored symbol is "", try and get ERC20 symbol
+    function _assetSymbol(address asset) internal view returns (string memory symbol_) {
+        symbol_ = _symbol[asset]; //check if there is an override for this asset
+        if (bytes(symbol_).length > 0) return symbol_;
+        else {
+            // try and read from asset itself
+            bool success;
+            (success, symbol_) = IERC20(asset).tryGetSymbol();
+            return success ? symbol_ : "";
+        }
+    }
+
+    // @dev - Stored name are an override.
+    // @dev - if stored name is "", try and get ERC20 name
+    function _assetName(address asset) internal view returns (string memory name_) {
+        name_ = _name[asset]; //check if there is an override for this asset
+        if (bytes(name_).length > 0) return name_;
+        else {
+            // try and read from asset itself
+            bool success;
+            (success, name_) = IERC20(asset).tryGetName();
+            return success ? name_ : "";
+        }
+    }
+
+    // internal functions.  These should be exposed with the appropriate access modifiers
+    // @dev - if newDecimals = 0, then _assetDecimals will try and get ERC20 decimals
+    function _updateAssetDecimals(address asset, uint8 newDecimals) internal {
+        if (newDecimals > 18) revert TokenData_InvalidDecimals();
+        uint8 oldDecimals = _assetDecimals(asset); // get old decimals
+        _decimals[asset] = newDecimals;
+        emit SetTokenDecimals(asset, oldDecimals, newDecimals);
+    }
+
+    // internal functions.  These should be exposed with the appropriate access modifiers
+    // @dev - if newSymbol = "", then _assetSymbol will try and get ERC20 symbol
+    function _updateAssetSymbol(address asset, string calldata newSymbol) internal {
+        string memory oldSymbol = _assetSymbol(asset); // get old symbol
+        _symbol[asset] = newSymbol;
+        emit SetTokenSymbol(asset, oldSymbol, newSymbol);
+    }
+
+    // internal functions.  These should be exposed with the appropriate access modifiers
+    // @dev - if newName = "", then _assetNAme will try and get ERC20 name
+    function _updateAssetName(address asset, string calldata newName) internal {
+        string memory oldName = _assetName(asset); // get old symbol
+        _name[asset] = newName;
+        emit SetTokenName(asset, oldName, newName);
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+/// @title Utils Library
+/// @author Covenant Labs
+/// @notice Library to convert a market to its id.
+library UtilsLib {
+    function encodeFee(uint16 yieldFee, uint16 tvlFee) internal pure returns (uint32 protocolFee) {
+        return ((uint32(yieldFee) << 16) | uint32(tvlFee));
+    }
+
+    function decodeFee(uint32 protocolFee) internal pure returns (uint16 yieldFee, uint16 tvlFee) {
+        yieldFee = uint16(protocolFee >> 16);
+        tvlFee = uint16(protocolFee & 0xFFFF);
+    }
+}
+
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.3.0) (utils/Strings.sol)
 
@@ -1057,6 +1327,198 @@ library Strings {
             value := mload(add(buffer, add(0x20, offset)))
         }
     }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
+import {Math} from "@openzeppelin/utils/math/Math.sol";
+import {SaturatingMath} from "./SaturatingMath.sol";
+import {FixedPoint} from "./FixedPoint.sol";
+
+/**
+ * @title DebtMath library
+ * @author Covenant Labs
+ * @notice Provides approximations for Perpetual Debt calculations
+ */
+library DebtMath {
+    using SaturatingMath for uint256;
+    using FixedPointMathLib for int256;
+    using Math for uint256;
+
+    uint256 internal constant SECONDS_PER_YEAR = 365 days;
+
+    /**
+     * @notice calculates interest update factor given perpetual debt duration, debt notional price and elapsed time.
+     * @param _amount amount on which interest is being applied
+     * @param _duration effective duration of the debt (in seconds)
+     * @param _discountPrice discount price (vs debt notional) in WADs
+     * @param _elapsedTime time over which to accrue interest (in seconds)
+     * @param _lnRateBias additional market rate bias (that is not determined by price), in WADs
+     * @return updatedAmount_  the updated amount given debt interest rate and elapsed time
+     **/
+    function accrueInterest(
+        uint256 _amount,
+        uint256 _duration,
+        uint256 _discountPrice,
+        uint256 _elapsedTime,
+        int256 _lnRateBias
+    ) internal pure returns (uint256 updatedAmount_) {
+        // Calculate rate = - ln(price) + lnRateBias
+        // and then updates amount.
+        return accrueInterestLnRate(_amount, _lnRateBias - int256(_discountPrice).lnWad(), _elapsedTime, _duration);
+    }
+
+    /**
+     * @notice updates amount given duration, lnRate and elapsed time.
+     * @dev interest accrual saturates.  ie, calculation will not revert,
+     * and instead updatedAmount will be >0 and <=type(uint256).max
+     * @param _amount amount to be update given duration, lnRate and elapsed time.
+     * @param _duration effective duration of the debt (in seconds)
+     * @param _lnRate lnRate in WADs (lnRate < 1 is a negative interest rate)
+     * @param _elapsedTime time over which to accrue interest (in seconds)
+     * @return updatedAmount_  the updated amount given debt interest rate and elapsed time
+     **/
+    function accrueInterestLnRate(
+        uint256 _amount,
+        int256 _lnRate,
+        uint256 _elapsedTime,
+        uint256 _duration
+    ) internal pure returns (uint256 updatedAmount_) {
+        uint256 updateFactor = calculateApproxExponentialUpdate(
+            uint256((_lnRate >= 0) ? _lnRate : -_lnRate),
+            _elapsedTime,
+            _duration
+        );
+
+        if (_lnRate >= 0) {
+            return _amount.saturatingMulDiv(updateFactor, FixedPoint.RAY);
+        } else {
+            // @dev - when lnRate < 0, we calculate exp(x), but then divide _amount by that updatefactor.
+            // given e(-x) = 1 / e(x). Amount is never allowed to get to 0 from interest accrual.
+            updatedAmount_ = _amount.mulDiv(FixedPoint.RAY, updateFactor);
+            if (updatedAmount_ == 0 && _amount > 0) updatedAmount_ = 1;
+        }
+    }
+
+    /**
+     * @notice Calculates approximation of exp(lnRate * timeDelta / duration) for small values of rate * timeDelta / duration
+     * @dev rate * timeDelta / duration is considered small, given timeDelta << duration, and rangebound rate
+     * @dev A taylor expansion is used to calculate exp(rate * timeDelta / duration), and output will alwas be <= to the exact calculation.
+     * @dev Below calculation does not overflow, even in extremes.  e.g, max lnRAte
+     * @dev below does not overflow for reasonable extremes.  E.g, duration of 1 year (in seconds), time elapsed of 10,000 years, lnRate = 7.9 RAYS (= 250000% daily rate)
+     * @param _lnRate logaritmic rate. -ln(price) in WADs
+     * @param _timeDelta time over which to accrue interest (in seconds)
+     * @param _duration effective duration of the debt (in seconds)
+     * @return updateMultiplier_ the update multiplier (in RAYs) with which to update an amount
+     **/
+    function calculateApproxExponentialUpdate(
+        uint256 _lnRate,
+        uint256 _timeDelta,
+        uint256 _duration
+    ) internal pure returns (uint256 updateMultiplier_) {
+        // @dev- for extreme cases (e.g., daily 10000% interest rate over 10000 years, with duration = 1 day),
+        // both _lnRate and _timeDelta are expected to be < uint96.max, and the below
+        // calculation not to revert.
+
+        // approximation for exp(lnRate * timeDelta / duration)
+        uint256 rate1 = (_lnRate * _timeDelta * FixedPoint.WAD_RAY_RATIO) / _duration;
+        uint256 rate2 = rate1.mulDiv(rate1, 2 * FixedPoint.RAY);
+        uint256 rate3 = rate2.mulDiv(rate1, 3 * FixedPoint.RAY);
+        return FixedPoint.RAY + rate1 + rate2 + rate3;
+    }
+
+    // returns linear update multiplier (ray units)
+    // assumes rate in BPS for a yearly duration
+    // @dev - output value saturates at type(uint256).max
+    function calculateLinearAccrual(
+        uint256 _value,
+        uint256 _rateBPS,
+        uint256 _timeDelta
+    ) internal pure returns (uint256 accrualValue_) {
+        // @dev - Even for extreme rate and timeDelta cases, _rate expected to be < type(uint160).max
+        // and _timeDelta < type(uint96).max.  Given this, below does not revert for any
+        // _value <= type(uint256).max.
+
+        return _value.saturatingMulDiv(_rateBPS * _timeDelta, SECONDS_PER_YEAR * FixedPoint.PERCENTAGE_FACTOR);
+    }
+}
+
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity >=0.8.0;
+
+/**
+ * @title IPriceOracle
+ * @author Covenant Labs
+ * @notice Defines the the core interface for Covenant oracles.
+ * @notice Extends the oracle interface of Euler Labs, https://github.com/euler-xyz/euler-price-oracle/
+    to include pricePreviews and priceUpdates/getUpdateFee for pull oracles
+ * @notice All functions return a value.  if bid/ask price not implemented, then getQuotes returns bid = ask = getQuote()
+ **/
+
+interface IPriceOracle {
+    /// @notice Get the name of the oracle.
+    /// @return The name of the oracle.
+    function name() external view returns (string memory);
+
+    /// @notice One-sided price: How much quote token you would get for inAmount of base token, assuming no price spread.
+    /// @param inAmount The amount of `base` to convert.
+    /// @param base The token that is being priced.
+    /// @param quote The token that is the unit of account.
+    /// @return outAmount The amount of `quote` that is equivalent to `inAmount` of `base`.
+    function getQuote(uint256 inAmount, address base, address quote) external view returns (uint256 outAmount);
+
+    /// @notice Two-sided price: How much quote token you would get/spend for selling/buying inAmount of base token.
+    /// @param inAmount The amount of `base` to convert.
+    /// @param base The token that is being priced.
+    /// @param quote The token that is the unit of account.
+    /// @return bidOutAmount The amount of `quote` you would get for selling `inAmount` of `base`.
+    /// @return askOutAmount The amount of `quote` you would spend for buying `inAmount` of `base`.
+    function getQuotes(
+        uint256 inAmount,
+        address base,
+        address quote
+    ) external view returns (uint256 bidOutAmount, uint256 askOutAmount);
+
+    /// @notice priceUpdate for pulled pricing (e.g., Pyth, Redstone, Chainlink datastreams)
+    /// @notice allows pushing pricing to be verified on-chain. Function is payable to receive required payment.
+    /// @param base The token that is being priced (use here for routing purposes).
+    /// @param quote The token that is the unit of account (use here for routing purposes).
+    /// @param updateData Update data package (contains price and other info to be verified onchain)
+    function updatePriceFeeds(address base, address quote, bytes calldata updateData) external payable;
+
+    /// @notice Returns the required fee to update an oracle price.
+    /// @param base The token that is being priced (use here for routing purposes).
+    /// @param quote The token that is the unit of account (use here for routing purposes).
+    /// @param updateData Array of price update data.
+    /// @return updateFee The required fee in Wei.
+    function getUpdateFee(
+        address base,
+        address quote,
+        bytes calldata updateData
+    ) external view returns (uint128 updateFee);
+
+    /// @notice Preview of getQuote, with a longer lookback window to avoid quote blocking
+    /// @notice One-sided price: How much quote token you would get for inAmount of base token, assuming no price spread.
+    /// @param inAmount The amount of `base` to convert.
+    /// @param base The token that is being priced.
+    /// @param quote The token that is the unit of account.
+    /// @return outAmount The amount of `quote` that is equivalent to `inAmount` of `base`.
+    function previewGetQuote(uint256 inAmount, address base, address quote) external view returns (uint256 outAmount);
+
+    /// @notice Preview of getQuotes, with a longer lookback window to avoid quote blocking
+    /// @notice Two-sided price: How much quote token you would get/spend for selling/buying inAmount of base token.
+    /// @param inAmount The amount of `base` to convert.
+    /// @param base The token that is being priced.
+    /// @param quote The token that is the unit of account.
+    /// @return bidOutAmount The amount of `quote` you would get for selling `inAmount` of `base`.
+    /// @return askOutAmount The amount of `quote` you would spend for buying `inAmount` of `base`.
+    function previewGetQuotes(
+        uint256 inAmount,
+        address base,
+        address quote
+    ) external view returns (uint256 bidOutAmount, uint256 askOutAmount);
 }
 
 //SPDX-License-Identifier: BUSL-1.1
@@ -2274,395 +2736,6 @@ library LatentSwapLogic {
         unchecked {
             return value * value;
         }
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-import {Math} from "@openzeppelin/utils/math/Math.sol";
-import {SafeCast} from "@openzeppelin/utils/math/SafeCast.sol";
-
-/**
- * @title SaturatingMath library
- * @author Covenant Labs
- * @notice Provides a saturating mulDiv operation
- */
-library SaturatingMath {
-    // Returns a saturating mulDiv operation
-    // @dev - does not overflow, but instead returns type(uint256).max if so.
-    function saturatingMulDiv(
-        uint256 _numerator1,
-        uint256 _numerator2,
-        uint256 _denominator
-    ) internal pure returns (uint256) {
-        (uint256 high, uint256 low) = Math.mul512(_numerator1, _numerator2);
-
-        // @dev - below follows the logic of Math.mulDiv, but saturates instead of reverting.
-        if (high >= _denominator) {
-            // returns type(uint256).max for all overflow and _denominator == 0 conditions
-            return type(uint256).max;
-        } else if (high == 0) {
-            // @dev - execute 256 bit division here directly.
-            // already checked for denominator == 0
-            unchecked {
-                return low / _denominator;
-            }
-        } else {
-            // @dev - would be more efficient to do a 512 division here,
-            // but OpenZeppelin does not have a separate (already audited) function.
-            // So below recomputes Math.mul512 internally, and then performs the division.
-            // Does not revert given checks above.
-            return Math.mulDiv(_numerator1, _numerator2, _denominator);
-        }
-    }
-
-    function saturatingMulDiv(
-        uint256 x,
-        uint256 y,
-        uint256 denominator,
-        Math.Rounding rounding
-    ) internal pure returns (uint256 result) {
-        result = saturatingMulDiv(x, y, denominator);
-        return
-            result +
-            SafeCast.toUint(
-                Math.unsignedRoundsUp(rounding) && mulmod(x, y, denominator) > 0 && result < type(uint256).max
-            );
-    }
-
-    /**
-     * @dev Calculates floor(x * y >> n) with full precision. saturates instead of reverting.
-     * @dev Code copies @openzeppelin/utils/math/Math.sol:mulShr, but saturates instead of reverting.
-     */
-    function saturatingMulShr(uint256 x, uint256 y, uint8 n) internal pure returns (uint256 result) {
-        unchecked {
-            (uint256 high, uint256 low) = Math.mul512(x, y);
-            if (high >= 1 << n) {
-                return type(uint256).max; // @dev - saturates instead of reverting for overflow.
-            }
-            return (high << (256 - n)) | (low >> n);
-        }
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-/// @title Utils Library
-/// @author Covenant Labs
-/// @notice Library to convert a market to its id.
-library UtilsLib {
-    function encodeFee(uint16 yieldFee, uint16 tvlFee) internal pure returns (uint32 protocolFee) {
-        return ((uint32(yieldFee) << 16) | uint32(tvlFee));
-    }
-
-    function decodeFee(uint32 protocolFee) internal pure returns (uint16 yieldFee, uint16 tvlFee) {
-        yieldFee = uint16(protocolFee >> 16);
-        tvlFee = uint16(protocolFee & 0xFFFF);
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
-import {Math} from "@openzeppelin/utils/math/Math.sol";
-import {SaturatingMath} from "./SaturatingMath.sol";
-import {FixedPoint} from "./FixedPoint.sol";
-
-/**
- * @title DebtMath library
- * @author Covenant Labs
- * @notice Provides approximations for Perpetual Debt calculations
- */
-library DebtMath {
-    using SaturatingMath for uint256;
-    using FixedPointMathLib for int256;
-    using Math for uint256;
-
-    uint256 internal constant SECONDS_PER_YEAR = 365 days;
-
-    /**
-     * @notice calculates interest update factor given perpetual debt duration, debt notional price and elapsed time.
-     * @param _amount amount on which interest is being applied
-     * @param _duration effective duration of the debt (in seconds)
-     * @param _discountPrice discount price (vs debt notional) in WADs
-     * @param _elapsedTime time over which to accrue interest (in seconds)
-     * @param _lnRateBias additional market rate bias (that is not determined by price), in WADs
-     * @return updatedAmount_  the updated amount given debt interest rate and elapsed time
-     **/
-    function accrueInterest(
-        uint256 _amount,
-        uint256 _duration,
-        uint256 _discountPrice,
-        uint256 _elapsedTime,
-        int256 _lnRateBias
-    ) internal pure returns (uint256 updatedAmount_) {
-        // Calculate rate = - ln(price) + lnRateBias
-        // and then updates amount.
-        return accrueInterestLnRate(_amount, _lnRateBias - int256(_discountPrice).lnWad(), _elapsedTime, _duration);
-    }
-
-    /**
-     * @notice updates amount given duration, lnRate and elapsed time.
-     * @dev interest accrual saturates.  ie, calculation will not revert,
-     * and instead updatedAmount will be >0 and <=type(uint256).max
-     * @param _amount amount to be update given duration, lnRate and elapsed time.
-     * @param _duration effective duration of the debt (in seconds)
-     * @param _lnRate lnRate in WADs (lnRate < 1 is a negative interest rate)
-     * @param _elapsedTime time over which to accrue interest (in seconds)
-     * @return updatedAmount_  the updated amount given debt interest rate and elapsed time
-     **/
-    function accrueInterestLnRate(
-        uint256 _amount,
-        int256 _lnRate,
-        uint256 _elapsedTime,
-        uint256 _duration
-    ) internal pure returns (uint256 updatedAmount_) {
-        uint256 updateFactor = calculateApproxExponentialUpdate(
-            uint256((_lnRate >= 0) ? _lnRate : -_lnRate),
-            _elapsedTime,
-            _duration
-        );
-
-        if (_lnRate >= 0) {
-            return _amount.saturatingMulDiv(updateFactor, FixedPoint.RAY);
-        } else {
-            // @dev - when lnRate < 0, we calculate exp(x), but then divide _amount by that updatefactor.
-            // given e(-x) = 1 / e(x). Amount is never allowed to get to 0 from interest accrual.
-            updatedAmount_ = _amount.mulDiv(FixedPoint.RAY, updateFactor);
-            if (updatedAmount_ == 0 && _amount > 0) updatedAmount_ = 1;
-        }
-    }
-
-    /**
-     * @notice Calculates approximation of exp(lnRate * timeDelta / duration) for small values of rate * timeDelta / duration
-     * @dev rate * timeDelta / duration is considered small, given timeDelta << duration, and rangebound rate
-     * @dev A taylor expansion is used to calculate exp(rate * timeDelta / duration), and output will alwas be <= to the exact calculation.
-     * @dev Below calculation does not overflow, even in extremes.  e.g, max lnRAte
-     * @dev below does not overflow for reasonable extremes.  E.g, duration of 1 year (in seconds), time elapsed of 10,000 years, lnRate = 7.9 RAYS (= 250000% daily rate)
-     * @param _lnRate logaritmic rate. -ln(price) in WADs
-     * @param _timeDelta time over which to accrue interest (in seconds)
-     * @param _duration effective duration of the debt (in seconds)
-     * @return updateMultiplier_ the update multiplier (in RAYs) with which to update an amount
-     **/
-    function calculateApproxExponentialUpdate(
-        uint256 _lnRate,
-        uint256 _timeDelta,
-        uint256 _duration
-    ) internal pure returns (uint256 updateMultiplier_) {
-        // @dev- for extreme cases (e.g., daily 10000% interest rate over 10000 years, with duration = 1 day),
-        // both _lnRate and _timeDelta are expected to be < uint96.max, and the below
-        // calculation not to revert.
-
-        // approximation for exp(lnRate * timeDelta / duration)
-        uint256 rate1 = (_lnRate * _timeDelta * FixedPoint.WAD_RAY_RATIO) / _duration;
-        uint256 rate2 = rate1.mulDiv(rate1, 2 * FixedPoint.RAY);
-        uint256 rate3 = rate2.mulDiv(rate1, 3 * FixedPoint.RAY);
-        return FixedPoint.RAY + rate1 + rate2 + rate3;
-    }
-
-    // returns linear update multiplier (ray units)
-    // assumes rate in BPS for a yearly duration
-    // @dev - output value saturates at type(uint256).max
-    function calculateLinearAccrual(
-        uint256 _value,
-        uint256 _rateBPS,
-        uint256 _timeDelta
-    ) internal pure returns (uint256 accrualValue_) {
-        // @dev - Even for extreme rate and timeDelta cases, _rate expected to be < type(uint160).max
-        // and _timeDelta < type(uint96).max.  Given this, below does not revert for any
-        // _value <= type(uint256).max.
-
-        return _value.saturatingMulDiv(_rateBPS * _timeDelta, SECONDS_PER_YEAR * FixedPoint.PERCENTAGE_FACTOR);
-    }
-}
-
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity >=0.8.0;
-
-/**
- * @title IPriceOracle
- * @author Covenant Labs
- * @notice Defines the the core interface for Covenant oracles.
- * @notice Extends the oracle interface of Euler Labs, https://github.com/euler-xyz/euler-price-oracle/
-    to include pricePreviews and priceUpdates/getUpdateFee for pull oracles
- * @notice All functions return a value.  if bid/ask price not implemented, then getQuotes returns bid = ask = getQuote()
- **/
-
-interface IPriceOracle {
-    /// @notice Get the name of the oracle.
-    /// @return The name of the oracle.
-    function name() external view returns (string memory);
-
-    /// @notice One-sided price: How much quote token you would get for inAmount of base token, assuming no price spread.
-    /// @param inAmount The amount of `base` to convert.
-    /// @param base The token that is being priced.
-    /// @param quote The token that is the unit of account.
-    /// @return outAmount The amount of `quote` that is equivalent to `inAmount` of `base`.
-    function getQuote(uint256 inAmount, address base, address quote) external view returns (uint256 outAmount);
-
-    /// @notice Two-sided price: How much quote token you would get/spend for selling/buying inAmount of base token.
-    /// @param inAmount The amount of `base` to convert.
-    /// @param base The token that is being priced.
-    /// @param quote The token that is the unit of account.
-    /// @return bidOutAmount The amount of `quote` you would get for selling `inAmount` of `base`.
-    /// @return askOutAmount The amount of `quote` you would spend for buying `inAmount` of `base`.
-    function getQuotes(
-        uint256 inAmount,
-        address base,
-        address quote
-    ) external view returns (uint256 bidOutAmount, uint256 askOutAmount);
-
-    /// @notice priceUpdate for pulled pricing (e.g., Pyth, Redstone, Chainlink datastreams)
-    /// @notice allows pushing pricing to be verified on-chain. Function is payable to receive required payment.
-    /// @param base The token that is being priced (use here for routing purposes).
-    /// @param quote The token that is the unit of account (use here for routing purposes).
-    /// @param updateData Update data package (contains price and other info to be verified onchain)
-    function updatePriceFeeds(address base, address quote, bytes calldata updateData) external payable;
-
-    /// @notice Returns the required fee to update an oracle price.
-    /// @param base The token that is being priced (use here for routing purposes).
-    /// @param quote The token that is the unit of account (use here for routing purposes).
-    /// @param updateData Array of price update data.
-    /// @return updateFee The required fee in Wei.
-    function getUpdateFee(
-        address base,
-        address quote,
-        bytes calldata updateData
-    ) external view returns (uint128 updateFee);
-
-    /// @notice Preview of getQuote, with a longer lookback window to avoid quote blocking
-    /// @notice One-sided price: How much quote token you would get for inAmount of base token, assuming no price spread.
-    /// @param inAmount The amount of `base` to convert.
-    /// @param base The token that is being priced.
-    /// @param quote The token that is the unit of account.
-    /// @return outAmount The amount of `quote` that is equivalent to `inAmount` of `base`.
-    function previewGetQuote(uint256 inAmount, address base, address quote) external view returns (uint256 outAmount);
-
-    /// @notice Preview of getQuotes, with a longer lookback window to avoid quote blocking
-    /// @notice Two-sided price: How much quote token you would get/spend for selling/buying inAmount of base token.
-    /// @param inAmount The amount of `base` to convert.
-    /// @param base The token that is being priced.
-    /// @param quote The token that is the unit of account.
-    /// @return bidOutAmount The amount of `quote` you would get for selling `inAmount` of `base`.
-    /// @return askOutAmount The amount of `quote` you would spend for buying `inAmount` of `base`.
-    function previewGetQuotes(
-        uint256 inAmount,
-        address base,
-        address quote
-    ) external view returns (uint256 bidOutAmount, uint256 askOutAmount);
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
-
-import {SafeMetadata, IERC20} from "../../../libraries/SafeMetadata.sol";
-import {ITokenData} from "../interfaces/ITokenData.sol";
-
-/// @title TokenData
-/// @author Covenant Labs
-/// @notice sets symbol, decimals and name overrides for a token
-/// @dev each item can be set independently, and will override existing ERC20 values for the respecitve token
-/// @dev if both symbol and decimals are overriden, a quote token need not be an actual ERC20
-/// @dev this gives the flexibility to use currency ISO addresses and symbols for quote tokens.
-/// @dev Oracles can use ERC-7535, ISO 4217 or other conventions to represent non-ERC20 assets as addresses.
-/// @dev e.g., EIP7528 would set address = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", symbol = "ETH", decimals = 18.
-abstract contract TokenData is ITokenData {
-    using SafeMetadata for IERC20;
-
-    // mapping of decimal overrides for specific assets
-    mapping(address => uint8) _decimals;
-
-    // mapping of symbol overrides for specific assets
-    mapping(address => string) _symbol;
-
-    // mapping of name overrides for specific assets
-    mapping(address => string) _name;
-
-    error TokenData_InvalidDecimals();
-
-    event SetTokenDecimals(address indexed token, uint8 oldDecimals, uint8 newDecimals);
-    event SetTokenSymbol(address indexed token, string oldSymbol, string newSymbol);
-    event SetTokenName(address indexed token, string oldName, string newName);
-
-    function assetDecimals(address asset) public view returns (uint8 decimals_) {
-        return _assetDecimals(asset);
-    }
-
-    function assetSymbol(address asset) public view returns (string memory symbol_) {
-        return _assetSymbol(asset);
-    }
-
-    function assetName(address asset) public view returns (string memory name_) {
-        return _assetName(asset);
-    }
-
-    //////////////////////////////////////////////////////////////////////////
-
-    // @dev - Stored decimals are an override.
-    // if stored decimals is 0, try and get ERC20 decimals
-    function _assetDecimals(address asset) internal view returns (uint8 decimals_) {
-        decimals_ = _decimals[asset]; //check if there is an override for this asset
-        if (decimals_ > 0) return decimals_;
-        else {
-            // try and read from asset itself
-            bool success;
-            (success, decimals_) = IERC20(asset).tryGetDecimals();
-            return success ? decimals_ : 18;
-        }
-    }
-
-    // @dev - Stored symbol are an override.
-    // @dev - if stored symbol is "", try and get ERC20 symbol
-    function _assetSymbol(address asset) internal view returns (string memory symbol_) {
-        symbol_ = _symbol[asset]; //check if there is an override for this asset
-        if (bytes(symbol_).length > 0) return symbol_;
-        else {
-            // try and read from asset itself
-            bool success;
-            (success, symbol_) = IERC20(asset).tryGetSymbol();
-            return success ? symbol_ : "";
-        }
-    }
-
-    // @dev - Stored name are an override.
-    // @dev - if stored name is "", try and get ERC20 name
-    function _assetName(address asset) internal view returns (string memory name_) {
-        name_ = _name[asset]; //check if there is an override for this asset
-        if (bytes(name_).length > 0) return name_;
-        else {
-            // try and read from asset itself
-            bool success;
-            (success, name_) = IERC20(asset).tryGetName();
-            return success ? name_ : "";
-        }
-    }
-
-    // internal functions.  These should be exposed with the appropriate access modifiers
-    // @dev - if newDecimals = 0, then _assetDecimals will try and get ERC20 decimals
-    function _updateAssetDecimals(address asset, uint8 newDecimals) internal {
-        if (newDecimals > 18) revert TokenData_InvalidDecimals();
-        uint8 oldDecimals = _assetDecimals(asset); // get old decimals
-        _decimals[asset] = newDecimals;
-        emit SetTokenDecimals(asset, oldDecimals, newDecimals);
-    }
-
-    // internal functions.  These should be exposed with the appropriate access modifiers
-    // @dev - if newSymbol = "", then _assetSymbol will try and get ERC20 symbol
-    function _updateAssetSymbol(address asset, string calldata newSymbol) internal {
-        string memory oldSymbol = _assetSymbol(asset); // get old symbol
-        _symbol[asset] = newSymbol;
-        emit SetTokenSymbol(asset, oldSymbol, newSymbol);
-    }
-
-    // internal functions.  These should be exposed with the appropriate access modifiers
-    // @dev - if newName = "", then _assetNAme will try and get ERC20 name
-    function _updateAssetName(address asset, string calldata newName) internal {
-        string memory oldName = _assetName(asset); // get old symbol
-        _name[asset] = newName;
-        emit SetTokenName(asset, oldName, newName);
     }
 }
 
@@ -3172,6 +3245,960 @@ library LatentMath {
     }
 }
 
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.0;
+
+import {MarketId, AssetType} from "../interfaces/ICovenant.sol";
+import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+
+/**
+ * @title ICovenant
+ * @author Amorphous
+ * @notice Defines the the core interface of Covenant Liquid markets.
+ **/
+interface ISynthToken is IERC20 {
+    // Notice - gets CovenantCore associated with the SynthToken
+    function getCovenantCore() external returns (address);
+
+    // Notice - gets marketId associated with the SynthToken
+    function getMarketId() external returns (MarketId);
+
+    // Notice - gets synthType associated with the SynthToken
+    function getSynthType() external returns (AssetType);
+
+    /**
+     * @dev Expose share mint functionality to Covenant Liquid
+     */
+    function lexMint(address account, uint256 value) external;
+
+    /**
+     * @dev Expose share redeem functionality to Covenant Liquid
+     */
+    function lexBurn(address account, uint256 value) external;
+}
+
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.0;
+
+import {ILiquidExchangeModel, AssetType, MintParams, RedeemParams, SwapParams, MarketId, MarketParams, TokenPrices, SynthTokens} from "src/interfaces/ILiquidExchangeModel.sol";
+
+struct LexState {
+    uint256 lastDebtNotionalPrice; // WAD units
+    uint256 lastBaseTokenPrice; // Last oracle read WAD units
+    uint256 lastETWAPBaseSupply; // Tracks baseSupply for redeem cap
+    uint160 lastSqrtPriceX96; // Last DEX price, X96 units
+    uint96 lastUpdateTimestamp; // Timestamp in seconds
+    int64 lastLnRateBias; // WAD units.
+}
+
+struct LexConfig {
+    uint32 protocolFee; // Protocol fees in BPS units (uint16 tvlFee, uint16 yieldFee)
+    address aToken;
+    address zToken;
+    uint8 noCapLimit; // Max liquidity mint / burn without a cap limit.  Limit = 2^noCapLimit
+    int8 scaleDecimals; // Scale decimals (used for scaling the price from the oracle)
+    bool adaptive; // Whether debtPriceDiscountBalanced is adaptive
+}
+
+struct LexParams {
+    address covenantCore;
+    int64 initLnRateBias;
+    uint160 edgeSqrtPriceX96_B; // high edge of concentrated liquidity
+    uint160 edgeSqrtPriceX96_A; // low edge of concentrated liquidity
+    uint160 limHighSqrtPriceX96; // from which _highLTV can be derived (no aToken sales, no zToken buys)
+    uint160 limMaxSqrtPriceX96; // from which _maxLTV can be derived (same as _highLTV && no aToken buys)
+    uint32 debtDuration; // perpetual duration of debt, in seconds (max 100 years)
+    uint8 swapFee; // BPS fee when swapping tokens.  Max of 2.55% swap fee
+    uint256 targetXvsL; // pre-calculated static value
+}
+
+/**
+ * @title ILatentSwapLEX
+ * @author Covenant Labs
+ * @notice Defines the interface for ILatentSwapLEX.sol
+ **/
+interface ILatentSwapLEX is ILiquidExchangeModel {
+    ///////////////////////////////////////////////////////////////////////////////
+    // Getters
+
+    /// @notice LexParams (constructor) getter
+    function getLexParams() external view returns (LexParams memory);
+
+    /// @notice LexState getter
+    function getLexState(MarketId marketId) external view returns (LexState memory);
+
+    /// @notice LexConfig getter
+    function getLexConfig(MarketId marketId) external view returns (LexConfig memory);
+
+    ///////////////////////////////////////////////////////////////////////////////
+    // Write functions (only Owner calls)
+
+    /// @notice sets default noCapDecimals for a quote token
+    /// @dev setting noCapLimit = 255 removes mint / redeem restriction for markets using this quoteToken
+    /// @param token the quote token address
+    /// @param newDefaultNoCapLimit the default noCapLimit for markets with this quote token
+    function setDefaultNoCapLimit(address token, uint8 newDefaultNoCapLimit) external;
+
+    /// @notice updates the noCapDecimals for a live market
+    /// @dev this is useful when the market is live and the quote token is not an actual ERC20
+    /// @dev setting noCapLimit = 255 removes mint / redeem restriction for the market
+    /// @param marketId the market id
+    /// @param newNoCapLimit the noCapLimit for the market (in power of 2).  Markets can mint and redeem baseTokens
+    //  wihout mint and redeem caps if baseTokenSupply < 2^nowCapLimt.
+    function setMarketNoCapLimit(MarketId marketId, uint8 newNoCapLimit) external;
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
+
+pragma solidity ^0.8.20;
+
+import {Ownable} from "./Ownable.sol";
+
+/**
+ * @dev Contract module which provides access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * This extension of the {Ownable} contract includes a two-step mechanism to transfer
+ * ownership, where the new owner must call {acceptOwnership} in order to replace the
+ * old one. This can help prevent common mistakes, such as transfers of ownership to
+ * incorrect accounts, or to contracts that are unable to interact with the
+ * permission system.
+ *
+ * The initial owner is specified at deployment time in the constructor for `Ownable`. This
+ * can later be changed with {transferOwnership} and {acceptOwnership}.
+ *
+ * This module is used through inheritance. It will make available all functions
+ * from parent (Ownable).
+ */
+abstract contract Ownable2Step is Ownable {
+    address private _pendingOwner;
+
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Returns the address of the pending owner.
+     */
+    function pendingOwner() public view virtual returns (address) {
+        return _pendingOwner;
+    }
+
+    /**
+     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
+     * Can only be called by the current owner.
+     *
+     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
+     */
+    function transferOwnership(address newOwner) public virtual override onlyOwner {
+        _pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner(), newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual override {
+        delete _pendingOwner;
+        super._transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev The new owner accepts the ownership transfer.
+     */
+    function acceptOwnership() public virtual {
+        address sender = _msgSender();
+        if (pendingOwner() != sender) {
+            revert OwnableUnauthorizedAccount(sender);
+        }
+        _transferOwnership(sender);
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+import {SafeMetadata, IERC20} from "../../../libraries/SafeMetadata.sol";
+import {ITokenData} from "../interfaces/ITokenData.sol";
+
+/// @title TokenData
+/// @author Covenant Labs
+/// @notice sets symbol, decimals and name overrides for a token
+/// @dev each item can be set independently, and will override existing ERC20 values for the respecitve token
+/// @dev if both symbol and decimals are overriden, a quote token need not be an actual ERC20
+/// @dev this gives the flexibility to use currency ISO addresses and symbols for quote tokens.
+/// @dev Oracles can use ERC-7535, ISO 4217 or other conventions to represent non-ERC20 assets as addresses.
+/// @dev e.g., EIP7528 would set address = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", symbol = "ETH", decimals = 18.
+abstract contract TokenData is ITokenData {
+    using SafeMetadata for IERC20;
+
+    // mapping of decimal overrides for specific assets
+    mapping(address => uint8) _decimals;
+
+    // mapping of symbol overrides for specific assets
+    mapping(address => string) _symbol;
+
+    // mapping of name overrides for specific assets
+    mapping(address => string) _name;
+
+    error TokenData_InvalidDecimals();
+
+    event SetTokenDecimals(address indexed token, uint8 oldDecimals, uint8 newDecimals);
+    event SetTokenSymbol(address indexed token, string oldSymbol, string newSymbol);
+    event SetTokenName(address indexed token, string oldName, string newName);
+
+    function assetDecimals(address asset) public view returns (uint8 decimals_) {
+        return _assetDecimals(asset);
+    }
+
+    function assetSymbol(address asset) public view returns (string memory symbol_) {
+        return _assetSymbol(asset);
+    }
+
+    function assetName(address asset) public view returns (string memory name_) {
+        return _assetName(asset);
+    }
+
+    //////////////////////////////////////////////////////////////////////////
+
+    // @dev - Stored decimals are an override.
+    // if stored decimals is 0, try and get ERC20 decimals
+    function _assetDecimals(address asset) internal view returns (uint8 decimals_) {
+        decimals_ = _decimals[asset]; //check if there is an override for this asset
+        if (decimals_ > 0) return decimals_;
+        else {
+            // try and read from asset itself
+            bool success;
+            (success, decimals_) = IERC20(asset).tryGetDecimals();
+            return success ? decimals_ : 18;
+        }
+    }
+
+    // @dev - Stored symbol are an override.
+    // @dev - if stored symbol is "", try and get ERC20 symbol
+    function _assetSymbol(address asset) internal view returns (string memory symbol_) {
+        symbol_ = _symbol[asset]; //check if there is an override for this asset
+        if (bytes(symbol_).length > 0) return symbol_;
+        else {
+            // try and read from asset itself
+            bool success;
+            (success, symbol_) = IERC20(asset).tryGetSymbol();
+            return success ? symbol_ : "";
+        }
+    }
+
+    // @dev - Stored name are an override.
+    // @dev - if stored name is "", try and get ERC20 name
+    function _assetName(address asset) internal view returns (string memory name_) {
+        name_ = _name[asset]; //check if there is an override for this asset
+        if (bytes(name_).length > 0) return name_;
+        else {
+            // try and read from asset itself
+            bool success;
+            (success, name_) = IERC20(asset).tryGetName();
+            return success ? name_ : "";
+        }
+    }
+
+    // internal functions.  These should be exposed with the appropriate access modifiers
+    // @dev - if newDecimals = 0, then _assetDecimals will try and get ERC20 decimals
+    function _updateAssetDecimals(address asset, uint8 newDecimals) internal {
+        if (newDecimals > 18) revert TokenData_InvalidDecimals();
+        uint8 oldDecimals = _assetDecimals(asset); // get old decimals
+        _decimals[asset] = newDecimals;
+        emit SetTokenDecimals(asset, oldDecimals, newDecimals);
+    }
+
+    // internal functions.  These should be exposed with the appropriate access modifiers
+    // @dev - if newSymbol = "", then _assetSymbol will try and get ERC20 symbol
+    function _updateAssetSymbol(address asset, string calldata newSymbol) internal {
+        string memory oldSymbol = _assetSymbol(asset); // get old symbol
+        _symbol[asset] = newSymbol;
+        emit SetTokenSymbol(asset, oldSymbol, newSymbol);
+    }
+
+    // internal functions.  These should be exposed with the appropriate access modifiers
+    // @dev - if newName = "", then _assetNAme will try and get ERC20 name
+    function _updateAssetName(address asset, string calldata newName) internal {
+        string memory oldName = _assetName(asset); // get old symbol
+        _name[asset] = newName;
+        emit SetTokenName(asset, oldName, newName);
+    }
+}
+
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity >=0.8.0;
+
+/**
+ * @title ITokenData
+ * @author Covenant Labs
+ * @notice Defines interface for symbol and decimal overrides
+ **/
+
+interface ITokenData {
+    function assetDecimals(address asset) external view returns (uint8);
+    function assetSymbol(address asset) external view returns (string memory);
+    function assetName(address asset) external view returns (string memory);
+}
+
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.0;
+
+import {IERC20} from "./ISynthToken.sol";
+import {ILiquidExchangeModel} from "./ILiquidExchangeModel.sol";
+import {Events} from "../libraries/Events.sol";
+import {Errors} from "../libraries/Errors.sol";
+
+type MarketId is bytes20;
+
+// Parameters that uniquely defines a Covenant market
+struct MarketParams {
+    address baseToken;
+    address quoteToken;
+    address curator; // address of the oracle router
+    address lex;
+}
+
+struct SynthTokens {
+    address aToken;
+    address zToken;
+}
+
+struct MarketState {
+    uint256 baseSupply; // total base tokens for market
+    uint128 protocolFeeGrowth; // cumulative fee accrued by protocol in base tokens (unclaimed)
+    address authorizedPauseAddress; // address authorized to pause market
+    uint8 statusFlag; // 0 = uninitialized, 1 = unlocked, 2 = locked, 3 = paused
+}
+
+struct SwapParams {
+    MarketId marketId;
+    MarketParams marketParams;
+    AssetType assetIn;
+    AssetType assetOut;
+    address to;
+    uint256 amountSpecified;
+    uint256 amountLimit;
+    bool isExactIn;
+    bytes data;
+    uint256 msgValue;
+}
+
+struct RedeemParams {
+    MarketId marketId;
+    MarketParams marketParams;
+    uint256 aTokenAmountIn;
+    uint256 zTokenAmountIn;
+    address to;
+    uint256 minAmountOut;
+    bytes data;
+    uint256 msgValue;
+}
+
+struct MintParams {
+    MarketId marketId;
+    MarketParams marketParams;
+    uint256 baseAmountIn;
+    address to;
+    uint256 minATokenAmountOut;
+    uint256 minZTokenAmountOut;
+    bytes data;
+    uint256 msgValue;
+}
+
+struct TokenPrices {
+    uint256 baseTokenPrice;
+    uint256 aTokenPrice;
+    uint256 zTokenPrice;
+}
+
+enum AssetType {
+    BASE, // index 0
+    DEBT, // index 1
+    LEVERAGE, // index 2
+    COUNT // used to get the count of asset types
+}
+
+/**
+ * @title ICovenant
+ * @author Covenant Labs
+ * @notice Defines the the core interface of Covenant Liquid markets.
+ **/
+interface ICovenant {
+    /// @notice Covenant name getter
+    function name() external view returns (string memory);
+
+    /// @notice MarketParams getter
+    function getIdToMarketParams(MarketId marketId) external view returns (MarketParams memory);
+
+    /// @notice MarketState getter
+    function getMarketState(MarketId marketId) external view returns (MarketState memory);
+
+    /// @notice Whether the LEX is enabled.
+    function isLexEnabled(address lex) external view returns (bool);
+
+    /// @notice Whether the Curator (oracle router) is enabled.
+    function isCuratorEnabled(address curator) external view returns (bool);
+
+    /**
+     * @notice creates a new Covenant Liquid market
+     * @param marketParams market initialization parameters
+     **/
+    function createMarket(MarketParams calldata marketParams, bytes calldata initData) external returns (MarketId);
+
+    /**
+     * @notice mints aTokens and zTokens from base tokens.
+     * @param mintParams mint parameters, as detailed below:
+     * - marketId: the marketId
+     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
+     * - baseAmountIn: the amount of base token to deposit (and against which to mint a and z tokens)
+     * - to: the receiver of aTokens and zTokens
+     * - minATokenAmountOut: minimum ATokens out
+     * - minZTokenAmountOut: minimum Ztokens out
+     * - data: additional data to send to LEX
+     * - msgValue: msgValue to send to LEX if needed
+     * @return aTokenAmountOut amount of aToken minted
+     * @return zTokenAmountOut amount of zToken minted
+     **/
+    function mint(
+        MintParams calldata mintParams
+    ) external payable returns (uint256 aTokenAmountOut, uint256 zTokenAmountOut);
+
+    /**
+     * @notice Redeems aTokenAmount and zTokenAmount for base token.
+     * @notice Treats amounts as exact input, and does not check for slippage
+     * @dev This function send to LEX msgValue, but does not check whether msg.Value == msgValue (this is done to enable multicalls)
+     * @dev This means that calling with msgValue > msg.Value will revert, and msgValue < msg.Value
+     * @dev will leave excess value in the Covenant contract (which can be used by subsequent function calls or users)
+     * @param redeemParams redeem parameters, as follows:
+     * - marketId: the marketId
+     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
+     * - aTokenAmountIn: the aTokenAmount being redeemed / burned (exact in)
+     * - zTokenAmountIn: the zTokenAmount being redeemed / burned (exact in)
+     * - to: the receiver of base tokens
+     * - minAmountOut: the minimum amount of base token out (for slippage / MEV protection)
+     * - data: additional data to send to LEX
+     * - msgValue: msgValue to send to LEX if needed
+     * @return baseAmountOut actual base tokens redeemed
+     **/
+    function redeem(RedeemParams calldata redeemParams) external payable returns (uint256 baseAmountOut);
+
+    /**
+     * @notice Executes a swap between any of the base, aToken, or zToken assets
+     * @dev All parameters are given in raw token decimal encoding.
+     * @dev function returns error if assets being swapped are not part of the same market
+     * @dev swapping between aTokens / zTokens actually mints / burns tokens
+     * @dev This function send to LEX msgValue, but does not check whether msg.Value == msgValue (this is done to enable multicalls)
+     * @dev This means that calling with msgValue > msg.Value will revert, and msgValue < msg.Value
+     * @dev will leave excess value in the Covenant contract (which can be used by subsequent function calls or users)
+     * @param swapParams swap parameters
+     * - marketId: the marketId
+     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
+     * - assetIn: AssetType in
+     * - assetOut: AssetType out
+     * - to: the receiver of base tokens
+     * - amountSpecified: swap amount specified (amount in, if isExactIn == true)
+     * - amountLimit: swap reverts if less than amountLimit is return (if isExactIn), or more than amountLimit is expected as input (if !isExactIn)
+     * - isExactIn: whether swap is exact in, or exact out
+     * - data: additional data to send to LEX
+     * - msgValue: msgValue to send to LEX if needed
+     * @return amount amount of tokens swapped out / in, depending on whether swap isExactIn
+     **/
+    function swap(SwapParams calldata swapParams) external payable returns (uint256 amount);
+
+    /**
+     * @notice Updates market state (e.g., accrues debt fees and protocol fees)
+     * @dev Calling mint / redeem / swap also updates internal states, but updateState allows a user to update the state without mint / redeem /swapping tokens
+     * @dev This function send to LEX msgValue, but does not check whether msg.Value == msgValue (this is done to enable multicalls)
+     * @dev This means that calling with msgValue > msg.Value will revert, and msgValue < msg.Value
+     * @dev will leave excess value in the Covenant contract (which can be used by subsequent function calls or users)
+     * @param marketId market to update
+     * @param marketParams marketParams of market to update
+     * @param data additional data to send to LEX
+     * @param msgValue msgValue to send to LEX if needed
+     **/
+    function updateState(
+        MarketId marketId,
+        MarketParams calldata marketParams,
+        bytes calldata data,
+        uint256 msgValue
+    ) external payable;
+
+    /**
+     * @notice previews mint of aTokens and zTokens from base tokens, without changing market state
+     * @notice Treats amounts as exact input, runs validation logic as actual mint call
+     * @param mintParams mint parameters, as detailed below:
+     * - marketId: the marketId
+     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
+     * - baseAmountIn: the amount of base token to deposit (and against which to mint a and z tokens)
+     * - to: the receiver of aTokens and zTokens
+     * - minATokenAmountOut: minimum ATokens out
+     * - minZTokenAmountOut: minimum Ztokens out
+     * @return aTokenAmountOut amount of aToken minted
+     * @return zTokenAmountOut amount of zToken minted
+     * @return protocolFees amount of fee charged by protocol in base tokens
+     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
+     * @return tokenPrices returns the dex prices after the action
+     **/
+    function previewMint(
+        MintParams calldata mintParams
+    )
+        external
+        view
+        returns (
+            uint256 aTokenAmountOut,
+            uint256 zTokenAmountOut,
+            uint128 protocolFees,
+            uint128 oracleUpdateFee,
+            TokenPrices memory tokenPrices
+        );
+
+    /**
+     * @notice previews redeem of aTokenAmount and zTokenAmount for base token, without changing market state.
+     * @notice Treats amounts as exact input, runs validation logic as actual redeem call
+     * @param redeemParams redeem parameters, as follows:
+     * - marketId: the marketId
+     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
+     * - aTokenAmountIn: the aTokenAmount being redeemed / burned (exact in)
+     * - zTokenAmountIn: the zTokenAmount being redeemed / burned (exact in)
+     * - to: the receiver of base tokens
+     * - minAmountOut: the minimum amount of base token out (for slippage / MEV protection)
+     * @return amountOut actual base tokens redeemed
+     * @return protocolFees amount of fee charged by protocol in base tokens
+     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
+     * @return tokenPrices returns the dex prices after the action
+     **/
+    function previewRedeem(
+        RedeemParams calldata redeemParams
+    )
+        external
+        view
+        returns (uint256 amountOut, uint128 protocolFees, uint128 oracleUpdateFee, TokenPrices memory tokenPrices);
+
+    /**
+     * @notice Calculates output of a swap between any of the base, aToken, or zToken assets, without changing market
+     * @notice Runs validation logic as actual swap call
+     * @param swapParams swap parameters
+     * - marketId: the marketId
+     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
+     * - assetIn: AssetType in
+     * - assetOut: AssetType out
+     * - to: the receiver of base tokens
+     * - amountSpecified: swap amount specified (amount in, if isExactIn == true)
+     * - amountLimit: swap reverts if less than amountLimit is return (if isExactIn), or more than amountLimit is expected as input (if !isExactIn)
+     * - isExactIn: whether swap is exact in, or exact out
+     * @return amountCalc amount of tokens swapped out / in, depending on whether swap is EXACT_IN / EXACT_OUT
+     * @return protocolFees amount of fee charged by protocol in base tokens
+     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
+     * @return tokenPrices returns the dex prices after the action
+     **/
+    function previewSwap(
+        SwapParams calldata swapParams
+    )
+        external
+        view
+        returns (uint256 amountCalc, uint128 protocolFees, uint128 oracleUpdateFee, TokenPrices memory tokenPrices);
+
+    /**
+     * @notice Payable multicall
+     * @notice Does not check msg.value received.  Instead, it uses any msgValues encoded in data and sends those onwards
+     * @notice This means that calling multicall where sum(data(msgValues)) > msg.Value will revert, and
+     * @notice sum(data(msgValues)) < msg.Value will leave excess value in the Covenant contract (which can be used by subsequent users)
+     * @param data array of call data
+     * @return results an array of return info
+     */
+    function multicall(bytes[] calldata data) external payable returns (bytes[] memory results);
+
+    /////////////////////////////////////////////////////////////////////////////////
+    // Restricted functions
+
+    /// @notice Set valid LEX contracts (onlyOwner)
+    /// @notice Disabling a LEX does not allow new markets with this LEX
+    /// but does not invalidate already created markets
+    function setEnabledLEX(address lex, bool isValid) external;
+
+    /// @notice Set valid Curator (oracle router) contracts (onlyOwner)
+    /// @notice Disabling a Curator does not allow new markets with this Curator
+    /// but does not invalidate already created markets
+    function setEnabledCurator(address curator, bool isValid) external;
+
+    /// @notice Set default protocol fee (onlyOwner)
+    function setDefaultFee(uint32 newFee) external;
+
+    /// @notice Set protocol fee for a market (onlyOwner)
+    function setMarketProtocolFee(
+        MarketId marketId,
+        MarketParams calldata marketParams,
+        bytes calldata data,
+        uint256 msgValue,
+        uint32 newFee
+    ) external payable;
+
+    /// @notice Collect protocol fees for a market (onlyOwner)
+    function collectProtocolFee(MarketId marketId, address recipient, uint128 amountRequested) external;
+
+    /// @notice Pause a market (only authorized pause address)
+    function setMarketPause(MarketId marketId, bool isPaused) external;
+
+    /// @notice Set default pause address (onlyOwner)
+    function setDefaultPauseAddress(address newPauseAddress) external;
+
+    /// @notice Set pause address for a market (onlyOwner)
+    function setMarketPauseAddress(MarketId marketId, address newPauseAddress) external;
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
+import {Math} from "@openzeppelin/utils/math/Math.sol";
+import {SaturatingMath} from "./SaturatingMath.sol";
+import {FixedPoint} from "./FixedPoint.sol";
+
+/**
+ * @title DebtMath library
+ * @author Covenant Labs
+ * @notice Provides approximations for Perpetual Debt calculations
+ */
+library DebtMath {
+    using SaturatingMath for uint256;
+    using FixedPointMathLib for int256;
+    using Math for uint256;
+
+    uint256 internal constant SECONDS_PER_YEAR = 365 days;
+
+    /**
+     * @notice calculates interest update factor given perpetual debt duration, debt notional price and elapsed time.
+     * @param _amount amount on which interest is being applied
+     * @param _duration effective duration of the debt (in seconds)
+     * @param _discountPrice discount price (vs debt notional) in WADs
+     * @param _elapsedTime time over which to accrue interest (in seconds)
+     * @param _lnRateBias additional market rate bias (that is not determined by price), in WADs
+     * @return updatedAmount_  the updated amount given debt interest rate and elapsed time
+     **/
+    function accrueInterest(
+        uint256 _amount,
+        uint256 _duration,
+        uint256 _discountPrice,
+        uint256 _elapsedTime,
+        int256 _lnRateBias
+    ) internal pure returns (uint256 updatedAmount_) {
+        // Calculate rate = - ln(price) + lnRateBias
+        // and then updates amount.
+        return accrueInterestLnRate(_amount, _lnRateBias - int256(_discountPrice).lnWad(), _elapsedTime, _duration);
+    }
+
+    /**
+     * @notice updates amount given duration, lnRate and elapsed time.
+     * @dev interest accrual saturates.  ie, calculation will not revert,
+     * and instead updatedAmount will be >0 and <=type(uint256).max
+     * @param _amount amount to be update given duration, lnRate and elapsed time.
+     * @param _duration effective duration of the debt (in seconds)
+     * @param _lnRate lnRate in WADs (lnRate < 1 is a negative interest rate)
+     * @param _elapsedTime time over which to accrue interest (in seconds)
+     * @return updatedAmount_  the updated amount given debt interest rate and elapsed time
+     **/
+    function accrueInterestLnRate(
+        uint256 _amount,
+        int256 _lnRate,
+        uint256 _elapsedTime,
+        uint256 _duration
+    ) internal pure returns (uint256 updatedAmount_) {
+        uint256 updateFactor = calculateApproxExponentialUpdate(
+            uint256((_lnRate >= 0) ? _lnRate : -_lnRate),
+            _elapsedTime,
+            _duration
+        );
+
+        if (_lnRate >= 0) {
+            return _amount.saturatingMulDiv(updateFactor, FixedPoint.RAY);
+        } else {
+            // @dev - when lnRate < 0, we calculate exp(x), but then divide _amount by that updatefactor.
+            // given e(-x) = 1 / e(x). Amount is never allowed to get to 0 from interest accrual.
+            updatedAmount_ = _amount.mulDiv(FixedPoint.RAY, updateFactor);
+            if (updatedAmount_ == 0 && _amount > 0) updatedAmount_ = 1;
+        }
+    }
+
+    /**
+     * @notice Calculates approximation of exp(lnRate * timeDelta / duration) for small values of rate * timeDelta / duration
+     * @dev rate * timeDelta / duration is considered small, given timeDelta << duration, and rangebound rate
+     * @dev A taylor expansion is used to calculate exp(rate * timeDelta / duration), and output will alwas be <= to the exact calculation.
+     * @dev Below calculation does not overflow, even in extremes.  e.g, max lnRAte
+     * @dev below does not overflow for reasonable extremes.  E.g, duration of 1 year (in seconds), time elapsed of 10,000 years, lnRate = 7.9 RAYS (= 250000% daily rate)
+     * @param _lnRate logaritmic rate. -ln(price) in WADs
+     * @param _timeDelta time over which to accrue interest (in seconds)
+     * @param _duration effective duration of the debt (in seconds)
+     * @return updateMultiplier_ the update multiplier (in RAYs) with which to update an amount
+     **/
+    function calculateApproxExponentialUpdate(
+        uint256 _lnRate,
+        uint256 _timeDelta,
+        uint256 _duration
+    ) internal pure returns (uint256 updateMultiplier_) {
+        // @dev- for extreme cases (e.g., daily 10000% interest rate over 10000 years, with duration = 1 day),
+        // both _lnRate and _timeDelta are expected to be < uint96.max, and the below
+        // calculation not to revert.
+
+        // approximation for exp(lnRate * timeDelta / duration)
+        uint256 rate1 = (_lnRate * _timeDelta * FixedPoint.WAD_RAY_RATIO) / _duration;
+        uint256 rate2 = rate1.mulDiv(rate1, 2 * FixedPoint.RAY);
+        uint256 rate3 = rate2.mulDiv(rate1, 3 * FixedPoint.RAY);
+        return FixedPoint.RAY + rate1 + rate2 + rate3;
+    }
+
+    // returns linear update multiplier (ray units)
+    // assumes rate in BPS for a yearly duration
+    // @dev - output value saturates at type(uint256).max
+    function calculateLinearAccrual(
+        uint256 _value,
+        uint256 _rateBPS,
+        uint256 _timeDelta
+    ) internal pure returns (uint256 accrualValue_) {
+        // @dev - Even for extreme rate and timeDelta cases, _rate expected to be < type(uint160).max
+        // and _timeDelta < type(uint96).max.  Given this, below does not revert for any
+        // _value <= type(uint256).max.
+
+        return _value.saturatingMulDiv(_rateBPS * _timeDelta, SECONDS_PER_YEAR * FixedPoint.PERCENTAGE_FACTOR);
+    }
+}
+
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.0;
+
+import {AssetType, MintParams, RedeemParams, SwapParams, MarketId, MarketParams, TokenPrices, SynthTokens} from "./ICovenant.sol";
+
+/**
+ * @title ILiquidExchangeModel
+ * @author Covenant Labs
+ * @notice Defines the the core interface of Liquid Exchange Models
+ **/
+interface ILiquidExchangeModel {
+    ///////////////////////////////////////////////////////////////////////////////
+    // Getters
+
+    /// @notice ProtocolFee getter
+    function getProtocolFee(MarketId marketId) external view returns (uint32);
+
+    /// @notice SynthTokens getter
+    function getSynthTokens(MarketId marketId) external view returns (SynthTokens memory);
+
+    /// @notice LEX name getter
+    function name() external view returns (string memory);
+
+    ///////////////////////////////////////////////////////////////////////////////
+    // Write functions (only Covenant calls)
+
+    /// @notice sets protocol Fee for a given market
+    function setMarketProtocolFee(MarketId marketId, uint32 newFee) external;
+
+    /// @notice initializes LEX variables for a market
+    function initMarket(
+        MarketId marketId,
+        MarketParams calldata marketParams,
+        uint32 protocolFee,
+        bytes memory initData
+    ) external returns (SynthTokens memory, bytes memory);
+
+    /**
+     * @notice calculate Synth tokens to mint given baseLiquidityIn, and updates internal states.
+     * @notice does not include fees
+     * @param mintParams covenant mint parameters
+     * @param baseTokenSupply total baseToken supply in the market
+     * @param sender sender of tokens coming in
+     * @return aTokenAmountOut amount of aToken to be minted given amountIn
+     * @return zTokenAmountOut amount of zToken to be minted given amountIn
+     * @return protocolFees calculated protocol fees to be charged
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after mint
+     **/
+    function mint(
+        MintParams calldata mintParams,
+        address sender,
+        uint256 baseTokenSupply
+    )
+        external
+        payable
+        returns (
+            uint256 aTokenAmountOut,
+            uint256 zTokenAmountOut,
+            uint128 protocolFees,
+            TokenPrices memory tokenPrices
+        );
+
+    /**
+     * @notice calculates base liquidity out, given synth tokens redeemed, and updates internal states
+     * @notice does not include fees
+     * @notice Treats amounts as exact input, and does not check for slippage
+     * @param redeemParams covenant redeem parameters
+     * @param sender sender of tokens coming in
+     * @param baseTokenSupply total baseToken supply in the market
+     * @return amountOut amount of base token being redeemed
+     * @return protocolFees calculated protocol fees to be charged
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after redeem
+     **/
+    function redeem(
+        RedeemParams calldata redeemParams,
+        address sender,
+        uint256 baseTokenSupply
+    ) external payable returns (uint256 amountOut, uint128 protocolFees, TokenPrices memory tokenPrices);
+
+    /**
+     * @notice calculates swap between tokens (base or synths), and updates internal states
+     * @notice does not include fees
+     * @dev All parameters are given in raw token decimal encoding.
+     * @param swapParams covenant swap parameters
+     * @param sender sender of tokens coming in
+     * @param baseTokenSupply total baseToken supply in the market
+     * @return amountCalculated amount of liquidity swapped out / in, depending on whether swap is EXACT_IN / EXACT_OUT
+     * @return protocolFees calculated protocol fees to be charged
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after swap
+     **/
+    function swap(
+        SwapParams calldata swapParams,
+        address sender,
+        uint256 baseTokenSupply
+    ) external payable returns (uint256 amountCalculated, uint128 protocolFees, TokenPrices memory tokenPrices);
+
+    /**
+     * @notice Updates market state (e.g., accrues debt fees and protocol fees)
+     * @dev Calling mint / redeem / swap also updates internal states, but updateState allows a user to update the state without mint / redeem /swapping tokens
+     * @param marketId market to update
+     * @param marketParams marketParams of market to update
+     * @param baseTokenSupply total baseToken supply in the market
+     * @param data additional data to send to LEX
+     * @return protocolFees calculated protocol fees to be charged
+     **/
+    function updateState(
+        MarketId marketId,
+        MarketParams calldata marketParams,
+        uint256 baseTokenSupply,
+        bytes calldata data
+    ) external payable returns (uint128 protocolFees);
+
+    ///////////////////////////////////////////////////////////////////////////////
+    // Quote functions (do not update internal state)
+
+    /**
+     * @notice calculate Synth tokens to mint given baseLiquidityIn
+     * @notice does not include fees
+     * @param mintParams covenant mint parameters
+     * @param baseTokenSupply total baseToken supply in the market
+     * @param sender sender of tokens coming in
+     * @return aTokenAmountOut amount of aToken to be minted given amountIn
+     * @return zTokenAmountOut amount of zToken to be minted given amountIn
+     * @return protocolFees calculated protocol fees to be charged
+     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after mint
+     **/
+    function quoteMint(
+        MintParams calldata mintParams,
+        address sender,
+        uint256 baseTokenSupply
+    )
+        external
+        view
+        returns (
+            uint256 aTokenAmountOut,
+            uint256 zTokenAmountOut,
+            uint128 protocolFees,
+            uint128 oracleUpdateFee,
+            TokenPrices memory tokenPrices
+        );
+
+    /**
+     * @notice calculates base liquidity out, given synth tokens redeemed
+     * @notice does not include fees
+     * @notice Treats amounts as exact input, and does not check for slippage
+     * @param redeemParams covenant redeem parameters
+     * @param sender sender of tokens coming in
+     * @param baseTokenSupply total baseToken supply in the market
+     * @return baseAmountOut base tokens that would come out
+     * @return protocolFees calculated protocol fees to be charged
+     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after redeem
+     **/
+    function quoteRedeem(
+        RedeemParams calldata redeemParams,
+        address sender,
+        uint256 baseTokenSupply
+    )
+        external
+        view
+        returns (uint256 baseAmountOut, uint128 protocolFees, uint128 oracleUpdateFee, TokenPrices memory tokenPrices);
+    /**
+     * @notice calculates swap between tokens (base or synths)
+     * @notice does not include fees
+     * @dev All parameters are given in raw token decimal encoding.
+     * @param swapParams covenant swap parameters
+     * @param sender sender of tokens coming in
+     * @param baseTokenSupply total baseToken supply in the market
+     * @return amountCalculated amount of liquidity swapped out / in, depending on whether swap is EXACT_IN / EXACT_OUT
+     * @return protocolFees calculated protocol fees to be charged
+     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after swap
+     **/
+    function quoteSwap(
+        SwapParams calldata swapParams,
+        address sender,
+        uint256 baseTokenSupply
+    )
+        external
+        view
+        returns (
+            uint256 amountCalculated,
+            uint128 protocolFees,
+            uint128 oracleUpdateFee,
+            TokenPrices memory tokenPrices
+        );
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity >=0.4.0;
+
+/// @title FixedPoint
+/// @notice A library for handling binary fixed point numbers, see https://en.wikipedia.org/wiki/Q_(number_format)
+library FixedPoint {
+    // Q96 Fixed Point Constants
+    uint8 internal constant RESOLUTION = 96;
+    uint256 internal constant Q96 = 0x1000000000000000000000000;
+    uint256 internal constant Q128 = 0x100000000000000000000000000000000;
+    uint256 internal constant Q160 = 0x0010000000000000000000000000000000000000000;
+    uint256 internal constant Q192 = 0x1000000000000000000000000000000000000000000000000;
+
+    // WAD Fixed Point Constants
+    uint8 internal constant RESOLUTION_WAD = 18;
+    uint256 internal constant WAD = 1e18;
+    uint256 internal constant HALF_WAD = 0.5e18;
+
+    // RAY Fixed Point Constants
+    uint8 internal constant RESOLUTION_RAY = 27;
+    uint256 internal constant RAY = 1e27;
+    uint256 internal constant HALF_RAY = 0.5e27;
+    uint256 internal constant WAD_RAY_RATIO = 1e9;
+
+    // Perecentage Math Constants
+    uint256 internal constant PERCENTAGE_FACTOR = 1e4;
+    uint256 internal constant HALF_PERCENTAGE_FACTOR = 0.5e4;
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+/// @title Utils Library
+/// @author Covenant Labs
+/// @notice Library to convert a market to its id.
+library UtilsLib {
+    function encodeFee(uint16 yieldFee, uint16 tvlFee) internal pure returns (uint32 protocolFee) {
+        return ((uint32(yieldFee) << 16) | uint32(tvlFee));
+    }
+
+    function decodeFee(uint32 protocolFee) internal pure returns (uint16 yieldFee, uint16 tvlFee) {
+        yieldFee = uint16(protocolFee >> 16);
+        tvlFee = uint16(protocolFee & 0xFFFF);
+    }
+}
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
@@ -3242,74 +4269,6 @@ library SafeMetadata {
         bytes memory out = new bytes(len);
         for (uint256 i = 0; i < len; ++i) out[i] = x[i];
         return string(out);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
-
-pragma solidity ^0.8.20;
-
-import {Ownable} from "./Ownable.sol";
-
-/**
- * @dev Contract module which provides access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * This extension of the {Ownable} contract includes a two-step mechanism to transfer
- * ownership, where the new owner must call {acceptOwnership} in order to replace the
- * old one. This can help prevent common mistakes, such as transfers of ownership to
- * incorrect accounts, or to contracts that are unable to interact with the
- * permission system.
- *
- * The initial owner is specified at deployment time in the constructor for `Ownable`. This
- * can later be changed with {transferOwnership} and {acceptOwnership}.
- *
- * This module is used through inheritance. It will make available all functions
- * from parent (Ownable).
- */
-abstract contract Ownable2Step is Ownable {
-    address private _pendingOwner;
-
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Returns the address of the pending owner.
-     */
-    function pendingOwner() public view virtual returns (address) {
-        return _pendingOwner;
-    }
-
-    /**
-     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
-     * Can only be called by the current owner.
-     *
-     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
-     */
-    function transferOwnership(address newOwner) public virtual override onlyOwner {
-        _pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner(), newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual override {
-        delete _pendingOwner;
-        super._transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev The new owner accepts the ownership transfer.
-     */
-    function acceptOwnership() public virtual {
-        address sender = _msgSender();
-        if (pendingOwner() != sender) {
-            revert OwnableUnauthorizedAccount(sender);
-        }
-        _transferOwnership(sender);
     }
 }
 
@@ -3384,36 +4343,421 @@ interface ILatentSwapLEX is ILiquidExchangeModel {
     function setMarketNoCapLimit(MarketId marketId, uint8 newNoCapLimit) external;
 }
 
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+import {Math} from "@openzeppelin/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/utils/math/SafeCast.sol";
+
+/**
+ * @title SaturatingMath library
+ * @author Covenant Labs
+ * @notice Provides a saturating mulDiv operation
+ */
+library SaturatingMath {
+    // Returns a saturating mulDiv operation
+    // @dev - does not overflow, but instead returns type(uint256).max if so.
+    function saturatingMulDiv(
+        uint256 _numerator1,
+        uint256 _numerator2,
+        uint256 _denominator
+    ) internal pure returns (uint256) {
+        (uint256 high, uint256 low) = Math.mul512(_numerator1, _numerator2);
+
+        // @dev - below follows the logic of Math.mulDiv, but saturates instead of reverting.
+        if (high >= _denominator) {
+            // returns type(uint256).max for all overflow and _denominator == 0 conditions
+            return type(uint256).max;
+        } else if (high == 0) {
+            // @dev - execute 256 bit division here directly.
+            // already checked for denominator == 0
+            unchecked {
+                return low / _denominator;
+            }
+        } else {
+            // @dev - would be more efficient to do a 512 division here,
+            // but OpenZeppelin does not have a separate (already audited) function.
+            // So below recomputes Math.mul512 internally, and then performs the division.
+            // Does not revert given checks above.
+            return Math.mulDiv(_numerator1, _numerator2, _denominator);
+        }
+    }
+
+    function saturatingMulDiv(
+        uint256 x,
+        uint256 y,
+        uint256 denominator,
+        Math.Rounding rounding
+    ) internal pure returns (uint256 result) {
+        result = saturatingMulDiv(x, y, denominator);
+        return
+            result +
+            SafeCast.toUint(
+                Math.unsignedRoundsUp(rounding) && mulmod(x, y, denominator) > 0 && result < type(uint256).max
+            );
+    }
+
+    /**
+     * @dev Calculates floor(x * y >> n) with full precision. saturates instead of reverting.
+     * @dev Code copies @openzeppelin/utils/math/Math.sol:mulShr, but saturates instead of reverting.
+     */
+    function saturatingMulShr(uint256 x, uint256 y, uint8 n) internal pure returns (uint256 result) {
+        unchecked {
+            (uint256 high, uint256 low) = Math.mul512(x, y);
+            if (high >= 1 << n) {
+                return type(uint256).max; // @dev - saturates instead of reverting for overflow.
+            }
+            return (high << (256 - n)) | (low >> n);
+        }
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.30;
+
+import {Math} from "@openzeppelin/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/utils/math/SafeCast.sol";
+import {FixedPoint} from "./FixedPoint.sol";
+
+/// @title Functions based on Q64.96 sqrt price and liquidity
+/// @notice Contains the math that uses square root of price as a Q64.96 and liquidity to compute deltas
+library SqrtPriceMath {
+    using SafeCast for uint256;
+
+    /// @notice Gets the next sqrt price given a delta of token0
+    /// The most precise formula for this is liquidity * sqrtPX96 / (liquidity +- amount * sqrtPX96),
+    /// if this is impossible because of overflow, we calculate liquidity / (liquidity / sqrtPX96 +- amount).
+    /// @param sqrtPX96 The starting price, i.e. before accounting for the token0 delta
+    /// @param liquidity The amount of usable liquidity
+    /// @param amount How much of token0 to add or remove from virtual reserves
+    /// @param add Whether to add or remove the amount of token0
+    /// @param rounding Whether to round result up or down
+    /// @return The price after adding or removing amount, depending on add
+    function getNextSqrtPriceFromAmount0(
+        uint160 sqrtPX96,
+        uint160 liquidity,
+        uint256 amount,
+        bool add,
+        Math.Rounding rounding
+    ) internal pure returns (uint160) {
+        require(sqrtPX96 > 0);
+        require(liquidity > 0);
+
+        // we short circuit amount == 0 because the result is otherwise not guaranteed to equal the input price
+        if (amount == 0) return sqrtPX96;
+        uint256 numerator1 = uint256(liquidity) << FixedPoint.RESOLUTION;
+
+        if (add) {
+            unchecked {
+                uint256 product;
+                if ((product = amount * sqrtPX96) / amount == sqrtPX96) {
+                    uint256 denominator = numerator1 + product;
+                    if (denominator >= numerator1)
+                        // always fits in 160 bits
+                        return uint160(Math.mulDiv(numerator1, sqrtPX96, denominator, rounding));
+                }
+            }
+            // denominator is checked for overflow
+            uint256 denominator2 = (numerator1 / sqrtPX96) + amount;
+            if (rounding == Math.Rounding.Ceil) return uint160(Math.ceilDiv(numerator1, denominator2));
+            else return uint160(numerator1 / denominator2);
+        } else {
+            unchecked {
+                uint256 product;
+                // if the product overflows, we know the denominator underflows
+                // in addition, we must check that the denominator does not underflow
+                require((product = amount * sqrtPX96) / amount == sqrtPX96 && numerator1 > product);
+                uint256 denominator = numerator1 - product;
+                return Math.mulDiv(numerator1, sqrtPX96, denominator, rounding).toUint160();
+            }
+        }
+    }
+
+    /// @notice Gets the next sqrt price given a delta of token1
+    /// The formula we compute is within <1 wei of the lossless version: sqrtPX96 +- amount / liquidity
+    /// @param sqrtPX96 The starting price, i.e., before accounting for the token1 delta
+    /// @param liquidity The amount of usable liquidity
+    /// @param amount How much of token1 to add, or remove, from virtual reserves
+    /// @param add Whether to add, or remove, the amount of token1
+    /// @param rounding Whether to round result up or down
+    /// @return The price after adding or removing `amount`
+    function getNextSqrtPriceFromAmount1(
+        uint160 sqrtPX96,
+        uint160 liquidity,
+        uint256 amount,
+        bool add,
+        Math.Rounding rounding
+    ) internal pure returns (uint160) {
+        require(sqrtPX96 > 0);
+        require(liquidity > 0);
+
+        // if we're adding (subtracting), rounding down requires rounding the quotient down (up)
+        // in both cases, avoid a mulDiv for most inputs
+        if (add) {
+            uint256 quotient = (
+                amount <= type(uint160).max
+                    ? (
+                        (rounding == Math.Rounding.Ceil)
+                            ? Math.ceilDiv((amount << FixedPoint.RESOLUTION), liquidity)
+                            : (amount << FixedPoint.RESOLUTION) / liquidity
+                    )
+                    : Math.mulDiv(amount, FixedPoint.Q96, liquidity, rounding)
+            );
+
+            return (uint256(sqrtPX96) + quotient).toUint160();
+        } else {
+            Math.Rounding invRounding = Math.Rounding(1 - uint8(rounding));
+            uint256 quotient = (
+                amount <= type(uint160).max
+                    ? (invRounding == Math.Rounding.Ceil)
+                        ? Math.ceilDiv(amount << FixedPoint.RESOLUTION, liquidity)
+                        : ((amount << FixedPoint.RESOLUTION) / liquidity)
+                    : Math.mulDiv(amount, FixedPoint.Q96, liquidity, invRounding)
+            );
+
+            require(sqrtPX96 > quotient);
+            // always fits 160 bits
+            unchecked {
+                return uint160(sqrtPX96 - quotient);
+            }
+        }
+    }
+
+    /// @notice Gets the amount0 delta between two prices
+    /// @dev Calculates liquidity / sqrt(lower) - liquidity / sqrt(upper),
+    /// i.e. liquidity * (sqrt(upper) - sqrt(lower)) / (sqrt(upper) * sqrt(lower))
+    /// @param sqrtRatioAX96 A sqrt price
+    /// @param sqrtRatioBX96 Another sqrt price
+    /// @param liquidity The amount of usable liquidity
+    /// @param rounding Whether to round the amount up or down
+    /// @return amount0 Amount of token0 required to cover a position of size liquidity between the two passed prices
+    function getAmount0Delta(
+        uint160 sqrtRatioAX96,
+        uint160 sqrtRatioBX96,
+        uint160 liquidity,
+        Math.Rounding rounding
+    ) internal pure returns (uint256 amount0) {
+        unchecked {
+            if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
+
+            uint256 numerator1 = uint256(liquidity) << FixedPoint.RESOLUTION;
+            uint256 numerator2 = sqrtRatioBX96 - sqrtRatioAX96;
+
+            require(sqrtRatioAX96 > 0);
+
+            uint256 numerator3 = Math.mulDiv(numerator1, numerator2, sqrtRatioBX96, rounding);
+            return
+                (rounding == Math.Rounding.Ceil) ? Math.ceilDiv(numerator3, sqrtRatioAX96) : numerator3 / sqrtRatioAX96;
+        }
+    }
+
+    /// @notice Gets the amount1 delta between two prices
+    /// @dev Calculates liquidity * (sqrt(upper) - sqrt(lower))
+    /// @param sqrtRatioAX96 A sqrt price
+    /// @param sqrtRatioBX96 Another sqrt price
+    /// @param liquidity The amount of usable liquidity
+    /// @param rounding Whether to round the amount up, or down
+    /// @return amount1 Amount of token1 required to cover a position of size liquidity between the two passed prices
+    function getAmount1Delta(
+        uint160 sqrtRatioAX96,
+        uint160 sqrtRatioBX96,
+        uint160 liquidity,
+        Math.Rounding rounding
+    ) internal pure returns (uint256 amount1) {
+        unchecked {
+            if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
+            return Math.mulDiv(liquidity, sqrtRatioBX96 - sqrtRatioAX96, FixedPoint.Q96, rounding);
+        }
+    }
+}
+
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.0;
 
-import {MarketId, AssetType} from "../interfaces/ICovenant.sol";
-import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+import {AssetType, MintParams, RedeemParams, SwapParams, MarketId, MarketParams, TokenPrices, SynthTokens} from "./ICovenant.sol";
 
 /**
- * @title ICovenant
- * @author Amorphous
- * @notice Defines the the core interface of Covenant Liquid markets.
+ * @title ILiquidExchangeModel
+ * @author Covenant Labs
+ * @notice Defines the the core interface of Liquid Exchange Models
  **/
-interface ISynthToken is IERC20 {
-    // Notice - gets CovenantCore associated with the SynthToken
-    function getCovenantCore() external returns (address);
+interface ILiquidExchangeModel {
+    ///////////////////////////////////////////////////////////////////////////////
+    // Getters
 
-    // Notice - gets marketId associated with the SynthToken
-    function getMarketId() external returns (MarketId);
+    /// @notice ProtocolFee getter
+    function getProtocolFee(MarketId marketId) external view returns (uint32);
 
-    // Notice - gets synthType associated with the SynthToken
-    function getSynthType() external returns (AssetType);
+    /// @notice SynthTokens getter
+    function getSynthTokens(MarketId marketId) external view returns (SynthTokens memory);
+
+    /// @notice LEX name getter
+    function name() external view returns (string memory);
+
+    ///////////////////////////////////////////////////////////////////////////////
+    // Write functions (only Covenant calls)
+
+    /// @notice sets protocol Fee for a given market
+    function setMarketProtocolFee(MarketId marketId, uint32 newFee) external;
+
+    /// @notice initializes LEX variables for a market
+    function initMarket(
+        MarketId marketId,
+        MarketParams calldata marketParams,
+        uint32 protocolFee,
+        bytes memory initData
+    ) external returns (SynthTokens memory, bytes memory);
 
     /**
-     * @dev Expose share mint functionality to Covenant Liquid
-     */
-    function lexMint(address account, uint256 value) external;
+     * @notice calculate Synth tokens to mint given baseLiquidityIn, and updates internal states.
+     * @notice does not include fees
+     * @param mintParams covenant mint parameters
+     * @param baseTokenSupply total baseToken supply in the market
+     * @param sender sender of tokens coming in
+     * @return aTokenAmountOut amount of aToken to be minted given amountIn
+     * @return zTokenAmountOut amount of zToken to be minted given amountIn
+     * @return protocolFees calculated protocol fees to be charged
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after mint
+     **/
+    function mint(
+        MintParams calldata mintParams,
+        address sender,
+        uint256 baseTokenSupply
+    )
+        external
+        payable
+        returns (
+            uint256 aTokenAmountOut,
+            uint256 zTokenAmountOut,
+            uint128 protocolFees,
+            TokenPrices memory tokenPrices
+        );
 
     /**
-     * @dev Expose share redeem functionality to Covenant Liquid
-     */
-    function lexBurn(address account, uint256 value) external;
+     * @notice calculates base liquidity out, given synth tokens redeemed, and updates internal states
+     * @notice does not include fees
+     * @notice Treats amounts as exact input, and does not check for slippage
+     * @param redeemParams covenant redeem parameters
+     * @param sender sender of tokens coming in
+     * @param baseTokenSupply total baseToken supply in the market
+     * @return amountOut amount of base token being redeemed
+     * @return protocolFees calculated protocol fees to be charged
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after redeem
+     **/
+    function redeem(
+        RedeemParams calldata redeemParams,
+        address sender,
+        uint256 baseTokenSupply
+    ) external payable returns (uint256 amountOut, uint128 protocolFees, TokenPrices memory tokenPrices);
+
+    /**
+     * @notice calculates swap between tokens (base or synths), and updates internal states
+     * @notice does not include fees
+     * @dev All parameters are given in raw token decimal encoding.
+     * @param swapParams covenant swap parameters
+     * @param sender sender of tokens coming in
+     * @param baseTokenSupply total baseToken supply in the market
+     * @return amountCalculated amount of liquidity swapped out / in, depending on whether swap is EXACT_IN / EXACT_OUT
+     * @return protocolFees calculated protocol fees to be charged
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after swap
+     **/
+    function swap(
+        SwapParams calldata swapParams,
+        address sender,
+        uint256 baseTokenSupply
+    ) external payable returns (uint256 amountCalculated, uint128 protocolFees, TokenPrices memory tokenPrices);
+
+    /**
+     * @notice Updates market state (e.g., accrues debt fees and protocol fees)
+     * @dev Calling mint / redeem / swap also updates internal states, but updateState allows a user to update the state without mint / redeem /swapping tokens
+     * @param marketId market to update
+     * @param marketParams marketParams of market to update
+     * @param baseTokenSupply total baseToken supply in the market
+     * @param data additional data to send to LEX
+     * @return protocolFees calculated protocol fees to be charged
+     **/
+    function updateState(
+        MarketId marketId,
+        MarketParams calldata marketParams,
+        uint256 baseTokenSupply,
+        bytes calldata data
+    ) external payable returns (uint128 protocolFees);
+
+    ///////////////////////////////////////////////////////////////////////////////
+    // Quote functions (do not update internal state)
+
+    /**
+     * @notice calculate Synth tokens to mint given baseLiquidityIn
+     * @notice does not include fees
+     * @param mintParams covenant mint parameters
+     * @param baseTokenSupply total baseToken supply in the market
+     * @param sender sender of tokens coming in
+     * @return aTokenAmountOut amount of aToken to be minted given amountIn
+     * @return zTokenAmountOut amount of zToken to be minted given amountIn
+     * @return protocolFees calculated protocol fees to be charged
+     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after mint
+     **/
+    function quoteMint(
+        MintParams calldata mintParams,
+        address sender,
+        uint256 baseTokenSupply
+    )
+        external
+        view
+        returns (
+            uint256 aTokenAmountOut,
+            uint256 zTokenAmountOut,
+            uint128 protocolFees,
+            uint128 oracleUpdateFee,
+            TokenPrices memory tokenPrices
+        );
+
+    /**
+     * @notice calculates base liquidity out, given synth tokens redeemed
+     * @notice does not include fees
+     * @notice Treats amounts as exact input, and does not check for slippage
+     * @param redeemParams covenant redeem parameters
+     * @param sender sender of tokens coming in
+     * @param baseTokenSupply total baseToken supply in the market
+     * @return baseAmountOut base tokens that would come out
+     * @return protocolFees calculated protocol fees to be charged
+     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after redeem
+     **/
+    function quoteRedeem(
+        RedeemParams calldata redeemParams,
+        address sender,
+        uint256 baseTokenSupply
+    )
+        external
+        view
+        returns (uint256 baseAmountOut, uint128 protocolFees, uint128 oracleUpdateFee, TokenPrices memory tokenPrices);
+    /**
+     * @notice calculates swap between tokens (base or synths)
+     * @notice does not include fees
+     * @dev All parameters are given in raw token decimal encoding.
+     * @param swapParams covenant swap parameters
+     * @param sender sender of tokens coming in
+     * @param baseTokenSupply total baseToken supply in the market
+     * @return amountCalculated amount of liquidity swapped out / in, depending on whether swap is EXACT_IN / EXACT_OUT
+     * @return protocolFees calculated protocol fees to be charged
+     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
+     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after swap
+     **/
+    function quoteSwap(
+        SwapParams calldata swapParams,
+        address sender,
+        uint256 baseTokenSupply
+    )
+        external
+        view
+        returns (
+            uint256 amountCalculated,
+            uint128 protocolFees,
+            uint128 oracleUpdateFee,
+            TokenPrices memory tokenPrices
+        );
 }
 
 // SPDX-License-Identifier: BUSL-1.1
@@ -3830,538 +5174,6 @@ library LatentMath {
     ) internal pure returns (uint256) {
         return SqrtPriceMath.getAmount0Delta(edgeSqrtRatioX96_B, edgeSqrtRatioX96_A, liquidity, Math.Rounding.Floor);
     }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-import {Math} from "@openzeppelin/utils/math/Math.sol";
-import {SafeCast} from "@openzeppelin/utils/math/SafeCast.sol";
-
-/**
- * @title SaturatingMath library
- * @author Covenant Labs
- * @notice Provides a saturating mulDiv operation
- */
-library SaturatingMath {
-    // Returns a saturating mulDiv operation
-    // @dev - does not overflow, but instead returns type(uint256).max if so.
-    function saturatingMulDiv(
-        uint256 _numerator1,
-        uint256 _numerator2,
-        uint256 _denominator
-    ) internal pure returns (uint256) {
-        (uint256 high, uint256 low) = Math.mul512(_numerator1, _numerator2);
-
-        // @dev - below follows the logic of Math.mulDiv, but saturates instead of reverting.
-        if (high >= _denominator) {
-            // returns type(uint256).max for all overflow and _denominator == 0 conditions
-            return type(uint256).max;
-        } else if (high == 0) {
-            // @dev - execute 256 bit division here directly.
-            // already checked for denominator == 0
-            unchecked {
-                return low / _denominator;
-            }
-        } else {
-            // @dev - would be more efficient to do a 512 division here,
-            // but OpenZeppelin does not have a separate (already audited) function.
-            // So below recomputes Math.mul512 internally, and then performs the division.
-            // Does not revert given checks above.
-            return Math.mulDiv(_numerator1, _numerator2, _denominator);
-        }
-    }
-
-    function saturatingMulDiv(
-        uint256 x,
-        uint256 y,
-        uint256 denominator,
-        Math.Rounding rounding
-    ) internal pure returns (uint256 result) {
-        result = saturatingMulDiv(x, y, denominator);
-        return
-            result +
-            SafeCast.toUint(
-                Math.unsignedRoundsUp(rounding) && mulmod(x, y, denominator) > 0 && result < type(uint256).max
-            );
-    }
-
-    /**
-     * @dev Calculates floor(x * y >> n) with full precision. saturates instead of reverting.
-     * @dev Code copies @openzeppelin/utils/math/Math.sol:mulShr, but saturates instead of reverting.
-     */
-    function saturatingMulShr(uint256 x, uint256 y, uint8 n) internal pure returns (uint256 result) {
-        unchecked {
-            (uint256 high, uint256 low) = Math.mul512(x, y);
-            if (high >= 1 << n) {
-                return type(uint256).max; // @dev - saturates instead of reverting for overflow.
-            }
-            return (high << (256 - n)) | (low >> n);
-        }
-    }
-}
-
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.30;
-
-library LSErrors {
-    error E_LEX_OnlyCovenantCanCall(); // 0x1150f470
-    error E_LEX_ZeroAddress(); // 0xad5292ae
-    error E_LEX_ZeroLiquidity(); // 0xb38d3cff
-    error E_LEX_AlreadyInitialized(); // 0xbb304191
-    error E_LEX_IncorrectInitializationPrice(); // 0xc868f36a
-    error E_LEX_IncorrectInitializationLnRateBias(); // 0x4cf570ef
-    error E_LEX_InsufficientTokens(); // 0x6cf03401
-    error E_LEX_ActionNotAllowedGivenLTVlimit(); // 0x2ab66638
-    error E_LEX_ActionNotAllowedUnderCollateralized(); // 0xabc1fa28
-    error E_LEX_OperationNotAllowed(); // 0x82a547cd
-    error E_LEX_RedeemCapExceeded(); // 0xef9b092a
-    error E_LEX_MintCapExceeded(); // 0x6c8de6e1
-    error E_LEX_OraclePriceTooLowForMarket(); // 0x417969ec
-    error E_LEX_IncorrectInitializationDuration(); // 0x50560b48
-    error E_LEX_BaseAssetNotERC20(); // 0x77e6fe18
-    error E_LEX_QuoteAssetHasNoSymbol(); // 0xd5862a35
-    error E_LEX_MarketDoesNotExist(); // 0xda47482e
-    error E_LEX_Overdeposit(); // 0x94f85219
-    error E_LEX_InsufficientAmount(); // 0xe869f1da
-    error E_LEX_MarketSizeLimitExceeded(); // 0x23565a11
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.4.0;
-
-/// @title FixedPoint
-/// @notice A library for handling binary fixed point numbers, see https://en.wikipedia.org/wiki/Q_(number_format)
-library FixedPoint {
-    // Q96 Fixed Point Constants
-    uint8 internal constant RESOLUTION = 96;
-    uint256 internal constant Q96 = 0x1000000000000000000000000;
-    uint256 internal constant Q128 = 0x100000000000000000000000000000000;
-    uint256 internal constant Q160 = 0x0010000000000000000000000000000000000000000;
-    uint256 internal constant Q192 = 0x1000000000000000000000000000000000000000000000000;
-
-    // WAD Fixed Point Constants
-    uint8 internal constant RESOLUTION_WAD = 18;
-    uint256 internal constant WAD = 1e18;
-    uint256 internal constant HALF_WAD = 0.5e18;
-
-    // RAY Fixed Point Constants
-    uint8 internal constant RESOLUTION_RAY = 27;
-    uint256 internal constant RAY = 1e27;
-    uint256 internal constant HALF_RAY = 0.5e27;
-    uint256 internal constant WAD_RAY_RATIO = 1e9;
-
-    // Perecentage Math Constants
-    uint256 internal constant PERCENTAGE_FACTOR = 1e4;
-    uint256 internal constant HALF_PERCENTAGE_FACTOR = 0.5e4;
-}
-
-// SPDX-License-Identifier: GPLv3
-pragma solidity ^0.8.30;
-
-import {Math} from "@openzeppelin/utils/math/Math.sol";
-
-// Code developed by https://github.com/SimonSuckut/Solidity_Uint512/
-
-library Uint512 {
-    /// @notice Calculates the difference of two uint512 (a - b)
-    /// @dev Does not revert on underflow (ie, does not revert if b > a)
-    /// @param a0 A uint256 representing the lower bits of the minuend.
-    /// @param a1 A uint256 representing the higher bits of the minuend.
-    /// @param b0 A uint256 representing the lower bits of the subtrahend.
-    /// @param b1 A uint256 representing the higher bits of the subtrahend.
-    /// @return r0 The result as an uint512. r0 contains the lower bits.
-    /// @return r1 The higher bits of the result.
-    function sub512x512(uint256 a0, uint256 a1, uint256 b0, uint256 b1) public pure returns (uint256 r0, uint256 r1) {
-        assembly {
-            r0 := sub(a0, b0)
-            r1 := sub(sub(a1, b1), lt(a0, b0))
-        }
-    }
-
-    /// @notice Calculates the square root of a 512 bit unsigned integer, rounding down.
-    /// @dev Uses the Karatsuba Square Root method. See https://hal.inria.fr/inria-00072854/document for details.
-    /// @param a0 A uint256 representing the low bits of the input.
-    /// @param a1 A uint256 representing the high bits of the input.
-    /// @return s The square root as an uint256. Result has at most 256 bit.
-    function sqrt512(uint256 a0, uint256 a1) public pure returns (uint256 s) {
-        // A simple 256 bit square root is sufficient
-        if (a1 == 0) return Math.sqrt(a0);
-
-        // The used algorithm has the pre-condition a1 >= 2**254
-        uint256 shift;
-
-        assembly {
-            let digits := mul(lt(a1, 0x100000000000000000000000000000000), 128)
-            a1 := shl(digits, a1)
-            shift := add(shift, digits)
-
-            digits := mul(lt(a1, 0x1000000000000000000000000000000000000000000000000), 64)
-            a1 := shl(digits, a1)
-            shift := add(shift, digits)
-
-            digits := mul(lt(a1, 0x100000000000000000000000000000000000000000000000000000000), 32)
-            a1 := shl(digits, a1)
-            shift := add(shift, digits)
-
-            digits := mul(lt(a1, 0x1000000000000000000000000000000000000000000000000000000000000), 16)
-            a1 := shl(digits, a1)
-            shift := add(shift, digits)
-
-            digits := mul(lt(a1, 0x100000000000000000000000000000000000000000000000000000000000000), 8)
-            a1 := shl(digits, a1)
-            shift := add(shift, digits)
-
-            digits := mul(lt(a1, 0x1000000000000000000000000000000000000000000000000000000000000000), 4)
-            a1 := shl(digits, a1)
-            shift := add(shift, digits)
-
-            digits := mul(lt(a1, 0x4000000000000000000000000000000000000000000000000000000000000000), 2)
-            a1 := shl(digits, a1)
-            shift := add(shift, digits)
-
-            a1 := or(a1, shr(sub(256, shift), a0))
-            a0 := shl(shift, a0)
-        }
-
-        uint256 sp = Math.sqrt(a1);
-        uint256 rp = a1 - (sp * sp);
-
-        uint256 nom;
-        uint256 denom;
-        uint256 u;
-        uint256 q;
-
-        assembly {
-            nom := or(shl(128, rp), shr(128, a0))
-            denom := shl(1, sp)
-            q := div(nom, denom)
-            u := mod(nom, denom)
-
-            // The nominator can be bigger than 2**256. We know that rp < (sp+1) * (sp+1). As sp can be
-            // at most floor(sqrt(2**256 - 1)) we can conclude that the nominator has at most 513 bits
-            // set. An expensive 512x256 bit division can be avoided by treating the bit at position 513 manually
-            let carry := shr(128, rp)
-            let x := mul(carry, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff)
-            q := add(q, div(x, denom))
-            u := add(u, add(carry, mod(x, denom)))
-            q := add(q, div(u, denom))
-            u := mod(u, denom)
-        }
-
-        unchecked {
-            s = (sp << 128) + q;
-
-            uint256 rl = ((u << 128) | (a0 & 0xffffffffffffffffffffffffffffffff));
-            uint256 rr = q * q;
-
-            if ((q >> 128) > (u >> 128) || (((q >> 128) == (u >> 128)) && rl < rr)) {
-                s = s - 1;
-            }
-
-            return s >> (shift / 2);
-        }
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
-
-import {SafeMetadata, IERC20} from "../../../libraries/SafeMetadata.sol";
-import {ITokenData} from "../interfaces/ITokenData.sol";
-
-/// @title TokenData
-/// @author Covenant Labs
-/// @notice sets symbol, decimals and name overrides for a token
-/// @dev each item can be set independently, and will override existing ERC20 values for the respecitve token
-/// @dev if both symbol and decimals are overriden, a quote token need not be an actual ERC20
-/// @dev this gives the flexibility to use currency ISO addresses and symbols for quote tokens.
-/// @dev Oracles can use ERC-7535, ISO 4217 or other conventions to represent non-ERC20 assets as addresses.
-/// @dev e.g., EIP7528 would set address = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", symbol = "ETH", decimals = 18.
-abstract contract TokenData is ITokenData {
-    using SafeMetadata for IERC20;
-
-    // mapping of decimal overrides for specific assets
-    mapping(address => uint8) _decimals;
-
-    // mapping of symbol overrides for specific assets
-    mapping(address => string) _symbol;
-
-    // mapping of name overrides for specific assets
-    mapping(address => string) _name;
-
-    error TokenData_InvalidDecimals();
-
-    event SetTokenDecimals(address indexed token, uint8 oldDecimals, uint8 newDecimals);
-    event SetTokenSymbol(address indexed token, string oldSymbol, string newSymbol);
-    event SetTokenName(address indexed token, string oldName, string newName);
-
-    function assetDecimals(address asset) public view returns (uint8 decimals_) {
-        return _assetDecimals(asset);
-    }
-
-    function assetSymbol(address asset) public view returns (string memory symbol_) {
-        return _assetSymbol(asset);
-    }
-
-    function assetName(address asset) public view returns (string memory name_) {
-        return _assetName(asset);
-    }
-
-    //////////////////////////////////////////////////////////////////////////
-
-    // @dev - Stored decimals are an override.
-    // if stored decimals is 0, try and get ERC20 decimals
-    function _assetDecimals(address asset) internal view returns (uint8 decimals_) {
-        decimals_ = _decimals[asset]; //check if there is an override for this asset
-        if (decimals_ > 0) return decimals_;
-        else {
-            // try and read from asset itself
-            bool success;
-            (success, decimals_) = IERC20(asset).tryGetDecimals();
-            return success ? decimals_ : 18;
-        }
-    }
-
-    // @dev - Stored symbol are an override.
-    // @dev - if stored symbol is "", try and get ERC20 symbol
-    function _assetSymbol(address asset) internal view returns (string memory symbol_) {
-        symbol_ = _symbol[asset]; //check if there is an override for this asset
-        if (bytes(symbol_).length > 0) return symbol_;
-        else {
-            // try and read from asset itself
-            bool success;
-            (success, symbol_) = IERC20(asset).tryGetSymbol();
-            return success ? symbol_ : "";
-        }
-    }
-
-    // @dev - Stored name are an override.
-    // @dev - if stored name is "", try and get ERC20 name
-    function _assetName(address asset) internal view returns (string memory name_) {
-        name_ = _name[asset]; //check if there is an override for this asset
-        if (bytes(name_).length > 0) return name_;
-        else {
-            // try and read from asset itself
-            bool success;
-            (success, name_) = IERC20(asset).tryGetName();
-            return success ? name_ : "";
-        }
-    }
-
-    // internal functions.  These should be exposed with the appropriate access modifiers
-    // @dev - if newDecimals = 0, then _assetDecimals will try and get ERC20 decimals
-    function _updateAssetDecimals(address asset, uint8 newDecimals) internal {
-        if (newDecimals > 18) revert TokenData_InvalidDecimals();
-        uint8 oldDecimals = _assetDecimals(asset); // get old decimals
-        _decimals[asset] = newDecimals;
-        emit SetTokenDecimals(asset, oldDecimals, newDecimals);
-    }
-
-    // internal functions.  These should be exposed with the appropriate access modifiers
-    // @dev - if newSymbol = "", then _assetSymbol will try and get ERC20 symbol
-    function _updateAssetSymbol(address asset, string calldata newSymbol) internal {
-        string memory oldSymbol = _assetSymbol(asset); // get old symbol
-        _symbol[asset] = newSymbol;
-        emit SetTokenSymbol(asset, oldSymbol, newSymbol);
-    }
-
-    // internal functions.  These should be exposed with the appropriate access modifiers
-    // @dev - if newName = "", then _assetNAme will try and get ERC20 name
-    function _updateAssetName(address asset, string calldata newName) internal {
-        string memory oldName = _assetName(asset); // get old symbol
-        _name[asset] = newName;
-        emit SetTokenName(asset, oldName, newName);
-    }
-}
-
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.0;
-
-import {AssetType, MintParams, RedeemParams, SwapParams, MarketId, MarketParams, TokenPrices, SynthTokens} from "./ICovenant.sol";
-
-/**
- * @title ILiquidExchangeModel
- * @author Covenant Labs
- * @notice Defines the the core interface of Liquid Exchange Models
- **/
-interface ILiquidExchangeModel {
-    ///////////////////////////////////////////////////////////////////////////////
-    // Getters
-
-    /// @notice ProtocolFee getter
-    function getProtocolFee(MarketId marketId) external view returns (uint32);
-
-    /// @notice SynthTokens getter
-    function getSynthTokens(MarketId marketId) external view returns (SynthTokens memory);
-
-    /// @notice LEX name getter
-    function name() external view returns (string memory);
-
-    ///////////////////////////////////////////////////////////////////////////////
-    // Write functions (only Covenant calls)
-
-    /// @notice sets protocol Fee for a given market
-    function setMarketProtocolFee(MarketId marketId, uint32 newFee) external;
-
-    /// @notice initializes LEX variables for a market
-    function initMarket(
-        MarketId marketId,
-        MarketParams calldata marketParams,
-        uint32 protocolFee,
-        bytes memory initData
-    ) external returns (SynthTokens memory, bytes memory);
-
-    /**
-     * @notice calculate Synth tokens to mint given baseLiquidityIn, and updates internal states.
-     * @notice does not include fees
-     * @param mintParams covenant mint parameters
-     * @param baseTokenSupply total baseToken supply in the market
-     * @param sender sender of tokens coming in
-     * @return aTokenAmountOut amount of aToken to be minted given amountIn
-     * @return zTokenAmountOut amount of zToken to be minted given amountIn
-     * @return protocolFees calculated protocol fees to be charged
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after mint
-     **/
-    function mint(
-        MintParams calldata mintParams,
-        address sender,
-        uint256 baseTokenSupply
-    )
-        external
-        payable
-        returns (
-            uint256 aTokenAmountOut,
-            uint256 zTokenAmountOut,
-            uint128 protocolFees,
-            TokenPrices memory tokenPrices
-        );
-
-    /**
-     * @notice calculates base liquidity out, given synth tokens redeemed, and updates internal states
-     * @notice does not include fees
-     * @notice Treats amounts as exact input, and does not check for slippage
-     * @param redeemParams covenant redeem parameters
-     * @param sender sender of tokens coming in
-     * @param baseTokenSupply total baseToken supply in the market
-     * @return amountOut amount of base token being redeemed
-     * @return protocolFees calculated protocol fees to be charged
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after redeem
-     **/
-    function redeem(
-        RedeemParams calldata redeemParams,
-        address sender,
-        uint256 baseTokenSupply
-    ) external payable returns (uint256 amountOut, uint128 protocolFees, TokenPrices memory tokenPrices);
-
-    /**
-     * @notice calculates swap between tokens (base or synths), and updates internal states
-     * @notice does not include fees
-     * @dev All parameters are given in raw token decimal encoding.
-     * @param swapParams covenant swap parameters
-     * @param sender sender of tokens coming in
-     * @param baseTokenSupply total baseToken supply in the market
-     * @return amountCalculated amount of liquidity swapped out / in, depending on whether swap is EXACT_IN / EXACT_OUT
-     * @return protocolFees calculated protocol fees to be charged
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after swap
-     **/
-    function swap(
-        SwapParams calldata swapParams,
-        address sender,
-        uint256 baseTokenSupply
-    ) external payable returns (uint256 amountCalculated, uint128 protocolFees, TokenPrices memory tokenPrices);
-
-    /**
-     * @notice Updates market state (e.g., accrues debt fees and protocol fees)
-     * @dev Calling mint / redeem / swap also updates internal states, but updateState allows a user to update the state without mint / redeem /swapping tokens
-     * @param marketId market to update
-     * @param marketParams marketParams of market to update
-     * @param baseTokenSupply total baseToken supply in the market
-     * @param data additional data to send to LEX
-     * @return protocolFees calculated protocol fees to be charged
-     **/
-    function updateState(
-        MarketId marketId,
-        MarketParams calldata marketParams,
-        uint256 baseTokenSupply,
-        bytes calldata data
-    ) external payable returns (uint128 protocolFees);
-
-    ///////////////////////////////////////////////////////////////////////////////
-    // Quote functions (do not update internal state)
-
-    /**
-     * @notice calculate Synth tokens to mint given baseLiquidityIn
-     * @notice does not include fees
-     * @param mintParams covenant mint parameters
-     * @param baseTokenSupply total baseToken supply in the market
-     * @param sender sender of tokens coming in
-     * @return aTokenAmountOut amount of aToken to be minted given amountIn
-     * @return zTokenAmountOut amount of zToken to be minted given amountIn
-     * @return protocolFees calculated protocol fees to be charged
-     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after mint
-     **/
-    function quoteMint(
-        MintParams calldata mintParams,
-        address sender,
-        uint256 baseTokenSupply
-    )
-        external
-        view
-        returns (
-            uint256 aTokenAmountOut,
-            uint256 zTokenAmountOut,
-            uint128 protocolFees,
-            uint128 oracleUpdateFee,
-            TokenPrices memory tokenPrices
-        );
-
-    /**
-     * @notice calculates base liquidity out, given synth tokens redeemed
-     * @notice does not include fees
-     * @notice Treats amounts as exact input, and does not check for slippage
-     * @param redeemParams covenant redeem parameters
-     * @param sender sender of tokens coming in
-     * @param baseTokenSupply total baseToken supply in the market
-     * @return baseAmountOut base tokens that would come out
-     * @return protocolFees calculated protocol fees to be charged
-     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after redeem
-     **/
-    function quoteRedeem(
-        RedeemParams calldata redeemParams,
-        address sender,
-        uint256 baseTokenSupply
-    )
-        external
-        view
-        returns (uint256 baseAmountOut, uint128 protocolFees, uint128 oracleUpdateFee, TokenPrices memory tokenPrices);
-    /**
-     * @notice calculates swap between tokens (base or synths)
-     * @notice does not include fees
-     * @dev All parameters are given in raw token decimal encoding.
-     * @param swapParams covenant swap parameters
-     * @param sender sender of tokens coming in
-     * @param baseTokenSupply total baseToken supply in the market
-     * @return amountCalculated amount of liquidity swapped out / in, depending on whether swap is EXACT_IN / EXACT_OUT
-     * @return protocolFees calculated protocol fees to be charged
-     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after swap
-     **/
-    function quoteSwap(
-        SwapParams calldata swapParams,
-        address sender,
-        uint256 baseTokenSupply
-    )
-        external
-        view
-        returns (
-            uint256 amountCalculated,
-            uint128 protocolFees,
-            uint128 oracleUpdateFee,
-            TokenPrices memory tokenPrices
-        );
 }
 
 //SPDX-License-Identifier: BUSL-1.1
@@ -5583,948 +6395,136 @@ library LatentSwapLogic {
 }
 
 // SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.30;
 
-import {AssetType, MintParams, RedeemParams, SwapParams, MarketId, MarketParams, TokenPrices, SynthTokens} from "./ICovenant.sol";
-
-/**
- * @title ILiquidExchangeModel
- * @author Covenant Labs
- * @notice Defines the the core interface of Liquid Exchange Models
- **/
-interface ILiquidExchangeModel {
-    ///////////////////////////////////////////////////////////////////////////////
-    // Getters
-
-    /// @notice ProtocolFee getter
-    function getProtocolFee(MarketId marketId) external view returns (uint32);
-
-    /// @notice SynthTokens getter
-    function getSynthTokens(MarketId marketId) external view returns (SynthTokens memory);
-
-    /// @notice LEX name getter
-    function name() external view returns (string memory);
-
-    ///////////////////////////////////////////////////////////////////////////////
-    // Write functions (only Covenant calls)
-
-    /// @notice sets protocol Fee for a given market
-    function setMarketProtocolFee(MarketId marketId, uint32 newFee) external;
-
-    /// @notice initializes LEX variables for a market
-    function initMarket(
-        MarketId marketId,
-        MarketParams calldata marketParams,
-        uint32 protocolFee,
-        bytes memory initData
-    ) external returns (SynthTokens memory, bytes memory);
-
-    /**
-     * @notice calculate Synth tokens to mint given baseLiquidityIn, and updates internal states.
-     * @notice does not include fees
-     * @param mintParams covenant mint parameters
-     * @param baseTokenSupply total baseToken supply in the market
-     * @param sender sender of tokens coming in
-     * @return aTokenAmountOut amount of aToken to be minted given amountIn
-     * @return zTokenAmountOut amount of zToken to be minted given amountIn
-     * @return protocolFees calculated protocol fees to be charged
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after mint
-     **/
-    function mint(
-        MintParams calldata mintParams,
-        address sender,
-        uint256 baseTokenSupply
-    )
-        external
-        payable
-        returns (
-            uint256 aTokenAmountOut,
-            uint256 zTokenAmountOut,
-            uint128 protocolFees,
-            TokenPrices memory tokenPrices
-        );
-
-    /**
-     * @notice calculates base liquidity out, given synth tokens redeemed, and updates internal states
-     * @notice does not include fees
-     * @notice Treats amounts as exact input, and does not check for slippage
-     * @param redeemParams covenant redeem parameters
-     * @param sender sender of tokens coming in
-     * @param baseTokenSupply total baseToken supply in the market
-     * @return amountOut amount of base token being redeemed
-     * @return protocolFees calculated protocol fees to be charged
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after redeem
-     **/
-    function redeem(
-        RedeemParams calldata redeemParams,
-        address sender,
-        uint256 baseTokenSupply
-    ) external payable returns (uint256 amountOut, uint128 protocolFees, TokenPrices memory tokenPrices);
-
-    /**
-     * @notice calculates swap between tokens (base or synths), and updates internal states
-     * @notice does not include fees
-     * @dev All parameters are given in raw token decimal encoding.
-     * @param swapParams covenant swap parameters
-     * @param sender sender of tokens coming in
-     * @param baseTokenSupply total baseToken supply in the market
-     * @return amountCalculated amount of liquidity swapped out / in, depending on whether swap is EXACT_IN / EXACT_OUT
-     * @return protocolFees calculated protocol fees to be charged
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after swap
-     **/
-    function swap(
-        SwapParams calldata swapParams,
-        address sender,
-        uint256 baseTokenSupply
-    ) external payable returns (uint256 amountCalculated, uint128 protocolFees, TokenPrices memory tokenPrices);
-
-    /**
-     * @notice Updates market state (e.g., accrues debt fees and protocol fees)
-     * @dev Calling mint / redeem / swap also updates internal states, but updateState allows a user to update the state without mint / redeem /swapping tokens
-     * @param marketId market to update
-     * @param marketParams marketParams of market to update
-     * @param baseTokenSupply total baseToken supply in the market
-     * @param data additional data to send to LEX
-     * @return protocolFees calculated protocol fees to be charged
-     **/
-    function updateState(
-        MarketId marketId,
-        MarketParams calldata marketParams,
-        uint256 baseTokenSupply,
-        bytes calldata data
-    ) external payable returns (uint128 protocolFees);
-
-    ///////////////////////////////////////////////////////////////////////////////
-    // Quote functions (do not update internal state)
-
-    /**
-     * @notice calculate Synth tokens to mint given baseLiquidityIn
-     * @notice does not include fees
-     * @param mintParams covenant mint parameters
-     * @param baseTokenSupply total baseToken supply in the market
-     * @param sender sender of tokens coming in
-     * @return aTokenAmountOut amount of aToken to be minted given amountIn
-     * @return zTokenAmountOut amount of zToken to be minted given amountIn
-     * @return protocolFees calculated protocol fees to be charged
-     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after mint
-     **/
-    function quoteMint(
-        MintParams calldata mintParams,
-        address sender,
-        uint256 baseTokenSupply
-    )
-        external
-        view
-        returns (
-            uint256 aTokenAmountOut,
-            uint256 zTokenAmountOut,
-            uint128 protocolFees,
-            uint128 oracleUpdateFee,
-            TokenPrices memory tokenPrices
-        );
-
-    /**
-     * @notice calculates base liquidity out, given synth tokens redeemed
-     * @notice does not include fees
-     * @notice Treats amounts as exact input, and does not check for slippage
-     * @param redeemParams covenant redeem parameters
-     * @param sender sender of tokens coming in
-     * @param baseTokenSupply total baseToken supply in the market
-     * @return baseAmountOut base tokens that would come out
-     * @return protocolFees calculated protocol fees to be charged
-     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after redeem
-     **/
-    function quoteRedeem(
-        RedeemParams calldata redeemParams,
-        address sender,
-        uint256 baseTokenSupply
-    )
-        external
-        view
-        returns (uint256 baseAmountOut, uint128 protocolFees, uint128 oracleUpdateFee, TokenPrices memory tokenPrices);
-    /**
-     * @notice calculates swap between tokens (base or synths)
-     * @notice does not include fees
-     * @dev All parameters are given in raw token decimal encoding.
-     * @param swapParams covenant swap parameters
-     * @param sender sender of tokens coming in
-     * @param baseTokenSupply total baseToken supply in the market
-     * @return amountCalculated amount of liquidity swapped out / in, depending on whether swap is EXACT_IN / EXACT_OUT
-     * @return protocolFees calculated protocol fees to be charged
-     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
-     * @return tokenPrices prices of baseToken, aToken and zToken (in quote tokens) after swap
-     **/
-    function quoteSwap(
-        SwapParams calldata swapParams,
-        address sender,
-        uint256 baseTokenSupply
-    )
-        external
-        view
-        returns (
-            uint256 amountCalculated,
-            uint128 protocolFees,
-            uint128 oracleUpdateFee,
-            TokenPrices memory tokenPrices
-        );
+library LSErrors {
+    error E_LEX_OnlyCovenantCanCall(); // 0x1150f470
+    error E_LEX_ZeroAddress(); // 0xad5292ae
+    error E_LEX_ZeroLiquidity(); // 0xb38d3cff
+    error E_LEX_AlreadyInitialized(); // 0xbb304191
+    error E_LEX_IncorrectInitializationPrice(); // 0xc868f36a
+    error E_LEX_IncorrectInitializationLnRateBias(); // 0x4cf570ef
+    error E_LEX_InsufficientTokens(); // 0x6cf03401
+    error E_LEX_ActionNotAllowedGivenLTVlimit(); // 0x2ab66638
+    error E_LEX_ActionNotAllowedUnderCollateralized(); // 0xabc1fa28
+    error E_LEX_OperationNotAllowed(); // 0x82a547cd
+    error E_LEX_RedeemCapExceeded(); // 0xef9b092a
+    error E_LEX_MintCapExceeded(); // 0x6c8de6e1
+    error E_LEX_OraclePriceTooLowForMarket(); // 0x417969ec
+    error E_LEX_IncorrectInitializationDuration(); // 0x50560b48
+    error E_LEX_BaseAssetNotERC20(); // 0x77e6fe18
+    error E_LEX_QuoteAssetHasNoSymbol(); // 0xd5862a35
+    error E_LEX_MarketDoesNotExist(); // 0xda47482e
+    error E_LEX_Overdeposit(); // 0x94f85219
+    error E_LEX_InsufficientAmount(); // 0xe869f1da
+    error E_LEX_MarketSizeLimitExceeded(); // 0x23565a11
 }
 
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.0;
-
-import {ILiquidExchangeModel, AssetType, MintParams, RedeemParams, SwapParams, MarketId, MarketParams, TokenPrices, SynthTokens} from "src/interfaces/ILiquidExchangeModel.sol";
-
-struct LexState {
-    uint256 lastDebtNotionalPrice; // WAD units
-    uint256 lastBaseTokenPrice; // Last oracle read WAD units
-    uint256 lastETWAPBaseSupply; // Tracks baseSupply for redeem cap
-    uint160 lastSqrtPriceX96; // Last DEX price, X96 units
-    uint96 lastUpdateTimestamp; // Timestamp in seconds
-    int64 lastLnRateBias; // WAD units.
-}
-
-struct LexConfig {
-    uint32 protocolFee; // Protocol fees in BPS units (uint16 tvlFee, uint16 yieldFee)
-    address aToken;
-    address zToken;
-    uint8 noCapLimit; // Max liquidity mint / burn without a cap limit.  Limit = 2^noCapLimit
-    int8 scaleDecimals; // Scale decimals (used for scaling the price from the oracle)
-    bool adaptive; // Whether debtPriceDiscountBalanced is adaptive
-}
-
-struct LexParams {
-    address covenantCore;
-    int64 initLnRateBias;
-    uint160 edgeSqrtPriceX96_B; // high edge of concentrated liquidity
-    uint160 edgeSqrtPriceX96_A; // low edge of concentrated liquidity
-    uint160 limHighSqrtPriceX96; // from which _highLTV can be derived (no aToken sales, no zToken buys)
-    uint160 limMaxSqrtPriceX96; // from which _maxLTV can be derived (same as _highLTV && no aToken buys)
-    uint32 debtDuration; // perpetual duration of debt, in seconds (max 100 years)
-    uint8 swapFee; // BPS fee when swapping tokens.  Max of 2.55% swap fee
-    uint256 targetXvsL; // pre-calculated static value
-}
-
-/**
- * @title ILatentSwapLEX
- * @author Covenant Labs
- * @notice Defines the interface for ILatentSwapLEX.sol
- **/
-interface ILatentSwapLEX is ILiquidExchangeModel {
-    ///////////////////////////////////////////////////////////////////////////////
-    // Getters
-
-    /// @notice LexParams (constructor) getter
-    function getLexParams() external view returns (LexParams memory);
-
-    /// @notice LexState getter
-    function getLexState(MarketId marketId) external view returns (LexState memory);
-
-    /// @notice LexConfig getter
-    function getLexConfig(MarketId marketId) external view returns (LexConfig memory);
-
-    ///////////////////////////////////////////////////////////////////////////////
-    // Write functions (only Owner calls)
-
-    /// @notice sets default noCapDecimals for a quote token
-    /// @dev setting noCapLimit = 255 removes mint / redeem restriction for markets using this quoteToken
-    /// @param token the quote token address
-    /// @param newDefaultNoCapLimit the default noCapLimit for markets with this quote token
-    function setDefaultNoCapLimit(address token, uint8 newDefaultNoCapLimit) external;
-
-    /// @notice updates the noCapDecimals for a live market
-    /// @dev this is useful when the market is live and the quote token is not an actual ERC20
-    /// @dev setting noCapLimit = 255 removes mint / redeem restriction for the market
-    /// @param marketId the market id
-    /// @param newNoCapLimit the noCapLimit for the market (in power of 2).  Markets can mint and redeem baseTokens
-    //  wihout mint and redeem caps if baseTokenSupply < 2^nowCapLimt.
-    function setMarketNoCapLimit(MarketId marketId, uint8 newNoCapLimit) external;
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPLv3
 pragma solidity ^0.8.30;
 
 import {Math} from "@openzeppelin/utils/math/Math.sol";
-import {SafeCast} from "@openzeppelin/utils/math/SafeCast.sol";
-import {FixedPoint} from "./FixedPoint.sol";
 
-/// @title Functions based on Q64.96 sqrt price and liquidity
-/// @notice Contains the math that uses square root of price as a Q64.96 and liquidity to compute deltas
-library SqrtPriceMath {
-    using SafeCast for uint256;
+// Code developed by https://github.com/SimonSuckut/Solidity_Uint512/
 
-    /// @notice Gets the next sqrt price given a delta of token0
-    /// The most precise formula for this is liquidity * sqrtPX96 / (liquidity +- amount * sqrtPX96),
-    /// if this is impossible because of overflow, we calculate liquidity / (liquidity / sqrtPX96 +- amount).
-    /// @param sqrtPX96 The starting price, i.e. before accounting for the token0 delta
-    /// @param liquidity The amount of usable liquidity
-    /// @param amount How much of token0 to add or remove from virtual reserves
-    /// @param add Whether to add or remove the amount of token0
-    /// @param rounding Whether to round result up or down
-    /// @return The price after adding or removing amount, depending on add
-    function getNextSqrtPriceFromAmount0(
-        uint160 sqrtPX96,
-        uint160 liquidity,
-        uint256 amount,
-        bool add,
-        Math.Rounding rounding
-    ) internal pure returns (uint160) {
-        require(sqrtPX96 > 0);
-        require(liquidity > 0);
-
-        // we short circuit amount == 0 because the result is otherwise not guaranteed to equal the input price
-        if (amount == 0) return sqrtPX96;
-        uint256 numerator1 = uint256(liquidity) << FixedPoint.RESOLUTION;
-
-        if (add) {
-            unchecked {
-                uint256 product;
-                if ((product = amount * sqrtPX96) / amount == sqrtPX96) {
-                    uint256 denominator = numerator1 + product;
-                    if (denominator >= numerator1)
-                        // always fits in 160 bits
-                        return uint160(Math.mulDiv(numerator1, sqrtPX96, denominator, rounding));
-                }
-            }
-            // denominator is checked for overflow
-            uint256 denominator2 = (numerator1 / sqrtPX96) + amount;
-            if (rounding == Math.Rounding.Ceil) return uint160(Math.ceilDiv(numerator1, denominator2));
-            else return uint160(numerator1 / denominator2);
-        } else {
-            unchecked {
-                uint256 product;
-                // if the product overflows, we know the denominator underflows
-                // in addition, we must check that the denominator does not underflow
-                require((product = amount * sqrtPX96) / amount == sqrtPX96 && numerator1 > product);
-                uint256 denominator = numerator1 - product;
-                return Math.mulDiv(numerator1, sqrtPX96, denominator, rounding).toUint160();
-            }
+library Uint512 {
+    /// @notice Calculates the difference of two uint512 (a - b)
+    /// @dev Does not revert on underflow (ie, does not revert if b > a)
+    /// @param a0 A uint256 representing the lower bits of the minuend.
+    /// @param a1 A uint256 representing the higher bits of the minuend.
+    /// @param b0 A uint256 representing the lower bits of the subtrahend.
+    /// @param b1 A uint256 representing the higher bits of the subtrahend.
+    /// @return r0 The result as an uint512. r0 contains the lower bits.
+    /// @return r1 The higher bits of the result.
+    function sub512x512(uint256 a0, uint256 a1, uint256 b0, uint256 b1) public pure returns (uint256 r0, uint256 r1) {
+        assembly {
+            r0 := sub(a0, b0)
+            r1 := sub(sub(a1, b1), lt(a0, b0))
         }
     }
 
-    /// @notice Gets the next sqrt price given a delta of token1
-    /// The formula we compute is within <1 wei of the lossless version: sqrtPX96 +- amount / liquidity
-    /// @param sqrtPX96 The starting price, i.e., before accounting for the token1 delta
-    /// @param liquidity The amount of usable liquidity
-    /// @param amount How much of token1 to add, or remove, from virtual reserves
-    /// @param add Whether to add, or remove, the amount of token1
-    /// @param rounding Whether to round result up or down
-    /// @return The price after adding or removing `amount`
-    function getNextSqrtPriceFromAmount1(
-        uint160 sqrtPX96,
-        uint160 liquidity,
-        uint256 amount,
-        bool add,
-        Math.Rounding rounding
-    ) internal pure returns (uint160) {
-        require(sqrtPX96 > 0);
-        require(liquidity > 0);
+    /// @notice Calculates the square root of a 512 bit unsigned integer, rounding down.
+    /// @dev Uses the Karatsuba Square Root method. See https://hal.inria.fr/inria-00072854/document for details.
+    /// @param a0 A uint256 representing the low bits of the input.
+    /// @param a1 A uint256 representing the high bits of the input.
+    /// @return s The square root as an uint256. Result has at most 256 bit.
+    function sqrt512(uint256 a0, uint256 a1) public pure returns (uint256 s) {
+        // A simple 256 bit square root is sufficient
+        if (a1 == 0) return Math.sqrt(a0);
 
-        // if we're adding (subtracting), rounding down requires rounding the quotient down (up)
-        // in both cases, avoid a mulDiv for most inputs
-        if (add) {
-            uint256 quotient = (
-                amount <= type(uint160).max
-                    ? (
-                        (rounding == Math.Rounding.Ceil)
-                            ? Math.ceilDiv((amount << FixedPoint.RESOLUTION), liquidity)
-                            : (amount << FixedPoint.RESOLUTION) / liquidity
-                    )
-                    : Math.mulDiv(amount, FixedPoint.Q96, liquidity, rounding)
-            );
+        // The used algorithm has the pre-condition a1 >= 2**254
+        uint256 shift;
 
-            return (uint256(sqrtPX96) + quotient).toUint160();
-        } else {
-            Math.Rounding invRounding = Math.Rounding(1 - uint8(rounding));
-            uint256 quotient = (
-                amount <= type(uint160).max
-                    ? (invRounding == Math.Rounding.Ceil)
-                        ? Math.ceilDiv(amount << FixedPoint.RESOLUTION, liquidity)
-                        : ((amount << FixedPoint.RESOLUTION) / liquidity)
-                    : Math.mulDiv(amount, FixedPoint.Q96, liquidity, invRounding)
-            );
+        assembly {
+            let digits := mul(lt(a1, 0x100000000000000000000000000000000), 128)
+            a1 := shl(digits, a1)
+            shift := add(shift, digits)
 
-            require(sqrtPX96 > quotient);
-            // always fits 160 bits
-            unchecked {
-                return uint160(sqrtPX96 - quotient);
-            }
+            digits := mul(lt(a1, 0x1000000000000000000000000000000000000000000000000), 64)
+            a1 := shl(digits, a1)
+            shift := add(shift, digits)
+
+            digits := mul(lt(a1, 0x100000000000000000000000000000000000000000000000000000000), 32)
+            a1 := shl(digits, a1)
+            shift := add(shift, digits)
+
+            digits := mul(lt(a1, 0x1000000000000000000000000000000000000000000000000000000000000), 16)
+            a1 := shl(digits, a1)
+            shift := add(shift, digits)
+
+            digits := mul(lt(a1, 0x100000000000000000000000000000000000000000000000000000000000000), 8)
+            a1 := shl(digits, a1)
+            shift := add(shift, digits)
+
+            digits := mul(lt(a1, 0x1000000000000000000000000000000000000000000000000000000000000000), 4)
+            a1 := shl(digits, a1)
+            shift := add(shift, digits)
+
+            digits := mul(lt(a1, 0x4000000000000000000000000000000000000000000000000000000000000000), 2)
+            a1 := shl(digits, a1)
+            shift := add(shift, digits)
+
+            a1 := or(a1, shr(sub(256, shift), a0))
+            a0 := shl(shift, a0)
         }
-    }
 
-    /// @notice Gets the amount0 delta between two prices
-    /// @dev Calculates liquidity / sqrt(lower) - liquidity / sqrt(upper),
-    /// i.e. liquidity * (sqrt(upper) - sqrt(lower)) / (sqrt(upper) * sqrt(lower))
-    /// @param sqrtRatioAX96 A sqrt price
-    /// @param sqrtRatioBX96 Another sqrt price
-    /// @param liquidity The amount of usable liquidity
-    /// @param rounding Whether to round the amount up or down
-    /// @return amount0 Amount of token0 required to cover a position of size liquidity between the two passed prices
-    function getAmount0Delta(
-        uint160 sqrtRatioAX96,
-        uint160 sqrtRatioBX96,
-        uint160 liquidity,
-        Math.Rounding rounding
-    ) internal pure returns (uint256 amount0) {
+        uint256 sp = Math.sqrt(a1);
+        uint256 rp = a1 - (sp * sp);
+
+        uint256 nom;
+        uint256 denom;
+        uint256 u;
+        uint256 q;
+
+        assembly {
+            nom := or(shl(128, rp), shr(128, a0))
+            denom := shl(1, sp)
+            q := div(nom, denom)
+            u := mod(nom, denom)
+
+            // The nominator can be bigger than 2**256. We know that rp < (sp+1) * (sp+1). As sp can be
+            // at most floor(sqrt(2**256 - 1)) we can conclude that the nominator has at most 513 bits
+            // set. An expensive 512x256 bit division can be avoided by treating the bit at position 513 manually
+            let carry := shr(128, rp)
+            let x := mul(carry, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff)
+            q := add(q, div(x, denom))
+            u := add(u, add(carry, mod(x, denom)))
+            q := add(q, div(u, denom))
+            u := mod(u, denom)
+        }
+
         unchecked {
-            if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
+            s = (sp << 128) + q;
 
-            uint256 numerator1 = uint256(liquidity) << FixedPoint.RESOLUTION;
-            uint256 numerator2 = sqrtRatioBX96 - sqrtRatioAX96;
+            uint256 rl = ((u << 128) | (a0 & 0xffffffffffffffffffffffffffffffff));
+            uint256 rr = q * q;
 
-            require(sqrtRatioAX96 > 0);
-
-            uint256 numerator3 = Math.mulDiv(numerator1, numerator2, sqrtRatioBX96, rounding);
-            return
-                (rounding == Math.Rounding.Ceil) ? Math.ceilDiv(numerator3, sqrtRatioAX96) : numerator3 / sqrtRatioAX96;
-        }
-    }
-
-    /// @notice Gets the amount1 delta between two prices
-    /// @dev Calculates liquidity * (sqrt(upper) - sqrt(lower))
-    /// @param sqrtRatioAX96 A sqrt price
-    /// @param sqrtRatioBX96 Another sqrt price
-    /// @param liquidity The amount of usable liquidity
-    /// @param rounding Whether to round the amount up, or down
-    /// @return amount1 Amount of token1 required to cover a position of size liquidity between the two passed prices
-    function getAmount1Delta(
-        uint160 sqrtRatioAX96,
-        uint160 sqrtRatioBX96,
-        uint160 liquidity,
-        Math.Rounding rounding
-    ) internal pure returns (uint256 amount1) {
-        unchecked {
-            if (sqrtRatioAX96 > sqrtRatioBX96) (sqrtRatioAX96, sqrtRatioBX96) = (sqrtRatioBX96, sqrtRatioAX96);
-            return Math.mulDiv(liquidity, sqrtRatioBX96 - sqrtRatioAX96, FixedPoint.Q96, rounding);
-        }
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
-import {Math} from "@openzeppelin/utils/math/Math.sol";
-import {SaturatingMath} from "./SaturatingMath.sol";
-import {FixedPoint} from "./FixedPoint.sol";
-
-/**
- * @title DebtMath library
- * @author Covenant Labs
- * @notice Provides approximations for Perpetual Debt calculations
- */
-library DebtMath {
-    using SaturatingMath for uint256;
-    using FixedPointMathLib for int256;
-    using Math for uint256;
-
-    uint256 internal constant SECONDS_PER_YEAR = 365 days;
-
-    /**
-     * @notice calculates interest update factor given perpetual debt duration, debt notional price and elapsed time.
-     * @param _amount amount on which interest is being applied
-     * @param _duration effective duration of the debt (in seconds)
-     * @param _discountPrice discount price (vs debt notional) in WADs
-     * @param _elapsedTime time over which to accrue interest (in seconds)
-     * @param _lnRateBias additional market rate bias (that is not determined by price), in WADs
-     * @return updatedAmount_  the updated amount given debt interest rate and elapsed time
-     **/
-    function accrueInterest(
-        uint256 _amount,
-        uint256 _duration,
-        uint256 _discountPrice,
-        uint256 _elapsedTime,
-        int256 _lnRateBias
-    ) internal pure returns (uint256 updatedAmount_) {
-        // Calculate rate = - ln(price) + lnRateBias
-        // and then updates amount.
-        return accrueInterestLnRate(_amount, _lnRateBias - int256(_discountPrice).lnWad(), _elapsedTime, _duration);
-    }
-
-    /**
-     * @notice updates amount given duration, lnRate and elapsed time.
-     * @dev interest accrual saturates.  ie, calculation will not revert,
-     * and instead updatedAmount will be >0 and <=type(uint256).max
-     * @param _amount amount to be update given duration, lnRate and elapsed time.
-     * @param _duration effective duration of the debt (in seconds)
-     * @param _lnRate lnRate in WADs (lnRate < 1 is a negative interest rate)
-     * @param _elapsedTime time over which to accrue interest (in seconds)
-     * @return updatedAmount_  the updated amount given debt interest rate and elapsed time
-     **/
-    function accrueInterestLnRate(
-        uint256 _amount,
-        int256 _lnRate,
-        uint256 _elapsedTime,
-        uint256 _duration
-    ) internal pure returns (uint256 updatedAmount_) {
-        uint256 updateFactor = calculateApproxExponentialUpdate(
-            uint256((_lnRate >= 0) ? _lnRate : -_lnRate),
-            _elapsedTime,
-            _duration
-        );
-
-        if (_lnRate >= 0) {
-            return _amount.saturatingMulDiv(updateFactor, FixedPoint.RAY);
-        } else {
-            // @dev - when lnRate < 0, we calculate exp(x), but then divide _amount by that updatefactor.
-            // given e(-x) = 1 / e(x). Amount is never allowed to get to 0 from interest accrual.
-            updatedAmount_ = _amount.mulDiv(FixedPoint.RAY, updateFactor);
-            if (updatedAmount_ == 0 && _amount > 0) updatedAmount_ = 1;
-        }
-    }
-
-    /**
-     * @notice Calculates approximation of exp(lnRate * timeDelta / duration) for small values of rate * timeDelta / duration
-     * @dev rate * timeDelta / duration is considered small, given timeDelta << duration, and rangebound rate
-     * @dev A taylor expansion is used to calculate exp(rate * timeDelta / duration), and output will alwas be <= to the exact calculation.
-     * @dev Below calculation does not overflow, even in extremes.  e.g, max lnRAte
-     * @dev below does not overflow for reasonable extremes.  E.g, duration of 1 year (in seconds), time elapsed of 10,000 years, lnRate = 7.9 RAYS (= 250000% daily rate)
-     * @param _lnRate logaritmic rate. -ln(price) in WADs
-     * @param _timeDelta time over which to accrue interest (in seconds)
-     * @param _duration effective duration of the debt (in seconds)
-     * @return updateMultiplier_ the update multiplier (in RAYs) with which to update an amount
-     **/
-    function calculateApproxExponentialUpdate(
-        uint256 _lnRate,
-        uint256 _timeDelta,
-        uint256 _duration
-    ) internal pure returns (uint256 updateMultiplier_) {
-        // @dev- for extreme cases (e.g., daily 10000% interest rate over 10000 years, with duration = 1 day),
-        // both _lnRate and _timeDelta are expected to be < uint96.max, and the below
-        // calculation not to revert.
-
-        // approximation for exp(lnRate * timeDelta / duration)
-        uint256 rate1 = (_lnRate * _timeDelta * FixedPoint.WAD_RAY_RATIO) / _duration;
-        uint256 rate2 = rate1.mulDiv(rate1, 2 * FixedPoint.RAY);
-        uint256 rate3 = rate2.mulDiv(rate1, 3 * FixedPoint.RAY);
-        return FixedPoint.RAY + rate1 + rate2 + rate3;
-    }
-
-    // returns linear update multiplier (ray units)
-    // assumes rate in BPS for a yearly duration
-    // @dev - output value saturates at type(uint256).max
-    function calculateLinearAccrual(
-        uint256 _value,
-        uint256 _rateBPS,
-        uint256 _timeDelta
-    ) internal pure returns (uint256 accrualValue_) {
-        // @dev - Even for extreme rate and timeDelta cases, _rate expected to be < type(uint160).max
-        // and _timeDelta < type(uint96).max.  Given this, below does not revert for any
-        // _value <= type(uint256).max.
-
-        return _value.saturatingMulDiv(_rateBPS * _timeDelta, SECONDS_PER_YEAR * FixedPoint.PERCENTAGE_FACTOR);
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-/// @title Utils Library
-/// @author Covenant Labs
-/// @notice Library to convert a market to its id.
-library UtilsLib {
-    function encodeFee(uint16 yieldFee, uint16 tvlFee) internal pure returns (uint32 protocolFee) {
-        return ((uint32(yieldFee) << 16) | uint32(tvlFee));
-    }
-
-    function decodeFee(uint32 protocolFee) internal pure returns (uint16 yieldFee, uint16 tvlFee) {
-        yieldFee = uint16(protocolFee >> 16);
-        tvlFee = uint16(protocolFee & 0xFFFF);
-    }
-}
-
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.0;
-
-import {IERC20} from "./ISynthToken.sol";
-import {ILiquidExchangeModel} from "./ILiquidExchangeModel.sol";
-import {Events} from "../libraries/Events.sol";
-import {Errors} from "../libraries/Errors.sol";
-
-type MarketId is bytes20;
-
-// Parameters that uniquely defines a Covenant market
-struct MarketParams {
-    address baseToken;
-    address quoteToken;
-    address curator; // address of the oracle router
-    address lex;
-}
-
-struct SynthTokens {
-    address aToken;
-    address zToken;
-}
-
-struct MarketState {
-    uint256 baseSupply; // total base tokens for market
-    uint128 protocolFeeGrowth; // cumulative fee accrued by protocol in base tokens (unclaimed)
-    address authorizedPauseAddress; // address authorized to pause market
-    uint8 statusFlag; // 0 = uninitialized, 1 = unlocked, 2 = locked, 3 = paused
-}
-
-struct SwapParams {
-    MarketId marketId;
-    MarketParams marketParams;
-    AssetType assetIn;
-    AssetType assetOut;
-    address to;
-    uint256 amountSpecified;
-    uint256 amountLimit;
-    bool isExactIn;
-    bytes data;
-    uint256 msgValue;
-}
-
-struct RedeemParams {
-    MarketId marketId;
-    MarketParams marketParams;
-    uint256 aTokenAmountIn;
-    uint256 zTokenAmountIn;
-    address to;
-    uint256 minAmountOut;
-    bytes data;
-    uint256 msgValue;
-}
-
-struct MintParams {
-    MarketId marketId;
-    MarketParams marketParams;
-    uint256 baseAmountIn;
-    address to;
-    uint256 minATokenAmountOut;
-    uint256 minZTokenAmountOut;
-    bytes data;
-    uint256 msgValue;
-}
-
-struct TokenPrices {
-    uint256 baseTokenPrice;
-    uint256 aTokenPrice;
-    uint256 zTokenPrice;
-}
-
-enum AssetType {
-    BASE, // index 0
-    DEBT, // index 1
-    LEVERAGE, // index 2
-    COUNT // used to get the count of asset types
-}
-
-/**
- * @title ICovenant
- * @author Covenant Labs
- * @notice Defines the the core interface of Covenant Liquid markets.
- **/
-interface ICovenant {
-    /// @notice Covenant name getter
-    function name() external view returns (string memory);
-
-    /// @notice MarketParams getter
-    function getIdToMarketParams(MarketId marketId) external view returns (MarketParams memory);
-
-    /// @notice MarketState getter
-    function getMarketState(MarketId marketId) external view returns (MarketState memory);
-
-    /// @notice Whether the LEX is enabled.
-    function isLexEnabled(address lex) external view returns (bool);
-
-    /// @notice Whether the Curator (oracle router) is enabled.
-    function isCuratorEnabled(address curator) external view returns (bool);
-
-    /**
-     * @notice creates a new Covenant Liquid market
-     * @param marketParams market initialization parameters
-     **/
-    function createMarket(MarketParams calldata marketParams, bytes calldata initData) external returns (MarketId);
-
-    /**
-     * @notice mints aTokens and zTokens from base tokens.
-     * @param mintParams mint parameters, as detailed below:
-     * - marketId: the marketId
-     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
-     * - baseAmountIn: the amount of base token to deposit (and against which to mint a and z tokens)
-     * - to: the receiver of aTokens and zTokens
-     * - minATokenAmountOut: minimum ATokens out
-     * - minZTokenAmountOut: minimum Ztokens out
-     * - data: additional data to send to LEX
-     * - msgValue: msgValue to send to LEX if needed
-     * @return aTokenAmountOut amount of aToken minted
-     * @return zTokenAmountOut amount of zToken minted
-     **/
-    function mint(
-        MintParams calldata mintParams
-    ) external payable returns (uint256 aTokenAmountOut, uint256 zTokenAmountOut);
-
-    /**
-     * @notice Redeems aTokenAmount and zTokenAmount for base token.
-     * @notice Treats amounts as exact input, and does not check for slippage
-     * @dev This function send to LEX msgValue, but does not check whether msg.Value == msgValue (this is done to enable multicalls)
-     * @dev This means that calling with msgValue > msg.Value will revert, and msgValue < msg.Value
-     * @dev will leave excess value in the Covenant contract (which can be used by subsequent function calls or users)
-     * @param redeemParams redeem parameters, as follows:
-     * - marketId: the marketId
-     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
-     * - aTokenAmountIn: the aTokenAmount being redeemed / burned (exact in)
-     * - zTokenAmountIn: the zTokenAmount being redeemed / burned (exact in)
-     * - to: the receiver of base tokens
-     * - minAmountOut: the minimum amount of base token out (for slippage / MEV protection)
-     * - data: additional data to send to LEX
-     * - msgValue: msgValue to send to LEX if needed
-     * @return baseAmountOut actual base tokens redeemed
-     **/
-    function redeem(RedeemParams calldata redeemParams) external payable returns (uint256 baseAmountOut);
-
-    /**
-     * @notice Executes a swap between any of the base, aToken, or zToken assets
-     * @dev All parameters are given in raw token decimal encoding.
-     * @dev function returns error if assets being swapped are not part of the same market
-     * @dev swapping between aTokens / zTokens actually mints / burns tokens
-     * @dev This function send to LEX msgValue, but does not check whether msg.Value == msgValue (this is done to enable multicalls)
-     * @dev This means that calling with msgValue > msg.Value will revert, and msgValue < msg.Value
-     * @dev will leave excess value in the Covenant contract (which can be used by subsequent function calls or users)
-     * @param swapParams swap parameters
-     * - marketId: the marketId
-     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
-     * - assetIn: AssetType in
-     * - assetOut: AssetType out
-     * - to: the receiver of base tokens
-     * - amountSpecified: swap amount specified (amount in, if isExactIn == true)
-     * - amountLimit: swap reverts if less than amountLimit is return (if isExactIn), or more than amountLimit is expected as input (if !isExactIn)
-     * - isExactIn: whether swap is exact in, or exact out
-     * - data: additional data to send to LEX
-     * - msgValue: msgValue to send to LEX if needed
-     * @return amount amount of tokens swapped out / in, depending on whether swap isExactIn
-     **/
-    function swap(SwapParams calldata swapParams) external payable returns (uint256 amount);
-
-    /**
-     * @notice Updates market state (e.g., accrues debt fees and protocol fees)
-     * @dev Calling mint / redeem / swap also updates internal states, but updateState allows a user to update the state without mint / redeem /swapping tokens
-     * @dev This function send to LEX msgValue, but does not check whether msg.Value == msgValue (this is done to enable multicalls)
-     * @dev This means that calling with msgValue > msg.Value will revert, and msgValue < msg.Value
-     * @dev will leave excess value in the Covenant contract (which can be used by subsequent function calls or users)
-     * @param marketId market to update
-     * @param marketParams marketParams of market to update
-     * @param data additional data to send to LEX
-     * @param msgValue msgValue to send to LEX if needed
-     **/
-    function updateState(
-        MarketId marketId,
-        MarketParams calldata marketParams,
-        bytes calldata data,
-        uint256 msgValue
-    ) external payable;
-
-    /**
-     * @notice previews mint of aTokens and zTokens from base tokens, without changing market state
-     * @notice Treats amounts as exact input, runs validation logic as actual mint call
-     * @param mintParams mint parameters, as detailed below:
-     * - marketId: the marketId
-     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
-     * - baseAmountIn: the amount of base token to deposit (and against which to mint a and z tokens)
-     * - to: the receiver of aTokens and zTokens
-     * - minATokenAmountOut: minimum ATokens out
-     * - minZTokenAmountOut: minimum Ztokens out
-     * @return aTokenAmountOut amount of aToken minted
-     * @return zTokenAmountOut amount of zToken minted
-     * @return protocolFees amount of fee charged by protocol in base tokens
-     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
-     * @return tokenPrices returns the dex prices after the action
-     **/
-    function previewMint(
-        MintParams calldata mintParams
-    )
-        external
-        view
-        returns (
-            uint256 aTokenAmountOut,
-            uint256 zTokenAmountOut,
-            uint128 protocolFees,
-            uint128 oracleUpdateFee,
-            TokenPrices memory tokenPrices
-        );
-
-    /**
-     * @notice previews redeem of aTokenAmount and zTokenAmount for base token, without changing market state.
-     * @notice Treats amounts as exact input, runs validation logic as actual redeem call
-     * @param redeemParams redeem parameters, as follows:
-     * - marketId: the marketId
-     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
-     * - aTokenAmountIn: the aTokenAmount being redeemed / burned (exact in)
-     * - zTokenAmountIn: the zTokenAmount being redeemed / burned (exact in)
-     * - to: the receiver of base tokens
-     * - minAmountOut: the minimum amount of base token out (for slippage / MEV protection)
-     * @return amountOut actual base tokens redeemed
-     * @return protocolFees amount of fee charged by protocol in base tokens
-     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
-     * @return tokenPrices returns the dex prices after the action
-     **/
-    function previewRedeem(
-        RedeemParams calldata redeemParams
-    )
-        external
-        view
-        returns (uint256 amountOut, uint128 protocolFees, uint128 oracleUpdateFee, TokenPrices memory tokenPrices);
-
-    /**
-     * @notice Calculates output of a swap between any of the base, aToken, or zToken assets, without changing market
-     * @notice Runs validation logic as actual swap call
-     * @param swapParams swap parameters
-     * - marketId: the marketId
-     * - marketParams: the marketParams (can be derived from Id by caller using getIdToMarketParams)
-     * - assetIn: AssetType in
-     * - assetOut: AssetType out
-     * - to: the receiver of base tokens
-     * - amountSpecified: swap amount specified (amount in, if isExactIn == true)
-     * - amountLimit: swap reverts if less than amountLimit is return (if isExactIn), or more than amountLimit is expected as input (if !isExactIn)
-     * - isExactIn: whether swap is exact in, or exact out
-     * @return amountCalc amount of tokens swapped out / in, depending on whether swap is EXACT_IN / EXACT_OUT
-     * @return protocolFees amount of fee charged by protocol in base tokens
-     * @return oracleUpdateFee fees to pay as msgValue when calling mint() given mintParams.data package, if any
-     * @return tokenPrices returns the dex prices after the action
-     **/
-    function previewSwap(
-        SwapParams calldata swapParams
-    )
-        external
-        view
-        returns (uint256 amountCalc, uint128 protocolFees, uint128 oracleUpdateFee, TokenPrices memory tokenPrices);
-
-    /**
-     * @notice Payable multicall
-     * @notice Does not check msg.value received.  Instead, it uses any msgValues encoded in data and sends those onwards
-     * @notice This means that calling multicall where sum(data(msgValues)) > msg.Value will revert, and
-     * @notice sum(data(msgValues)) < msg.Value will leave excess value in the Covenant contract (which can be used by subsequent users)
-     * @param data array of call data
-     * @return results an array of return info
-     */
-    function multicall(bytes[] calldata data) external payable returns (bytes[] memory results);
-
-    /////////////////////////////////////////////////////////////////////////////////
-    // Restricted functions
-
-    /// @notice Set valid LEX contracts (onlyOwner)
-    /// @notice Disabling a LEX does not allow new markets with this LEX
-    /// but does not invalidate already created markets
-    function setEnabledLEX(address lex, bool isValid) external;
-
-    /// @notice Set valid Curator (oracle router) contracts (onlyOwner)
-    /// @notice Disabling a Curator does not allow new markets with this Curator
-    /// but does not invalidate already created markets
-    function setEnabledCurator(address curator, bool isValid) external;
-
-    /// @notice Set default protocol fee (onlyOwner)
-    function setDefaultFee(uint32 newFee) external;
-
-    /// @notice Set protocol fee for a market (onlyOwner)
-    function setMarketProtocolFee(
-        MarketId marketId,
-        MarketParams calldata marketParams,
-        bytes calldata data,
-        uint256 msgValue,
-        uint32 newFee
-    ) external payable;
-
-    /// @notice Collect protocol fees for a market (onlyOwner)
-    function collectProtocolFee(MarketId marketId, address recipient, uint128 amountRequested) external;
-
-    /// @notice Pause a market (only authorized pause address)
-    function setMarketPause(MarketId marketId, bool isPaused) external;
-
-    /// @notice Set default pause address (onlyOwner)
-    function setDefaultPauseAddress(address newPauseAddress) external;
-
-    /// @notice Set pause address for a market (onlyOwner)
-    function setMarketPauseAddress(MarketId marketId, address newPauseAddress) external;
-}
-
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity >=0.8.0;
-
-/**
- * @title ITokenData
- * @author Covenant Labs
- * @notice Defines interface for symbol and decimal overrides
- **/
-
-interface ITokenData {
-    function assetDecimals(address asset) external view returns (uint8);
-    function assetSymbol(address asset) external view returns (string memory);
-    function assetName(address asset) external view returns (string memory);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/token/ERC20/extensions/IERC20Metadata.sol";
-
-library SafeMetadata {
-    /**
-     * @dev Attempts to fetch the asset name as a string. A return value of false indicates that the attempt failed in some way.
-     */
-    function tryGetName(IERC20 token) internal view returns (bool ok, string memory out) {
-        return _tryStringOrBytes32(address(token), IERC20Metadata.name.selector);
-    }
-
-    /**
-     * @dev Attempts to fetch the asset symbol as a string. A return value of false indicates that the attempt failed in some way.
-     */
-    function tryGetSymbol(IERC20 token) internal view returns (bool ok, string memory out) {
-        return _tryStringOrBytes32(address(token), IERC20Metadata.symbol.selector);
-    }
-
-    /**
-     * @dev Attempts to fetch the asset decimals. A return value of false indicates that the attempt failed in some way.
-     */
-    function tryGetDecimals(IERC20 token) internal view returns (bool ok, uint8 assetDecimals) {
-        (bool success, bytes memory encodedDecimals) = address(token).staticcall(
-            abi.encodeCall(IERC20Metadata.decimals, ())
-        );
-        if (success && encodedDecimals.length >= 32) {
-            uint256 returnedDecimals = abi.decode(encodedDecimals, (uint256));
-            if (returnedDecimals <= type(uint8).max) {
-                return (true, uint8(returnedDecimals));
+            if ((q >> 128) > (u >> 128) || (((q >> 128) == (u >> 128)) && rl < rr)) {
+                s = s - 1;
             }
+
+            return s >> (shift / 2);
         }
-        return (false, 0);
-    }
-
-    function _tryStringOrBytes32(address token, bytes4 selector) private view returns (bool ok, string memory out) {
-        // Enforce read-only
-        (bool success, bytes memory data) = token.staticcall(abi.encodeWithSelector(selector));
-        if (!success) return (false, "");
-
-        // Try standard (string).  Reverts on malformed data.
-        if (data.length >= 64) return (true, abi.decode(data, (string)));
-
-        // Fallback: bytes32 (older tokens)
-        if (data.length == 32) {
-            bytes32 raw = abi.decode(data, (bytes32));
-            return (true, _bytes32ToString(raw));
-        }
-
-        // Anything else: treat as failure
-        return (false, "");
-    }
-
-    // separate to allow try/catch
-    function _decodeString(bytes memory data) internal pure returns (string memory s) {
-        return abi.decode(data, (string));
-    }
-
-    function _bytes32ToString(bytes32 x) private pure returns (string memory) {
-        uint256 len = 32;
-        while (len > 0 && x[len - 1] == 0) {
-            unchecked {
-                len--;
-            }
-        }
-        bytes memory out = new bytes(len);
-        for (uint256 i = 0; i < len; ++i) out[i] = x[i];
-        return string(out);
     }
 }
 
