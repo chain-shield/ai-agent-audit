@@ -566,188 +566,6 @@ contract Covenant is ICovenant, NoDelegateCall, Ownable2Step {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-import {MarketId, MarketParams} from "../interfaces/ICovenant.sol";
-
-/// @title MarketParams Library
-/// @author Covenant Labs
-/// @notice Library to convert a market to its id.
-library MarketParamsLib {
-    /// @notice Returns the id of the market `marketParams`.
-    function id(MarketParams calldata p) internal pure returns (MarketId marketParamsId) {
-        return
-            MarketId.wrap(
-                bytes20(uint160(uint256(keccak256(abi.encodePacked(p.baseToken, p.quoteToken, p.curator, p.lex)))))
-            );
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.0.1) (utils/Context.sol)
-
-pragma solidity ^0.8.20;
-
-/**
- * @dev Provides information about the current execution context, including the
- * sender of the transaction and its data. While these are generally available
- * via msg.sender and msg.data, they should not be accessed in such a direct
- * manner, since when dealing with meta-transactions the account sending and
- * paying for execution may not be the actual sender (as far as an application
- * is concerned).
- *
- * This contract is only required for intermediate, library-like contracts.
- */
-abstract contract Context {
-    function _msgSender() internal view virtual returns (address) {
-        return msg.sender;
-    }
-
-    function _msgData() internal view virtual returns (bytes calldata) {
-        return msg.data;
-    }
-
-    function _contextSuffixLength() internal view virtual returns (uint256) {
-        return 0;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
-
-pragma solidity ^0.8.20;
-
-import {Context} from "../utils/Context.sol";
-
-/**
- * @dev Contract module which provides a basic access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * The initial owner is set to the address provided by the deployer. This can
- * later be changed with {transferOwnership}.
- *
- * This module is used through inheritance. It will make available the modifier
- * `onlyOwner`, which can be applied to your functions to restrict their use to
- * the owner.
- */
-abstract contract Ownable is Context {
-    address private _owner;
-
-    /**
-     * @dev The caller account is not authorized to perform an operation.
-     */
-    error OwnableUnauthorizedAccount(address account);
-
-    /**
-     * @dev The owner is not a valid owner account. (eg. `address(0)`)
-     */
-    error OwnableInvalidOwner(address owner);
-
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Initializes the contract setting the address provided by the deployer as the initial owner.
-     */
-    constructor(address initialOwner) {
-        if (initialOwner == address(0)) {
-            revert OwnableInvalidOwner(address(0));
-        }
-        _transferOwnership(initialOwner);
-    }
-
-    /**
-     * @dev Throws if called by any account other than the owner.
-     */
-    modifier onlyOwner() {
-        _checkOwner();
-        _;
-    }
-
-    /**
-     * @dev Returns the address of the current owner.
-     */
-    function owner() public view virtual returns (address) {
-        return _owner;
-    }
-
-    /**
-     * @dev Throws if the sender is not the owner.
-     */
-    function _checkOwner() internal view virtual {
-        if (owner() != _msgSender()) {
-            revert OwnableUnauthorizedAccount(_msgSender());
-        }
-    }
-
-    /**
-     * @dev Leaves the contract without owner. It will not be possible to call
-     * `onlyOwner` functions. Can only be called by the current owner.
-     *
-     * NOTE: Renouncing ownership will leave the contract without an owner,
-     * thereby disabling any functionality that is only available to the owner.
-     */
-    function renounceOwnership() public virtual onlyOwner {
-        _transferOwnership(address(0));
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Can only be called by the current owner.
-     */
-    function transferOwnership(address newOwner) public virtual onlyOwner {
-        if (newOwner == address(0)) {
-            revert OwnableInvalidOwner(address(0));
-        }
-        _transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual {
-        address oldOwner = _owner;
-        _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.3.0) (utils/MultiCall.sol)
-
-// CovenantLabs - modified to make contract payable
-// @dev - use with caution, all calls will get same msg.value and should not be relied on
-// @dev - cannot be used by ERC2771Contexts
-
-pragma solidity ^0.8.30;
-
-import {Address} from "@openzeppelin/utils/Address.sol";
-import {Context} from "@openzeppelin/utils/Context.sol";
-
-/**
- * @dev Provides a function to batch together multiple calls in a single external call.
- *
- * Consider any assumption about calldata validation performed by the sender may be violated if it's not especially
- * careful about sending transactions invoking {multicall}. For example, a relay address that filters function
- * selectors won't filter calls nested within a {multicall} operation.
- *
- */
-library MulticallLib {
-    /**
-     * @dev Receives and executes a batch of function calls on this contract.
-     * @custom:oz-upgrades-unsafe-allow-reachable delegatecall
-     */
-    function multicall(bytes[] calldata data) internal returns (bytes[] memory results) {
-        results = new bytes[](data.length);
-        for (uint256 i = 0; i < data.length; i++) {
-            results[i] = Address.functionDelegateCall(address(this), data[i]);
-        }
-        return results;
-    }
-}
-
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.0;
 
@@ -940,17 +758,18 @@ interface ILiquidExchangeModel {
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.30;
 
-/// @title Utils Library
+import {MarketId, MarketParams} from "../interfaces/ICovenant.sol";
+
+/// @title MarketParams Library
 /// @author Covenant Labs
 /// @notice Library to convert a market to its id.
-library UtilsLib {
-    function encodeFee(uint16 yieldFee, uint16 tvlFee) internal pure returns (uint32 protocolFee) {
-        return ((uint32(yieldFee) << 16) | uint32(tvlFee));
-    }
-
-    function decodeFee(uint32 protocolFee) internal pure returns (uint16 yieldFee, uint16 tvlFee) {
-        yieldFee = uint16(protocolFee >> 16);
-        tvlFee = uint16(protocolFee & 0xFFFF);
+library MarketParamsLib {
+    /// @notice Returns the id of the market `marketParams`.
+    function id(MarketParams calldata p) internal pure returns (MarketId marketParamsId) {
+        return
+            MarketId.wrap(
+                bytes20(uint160(uint256(keccak256(abi.encodePacked(p.baseToken, p.quoteToken, p.curator, p.lex)))))
+            );
     }
 }
 
@@ -1087,6 +906,272 @@ library ValidationLogic {
 
         if (yieldFee > 3000) revert Errors.E_ProtocolFeeTooHigh(); // 30% max of yield as additional fee
         if (tvlFee > 500) revert Errors.E_ProtocolFeeTooHigh(); // 5% max of tvl as yearly fee
+    }
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.0.1) (utils/Context.sol)
+
+pragma solidity ^0.8.20;
+
+/**
+ * @dev Provides information about the current execution context, including the
+ * sender of the transaction and its data. While these are generally available
+ * via msg.sender and msg.data, they should not be accessed in such a direct
+ * manner, since when dealing with meta-transactions the account sending and
+ * paying for execution may not be the actual sender (as far as an application
+ * is concerned).
+ *
+ * This contract is only required for intermediate, library-like contracts.
+ */
+abstract contract Context {
+    function _msgSender() internal view virtual returns (address) {
+        return msg.sender;
+    }
+
+    function _msgData() internal view virtual returns (bytes calldata) {
+        return msg.data;
+    }
+
+    function _contextSuffixLength() internal view virtual returns (uint256) {
+        return 0;
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+/// @title Utils Library
+/// @author Covenant Labs
+/// @notice Library to convert a market to its id.
+library UtilsLib {
+    function encodeFee(uint16 yieldFee, uint16 tvlFee) internal pure returns (uint32 protocolFee) {
+        return ((uint32(yieldFee) << 16) | uint32(tvlFee));
+    }
+
+    function decodeFee(uint32 protocolFee) internal pure returns (uint16 yieldFee, uint16 tvlFee) {
+        yieldFee = uint16(protocolFee >> 16);
+        tvlFee = uint16(protocolFee & 0xFFFF);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
+
+pragma solidity ^0.8.20;
+
+import {Context} from "../utils/Context.sol";
+
+/**
+ * @dev Contract module which provides a basic access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * The initial owner is set to the address provided by the deployer. This can
+ * later be changed with {transferOwnership}.
+ *
+ * This module is used through inheritance. It will make available the modifier
+ * `onlyOwner`, which can be applied to your functions to restrict their use to
+ * the owner.
+ */
+abstract contract Ownable is Context {
+    address private _owner;
+
+    /**
+     * @dev The caller account is not authorized to perform an operation.
+     */
+    error OwnableUnauthorizedAccount(address account);
+
+    /**
+     * @dev The owner is not a valid owner account. (eg. `address(0)`)
+     */
+    error OwnableInvalidOwner(address owner);
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Initializes the contract setting the address provided by the deployer as the initial owner.
+     */
+    constructor(address initialOwner) {
+        if (initialOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(initialOwner);
+    }
+
+    /**
+     * @dev Throws if called by any account other than the owner.
+     */
+    modifier onlyOwner() {
+        _checkOwner();
+        _;
+    }
+
+    /**
+     * @dev Returns the address of the current owner.
+     */
+    function owner() public view virtual returns (address) {
+        return _owner;
+    }
+
+    /**
+     * @dev Throws if the sender is not the owner.
+     */
+    function _checkOwner() internal view virtual {
+        if (owner() != _msgSender()) {
+            revert OwnableUnauthorizedAccount(_msgSender());
+        }
+    }
+
+    /**
+     * @dev Leaves the contract without owner. It will not be possible to call
+     * `onlyOwner` functions. Can only be called by the current owner.
+     *
+     * NOTE: Renouncing ownership will leave the contract without an owner,
+     * thereby disabling any functionality that is only available to the owner.
+     */
+    function renounceOwnership() public virtual onlyOwner {
+        _transferOwnership(address(0));
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`).
+     * Can only be called by the current owner.
+     */
+    function transferOwnership(address newOwner) public virtual onlyOwner {
+        if (newOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`).
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual {
+        address oldOwner = _owner;
+        _owner = newOwner;
+        emit OwnershipTransferred(oldOwner, newOwner);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.3.0) (utils/MultiCall.sol)
+
+// CovenantLabs - modified to make contract payable
+// @dev - use with caution, all calls will get same msg.value and should not be relied on
+// @dev - cannot be used by ERC2771Contexts
+
+pragma solidity ^0.8.30;
+
+import {Address} from "@openzeppelin/utils/Address.sol";
+import {Context} from "@openzeppelin/utils/Context.sol";
+
+/**
+ * @dev Provides a function to batch together multiple calls in a single external call.
+ *
+ * Consider any assumption about calldata validation performed by the sender may be violated if it's not especially
+ * careful about sending transactions invoking {multicall}. For example, a relay address that filters function
+ * selectors won't filter calls nested within a {multicall} operation.
+ *
+ */
+library MulticallLib {
+    /**
+     * @dev Receives and executes a batch of function calls on this contract.
+     * @custom:oz-upgrades-unsafe-allow-reachable delegatecall
+     */
+    function multicall(bytes[] calldata data) internal returns (bytes[] memory results) {
+        results = new bytes[](data.length);
+        for (uint256 i = 0; i < data.length; i++) {
+            results[i] = Address.functionDelegateCall(address(this), data[i]);
+        }
+        return results;
+    }
+}
+
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.30;
+
+contract NoDelegateCall {
+    address private immutable originalAddress;
+    error E_DelegateCallNotAllowed();
+
+    constructor() {
+        originalAddress = address(this);
+    }
+
+    modifier noDelegateCall() {
+        if (address(this) != originalAddress) revert E_DelegateCallNotAllowed();
+        _;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
+
+pragma solidity ^0.8.20;
+
+import {Ownable} from "./Ownable.sol";
+
+/**
+ * @dev Contract module which provides access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * This extension of the {Ownable} contract includes a two-step mechanism to transfer
+ * ownership, where the new owner must call {acceptOwnership} in order to replace the
+ * old one. This can help prevent common mistakes, such as transfers of ownership to
+ * incorrect accounts, or to contracts that are unable to interact with the
+ * permission system.
+ *
+ * The initial owner is specified at deployment time in the constructor for `Ownable`. This
+ * can later be changed with {transferOwnership} and {acceptOwnership}.
+ *
+ * This module is used through inheritance. It will make available all functions
+ * from parent (Ownable).
+ */
+abstract contract Ownable2Step is Ownable {
+    address private _pendingOwner;
+
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Returns the address of the pending owner.
+     */
+    function pendingOwner() public view virtual returns (address) {
+        return _pendingOwner;
+    }
+
+    /**
+     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
+     * Can only be called by the current owner.
+     *
+     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
+     */
+    function transferOwnership(address newOwner) public virtual override onlyOwner {
+        _pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner(), newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual override {
+        delete _pendingOwner;
+        super._transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev The new owner accepts the ownership transfer.
+     */
+    function acceptOwnership() public virtual {
+        address sender = _msgSender();
+        if (pendingOwner() != sender) {
+            revert OwnableUnauthorizedAccount(sender);
+        }
+        _transferOwnership(sender);
     }
 }
 
@@ -1394,227 +1479,6 @@ interface ICovenant {
 
     /// @notice Set pause address for a market (onlyOwner)
     function setMarketPauseAddress(MarketId marketId, address newPauseAddress) external;
-}
-
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.30;
-
-contract NoDelegateCall {
-    address private immutable originalAddress;
-    error E_DelegateCallNotAllowed();
-
-    constructor() {
-        originalAddress = address(this);
-    }
-
-    modifier noDelegateCall() {
-        if (address(this) != originalAddress) revert E_DelegateCallNotAllowed();
-        _;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
-
-pragma solidity ^0.8.20;
-
-import {Ownable} from "./Ownable.sol";
-
-/**
- * @dev Contract module which provides access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * This extension of the {Ownable} contract includes a two-step mechanism to transfer
- * ownership, where the new owner must call {acceptOwnership} in order to replace the
- * old one. This can help prevent common mistakes, such as transfers of ownership to
- * incorrect accounts, or to contracts that are unable to interact with the
- * permission system.
- *
- * The initial owner is specified at deployment time in the constructor for `Ownable`. This
- * can later be changed with {transferOwnership} and {acceptOwnership}.
- *
- * This module is used through inheritance. It will make available all functions
- * from parent (Ownable).
- */
-abstract contract Ownable2Step is Ownable {
-    address private _pendingOwner;
-
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Returns the address of the pending owner.
-     */
-    function pendingOwner() public view virtual returns (address) {
-        return _pendingOwner;
-    }
-
-    /**
-     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
-     * Can only be called by the current owner.
-     *
-     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
-     */
-    function transferOwnership(address newOwner) public virtual override onlyOwner {
-        _pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner(), newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual override {
-        delete _pendingOwner;
-        super._transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev The new owner accepts the ownership transfer.
-     */
-    function acceptOwnership() public virtual {
-        address sender = _msgSender();
-        if (pendingOwner() != sender) {
-            revert OwnableUnauthorizedAccount(sender);
-        }
-        _transferOwnership(sender);
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-import {Errors} from "./Errors.sol";
-import {MarketId, MarketParams, SwapParams, MintParams, RedeemParams, AssetType} from "../interfaces/ICovenant.sol";
-import {MarketParamsLib} from "./MarketParams.sol";
-import {UtilsLib} from "./Utils.sol";
-
-/**
- * @title ValidationLogic library
- * @author Covenant Labs
- * @notice Implements functions to validate the different actions of the protocol
- */
-library ValidationLogic {
-    using MarketParamsLib for MarketParams;
-
-    function checkUpdateParams(MarketId marketId, MarketParams calldata marketParams) internal pure {
-        // check marketParams
-        if (MarketId.unwrap(marketId) != MarketId.unwrap(marketParams.id())) revert Errors.E_IncorrectMarketParams();
-    }
-
-    function checkMintParams(MintParams calldata mintParams) internal pure {
-        // check marketParams
-        if (MarketId.unwrap(mintParams.marketId) != MarketId.unwrap(mintParams.marketParams.id()))
-            revert Errors.E_IncorrectMarketParams();
-
-        // check mintParams
-        if (mintParams.baseAmountIn == 0) revert Errors.E_ZeroAmount();
-        if (mintParams.to == address(0)) revert Errors.E_ZeroAddress();
-    }
-
-    function checkMintOutputs(
-        MintParams calldata mintParams,
-        uint256 aTokenAmountOut,
-        uint256 zTokenAmountOut
-    ) internal pure {
-        if (aTokenAmountOut < mintParams.minATokenAmountOut) revert Errors.E_CrossedLimit();
-        if (zTokenAmountOut < mintParams.minZTokenAmountOut) revert Errors.E_CrossedLimit();
-        if (zTokenAmountOut == 0 && aTokenAmountOut == 0) revert Errors.E_InsufficientAmount();
-    }
-
-    function checkRedeemParams(RedeemParams calldata redeemParams) internal pure {
-        // check marketParams
-        if (MarketId.unwrap(redeemParams.marketId) != MarketId.unwrap(redeemParams.marketParams.id()))
-            revert Errors.E_IncorrectMarketParams();
-
-        // check redeemParams
-        if (redeemParams.aTokenAmountIn == 0 && redeemParams.zTokenAmountIn == 0) revert Errors.E_ZeroAmount();
-        if (redeemParams.to == address(0)) revert Errors.E_ZeroAddress();
-    }
-
-    function checkRedeemOutputs(
-        RedeemParams calldata redeemParams,
-        uint256 baseSupply,
-        uint256 amountOut
-    ) internal pure {
-        if (amountOut < redeemParams.minAmountOut) revert Errors.E_CrossedLimit();
-        if (amountOut > baseSupply) revert Errors.E_InsufficientAmount();
-        if (amountOut == 0) revert Errors.E_InsufficientAmount();
-    }
-
-    function checkSwapParams(SwapParams calldata swapParams, uint256 baseSupply) internal pure {
-        // check marketParams
-        if (MarketId.unwrap(swapParams.marketId) != MarketId.unwrap(swapParams.marketParams.id()))
-            revert Errors.E_IncorrectMarketParams();
-
-        // check swapParams
-        if (swapParams.amountSpecified == 0) revert Errors.E_ZeroAmount();
-        if (swapParams.to == address(0)) revert Errors.E_ZeroAddress();
-        if (swapParams.assetOut == swapParams.assetIn) revert Errors.E_EqualSwapAssets();
-        if (
-            (uint8(swapParams.assetOut) >= uint8(AssetType.COUNT)) ||
-            (uint8(swapParams.assetIn) >= uint8(AssetType.COUNT))
-        ) revert Errors.E_IncorrectMarketAsset();
-
-        // check if requesting more base tokens than available
-        if (
-            !swapParams.isExactIn &&
-            (swapParams.assetOut == AssetType.BASE) &&
-            (swapParams.amountSpecified > baseSupply)
-        ) revert Errors.E_InsufficientAmount();
-    }
-
-    function checkSwapOutputs(
-        SwapParams calldata swapParams,
-        uint256 baseSupply,
-        uint256 amountCalculated,
-        uint256 protocolFees
-    ) internal pure {
-        if (amountCalculated == 0) {
-            if (!swapParams.isExactIn) revert Errors.E_InsufficientAmount();
-            // Do not allow 0 input if this is an exactOut swap
-            else if (swapParams.assetIn == AssetType.BASE) revert Errors.E_InsufficientAmount(); //  Do not allow zero out swaps with BASE token as input
-            // @dev - the above conditions allow exactIn swaps where a Synth token is donated in, but no Base tokens come out (0 output)
-            // This is to allow donation of valueless synth dust to the Covenant Protocol.
-        }
-
-        // check amounts do not surpass swapParam limits
-        if (swapParams.isExactIn) {
-            if (amountCalculated < swapParams.amountLimit) revert Errors.E_CrossedLimit(); // check minimum limit is coming out
-        } else {
-            if (amountCalculated > swapParams.amountLimit) revert Errors.E_CrossedLimit(); // check less than max limit is coming in
-        }
-
-        // if Base asset out check base supply limits
-        if (
-            (swapParams.assetOut == AssetType.BASE) &&
-            (((swapParams.isExactIn ? amountCalculated : swapParams.amountSpecified) + protocolFees) > baseSupply)
-        ) revert Errors.E_InsufficientAmount();
-    }
-
-    function checkMarketParams(
-        MarketParams calldata marketParams,
-        MarketParams storage storageMarketParams,
-        mapping(address LEXimplementation => bool) storage validLEX,
-        mapping(address Oracle => bool) storage validCurator
-    ) internal view {
-        // check whether lex is enabled
-        if (!validLEX[address(marketParams.lex)]) revert Errors.E_LEXimplementationNotAuthorized();
-
-        // check whether curator is enabled
-        if (!validCurator[address(marketParams.curator)]) revert Errors.E_CuratorNotAuthorized();
-
-        // check whether market already exists
-        if (address(storageMarketParams.baseToken) != address(0)) revert Errors.E_MarketAlreadyExists();
-    }
-
-    function checkProtocolFee(uint32 protocolFee) internal pure {
-        // split out fees
-        (uint16 yieldFee, uint16 tvlFee) = UtilsLib.decodeFee(protocolFee);
-
-        if (yieldFee > 3000) revert Errors.E_ProtocolFeeTooHigh(); // 30% max of yield as additional fee
-        if (tvlFee > 500) revert Errors.E_ProtocolFeeTooHigh(); // 5% max of tvl as yearly fee
-    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -1821,56 +1685,6 @@ library Events {
     event UpdateMarketPauseAddress(MarketId indexed marketId, address oldPauseAddress, address newPauseAddress);
 }
 
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.30;
-
-import {MarketId, MarketParams} from "../interfaces/ICovenant.sol";
-
-/// @title MarketParams Library
-/// @author Covenant Labs
-/// @notice Library to convert a market to its id.
-library MarketParamsLib {
-    /// @notice Returns the id of the market `marketParams`.
-    function id(MarketParams calldata p) internal pure returns (MarketId marketParamsId) {
-        return
-            MarketId.wrap(
-                bytes20(uint160(uint256(keccak256(abi.encodePacked(p.baseToken, p.quoteToken, p.curator, p.lex)))))
-            );
-    }
-}
-
-// SPDX-License-Identifier: AGPL-3.0
-pragma solidity ^0.8.0;
-
-import {MarketId, AssetType} from "../interfaces/ICovenant.sol";
-import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
-
-/**
- * @title ICovenant
- * @author Amorphous
- * @notice Defines the the core interface of Covenant Liquid markets.
- **/
-interface ISynthToken is IERC20 {
-    // Notice - gets CovenantCore associated with the SynthToken
-    function getCovenantCore() external returns (address);
-
-    // Notice - gets marketId associated with the SynthToken
-    function getMarketId() external returns (MarketId);
-
-    // Notice - gets synthType associated with the SynthToken
-    function getSynthType() external returns (AssetType);
-
-    /**
-     * @dev Expose share mint functionality to Covenant Liquid
-     */
-    function lexMint(address account, uint256 value) external;
-
-    /**
-     * @dev Expose share redeem functionality to Covenant Liquid
-     */
-    function lexBurn(address account, uint256 value) external;
-}
-
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.0;
 
@@ -2180,18 +1994,187 @@ interface ICovenant {
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.30;
 
-/// @title Utils Library
+import {MarketId, MarketParams} from "../interfaces/ICovenant.sol";
+
+/// @title MarketParams Library
 /// @author Covenant Labs
 /// @notice Library to convert a market to its id.
-library UtilsLib {
-    function encodeFee(uint16 yieldFee, uint16 tvlFee) internal pure returns (uint32 protocolFee) {
-        return ((uint32(yieldFee) << 16) | uint32(tvlFee));
+library MarketParamsLib {
+    /// @notice Returns the id of the market `marketParams`.
+    function id(MarketParams calldata p) internal pure returns (MarketId marketParamsId) {
+        return
+            MarketId.wrap(
+                bytes20(uint160(uint256(keccak256(abi.encodePacked(p.baseToken, p.quoteToken, p.curator, p.lex)))))
+            );
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+import {Errors} from "./Errors.sol";
+import {MarketId, MarketParams, SwapParams, MintParams, RedeemParams, AssetType} from "../interfaces/ICovenant.sol";
+import {MarketParamsLib} from "./MarketParams.sol";
+import {UtilsLib} from "./Utils.sol";
+
+/**
+ * @title ValidationLogic library
+ * @author Covenant Labs
+ * @notice Implements functions to validate the different actions of the protocol
+ */
+library ValidationLogic {
+    using MarketParamsLib for MarketParams;
+
+    function checkUpdateParams(MarketId marketId, MarketParams calldata marketParams) internal pure {
+        // check marketParams
+        if (MarketId.unwrap(marketId) != MarketId.unwrap(marketParams.id())) revert Errors.E_IncorrectMarketParams();
     }
 
-    function decodeFee(uint32 protocolFee) internal pure returns (uint16 yieldFee, uint16 tvlFee) {
-        yieldFee = uint16(protocolFee >> 16);
-        tvlFee = uint16(protocolFee & 0xFFFF);
+    function checkMintParams(MintParams calldata mintParams) internal pure {
+        // check marketParams
+        if (MarketId.unwrap(mintParams.marketId) != MarketId.unwrap(mintParams.marketParams.id()))
+            revert Errors.E_IncorrectMarketParams();
+
+        // check mintParams
+        if (mintParams.baseAmountIn == 0) revert Errors.E_ZeroAmount();
+        if (mintParams.to == address(0)) revert Errors.E_ZeroAddress();
     }
+
+    function checkMintOutputs(
+        MintParams calldata mintParams,
+        uint256 aTokenAmountOut,
+        uint256 zTokenAmountOut
+    ) internal pure {
+        if (aTokenAmountOut < mintParams.minATokenAmountOut) revert Errors.E_CrossedLimit();
+        if (zTokenAmountOut < mintParams.minZTokenAmountOut) revert Errors.E_CrossedLimit();
+        if (zTokenAmountOut == 0 && aTokenAmountOut == 0) revert Errors.E_InsufficientAmount();
+    }
+
+    function checkRedeemParams(RedeemParams calldata redeemParams) internal pure {
+        // check marketParams
+        if (MarketId.unwrap(redeemParams.marketId) != MarketId.unwrap(redeemParams.marketParams.id()))
+            revert Errors.E_IncorrectMarketParams();
+
+        // check redeemParams
+        if (redeemParams.aTokenAmountIn == 0 && redeemParams.zTokenAmountIn == 0) revert Errors.E_ZeroAmount();
+        if (redeemParams.to == address(0)) revert Errors.E_ZeroAddress();
+    }
+
+    function checkRedeemOutputs(
+        RedeemParams calldata redeemParams,
+        uint256 baseSupply,
+        uint256 amountOut
+    ) internal pure {
+        if (amountOut < redeemParams.minAmountOut) revert Errors.E_CrossedLimit();
+        if (amountOut > baseSupply) revert Errors.E_InsufficientAmount();
+        if (amountOut == 0) revert Errors.E_InsufficientAmount();
+    }
+
+    function checkSwapParams(SwapParams calldata swapParams, uint256 baseSupply) internal pure {
+        // check marketParams
+        if (MarketId.unwrap(swapParams.marketId) != MarketId.unwrap(swapParams.marketParams.id()))
+            revert Errors.E_IncorrectMarketParams();
+
+        // check swapParams
+        if (swapParams.amountSpecified == 0) revert Errors.E_ZeroAmount();
+        if (swapParams.to == address(0)) revert Errors.E_ZeroAddress();
+        if (swapParams.assetOut == swapParams.assetIn) revert Errors.E_EqualSwapAssets();
+        if (
+            (uint8(swapParams.assetOut) >= uint8(AssetType.COUNT)) ||
+            (uint8(swapParams.assetIn) >= uint8(AssetType.COUNT))
+        ) revert Errors.E_IncorrectMarketAsset();
+
+        // check if requesting more base tokens than available
+        if (
+            !swapParams.isExactIn &&
+            (swapParams.assetOut == AssetType.BASE) &&
+            (swapParams.amountSpecified > baseSupply)
+        ) revert Errors.E_InsufficientAmount();
+    }
+
+    function checkSwapOutputs(
+        SwapParams calldata swapParams,
+        uint256 baseSupply,
+        uint256 amountCalculated,
+        uint256 protocolFees
+    ) internal pure {
+        if (amountCalculated == 0) {
+            if (!swapParams.isExactIn) revert Errors.E_InsufficientAmount();
+            // Do not allow 0 input if this is an exactOut swap
+            else if (swapParams.assetIn == AssetType.BASE) revert Errors.E_InsufficientAmount(); //  Do not allow zero out swaps with BASE token as input
+            // @dev - the above conditions allow exactIn swaps where a Synth token is donated in, but no Base tokens come out (0 output)
+            // This is to allow donation of valueless synth dust to the Covenant Protocol.
+        }
+
+        // check amounts do not surpass swapParam limits
+        if (swapParams.isExactIn) {
+            if (amountCalculated < swapParams.amountLimit) revert Errors.E_CrossedLimit(); // check minimum limit is coming out
+        } else {
+            if (amountCalculated > swapParams.amountLimit) revert Errors.E_CrossedLimit(); // check less than max limit is coming in
+        }
+
+        // if Base asset out check base supply limits
+        if (
+            (swapParams.assetOut == AssetType.BASE) &&
+            (((swapParams.isExactIn ? amountCalculated : swapParams.amountSpecified) + protocolFees) > baseSupply)
+        ) revert Errors.E_InsufficientAmount();
+    }
+
+    function checkMarketParams(
+        MarketParams calldata marketParams,
+        MarketParams storage storageMarketParams,
+        mapping(address LEXimplementation => bool) storage validLEX,
+        mapping(address Oracle => bool) storage validCurator
+    ) internal view {
+        // check whether lex is enabled
+        if (!validLEX[address(marketParams.lex)]) revert Errors.E_LEXimplementationNotAuthorized();
+
+        // check whether curator is enabled
+        if (!validCurator[address(marketParams.curator)]) revert Errors.E_CuratorNotAuthorized();
+
+        // check whether market already exists
+        if (address(storageMarketParams.baseToken) != address(0)) revert Errors.E_MarketAlreadyExists();
+    }
+
+    function checkProtocolFee(uint32 protocolFee) internal pure {
+        // split out fees
+        (uint16 yieldFee, uint16 tvlFee) = UtilsLib.decodeFee(protocolFee);
+
+        if (yieldFee > 3000) revert Errors.E_ProtocolFeeTooHigh(); // 30% max of yield as additional fee
+        if (tvlFee > 500) revert Errors.E_ProtocolFeeTooHigh(); // 5% max of tvl as yearly fee
+    }
+}
+
+// SPDX-License-Identifier: AGPL-3.0
+pragma solidity ^0.8.0;
+
+import {MarketId, AssetType} from "../interfaces/ICovenant.sol";
+import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+
+/**
+ * @title ICovenant
+ * @author Amorphous
+ * @notice Defines the the core interface of Covenant Liquid markets.
+ **/
+interface ISynthToken is IERC20 {
+    // Notice - gets CovenantCore associated with the SynthToken
+    function getCovenantCore() external returns (address);
+
+    // Notice - gets marketId associated with the SynthToken
+    function getMarketId() external returns (MarketId);
+
+    // Notice - gets synthType associated with the SynthToken
+    function getSynthType() external returns (AssetType);
+
+    /**
+     * @dev Expose share mint functionality to Covenant Liquid
+     */
+    function lexMint(address account, uint256 value) external;
+
+    /**
+     * @dev Expose share redeem functionality to Covenant Liquid
+     */
+    function lexBurn(address account, uint256 value) external;
 }
 
 // SPDX-License-Identifier: AGPL-3.0
@@ -2211,8 +2194,336 @@ contract NoDelegateCall {
     }
 }
 
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.30;
+
+/// @title Utils Library
+/// @author Covenant Labs
+/// @notice Library to convert a market to its id.
+library UtilsLib {
+    function encodeFee(uint16 yieldFee, uint16 tvlFee) internal pure returns (uint32 protocolFee) {
+        return ((uint32(yieldFee) << 16) | uint32(tvlFee));
+    }
+
+    function decodeFee(uint32 protocolFee) internal pure returns (uint16 yieldFee, uint16 tvlFee) {
+        yieldFee = uint16(protocolFee >> 16);
+        tvlFee = uint16(protocolFee & 0xFFFF);
+    }
+}
+
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+import {IERC4626} from "forge-std/interfaces/IERC4626.sol";
+import {Ownable2Step, Ownable} from "@openzeppelin/access/Ownable2Step.sol";
+import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
+import {Errors} from "./lib/Errors.sol";
+
+/// @title CovenantCurator
+/// @author Covenant Labs
+/// @notice Covenant Curator V1.0 is, among other things, an oracle router
+/// @notice The contract enables the curator to decide on oracle and ERC4626 to authorize
+/// @notice This is a very close copy to the oracle router contract in the euler-price-oracle library, adapted for Covenant under GPL.
+/// but extends logic to include pricePreviews and priceUpdates/getUpdateFee for pull oracles
+/// @notice All functions return a value.  if bid/ask price not implemented, then getQuotes returns bid = ask = getQuote()
+/// @dev Integration Note: The router supports pricing via `convertToAssets` for trusted `resolvedVaults`.
+/// By ERC4626 spec `convert*` ignores liquidity restrictions, fees, slippage and per-user restrictions.
+/// Therefore the reported price may not be realizable through `redeem` or `withdraw`.
+contract CovenantCurator is Ownable2Step, IPriceOracle {
+    /// @inheritdoc IPriceOracle
+    string public constant name = "CovenantCurator V1.0";
+    /// @notice The PriceOracle to call if this router is not configured for base/quote.
+    /// @dev If `address(0)` then there is no fallback.
+    address public fallbackOracle;
+    /// @notice ERC4626 vaults resolved using internal pricing (`convertToAssets`).
+    mapping(address vault => address asset) public resolvedVaults;
+    /// @notice PriceOracle configured per asset pair.
+    /// @dev The keys are lexicographically sorted (asset0 < asset1).
+    mapping(address asset0 => mapping(address asset1 => address oracle)) internal oracles;
+
+    /// @notice Configure a PriceOracle to resolve an asset pair.
+    /// @param asset0 The address first in lexicographic order.
+    /// @param asset1 The address second in lexicographic order.
+    /// @param oracle The address of the PriceOracle that resolves the pair.
+    /// @dev If `oracle` is `address(0)` then the configuration was removed.
+    /// The keys are lexicographically sorted (asset0 < asset1).
+    event ConfigSet(address indexed asset0, address indexed asset1, address indexed oracle);
+    /// @notice Set a PriceOracle as a fallback resolver.
+    /// @param fallbackOracle The address of the PriceOracle that is called when base/quote is not configured.
+    /// @dev If `fallbackOracle` is `address(0)` then there is no fallback resolver.
+    event FallbackOracleSet(address indexed fallbackOracle);
+    /// @notice Mark an ERC4626 vault to be resolved to its `asset` via its `convert*` methods.
+    /// @param vault The address of the ERC4626 vault.
+    /// @param asset The address of the vault's asset.
+    /// @dev If `asset` is `address(0)` then the configuration was removed.
+    event ResolvedVaultSet(address indexed vault, address indexed asset);
+
+    /// @notice Deploy CovenantRouter.
+    /// @param _governor The address of the governor.
+    constructor(address _governor) Ownable(_governor) {
+        if (_governor == address(0)) revert Errors.PriceOracle_InvalidConfiguration();
+    }
+
+    /// @notice Configure a PriceOracle to resolve base/quote and quote/base.
+    /// @param base The address of the base token.
+    /// @param quote The address of the quote token.
+    /// @param oracle The address of the PriceOracle to resolve the pair.
+    /// @dev Callable only by the governor.
+    function govSetConfig(address base, address quote, address oracle) external onlyOwner {
+        // This case is handled by `resolveOracle`.
+        if (base == quote) revert Errors.PriceOracle_InvalidConfiguration();
+        (address asset0, address asset1) = _sort(base, quote);
+        oracles[asset0][asset1] = oracle;
+        emit ConfigSet(asset0, asset1, oracle);
+    }
+
+    /// @notice Configure an ERC4626 vault to use internal pricing via `convert*` methods.
+    /// @param vault The address of the ERC4626 vault.
+    /// @param set True to configure the vault, false to clear the record.
+    /// @dev Callable only by the governor. Vault must implement ERC4626.
+    /// Note: Before configuring a vault verify that its `convertToAssets` is secure.
+    function govSetResolvedVault(address vault, bool set) external onlyOwner {
+        address asset = set ? IERC4626(vault).asset() : address(0);
+        resolvedVaults[vault] = asset;
+        emit ResolvedVaultSet(vault, asset);
+    }
+
+    /// @notice Set a PriceOracle as a fallback resolver.
+    /// @param _fallbackOracle The address of the PriceOracle that is called when base/quote is not configured.
+    /// @dev Callable only by the governor. `address(0)` removes the fallback.
+    function govSetFallbackOracle(address _fallbackOracle) external onlyOwner {
+        fallbackOracle = _fallbackOracle;
+        emit FallbackOracleSet(_fallbackOracle);
+    }
+
+    /// @inheritdoc IPriceOracle
+    function getQuote(uint256 inAmount, address base, address quote) external view returns (uint256) {
+        address oracle;
+        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
+        if (base == quote) return inAmount;
+        return IPriceOracle(oracle).getQuote(inAmount, base, quote);
+    }
+
+    /// @inheritdoc IPriceOracle
+    function getQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
+        address oracle;
+        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
+        if (base == quote) return (inAmount, inAmount);
+        return IPriceOracle(oracle).getQuotes(inAmount, base, quote);
+    }
+
+    /// @notice Get the PriceOracle configured for base/quote.
+    /// @param base The address of the base token.
+    /// @param quote The address of the quote token.
+    /// @return The configured `PriceOracle` for the pair or `address(0)` if no oracle is configured.
+    function getConfiguredOracle(address base, address quote) public view returns (address) {
+        (address asset0, address asset1) = _sort(base, quote);
+        return oracles[asset0][asset1];
+    }
+
+    /// @notice Resolve the PriceOracle to call for a given base/quote pair.
+    /// @param inAmount The amount of `base` to convert.
+    /// @param base The token that is being priced.
+    /// @param quote The token that is the unit of account.
+    /// @dev Implements the following resolution logic:
+    /// 1. Check the base case: `base == quote` and terminate if true.
+    /// 2. If a PriceOracle is configured for base/quote in the `oracles` mapping, return it.
+    /// 3. If `base` is configured as a resolved ERC4626 vault, call `convertToAssets(inAmount)`
+    /// and continue the recursion, substituting the ERC4626 `asset` for `base`.
+    /// 4. As a last resort, return the fallback oracle or revert if it is not set.
+    /// @return The resolved amount. This value may be different from the original `inAmount`
+    /// if the resolution path included an ERC4626 vault present in `resolvedVaults`.
+    /// @return The resolved base.
+    /// @return The resolved quote.
+    /// @return The resolved PriceOracle to call.
+    function resolveOracle(
+        uint256 inAmount,
+        address base,
+        address quote
+    )
+        public
+        view
+        returns (uint256, /* resolvedAmount */ address, /* base */ address, /* quote */ address /* oracle */)
+    {
+        // 1. Check the base case.
+        if (base == quote) return (inAmount, base, quote, address(0));
+        // 2. Check if there is a PriceOracle configured for base/quote.
+        address oracle = getConfiguredOracle(base, quote);
+        if (oracle != address(0)) return (inAmount, base, quote, oracle);
+        // 3. Recursively resolve `base`.
+        address baseAsset = resolvedVaults[base];
+        if (baseAsset != address(0)) {
+            inAmount = IERC4626(base).convertToAssets(inAmount);
+            return resolveOracle(inAmount, baseAsset, quote);
+        }
+        // 4. Return the fallback or revert if not configured.
+        oracle = fallbackOracle;
+        if (oracle == address(0)) revert Errors.PriceOracle_NotSupported(base, quote);
+        return (inAmount, base, quote, oracle);
+    }
+
+    /// @notice Lexicographically sort two addresses.
+    /// @param assetA One of the assets in the pair.
+    /// @param assetB The other asset in the pair.
+    /// @return The address first in lexicographic order.
+    /// @return The address second in lexicographic order.
+    function _sort(address assetA, address assetB) internal pure returns (address, address) {
+        return assetA < assetB ? (assetA, assetB) : (assetB, assetA);
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////
+    // Additional functions for Covenant
+    /////////////////////////////////////////////////////////////////////////////////
+
+    /// @inheritdoc IPriceOracle
+    function previewGetQuote(uint256 inAmount, address base, address quote) external view returns (uint256) {
+        address oracle;
+        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
+        if (base == quote) return inAmount;
+        return IPriceOracle(oracle).previewGetQuote(inAmount, base, quote);
+    }
+
+    /// @inheritdoc IPriceOracle
+    function previewGetQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
+        address oracle;
+        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
+        if (base == quote) return (inAmount, inAmount);
+        return IPriceOracle(oracle).previewGetQuotes(inAmount, base, quote);
+    }
+
+    /// @inheritdoc IPriceOracle
+    function updatePriceFeeds(address base, address quote, bytes calldata updateData) external payable {
+        address oracle;
+        (, base, quote, oracle) = resolveOracle(0, base, quote);
+        if (base == quote) {
+            if (msg.value > 0) revert Errors.PriceOracle_IncorrectPayment();
+            return;
+        }
+        return IPriceOracle(oracle).updatePriceFeeds{value: msg.value}(base, quote, updateData);
+    }
+
+    /// @inheritdoc IPriceOracle
+    function getUpdateFee(address base, address quote, bytes calldata updateData) external view returns (uint128) {
+        address oracle;
+        (, base, quote, oracle) = resolveOracle(0, base, quote);
+        if (base == quote) return 0;
+        return IPriceOracle(oracle).getUpdateFee(base, quote, updateData);
+    }
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+import {SafeMetadata, IERC20} from "../../../libraries/SafeMetadata.sol";
+import {ITokenData} from "../interfaces/ITokenData.sol";
+
+/// @title TokenData
+/// @author Covenant Labs
+/// @notice sets symbol, decimals and name overrides for a token
+/// @dev each item can be set independently, and will override existing ERC20 values for the respecitve token
+/// @dev if both symbol and decimals are overriden, a quote token need not be an actual ERC20
+/// @dev this gives the flexibility to use currency ISO addresses and symbols for quote tokens.
+/// @dev Oracles can use ERC-7535, ISO 4217 or other conventions to represent non-ERC20 assets as addresses.
+/// @dev e.g., EIP7528 would set address = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", symbol = "ETH", decimals = 18.
+abstract contract TokenData is ITokenData {
+    using SafeMetadata for IERC20;
+
+    // mapping of decimal overrides for specific assets
+    mapping(address => uint8) _decimals;
+
+    // mapping of symbol overrides for specific assets
+    mapping(address => string) _symbol;
+
+    // mapping of name overrides for specific assets
+    mapping(address => string) _name;
+
+    error TokenData_InvalidDecimals();
+
+    event SetTokenDecimals(address indexed token, uint8 oldDecimals, uint8 newDecimals);
+    event SetTokenSymbol(address indexed token, string oldSymbol, string newSymbol);
+    event SetTokenName(address indexed token, string oldName, string newName);
+
+    function assetDecimals(address asset) public view returns (uint8 decimals_) {
+        return _assetDecimals(asset);
+    }
+
+    function assetSymbol(address asset) public view returns (string memory symbol_) {
+        return _assetSymbol(asset);
+    }
+
+    function assetName(address asset) public view returns (string memory name_) {
+        return _assetName(asset);
+    }
+
+    //////////////////////////////////////////////////////////////////////////
+
+    // @dev - Stored decimals are an override.
+    // if stored decimals is 0, try and get ERC20 decimals
+    function _assetDecimals(address asset) internal view returns (uint8 decimals_) {
+        decimals_ = _decimals[asset]; //check if there is an override for this asset
+        if (decimals_ > 0) return decimals_;
+        else {
+            // try and read from asset itself
+            bool success;
+            (success, decimals_) = IERC20(asset).tryGetDecimals();
+            return success ? decimals_ : 18;
+        }
+    }
+
+    // @dev - Stored symbol are an override.
+    // @dev - if stored symbol is "", try and get ERC20 symbol
+    function _assetSymbol(address asset) internal view returns (string memory symbol_) {
+        symbol_ = _symbol[asset]; //check if there is an override for this asset
+        if (bytes(symbol_).length > 0) return symbol_;
+        else {
+            // try and read from asset itself
+            bool success;
+            (success, symbol_) = IERC20(asset).tryGetSymbol();
+            return success ? symbol_ : "";
+        }
+    }
+
+    // @dev - Stored name are an override.
+    // @dev - if stored name is "", try and get ERC20 name
+    function _assetName(address asset) internal view returns (string memory name_) {
+        name_ = _name[asset]; //check if there is an override for this asset
+        if (bytes(name_).length > 0) return name_;
+        else {
+            // try and read from asset itself
+            bool success;
+            (success, name_) = IERC20(asset).tryGetName();
+            return success ? name_ : "";
+        }
+    }
+
+    // internal functions.  These should be exposed with the appropriate access modifiers
+    // @dev - if newDecimals = 0, then _assetDecimals will try and get ERC20 decimals
+    function _updateAssetDecimals(address asset, uint8 newDecimals) internal {
+        if (newDecimals > 18) revert TokenData_InvalidDecimals();
+        uint8 oldDecimals = _assetDecimals(asset); // get old decimals
+        _decimals[asset] = newDecimals;
+        emit SetTokenDecimals(asset, oldDecimals, newDecimals);
+    }
+
+    // internal functions.  These should be exposed with the appropriate access modifiers
+    // @dev - if newSymbol = "", then _assetSymbol will try and get ERC20 symbol
+    function _updateAssetSymbol(address asset, string calldata newSymbol) internal {
+        string memory oldSymbol = _assetSymbol(asset); // get old symbol
+        _symbol[asset] = newSymbol;
+        emit SetTokenSymbol(asset, oldSymbol, newSymbol);
+    }
+
+    // internal functions.  These should be exposed with the appropriate access modifiers
+    // @dev - if newName = "", then _assetNAme will try and get ERC20 name
+    function _updateAssetName(address asset, string calldata newName) internal {
+        string memory oldName = _assetName(asset); // get old symbol
+        _name[asset] = newName;
+        emit SetTokenName(asset, oldName, newName);
+    }
+}
+
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.30;
 
@@ -2864,317 +3175,6 @@ contract SynthToken is ERC20, ISynthToken {
      */
     function lexBurn(address account, uint256 value) external onlyLexCore {
         _burn(account, value);
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
-
-import {SafeMetadata, IERC20} from "../../../libraries/SafeMetadata.sol";
-import {ITokenData} from "../interfaces/ITokenData.sol";
-
-/// @title TokenData
-/// @author Covenant Labs
-/// @notice sets symbol, decimals and name overrides for a token
-/// @dev each item can be set independently, and will override existing ERC20 values for the respecitve token
-/// @dev if both symbol and decimals are overriden, a quote token need not be an actual ERC20
-/// @dev this gives the flexibility to use currency ISO addresses and symbols for quote tokens.
-/// @dev Oracles can use ERC-7535, ISO 4217 or other conventions to represent non-ERC20 assets as addresses.
-/// @dev e.g., EIP7528 would set address = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", symbol = "ETH", decimals = 18.
-abstract contract TokenData is ITokenData {
-    using SafeMetadata for IERC20;
-
-    // mapping of decimal overrides for specific assets
-    mapping(address => uint8) _decimals;
-
-    // mapping of symbol overrides for specific assets
-    mapping(address => string) _symbol;
-
-    // mapping of name overrides for specific assets
-    mapping(address => string) _name;
-
-    error TokenData_InvalidDecimals();
-
-    event SetTokenDecimals(address indexed token, uint8 oldDecimals, uint8 newDecimals);
-    event SetTokenSymbol(address indexed token, string oldSymbol, string newSymbol);
-    event SetTokenName(address indexed token, string oldName, string newName);
-
-    function assetDecimals(address asset) public view returns (uint8 decimals_) {
-        return _assetDecimals(asset);
-    }
-
-    function assetSymbol(address asset) public view returns (string memory symbol_) {
-        return _assetSymbol(asset);
-    }
-
-    function assetName(address asset) public view returns (string memory name_) {
-        return _assetName(asset);
-    }
-
-    //////////////////////////////////////////////////////////////////////////
-
-    // @dev - Stored decimals are an override.
-    // if stored decimals is 0, try and get ERC20 decimals
-    function _assetDecimals(address asset) internal view returns (uint8 decimals_) {
-        decimals_ = _decimals[asset]; //check if there is an override for this asset
-        if (decimals_ > 0) return decimals_;
-        else {
-            // try and read from asset itself
-            bool success;
-            (success, decimals_) = IERC20(asset).tryGetDecimals();
-            return success ? decimals_ : 18;
-        }
-    }
-
-    // @dev - Stored symbol are an override.
-    // @dev - if stored symbol is "", try and get ERC20 symbol
-    function _assetSymbol(address asset) internal view returns (string memory symbol_) {
-        symbol_ = _symbol[asset]; //check if there is an override for this asset
-        if (bytes(symbol_).length > 0) return symbol_;
-        else {
-            // try and read from asset itself
-            bool success;
-            (success, symbol_) = IERC20(asset).tryGetSymbol();
-            return success ? symbol_ : "";
-        }
-    }
-
-    // @dev - Stored name are an override.
-    // @dev - if stored name is "", try and get ERC20 name
-    function _assetName(address asset) internal view returns (string memory name_) {
-        name_ = _name[asset]; //check if there is an override for this asset
-        if (bytes(name_).length > 0) return name_;
-        else {
-            // try and read from asset itself
-            bool success;
-            (success, name_) = IERC20(asset).tryGetName();
-            return success ? name_ : "";
-        }
-    }
-
-    // internal functions.  These should be exposed with the appropriate access modifiers
-    // @dev - if newDecimals = 0, then _assetDecimals will try and get ERC20 decimals
-    function _updateAssetDecimals(address asset, uint8 newDecimals) internal {
-        if (newDecimals > 18) revert TokenData_InvalidDecimals();
-        uint8 oldDecimals = _assetDecimals(asset); // get old decimals
-        _decimals[asset] = newDecimals;
-        emit SetTokenDecimals(asset, oldDecimals, newDecimals);
-    }
-
-    // internal functions.  These should be exposed with the appropriate access modifiers
-    // @dev - if newSymbol = "", then _assetSymbol will try and get ERC20 symbol
-    function _updateAssetSymbol(address asset, string calldata newSymbol) internal {
-        string memory oldSymbol = _assetSymbol(asset); // get old symbol
-        _symbol[asset] = newSymbol;
-        emit SetTokenSymbol(asset, oldSymbol, newSymbol);
-    }
-
-    // internal functions.  These should be exposed with the appropriate access modifiers
-    // @dev - if newName = "", then _assetNAme will try and get ERC20 name
-    function _updateAssetName(address asset, string calldata newName) internal {
-        string memory oldName = _assetName(asset); // get old symbol
-        _name[asset] = newName;
-        emit SetTokenName(asset, oldName, newName);
-    }
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
-
-import {IERC4626} from "forge-std/interfaces/IERC4626.sol";
-import {Ownable2Step, Ownable} from "@openzeppelin/access/Ownable2Step.sol";
-import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
-import {Errors} from "./lib/Errors.sol";
-
-/// @title CovenantCurator
-/// @author Covenant Labs
-/// @notice Covenant Curator V1.0 is, among other things, an oracle router
-/// @notice The contract enables the curator to decide on oracle and ERC4626 to authorize
-/// @notice This is a very close copy to the oracle router contract in the euler-price-oracle library, adapted for Covenant under GPL.
-/// but extends logic to include pricePreviews and priceUpdates/getUpdateFee for pull oracles
-/// @notice All functions return a value.  if bid/ask price not implemented, then getQuotes returns bid = ask = getQuote()
-/// @dev Integration Note: The router supports pricing via `convertToAssets` for trusted `resolvedVaults`.
-/// By ERC4626 spec `convert*` ignores liquidity restrictions, fees, slippage and per-user restrictions.
-/// Therefore the reported price may not be realizable through `redeem` or `withdraw`.
-contract CovenantCurator is Ownable2Step, IPriceOracle {
-    /// @inheritdoc IPriceOracle
-    string public constant name = "CovenantCurator V1.0";
-    /// @notice The PriceOracle to call if this router is not configured for base/quote.
-    /// @dev If `address(0)` then there is no fallback.
-    address public fallbackOracle;
-    /// @notice ERC4626 vaults resolved using internal pricing (`convertToAssets`).
-    mapping(address vault => address asset) public resolvedVaults;
-    /// @notice PriceOracle configured per asset pair.
-    /// @dev The keys are lexicographically sorted (asset0 < asset1).
-    mapping(address asset0 => mapping(address asset1 => address oracle)) internal oracles;
-
-    /// @notice Configure a PriceOracle to resolve an asset pair.
-    /// @param asset0 The address first in lexicographic order.
-    /// @param asset1 The address second in lexicographic order.
-    /// @param oracle The address of the PriceOracle that resolves the pair.
-    /// @dev If `oracle` is `address(0)` then the configuration was removed.
-    /// The keys are lexicographically sorted (asset0 < asset1).
-    event ConfigSet(address indexed asset0, address indexed asset1, address indexed oracle);
-    /// @notice Set a PriceOracle as a fallback resolver.
-    /// @param fallbackOracle The address of the PriceOracle that is called when base/quote is not configured.
-    /// @dev If `fallbackOracle` is `address(0)` then there is no fallback resolver.
-    event FallbackOracleSet(address indexed fallbackOracle);
-    /// @notice Mark an ERC4626 vault to be resolved to its `asset` via its `convert*` methods.
-    /// @param vault The address of the ERC4626 vault.
-    /// @param asset The address of the vault's asset.
-    /// @dev If `asset` is `address(0)` then the configuration was removed.
-    event ResolvedVaultSet(address indexed vault, address indexed asset);
-
-    /// @notice Deploy CovenantRouter.
-    /// @param _governor The address of the governor.
-    constructor(address _governor) Ownable(_governor) {
-        if (_governor == address(0)) revert Errors.PriceOracle_InvalidConfiguration();
-    }
-
-    /// @notice Configure a PriceOracle to resolve base/quote and quote/base.
-    /// @param base The address of the base token.
-    /// @param quote The address of the quote token.
-    /// @param oracle The address of the PriceOracle to resolve the pair.
-    /// @dev Callable only by the governor.
-    function govSetConfig(address base, address quote, address oracle) external onlyOwner {
-        // This case is handled by `resolveOracle`.
-        if (base == quote) revert Errors.PriceOracle_InvalidConfiguration();
-        (address asset0, address asset1) = _sort(base, quote);
-        oracles[asset0][asset1] = oracle;
-        emit ConfigSet(asset0, asset1, oracle);
-    }
-
-    /// @notice Configure an ERC4626 vault to use internal pricing via `convert*` methods.
-    /// @param vault The address of the ERC4626 vault.
-    /// @param set True to configure the vault, false to clear the record.
-    /// @dev Callable only by the governor. Vault must implement ERC4626.
-    /// Note: Before configuring a vault verify that its `convertToAssets` is secure.
-    function govSetResolvedVault(address vault, bool set) external onlyOwner {
-        address asset = set ? IERC4626(vault).asset() : address(0);
-        resolvedVaults[vault] = asset;
-        emit ResolvedVaultSet(vault, asset);
-    }
-
-    /// @notice Set a PriceOracle as a fallback resolver.
-    /// @param _fallbackOracle The address of the PriceOracle that is called when base/quote is not configured.
-    /// @dev Callable only by the governor. `address(0)` removes the fallback.
-    function govSetFallbackOracle(address _fallbackOracle) external onlyOwner {
-        fallbackOracle = _fallbackOracle;
-        emit FallbackOracleSet(_fallbackOracle);
-    }
-
-    /// @inheritdoc IPriceOracle
-    function getQuote(uint256 inAmount, address base, address quote) external view returns (uint256) {
-        address oracle;
-        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
-        if (base == quote) return inAmount;
-        return IPriceOracle(oracle).getQuote(inAmount, base, quote);
-    }
-
-    /// @inheritdoc IPriceOracle
-    function getQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
-        address oracle;
-        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
-        if (base == quote) return (inAmount, inAmount);
-        return IPriceOracle(oracle).getQuotes(inAmount, base, quote);
-    }
-
-    /// @notice Get the PriceOracle configured for base/quote.
-    /// @param base The address of the base token.
-    /// @param quote The address of the quote token.
-    /// @return The configured `PriceOracle` for the pair or `address(0)` if no oracle is configured.
-    function getConfiguredOracle(address base, address quote) public view returns (address) {
-        (address asset0, address asset1) = _sort(base, quote);
-        return oracles[asset0][asset1];
-    }
-
-    /// @notice Resolve the PriceOracle to call for a given base/quote pair.
-    /// @param inAmount The amount of `base` to convert.
-    /// @param base The token that is being priced.
-    /// @param quote The token that is the unit of account.
-    /// @dev Implements the following resolution logic:
-    /// 1. Check the base case: `base == quote` and terminate if true.
-    /// 2. If a PriceOracle is configured for base/quote in the `oracles` mapping, return it.
-    /// 3. If `base` is configured as a resolved ERC4626 vault, call `convertToAssets(inAmount)`
-    /// and continue the recursion, substituting the ERC4626 `asset` for `base`.
-    /// 4. As a last resort, return the fallback oracle or revert if it is not set.
-    /// @return The resolved amount. This value may be different from the original `inAmount`
-    /// if the resolution path included an ERC4626 vault present in `resolvedVaults`.
-    /// @return The resolved base.
-    /// @return The resolved quote.
-    /// @return The resolved PriceOracle to call.
-    function resolveOracle(
-        uint256 inAmount,
-        address base,
-        address quote
-    )
-        public
-        view
-        returns (uint256, /* resolvedAmount */ address, /* base */ address, /* quote */ address /* oracle */)
-    {
-        // 1. Check the base case.
-        if (base == quote) return (inAmount, base, quote, address(0));
-        // 2. Check if there is a PriceOracle configured for base/quote.
-        address oracle = getConfiguredOracle(base, quote);
-        if (oracle != address(0)) return (inAmount, base, quote, oracle);
-        // 3. Recursively resolve `base`.
-        address baseAsset = resolvedVaults[base];
-        if (baseAsset != address(0)) {
-            inAmount = IERC4626(base).convertToAssets(inAmount);
-            return resolveOracle(inAmount, baseAsset, quote);
-        }
-        // 4. Return the fallback or revert if not configured.
-        oracle = fallbackOracle;
-        if (oracle == address(0)) revert Errors.PriceOracle_NotSupported(base, quote);
-        return (inAmount, base, quote, oracle);
-    }
-
-    /// @notice Lexicographically sort two addresses.
-    /// @param assetA One of the assets in the pair.
-    /// @param assetB The other asset in the pair.
-    /// @return The address first in lexicographic order.
-    /// @return The address second in lexicographic order.
-    function _sort(address assetA, address assetB) internal pure returns (address, address) {
-        return assetA < assetB ? (assetA, assetB) : (assetB, assetA);
-    }
-
-    /////////////////////////////////////////////////////////////////////////////////
-    // Additional functions for Covenant
-    /////////////////////////////////////////////////////////////////////////////////
-
-    /// @inheritdoc IPriceOracle
-    function previewGetQuote(uint256 inAmount, address base, address quote) external view returns (uint256) {
-        address oracle;
-        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
-        if (base == quote) return inAmount;
-        return IPriceOracle(oracle).previewGetQuote(inAmount, base, quote);
-    }
-
-    /// @inheritdoc IPriceOracle
-    function previewGetQuotes(uint256 inAmount, address base, address quote) external view returns (uint256, uint256) {
-        address oracle;
-        (inAmount, base, quote, oracle) = resolveOracle(inAmount, base, quote);
-        if (base == quote) return (inAmount, inAmount);
-        return IPriceOracle(oracle).previewGetQuotes(inAmount, base, quote);
-    }
-
-    /// @inheritdoc IPriceOracle
-    function updatePriceFeeds(address base, address quote, bytes calldata updateData) external payable {
-        address oracle;
-        (, base, quote, oracle) = resolveOracle(0, base, quote);
-        if (base == quote) {
-            if (msg.value > 0) revert Errors.PriceOracle_IncorrectPayment();
-            return;
-        }
-        return IPriceOracle(oracle).updatePriceFeeds{value: msg.value}(base, quote, updateData);
-    }
-
-    /// @inheritdoc IPriceOracle
-    function getUpdateFee(address base, address quote, bytes calldata updateData) external view returns (uint128) {
-        address oracle;
-        (, base, quote, oracle) = resolveOracle(0, base, quote);
-        if (base == quote) return 0;
-        return IPriceOracle(oracle).getUpdateFee(base, quote, updateData);
     }
 }
 

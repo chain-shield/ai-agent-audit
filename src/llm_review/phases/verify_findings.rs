@@ -8,19 +8,26 @@ use crate::{
         context_state::{generate_audit_scope, get_metadata_context},
         enums::{AIAgent, Severity},
         findings::{Finding, Findings},
-        prompt_support::{
-            post_verify::POST_VERIFY, pre_verify::PRE_VERIFY, verify_prompt::generate_verify_prompt,
-        },
+        prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
         semaphore::VERIFY_SEM,
-        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
+        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
     },
     prepare_code::git_clone::RepoPaths,
 };
 use log::info;
 
+use crate::{
+    config::AuditType,
+    llm_review::{
+        enums::{all_enum_variants, generate_enum_list},
+        prompt_support::severity_rubics::{CANTINA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC},
+    },
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 use tokio::sync::Mutex;
 
 #[derive(
@@ -34,6 +41,7 @@ use tokio::sync::Mutex;
     Serialize,
     Deserialize,
     JsonSchema,
+    EnumIter,
     strum_macros::EnumString,
     strum_macros::Display,
 )]
@@ -55,6 +63,7 @@ pub enum FindingStatus {
     Hash,
     Serialize,
     Deserialize,
+    EnumIter,
     JsonSchema,
     strum_macros::EnumString,
     strum_macros::Display,
@@ -147,6 +156,7 @@ pub async fn execute(
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
     let arc_code_context = Arc::new(code_and_context);
+    let arc_repo = Arc::new(repo.clone());
 
     let dedup_finding_count = deduped_findings.findings.len();
     let is_legit_finding_vec: Arc<Mutex<Vec<LegitVulnerability>>> = Arc::new(Mutex::new(vec![
@@ -159,14 +169,14 @@ pub async fn execute(
 
     let audit_scope = generate_audit_scope(repo).await?;
 
-    let verify_prompt = generate_verify_prompt(&repo.audit_type);
+    let verify_prompt = generate_verify_prompt(repo);
 
     let updated_verify_prompt = if audit_scope.is_empty() {
         Arc::new(verify_prompt.to_string())
     } else {
         Arc::new(format!(
-            "{}\n {}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
-            PRE_VERIFY, &verify_prompt, &audit_scope
+            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
+            &verify_prompt, &audit_scope
         ))
     };
     // info!("verify prompt + scope => {}", verify_prompt_plus_scope);
@@ -175,6 +185,7 @@ pub async fn execute(
         let codeblock_plus_context = Arc::clone(&arc_code_context);
         let arc_findings = Arc::clone(&deduped_findings);
         let arc_agent = Arc::clone(&agent);
+        let repo_clone = Arc::clone(&arc_repo);
         let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
         let verify_prompt_and_scope = Arc::clone(&updated_verify_prompt);
         let sem = Arc::clone(&VERIFY_SEM);
@@ -183,11 +194,12 @@ pub async fn execute(
             // ── acquire permit ────────────────────────
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async {
+                let post_verify_json = generate_post_verify_json_requirement(&repo_clone);
                 let instruction_prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
                     &arc_findings.findings[i],
                     &verify_prompt_and_scope,
-                    POST_VERIFY,
+                    &post_verify_json,
                     FindingReportType::Standard,
                 );
 
@@ -281,6 +293,140 @@ pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str)
     code_plus_context
 }
 
+struct VerifyEnumLists {
+    severity_list: String,           //  High | Medium | Low | Info | Invalid
+    finding_status_list: String,     // Valid | Invalid | OutOfScope | NeedsMoreInfo
+    finding_confidence_list: String, // VeryConfident | Confident | SomeWhatConfident
+}
+
+fn generate_verify_enum_lists(repo: &RepoPaths) -> VerifyEnumLists {
+    let severity_enums_standard: Vec<Severity> = Severity::iter()
+        .filter(|s| *s != Severity::Critical)
+        .collect();
+    let severity_enums_list_standard = generate_enum_list(severity_enums_standard.as_slice());
+    let severity_list = match repo.audit_type {
+        AuditType::Code4rena => severity_enums_list_standard,
+        AuditType::Sherlock => severity_enums_list_standard,
+        AuditType::Cantina => severity_enums_list_standard,
+        _ => generate_enum_list(all_enum_variants::<Severity>().as_slice()),
+    };
+
+    let finding_status_list = generate_enum_list(all_enum_variants::<FindingStatus>().as_slice());
+    let finding_confidence_list =
+        generate_enum_list(all_enum_variants::<FindingConfidence>().as_slice());
+
+    VerifyEnumLists {
+        severity_list,
+        finding_status_list,
+        finding_confidence_list,
+    }
+}
+
+pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
+    let (severity_rubic, contest) = match repo.audit_type {
+        AuditType::Code4rena => (CODE4RENA_SEVERITY_RUBRIC, "Code4rena"),
+        AuditType::Sherlock => (SHERLOCK_SEVERITY_RUBRIC, "Sherlock"),
+        AuditType::Cantina => (CANTINA_SEVERITY_RUBRIC, "Cantina"),
+        _ => (CODE4RENA_SEVERITY_RUBRIC, "Private Audit"),
+    };
+
+    let VerifyEnumLists {
+        severity_list,
+        finding_status_list,
+        finding_confidence_list,
+    } = generate_verify_enum_lists(repo);
+
+    let pre_verify_json = generate_pre_verify_json_requirement(repo);
+
+    format!(
+        r#"
+        {pre_verify_json}
+
+Your task: decide if a reported finding is valid and would likely receive **≥ Medium severity** in a {contest} contest.
+
+Consider the following Criteria:
+1. Is finding in scope? (see scope provided below)
+2. Is this finding valid? Does protocol have safeguards against it? Are there any external depedencies that cannot be seen and analyzed (creating uncertainly about validity of finding)?
+3. Is this by design (invalidating finding)? (see docs, natspec, & scope provided below)
+4. Is impact accurately stated? 
+5. Would it likely receive **≥ Medium severity** in a {contest} contest
+
+Carefully trace the code to verify finding validity.
+
+Based on your assessment please provided the following:
+
+*Severity:* {severity_list} (only provide if finding is finding is valid and differs from listed severity)
+*Finding Severity Justification:* Explain why you assigned this severity. 
+*Finding Status:* {finding_status_list}
+*Status Justification:* if invalid, out of scope, or needs more info, please explain why.
+*Finding Status Confidence:* {finding_confidence_list}
+*Finding Status Confidence Justification:* if Somewhat Confident, please explain why. 
+*Finding Complexity:* How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty.
+
+## {contest} Guidelines
+# {contest} Severity Rubric (What {contest} Actually Pays For)
+
+{severity_rubic}
+"#
+    )
+}
+
+pub fn generate_post_verify_json_requirement(repo: &RepoPaths) -> String {
+    let json = generate_verify_json(repo);
+
+    format!(
+        r#"
+
+### OUTPUT REQUIREMENTS 
+*Please respond with ONLY valid JSON in the following exact format:*
+
+{json}
+
+**Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
+
+"#
+    )
+}
+
+pub fn generate_pre_verify_json_requirement(repo: &RepoPaths) -> String {
+    let json = generate_verify_json(repo);
+
+    format!(
+        r#"
+
+Before instructions are provided on the task please note required output format:
+
+## JSON Output Requirement
+
+**Output must be strictly valid JSON** with this structure (no extra text or code fencing):
+
+{json}
+
+"#
+    )
+}
+
+fn generate_verify_json(repo: &RepoPaths) -> String {
+    let VerifyEnumLists {
+        severity_list,
+        finding_status_list,
+        finding_confidence_list,
+    } = generate_verify_enum_lists(repo);
+
+    format!(
+        r#"
+{{
+    "severity": "{severity_list}",
+    "severity_justification": "Explain why you assigned this severity",
+    "status": "{finding_status_list}",
+    "status_justification": "if invalid, out of scope, or needs more info, please explain why",
+    "status_confidence": "{finding_confidence_list}",
+    "status_confidence_justification": "if Somewhat Confident, please explain why",
+    "finding_complexity": How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty. This value is a number (NOT a string)
+}}
+"#
+    )
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,6 +773,82 @@ mod tests {
         assert_eq!(vuln.status, FindingStatus::Invalid); // Default from FindingStatus enum
         assert_eq!(vuln.status_confidence, FindingConfidence::SomeWhatConfident); // Default from FindingConfidence enum
         assert_eq!(vuln.finding_complexity, 0); // Default u8
+    }
+
+    /// Test prompt generation for all audit types
+    #[test]
+    fn test_verify_prompt_generation_all_audit_types() {
+        use crate::config::AuditType;
+        use crate::prepare_code::git_clone::PocConfig;
+        use std::path::PathBuf;
+
+        println!("\n{}", "=".repeat(80));
+        println!("VERIFY FINDINGS PROMPT GENERATION TEST");
+        println!("{}\n", "=".repeat(80));
+
+        let audit_types = vec![
+            AuditType::Code4rena,
+            AuditType::Sherlock,
+            AuditType::Cantina,
+            AuditType::Client,
+        ];
+
+        for audit_type in audit_types {
+            println!("\n{}", "-".repeat(80));
+            println!("AUDIT TYPE: {:?}", audit_type);
+            println!("{}\n", "-".repeat(80));
+
+            let repo = RepoPaths {
+                github_url: "https://github.com/test/repo".to_string(),
+                project_id: "test-project".to_string(),
+                root: PathBuf::from("/tmp"),
+                sol_files: vec![],
+                test_files: vec![],
+                script_files: vec![],
+                config_files: vec![],
+                lib_config_files: vec![],
+                source_code_folders: vec![],
+                docs: vec![],
+                repo_name: "test-repo".to_string(),
+                audit_scope: None,
+                excluded_folders: None,
+                scoped_files: None,
+                monorepo_folders: None,
+                commit_hash: "abc123".to_string(),
+                audit_type,
+                poc: PocConfig::default(),
+            };
+
+            // Test 1: Pre-verify JSON requirement
+            println!("📋 PRE-VERIFY JSON REQUIREMENT:");
+            println!("{}", "-".repeat(80));
+            let pre_json = generate_pre_verify_json_requirement(&repo);
+            println!("{}", pre_json);
+
+            // Test 2: Main verify prompt
+            println!("\n📝 MAIN VERIFY PROMPT:");
+            println!("{}", "-".repeat(80));
+            let verify_prompt = generate_verify_prompt(&repo);
+            println!("{}", verify_prompt);
+
+            // Test 3: Post-verify JSON requirement
+            println!("\n📋 POST-VERIFY JSON REQUIREMENT:");
+            println!("{}", "-".repeat(80));
+            let post_json = generate_post_verify_json_requirement(&repo);
+            println!("{}", post_json);
+
+            // Test 4: Verify JSON structure
+            println!("\n🔧 VERIFY JSON STRUCTURE:");
+            println!("{}", "-".repeat(80));
+            let json_structure = generate_verify_json(&repo);
+            println!("{}", json_structure);
+
+            println!("\n");
+        }
+
+        println!("\n{}", "=".repeat(80));
+        println!("END OF VERIFY FINDINGS PROMPT GENERATION TEST");
+        println!("{}\n", "=".repeat(80));
     }
 
     /// Test boundary values for finding_complexity

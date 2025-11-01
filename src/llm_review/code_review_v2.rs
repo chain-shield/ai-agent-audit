@@ -243,7 +243,7 @@ rigorous PoC tests that validate the findings.";
         .with_file_retrieval(false);
 
     let ai_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
-    let finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
+    let _finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
         &finding_verify_config,
     )?);
 
@@ -275,7 +275,7 @@ rigorous PoC tests that validate the findings.";
     // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
     // info!("Created {} discovery agents", ai_discovery_agents.len());
 
-    Ok((ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent))
+    Ok((ai_verify_agent.clone(), ai_discovery_agent, ai_verify_agent))
 }
 
 /// Process pattern analysis: generate, verify, and convert to findings
