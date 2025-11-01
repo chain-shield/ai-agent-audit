@@ -11,6 +11,7 @@ use crate::{
     },
     prepare_code::git_clone::RepoPaths,
 };
+use strum::IntoEnumIterator;
 
 pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
     issue_type: &str,
@@ -76,10 +77,14 @@ where
 {
     let issue_list = generate_enum_list(pattern.to_types());
     let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
+    let severity_enums_standard: Vec<Severity> = Severity::iter()
+        .filter(|s| *s != Severity::Critical)
+        .collect();
+    let severity_enums_list_standard = generate_enum_list(severity_enums_standard.as_slice());
     let severity_list = match repo.audit_type {
-        AuditType::Code4rena => "High|Medium|Low|Info".to_string(),
-        AuditType::Sherlock => "High|Medium|Low|Info".to_string(),
-        AuditType::Cantina => "High|Medium|Low|Info".to_string(),
+        AuditType::Code4rena => severity_enums_list_standard,
+        AuditType::Sherlock => severity_enums_list_standard,
+        AuditType::Cantina => severity_enums_list_standard,
         _ => generate_enum_list(all_enum_variants::<Severity>().as_slice()),
     };
 

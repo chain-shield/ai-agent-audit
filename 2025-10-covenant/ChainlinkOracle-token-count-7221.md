@@ -87,6 +87,38 @@ interface AggregatorV3Interface {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
 }
 
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+/// @title Errors
+/// @author Covenant Labs
+/// @notice Collects common errors in PriceOracles.
+/// @notice This is a very close copy to the Errors contract in the euler-price-oracle library, adapted for Covenant under GPL.
+library Errors {
+    /// @notice The external feed returned an invalid answer.
+    error PriceOracle_InvalidAnswer();
+    /// @notice The configuration parameters for the PriceOracle are invalid.
+    error PriceOracle_InvalidConfiguration();
+    /// @notice The base/quote path is not supported.
+    /// @param base The address of the base asset.
+    /// @param quote The address of the quote asset.
+    error PriceOracle_NotSupported(address base, address quote);
+    /// @notice The quote cannot be completed due to overflow.
+    error PriceOracle_Overflow();
+    /// @notice The price is too stale.
+    /// @param staleness The time elapsed since the price was updated.
+    /// @param maxStaleness The maximum time elapsed since the last price update.
+    error PriceOracle_TooStale(uint256 staleness, uint256 maxStaleness);
+    /// @notice The method can only be called by the governor.
+    error Governance_CallerNotGovernor();
+    /// @notice There is an incorrect payment in the call.
+    error PriceOracle_IncorrectPayment();
+    /// @notice The update data is invalid.
+    error PriceOracle_InvalidUpdateData();
+    /// @notice The method is not implemented.
+    error PriceOracle_NotImplemented();
+}
+
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity >=0.8.0;
 
@@ -161,38 +193,6 @@ interface IPriceOracle {
         address base,
         address quote
     ) external view returns (uint256 bidOutAmount, uint256 askOutAmount);
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
-
-/// @title Errors
-/// @author Covenant Labs
-/// @notice Collects common errors in PriceOracles.
-/// @notice This is a very close copy to the Errors contract in the euler-price-oracle library, adapted for Covenant under GPL.
-library Errors {
-    /// @notice The external feed returned an invalid answer.
-    error PriceOracle_InvalidAnswer();
-    /// @notice The configuration parameters for the PriceOracle are invalid.
-    error PriceOracle_InvalidConfiguration();
-    /// @notice The base/quote path is not supported.
-    /// @param base The address of the base asset.
-    /// @param quote The address of the quote asset.
-    error PriceOracle_NotSupported(address base, address quote);
-    /// @notice The quote cannot be completed due to overflow.
-    error PriceOracle_Overflow();
-    /// @notice The price is too stale.
-    /// @param staleness The time elapsed since the price was updated.
-    /// @param maxStaleness The maximum time elapsed since the last price update.
-    error PriceOracle_TooStale(uint256 staleness, uint256 maxStaleness);
-    /// @notice The method can only be called by the governor.
-    error Governance_CallerNotGovernor();
-    /// @notice There is an incorrect payment in the call.
-    error PriceOracle_IncorrectPayment();
-    /// @notice The update data is invalid.
-    error PriceOracle_InvalidUpdateData();
-    /// @notice The method is not implemented.
-    error PriceOracle_NotImplemented();
 }
 
 
@@ -402,6 +402,105 @@ contract CovenantCurator is Ownable2Step, IPriceOracle {
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
+import {BaseAdapter, Errors, IPriceOracle} from "../BaseAdapter.sol";
+import {AggregatorV3Interface} from "./AggregatorV3Interface.sol";
+import {ScaleUtils, Scale} from "../../lib/ScaleUtils.sol";
+
+/// @title ChainlinkOracle
+/// @custom:security-contact security@euler.xyz
+/// @author Euler Labs (https://www.eulerlabs.com/)
+/// @notice PriceOracle adapter for Chainlink push-based price feeds.
+/// @dev Integration Note: `maxStaleness` is an immutable parameter set in the constructor.
+/// If the aggregator's heartbeat changes, this adapter may exhibit unintended behavior.
+contract ChainlinkOracle is BaseAdapter {
+    /// @inheritdoc IPriceOracle
+    string public constant name = "ChainlinkOracle";
+    /// @notice The minimum permitted value for `maxStaleness`.
+    uint256 internal constant MAX_STALENESS_LOWER_BOUND = 1 minutes;
+    /// @notice The maximum permitted value for `maxStaleness`.
+    uint256 internal constant MAX_STALENESS_UPPER_BOUND = 72 hours;
+    /// @notice The address of the base asset corresponding to the feed.
+    address public immutable base;
+    /// @notice The address of the quote asset corresponding to the feed.
+    address public immutable quote;
+    /// @notice The address of the Chainlink price feed.
+    /// @dev https://docs.chain.link/data-feeds/price-feeds/addresses
+    address public immutable feed;
+    /// @notice The maximum allowed age of the price.
+    /// @dev Reverts if block.timestamp - updatedAt > maxStaleness.
+    uint256 public immutable maxStaleness;
+    /// @notice The scale factors used for decimal conversions.
+    Scale internal immutable scale;
+
+    /// @notice Deploy a ChainlinkOracle.
+    /// @param _base The address of the base asset corresponding to the feed.
+    /// @param _quote The address of the quote asset corresponding to the feed.
+    /// @param _feed The address of the Chainlink price feed.
+    /// @param _maxStaleness The maximum allowed age of the price.
+    /// @dev Consider setting `_maxStaleness` to slightly more than the feed's heartbeat
+    /// to account for possible network delays when the heartbeat is triggered.
+    constructor(address _base, address _quote, address _feed, uint256 _maxStaleness) {
+        if (_maxStaleness < MAX_STALENESS_LOWER_BOUND || _maxStaleness > MAX_STALENESS_UPPER_BOUND) {
+            revert Errors.PriceOracle_InvalidConfiguration();
+        }
+
+        base = _base;
+        quote = _quote;
+        feed = _feed;
+        maxStaleness = _maxStaleness;
+
+        // The scale factor is used to correctly convert decimals.
+        uint8 baseDecimals = _getDecimals(base);
+        uint8 quoteDecimals = _getDecimals(quote);
+        uint8 feedDecimals = AggregatorV3Interface(feed).decimals();
+        scale = ScaleUtils.calcScale(baseDecimals, quoteDecimals, feedDecimals);
+    }
+
+    /// @notice Get the quote from the Chainlink feed.
+    /// @param inAmount The amount of `base` to convert.
+    /// @param _base The token that is being priced.
+    /// @param _quote The token that is the unit of account.
+    /// @return The converted amount using the Chainlink feed.
+    function _getQuote(uint256 inAmount, address _base, address _quote) internal view override returns (uint256) {
+        bool inverse = ScaleUtils.getDirectionOrRevert(_base, base, _quote, quote);
+
+        (, int256 answer,, uint256 updatedAt,) = AggregatorV3Interface(feed).latestRoundData();
+        if (answer <= 0) revert Errors.PriceOracle_InvalidAnswer();
+        uint256 staleness = block.timestamp - updatedAt;
+        if (staleness > maxStaleness) revert Errors.PriceOracle_TooStale(staleness, maxStaleness);
+
+        uint256 price = uint256(answer);
+        return ScaleUtils.calcOutAmount(inAmount, price, scale, inverse);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+
+/// @title AggregatorV3Interface
+/// @author smartcontractkit (https://github.com/smartcontractkit/chainlink/blob/e87b83cd78595c09061c199916c4bb9145e719b7/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol)
+/// @notice Partial interface for Chainlink Data Feeds.
+interface AggregatorV3Interface {
+    /// @notice Returns the feed's decimals.
+    /// @return The decimals of the feed.
+    function decimals() external view returns (uint8);
+
+    /// @notice Get data about the latest round.
+    /// @return roundId The round ID from the aggregator for which the data was retrieved.
+    /// @return answer The answer for the given round.
+    /// @return startedAt The timestamp when the round was started.
+    /// (Only some AggregatorV3Interface implementations return meaningful values)
+    /// @return updatedAt The timestamp when the round last was updated (i.e. answer was last computed).
+    /// @return answeredInRound is the round ID of the round in which the answer was computed.
+    function latestRoundData()
+        external
+        view
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
 import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
 import {Errors} from "./Errors.sol";
 
@@ -475,105 +574,6 @@ library ScaleUtils {
             // (inAmount * priceScale * unitPrice) / feedScale
             return FixedPointMathLib.fullMulDiv(inAmount, priceScale * unitPrice, feedScale);
         }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.8.0;
-
-/// @title AggregatorV3Interface
-/// @author smartcontractkit (https://github.com/smartcontractkit/chainlink/blob/e87b83cd78595c09061c199916c4bb9145e719b7/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol)
-/// @notice Partial interface for Chainlink Data Feeds.
-interface AggregatorV3Interface {
-    /// @notice Returns the feed's decimals.
-    /// @return The decimals of the feed.
-    function decimals() external view returns (uint8);
-
-    /// @notice Get data about the latest round.
-    /// @return roundId The round ID from the aggregator for which the data was retrieved.
-    /// @return answer The answer for the given round.
-    /// @return startedAt The timestamp when the round was started.
-    /// (Only some AggregatorV3Interface implementations return meaningful values)
-    /// @return updatedAt The timestamp when the round last was updated (i.e. answer was last computed).
-    /// @return answeredInRound is the round ID of the round in which the answer was computed.
-    function latestRoundData()
-        external
-        view
-        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
-}
-
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
-
-import {BaseAdapter, Errors, IPriceOracle} from "../BaseAdapter.sol";
-import {AggregatorV3Interface} from "./AggregatorV3Interface.sol";
-import {ScaleUtils, Scale} from "../../lib/ScaleUtils.sol";
-
-/// @title ChainlinkOracle
-/// @custom:security-contact security@euler.xyz
-/// @author Euler Labs (https://www.eulerlabs.com/)
-/// @notice PriceOracle adapter for Chainlink push-based price feeds.
-/// @dev Integration Note: `maxStaleness` is an immutable parameter set in the constructor.
-/// If the aggregator's heartbeat changes, this adapter may exhibit unintended behavior.
-contract ChainlinkOracle is BaseAdapter {
-    /// @inheritdoc IPriceOracle
-    string public constant name = "ChainlinkOracle";
-    /// @notice The minimum permitted value for `maxStaleness`.
-    uint256 internal constant MAX_STALENESS_LOWER_BOUND = 1 minutes;
-    /// @notice The maximum permitted value for `maxStaleness`.
-    uint256 internal constant MAX_STALENESS_UPPER_BOUND = 72 hours;
-    /// @notice The address of the base asset corresponding to the feed.
-    address public immutable base;
-    /// @notice The address of the quote asset corresponding to the feed.
-    address public immutable quote;
-    /// @notice The address of the Chainlink price feed.
-    /// @dev https://docs.chain.link/data-feeds/price-feeds/addresses
-    address public immutable feed;
-    /// @notice The maximum allowed age of the price.
-    /// @dev Reverts if block.timestamp - updatedAt > maxStaleness.
-    uint256 public immutable maxStaleness;
-    /// @notice The scale factors used for decimal conversions.
-    Scale internal immutable scale;
-
-    /// @notice Deploy a ChainlinkOracle.
-    /// @param _base The address of the base asset corresponding to the feed.
-    /// @param _quote The address of the quote asset corresponding to the feed.
-    /// @param _feed The address of the Chainlink price feed.
-    /// @param _maxStaleness The maximum allowed age of the price.
-    /// @dev Consider setting `_maxStaleness` to slightly more than the feed's heartbeat
-    /// to account for possible network delays when the heartbeat is triggered.
-    constructor(address _base, address _quote, address _feed, uint256 _maxStaleness) {
-        if (_maxStaleness < MAX_STALENESS_LOWER_BOUND || _maxStaleness > MAX_STALENESS_UPPER_BOUND) {
-            revert Errors.PriceOracle_InvalidConfiguration();
-        }
-
-        base = _base;
-        quote = _quote;
-        feed = _feed;
-        maxStaleness = _maxStaleness;
-
-        // The scale factor is used to correctly convert decimals.
-        uint8 baseDecimals = _getDecimals(base);
-        uint8 quoteDecimals = _getDecimals(quote);
-        uint8 feedDecimals = AggregatorV3Interface(feed).decimals();
-        scale = ScaleUtils.calcScale(baseDecimals, quoteDecimals, feedDecimals);
-    }
-
-    /// @notice Get the quote from the Chainlink feed.
-    /// @param inAmount The amount of `base` to convert.
-    /// @param _base The token that is being priced.
-    /// @param _quote The token that is the unit of account.
-    /// @return The converted amount using the Chainlink feed.
-    function _getQuote(uint256 inAmount, address _base, address _quote) internal view override returns (uint256) {
-        bool inverse = ScaleUtils.getDirectionOrRevert(_base, base, _quote, quote);
-
-        (, int256 answer,, uint256 updatedAt,) = AggregatorV3Interface(feed).latestRoundData();
-        if (answer <= 0) revert Errors.PriceOracle_InvalidAnswer();
-        uint256 staleness = block.timestamp - updatedAt;
-        if (staleness > maxStaleness) revert Errors.PriceOracle_TooStale(staleness, maxStaleness);
-
-        uint256 price = uint256(answer);
-        return ScaleUtils.calcOutAmount(inAmount, price, scale, inverse);
     }
 }
 

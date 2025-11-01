@@ -109,8 +109,6 @@ pub mod llm_review {
         pub mod prefetch_context;
         /// Phase 5: Quality assurance and final finding refinement
         pub mod quality_check;
-        /// Phase 3a: Check finding are in scope, if scope is provided
-        pub mod scope_findings;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_findings;
         // Phase 7: Create professaionl competition-grade report
@@ -142,22 +140,11 @@ pub mod llm_review {
         pub mod planner_prompt;
         pub mod post_file_select_prompt;
         pub mod post_poc;
-        /// Quality check prompts
-        pub mod post_qualify;
         /// Verification prompts
-        pub mod post_verify;
         pub mod pre_file_select_prompt;
         pub mod pre_poc;
-        /// Pre-qualification prompts
-        pub mod pre_qualify;
-        /// Pre-verification prompts
-        pub mod pre_verify;
-        /// Quality assessment prompts
-        pub mod qualify_prompt;
         pub mod report_templates;
         pub mod severity_rubics;
-        /// Verification prompts
-        pub mod verify_prompt;
     }
 }
 

@@ -106,6 +106,7 @@ pub enum Severity {
     Medium,
     Low,
     Info,
+    Invalid,
 }
 
 #[derive(
@@ -244,6 +245,7 @@ impl Severity {
             Severity::Medium => "M",
             Severity::Low => "L",
             Severity::Info => "I",
+            Severity::Invalid => "X",
         }
     }
 }

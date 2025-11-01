@@ -268,38 +268,6 @@ interface IPyth is IPythEvents {
     ) external payable returns (PythStructs.PriceFeed[] memory priceFeeds);
 }
 
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity ^0.8.0;
-
-/// @title Errors
-/// @author Covenant Labs
-/// @notice Collects common errors in PriceOracles.
-/// @notice This is a very close copy to the Errors contract in the euler-price-oracle library, adapted for Covenant under GPL.
-library Errors {
-    /// @notice The external feed returned an invalid answer.
-    error PriceOracle_InvalidAnswer();
-    /// @notice The configuration parameters for the PriceOracle are invalid.
-    error PriceOracle_InvalidConfiguration();
-    /// @notice The base/quote path is not supported.
-    /// @param base The address of the base asset.
-    /// @param quote The address of the quote asset.
-    error PriceOracle_NotSupported(address base, address quote);
-    /// @notice The quote cannot be completed due to overflow.
-    error PriceOracle_Overflow();
-    /// @notice The price is too stale.
-    /// @param staleness The time elapsed since the price was updated.
-    /// @param maxStaleness The maximum time elapsed since the last price update.
-    error PriceOracle_TooStale(uint256 staleness, uint256 maxStaleness);
-    /// @notice The method can only be called by the governor.
-    error Governance_CallerNotGovernor();
-    /// @notice There is an incorrect payment in the call.
-    error PriceOracle_IncorrectPayment();
-    /// @notice The update data is invalid.
-    error PriceOracle_InvalidUpdateData();
-    /// @notice The method is not implemented.
-    error PriceOracle_NotImplemented();
-}
-
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.0;
 
@@ -333,6 +301,38 @@ interface IPythEvents {
     /// @param chainId ID of the source chain that the batch price update comes from.
     /// @param sequenceNumber Sequence number of the batch price update.
     event BatchPriceFeedUpdate(uint16 chainId, uint64 sequenceNumber);
+}
+
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity ^0.8.0;
+
+/// @title Errors
+/// @author Covenant Labs
+/// @notice Collects common errors in PriceOracles.
+/// @notice This is a very close copy to the Errors contract in the euler-price-oracle library, adapted for Covenant under GPL.
+library Errors {
+    /// @notice The external feed returned an invalid answer.
+    error PriceOracle_InvalidAnswer();
+    /// @notice The configuration parameters for the PriceOracle are invalid.
+    error PriceOracle_InvalidConfiguration();
+    /// @notice The base/quote path is not supported.
+    /// @param base The address of the base asset.
+    /// @param quote The address of the quote asset.
+    error PriceOracle_NotSupported(address base, address quote);
+    /// @notice The quote cannot be completed due to overflow.
+    error PriceOracle_Overflow();
+    /// @notice The price is too stale.
+    /// @param staleness The time elapsed since the price was updated.
+    /// @param maxStaleness The maximum time elapsed since the last price update.
+    error PriceOracle_TooStale(uint256 staleness, uint256 maxStaleness);
+    /// @notice The method can only be called by the governor.
+    error Governance_CallerNotGovernor();
+    /// @notice There is an incorrect payment in the call.
+    error PriceOracle_IncorrectPayment();
+    /// @notice The update data is invalid.
+    error PriceOracle_InvalidUpdateData();
+    /// @notice The method is not implemented.
+    error PriceOracle_NotImplemented();
 }
 
 // SPDX-License-Identifier: Apache-2.0
