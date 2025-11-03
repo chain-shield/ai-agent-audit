@@ -10,7 +10,7 @@ use crate::{
         findings::{Finding, Findings},
         prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
         semaphore::VERIFY_SEM,
-        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
+        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -342,20 +342,19 @@ pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
         r#"
         {pre_verify_json}
 
-Your task: decide if a reported finding is valid and would likely receive **≥ Medium severity** in a {contest} contest.
+Your task: decide if a reported finding is Valid and to accurately assess its Severity in a {contest} contest.
 
 Consider the following Criteria:
 1. Is finding in scope? (see scope provided below)
 2. Is this finding valid? Does protocol have safeguards against it? Are there any external depedencies that cannot be seen and analyzed (creating uncertainly about validity of finding)?
 3. Is this by design (invalidating finding)? (see docs, natspec, & scope provided below)
-4. Is impact accurately stated? 
-5. Would it likely receive **≥ Medium severity** in a {contest} contest
+4. Does finding Impact and Likelihood justify current Severity score?
 
 Carefully trace the code to verify finding validity.
 
 Based on your assessment please provided the following:
 
-*Severity:* {severity_list} (only provide if finding is finding is valid and differs from listed severity)
+*Severity:* {severity_list} 
 *Finding Severity Justification:* Explain why you assigned this severity. 
 *Finding Status:* {finding_status_list}
 *Status Justification:* if invalid, out of scope, or needs more info, please explain why.

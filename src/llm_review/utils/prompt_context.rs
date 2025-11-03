@@ -134,6 +134,11 @@ pub fn get_finding_report(
             finding.title
         ));
     }
+    findings_report.push_str(&format!(
+        "### Finding Severity Justification: {}\n",
+        finding.severity_justification.clone().unwrap_or_default()
+    ));
+
     //derived from
     findings_report.push_str("## Derived From Pattern/Invariant\n");
     findings_report.push_str(&finding.derived_from.clone().unwrap_or_default());

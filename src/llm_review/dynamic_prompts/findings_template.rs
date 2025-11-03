@@ -29,7 +29,7 @@ pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
     };
 
     format!(
-        r#"You are a top Code4rena security warden. Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
+        r#"Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
 
         ## Rules
         - Only report exploits tied to the below {pattern_name} {pattern_type}.
