@@ -26,8 +26,7 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
         - Check **multi-step / multi-transaction / cross-contract** flows, not just single-function reads.
         - Examine **interactions between imported or external libraries** — how arithmetic, math utilities, token wrappers, or accounting helpers are used together. 
         - Consider **HIGH-impact edge cases** — situations that are rare but, if reached, clearly wreck havoc (i.e. still H/M, not Low/QA under Code4rena rubric).
-        - If you find a very common instance, **keep searching** for a rarer variant of the same pattern.
-        - When you report, **state explicitly** why this instance is likely to be low-duplicate (e.g. "protocol specific math bug", "realistic edge case bricks all user withdrawals", "multi-step flow").
+        - If you find a very common instance include it, however, **keep searching** for a rarer variant of the same pattern.
 
         ## Governance / Admin Assumptions
         - **Exclude** vulnerabilities that rely on an admin behaving maliciously, making configuration mistakes, or neglecting duties — these are governance risks and out of scope.
@@ -86,7 +85,7 @@ pub fn get_pattern_json_requirement(patterns: &[VulnerabilityPattern]) -> String
         "patterns": [
             {{
             "title": "100 chars or less audit report friendly title",
-            "description": "Detailed explanation + vulnerable code snippet + why likely low dupe vulnerability",
+            "description": "Detailed explanation + vulnerable code snippets",
             "issue_type": "{issues}",
             "contract": "{{contract_name}}",
             "function": "{{function_name}}",
