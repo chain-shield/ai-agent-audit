@@ -24,6 +24,7 @@ pub enum PatternCategory {
     Evm,
     Randomness,
     Top,
+    Rare,
     Frequent,
     MostObserved,
 }
@@ -132,6 +133,13 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         runs: MAX_PATTERN_RUN_TOP,
     },
     PatternCategorySpec {
+        category: PatternCategory::Rare,
+        title: "Top Code4rena",
+        issues: RARE_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_RUN_TOP,
+    },
+    PatternCategorySpec {
         category: PatternCategory::Frequent,
         title: "Most Frequent Code4rena",
         issues: FREQUENT_PATTERNS,
@@ -140,7 +148,7 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
     },
     PatternCategorySpec {
         category: PatternCategory::MostObserved,
-        title: "Most Frequent in recent Code4rena compeitions",
+        title: "Most Frequent Code4rena",
         issues: TOP_OBSERVED_PATTERNS,
         tier: PatternTier::Tier1,
         runs: MAX_PATTERN_RUN_FREQUENT,
@@ -285,6 +293,19 @@ pub const TOP_OBSERVED_PATTERNS: &[VulnerabilityPattern; 8] = &[
     VulnerabilityPattern::AccessControlOrAuthByPass,
     VulnerabilityPattern::FeeOnTransferAssumption,
     VulnerabilityPattern::ReserveOrPriceDesync,
+];
+
+pub const RARE_PATTERNS: &[VulnerabilityPattern; 10] = &[
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::FeeAccountingDrift,
+    VulnerabilityPattern::ERC4626SharePriceMismatch,
+    VulnerabilityPattern::NonStandardERC20Behavior,
+    VulnerabilityPattern::ERC20DecimalsMismatch,
+    VulnerabilityPattern::MulticallCrossPathReentrancy,
+    VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity,
+    VulnerabilityPattern::StaleOracleAcceptance,
+    VulnerabilityPattern::ForcedAssetVsStrictEquality,
+    VulnerabilityPattern::UntrustedDelegateCall,
 ];
 
 pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 15] = &[

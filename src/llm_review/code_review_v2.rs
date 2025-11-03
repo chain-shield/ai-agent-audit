@@ -290,6 +290,7 @@ async fn process_patterns(
             *p == PatternCategory::Top
                 || *p == PatternCategory::Frequent
                 || *p == PatternCategory::MostObserved
+                || *p == PatternCategory::Rare
         })
         .collect();
 
