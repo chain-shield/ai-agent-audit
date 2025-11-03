@@ -286,7 +286,11 @@ async fn process_patterns(
     repo: &RepoPaths,
 ) -> Result<Findings> {
     let pattern_category_c4: Vec<PatternCategory> = PatternCategory::iter()
-        .filter(|p| *p == PatternCategory::Top || *p == PatternCategory::Frequent)
+        .filter(|p| {
+            *p == PatternCategory::Top
+                || *p == PatternCategory::Frequent
+                || *p == PatternCategory::MostObserved
+        })
         .collect();
 
     let pattern_prompt = IssuePrompt::Pattern(pattern_category_c4);

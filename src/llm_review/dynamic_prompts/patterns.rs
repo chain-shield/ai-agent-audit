@@ -1,9 +1,9 @@
 use crate::llm_review::{
     enums::{all_enum_variants, generate_enum_list},
     findings::PrivilegeLevel,
-    pattern_category::{PatternCategory, get_category_library_spec},
+    pattern_category::{get_category_library_spec, PatternCategory},
     patterns::{
-        Pattern, VULNERABILITY_PATTERN_LIBRARY, VulnerabilityPattern, VulnerabilityPatternSpec,
+        Pattern, VulnerabilityPattern, VulnerabilityPatternSpec, VULNERABILITY_PATTERN_LIBRARY,
     },
     utils::prompt_context::generate_formatted_pattern,
 };
@@ -14,13 +14,23 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
 
     format!(
         r#"
-        You are a top C4 Security Warden specializing in finding {title} vulnerabilities.
-
         Please Analyse the main target contract below for 
         *each* {title} security vulnerability patterns listed below:
 
         ## {title_all_caps} VULNERABILITY PATTERNS TO LOOK FOR
         {categories}
+
+        ## Generic Solo / Low-Duplicate Guidance
+        - Prefer **less obvious / less generic** instances of the patterns over the textbook ones. These instances should also be **realistically satisfiable** (current protocol config, common ERC-20s, normal user actions).
+        - Look for **context-dependent** breakages (the pattern only becomes a vuln because of how THIS protocol does state, math, or access control).
+        - Check **multi-step / multi-transaction / cross-contract** flows, not just single-function reads.
+        - Consider **HIGH-impact edge cases** — situations that are rare but, if reached, clearly wreck havoc (i.e. still H/M, not Low/QA under Code4rena rubric).
+        - If you find a very common instance, **keep searching** for a rarer variant of the same pattern.
+        - When you report, **state explicitly** why this instance is likely to be low-duplicate (e.g. "protocol specific math bug", "realistic edge case bricks all user withdrawals", "multi-step flow").
+
+        ## Governance / Admin Assumptions
+        - **Exclude** vulnerabilities that rely on an admin behaving maliciously, making configuration mistakes, or neglecting duties — these are governance risks and out of scope.
+        - **Include** vulnerabilities where the admin or privileged function operates **exactly according to the specification**, but the implementation itself introduces a vulnerability.
 
         ## Rules
         - **ONLY LOOK FOR {title_all_caps} VULNERABILITY** - disregard everything else
@@ -31,6 +41,7 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
         categories = pattern_categories,
     )
 }
+
 pub fn generate_pattern_verify_prompt(pattern: &Pattern) -> String {
     let verify_json = get_pattern_verify_json();
     let pattern_finding_report = generate_formatted_pattern(pattern);
@@ -74,7 +85,7 @@ pub fn get_pattern_json_requirement(patterns: &[VulnerabilityPattern]) -> String
         "patterns": [
             {{
             "title": "100 chars or less audit report friendly title",
-            "description": "Detailed explanation + vulnerable code snippet",
+            "description": "Detailed explanation + vulnerable code snippet + why likely low dupe vulnerability",
             "issue_type": "{issues}",
             "contract": "{{contract_name}}",
             "function": "{{function_name}}",

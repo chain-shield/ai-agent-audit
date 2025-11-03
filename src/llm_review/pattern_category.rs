@@ -25,6 +25,7 @@ pub enum PatternCategory {
     Randomness,
     Top,
     Frequent,
+    MostObserved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -134,6 +135,13 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         category: PatternCategory::Frequent,
         title: "Most Frequent Code4rena",
         issues: FREQUENT_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_RUN_FREQUENT,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::MostObserved,
+        title: "Most Frequent in recent Code4rena compeitions",
+        issues: TOP_OBSERVED_PATTERNS,
         tier: PatternTier::Tier1,
         runs: MAX_PATTERN_RUN_FREQUENT,
     },
@@ -267,6 +275,17 @@ pub const RANDOMNESS: &[VulnerabilityPattern; 2] = &[
 
 //**************************************************
 //**************************************************
+
+pub const TOP_OBSERVED_PATTERNS: &[VulnerabilityPattern; 8] = &[
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::GriefableCallbacks,
+    VulnerabilityPattern::UnboundedLoops,
+    VulnerabilityPattern::FlashLoanEconomicManipulation,
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::ReserveOrPriceDesync,
+];
 
 pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 15] = &[
     VulnerabilityPattern::SlippageMissingOrInsufficient,
