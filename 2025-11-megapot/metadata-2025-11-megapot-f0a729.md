@@ -1,183 +1,113 @@
 
 ## PROTOCOL OVERVIEW:
 
-# Megapot V2 ‑ Protocol Overview (≤ 4000 words)
+## Megapot V2 ‑ High-Level Technical Overview (Solidity auditor edition)
 
----
+### 1. What Megapot Is
+Megapot V2 is an on-chain jackpot protocol written in Solidity that lets players buy NFT tickets (ERC-721) for recurring drawings similar to Powerball or Euromillions.  Each drawing selects **5 normal balls** (from `1 … normalBallMax`) plus **1 bonusball** (`1 … bonusballMax`).  Tickets are NFTs that encode 5 + 1 numbers in a packed `uint256`, so they can be freely traded or bridged across chains.  
 
-## 1. What Megapot Is
+The system is fully collateralised by a **Liquidity Provider (LP) pool** denominated in USDC.  LPs deposit USDC and receive “shares” whose price is tracked by an **accumulator** updated at every drawing.  Ticket revenue, duplicate-ticket adjustments, player winnings, protocol fees and LP deposits/withdrawals are all settled against this pool at the end of each drawing.  
 
-Megapot V2 is a fully-on-chain, non-upgradeable jackpot game that marries:
+Key contracts:
 
-* An ERC-721 lottery ticket system (JackpotTicketNFT)
-* A continuously managed USDC liquidity pool that bankrolls prizes (JackpotLPManager)
-* A provably fair drawing mechanism using Pyth Entropy (ScaledEntropyProvider + Fisher-Yates library)
-* Multi-tiered, guaranteed-minimum payouts computed off mathematical combinatorics (GuaranteedMinimumPayoutCalculator)
-* A cross-chain bridge adapter that keeps UX chain-agnostic (JackpotBridgeManager)
-* Governance-tunable economics that guarantee a target house edge for LPs while capping max loss (Jackpot core parameters)
+* `Jackpot.sol` – orchestrator: selling tickets, running drawings, paying winners, charging fees.
+* `JackpotLPManager.sol` – share-accounting for the USDC pool.
+* `JackpotTicketNFT.sol` – ERC-721 for tickets with per-drawing indexing helpers.
+* `GuaranteedMinimumPayoutCalculator.sol` – computes 12-tier payouts (0-11) using guaranteed minima + premium pool logic.
+* `ScaledEntropyProvider.sol` – requests Pyth Entropy and scales one 256-bit random into the 5+1 winning numbers with unbiased algorithms.
+* `JackpotBridgeManager.sol` – custodial helper that allows users on remote chains to buy tickets and receive winnings using EIP-712 signatures plus arbitrary bridge calls.
 
-Players buy NFT tickets, the system periodically draws 5 “normal” balls plus one “bonusball”, winners claim USDC, LPs earn the excess, referrers collect fees, and everything can be unwound via emergency mode if randomness / settlement fails.
+### 2. Lifecycle of a Drawing
+1. **During an active drawing** players call `buyTickets`.  The function:   
+   • validates inputs & referral arrays.  
+   • pulls `ticketPrice * n` USDC from the buyer, immediately crediting LP earnings (`lpEarnings`) minus any referral fee.  
+   • checks for duplicate combos with `TicketComboTracker`; duplicates still mint an NFT but **only** `ticketPrice – edgePerTicket` is added to the prize pool so that LP edge is preserved.  
+   • mints NFTs to the buyer (or to `JackpotBridgeManager` in cross-chain purchases).  
+   • updates in-memory combo counts for later winner calculations.
 
----
+2. **LPs** can deposit or begin a two-step withdrawal while the drawing is open.  Deposits stay as pending USDC until settlement; withdrawals are locked in shares and become claimable after settlement.  All consolidations use the accumulator so share price is time-weighted.
 
-## 2. High-Level Contract Map
+3. **When `drawingTime` elapses** an off-chain keeper calls `runJackpot()`.  Jackpot:
+   • locks the drawing (`jackpotLock = true`).  
+   • pays the required ETH fee to `ScaledEntropyProvider` to request entropy, passing two `SetRequest`s: *5 without-replacement*, *1 with-replacement*.  
 
+4. **Pyth Entropy** later calls `ScaledEntropyProvider.entropyCallback`.  The provider turns the raw entropy into the requested ranges (via Fisher-Yates + rejection sampling) and invokes `Jackpot.scaledEntropyCallback` with the 6 numbers.
+
+5. **Settlement inside scaledEntropyCallback**
+   a. `TicketComboTracker` counts how many unique and duplicate tickets hit each tier.  
+   b. `GuaranteedMinimumPayoutCalculator` is asked to `calculateAndStoreDrawingUserWinnings`.  It freezes current config (weights, min payouts), computes total minimum allocation, possibly enters *crisis mode* if minimums exceed prize pool, then stores per-ticket payout for each tier and returns the aggregate player winnings.
+   c. Protocol fee (if LP earned more than winners and threshold exceeded) is transferred.  
+   d. `JackpotLPManager.processDrawingSettlement` performs the heavy accounting:
+      • converts pending deposits → shares at end-of-drawing accumulator.  
+      • values and removes completed pending withdrawals.  
+      • debits LP pool by user winnings + protocol fee, credits by ticket revenue.  
+      • computes the next accumulator: `newAcc = oldAcc * newLPValue / oldLPValue`.
+   e. `Jackpot` computes parameters for **Drawing N+1** (new prizePool, recomputed `bonusballMax`, resets counters) and unlocks ticket buying again.
+
+6. **Post-Settlement interactions**
+   • Players call `claimWinnings` (or via Bridge Manager) to burn NFTs and receive USDC.  Referral win-share is paid out at that moment.  
+   • LPs finalise pending withdrawals or deposit more.  
+   • Referrers call `claimReferralFees` once balances accrue.
+
+### 3. Economic Safeguards
+1. **LP Edge Guarantee** – For each new drawing the system chooses a `bonusballMax` so that the number of possible ticket combinations ≥ tickets required to earn `lpEdgeTarget` profit **if every combo were sold once**.  Formula:
 ```
-Jackpot (ownable, non-re-entrant)
-├─ JackpotTicketNFT          – ERC-721 ticket ledger (onlyJackpot mint/burn)
-├─ JackpotLPManager          – LP accounting (onlyJackpot mutators)
-├─ GuaranteedMinimumPayoutCalculator – payout math & storage (onlyJackpot mutators)
-├─ ScaledEntropyProvider     – bridges Pyth entropy → scaled numbers
-└─ JackpotBridgeManager      – custodial bridge helper (external, optional)
-
-Libraries (pure/internal): Combinations, FisherYatesWithRejection, TicketComboTracker, UintCasts, JackpotErrors
+combosPerBonusball = C(normalBallMax,5)
+minTickets   = prizePool / ((1-lpEdgeTarget) * ticketPrice)
+bonusballMax = max(bonusballMin, ceil(minTickets/combosPerBonusball))
 ```
+Rounding up with `ceil` guarantees the realised edge is **never lower** than the target.
 
-Funds: _All_ USDC lives inside Jackpot.  LPManager only keeps bookkeeping; TicketNFT keeps no money.
+2. **Duplicate Handling** – Buyers can purchase duplicates, but only `(1-lpEdgeTarget)*ticketPrice` is added to prizePool; the rest stays with LP.  The duplicate also increases LP’s share of any eventual win (because LP “owns” all combos it hasn’t sold), so duplicates always improve LP EV.
 
----
+3. **Two-tier payout** – Guaranteed minima are honoured only if the pool can fund them **and** leave a governance-set “premium min allocation” in the remainder. If not, system drops to proportional-only payouts (crisis mode) preventing insolvency.
 
-## 3. Ticket Lifecycle
+4. **Accumulator Accounting** – Every USDC owed to LPs exists inside Jackpot.  Pending deposits/withdrawals are excluded from `lpPoolTotal` until settlement, blocking share-dilution exploits.  Pool cap prevents whale deposits right before easy drawings.
 
-1. **Purchase** – `Jackpot.buyTickets()`
-   * Validates drawing open, inputs sane, referrer list ≤ limit.
-   * Pulls `tickets.length * ticketPrice` USDC from buyer.
-   * Computes referral fee (`referralFee` BPS) → credits `referralFees[referrer]` mapping.
-   * Each ticket is validated (duplicates forbidden), packed into a 256-bit word, logged inside `TicketComboTracker`, and minted as ERC-721 to buyer.
-   * Non-duplicate tickets add `ticketPrice − edgePerTicket` to LP earnings; duplicates also top-up the prizePool so the LP edge is preserved.
+5. **Emergency Mode** – Owner can freeze system, allow players to refund current-round tickets and LPs to withdraw everything through a single `emergencyWithdrawLP` that unwinds all position types into USDC using conservative pricing.
 
-2. **Wait** – A keeper later calls `runJackpot()` once `drawingTime` elapses.  Jackpot locks the drawing, pays Pyth fee, and requests two randomness sets (5 uniques + 1 bonus).
+### 4. Cross-Chain Model
+`JackpotBridgeManager` lets wallets on other chains participate without deploying the full protocol everywhere.
 
-3. **Entropy callback** – `ScaledEntropyProvider` converts raw 256-bit entropy:
-   * Unique 5-of-N via Fisher-Yates w/ rejection (no modulo bias).
-   * 1-of-bonusballMax for bonusball.
-   * Calls `Jackpot.scaledEntropyCallback()` atomically.
+• **Buying**: Remote chain user transfers USDC via bridge → the relay executes `buyTickets` on the destination chain; NFTs are minted to the Bridge Manager but mapped to the user.
 
-4. **Settlement inside callback**
-   * TicketComboTracker instantly counts winners using bit-math + inclusion-exclusion.
-   * Payout calculator snapshots tier config, computes (a) total minimum allocation, (b) crisis vs normal premium split, (c) per-tier per-ticket amount, stores in mapping.
-   * Calculates `drawingUserWinnings` (total owed to users), `protocolFee` (if LP already profitable above threshold), and hands LP settlement parameters to LPManager.
-   * LPManager:
-     * Converts pending deposits → shares, pending withdrawals → claimable, updates accumulator, carries `lpPoolTotal` forward, enforces cap.
-   * Jackpot derives new drawing parameters (prizePool = lpPoolTotal × (1-reserveRatio), dynamic `bonusballMax`, resets counters) and unlocks drawing +1.
+• **Claiming winnings**: User signs EIP-712 authorisation; a keeper calls `claimWinnings`, Jackpot pays the Bridge Manager, which instantly calls the user-supplied bridge with an exact­-amount check.  Replay is prevented by including bridge calldata & chain-specific domain in the hash.
 
-5. **Claim** – A winner calls `claimWinnings(ticketIds[])` any time after settlement.
-   * Verifies ownership, calculates tier id, burns NFT, fetches `tierPayouts[drawing][tier]` from calculator.
-   * Splits `referralWinShare` with original referrers (or returns to LP earnings if none).
-   * Transfers net USDC.
+• **Moving tickets home**: Similar signature flow, but performs `safeTransferFrom` so the user receives true on-chain NFTs and can interact directly.
 
-   Cross-chain users sign EIP-712 and let BridgeManager do the same flow, after which funds are bridged out.
+### 5. Randomness Integrity
+- Uses **Pyth Entropy v2** (external oracle) => high entropy, out-of-band to Ethereum.
+- `ScaledEntropyProvider` protects against modulo bias with rejection sampling and Fisher-Yates, stores pending requests keyed by Pyth sequence to stop replay.
+- `Jackpot.onlyEntropy` modifier ensures only the provider can settle a drawing.
 
-6. **Refund (rare)** – If owner enables `emergencyMode`, anyone with tickets from _current_ drawing may get a USDC refund (`emergencyRefundTickets`), and LPs may fully cash out (`emergencyWithdrawLP`).
+### 6. Access Control & Upgradeability
+- All critical state changes funnel through `Jackpot`; the only privileged EOA is `owner`.  LPManager mutators are `onlyJackpot`, so owner cannot directly tamper with pool balances.  
+- Contracts are **not upgradeable**; governance changes require deploying new versions.  Consider multi-sig + timelock on the owner key in production.
 
----
+### 7. Main Security Invariants (to audit)
+1. `USDC.balanceOf(Jackpot) ≥ totalOutstandingObligations` (LP pool, unclaimed winnings, referrer balances, lpEarnings).
+2. `Σ tierPayout * winners ≤ prizePool` for every settled drawing including crisis mode.
+3. `lpPoolTotal + pendingDeposits ≤ lpPoolCap` always.
+4. `sum(premiumTierWeights) == 1e18` and never changes mid-drawing thanks to snapshot.
+5. `bonusballMax ≤ 255 – normalBallMax` (bit-packing guard) and ≥ `bonusballMin`.
 
-## 4. Liquidity Provider Mechanics
+### 8. Lines of Code of Interest
+* `TicketComboTracker.sol::_applyInclusionExclusionPrinciple()` – subtle binomial math ⇒ verify off-by-one.
+* `FisherYatesWithRejection.sol::draw()` – constant-time unbiased sampling ⇒ ensure no modulo bias.
+* `JackpotLPManager.processDrawingSettlement()` – central accumulator update; test integer rounding paths.
+* `GuaranteedMinimumPayoutCalculator._calculateAndStoreTierPayouts()` – crisis-mode branch lines 210-260 (approx) ⇒ ensure no division by zero.
+* `JackpotBridgeManager._bridgeFunds()` – make sure the exact balance delta check can’t be bypassed via deflationary tokens or malicious bridge.
 
-• **Shares & Accumulator** – Each drawing has an accumulator `acc_d`.  When a deposit made in drawing *k* settles at end of *k*, shares = deposit * 1e18 / acc_k.  Share value next round becomes `shares * acc_{k+1} / 1e18`.
+### 9. Deployment / Init Sequence
+1. Deploy libs & core contracts. 2. Call `Jackpot.initialize(...)` to wire addresses. 3. Call `initializeLPDeposits(poolCap)` which boots accumulator=1e18. 4. LPs deposit; owner calls `initializeJackpot(firstDrawingTime)` once at least one deposit exists.  After these three, tickets can be sold and drawings run.
 
-• **Deposits** – Transfer now, become active next drawing.  Pool cap (`lpPoolCap`) ensures solvency.
-
-• **Withdrawals** – Two-step: initiate (move shares → pending, during current drawing) then finalize (after drawing complete, convert shares with that drawing’s accumulator and USDC out).
-
-• **Edge Target** – Global `lpEdgeTarget` (eg 25 %) defines `edgePerTicket = lpEdgeTarget * ticketPrice`.  prizePool is at most `lpValue * (1-reserveRatio)` so LP always has buffer.  BonusballMax is recomputed via ceiling(minTickets / C(n,5)) guaranteeing at least required combos exist for sales, enforcing minimum edge.
-
-• **Protocol Fee** – If `lpEarnings – userWinnings > protocolFeeThreshold`, a `protocolFeeBps` slice is skimmed to `protocolFeeRecipient`.
+### 10. Gas & Scalability Notes
+- Winner counting is **O(1)** regardless of tickets sold thanks to math rather than iteration.
+- Ticket purchase gas dominated by NFT mint + bit-vector insertion; practical to batch hundreds of tickets (< 5 M gas).
+- LP settlement scales only with number of LPs who moved state in that drawing (consolidations).
 
 ---
-
-## 5. Payout Mathematics
-
-12 tiers (0-11).  `tierId = normalMatches*2 + bonusMatchFlag`.
-
-Inputs per drawing:
-* minPayout (USDC)
-* minPayoutTiers[12] bools – which tiers get the guarantee
-* premiumTierWeights[12] – sum 1e18
-* premiumTierMinAllocation – % of pool reserved for premium even in min-heavy draws
-
-Algorithm summary:
-1. Count winners per tier (unique + duplicates).
-2. Compute `minAllocation = Σ winners[i]*minPayout where minPayoutTiers[i]==true`.
-3. If `minAllocation + pool*premiumTierMinAllocation > pool` ⇒ **crisis** mode ⇒ drop minimums, distribute full pool by weights.
-4. Else pay minimums, split leftover pool by weights.
-5. Store `tierPayout = (isMinTier?minPayout:0) + (remainingPool * weight / winners / 1e18)`.
-
-Invariant: Σ tierPayout * winners ≤ prizePool (checked by `require`).
-
----
-
-## 6. Security Surfaces & Mitigations
-
-1. **Randomness bias** – Uses external Pyth entropy + rejection sampling.  Callback restricted to `onlyEntropy`, drawing locked beforehand; front-run impossible.
-2. **Reentrancy** – `nonReentrant` on all functions that move funds; state mutated before external transfers.
-3. **Cross-chain replay** – EIP-712 domain separator binds chain+contract; BridgeManager validates exact USDC delta after bridge call.
-4. **Economic solvency** – Prize pool derived from LP value; rounding always LP-favouring.  Crisis mode prevents over-payment when too many winners.
-5. **Duplicate ticket injection** – TicketComboTracker detects duplicates on insert; duplicates still allowed but priced so LP edge preserved.
-6. **Parameter changes** – Governance changes only affect _next_ drawing; current drawing stores snapshot at init.
-7. **Emergency exit** – Emergency mode lets all participants retrieve value even if drawing stuck (entropy never returns, etc.).
-
----
-
-## 7. Governance Knobs
-
-Owner (ideally via multi-sig + timelock):
-* ticketPrice, normalBallMax, bonusballMin
-* lpEdgeTarget, reserveRatio, lpPoolCap
-* referralFee, referralWinShare, protocolFeeBps/threshold/recipient
-* minimumPayout, premiumTierWeights, premiumTierMinAllocation
-* entropy gas limits, drawingDurationInSeconds
-* emergencyMode toggles, allowTicketPurchases flag
-
-All setters emit events; none can retroactively alter an active drawing.
-
----
-
-## 8. Failure & Recovery Paths
-
-1. **Pyth outage** – Drawing remains locked; owner may enable emergencyMode, users refund, LPs exit.
-2. **Accounting bug** – Emergency withdrawal ensures LPs can withdraw full pro-rated value.
-3. **Bridge exploit** – BridgeManager validates exact USDC moved; failure reverts entire Tx.
-4. **Parameter mis-set** – Worst case edges favour LP so never bankrupts pool; min payout crisis mode keeps solvency.
-
----
-
-## 9. Deployment & Initialization
-
-1. Owner deploys all libs & contracts, wiring addresses.
-2. `Jackpot.initialize(usdc, lpManager, nft, entropy, payoutCalc)`
-3. `initializeLPDeposits(poolCap)` – boots accumulator=1e18.
-4. LPs deposit seed capital.
-5. `initializeJackpot(firstDrawingTime)` – performs drawing 0 pseudo-settlement, enables ticket purchases, kicks off drawing 1.
-
-Contracts are immutable; future upgrades require fresh deployment + migration scripts.
-
----
-
-## 10. Key Invariants For Auditors
-
-* USDC.balanceOf(Jackpot) ≥ (lpPoolTotal + pendingDeposits + Σ referralFees + unclaimedWinnings + lpEarnings)
-* Σ premiumTierWeights == 1e18 (constructor & setter enforce)
-* bonusballMax ∈ [bonusballMin, 255-normalBallMax]
-* After settlement: lpPoolTotal = prevLp + lpEarnings − userWinnings − protocolFee
-* Emergency withdrawals cannot underflow pool state variables (internal checks).
-
----
-
-## 11. File-by-File Notables
-
-* **Jackpot.sol** – Orchestrator; keep an eye on `_calculateTicketTierId`, `_lockJackpot`, and parameterization math.
-* **JackpotLPManager.sol** – Complex accumulator math; `_consolidateDeposits/Withdrawals` precision critical.
-* **GuaranteedMinimumPayoutCalculator.sol** – Crisis mode branch; ensure no div-by-0 and weight sanity.
-* **TicketComboTracker.sol** (library) – Inclusion-exclusion for winner counts; must never overflow 256-bit.
-* **FisherYatesWithRejection.sol** – Uniform sampling; confirm rejection loop upper bound safe.
-* **JackpotBridgeManager.sol** – `_bridgeFunds` exact-delta check guards bridge exfiltration.
-
----
-
-## 12. Conclusion
-
-Megapot V2 provides a self-contained, cross-chain jackpot with mathematically provable fairness and conservative economic safeguards that favor system solvency and LP profitability.  Critical areas for security review are the accumulator math, payout crisis branch, and cross-chain signature replay resistance; however, the architecture includes explicit emergency egress paths and state snapshots that confine risk to individual drawings, making catastrophic loss unlikely if these invariants hold.
+This ~2,100-word overview should give auditors enough mental model to reason about how money flows, where randomness enters, which modifiers gate sensitive phases, and which invariants must hold for solvency and fairness.
 
 
 ## Main List of Files in Project
