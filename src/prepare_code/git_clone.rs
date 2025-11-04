@@ -130,17 +130,15 @@ pub fn clone_and_filter_git_repo(
     info!("repo_name ==> {}", repo_name);
 
     // 5. git clone, install, and build in secure docker container
+    // 6. define project id
     // returns dierctory where files are located
     let project_id = format!("{}-{}", repo_name.replace("/", "-"), &commit_hash[..6]);
     let root = clone_and_build_repo(cli, &repo_name, &project_id)?;
-
-    // 6. define project id
 
     // 6. Build .gitignore matcher
     let mut ign = GitignoreBuilder::new(&root);
     ign.add_line(None, "dist")?;
     ign.add_line(None, "out")?;
-    ign.add_line(None, "node_modules")?;
     let ign = ign.build()?;
 
     // Determine the search root - if subfolder is specified, search within that subdirectory
@@ -152,7 +150,7 @@ pub fn clone_and_filter_git_repo(
         .iter()
         .map(|f| search_root.join(f))
         .collect::<Vec<PathBuf>>();
-    // info!("source_code_folder => {}", source_code_folder.display());
+    info!("source_code_folders => {:?}", source_code_folders);
 
     // Validate that the search root exists
     if !search_root.exists() {
