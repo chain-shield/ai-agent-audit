@@ -7,7 +7,11 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+/// DEPRECATED: This Slither-based inheritance parsing is no longer used.
+/// Use the custom Solidity parsing in `src/enumerator/utils.rs` instead.
+///
 /// Step 2: pull every DOT file’s `content` string
+#[deprecated(note = "Use custom Solidity parsing via contracts_in_source_folder() instead")]
 pub fn parse_inheritance_json(json: &str) -> Result<Vec<(String, String)>> {
     /// Represents a list of immediate and non-immediate inheritance relationships.
     #[derive(Debug, Deserialize)]
@@ -49,9 +53,7 @@ pub fn parse_inheritance_json(json: &str) -> Result<Vec<(String, String)>> {
 
     for (child, parents) in child_parent_map.into_iter() {
         for parent in parents.immediate.iter() {
-            if child == "IPriceOracle" || parent == "IPriceOracle" {
-                log::warn!("Adding edge: child: {}, parent: {}", child, parent);
-            }
+            log::warn!("Adding edge: child: {}, parent: {}", child, parent);
             edges.push((child.clone(), parent.to_string()));
         }
     }

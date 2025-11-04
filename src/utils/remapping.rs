@@ -153,6 +153,16 @@ pub fn get_all_remappings(repo: &RepoPaths) -> Option<HashMap<String, String>> {
 pub fn resolve_import_path(import_path: &str, repo: &RepoPaths) -> Option<String> {
     let remappings = get_all_remappings(repo)?;
 
+    // NOTE: if remappping is empty we are dealing with node_modules/ project (likely hardhat)
+    // However, we should NOT prepend node_modules/ to relative imports (../ or ./)
+    if remappings.is_empty() {
+        // Don't prepend node_modules/ to relative imports - they should be resolved relative to the current file
+        if import_path.starts_with("../") || import_path.starts_with("./") {
+            return None; // Let the caller handle relative path resolution
+        }
+        return Some(format!("node_modules/{}", import_path));
+    }
+
     // Try to find a matching prefix
     for (prefix, target) in remappings.iter() {
         if import_path.starts_with(prefix) {

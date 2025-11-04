@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -462,8 +462,12 @@ pub async fn run_printer_monorepo(repo: &RepoPaths, printer: &str) -> Result<Str
 /// - prb-test: PRBTest testing framework
 /// - node_modules: npm dependencies
 ///
+/// DEPRECATED: This Slither-based inheritance extraction is no longer used.
+/// Use the custom Solidity parsing in `src/enumerator/utils.rs` instead.
+///
 /// This ensures we capture inheritance relationships for all project contracts,
 /// including those in lib/ folders that are part of the project scope.
+#[deprecated(note = "Use custom Solidity parsing via contracts_in_source_folder() instead")]
 pub async fn run_printer_json_inheritance(
     repo: &RepoPaths,
     subfolder: Option<PathBuf>,
@@ -511,7 +515,7 @@ pub async fn run_printer_json_inheritance(
     args.push(target_dir);
 
     // Log the full docker command for debugging
-    log::info!("Docker command: docker {}", args.join(" "));
+    // log::info!("Docker command: docker {}", args.join(" "));
 
     let out = Command::new("docker").args(&args).output()?;
 

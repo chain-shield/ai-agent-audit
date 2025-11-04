@@ -79,11 +79,14 @@ impl FilePickerTool {
     fn collect_files(repo: &RepoPaths) -> Vec<String> {
         let mut files = Vec::new();
 
-        // Add Solidity files
+        // Add Solidity files (excluding lib and node_modules folders)
         for sol_file in &repo.sol_files {
             if let Ok(relative_path) = sol_file.strip_prefix(&repo.root) {
                 let lib_folder = format!("{}/lib", repo.repo_name);
-                if !relative_path.starts_with(lib_folder) {
+                let node_modules_folder = format!("{}/node_modules", repo.repo_name);
+                if !relative_path.starts_with(&lib_folder)
+                    && !relative_path.starts_with(&node_modules_folder)
+                {
                     files.push(relative_path.to_string_lossy().to_string());
                 }
             }
