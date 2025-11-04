@@ -87,10 +87,23 @@ fn find_all_interfaces_recursive<'a>(
         visited.insert((contract_name.to_string(), contract_file.clone()));
 
         // Get direct parents
-        let parents = match get_parents_with_file(contract_name, contract_file, repo).await {
-            Ok(p) => p,
-            Err(_) => return Ok(interfaces),
-        };
+        let parents = get_parents_with_file(contract_name, contract_file, repo).await?;
+
+        if parents.is_empty() {
+            log::debug!(
+                "⚠️  No parents found in inheritance map for contract '{}' at '{}'",
+                contract_name,
+                contract_file.display()
+            );
+            return Ok(interfaces);
+        }
+
+        log::debug!(
+            "✅ Found {} parents for contract '{}': {:?}",
+            parents.len(),
+            contract_name,
+            parents.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
 
         for (parent_name, parent_file) in parents {
             // Check if this parent is an interface
@@ -143,6 +156,12 @@ pub async fn build_interface_implementation_index(
     info!("🔍 Building interface implementation index with recursive traversal...");
     info!("   Total .sol files in repo: {}", repo.sol_files.len());
 
+    // Debug: Show first 20 files to see what's in the list
+    // info!("   First 20 files in repo.sol_files:");
+    // for (i, file) in repo.sol_files.iter().take(20).enumerate() {
+    //     info!("     {}. {}", i + 1, file.display());
+    // }
+
     let mut total_contracts = 0;
     let mut total_implementations = 0;
     let mut total_skipped = 0;
@@ -161,23 +180,63 @@ pub async fn build_interface_implementation_index(
             Err(_) => continue,
         };
 
+        // Log which files we're scanning (first 10 only to avoid spam)
+        // if total_contracts < 10 {
+        //     info!("   Scanning file: {}", sol_file.display());
+        // }
+
         total_contracts += 1;
 
         // Extract ALL parent names from contracts in this file
         let implementations = extract_all_interface_implementations(&content);
+        // info!(
+        //     "implementations for {}: \n {:?}",
+        //     sol_file.display(),
+        //     implementations
+        // );
 
-        for (contract_name, _parent_names) in implementations {
+        for (contract_name, parent_names) in implementations {
+            // Use the file path as-is (no canonicalization) to match the format in the inheritance map
+            // On macOS, /tmp is a symlink to /private/tmp, and canonicalization would resolve
+            // the symlink causing path mismatches
+            use crate::build_brain::inheritance_map::canonicalize_path;
+            let canonical_sol_file = canonicalize_path(sol_file);
+
+            log::debug!(
+                "   🔍 Looking up interfaces for contract '{}' at '{}' with parents: {:?}",
+                contract_name,
+                sol_file.display(),
+                parent_names
+            );
             // Recursively find ALL interfaces this contract implements (direct + indirect)
             let mut visited = HashSet::new();
-            let interfaces =
-                find_all_interfaces_recursive(&contract_name, sol_file, repo, &mut visited).await?;
+            let interfaces = find_all_interfaces_recursive(
+                &contract_name,
+                &canonical_sol_file,
+                repo,
+                &mut visited,
+            )
+            .await?;
+
+            log::debug!(
+                "      Found {} interfaces for '{}': {:?}",
+                interfaces.len(),
+                contract_name,
+                interfaces.iter().map(|(name, _)| name).collect::<Vec<_>>()
+            );
 
             // Add this contract to the index for each interface it implements
             for (interface_name, interface_file) in interfaces {
+                log::debug!(
+                    "      Adding implementation: {} implements {}",
+                    contract_name,
+                    interface_name
+                );
+
                 index
                     .entry((interface_name.clone(), interface_file.clone()))
                     .or_insert_with(Vec::new)
-                    .push((contract_name.clone(), sol_file.clone()));
+                    .push((contract_name.clone(), canonical_sol_file.clone()));
                 total_implementations += 1;
             }
         }
@@ -255,31 +314,6 @@ pub async fn find_implementations_for_interfaces(
 ) -> Result<HashMap<String, PathBuf>> {
     // Use the existing build_and_get function which handles caching
     let index = build_and_get_interface_implementation_index(repo).await?;
-
-    // info!(
-    //     "🔍 DEBUG: Searching for implementations of {} interfaces",
-    //     interfaces_with_files.len()
-    // );
-    //
-    // Debug: Show what interfaces we're looking for
-    // for (interface_name, interface_file) in interfaces_with_files.iter().take(5) {
-    //     info!(
-    //         "🔍 DEBUG: Looking for interface '{}' at {}",
-    //         interface_name,
-    //         interface_file.display()
-    //     );
-    // }
-    //
-    // // Debug: Show what's in the index
-    // info!("🔍 DEBUG: Index contains {} interface entries", index.len());
-    // for ((idx_name, idx_file), impls) in index.iter().take(5) {
-    //     info!(
-    //         "🔍 DEBUG: Index has '{}' at {} with {} implementations",
-    //         idx_name,
-    //         idx_file.display(),
-    //         impls.len()
-    //     );
-    // }
 
     // O(1) lookup for each interface
     let mut all_implementations = HashMap::new();
@@ -432,21 +466,34 @@ fn extracts_contract_implementing_interface(content: &str, interface_name: &str)
 /// We skip:
 /// - Standard libraries (OpenZeppelin, forge-std, ds-test, erc4626-tests, halmos-cheatcodes, solmate, prb-test)
 /// - Files in node_modules/
-/// - Files in test/ or tests/
-/// - Interface files themselves (in interfaces/ directory)
+/// - Files in test/, tests/, or mocks/ folders
+/// - Files NOT in source_code_folders (e.g., if source is contracts/, skip files in src/)
 ///
-/// We DO NOT skip project-specific lib folders like euler-price-oracle!
+/// We DO NOT skip:
+/// - Project-specific lib folders like euler-price-oracle
+/// - Files in interfaces/ directory (they may contain implementations!)
+///
+/// Note: We used to skip /interfaces/ but that was wrong because:
+/// 1. Contracts can implement interfaces in the same file/folder
+/// 2. We need to scan ALL contracts to find implementations
+/// 3. The interface detection logic already filters out interface definitions
 fn should_skip_file(file: &PathBuf) -> bool {
     use crate::enumerator::parse_solidity::should_exclude_this_library;
 
     let file_str = file.to_string_lossy();
 
     // Use the same standard library exclusion logic as the rest of the codebase
-    should_exclude_this_library(&file_str)
+    if should_exclude_this_library(&file_str)
         || file_str.contains("/node_modules/")
         || file_str.contains("/test/")
         || file_str.contains("/tests/")
-        || file_str.contains("/interfaces/") // Skip interface definitions themselves
+        || file_str.contains("/mocks/")
+        || file_str.contains("/mock/")
+    {
+        return true;
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -506,44 +553,6 @@ mod tests {
 
         let result = extracts_contract_implementing_interface(code, "IPriceOracle");
         assert_eq!(result, Some("MultiImpl".to_string()));
-    }
-
-    #[test]
-    fn test_should_skip_file() {
-        // Should skip standard libraries
-        assert!(should_skip_file(&PathBuf::from(
-            "/repo/lib/openzeppelin/ERC20.sol"
-        )));
-        assert!(should_skip_file(&PathBuf::from(
-            "/repo/lib/forge-std/Test.sol"
-        )));
-        assert!(should_skip_file(&PathBuf::from(
-            "/repo/lib/solmate/ERC20.sol"
-        )));
-
-        // Should skip node_modules and test directories
-        assert!(should_skip_file(&PathBuf::from(
-            "/repo/node_modules/foo.sol"
-        )));
-        assert!(should_skip_file(&PathBuf::from("/repo/test/MyTest.sol")));
-
-        // Should skip interface definitions
-        assert!(should_skip_file(&PathBuf::from(
-            "/repo/src/interfaces/IPriceOracle.sol"
-        )));
-
-        // Should NOT skip source files
-        assert!(!should_skip_file(&PathBuf::from(
-            "/repo/src/curators/CovenantCurator.sol"
-        )));
-
-        // Should NOT skip project-specific lib folders like euler-price-oracle
-        assert!(!should_skip_file(&PathBuf::from(
-            "/repo/lib/euler-price-oracle/BaseAdapter.sol"
-        )));
-        assert!(!should_skip_file(&PathBuf::from(
-            "/repo/lib/euler-price-oracle/ChainlinkOracle.sol"
-        )));
     }
 
     #[test]

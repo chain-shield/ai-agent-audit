@@ -144,8 +144,10 @@ pub async fn parse_all_import_dependencies(
                 if let Some(resolved_path) = resolve_import_path(import_path, repo) {
                     if !should_exclude_this_library(&resolved_path) {
                         let full_path = repo.root.join(&repo.repo_name).join(&resolved_path);
-                        if let Ok(canonical_path) = full_path.canonicalize() {
-                            lib_files.insert(canonical_path);
+                        // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
+                        // and canonicalization resolves symlinks, causing path mismatches.
+                        if full_path.exists() {
+                            lib_files.insert(full_path);
                         }
                     }
                 }
@@ -191,8 +193,10 @@ pub async fn parse_all_import_dependencies(
                                 repo.root.join(&repo.repo_name).join(import_path)
                             };
 
-                        if let Ok(canonical_path) = resolved_path.canonicalize() {
-                            source_files.insert(canonical_path);
+                        // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
+                        // and canonicalization resolves symlinks, causing path mismatches.
+                        if resolved_path.exists() {
+                            source_files.insert(resolved_path);
                         }
                     }
                 }
@@ -209,8 +213,10 @@ pub async fn parse_all_import_dependencies(
             if let Some(resolved_path) = resolve_import_path(import_path, repo) {
                 if !should_exclude_this_library(&resolved_path) {
                     let full_path = repo.root.join(&repo.repo_name).join(&resolved_path);
-                    if let Ok(canonical_path) = full_path.canonicalize() {
-                        lib_files.insert(canonical_path);
+                    // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
+                    // and canonicalization resolves symlinks, causing path mismatches.
+                    if full_path.exists() {
+                        lib_files.insert(full_path);
                     }
                 }
             }
@@ -226,8 +232,10 @@ pub async fn parse_all_import_dependencies(
                 repo.root.join(&repo.repo_name).join(import_path)
             };
 
-            if let Ok(canonical_path) = resolved_path.canonicalize() {
-                source_files.insert(canonical_path);
+            // DO NOT canonicalize! On macOS, /tmp is a symlink to /private/tmp,
+            // and canonicalization resolves symlinks, causing path mismatches.
+            if resolved_path.exists() {
+                source_files.insert(resolved_path);
             }
         }
     }

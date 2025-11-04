@@ -18,6 +18,13 @@ use crate::{
     utils::display_file::{self, display_file},
 };
 
+/// DO NOT canonicalize paths! On macOS, /tmp is a symlink to /private/tmp,
+/// and canonicalization resolves symlinks, causing path mismatches.
+/// Instead, just return the path as-is to ensure consistency.
+pub fn canonicalize_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 /// Child → Parents mapping
 /// Key: project_id
 /// Value: HashMap of (child_contract, child_file) → Vec<(parent_contract, parent_file)>
@@ -45,14 +52,26 @@ pub async fn insert_inheritance_edge(
 ) -> Result<()> {
     let project_id = repo.project_id.clone();
 
+    // Canonicalize paths to ensure consistent lookups
+    let child_canonical = (child.0.clone(), canonicalize_path(&child.1));
+    let parent_canonical = (parent.0.clone(), canonicalize_path(&parent.1));
+
+    // log::info!(
+    //     "📝 Inserting inheritance edge: {} ({}) -> {} ({})",
+    //     child_canonical.0,
+    //     child_canonical.1.display(),
+    //     parent_canonical.0,
+    //     parent_canonical.1.display()
+    // );
+    //
     // Insert into child → parents map
     {
         let mut map = INHERITANCE_MAP.lock().await;
         map.entry(project_id.clone())
             .or_insert_with(HashMap::new)
-            .entry(child.clone())
+            .entry(child_canonical.clone())
             .or_insert_with(Vec::new)
-            .push(parent.clone());
+            .push(parent_canonical.clone());
     }
 
     // Insert into parent → children map (inverted)
@@ -61,9 +80,9 @@ pub async fn insert_inheritance_edge(
         inv_map
             .entry(project_id)
             .or_insert_with(HashMap::new)
-            .entry(parent)
+            .entry(parent_canonical)
             .or_insert_with(Vec::new)
-            .push(child);
+            .push(child_canonical);
     }
 
     Ok(())
@@ -85,10 +104,18 @@ pub async fn get_parents_with_file(
 ) -> Result<Vec<(String, PathBuf)>> {
     let map = INHERITANCE_MAP.lock().await;
 
+    // Canonicalize the file path before lookup
+    let canonical_file = canonicalize_path(file);
+
     if let Some(project_map) = map.get(&repo.project_id) {
-        if let Some(parents) = project_map.get(&(contract.to_string(), file.to_path_buf())) {
+        if let Some(parents) = project_map.get(&(contract.to_string(), canonical_file.clone())) {
             return Ok(parents.clone());
         }
+    } else {
+        log::debug!(
+            "No inheritance map found for project_id '{}'",
+            repo.project_id
+        );
     }
 
     Ok(Vec::new())
@@ -110,20 +137,23 @@ pub async fn get_children_with_file(
 ) -> Result<Vec<(String, PathBuf)>> {
     let inv_map = INVERTED_INHERITANCE_MAP.lock().await;
 
+    // Canonicalize the file path before lookup
+    let canonical_file = canonicalize_path(file);
+
     if let Some(project_map) = inv_map.get(&repo.project_id) {
-        if let Some(children) = project_map.get(&(contract.to_string(), file.to_path_buf())) {
+        if let Some(children) = project_map.get(&(contract.to_string(), canonical_file.clone())) {
             log::info!(
                 "✅ Found {} children for '{}' at '{}'",
                 children.len(),
                 contract,
-                display_file(&file.to_path_buf(), repo),
+                display_file(&canonical_file, repo),
             );
             return Ok(children.clone());
         } else {
             log::info!(
                 "No children found for '{}' at '{}'",
                 contract,
-                display_file(&file.to_path_buf(), repo),
+                display_file(&canonical_file, repo),
             );
         }
     } else {

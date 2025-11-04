@@ -22,7 +22,7 @@ pub async fn is_contract_in_scope(contract: &str, repo: &RepoPaths) -> anyhow::R
             }
 
             let is_library_file = file.ancestors().any(|ancestor| {
-                matches!(ancestor.file_name(), Some(name) if name == "lib" || name == "library" || name == "libraries")
+                matches!(ancestor.file_name(), Some(name) if name == "lib" || name == "library" || name == "libraries"|| name == "node_modules")
             });
             let is_in_scope = scoped_files.contains(&file);
 

@@ -43,6 +43,12 @@ use crate::{
 static CODE_IR_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<(String, String), SlithIRFn>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Global cache for contracts_in_source_folder results.
+/// Key: project_id, Value: Vec of contract names
+/// This ensures the inheritance map is only built once per repository.
+static CONTRACTS_CACHE: Lazy<Mutex<HashMap<String, Vec<String>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 /// Global cache for get_storage_map results.
 /// Key: project_id, Value: Storage map for that project
 static STORAGE_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<String, Vec<StorageVar>>>>> =
@@ -387,11 +393,15 @@ pub struct SolidityRegexes {
 /// # Example
 /// ```solidity
 /// import {BaseAdapter as EulerBaseAdapter} from "@euler-price-oracle/adapter/BaseAdapter.sol";
+/// import "./EntropyEvents.sol";
 /// ```
-/// Returns: `{"EulerBaseAdapter" => "@euler-price-oracle/adapter/BaseAdapter.sol"}`
+/// Returns:
+/// - `{"EulerBaseAdapter" => "@euler-price-oracle/adapter/BaseAdapter.sol"}`
+/// - `{"EntropyEvents" => "./EntropyEvents.sol"}`
 fn parse_import_map(content: &str) -> HashMap<String, String> {
     let mut import_map = HashMap::new();
 
+    // Parse named imports: import { X, Y, Z } from "path"
     for cap in SOLIDITY_REGEXES.import_named.captures_iter(content) {
         if let Some(imports) = cap.get(1) {
             let import_path = cap.get(2).unwrap().as_str();
@@ -419,6 +429,23 @@ fn parse_import_map(content: &str) -> HashMap<String, String> {
                     // No alias, use the contract name directly
                     import_map.insert(name.to_string(), import_path.to_string());
                 }
+            }
+        }
+    }
+
+    // Parse simple imports: import "path";
+    // For these, we extract the contract name from the file path
+    // Example: import "./EntropyEvents.sol" => {"EntropyEvents" => "./EntropyEvents.sol"}
+    let simple_import_regex = Regex::new(r#"import\s*[\"']([^\"']+)[\"']"#).unwrap();
+    for cap in simple_import_regex.captures_iter(content) {
+        let import_path = cap.get(1).unwrap().as_str();
+
+        // Extract contract name from file path
+        // "./EntropyEvents.sol" => "EntropyEvents"
+        // "@openzeppelin/contracts/token/ERC20/IERC20.sol" => "IERC20"
+        if let Some(file_name) = import_path.split('/').last() {
+            if let Some(contract_name) = file_name.strip_suffix(".sol") {
+                import_map.insert(contract_name.to_string(), import_path.to_string());
             }
         }
     }
@@ -542,11 +569,37 @@ async fn process_contract_declarations(
         };
 
         if file_type == SolFileType::Standard {
-            if !contract.to_ascii_lowercase().contains("mock") {
+            // Only add concrete contracts to the contracts list (exclude interfaces, mocks, and test contracts)
+            let is_mock = contract.to_ascii_lowercase().contains("mock")
+                || file.to_string_lossy().contains("/mocks/")
+                || file.to_string_lossy().contains("/test/");
+            let is_interface = contract_type == ContractType::Interface;
+
+            if !is_mock && !is_interface {
+                log::info!(
+                    "✅ Found source contract: {} ({:?}) in {}",
+                    contract,
+                    contract_type,
+                    file.display()
+                );
                 contracts.push(contract.to_string());
+            } else {
+                log::debug!(
+                    "⏭️  Skipping contract: {} ({:?}, is_mock={}, is_interface={}) in {}",
+                    contract,
+                    contract_type,
+                    is_mock,
+                    is_interface,
+                    file.display()
+                );
             }
             insert_contract_to_file_mapping(contract, file, contract_type, repo).await?;
         } else {
+            log::debug!(
+                "📚 Found library contract: {} in {}",
+                contract,
+                file.display()
+            );
             insert_lib_contract_to_file_mapping(contract, file, contract_type, repo).await?;
         }
     }
@@ -568,9 +621,22 @@ async fn process_inheritance_relationships(
     repo: &RepoPaths,
     import_map: &HashMap<String, String>,
 ) -> Result<()> {
+    // log::info!(
+    //     "🔍 process_inheritance_relationships called for file: {} ({} chars)",
+    //     file.display(),
+    //     content.len()
+    // );
+
     for cap in SOLIDITY_REGEXES.inheritance.captures_iter(content) {
         let child_contract = cap.get(1).unwrap().as_str();
         let parent_list = cap.get(2).unwrap().as_str();
+
+        // log::info!(
+        //     "🔗 Found inheritance: {} is {} in {}",
+        //     child_contract,
+        //     parent_list,
+        //     file.display()
+        // );
 
         // Parse parent list (split by comma, trim whitespace)
         let parents: Vec<String> = parent_list
@@ -664,15 +730,57 @@ async fn process_inheritance_relationships(
                 }
             } else {
                 // Parent not in import map - might be from same file or excluded library
-                log::debug!(
-                    "Parent '{}' not found in imports for '{}' in {} - might be in same file or excluded library",
-                    parent,
-                    child_contract,
-                    file.display()
-                );
+                // Try to find the parent in the same file
+
+                // Check if parent is in the same file
+                let parent_in_same_file = content.contains(&format!("interface {}", parent))
+                    || content.contains(&format!("contract {}", parent))
+                    || content.contains(&format!("abstract contract {}", parent))
+                    || content.contains(&format!("library {}", parent));
+
+                if parent_in_same_file {
+                    // Parent is in the same file - add inheritance edge
+                    // log::info!(
+                    //     "Parent '{}' found in same file as '{}' ({})",
+                    //     parent,
+                    //     child_contract,
+                    //     file.display()
+                    // );
+                    //
+                    if let Err(e) = crate::build_brain::inheritance_map::insert_inheritance_edge(
+                        (child_contract.to_string(), file.to_path_buf()),
+                        (parent.clone(), file.to_path_buf()),
+                        repo,
+                    )
+                    .await
+                    {
+                        log::warn!(
+                            "Failed to insert inheritance edge {} -> {}: {}",
+                            child_contract,
+                            parent,
+                            e
+                        );
+                    }
+                } else {
+                    log::debug!(
+                        "Parent '{}' not found in imports or same file for '{}' in {} - likely excluded library",
+                        parent,
+                        child_contract,
+                        file.display()
+                    );
+                }
             }
         }
     }
+
+    // if inheritance_count > 0 {
+    //     log::debug!(
+    //         "✅ Processed {} inheritance relationships in {}",
+    //         inheritance_count,
+    //         file.display()
+    //     );
+    // }
+
     Ok(())
 }
 
@@ -682,29 +790,71 @@ async fn process_inheritance_relationships(
 
 /// Return the names of all `contract XXX` declarations that sit
 /// anywhere under `repo_root/src/`.
+///
+/// This function is cached per project_id to ensure the inheritance map is only built once.
 pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>> {
+    // Check cache first
+    {
+        let cache = CONTRACTS_CACHE.lock().unwrap();
+        if let Some(cached_contracts) = cache.get(&repo.project_id) {
+            log::debug!(
+                "✅ Using cached contracts for project '{}' ({} contracts)",
+                repo.project_id,
+                cached_contracts.len()
+            );
+            return Ok(cached_contracts.clone());
+        }
+    }
+
     if !repo.source_code_folders.iter().any(|f| f.exists()) {
         anyhow::bail!("no src/ folder found at {:?},", repo.source_code_folders);
     }
 
+    log::info!(
+        "📂 Processing {} .sol files to build inheritance map...",
+        repo.sol_files.len()
+    );
+    log::info!("   Source code folders: {:?}", repo.source_code_folders);
+
     let mut libraries = Vec::<ParsedLibrary>::new();
     let mut contracts = Vec::<String>::new();
+    let mut files_processed = 0;
+    let mut files_skipped = 0;
+
+    log::info!(
+        "🔍 Building inheritance map for {} Solidity files. Source folders: {:?}",
+        repo.sol_files.len(),
+        repo.source_code_folders
+    );
 
     for file in &repo.sol_files {
         // Determine file type: Standard (in source folder) or LibFolder (in lib/ but not nested)
-        let file_type = if is_library_file(file, &repo.root) {
+        let is_lib = is_library_file(file, &repo.root);
+        let is_source = repo.source_code_folders.iter().any(|f| file.starts_with(f));
+
+        let file_type = if is_lib {
             // File is in a library folder (lib, library, or libraries) but NOT nested
+            log::debug!("📚 Processing library file: {}", file.display());
             SolFileType::LibFolder
-        } else if repo.source_code_folders.iter().any(|f| file.starts_with(f)) {
+        } else if is_source {
             // File is in a source code folder
+            log::debug!("📄 Processing source file: {}", file.display());
             SolFileType::Standard
         } else {
             // File is neither in source nor in a valid library folder - skip it
+            log::debug!(
+                "⏭️  Skipping file (not in source or lib): {} (is_lib={}, is_source={})",
+                file.display(),
+                is_lib,
+                is_source
+            );
+            files_skipped += 1;
             continue;
         };
 
         // Skip directories and symlinks
         if fs::symlink_metadata(file)?.file_type().is_symlink() {
+            files_skipped += 1;
             continue;
         }
 
@@ -713,6 +863,7 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
             Ok(c) => c,
             Err(e) => {
                 log::warn!("Could not read file {}: {}", file.display(), e);
+                files_skipped += 1;
                 continue;
             }
         };
@@ -723,16 +874,51 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
 
         // Process contract declarations and insert into mappings
         process_contract_declarations(&content, file, file_type, repo, &mut contracts).await?;
+        log::debug!(
+            "✅ Finished processing contract declarations for {}",
+            file.display()
+        );
 
         // Parse import statements to build contract → file mapping
         let import_map = parse_import_map(&content);
+        log::debug!(
+            "✅ Parsed {} imports for {}",
+            import_map.len(),
+            file.display()
+        );
+
+        // Log file processing for debugging
+        if file_type == SolFileType::Standard {
+            log::debug!(
+                "📝 Processing inheritance for source file: {} ({} chars, {} imports)",
+                file.display(),
+                content.len(),
+                import_map.len()
+            );
+        }
 
         // Process inheritance relationships using the import map
         process_inheritance_relationships(&content, file, file_type, repo, &import_map).await?;
 
         // generated library.fn -> code mapping
         generate_library_to_code_mapping(&libraries).await?;
+
+        files_processed += 1;
     }
+
+    log::info!(
+        "✅ Inheritance map building complete: {} files processed, {} skipped, {} contracts found",
+        files_processed,
+        files_skipped,
+        contracts.len()
+    );
+
+    // Cache the results
+    {
+        let mut cache = CONTRACTS_CACHE.lock().unwrap();
+        cache.insert(repo.project_id.clone(), contracts.clone());
+    }
+
     Ok(contracts)
 }
 

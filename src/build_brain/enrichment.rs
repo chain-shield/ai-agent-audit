@@ -1,5 +1,4 @@
 use crate::build_brain::callgraph::DotFunc;
-use crate::build_brain::{inheritance, inheritance_map, slither_ffi};
 use crate::config::{CHAINSHIELD_DB_FOLDER, SEMANTIC_DB};
 use crate::enumerator::utils::get_code_ir_map;
 use crate::error::{AuditError, Result};
@@ -133,36 +132,8 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
         Ok::<_, AuditError>(())
     });
 
-    // Process inheritance data in parallel task
-    let db_inheritance = Arc::clone(&db);
-    let repo_inheritance = Arc::clone(&repo);
-    let handle_inheritance = tokio::spawn(async move {
-        let result: Result<()> = async move {
-            // Extract inheritance hierarchy from Slither
-            info!("generating inheritance json");
-            let inheritance_json = slither_ffi::run_printer_json_inheritance(&repo, None).await?;
-            let inheritance_edges = inheritance::parse_inheritance_json(&inheritance_json)?;
-            info!("{} inheritance edges", inheritance_edges.len());
-
-            // Insert inheritance relationships into database
-            for (child, parent) in inheritance_edges {
-                let db_guard = db_inheritance.lock().await;
-                db_guard.insert_inheritance(&repo_inheritance.project_id, &child, &parent)?;
-            }
-            info!("done generating inheritance edges");
-
-            Ok(())
-        }
-        .await;
-
-        if let Err(e) = result {
-            log::error!("Error processing inheritance data: {:#}", e);
-        }
-        Ok::<_, AuditError>(())
-    });
-
-    // Wait for both parallel tasks to complete
+    // Wait for call graph processing to complete
     info!("waiting for meta data analysis to complete...");
-    let (_func_result, _inheritance_result) = tokio::try_join!(handle, handle_inheritance)?;
+    let _func_result = handle.await?;
     Ok(db_path)
 }

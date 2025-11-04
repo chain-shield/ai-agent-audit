@@ -194,7 +194,7 @@ fn test_walkdir_scans_lib_folders_in_local_repo() {
     // This test is for diagnostics to see what WalkDir actually finds
 }
 
-/// Helper function to check if a file is under any lib*/library* folder
+/// Helper function to check if a file is under any lib*/library*/node_modules folder
 fn is_in_lib_folder(file: &Path, root: &Path) -> bool {
     let mut cursor = file.parent();
     while let Some(dir) = cursor {
@@ -203,7 +203,7 @@ fn is_in_lib_folder(file: &Path, root: &Path) -> bool {
         }
         if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
             let lname = name.to_ascii_lowercase();
-            if lname == "lib" || lname.contains("library") {
+            if lname == "lib" || lname.contains("library") || lname == "node_modules" {
                 return true;
             }
         }
