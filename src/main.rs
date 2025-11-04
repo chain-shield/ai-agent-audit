@@ -107,7 +107,6 @@ async fn main() -> Result<()> {
     .await?;
     info!("Slices at {}", codeblocks_db.display());
 
-    return Ok(());
     // ────────────────────────────────
     // 4. Vector Database Population
     // ────────────────────────────────
