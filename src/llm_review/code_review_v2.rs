@@ -50,6 +50,9 @@ pub async fn review_codebase_for_security_issues_v2(
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
+    // ONLY audit these failed
+    let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
+
     let (ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent) =
         generate_ai_agents(repo).await?;
 
@@ -59,6 +62,13 @@ pub async fn review_codebase_for_security_issues_v2(
 
     for (contract, codeblock) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
+
+        if let Some(scoped_contracts) = &custom_scoped_contracts {
+            if !scoped_contracts.contains(&contract) {
+                info!("contract {}  is NOT in scope", contract);
+                continue;
+            }
+        }
 
         // check contract in inscope!
         if !is_contract_in_scope(&contract, repo).await? {

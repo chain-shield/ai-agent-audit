@@ -4,11 +4,15 @@
 Use the following template for each **High** or **Medium** severity issue you submit.
 This format is aligned with what judges look for in **primary findings**, including all necessary details.
 
+## General Guidelines
+- be concise and to the point, while still providing all necessary details.
+- professional presentation, no icons.
+
 ## Descriptive Issue Title
 
 **Severity:** High (or Medium)
-**Affected Contracts:** `ContractName.sol` — e.g. function `vulnerableFunction` at line 123
-*(Specify the contract and location where the issue occurs.)*
+**Affected Contracts and Lines of Code:** Provide actual links to effected code snippets. i.g. https://github.com/code-423n4/2025-10-covenant/blob/7cd409f4b6ad7134e8926feeafb15eb811d2503c/src/curators/oracles/CrossAdapter.sol#L88-L109 
+*(points to the contracts and locations where the issue occurs, do not link to single lines preferable a readable block of code of entire function.)*
 
 ## Summary
 
