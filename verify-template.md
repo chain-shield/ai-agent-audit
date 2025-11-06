@@ -3,13 +3,40 @@
 
 Follow these steps, please
 
-1. is the bug IN SCOPE?
+Honest Assessment:
+1. is the bug IN SCOPE per client scope? see covenant-scope.md 
 if its in scope then...
-2. honest assessment: is bug legit? does protocol have safeguards against it? 
-is 'Derived From' pattern/invariant assumption correct? 
-If yes to ALL of the above then...
+2. honest assessment: is bug legit? does protocol have safeguards against it? carefuly trace code and read natspec + inline comments.
+3. is 'Derived From' pattern/invariant assumption correct? 
+4. is this by design? 
+Check ALL:
+- NatSpec (@dev, @notice, @custom)
+- Inline comments (`// NOTE:`, `// IMPORTANT:`)
+- megapot-docs.md & megapot-scope.md (Known Limitations, Design Decisions)
+- Function placement (Emergency/Admin sections)
+- Function naming (emergencyPause, adminOnly)
 
-3. is the severity level accurately stated? where severity levels are:  High | Medium | Low | informational ?
+5. Configuration check: 
+**Does finding rely on constants (time, thresholds, buffers)?**
+
+If YES, check:
+- `// for testnet`, `// for testing`, `// temporary` comments
+- Suspiciously small values (WEEK=1800 vs 604800, BUFFER=300 vs 3600)
+- Commented-out production values
+- Re-assess with production config
+
+6. how likely is this attack? For Medium or High severity attack cannot be unliklely, unless its HIGH impact.
+7. is Impact accurately stated?
+
+**Please go through verify-checklist.md to fully confirm finding is valid.**
+
+1. is the bug IN SCOPE per client scope? see covenant-scope.md 
+if its in scope then...
+2. honest assessment: is bug legit? does protocol have safeguards against it? carefuly trace code. 
+3. is this by design? (look at natspec comments and megapot-docs.md)
+4. how likely is this attack? For Medium or High severity attack cannot be unliklely, unless its HIGH impact.
+5. is Impact accurately stated?
+6. is the severity level accurately stated? where severity levels are:  High | Medium | Low | informational ?
 Would it likely receive **≥ Medium severity** in a Code4rena contest
 
 # Code4rena Severity Classifications

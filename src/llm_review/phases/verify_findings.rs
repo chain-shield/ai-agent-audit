@@ -344,13 +344,27 @@ pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
 
 Your task: decide if a reported finding is Valid and to accurately assess its Severity in a {contest} contest.
 
-Consider the following Criteria:
-1. Is finding in scope? (see scope provided below)
-2. Is this finding valid? Does protocol have safeguards against it? Are there any external depedencies that cannot be seen and analyzed (creating uncertainly about validity of finding)?
-3. Is this by design (invalidating finding)? (see docs, natspec, & scope provided below)
-4. Does finding Impact and Likelihood justify current Severity score?
+### SCOPE CHECK
+    - Is finding in scope? (see scope provided below)
 
-Carefully trace the code to verify finding validity.
+### BY DESIGN CHECK
+    Check ALL:
+    - NatSpec (@dev, @notice, @custom)
+    - Inline comments (`// NOTE:`, `// IMPORTANT:`)
+    - docs and scope provided below (Known Limitations, Design Decisions)
+    - Function placement (Emergency/Admin sections)
+    - Function naming (emergencyPause, adminOnly)
+
+### VALIDITY CHECK
+    - Trace execution path - does attack work?
+    - Check safeguards: access control, reentrancy guards, pauses, timelocks, validation
+    - Verify root cause is correct
+    - Check external dependencies - are assumptions reasonable?
+
+### 5. SEVERITY && LIKELIHOOD CHECK
+    - Does finding Impact and Likelihood justify current Severity score?
+    - Please use Severity Rubric below to evaluate Severity Score
+
 
 Based on your assessment please provided the following:
 
