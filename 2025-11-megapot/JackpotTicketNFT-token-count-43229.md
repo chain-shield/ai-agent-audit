@@ -211,292 +211,6 @@ contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
-
-/// @notice Library for bit twiddling and boolean operations.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/LibBit.sol)
-/// @author Inspired by (https://graphics.stanford.edu/~seander/bithacks.html)
-library LibBit {
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                  BIT TWIDDLING OPERATIONS                  */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Find last set.
-    /// Returns the index of the most significant bit of `x`,
-    /// counting from the least significant bit position.
-    /// If `x` is zero, returns 256.
-    function fls(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            r := or(shl(8, iszero(x)), shl(7, lt(0xffffffffffffffffffffffffffffffff, x)))
-            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
-            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
-            r := or(r, shl(4, lt(0xffff, shr(r, x))))
-            r := or(r, shl(3, lt(0xff, shr(r, x))))
-            // forgefmt: disable-next-item
-            r := or(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
-                0x0706060506020504060203020504030106050205030304010505030400000000))
-        }
-    }
-
-    /// @dev Count leading zeros.
-    /// Returns the number of zeros preceding the most significant one bit.
-    /// If `x` is zero, returns 256.
-    function clz(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            r := shl(7, lt(0xffffffffffffffffffffffffffffffff, x))
-            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
-            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
-            r := or(r, shl(4, lt(0xffff, shr(r, x))))
-            r := or(r, shl(3, lt(0xff, shr(r, x))))
-            // forgefmt: disable-next-item
-            r := add(xor(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
-                0xf8f9f9faf9fdfafbf9fdfcfdfafbfcfef9fafdfafcfcfbfefafafcfbffffffff)), iszero(x))
-        }
-    }
-
-    /// @dev Find first set.
-    /// Returns the index of the least significant bit of `x`,
-    /// counting from the least significant bit position.
-    /// If `x` is zero, returns 256.
-    /// Equivalent to `ctz` (count trailing zeros), which gives
-    /// the number of zeros following the least significant one bit.
-    function ffs(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            // Isolate the least significant bit.
-            x := and(x, add(not(x), 1))
-            // For the upper 3 bits of the result, use a De Bruijn-like lookup.
-            // Credit to adhusson: https://blog.adhusson.com/cheap-find-first-set-evm/
-            // forgefmt: disable-next-item
-            r := shl(5, shr(252, shl(shl(2, shr(250, mul(x,
-                0xb6db6db6ddddddddd34d34d349249249210842108c6318c639ce739cffffffff))),
-                0x8040405543005266443200005020610674053026020000107506200176117077)))
-            // For the lower 5 bits of the result, use a De Bruijn lookup.
-            // forgefmt: disable-next-item
-            r := or(r, byte(and(div(0xd76453e0, shr(r, x)), 0x1f),
-                0x001f0d1e100c1d070f090b19131c1706010e11080a1a141802121b1503160405))
-        }
-    }
-
-    /// @dev Returns the number of set bits in `x`.
-    function popCount(uint256 x) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            let max := not(0)
-            let isMax := eq(x, max)
-            x := sub(x, and(shr(1, x), div(max, 3)))
-            x := add(and(x, div(max, 5)), and(shr(2, x), div(max, 5)))
-            x := and(add(x, shr(4, x)), div(max, 17))
-            c := or(shl(8, isMax), shr(248, mul(x, div(max, 255))))
-        }
-    }
-
-    /// @dev Returns the number of zero bytes in `x`.
-    /// To get the number of non-zero bytes, simply do `32 - countZeroBytes(x)`.
-    function countZeroBytes(uint256 x) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            let m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-            c := byte(0, mul(shr(7, not(m)), shr(7, not(or(or(add(and(x, m), m), x), m)))))
-        }
-    }
-
-    /// @dev Returns the number of zero bytes in `s`.
-    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
-    function countZeroBytes(bytes memory s) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            function czb(x_) -> _c {
-                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
-                _c := byte(0, mul(shr(7, not(_m)), _c))
-            }
-            let n := mload(s)
-            let l := shl(5, shr(5, n))
-            s := add(s, 0x20)
-            for { let i } xor(i, l) { i := add(i, 0x20) } { c := add(czb(mload(add(s, i))), c) }
-            if lt(l, n) { c := add(czb(or(shr(shl(3, sub(n, l)), not(0)), mload(add(s, l)))), c) }
-        }
-    }
-
-    /// @dev Returns the number of zero bytes in `s`.
-    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
-    function countZeroBytesCalldata(bytes calldata s) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            function czb(x_) -> _c {
-                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
-                _c := byte(0, mul(shr(7, not(_m)), _c))
-            }
-            let l := shl(5, shr(5, s.length))
-            for { let i } xor(i, l) { i := add(i, 0x20) } {
-                c := add(czb(calldataload(add(s.offset, i))), c)
-            }
-            if lt(l, s.length) {
-                let m := shr(shl(3, sub(s.length, l)), not(0))
-                c := add(czb(or(m, calldataload(add(s.offset, l)))), c)
-            }
-        }
-    }
-
-    /// @dev Returns whether `x` is a power of 2.
-    function isPo2(uint256 x) internal pure returns (bool result) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            // Equivalent to `x && !(x & (x - 1))`.
-            result := iszero(add(and(x, sub(x, 1)), iszero(x)))
-        }
-    }
-
-    /// @dev Returns `x` reversed at the bit level.
-    function reverseBits(uint256 x) internal pure returns (uint256 r) {
-        uint256 m0 = 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f;
-        uint256 m1 = m0 ^ (m0 << 2);
-        uint256 m2 = m1 ^ (m1 << 1);
-        r = reverseBytes(x);
-        r = (m2 & (r >> 1)) | ((m2 & r) << 1);
-        r = (m1 & (r >> 2)) | ((m1 & r) << 2);
-        r = (m0 & (r >> 4)) | ((m0 & r) << 4);
-    }
-
-    /// @dev Returns `x` reversed at the byte level.
-    function reverseBytes(uint256 x) internal pure returns (uint256 r) {
-        unchecked {
-            // Computing masks on-the-fly reduces bytecode size by about 200 bytes.
-            uint256 m0 = 0x100000000000000000000000000000001 * (~toUint(x == uint256(0)) >> 192);
-            uint256 m1 = m0 ^ (m0 << 32);
-            uint256 m2 = m1 ^ (m1 << 16);
-            uint256 m3 = m2 ^ (m2 << 8);
-            r = (m3 & (x >> 8)) | ((m3 & x) << 8);
-            r = (m2 & (r >> 16)) | ((m2 & r) << 16);
-            r = (m1 & (r >> 32)) | ((m1 & r) << 32);
-            r = (m0 & (r >> 64)) | ((m0 & r) << 64);
-            r = (r >> 128) | (r << 128);
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the bit level.
-    function commonBitPrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = 256 - clz(x ^ y);
-            return (x >> s) << s;
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the nibble level.
-    function commonNibblePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = (64 - (clz(x ^ y) >> 2)) << 2;
-            return (x >> s) << s;
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the byte level.
-    function commonBytePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = (32 - (clz(x ^ y) >> 3)) << 3;
-            return (x >> s) << s;
-        }
-    }
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                     BOOLEAN OPERATIONS                     */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    // A Solidity bool on the stack or memory is represented as a 256-bit word.
-    // Non-zero values are true, zero is false.
-    // A clean bool is either 0 (false) or 1 (true) under the hood.
-    // Usually, if not always, the bool result of a regular Solidity expression,
-    // or the argument of a public/external function will be a clean bool.
-    // You can usually use the raw variants for more performance.
-    // If uncertain, test (best with exact compiler settings).
-    // Or use the non-raw variants (compiler can sometimes optimize out the double `iszero`s).
-
-    /// @dev Returns `x & y`. Inputs must be clean.
-    function rawAnd(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := and(x, y)
-        }
-    }
-
-    /// @dev Returns `x & y`.
-    function and(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := and(iszero(iszero(x)), iszero(iszero(y)))
-        }
-    }
-
-    /// @dev Returns `w & x & y`.
-    function and(bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(or(iszero(w), or(iszero(x), iszero(y))))
-        }
-    }
-
-    /// @dev Returns `v & w & x & y`.
-    function and(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(or(or(iszero(v), iszero(w)), or(iszero(x), iszero(y))))
-        }
-    }
-
-    /// @dev Returns `x | y`. Inputs must be clean.
-    function rawOr(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := or(x, y)
-        }
-    }
-
-    /// @dev Returns `x | y`.
-    function or(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(x, y)))
-        }
-    }
-
-    /// @dev Returns `w | x | y`.
-    function or(bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(w, or(x, y))))
-        }
-    }
-
-    /// @dev Returns `v | w | x | y`.
-    function or(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(v, or(w, or(x, y)))))
-        }
-    }
-
-    /// @dev Returns 1 if `b` is true, else 0. Input must be clean.
-    function rawToUint(bool b) internal pure returns (uint256 z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := b
-        }
-    }
-
-    /// @dev Returns 1 if `b` is true, else 0.
-    function toUint(bool b) internal pure returns (uint256 z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(b))
-        }
-    }
-}
-
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -2227,6 +1941,292 @@ contract Jackpot is IJackpot, Ownable2Step, ReentrancyGuardTransient {
 }
 
 // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
+/// @notice Library for bit twiddling and boolean operations.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/LibBit.sol)
+/// @author Inspired by (https://graphics.stanford.edu/~seander/bithacks.html)
+library LibBit {
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                  BIT TWIDDLING OPERATIONS                  */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Find last set.
+    /// Returns the index of the most significant bit of `x`,
+    /// counting from the least significant bit position.
+    /// If `x` is zero, returns 256.
+    function fls(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            r := or(shl(8, iszero(x)), shl(7, lt(0xffffffffffffffffffffffffffffffff, x)))
+            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
+            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
+            r := or(r, shl(4, lt(0xffff, shr(r, x))))
+            r := or(r, shl(3, lt(0xff, shr(r, x))))
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0x0706060506020504060203020504030106050205030304010505030400000000))
+        }
+    }
+
+    /// @dev Count leading zeros.
+    /// Returns the number of zeros preceding the most significant one bit.
+    /// If `x` is zero, returns 256.
+    function clz(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            r := shl(7, lt(0xffffffffffffffffffffffffffffffff, x))
+            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
+            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
+            r := or(r, shl(4, lt(0xffff, shr(r, x))))
+            r := or(r, shl(3, lt(0xff, shr(r, x))))
+            // forgefmt: disable-next-item
+            r := add(xor(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0xf8f9f9faf9fdfafbf9fdfcfdfafbfcfef9fafdfafcfcfbfefafafcfbffffffff)), iszero(x))
+        }
+    }
+
+    /// @dev Find first set.
+    /// Returns the index of the least significant bit of `x`,
+    /// counting from the least significant bit position.
+    /// If `x` is zero, returns 256.
+    /// Equivalent to `ctz` (count trailing zeros), which gives
+    /// the number of zeros following the least significant one bit.
+    function ffs(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Isolate the least significant bit.
+            x := and(x, add(not(x), 1))
+            // For the upper 3 bits of the result, use a De Bruijn-like lookup.
+            // Credit to adhusson: https://blog.adhusson.com/cheap-find-first-set-evm/
+            // forgefmt: disable-next-item
+            r := shl(5, shr(252, shl(shl(2, shr(250, mul(x,
+                0xb6db6db6ddddddddd34d34d349249249210842108c6318c639ce739cffffffff))),
+                0x8040405543005266443200005020610674053026020000107506200176117077)))
+            // For the lower 5 bits of the result, use a De Bruijn lookup.
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(div(0xd76453e0, shr(r, x)), 0x1f),
+                0x001f0d1e100c1d070f090b19131c1706010e11080a1a141802121b1503160405))
+        }
+    }
+
+    /// @dev Returns the number of set bits in `x`.
+    function popCount(uint256 x) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            let max := not(0)
+            let isMax := eq(x, max)
+            x := sub(x, and(shr(1, x), div(max, 3)))
+            x := add(and(x, div(max, 5)), and(shr(2, x), div(max, 5)))
+            x := and(add(x, shr(4, x)), div(max, 17))
+            c := or(shl(8, isMax), shr(248, mul(x, div(max, 255))))
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `x`.
+    /// To get the number of non-zero bytes, simply do `32 - countZeroBytes(x)`.
+    function countZeroBytes(uint256 x) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            let m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+            c := byte(0, mul(shr(7, not(m)), shr(7, not(or(or(add(and(x, m), m), x), m)))))
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `s`.
+    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
+    function countZeroBytes(bytes memory s) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            function czb(x_) -> _c {
+                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
+                _c := byte(0, mul(shr(7, not(_m)), _c))
+            }
+            let n := mload(s)
+            let l := shl(5, shr(5, n))
+            s := add(s, 0x20)
+            for { let i } xor(i, l) { i := add(i, 0x20) } { c := add(czb(mload(add(s, i))), c) }
+            if lt(l, n) { c := add(czb(or(shr(shl(3, sub(n, l)), not(0)), mload(add(s, l)))), c) }
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `s`.
+    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
+    function countZeroBytesCalldata(bytes calldata s) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            function czb(x_) -> _c {
+                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
+                _c := byte(0, mul(shr(7, not(_m)), _c))
+            }
+            let l := shl(5, shr(5, s.length))
+            for { let i } xor(i, l) { i := add(i, 0x20) } {
+                c := add(czb(calldataload(add(s.offset, i))), c)
+            }
+            if lt(l, s.length) {
+                let m := shr(shl(3, sub(s.length, l)), not(0))
+                c := add(czb(or(m, calldataload(add(s.offset, l)))), c)
+            }
+        }
+    }
+
+    /// @dev Returns whether `x` is a power of 2.
+    function isPo2(uint256 x) internal pure returns (bool result) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Equivalent to `x && !(x & (x - 1))`.
+            result := iszero(add(and(x, sub(x, 1)), iszero(x)))
+        }
+    }
+
+    /// @dev Returns `x` reversed at the bit level.
+    function reverseBits(uint256 x) internal pure returns (uint256 r) {
+        uint256 m0 = 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f;
+        uint256 m1 = m0 ^ (m0 << 2);
+        uint256 m2 = m1 ^ (m1 << 1);
+        r = reverseBytes(x);
+        r = (m2 & (r >> 1)) | ((m2 & r) << 1);
+        r = (m1 & (r >> 2)) | ((m1 & r) << 2);
+        r = (m0 & (r >> 4)) | ((m0 & r) << 4);
+    }
+
+    /// @dev Returns `x` reversed at the byte level.
+    function reverseBytes(uint256 x) internal pure returns (uint256 r) {
+        unchecked {
+            // Computing masks on-the-fly reduces bytecode size by about 200 bytes.
+            uint256 m0 = 0x100000000000000000000000000000001 * (~toUint(x == uint256(0)) >> 192);
+            uint256 m1 = m0 ^ (m0 << 32);
+            uint256 m2 = m1 ^ (m1 << 16);
+            uint256 m3 = m2 ^ (m2 << 8);
+            r = (m3 & (x >> 8)) | ((m3 & x) << 8);
+            r = (m2 & (r >> 16)) | ((m2 & r) << 16);
+            r = (m1 & (r >> 32)) | ((m1 & r) << 32);
+            r = (m0 & (r >> 64)) | ((m0 & r) << 64);
+            r = (r >> 128) | (r << 128);
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the bit level.
+    function commonBitPrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = 256 - clz(x ^ y);
+            return (x >> s) << s;
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the nibble level.
+    function commonNibblePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = (64 - (clz(x ^ y) >> 2)) << 2;
+            return (x >> s) << s;
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the byte level.
+    function commonBytePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = (32 - (clz(x ^ y) >> 3)) << 3;
+            return (x >> s) << s;
+        }
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                     BOOLEAN OPERATIONS                     */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    // A Solidity bool on the stack or memory is represented as a 256-bit word.
+    // Non-zero values are true, zero is false.
+    // A clean bool is either 0 (false) or 1 (true) under the hood.
+    // Usually, if not always, the bool result of a regular Solidity expression,
+    // or the argument of a public/external function will be a clean bool.
+    // You can usually use the raw variants for more performance.
+    // If uncertain, test (best with exact compiler settings).
+    // Or use the non-raw variants (compiler can sometimes optimize out the double `iszero`s).
+
+    /// @dev Returns `x & y`. Inputs must be clean.
+    function rawAnd(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := and(x, y)
+        }
+    }
+
+    /// @dev Returns `x & y`.
+    function and(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := and(iszero(iszero(x)), iszero(iszero(y)))
+        }
+    }
+
+    /// @dev Returns `w & x & y`.
+    function and(bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(or(iszero(w), or(iszero(x), iszero(y))))
+        }
+    }
+
+    /// @dev Returns `v & w & x & y`.
+    function and(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(or(or(iszero(v), iszero(w)), or(iszero(x), iszero(y))))
+        }
+    }
+
+    /// @dev Returns `x | y`. Inputs must be clean.
+    function rawOr(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := or(x, y)
+        }
+    }
+
+    /// @dev Returns `x | y`.
+    function or(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(x, y)))
+        }
+    }
+
+    /// @dev Returns `w | x | y`.
+    function or(bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(w, or(x, y))))
+        }
+    }
+
+    /// @dev Returns `v | w | x | y`.
+    function or(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(v, or(w, or(x, y)))))
+        }
+    }
+
+    /// @dev Returns 1 if `b` is true, else 0. Input must be clean.
+    function rawToUint(bool b) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := b
+        }
+    }
+
+    /// @dev Returns 1 if `b` is true, else 0.
+    function toUint(bool b) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(b))
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import { Combinations } from "./Combinations.sol";
@@ -2570,6 +2570,67 @@ library TicketComboTracker {
         bonusball = uint8(LibBit.fls(_packedTicket) - _normalMax);
     }
 }
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IJackpot {
+
+    struct Ticket {
+        uint8[] normals;
+        uint8 bonusball;
+    }
+
+    function buyTickets(
+        Ticket[] memory _tickets,
+        address _recipient,
+        address[] memory _referrers,
+        uint256[] memory _referralSplitBps,
+        bytes32 _source
+    )
+        external
+        returns (uint256[] memory ticketIds);
+
+    function claimWinnings(
+        uint256[] memory _userTicketIds
+    )
+        external;
+
+    function ticketPrice() external view returns (uint256);
+    function currentDrawingId() external view returns (uint256);
+    function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
+}
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IJackpotTicketNFT {
+
+    struct TrackedTicket {
+        uint256 drawingId;
+        uint256 packedTicket;
+        bytes32 referralScheme;
+    }
+
+    struct ExtendedTrackedTicket {
+        uint256 ticketId;
+        TrackedTicket ticket;
+        uint8[] normals;
+        uint8 bonusball;
+    }
+
+    function mintTicket(
+        address recipient, 
+        uint256 ticketId, 
+        uint256 drawingId,
+        uint256 packedTicket, 
+        bytes32 referralScheme
+    ) external;
+    
+    function burnTicket(uint256 ticketId) external;
+    function getTicketInfo(uint256 ticketId) external view returns (TrackedTicket memory);
+    function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
+}
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
 
@@ -2632,67 +2693,6 @@ abstract contract ReentrancyGuardTransient {
     }
 }
 
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpot {
-
-    struct Ticket {
-        uint8[] normals;
-        uint8 bonusball;
-    }
-
-    function buyTickets(
-        Ticket[] memory _tickets,
-        address _recipient,
-        address[] memory _referrers,
-        uint256[] memory _referralSplitBps,
-        bytes32 _source
-    )
-        external
-        returns (uint256[] memory ticketIds);
-
-    function claimWinnings(
-        uint256[] memory _userTicketIds
-    )
-        external;
-
-    function ticketPrice() external view returns (uint256);
-    function currentDrawingId() external view returns (uint256);
-    function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
-}
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpotTicketNFT {
-
-    struct TrackedTicket {
-        uint256 drawingId;
-        uint256 packedTicket;
-        bytes32 referralScheme;
-    }
-
-    struct ExtendedTrackedTicket {
-        uint256 ticketId;
-        TrackedTicket ticket;
-        uint8[] normals;
-        uint8 bonusball;
-    }
-
-    function mintTicket(
-        address recipient, 
-        uint256 ticketId, 
-        uint256 drawingId,
-        uint256 packedTicket, 
-        bytes32 referralScheme
-    ) external;
-    
-    function burnTicket(uint256 ticketId) external;
-    function getTicketInfo(uint256 ticketId) external view returns (TrackedTicket memory);
-    function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
-}
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
 
@@ -2761,41 +2761,75 @@ abstract contract Ownable2Step is Ownable {
     }
 }
 
-//SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8;
 
-pragma solidity ^0.8.28;
+import { LibBit } from "solady/src/utils/LibBit.sol";
 
-interface IJackpotLPManager {
-
-    struct LPDrawingState {
-        uint256 lpPoolTotal;
-        uint256 pendingDeposits;
-        uint256 pendingWithdrawals;
+library Combinations {
+    uint256 constant UINT256_BIT_WIDTH = 256;
+    /// @notice Compute number of combinations of size k from a set of n
+    /// @param n Size of set to choose from
+    /// @param k Size of subsets to choose
+    function choose(
+        uint256 n,
+        uint256 k
+    ) internal pure returns (uint256 result) {
+        assert(n >= k);
+        assert(n <= 128); // Artificial limit to avoid overflow
+        // "How to calculate binomial coefficients"
+        // From: https://blog.plover.com/math/choose.html
+        // This algorithm computes multiplication and division in alternation
+        // to avoid overflow as much as possible.
+        unchecked {
+            uint256 out = 1;
+            for (uint256 d = 1; d <= k; ++d) {
+                out *= n--;
+                out /= d;
+            }
+            return out;
+        }
     }
 
-    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
+    /// @notice Generate all possible subsets of size k from a bit vector.
+    /// @param set Bit vector to generate subsets from
+    /// @param k Size of subsets to generate
+    function generateSubsets(
+        uint256 set,
+        uint256 k
+    ) internal pure returns (uint256[] memory subsets) {
+        unchecked {
+            uint256 n = LibBit.popCount(set);
+            assert(k <= n);
+            subsets = new uint256[](choose(n, k));
 
-    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
+            uint256 bound = 1 << n;
+            uint256 comb = (1 << k) - 1;
+            uint256 count;
+            while (comb < bound) {
+                uint256 mapped;
+                uint256 _set = set;
+                uint256 _comb = comb;
+                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
+                    if (_set & 1 == 1) {
+                        if (_comb & 1 == 1) {
+                            mapped |= (1 << i);
+                        }
+                        _comb >>= 1;
+                    }
+                    _set >>= 1;
+                }
 
-    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
+                subsets[count++] = mapped;
 
-    function processDrawingSettlement(
-        uint256 _drawingId,
-        uint256 _lpEarnings,
-        uint256 _userWinnings,
-        uint256 _protocolFeeAmount
-    ) external returns (uint256 newLPValue, uint256 newAccumulator);
-
-    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
-
-    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
-
-    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
-
-    function initializeLP() external;
-
-    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
-    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
+                // "Gosper's hack"
+                uint256 c = comb & uint256(-int256(comb));
+                uint256 r = comb + c;
+                comb = (((r ^ comb) >> 2) / c) | r;
+            }
+            assert(count == choose(n, k));
+        }
+    }
 }
 //SPDX-License-Identifier: UNLICENSED
 
@@ -2892,75 +2926,41 @@ interface IScaledEntropyProvider {
         returns (uint64 requestId);
     function getFee(uint32 _gasLimit) external view returns (uint256);
 }
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8;
+//SPDX-License-Identifier: UNLICENSED
 
-import { LibBit } from "solady/src/utils/LibBit.sol";
+pragma solidity ^0.8.28;
 
-library Combinations {
-    uint256 constant UINT256_BIT_WIDTH = 256;
-    /// @notice Compute number of combinations of size k from a set of n
-    /// @param n Size of set to choose from
-    /// @param k Size of subsets to choose
-    function choose(
-        uint256 n,
-        uint256 k
-    ) internal pure returns (uint256 result) {
-        assert(n >= k);
-        assert(n <= 128); // Artificial limit to avoid overflow
-        // "How to calculate binomial coefficients"
-        // From: https://blog.plover.com/math/choose.html
-        // This algorithm computes multiplication and division in alternation
-        // to avoid overflow as much as possible.
-        unchecked {
-            uint256 out = 1;
-            for (uint256 d = 1; d <= k; ++d) {
-                out *= n--;
-                out /= d;
-            }
-            return out;
-        }
+interface IJackpotLPManager {
+
+    struct LPDrawingState {
+        uint256 lpPoolTotal;
+        uint256 pendingDeposits;
+        uint256 pendingWithdrawals;
     }
 
-    /// @notice Generate all possible subsets of size k from a bit vector.
-    /// @param set Bit vector to generate subsets from
-    /// @param k Size of subsets to generate
-    function generateSubsets(
-        uint256 set,
-        uint256 k
-    ) internal pure returns (uint256[] memory subsets) {
-        unchecked {
-            uint256 n = LibBit.popCount(set);
-            assert(k <= n);
-            subsets = new uint256[](choose(n, k));
+    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
 
-            uint256 bound = 1 << n;
-            uint256 comb = (1 << k) - 1;
-            uint256 count;
-            while (comb < bound) {
-                uint256 mapped;
-                uint256 _set = set;
-                uint256 _comb = comb;
-                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
-                    if (_set & 1 == 1) {
-                        if (_comb & 1 == 1) {
-                            mapped |= (1 << i);
-                        }
-                        _comb >>= 1;
-                    }
-                    _set >>= 1;
-                }
+    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
 
-                subsets[count++] = mapped;
+    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
 
-                // "Gosper's hack"
-                uint256 c = comb & uint256(-int256(comb));
-                uint256 r = comb + c;
-                comb = (((r ^ comb) >> 2) / c) | r;
-            }
-            assert(count == choose(n, k));
-        }
-    }
+    function processDrawingSettlement(
+        uint256 _drawingId,
+        uint256 _lpEarnings,
+        uint256 _userWinnings,
+        uint256 _protocolFeeAmount
+    ) external returns (uint256 newLPValue, uint256 newAccumulator);
+
+    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
+
+    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
+
+    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
+
+    function initializeLP() external;
+
+    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
+    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
 }
 //SPDX-License-Identifier: UNLICENSED
 
@@ -3511,6 +3511,347 @@ For licensing inquiries: legal@coordinationlabs.com
 
 pragma solidity ^0.8.28;
 
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
+import { IEntropyV2 } from "@pythnetwork/entropy-sdk-solidity/IEntropyV2.sol";
+
+import { FisherYatesRejection } from "./lib/FisherYatesWithRejection.sol";
+import { IScaledEntropyProvider } from "./interfaces/IScaledEntropyProvider.sol";
+
+/**
+ * @title ScaledEntropyProvider
+ * @notice Provides scaled random number generation using Pyth Network entropy with callback functionality
+ * @dev Integrates with Pyth Network's entropy service to generate cryptographically secure random numbers:
+ *      - Handles entropy requests with custom scaling and range parameters
+ *      - Supports both sampling with and without replacement using Fisher-Yates algorithm
+ *      - Provides callback mechanism for asynchronous random number delivery
+ *      - Implements unbiased rejection sampling to prevent modulo bias
+ *      - Manages fee payments to entropy providers
+ *      - Stores pending requests and validates callback execution
+ */
+contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsumer {
+    // =============================================================
+    //                           STRUCTS
+    // =============================================================
+    struct PendingRequest {
+        address callback;
+        bytes4 selector;
+        bytes context;
+        bytes32 userRandomNumber;
+        SetRequest[] setRequests;
+    }
+
+    // =============================================================
+    //                           EVENTS
+    // =============================================================
+
+    event ScaledRandomnessDelivered(uint64 indexed sequence, address indexed callback, uint256 samples);
+    event EntropyFulfilled(uint64 indexed sequence, bytes32 randomNumber);
+
+    // =============================================================
+    //                           ERRORS
+    // =============================================================
+    error InvalidCallback();
+    error CallbackFailed(bytes4 selector);
+    error ZeroAddress();
+    error InvalidSelector();
+    error InvalidRequests();
+    error InvalidRange();
+    error InvalidSamples();
+    error InsufficientFee();
+    error UnknownSequence();
+
+    // =============================================================
+    //                       STATE VARIABLES
+    // =============================================================
+
+    IEntropyV2 private entropy;
+    address private entropyProvider;
+    mapping(uint64 => PendingRequest) private pending;
+
+    // =============================================================
+    //                         CONSTRUCTOR
+    // =============================================================
+    
+    /**
+     * @notice Initializes the ScaledEntropyProvider with Pyth Network entropy configuration
+     * @dev Sets up connections to Pyth Network entropy contract and provider.
+     *      Both addresses are validated and stored as immutable references.
+     * @param _entropy Address of the Pyth Network entropy contract
+     * @param _entropyProvider Address of the specific entropy provider to use
+     * @custom:requirements
+     * - Entropy contract address must not be zero
+     * - Entropy provider address must not be zero
+     * @custom:effects
+     * - Sets immutable entropy contract reference
+     * - Configures entropy provider for fee calculations
+     * - Sets deployer as contract owner
+     * @custom:security
+     * - Address validation prevents zero address configuration
+     * - Immutable references prevent unauthorized changes
+     * - Owner-based access control for administrative functions
+     */
+    constructor(address _entropy, address _entropyProvider) Ownable(msg.sender) {
+        if (_entropy == address(0)) revert ZeroAddress();
+        if (_entropyProvider == address(0)) revert ZeroAddress();
+        entropy = IEntropyV2(_entropy);
+        entropyProvider = _entropyProvider;
+    }
+
+    // =============================================================
+    //                      EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Requests scaled random numbers from Pyth Network with callback delivery
+     * @dev Submits entropy request to Pyth Network and stores callback details for async delivery.
+     *      The callback will receive scaled random numbers according to the specified requests. Developer
+     *      needs to ensure that the range is not too large to be able to build an array of the appropriate
+     *      size in memory in order to avoid out of gas errors during Fisher-Yates sampling.
+     *      IMPORTANT: The callback address is automatically set to msg.sender (the calling contract).
+     * @param _gasLimit Gas limit for the entropy callback execution
+     * @param _requests Array of SetRequest structs defining random number requirements
+     * @param _selector Function selector for the callback method on the calling contract
+     * @param _context Additional data to pass to the callback
+     * @return sequence Unique identifier for tracking this entropy request
+     * @custom:requirements
+     * - Calling contract (msg.sender) must implement the callback function
+     * - Provided fee (msg.value) must meet minimum requirements
+     * - Function selector must not be zero
+     * - All set requests must be valid (proper ranges and sample counts)
+     * @custom:emits None (events emitted in callback)
+     * @custom:effects
+     * - Submits entropy request to Pyth Network
+     * - Stores pending request details with msg.sender as callback address
+     * - Transfers fee to entropy provider
+     * @custom:security
+     * - Callback address is restricted to msg.sender preventing unauthorized callbacks
+     * - Fee validation ensures sufficient payment
+     * - Request validation prevents invalid random number generation
+     */
+    function requestAndCallbackScaledRandomness(
+        uint32 _gasLimit,
+        SetRequest[] memory _requests,
+        bytes4 _selector,
+        bytes memory _context
+    )
+        external
+        payable
+        returns (uint64 sequence)
+    {
+        // We assume that the caller has already checked that the fee is sufficient
+        if (msg.value < getFee(_gasLimit)) revert InsufficientFee();
+        if (_selector == bytes4(0)) revert InvalidSelector();
+        _validateRequests(_requests);
+
+        sequence = entropy.requestV2{value: msg.value}(entropyProvider, _gasLimit);
+        _storePendingRequest(sequence, _selector, _context, _requests);
+    }
+
+    /**
+     * @notice Returns the fee required for an entropy request with specified gas limit
+     * @dev Queries the Pyth Network entropy contract for current fee requirements.
+     *      Fee covers entropy generation and callback execution costs.
+     * @param _gasLimit Gas limit for the callback execution
+     * @return Fee amount in wei required for the entropy request
+     */
+    function getFee(uint32 _gasLimit) public view returns (uint256) {
+        return entropy.getFeeV2(entropyProvider, _gasLimit);
+    }
+
+    /**
+     * @notice Returns the address of the Pyth Network entropy contract
+     * @dev Provides access to the entropy contract address for integration purposes.
+     * @return Address of the entropy contract
+     */
+    function getEntropyContract() external view returns (address) {
+        return address(entropy);
+    }
+
+    /**
+     * @notice Returns the address of the currently configured entropy provider
+     * @dev Shows which entropy provider is being used for fee calculations and requests.
+     * @return Address of the entropy provider
+     */
+    function getEntropyProvider() external view returns (address) {
+        return entropyProvider;
+    }
+
+    /**
+     * @notice Returns the details of a pending entropy request
+     * @dev Retrieves stored request information for a specific sequence number.
+     *      Useful for debugging and monitoring pending requests.
+     * @param sequence Unique identifier of the entropy request
+     * @return PendingRequest struct containing callback details and request parameters
+     */
+    function getPendingRequest(uint64 sequence) external view returns (PendingRequest memory) {
+        return pending[sequence];
+    }
+
+    // =============================================================
+    //                      ADMIN FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Updates the entropy provider address
+     * @dev Changes which entropy provider is used for fee calculations and requests.
+     *      Only affects future requests, not pending ones.
+     * @param _entropyProvider New entropy provider address
+     * @custom:requirements
+     * - Only owner can call
+     * - Provider address must not be zero
+     * @custom:emits None
+     * @custom:effects
+     * - Updates entropy provider for future requests
+     * - Changes fee calculations for new requests
+     * @custom:security
+     * - Owner-only access restriction
+     * - Zero address validation
+     */
+    function setEntropyProvider(address _entropyProvider) external onlyOwner {
+        if (_entropyProvider == address(0)) revert ZeroAddress();
+        entropyProvider = _entropyProvider;
+    }
+
+    // =============================================================
+    //                      INTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Processes entropy callback from Pyth Network and delivers scaled random numbers
+     * @dev Called by Pyth Network when entropy is available. Processes the raw entropy into scaled
+     *      random numbers according to stored request parameters and delivers via callback.
+     *      This is the core function that bridges Pyth entropy with application-specific randomness.
+     * @param sequence Unique identifier for the entropy request
+     * @param randomNumber Raw entropy value from Pyth Network (provider parameter ignored)
+     * @custom:requirements
+     * - Sequence must correspond to a valid pending request
+     * - Callback execution must succeed
+     * - Only called by Pyth Network entropy contract
+     * @custom:emits EntropyFulfilled with sequence and raw random number
+     * @custom:emits ScaledRandomnessDelivered with sequence, callback address, and sample count
+     * @custom:effects
+     * - Retrieves and deletes pending request data
+     * - Generates scaled random numbers using Fisher-Yates or replacement sampling
+     * - Executes callback with scaled results and original context
+     * - Cleans up pending request storage
+     * @custom:security
+     * - Validates sequence corresponds to pending request
+     * - Ensures callback execution succeeds before cleanup
+     * - Uses unbiased sampling methods to prevent statistical attacks
+     * - Immediate cleanup prevents replay attacks
+     */
+    function entropyCallback(uint64 sequence, address /*provider*/, bytes32 randomNumber) internal override {
+        PendingRequest memory req = pending[sequence];
+        if (req.callback == address(0)) revert UnknownSequence();
+        
+        delete pending[sequence];
+
+        uint256[][] memory scaledRandomNumbers = _getScaledRandomness(randomNumber, req.setRequests);
+        (bool success, ) = req.callback.call(abi.encodeWithSelector(req.selector, sequence, scaledRandomNumbers, req.context));
+        if (!success) revert CallbackFailed(req.selector);
+
+        emit EntropyFulfilled(sequence, randomNumber);
+        emit ScaledRandomnessDelivered(sequence, req.callback, scaledRandomNumbers.length);
+    }
+
+    function _getScaledRandomness(
+        bytes32 _randomNumber,
+        SetRequest[] memory _setRequests
+    )
+        internal
+        pure
+        returns (uint256[][] memory requestsOutputs)
+    {
+        requestsOutputs = new uint256[][](_setRequests.length);
+        
+        for (uint256 i = 0; i < _setRequests.length; i++) {
+            if (!_setRequests[i].withReplacement) {
+                requestsOutputs[i] = FisherYatesRejection.draw(
+                    _setRequests[i].minRange,
+                    _setRequests[i].maxRange,
+                    _setRequests[i].samples,
+                    uint256(_randomNumber)
+                );
+            } else {
+                requestsOutputs[i] = _drawWithReplacement(
+                    _setRequests[i].minRange,
+                    _setRequests[i].maxRange,
+                    _setRequests[i].samples,
+                    uint256(_randomNumber)
+                );
+            }
+        }
+    }
+
+    function getEntropy() internal view override returns (address) {
+        return address(entropy);
+    }
+
+    function _validateRequests(SetRequest[] memory _requests) internal pure {
+        if (_requests.length == 0) revert InvalidRequests();
+        for (uint256 i = 0; i < _requests.length; i++) {
+            if (_requests[i].minRange > _requests[i].maxRange) revert InvalidRange();
+            if (_requests[i].samples == 0) revert InvalidSamples();
+        }
+    }
+
+    function _storePendingRequest(
+        uint64 sequence,
+        bytes4 _selector,
+        bytes memory _context,
+        SetRequest[] memory _setRequests
+    ) internal {
+        pending[sequence].callback = msg.sender;
+        pending[sequence].selector = _selector;
+        pending[sequence].context = _context;
+        for (uint256 i = 0; i < _setRequests.length; i++) {
+            pending[sequence].setRequests.push(_setRequests[i]);
+        }
+    }
+
+    function _drawWithReplacement(
+        uint256 _minRange,
+        uint256 _maxRange,
+        uint8 _samples,
+        uint256 _randomNumber
+    ) internal pure returns (uint256[] memory) {
+        uint256[] memory result = new uint256[](_samples);
+        uint256 range = _maxRange - _minRange + 1;
+        uint256 nonce = 0;
+
+        for (uint256 i = 0; i < _samples; i++) {
+            uint256 rand;
+            while (true) {
+                rand = uint256(keccak256(abi.encode(_randomNumber, nonce)));
+                uint256 limit = (type(uint256).max / range) * range;
+
+                if (rand < limit) {
+                    result[i] = uint256((rand % range) + _minRange); // [1..range]
+                    break;
+                }
+                nonce++;
+            }
+            nonce++;
+        }
+
+        return result;
+    }
+}
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -4037,347 +4378,6 @@ contract JackpotLPManager is IJackpotLPManager, Ownable {
     }
 }
 
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
-import { IEntropyV2 } from "@pythnetwork/entropy-sdk-solidity/IEntropyV2.sol";
-
-import { FisherYatesRejection } from "./lib/FisherYatesWithRejection.sol";
-import { IScaledEntropyProvider } from "./interfaces/IScaledEntropyProvider.sol";
-
-/**
- * @title ScaledEntropyProvider
- * @notice Provides scaled random number generation using Pyth Network entropy with callback functionality
- * @dev Integrates with Pyth Network's entropy service to generate cryptographically secure random numbers:
- *      - Handles entropy requests with custom scaling and range parameters
- *      - Supports both sampling with and without replacement using Fisher-Yates algorithm
- *      - Provides callback mechanism for asynchronous random number delivery
- *      - Implements unbiased rejection sampling to prevent modulo bias
- *      - Manages fee payments to entropy providers
- *      - Stores pending requests and validates callback execution
- */
-contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsumer {
-    // =============================================================
-    //                           STRUCTS
-    // =============================================================
-    struct PendingRequest {
-        address callback;
-        bytes4 selector;
-        bytes context;
-        bytes32 userRandomNumber;
-        SetRequest[] setRequests;
-    }
-
-    // =============================================================
-    //                           EVENTS
-    // =============================================================
-
-    event ScaledRandomnessDelivered(uint64 indexed sequence, address indexed callback, uint256 samples);
-    event EntropyFulfilled(uint64 indexed sequence, bytes32 randomNumber);
-
-    // =============================================================
-    //                           ERRORS
-    // =============================================================
-    error InvalidCallback();
-    error CallbackFailed(bytes4 selector);
-    error ZeroAddress();
-    error InvalidSelector();
-    error InvalidRequests();
-    error InvalidRange();
-    error InvalidSamples();
-    error InsufficientFee();
-    error UnknownSequence();
-
-    // =============================================================
-    //                       STATE VARIABLES
-    // =============================================================
-
-    IEntropyV2 private entropy;
-    address private entropyProvider;
-    mapping(uint64 => PendingRequest) private pending;
-
-    // =============================================================
-    //                         CONSTRUCTOR
-    // =============================================================
-    
-    /**
-     * @notice Initializes the ScaledEntropyProvider with Pyth Network entropy configuration
-     * @dev Sets up connections to Pyth Network entropy contract and provider.
-     *      Both addresses are validated and stored as immutable references.
-     * @param _entropy Address of the Pyth Network entropy contract
-     * @param _entropyProvider Address of the specific entropy provider to use
-     * @custom:requirements
-     * - Entropy contract address must not be zero
-     * - Entropy provider address must not be zero
-     * @custom:effects
-     * - Sets immutable entropy contract reference
-     * - Configures entropy provider for fee calculations
-     * - Sets deployer as contract owner
-     * @custom:security
-     * - Address validation prevents zero address configuration
-     * - Immutable references prevent unauthorized changes
-     * - Owner-based access control for administrative functions
-     */
-    constructor(address _entropy, address _entropyProvider) Ownable(msg.sender) {
-        if (_entropy == address(0)) revert ZeroAddress();
-        if (_entropyProvider == address(0)) revert ZeroAddress();
-        entropy = IEntropyV2(_entropy);
-        entropyProvider = _entropyProvider;
-    }
-
-    // =============================================================
-    //                      EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Requests scaled random numbers from Pyth Network with callback delivery
-     * @dev Submits entropy request to Pyth Network and stores callback details for async delivery.
-     *      The callback will receive scaled random numbers according to the specified requests. Developer
-     *      needs to ensure that the range is not too large to be able to build an array of the appropriate
-     *      size in memory in order to avoid out of gas errors during Fisher-Yates sampling.
-     *      IMPORTANT: The callback address is automatically set to msg.sender (the calling contract).
-     * @param _gasLimit Gas limit for the entropy callback execution
-     * @param _requests Array of SetRequest structs defining random number requirements
-     * @param _selector Function selector for the callback method on the calling contract
-     * @param _context Additional data to pass to the callback
-     * @return sequence Unique identifier for tracking this entropy request
-     * @custom:requirements
-     * - Calling contract (msg.sender) must implement the callback function
-     * - Provided fee (msg.value) must meet minimum requirements
-     * - Function selector must not be zero
-     * - All set requests must be valid (proper ranges and sample counts)
-     * @custom:emits None (events emitted in callback)
-     * @custom:effects
-     * - Submits entropy request to Pyth Network
-     * - Stores pending request details with msg.sender as callback address
-     * - Transfers fee to entropy provider
-     * @custom:security
-     * - Callback address is restricted to msg.sender preventing unauthorized callbacks
-     * - Fee validation ensures sufficient payment
-     * - Request validation prevents invalid random number generation
-     */
-    function requestAndCallbackScaledRandomness(
-        uint32 _gasLimit,
-        SetRequest[] memory _requests,
-        bytes4 _selector,
-        bytes memory _context
-    )
-        external
-        payable
-        returns (uint64 sequence)
-    {
-        // We assume that the caller has already checked that the fee is sufficient
-        if (msg.value < getFee(_gasLimit)) revert InsufficientFee();
-        if (_selector == bytes4(0)) revert InvalidSelector();
-        _validateRequests(_requests);
-
-        sequence = entropy.requestV2{value: msg.value}(entropyProvider, _gasLimit);
-        _storePendingRequest(sequence, _selector, _context, _requests);
-    }
-
-    /**
-     * @notice Returns the fee required for an entropy request with specified gas limit
-     * @dev Queries the Pyth Network entropy contract for current fee requirements.
-     *      Fee covers entropy generation and callback execution costs.
-     * @param _gasLimit Gas limit for the callback execution
-     * @return Fee amount in wei required for the entropy request
-     */
-    function getFee(uint32 _gasLimit) public view returns (uint256) {
-        return entropy.getFeeV2(entropyProvider, _gasLimit);
-    }
-
-    /**
-     * @notice Returns the address of the Pyth Network entropy contract
-     * @dev Provides access to the entropy contract address for integration purposes.
-     * @return Address of the entropy contract
-     */
-    function getEntropyContract() external view returns (address) {
-        return address(entropy);
-    }
-
-    /**
-     * @notice Returns the address of the currently configured entropy provider
-     * @dev Shows which entropy provider is being used for fee calculations and requests.
-     * @return Address of the entropy provider
-     */
-    function getEntropyProvider() external view returns (address) {
-        return entropyProvider;
-    }
-
-    /**
-     * @notice Returns the details of a pending entropy request
-     * @dev Retrieves stored request information for a specific sequence number.
-     *      Useful for debugging and monitoring pending requests.
-     * @param sequence Unique identifier of the entropy request
-     * @return PendingRequest struct containing callback details and request parameters
-     */
-    function getPendingRequest(uint64 sequence) external view returns (PendingRequest memory) {
-        return pending[sequence];
-    }
-
-    // =============================================================
-    //                      ADMIN FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Updates the entropy provider address
-     * @dev Changes which entropy provider is used for fee calculations and requests.
-     *      Only affects future requests, not pending ones.
-     * @param _entropyProvider New entropy provider address
-     * @custom:requirements
-     * - Only owner can call
-     * - Provider address must not be zero
-     * @custom:emits None
-     * @custom:effects
-     * - Updates entropy provider for future requests
-     * - Changes fee calculations for new requests
-     * @custom:security
-     * - Owner-only access restriction
-     * - Zero address validation
-     */
-    function setEntropyProvider(address _entropyProvider) external onlyOwner {
-        if (_entropyProvider == address(0)) revert ZeroAddress();
-        entropyProvider = _entropyProvider;
-    }
-
-    // =============================================================
-    //                      INTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Processes entropy callback from Pyth Network and delivers scaled random numbers
-     * @dev Called by Pyth Network when entropy is available. Processes the raw entropy into scaled
-     *      random numbers according to stored request parameters and delivers via callback.
-     *      This is the core function that bridges Pyth entropy with application-specific randomness.
-     * @param sequence Unique identifier for the entropy request
-     * @param randomNumber Raw entropy value from Pyth Network (provider parameter ignored)
-     * @custom:requirements
-     * - Sequence must correspond to a valid pending request
-     * - Callback execution must succeed
-     * - Only called by Pyth Network entropy contract
-     * @custom:emits EntropyFulfilled with sequence and raw random number
-     * @custom:emits ScaledRandomnessDelivered with sequence, callback address, and sample count
-     * @custom:effects
-     * - Retrieves and deletes pending request data
-     * - Generates scaled random numbers using Fisher-Yates or replacement sampling
-     * - Executes callback with scaled results and original context
-     * - Cleans up pending request storage
-     * @custom:security
-     * - Validates sequence corresponds to pending request
-     * - Ensures callback execution succeeds before cleanup
-     * - Uses unbiased sampling methods to prevent statistical attacks
-     * - Immediate cleanup prevents replay attacks
-     */
-    function entropyCallback(uint64 sequence, address /*provider*/, bytes32 randomNumber) internal override {
-        PendingRequest memory req = pending[sequence];
-        if (req.callback == address(0)) revert UnknownSequence();
-        
-        delete pending[sequence];
-
-        uint256[][] memory scaledRandomNumbers = _getScaledRandomness(randomNumber, req.setRequests);
-        (bool success, ) = req.callback.call(abi.encodeWithSelector(req.selector, sequence, scaledRandomNumbers, req.context));
-        if (!success) revert CallbackFailed(req.selector);
-
-        emit EntropyFulfilled(sequence, randomNumber);
-        emit ScaledRandomnessDelivered(sequence, req.callback, scaledRandomNumbers.length);
-    }
-
-    function _getScaledRandomness(
-        bytes32 _randomNumber,
-        SetRequest[] memory _setRequests
-    )
-        internal
-        pure
-        returns (uint256[][] memory requestsOutputs)
-    {
-        requestsOutputs = new uint256[][](_setRequests.length);
-        
-        for (uint256 i = 0; i < _setRequests.length; i++) {
-            if (!_setRequests[i].withReplacement) {
-                requestsOutputs[i] = FisherYatesRejection.draw(
-                    _setRequests[i].minRange,
-                    _setRequests[i].maxRange,
-                    _setRequests[i].samples,
-                    uint256(_randomNumber)
-                );
-            } else {
-                requestsOutputs[i] = _drawWithReplacement(
-                    _setRequests[i].minRange,
-                    _setRequests[i].maxRange,
-                    _setRequests[i].samples,
-                    uint256(_randomNumber)
-                );
-            }
-        }
-    }
-
-    function getEntropy() internal view override returns (address) {
-        return address(entropy);
-    }
-
-    function _validateRequests(SetRequest[] memory _requests) internal pure {
-        if (_requests.length == 0) revert InvalidRequests();
-        for (uint256 i = 0; i < _requests.length; i++) {
-            if (_requests[i].minRange > _requests[i].maxRange) revert InvalidRange();
-            if (_requests[i].samples == 0) revert InvalidSamples();
-        }
-    }
-
-    function _storePendingRequest(
-        uint64 sequence,
-        bytes4 _selector,
-        bytes memory _context,
-        SetRequest[] memory _setRequests
-    ) internal {
-        pending[sequence].callback = msg.sender;
-        pending[sequence].selector = _selector;
-        pending[sequence].context = _context;
-        for (uint256 i = 0; i < _setRequests.length; i++) {
-            pending[sequence].setRequests.push(_setRequests[i]);
-        }
-    }
-
-    function _drawWithReplacement(
-        uint256 _minRange,
-        uint256 _maxRange,
-        uint8 _samples,
-        uint256 _randomNumber
-    ) internal pure returns (uint256[] memory) {
-        uint256[] memory result = new uint256[](_samples);
-        uint256 range = _maxRange - _minRange + 1;
-        uint256 nonce = 0;
-
-        for (uint256 i = 0; i < _samples; i++) {
-            uint256 rand;
-            while (true) {
-                rand = uint256(keccak256(abi.encode(_randomNumber, nonce)));
-                uint256 limit = (type(uint256).max / range) * range;
-
-                if (rand < limit) {
-                    result[i] = uint256((rand % range) + _minRange); // [1..range]
-                    break;
-                }
-                nonce++;
-            }
-            nonce++;
-        }
-
-        return result;
-    }
-}
 
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 

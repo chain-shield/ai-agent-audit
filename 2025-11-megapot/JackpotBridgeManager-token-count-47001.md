@@ -2424,213 +2424,6 @@ interface IJackpot {
 
 /*
 Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-import { ERC721 } from "solady/src/tokens/ERC721.sol";
-
-import { IJackpot } from "./interfaces/IJackpot.sol";
-import { IJackpotTicketNFT } from "./interfaces/IJackpotTicketNFT.sol";
-
-
-/**
- * @title JackpotTicketNFT
- * @notice ERC-721 implementation for jackpot tickets with tracking and transfer functionality
- * @dev Implements jackpot tickets as transferable NFTs with:
- *      - Packed ticket number storage for efficient gas usage
- *      - User ticket tracking per drawing for easy querying
- *      - Referral scheme association for winnings distribution
- *      - Automatic ticket list management on transfers
- *      - Integration with Jackpot contract for minting and burning
- */
-contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
-
-    // =============================================================
-    //                           STRUCTS
-    // =============================================================
-    struct UserTickets {
-        uint256 totalTicketsBought;
-        mapping(uint256 => uint256) ticketIds;
-        mapping(uint256 => uint256) indexOfTicketId;
-    }
-
-    // =============================================================
-    //                       ERRORS
-    // =============================================================
-
-    error UnauthorizedCaller();
-
-    // =============================================================
-    //                       STATE VARIABLES
-    // =============================================================
-
-    // User and ticket mappings
-    mapping(address => mapping(uint256 => UserTickets)) internal userTickets; // user address => drawing => UserTickets
-    mapping(uint256 => TrackedTicket) public tickets; // ticketId → ticket info
-
-    IJackpot public immutable jackpot;
-
-    // =============================================================
-    //                       MODIFIERS
-    // =============================================================
-
-    modifier onlyJackpot() {
-        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
-        _;
-    }
-
-    // =============================================================
-    //                       CONSTRUCTOR
-    // =============================================================
-
-    /**
-     * @notice Initializes the JackpotTicketNFT with the Jackpot contract reference
-     * @dev Sets up the connection to the main Jackpot contract that will mint and burn tickets
-     * @param _jackpot Address of the main Jackpot contract
-     * @custom:effects
-     * - Sets jackpot contract reference as immutable
-     * - Inherits ERC721 functionality for NFT operations
-     * @custom:security
-     * - Immutable jackpot reference prevents unauthorized contract changes
-     */
-    constructor(IJackpot _jackpot) {
-        jackpot = _jackpot;
-    }
-
-    // =============================================================
-    //                       EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Mints a new ticket NFT with jackpot information
-     * @dev Creates an ERC-721 token representing a jackpot ticket with embedded metadata.
-     *      Automatically adds ticket to user's ticket list for the drawing.
-     * @param _recipient Address to receive the minted ticket
-     * @param _ticketId Unique identifier for the ticket (used as token ID)
-     * @param _drawingId Drawing the ticket is for
-     * @param _packedTicket Packed ticket numbers (normal numbers + bonusball)
-     * @param _referralScheme Hash of referral scheme used for this ticket
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - Ticket ID must be unique (ERC721 enforces this)
-     * - Recipient address must not be zero (ERC721 enforces this)
-     * @custom:emits Transfer (ERC-721 standard)
-     * @custom:effects
-     * - Mints ERC-721 token to specified address
-     * - Stores ticket metadata in contract storage
-     * - Adds ticket to user's ticket list via _afterTokenTransfer
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Unique ticket ID enforcement via ERC721
-     * - Automatic user ticket tracking
-     */
-    function mintTicket(
-        address _recipient,
-        uint256 _ticketId,
-        uint256 _drawingId,
-        uint256 _packedTicket,
-        bytes32 _referralScheme
-    ) external onlyJackpot {
-        tickets[_ticketId] = TrackedTicket({
-            drawingId: _drawingId,
-            packedTicket: _packedTicket,
-            referralScheme: _referralScheme
-        });
-
-        _mint(_recipient, _ticketId);
-    }
-
-    function burnTicket(uint256 _ticketId) external onlyJackpot {
-        _burn(_ticketId);
-    }
-
-    // =============================================================
-    //                       VIEW FUNCTIONS
-    // =============================================================
-
-    function getUserTickets(address _userAddress, uint256 _drawingId) external view returns (ExtendedTrackedTicket[] memory) {
-        UserTickets storage userDrawingTickets = userTickets[_userAddress][_drawingId];
-        ExtendedTrackedTicket[] memory userTicketsList = new ExtendedTrackedTicket[](userDrawingTickets.totalTicketsBought);
-        for (uint256 i = 0; i < userDrawingTickets.totalTicketsBought; i++) {
-            uint256 ticketId = userDrawingTickets.ticketIds[i];
-            userTicketsList[i] = _getExtendedTicketInfo(ticketId);
-        }
-        return userTicketsList;
-    }
-
-    function getTicketInfo(uint256 _ticketId) external view returns (TrackedTicket memory) {
-        return tickets[_ticketId];
-    }
-
-    function getExtendedTicketInfo(uint256 _ticketId) external view returns (ExtendedTrackedTicket memory) {
-        return _getExtendedTicketInfo(_ticketId);
-    }
-    
-    function name() public pure override returns (string memory) {
-        return "Jackpot";
-    }
-
-    function symbol() public pure override returns (string memory) {
-        return "JACKPOT";
-    }
-
-    function tokenURI(uint256 /* tokenId */) public pure override returns (string memory) {
-        return "";
-    }
-
-    // =============================================================
-    //                       INTERNAL FUNCTIONS
-    // =============================================================
-
-    function _beforeTokenTransfer(address _from, address /* _to */, uint256 _tokenId) internal override {
-        if (_from != address(0)) {
-            TrackedTicket memory ticketInfo = tickets[_tokenId];
-            UserTickets storage fromTickets = userTickets[_from][ticketInfo.drawingId];
-            uint256 idx = fromTickets.indexOfTicketId[_tokenId];
-            uint256 lastIdx = fromTickets.totalTicketsBought - 1;
-            if (idx != lastIdx) {
-                uint256 swapId = fromTickets.ticketIds[lastIdx];
-                fromTickets.ticketIds[idx] = swapId;
-                fromTickets.indexOfTicketId[swapId] = idx;
-            }
-            delete fromTickets.ticketIds[lastIdx];
-            delete fromTickets.indexOfTicketId[_tokenId];
-            fromTickets.totalTicketsBought -= 1;
-        }
-    }
-
-    function _afterTokenTransfer(address /* _from */, address _to, uint256 _tokenId) internal override {
-        if (_to != address(0)) {
-            TrackedTicket memory ticketInfo = tickets[_tokenId];
-            UserTickets storage toTickets = userTickets[_to][ticketInfo.drawingId];
-            uint256 newIdx = toTickets.totalTicketsBought;
-            toTickets.ticketIds[newIdx] = _tokenId;
-            toTickets.indexOfTicketId[_tokenId] = newIdx;
-            toTickets.totalTicketsBought += 1;
-        }
-    }
-
-    function _getExtendedTicketInfo(uint256 _ticketId) internal view returns (ExtendedTrackedTicket memory) {
-        (uint8[] memory normals, uint8 bonusball) = jackpot.getUnpackedTicket(tickets[_ticketId].drawingId, tickets[_ticketId].packedTicket);
-        return ExtendedTrackedTicket({
-            ticketId: _ticketId,
-            ticket: tickets[_ticketId],
-            normals: normals,
-            bonusball: bonusball
-        });
-    }
-}
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
 Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
 
 Change Date: 2029-12-01
@@ -2998,74 +2791,213 @@ library TicketComboTracker {
         bonusball = uint8(LibBit.fls(_packedTicket) - _normalMax);
     }
 }
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
+//SPDX-License-Identifier: UNLICENSED
 
-pragma solidity ^0.8.20;
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
 
-import {Ownable} from "./Ownable.sol";
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+import { ERC721 } from "solady/src/tokens/ERC721.sol";
+
+import { IJackpot } from "./interfaces/IJackpot.sol";
+import { IJackpotTicketNFT } from "./interfaces/IJackpotTicketNFT.sol";
+
 
 /**
- * @dev Contract module which provides access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * This extension of the {Ownable} contract includes a two-step mechanism to transfer
- * ownership, where the new owner must call {acceptOwnership} in order to replace the
- * old one. This can help prevent common mistakes, such as transfers of ownership to
- * incorrect accounts, or to contracts that are unable to interact with the
- * permission system.
- *
- * The initial owner is specified at deployment time in the constructor for `Ownable`. This
- * can later be changed with {transferOwnership} and {acceptOwnership}.
- *
- * This module is used through inheritance. It will make available all functions
- * from parent (Ownable).
+ * @title JackpotTicketNFT
+ * @notice ERC-721 implementation for jackpot tickets with tracking and transfer functionality
+ * @dev Implements jackpot tickets as transferable NFTs with:
+ *      - Packed ticket number storage for efficient gas usage
+ *      - User ticket tracking per drawing for easy querying
+ *      - Referral scheme association for winnings distribution
+ *      - Automatic ticket list management on transfers
+ *      - Integration with Jackpot contract for minting and burning
  */
-abstract contract Ownable2Step is Ownable {
-    address private _pendingOwner;
+contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
 
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Returns the address of the pending owner.
-     */
-    function pendingOwner() public view virtual returns (address) {
-        return _pendingOwner;
+    // =============================================================
+    //                           STRUCTS
+    // =============================================================
+    struct UserTickets {
+        uint256 totalTicketsBought;
+        mapping(uint256 => uint256) ticketIds;
+        mapping(uint256 => uint256) indexOfTicketId;
     }
 
-    /**
-     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
-     * Can only be called by the current owner.
-     *
-     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
-     */
-    function transferOwnership(address newOwner) public virtual override onlyOwner {
-        _pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner(), newOwner);
+    // =============================================================
+    //                       ERRORS
+    // =============================================================
+
+    error UnauthorizedCaller();
+
+    // =============================================================
+    //                       STATE VARIABLES
+    // =============================================================
+
+    // User and ticket mappings
+    mapping(address => mapping(uint256 => UserTickets)) internal userTickets; // user address => drawing => UserTickets
+    mapping(uint256 => TrackedTicket) public tickets; // ticketId → ticket info
+
+    IJackpot public immutable jackpot;
+
+    // =============================================================
+    //                       MODIFIERS
+    // =============================================================
+
+    modifier onlyJackpot() {
+        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
+        _;
     }
 
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual override {
-        delete _pendingOwner;
-        super._transferOwnership(newOwner);
-    }
+    // =============================================================
+    //                       CONSTRUCTOR
+    // =============================================================
 
     /**
-     * @dev The new owner accepts the ownership transfer.
+     * @notice Initializes the JackpotTicketNFT with the Jackpot contract reference
+     * @dev Sets up the connection to the main Jackpot contract that will mint and burn tickets
+     * @param _jackpot Address of the main Jackpot contract
+     * @custom:effects
+     * - Sets jackpot contract reference as immutable
+     * - Inherits ERC721 functionality for NFT operations
+     * @custom:security
+     * - Immutable jackpot reference prevents unauthorized contract changes
      */
-    function acceptOwnership() public virtual {
-        address sender = _msgSender();
-        if (pendingOwner() != sender) {
-            revert OwnableUnauthorizedAccount(sender);
+    constructor(IJackpot _jackpot) {
+        jackpot = _jackpot;
+    }
+
+    // =============================================================
+    //                       EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Mints a new ticket NFT with jackpot information
+     * @dev Creates an ERC-721 token representing a jackpot ticket with embedded metadata.
+     *      Automatically adds ticket to user's ticket list for the drawing.
+     * @param _recipient Address to receive the minted ticket
+     * @param _ticketId Unique identifier for the ticket (used as token ID)
+     * @param _drawingId Drawing the ticket is for
+     * @param _packedTicket Packed ticket numbers (normal numbers + bonusball)
+     * @param _referralScheme Hash of referral scheme used for this ticket
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - Ticket ID must be unique (ERC721 enforces this)
+     * - Recipient address must not be zero (ERC721 enforces this)
+     * @custom:emits Transfer (ERC-721 standard)
+     * @custom:effects
+     * - Mints ERC-721 token to specified address
+     * - Stores ticket metadata in contract storage
+     * - Adds ticket to user's ticket list via _afterTokenTransfer
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Unique ticket ID enforcement via ERC721
+     * - Automatic user ticket tracking
+     */
+    function mintTicket(
+        address _recipient,
+        uint256 _ticketId,
+        uint256 _drawingId,
+        uint256 _packedTicket,
+        bytes32 _referralScheme
+    ) external onlyJackpot {
+        tickets[_ticketId] = TrackedTicket({
+            drawingId: _drawingId,
+            packedTicket: _packedTicket,
+            referralScheme: _referralScheme
+        });
+
+        _mint(_recipient, _ticketId);
+    }
+
+    function burnTicket(uint256 _ticketId) external onlyJackpot {
+        _burn(_ticketId);
+    }
+
+    // =============================================================
+    //                       VIEW FUNCTIONS
+    // =============================================================
+
+    function getUserTickets(address _userAddress, uint256 _drawingId) external view returns (ExtendedTrackedTicket[] memory) {
+        UserTickets storage userDrawingTickets = userTickets[_userAddress][_drawingId];
+        ExtendedTrackedTicket[] memory userTicketsList = new ExtendedTrackedTicket[](userDrawingTickets.totalTicketsBought);
+        for (uint256 i = 0; i < userDrawingTickets.totalTicketsBought; i++) {
+            uint256 ticketId = userDrawingTickets.ticketIds[i];
+            userTicketsList[i] = _getExtendedTicketInfo(ticketId);
         }
-        _transferOwnership(sender);
+        return userTicketsList;
+    }
+
+    function getTicketInfo(uint256 _ticketId) external view returns (TrackedTicket memory) {
+        return tickets[_ticketId];
+    }
+
+    function getExtendedTicketInfo(uint256 _ticketId) external view returns (ExtendedTrackedTicket memory) {
+        return _getExtendedTicketInfo(_ticketId);
+    }
+    
+    function name() public pure override returns (string memory) {
+        return "Jackpot";
+    }
+
+    function symbol() public pure override returns (string memory) {
+        return "JACKPOT";
+    }
+
+    function tokenURI(uint256 /* tokenId */) public pure override returns (string memory) {
+        return "";
+    }
+
+    // =============================================================
+    //                       INTERNAL FUNCTIONS
+    // =============================================================
+
+    function _beforeTokenTransfer(address _from, address /* _to */, uint256 _tokenId) internal override {
+        if (_from != address(0)) {
+            TrackedTicket memory ticketInfo = tickets[_tokenId];
+            UserTickets storage fromTickets = userTickets[_from][ticketInfo.drawingId];
+            uint256 idx = fromTickets.indexOfTicketId[_tokenId];
+            uint256 lastIdx = fromTickets.totalTicketsBought - 1;
+            if (idx != lastIdx) {
+                uint256 swapId = fromTickets.ticketIds[lastIdx];
+                fromTickets.ticketIds[idx] = swapId;
+                fromTickets.indexOfTicketId[swapId] = idx;
+            }
+            delete fromTickets.ticketIds[lastIdx];
+            delete fromTickets.indexOfTicketId[_tokenId];
+            fromTickets.totalTicketsBought -= 1;
+        }
+    }
+
+    function _afterTokenTransfer(address /* _from */, address _to, uint256 _tokenId) internal override {
+        if (_to != address(0)) {
+            TrackedTicket memory ticketInfo = tickets[_tokenId];
+            UserTickets storage toTickets = userTickets[_to][ticketInfo.drawingId];
+            uint256 newIdx = toTickets.totalTicketsBought;
+            toTickets.ticketIds[newIdx] = _tokenId;
+            toTickets.indexOfTicketId[_tokenId] = newIdx;
+            toTickets.totalTicketsBought += 1;
+        }
+    }
+
+    function _getExtendedTicketInfo(uint256 _ticketId) internal view returns (ExtendedTrackedTicket memory) {
+        (uint8[] memory normals, uint8 bonusball) = jackpot.getUnpackedTicket(tickets[_ticketId].drawingId, tickets[_ticketId].packedTicket);
+        return ExtendedTrackedTicket({
+            ticketId: _ticketId,
+            ticket: tickets[_ticketId],
+            normals: normals,
+            bonusball: bonusball
+        });
     }
 }
-
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
 
@@ -3160,133 +3092,73 @@ interface IJackpotTicketNFT {
     function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
 }
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8;
+// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
 
-import { LibBit } from "solady/src/utils/LibBit.sol";
+pragma solidity ^0.8.20;
 
-library Combinations {
-    uint256 constant UINT256_BIT_WIDTH = 256;
-    /// @notice Compute number of combinations of size k from a set of n
-    /// @param n Size of set to choose from
-    /// @param k Size of subsets to choose
-    function choose(
-        uint256 n,
-        uint256 k
-    ) internal pure returns (uint256 result) {
-        assert(n >= k);
-        assert(n <= 128); // Artificial limit to avoid overflow
-        // "How to calculate binomial coefficients"
-        // From: https://blog.plover.com/math/choose.html
-        // This algorithm computes multiplication and division in alternation
-        // to avoid overflow as much as possible.
-        unchecked {
-            uint256 out = 1;
-            for (uint256 d = 1; d <= k; ++d) {
-                out *= n--;
-                out /= d;
-            }
-            return out;
+import {Ownable} from "./Ownable.sol";
+
+/**
+ * @dev Contract module which provides access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * This extension of the {Ownable} contract includes a two-step mechanism to transfer
+ * ownership, where the new owner must call {acceptOwnership} in order to replace the
+ * old one. This can help prevent common mistakes, such as transfers of ownership to
+ * incorrect accounts, or to contracts that are unable to interact with the
+ * permission system.
+ *
+ * The initial owner is specified at deployment time in the constructor for `Ownable`. This
+ * can later be changed with {transferOwnership} and {acceptOwnership}.
+ *
+ * This module is used through inheritance. It will make available all functions
+ * from parent (Ownable).
+ */
+abstract contract Ownable2Step is Ownable {
+    address private _pendingOwner;
+
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Returns the address of the pending owner.
+     */
+    function pendingOwner() public view virtual returns (address) {
+        return _pendingOwner;
+    }
+
+    /**
+     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
+     * Can only be called by the current owner.
+     *
+     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
+     */
+    function transferOwnership(address newOwner) public virtual override onlyOwner {
+        _pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner(), newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual override {
+        delete _pendingOwner;
+        super._transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev The new owner accepts the ownership transfer.
+     */
+    function acceptOwnership() public virtual {
+        address sender = _msgSender();
+        if (pendingOwner() != sender) {
+            revert OwnableUnauthorizedAccount(sender);
         }
-    }
-
-    /// @notice Generate all possible subsets of size k from a bit vector.
-    /// @param set Bit vector to generate subsets from
-    /// @param k Size of subsets to generate
-    function generateSubsets(
-        uint256 set,
-        uint256 k
-    ) internal pure returns (uint256[] memory subsets) {
-        unchecked {
-            uint256 n = LibBit.popCount(set);
-            assert(k <= n);
-            subsets = new uint256[](choose(n, k));
-
-            uint256 bound = 1 << n;
-            uint256 comb = (1 << k) - 1;
-            uint256 count;
-            while (comb < bound) {
-                uint256 mapped;
-                uint256 _set = set;
-                uint256 _comb = comb;
-                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
-                    if (_set & 1 == 1) {
-                        if (_comb & 1 == 1) {
-                            mapped |= (1 << i);
-                        }
-                        _comb >>= 1;
-                    }
-                    _set >>= 1;
-                }
-
-                subsets[count++] = mapped;
-
-                // "Gosper's hack"
-                uint256 c = comb & uint256(-int256(comb));
-                uint256 r = comb + c;
-                comb = (((r ^ comb) >> 2) / c) | r;
-            }
-            assert(count == choose(n, k));
-        }
+        _transferOwnership(sender);
     }
 }
-//SPDX-License-Identifier: UNLICENSED
 
-pragma solidity ^0.8.28;
-
-interface IScaledEntropyProvider {
-    struct SetRequest {
-        uint8 samples;
-        uint256 minRange;
-        uint256 maxRange;
-        bool withReplacement;
-    }
-    function requestAndCallbackScaledRandomness(
-        uint32 _gasLimit,
-        SetRequest[] memory _requests,
-        bytes4 _selector,
-        bytes memory _context
-    )
-        external
-        payable
-        returns (uint64 requestId);
-    function getFee(uint32 _gasLimit) external view returns (uint256);
-}
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpotLPManager {
-
-    struct LPDrawingState {
-        uint256 lpPoolTotal;
-        uint256 pendingDeposits;
-        uint256 pendingWithdrawals;
-    }
-
-    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
-
-    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
-
-    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
-
-    function processDrawingSettlement(
-        uint256 _drawingId,
-        uint256 _lpEarnings,
-        uint256 _userWinnings,
-        uint256 _protocolFeeAmount
-    ) external returns (uint256 newLPValue, uint256 newAccumulator);
-
-    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
-
-    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
-
-    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
-
-    function initializeLP() external;
-
-    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
-    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
-}
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -3336,6 +3208,28 @@ library UintCasts {
     }
 }
 
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IScaledEntropyProvider {
+    struct SetRequest {
+        uint8 samples;
+        uint256 minRange;
+        uint256 maxRange;
+        bool withReplacement;
+    }
+    function requestAndCallbackScaledRandomness(
+        uint32 _gasLimit,
+        SetRequest[] memory _requests,
+        bytes4 _selector,
+        bytes memory _context
+    )
+        external
+        payable
+        returns (uint64 requestId);
+    function getFee(uint32 _gasLimit) external view returns (uint256);
+}
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -3408,6 +3302,112 @@ library JackpotErrors {
     error InvalidGovernancePoolCap();
     error TicketNotEligibleForRefund();
     error NoTicketsProvided();
+}
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IJackpotLPManager {
+
+    struct LPDrawingState {
+        uint256 lpPoolTotal;
+        uint256 pendingDeposits;
+        uint256 pendingWithdrawals;
+    }
+
+    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
+
+    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
+
+    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
+
+    function processDrawingSettlement(
+        uint256 _drawingId,
+        uint256 _lpEarnings,
+        uint256 _userWinnings,
+        uint256 _protocolFeeAmount
+    ) external returns (uint256 newLPValue, uint256 newAccumulator);
+
+    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
+
+    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
+
+    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
+
+    function initializeLP() external;
+
+    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
+    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8;
+
+import { LibBit } from "solady/src/utils/LibBit.sol";
+
+library Combinations {
+    uint256 constant UINT256_BIT_WIDTH = 256;
+    /// @notice Compute number of combinations of size k from a set of n
+    /// @param n Size of set to choose from
+    /// @param k Size of subsets to choose
+    function choose(
+        uint256 n,
+        uint256 k
+    ) internal pure returns (uint256 result) {
+        assert(n >= k);
+        assert(n <= 128); // Artificial limit to avoid overflow
+        // "How to calculate binomial coefficients"
+        // From: https://blog.plover.com/math/choose.html
+        // This algorithm computes multiplication and division in alternation
+        // to avoid overflow as much as possible.
+        unchecked {
+            uint256 out = 1;
+            for (uint256 d = 1; d <= k; ++d) {
+                out *= n--;
+                out /= d;
+            }
+            return out;
+        }
+    }
+
+    /// @notice Generate all possible subsets of size k from a bit vector.
+    /// @param set Bit vector to generate subsets from
+    /// @param k Size of subsets to generate
+    function generateSubsets(
+        uint256 set,
+        uint256 k
+    ) internal pure returns (uint256[] memory subsets) {
+        unchecked {
+            uint256 n = LibBit.popCount(set);
+            assert(k <= n);
+            subsets = new uint256[](choose(n, k));
+
+            uint256 bound = 1 << n;
+            uint256 comb = (1 << k) - 1;
+            uint256 count;
+            while (comb < bound) {
+                uint256 mapped;
+                uint256 _set = set;
+                uint256 _comb = comb;
+                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
+                    if (_set & 1 == 1) {
+                        if (_comb & 1 == 1) {
+                            mapped |= (1 << i);
+                        }
+                        _comb >>= 1;
+                    }
+                    _set >>= 1;
+                }
+
+                subsets[count++] = mapped;
+
+                // "Gosper's hack"
+                uint256 c = comb & uint256(-int256(comb));
+                uint256 r = comb + c;
+                comb = (((r ^ comb) >> 2) / c) | r;
+            }
+            assert(count == choose(n, k));
+        }
+    }
 }
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS

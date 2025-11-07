@@ -705,6 +705,554 @@ For licensing inquiries: legal@coordinationlabs.com
 
 pragma solidity ^0.8.28;
 
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
+import { IEntropyV2 } from "@pythnetwork/entropy-sdk-solidity/IEntropyV2.sol";
+
+import { FisherYatesRejection } from "./lib/FisherYatesWithRejection.sol";
+import { IScaledEntropyProvider } from "./interfaces/IScaledEntropyProvider.sol";
+
+/**
+ * @title ScaledEntropyProvider
+ * @notice Provides scaled random number generation using Pyth Network entropy with callback functionality
+ * @dev Integrates with Pyth Network's entropy service to generate cryptographically secure random numbers:
+ *      - Handles entropy requests with custom scaling and range parameters
+ *      - Supports both sampling with and without replacement using Fisher-Yates algorithm
+ *      - Provides callback mechanism for asynchronous random number delivery
+ *      - Implements unbiased rejection sampling to prevent modulo bias
+ *      - Manages fee payments to entropy providers
+ *      - Stores pending requests and validates callback execution
+ */
+contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsumer {
+    // =============================================================
+    //                           STRUCTS
+    // =============================================================
+    struct PendingRequest {
+        address callback;
+        bytes4 selector;
+        bytes context;
+        bytes32 userRandomNumber;
+        SetRequest[] setRequests;
+    }
+
+    // =============================================================
+    //                           EVENTS
+    // =============================================================
+
+    event ScaledRandomnessDelivered(uint64 indexed sequence, address indexed callback, uint256 samples);
+    event EntropyFulfilled(uint64 indexed sequence, bytes32 randomNumber);
+
+    // =============================================================
+    //                           ERRORS
+    // =============================================================
+    error InvalidCallback();
+    error CallbackFailed(bytes4 selector);
+    error ZeroAddress();
+    error InvalidSelector();
+    error InvalidRequests();
+    error InvalidRange();
+    error InvalidSamples();
+    error InsufficientFee();
+    error UnknownSequence();
+
+    // =============================================================
+    //                       STATE VARIABLES
+    // =============================================================
+
+    IEntropyV2 private entropy;
+    address private entropyProvider;
+    mapping(uint64 => PendingRequest) private pending;
+
+    // =============================================================
+    //                         CONSTRUCTOR
+    // =============================================================
+    
+    /**
+     * @notice Initializes the ScaledEntropyProvider with Pyth Network entropy configuration
+     * @dev Sets up connections to Pyth Network entropy contract and provider.
+     *      Both addresses are validated and stored as immutable references.
+     * @param _entropy Address of the Pyth Network entropy contract
+     * @param _entropyProvider Address of the specific entropy provider to use
+     * @custom:requirements
+     * - Entropy contract address must not be zero
+     * - Entropy provider address must not be zero
+     * @custom:effects
+     * - Sets immutable entropy contract reference
+     * - Configures entropy provider for fee calculations
+     * - Sets deployer as contract owner
+     * @custom:security
+     * - Address validation prevents zero address configuration
+     * - Immutable references prevent unauthorized changes
+     * - Owner-based access control for administrative functions
+     */
+    constructor(address _entropy, address _entropyProvider) Ownable(msg.sender) {
+        if (_entropy == address(0)) revert ZeroAddress();
+        if (_entropyProvider == address(0)) revert ZeroAddress();
+        entropy = IEntropyV2(_entropy);
+        entropyProvider = _entropyProvider;
+    }
+
+    // =============================================================
+    //                      EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Requests scaled random numbers from Pyth Network with callback delivery
+     * @dev Submits entropy request to Pyth Network and stores callback details for async delivery.
+     *      The callback will receive scaled random numbers according to the specified requests. Developer
+     *      needs to ensure that the range is not too large to be able to build an array of the appropriate
+     *      size in memory in order to avoid out of gas errors during Fisher-Yates sampling.
+     *      IMPORTANT: The callback address is automatically set to msg.sender (the calling contract).
+     * @param _gasLimit Gas limit for the entropy callback execution
+     * @param _requests Array of SetRequest structs defining random number requirements
+     * @param _selector Function selector for the callback method on the calling contract
+     * @param _context Additional data to pass to the callback
+     * @return sequence Unique identifier for tracking this entropy request
+     * @custom:requirements
+     * - Calling contract (msg.sender) must implement the callback function
+     * - Provided fee (msg.value) must meet minimum requirements
+     * - Function selector must not be zero
+     * - All set requests must be valid (proper ranges and sample counts)
+     * @custom:emits None (events emitted in callback)
+     * @custom:effects
+     * - Submits entropy request to Pyth Network
+     * - Stores pending request details with msg.sender as callback address
+     * - Transfers fee to entropy provider
+     * @custom:security
+     * - Callback address is restricted to msg.sender preventing unauthorized callbacks
+     * - Fee validation ensures sufficient payment
+     * - Request validation prevents invalid random number generation
+     */
+    function requestAndCallbackScaledRandomness(
+        uint32 _gasLimit,
+        SetRequest[] memory _requests,
+        bytes4 _selector,
+        bytes memory _context
+    )
+        external
+        payable
+        returns (uint64 sequence)
+    {
+        // We assume that the caller has already checked that the fee is sufficient
+        if (msg.value < getFee(_gasLimit)) revert InsufficientFee();
+        if (_selector == bytes4(0)) revert InvalidSelector();
+        _validateRequests(_requests);
+
+        sequence = entropy.requestV2{value: msg.value}(entropyProvider, _gasLimit);
+        _storePendingRequest(sequence, _selector, _context, _requests);
+    }
+
+    /**
+     * @notice Returns the fee required for an entropy request with specified gas limit
+     * @dev Queries the Pyth Network entropy contract for current fee requirements.
+     *      Fee covers entropy generation and callback execution costs.
+     * @param _gasLimit Gas limit for the callback execution
+     * @return Fee amount in wei required for the entropy request
+     */
+    function getFee(uint32 _gasLimit) public view returns (uint256) {
+        return entropy.getFeeV2(entropyProvider, _gasLimit);
+    }
+
+    /**
+     * @notice Returns the address of the Pyth Network entropy contract
+     * @dev Provides access to the entropy contract address for integration purposes.
+     * @return Address of the entropy contract
+     */
+    function getEntropyContract() external view returns (address) {
+        return address(entropy);
+    }
+
+    /**
+     * @notice Returns the address of the currently configured entropy provider
+     * @dev Shows which entropy provider is being used for fee calculations and requests.
+     * @return Address of the entropy provider
+     */
+    function getEntropyProvider() external view returns (address) {
+        return entropyProvider;
+    }
+
+    /**
+     * @notice Returns the details of a pending entropy request
+     * @dev Retrieves stored request information for a specific sequence number.
+     *      Useful for debugging and monitoring pending requests.
+     * @param sequence Unique identifier of the entropy request
+     * @return PendingRequest struct containing callback details and request parameters
+     */
+    function getPendingRequest(uint64 sequence) external view returns (PendingRequest memory) {
+        return pending[sequence];
+    }
+
+    // =============================================================
+    //                      ADMIN FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Updates the entropy provider address
+     * @dev Changes which entropy provider is used for fee calculations and requests.
+     *      Only affects future requests, not pending ones.
+     * @param _entropyProvider New entropy provider address
+     * @custom:requirements
+     * - Only owner can call
+     * - Provider address must not be zero
+     * @custom:emits None
+     * @custom:effects
+     * - Updates entropy provider for future requests
+     * - Changes fee calculations for new requests
+     * @custom:security
+     * - Owner-only access restriction
+     * - Zero address validation
+     */
+    function setEntropyProvider(address _entropyProvider) external onlyOwner {
+        if (_entropyProvider == address(0)) revert ZeroAddress();
+        entropyProvider = _entropyProvider;
+    }
+
+    // =============================================================
+    //                      INTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Processes entropy callback from Pyth Network and delivers scaled random numbers
+     * @dev Called by Pyth Network when entropy is available. Processes the raw entropy into scaled
+     *      random numbers according to stored request parameters and delivers via callback.
+     *      This is the core function that bridges Pyth entropy with application-specific randomness.
+     * @param sequence Unique identifier for the entropy request
+     * @param randomNumber Raw entropy value from Pyth Network (provider parameter ignored)
+     * @custom:requirements
+     * - Sequence must correspond to a valid pending request
+     * - Callback execution must succeed
+     * - Only called by Pyth Network entropy contract
+     * @custom:emits EntropyFulfilled with sequence and raw random number
+     * @custom:emits ScaledRandomnessDelivered with sequence, callback address, and sample count
+     * @custom:effects
+     * - Retrieves and deletes pending request data
+     * - Generates scaled random numbers using Fisher-Yates or replacement sampling
+     * - Executes callback with scaled results and original context
+     * - Cleans up pending request storage
+     * @custom:security
+     * - Validates sequence corresponds to pending request
+     * - Ensures callback execution succeeds before cleanup
+     * - Uses unbiased sampling methods to prevent statistical attacks
+     * - Immediate cleanup prevents replay attacks
+     */
+    function entropyCallback(uint64 sequence, address /*provider*/, bytes32 randomNumber) internal override {
+        PendingRequest memory req = pending[sequence];
+        if (req.callback == address(0)) revert UnknownSequence();
+        
+        delete pending[sequence];
+
+        uint256[][] memory scaledRandomNumbers = _getScaledRandomness(randomNumber, req.setRequests);
+        (bool success, ) = req.callback.call(abi.encodeWithSelector(req.selector, sequence, scaledRandomNumbers, req.context));
+        if (!success) revert CallbackFailed(req.selector);
+
+        emit EntropyFulfilled(sequence, randomNumber);
+        emit ScaledRandomnessDelivered(sequence, req.callback, scaledRandomNumbers.length);
+    }
+
+    function _getScaledRandomness(
+        bytes32 _randomNumber,
+        SetRequest[] memory _setRequests
+    )
+        internal
+        pure
+        returns (uint256[][] memory requestsOutputs)
+    {
+        requestsOutputs = new uint256[][](_setRequests.length);
+        
+        for (uint256 i = 0; i < _setRequests.length; i++) {
+            if (!_setRequests[i].withReplacement) {
+                requestsOutputs[i] = FisherYatesRejection.draw(
+                    _setRequests[i].minRange,
+                    _setRequests[i].maxRange,
+                    _setRequests[i].samples,
+                    uint256(_randomNumber)
+                );
+            } else {
+                requestsOutputs[i] = _drawWithReplacement(
+                    _setRequests[i].minRange,
+                    _setRequests[i].maxRange,
+                    _setRequests[i].samples,
+                    uint256(_randomNumber)
+                );
+            }
+        }
+    }
+
+    function getEntropy() internal view override returns (address) {
+        return address(entropy);
+    }
+
+    function _validateRequests(SetRequest[] memory _requests) internal pure {
+        if (_requests.length == 0) revert InvalidRequests();
+        for (uint256 i = 0; i < _requests.length; i++) {
+            if (_requests[i].minRange > _requests[i].maxRange) revert InvalidRange();
+            if (_requests[i].samples == 0) revert InvalidSamples();
+        }
+    }
+
+    function _storePendingRequest(
+        uint64 sequence,
+        bytes4 _selector,
+        bytes memory _context,
+        SetRequest[] memory _setRequests
+    ) internal {
+        pending[sequence].callback = msg.sender;
+        pending[sequence].selector = _selector;
+        pending[sequence].context = _context;
+        for (uint256 i = 0; i < _setRequests.length; i++) {
+            pending[sequence].setRequests.push(_setRequests[i]);
+        }
+    }
+
+    function _drawWithReplacement(
+        uint256 _minRange,
+        uint256 _maxRange,
+        uint8 _samples,
+        uint256 _randomNumber
+    ) internal pure returns (uint256[] memory) {
+        uint256[] memory result = new uint256[](_samples);
+        uint256 range = _maxRange - _minRange + 1;
+        uint256 nonce = 0;
+
+        for (uint256 i = 0; i < _samples; i++) {
+            uint256 rand;
+            while (true) {
+                rand = uint256(keccak256(abi.encode(_randomNumber, nonce)));
+                uint256 limit = (type(uint256).max / range) * range;
+
+                if (rand < limit) {
+                    result[i] = uint256((rand % range) + _minRange); // [1..range]
+                    break;
+                }
+                nonce++;
+            }
+            nonce++;
+        }
+
+        return result;
+    }
+}
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+import { ERC721 } from "solady/src/tokens/ERC721.sol";
+
+import { IJackpot } from "./interfaces/IJackpot.sol";
+import { IJackpotTicketNFT } from "./interfaces/IJackpotTicketNFT.sol";
+
+
+/**
+ * @title JackpotTicketNFT
+ * @notice ERC-721 implementation for jackpot tickets with tracking and transfer functionality
+ * @dev Implements jackpot tickets as transferable NFTs with:
+ *      - Packed ticket number storage for efficient gas usage
+ *      - User ticket tracking per drawing for easy querying
+ *      - Referral scheme association for winnings distribution
+ *      - Automatic ticket list management on transfers
+ *      - Integration with Jackpot contract for minting and burning
+ */
+contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
+
+    // =============================================================
+    //                           STRUCTS
+    // =============================================================
+    struct UserTickets {
+        uint256 totalTicketsBought;
+        mapping(uint256 => uint256) ticketIds;
+        mapping(uint256 => uint256) indexOfTicketId;
+    }
+
+    // =============================================================
+    //                       ERRORS
+    // =============================================================
+
+    error UnauthorizedCaller();
+
+    // =============================================================
+    //                       STATE VARIABLES
+    // =============================================================
+
+    // User and ticket mappings
+    mapping(address => mapping(uint256 => UserTickets)) internal userTickets; // user address => drawing => UserTickets
+    mapping(uint256 => TrackedTicket) public tickets; // ticketId → ticket info
+
+    IJackpot public immutable jackpot;
+
+    // =============================================================
+    //                       MODIFIERS
+    // =============================================================
+
+    modifier onlyJackpot() {
+        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
+        _;
+    }
+
+    // =============================================================
+    //                       CONSTRUCTOR
+    // =============================================================
+
+    /**
+     * @notice Initializes the JackpotTicketNFT with the Jackpot contract reference
+     * @dev Sets up the connection to the main Jackpot contract that will mint and burn tickets
+     * @param _jackpot Address of the main Jackpot contract
+     * @custom:effects
+     * - Sets jackpot contract reference as immutable
+     * - Inherits ERC721 functionality for NFT operations
+     * @custom:security
+     * - Immutable jackpot reference prevents unauthorized contract changes
+     */
+    constructor(IJackpot _jackpot) {
+        jackpot = _jackpot;
+    }
+
+    // =============================================================
+    //                       EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Mints a new ticket NFT with jackpot information
+     * @dev Creates an ERC-721 token representing a jackpot ticket with embedded metadata.
+     *      Automatically adds ticket to user's ticket list for the drawing.
+     * @param _recipient Address to receive the minted ticket
+     * @param _ticketId Unique identifier for the ticket (used as token ID)
+     * @param _drawingId Drawing the ticket is for
+     * @param _packedTicket Packed ticket numbers (normal numbers + bonusball)
+     * @param _referralScheme Hash of referral scheme used for this ticket
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - Ticket ID must be unique (ERC721 enforces this)
+     * - Recipient address must not be zero (ERC721 enforces this)
+     * @custom:emits Transfer (ERC-721 standard)
+     * @custom:effects
+     * - Mints ERC-721 token to specified address
+     * - Stores ticket metadata in contract storage
+     * - Adds ticket to user's ticket list via _afterTokenTransfer
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Unique ticket ID enforcement via ERC721
+     * - Automatic user ticket tracking
+     */
+    function mintTicket(
+        address _recipient,
+        uint256 _ticketId,
+        uint256 _drawingId,
+        uint256 _packedTicket,
+        bytes32 _referralScheme
+    ) external onlyJackpot {
+        tickets[_ticketId] = TrackedTicket({
+            drawingId: _drawingId,
+            packedTicket: _packedTicket,
+            referralScheme: _referralScheme
+        });
+
+        _mint(_recipient, _ticketId);
+    }
+
+    function burnTicket(uint256 _ticketId) external onlyJackpot {
+        _burn(_ticketId);
+    }
+
+    // =============================================================
+    //                       VIEW FUNCTIONS
+    // =============================================================
+
+    function getUserTickets(address _userAddress, uint256 _drawingId) external view returns (ExtendedTrackedTicket[] memory) {
+        UserTickets storage userDrawingTickets = userTickets[_userAddress][_drawingId];
+        ExtendedTrackedTicket[] memory userTicketsList = new ExtendedTrackedTicket[](userDrawingTickets.totalTicketsBought);
+        for (uint256 i = 0; i < userDrawingTickets.totalTicketsBought; i++) {
+            uint256 ticketId = userDrawingTickets.ticketIds[i];
+            userTicketsList[i] = _getExtendedTicketInfo(ticketId);
+        }
+        return userTicketsList;
+    }
+
+    function getTicketInfo(uint256 _ticketId) external view returns (TrackedTicket memory) {
+        return tickets[_ticketId];
+    }
+
+    function getExtendedTicketInfo(uint256 _ticketId) external view returns (ExtendedTrackedTicket memory) {
+        return _getExtendedTicketInfo(_ticketId);
+    }
+    
+    function name() public pure override returns (string memory) {
+        return "Jackpot";
+    }
+
+    function symbol() public pure override returns (string memory) {
+        return "JACKPOT";
+    }
+
+    function tokenURI(uint256 /* tokenId */) public pure override returns (string memory) {
+        return "";
+    }
+
+    // =============================================================
+    //                       INTERNAL FUNCTIONS
+    // =============================================================
+
+    function _beforeTokenTransfer(address _from, address /* _to */, uint256 _tokenId) internal override {
+        if (_from != address(0)) {
+            TrackedTicket memory ticketInfo = tickets[_tokenId];
+            UserTickets storage fromTickets = userTickets[_from][ticketInfo.drawingId];
+            uint256 idx = fromTickets.indexOfTicketId[_tokenId];
+            uint256 lastIdx = fromTickets.totalTicketsBought - 1;
+            if (idx != lastIdx) {
+                uint256 swapId = fromTickets.ticketIds[lastIdx];
+                fromTickets.ticketIds[idx] = swapId;
+                fromTickets.indexOfTicketId[swapId] = idx;
+            }
+            delete fromTickets.ticketIds[lastIdx];
+            delete fromTickets.indexOfTicketId[_tokenId];
+            fromTickets.totalTicketsBought -= 1;
+        }
+    }
+
+    function _afterTokenTransfer(address /* _from */, address _to, uint256 _tokenId) internal override {
+        if (_to != address(0)) {
+            TrackedTicket memory ticketInfo = tickets[_tokenId];
+            UserTickets storage toTickets = userTickets[_to][ticketInfo.drawingId];
+            uint256 newIdx = toTickets.totalTicketsBought;
+            toTickets.ticketIds[newIdx] = _tokenId;
+            toTickets.indexOfTicketId[_tokenId] = newIdx;
+            toTickets.totalTicketsBought += 1;
+        }
+    }
+
+    function _getExtendedTicketInfo(uint256 _ticketId) internal view returns (ExtendedTrackedTicket memory) {
+        (uint8[] memory normals, uint8 bonusball) = jackpot.getUnpackedTicket(tickets[_ticketId].drawingId, tickets[_ticketId].packedTicket);
+        return ExtendedTrackedTicket({
+            ticketId: _ticketId,
+            ticket: tickets[_ticketId],
+            normals: normals,
+            bonusball: bonusball
+        });
+    }
+}
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -1231,554 +1779,6 @@ contract JackpotLPManager is IJackpotLPManager, Ownable {
     }
 }
 
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-import { ERC721 } from "solady/src/tokens/ERC721.sol";
-
-import { IJackpot } from "./interfaces/IJackpot.sol";
-import { IJackpotTicketNFT } from "./interfaces/IJackpotTicketNFT.sol";
-
-
-/**
- * @title JackpotTicketNFT
- * @notice ERC-721 implementation for jackpot tickets with tracking and transfer functionality
- * @dev Implements jackpot tickets as transferable NFTs with:
- *      - Packed ticket number storage for efficient gas usage
- *      - User ticket tracking per drawing for easy querying
- *      - Referral scheme association for winnings distribution
- *      - Automatic ticket list management on transfers
- *      - Integration with Jackpot contract for minting and burning
- */
-contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
-
-    // =============================================================
-    //                           STRUCTS
-    // =============================================================
-    struct UserTickets {
-        uint256 totalTicketsBought;
-        mapping(uint256 => uint256) ticketIds;
-        mapping(uint256 => uint256) indexOfTicketId;
-    }
-
-    // =============================================================
-    //                       ERRORS
-    // =============================================================
-
-    error UnauthorizedCaller();
-
-    // =============================================================
-    //                       STATE VARIABLES
-    // =============================================================
-
-    // User and ticket mappings
-    mapping(address => mapping(uint256 => UserTickets)) internal userTickets; // user address => drawing => UserTickets
-    mapping(uint256 => TrackedTicket) public tickets; // ticketId → ticket info
-
-    IJackpot public immutable jackpot;
-
-    // =============================================================
-    //                       MODIFIERS
-    // =============================================================
-
-    modifier onlyJackpot() {
-        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
-        _;
-    }
-
-    // =============================================================
-    //                       CONSTRUCTOR
-    // =============================================================
-
-    /**
-     * @notice Initializes the JackpotTicketNFT with the Jackpot contract reference
-     * @dev Sets up the connection to the main Jackpot contract that will mint and burn tickets
-     * @param _jackpot Address of the main Jackpot contract
-     * @custom:effects
-     * - Sets jackpot contract reference as immutable
-     * - Inherits ERC721 functionality for NFT operations
-     * @custom:security
-     * - Immutable jackpot reference prevents unauthorized contract changes
-     */
-    constructor(IJackpot _jackpot) {
-        jackpot = _jackpot;
-    }
-
-    // =============================================================
-    //                       EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Mints a new ticket NFT with jackpot information
-     * @dev Creates an ERC-721 token representing a jackpot ticket with embedded metadata.
-     *      Automatically adds ticket to user's ticket list for the drawing.
-     * @param _recipient Address to receive the minted ticket
-     * @param _ticketId Unique identifier for the ticket (used as token ID)
-     * @param _drawingId Drawing the ticket is for
-     * @param _packedTicket Packed ticket numbers (normal numbers + bonusball)
-     * @param _referralScheme Hash of referral scheme used for this ticket
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - Ticket ID must be unique (ERC721 enforces this)
-     * - Recipient address must not be zero (ERC721 enforces this)
-     * @custom:emits Transfer (ERC-721 standard)
-     * @custom:effects
-     * - Mints ERC-721 token to specified address
-     * - Stores ticket metadata in contract storage
-     * - Adds ticket to user's ticket list via _afterTokenTransfer
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Unique ticket ID enforcement via ERC721
-     * - Automatic user ticket tracking
-     */
-    function mintTicket(
-        address _recipient,
-        uint256 _ticketId,
-        uint256 _drawingId,
-        uint256 _packedTicket,
-        bytes32 _referralScheme
-    ) external onlyJackpot {
-        tickets[_ticketId] = TrackedTicket({
-            drawingId: _drawingId,
-            packedTicket: _packedTicket,
-            referralScheme: _referralScheme
-        });
-
-        _mint(_recipient, _ticketId);
-    }
-
-    function burnTicket(uint256 _ticketId) external onlyJackpot {
-        _burn(_ticketId);
-    }
-
-    // =============================================================
-    //                       VIEW FUNCTIONS
-    // =============================================================
-
-    function getUserTickets(address _userAddress, uint256 _drawingId) external view returns (ExtendedTrackedTicket[] memory) {
-        UserTickets storage userDrawingTickets = userTickets[_userAddress][_drawingId];
-        ExtendedTrackedTicket[] memory userTicketsList = new ExtendedTrackedTicket[](userDrawingTickets.totalTicketsBought);
-        for (uint256 i = 0; i < userDrawingTickets.totalTicketsBought; i++) {
-            uint256 ticketId = userDrawingTickets.ticketIds[i];
-            userTicketsList[i] = _getExtendedTicketInfo(ticketId);
-        }
-        return userTicketsList;
-    }
-
-    function getTicketInfo(uint256 _ticketId) external view returns (TrackedTicket memory) {
-        return tickets[_ticketId];
-    }
-
-    function getExtendedTicketInfo(uint256 _ticketId) external view returns (ExtendedTrackedTicket memory) {
-        return _getExtendedTicketInfo(_ticketId);
-    }
-    
-    function name() public pure override returns (string memory) {
-        return "Jackpot";
-    }
-
-    function symbol() public pure override returns (string memory) {
-        return "JACKPOT";
-    }
-
-    function tokenURI(uint256 /* tokenId */) public pure override returns (string memory) {
-        return "";
-    }
-
-    // =============================================================
-    //                       INTERNAL FUNCTIONS
-    // =============================================================
-
-    function _beforeTokenTransfer(address _from, address /* _to */, uint256 _tokenId) internal override {
-        if (_from != address(0)) {
-            TrackedTicket memory ticketInfo = tickets[_tokenId];
-            UserTickets storage fromTickets = userTickets[_from][ticketInfo.drawingId];
-            uint256 idx = fromTickets.indexOfTicketId[_tokenId];
-            uint256 lastIdx = fromTickets.totalTicketsBought - 1;
-            if (idx != lastIdx) {
-                uint256 swapId = fromTickets.ticketIds[lastIdx];
-                fromTickets.ticketIds[idx] = swapId;
-                fromTickets.indexOfTicketId[swapId] = idx;
-            }
-            delete fromTickets.ticketIds[lastIdx];
-            delete fromTickets.indexOfTicketId[_tokenId];
-            fromTickets.totalTicketsBought -= 1;
-        }
-    }
-
-    function _afterTokenTransfer(address /* _from */, address _to, uint256 _tokenId) internal override {
-        if (_to != address(0)) {
-            TrackedTicket memory ticketInfo = tickets[_tokenId];
-            UserTickets storage toTickets = userTickets[_to][ticketInfo.drawingId];
-            uint256 newIdx = toTickets.totalTicketsBought;
-            toTickets.ticketIds[newIdx] = _tokenId;
-            toTickets.indexOfTicketId[_tokenId] = newIdx;
-            toTickets.totalTicketsBought += 1;
-        }
-    }
-
-    function _getExtendedTicketInfo(uint256 _ticketId) internal view returns (ExtendedTrackedTicket memory) {
-        (uint8[] memory normals, uint8 bonusball) = jackpot.getUnpackedTicket(tickets[_ticketId].drawingId, tickets[_ticketId].packedTicket);
-        return ExtendedTrackedTicket({
-            ticketId: _ticketId,
-            ticket: tickets[_ticketId],
-            normals: normals,
-            bonusball: bonusball
-        });
-    }
-}
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
-import { IEntropyV2 } from "@pythnetwork/entropy-sdk-solidity/IEntropyV2.sol";
-
-import { FisherYatesRejection } from "./lib/FisherYatesWithRejection.sol";
-import { IScaledEntropyProvider } from "./interfaces/IScaledEntropyProvider.sol";
-
-/**
- * @title ScaledEntropyProvider
- * @notice Provides scaled random number generation using Pyth Network entropy with callback functionality
- * @dev Integrates with Pyth Network's entropy service to generate cryptographically secure random numbers:
- *      - Handles entropy requests with custom scaling and range parameters
- *      - Supports both sampling with and without replacement using Fisher-Yates algorithm
- *      - Provides callback mechanism for asynchronous random number delivery
- *      - Implements unbiased rejection sampling to prevent modulo bias
- *      - Manages fee payments to entropy providers
- *      - Stores pending requests and validates callback execution
- */
-contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsumer {
-    // =============================================================
-    //                           STRUCTS
-    // =============================================================
-    struct PendingRequest {
-        address callback;
-        bytes4 selector;
-        bytes context;
-        bytes32 userRandomNumber;
-        SetRequest[] setRequests;
-    }
-
-    // =============================================================
-    //                           EVENTS
-    // =============================================================
-
-    event ScaledRandomnessDelivered(uint64 indexed sequence, address indexed callback, uint256 samples);
-    event EntropyFulfilled(uint64 indexed sequence, bytes32 randomNumber);
-
-    // =============================================================
-    //                           ERRORS
-    // =============================================================
-    error InvalidCallback();
-    error CallbackFailed(bytes4 selector);
-    error ZeroAddress();
-    error InvalidSelector();
-    error InvalidRequests();
-    error InvalidRange();
-    error InvalidSamples();
-    error InsufficientFee();
-    error UnknownSequence();
-
-    // =============================================================
-    //                       STATE VARIABLES
-    // =============================================================
-
-    IEntropyV2 private entropy;
-    address private entropyProvider;
-    mapping(uint64 => PendingRequest) private pending;
-
-    // =============================================================
-    //                         CONSTRUCTOR
-    // =============================================================
-    
-    /**
-     * @notice Initializes the ScaledEntropyProvider with Pyth Network entropy configuration
-     * @dev Sets up connections to Pyth Network entropy contract and provider.
-     *      Both addresses are validated and stored as immutable references.
-     * @param _entropy Address of the Pyth Network entropy contract
-     * @param _entropyProvider Address of the specific entropy provider to use
-     * @custom:requirements
-     * - Entropy contract address must not be zero
-     * - Entropy provider address must not be zero
-     * @custom:effects
-     * - Sets immutable entropy contract reference
-     * - Configures entropy provider for fee calculations
-     * - Sets deployer as contract owner
-     * @custom:security
-     * - Address validation prevents zero address configuration
-     * - Immutable references prevent unauthorized changes
-     * - Owner-based access control for administrative functions
-     */
-    constructor(address _entropy, address _entropyProvider) Ownable(msg.sender) {
-        if (_entropy == address(0)) revert ZeroAddress();
-        if (_entropyProvider == address(0)) revert ZeroAddress();
-        entropy = IEntropyV2(_entropy);
-        entropyProvider = _entropyProvider;
-    }
-
-    // =============================================================
-    //                      EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Requests scaled random numbers from Pyth Network with callback delivery
-     * @dev Submits entropy request to Pyth Network and stores callback details for async delivery.
-     *      The callback will receive scaled random numbers according to the specified requests. Developer
-     *      needs to ensure that the range is not too large to be able to build an array of the appropriate
-     *      size in memory in order to avoid out of gas errors during Fisher-Yates sampling.
-     *      IMPORTANT: The callback address is automatically set to msg.sender (the calling contract).
-     * @param _gasLimit Gas limit for the entropy callback execution
-     * @param _requests Array of SetRequest structs defining random number requirements
-     * @param _selector Function selector for the callback method on the calling contract
-     * @param _context Additional data to pass to the callback
-     * @return sequence Unique identifier for tracking this entropy request
-     * @custom:requirements
-     * - Calling contract (msg.sender) must implement the callback function
-     * - Provided fee (msg.value) must meet minimum requirements
-     * - Function selector must not be zero
-     * - All set requests must be valid (proper ranges and sample counts)
-     * @custom:emits None (events emitted in callback)
-     * @custom:effects
-     * - Submits entropy request to Pyth Network
-     * - Stores pending request details with msg.sender as callback address
-     * - Transfers fee to entropy provider
-     * @custom:security
-     * - Callback address is restricted to msg.sender preventing unauthorized callbacks
-     * - Fee validation ensures sufficient payment
-     * - Request validation prevents invalid random number generation
-     */
-    function requestAndCallbackScaledRandomness(
-        uint32 _gasLimit,
-        SetRequest[] memory _requests,
-        bytes4 _selector,
-        bytes memory _context
-    )
-        external
-        payable
-        returns (uint64 sequence)
-    {
-        // We assume that the caller has already checked that the fee is sufficient
-        if (msg.value < getFee(_gasLimit)) revert InsufficientFee();
-        if (_selector == bytes4(0)) revert InvalidSelector();
-        _validateRequests(_requests);
-
-        sequence = entropy.requestV2{value: msg.value}(entropyProvider, _gasLimit);
-        _storePendingRequest(sequence, _selector, _context, _requests);
-    }
-
-    /**
-     * @notice Returns the fee required for an entropy request with specified gas limit
-     * @dev Queries the Pyth Network entropy contract for current fee requirements.
-     *      Fee covers entropy generation and callback execution costs.
-     * @param _gasLimit Gas limit for the callback execution
-     * @return Fee amount in wei required for the entropy request
-     */
-    function getFee(uint32 _gasLimit) public view returns (uint256) {
-        return entropy.getFeeV2(entropyProvider, _gasLimit);
-    }
-
-    /**
-     * @notice Returns the address of the Pyth Network entropy contract
-     * @dev Provides access to the entropy contract address for integration purposes.
-     * @return Address of the entropy contract
-     */
-    function getEntropyContract() external view returns (address) {
-        return address(entropy);
-    }
-
-    /**
-     * @notice Returns the address of the currently configured entropy provider
-     * @dev Shows which entropy provider is being used for fee calculations and requests.
-     * @return Address of the entropy provider
-     */
-    function getEntropyProvider() external view returns (address) {
-        return entropyProvider;
-    }
-
-    /**
-     * @notice Returns the details of a pending entropy request
-     * @dev Retrieves stored request information for a specific sequence number.
-     *      Useful for debugging and monitoring pending requests.
-     * @param sequence Unique identifier of the entropy request
-     * @return PendingRequest struct containing callback details and request parameters
-     */
-    function getPendingRequest(uint64 sequence) external view returns (PendingRequest memory) {
-        return pending[sequence];
-    }
-
-    // =============================================================
-    //                      ADMIN FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Updates the entropy provider address
-     * @dev Changes which entropy provider is used for fee calculations and requests.
-     *      Only affects future requests, not pending ones.
-     * @param _entropyProvider New entropy provider address
-     * @custom:requirements
-     * - Only owner can call
-     * - Provider address must not be zero
-     * @custom:emits None
-     * @custom:effects
-     * - Updates entropy provider for future requests
-     * - Changes fee calculations for new requests
-     * @custom:security
-     * - Owner-only access restriction
-     * - Zero address validation
-     */
-    function setEntropyProvider(address _entropyProvider) external onlyOwner {
-        if (_entropyProvider == address(0)) revert ZeroAddress();
-        entropyProvider = _entropyProvider;
-    }
-
-    // =============================================================
-    //                      INTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Processes entropy callback from Pyth Network and delivers scaled random numbers
-     * @dev Called by Pyth Network when entropy is available. Processes the raw entropy into scaled
-     *      random numbers according to stored request parameters and delivers via callback.
-     *      This is the core function that bridges Pyth entropy with application-specific randomness.
-     * @param sequence Unique identifier for the entropy request
-     * @param randomNumber Raw entropy value from Pyth Network (provider parameter ignored)
-     * @custom:requirements
-     * - Sequence must correspond to a valid pending request
-     * - Callback execution must succeed
-     * - Only called by Pyth Network entropy contract
-     * @custom:emits EntropyFulfilled with sequence and raw random number
-     * @custom:emits ScaledRandomnessDelivered with sequence, callback address, and sample count
-     * @custom:effects
-     * - Retrieves and deletes pending request data
-     * - Generates scaled random numbers using Fisher-Yates or replacement sampling
-     * - Executes callback with scaled results and original context
-     * - Cleans up pending request storage
-     * @custom:security
-     * - Validates sequence corresponds to pending request
-     * - Ensures callback execution succeeds before cleanup
-     * - Uses unbiased sampling methods to prevent statistical attacks
-     * - Immediate cleanup prevents replay attacks
-     */
-    function entropyCallback(uint64 sequence, address /*provider*/, bytes32 randomNumber) internal override {
-        PendingRequest memory req = pending[sequence];
-        if (req.callback == address(0)) revert UnknownSequence();
-        
-        delete pending[sequence];
-
-        uint256[][] memory scaledRandomNumbers = _getScaledRandomness(randomNumber, req.setRequests);
-        (bool success, ) = req.callback.call(abi.encodeWithSelector(req.selector, sequence, scaledRandomNumbers, req.context));
-        if (!success) revert CallbackFailed(req.selector);
-
-        emit EntropyFulfilled(sequence, randomNumber);
-        emit ScaledRandomnessDelivered(sequence, req.callback, scaledRandomNumbers.length);
-    }
-
-    function _getScaledRandomness(
-        bytes32 _randomNumber,
-        SetRequest[] memory _setRequests
-    )
-        internal
-        pure
-        returns (uint256[][] memory requestsOutputs)
-    {
-        requestsOutputs = new uint256[][](_setRequests.length);
-        
-        for (uint256 i = 0; i < _setRequests.length; i++) {
-            if (!_setRequests[i].withReplacement) {
-                requestsOutputs[i] = FisherYatesRejection.draw(
-                    _setRequests[i].minRange,
-                    _setRequests[i].maxRange,
-                    _setRequests[i].samples,
-                    uint256(_randomNumber)
-                );
-            } else {
-                requestsOutputs[i] = _drawWithReplacement(
-                    _setRequests[i].minRange,
-                    _setRequests[i].maxRange,
-                    _setRequests[i].samples,
-                    uint256(_randomNumber)
-                );
-            }
-        }
-    }
-
-    function getEntropy() internal view override returns (address) {
-        return address(entropy);
-    }
-
-    function _validateRequests(SetRequest[] memory _requests) internal pure {
-        if (_requests.length == 0) revert InvalidRequests();
-        for (uint256 i = 0; i < _requests.length; i++) {
-            if (_requests[i].minRange > _requests[i].maxRange) revert InvalidRange();
-            if (_requests[i].samples == 0) revert InvalidSamples();
-        }
-    }
-
-    function _storePendingRequest(
-        uint64 sequence,
-        bytes4 _selector,
-        bytes memory _context,
-        SetRequest[] memory _setRequests
-    ) internal {
-        pending[sequence].callback = msg.sender;
-        pending[sequence].selector = _selector;
-        pending[sequence].context = _context;
-        for (uint256 i = 0; i < _setRequests.length; i++) {
-            pending[sequence].setRequests.push(_setRequests[i]);
-        }
-    }
-
-    function _drawWithReplacement(
-        uint256 _minRange,
-        uint256 _maxRange,
-        uint8 _samples,
-        uint256 _randomNumber
-    ) internal pure returns (uint256[] memory) {
-        uint256[] memory result = new uint256[](_samples);
-        uint256 range = _maxRange - _minRange + 1;
-        uint256 nonce = 0;
-
-        for (uint256 i = 0; i < _samples; i++) {
-            uint256 rand;
-            while (true) {
-                rand = uint256(keccak256(abi.encode(_randomNumber, nonce)));
-                uint256 limit = (type(uint256).max / range) * range;
-
-                if (rand < limit) {
-                    result[i] = uint256((rand % range) + _minRange); // [1..range]
-                    break;
-                }
-                nonce++;
-            }
-            nonce++;
-        }
-
-        return result;
-    }
-}
 //SPDX-License-Identifier: UNLICENSED
 
 /*
