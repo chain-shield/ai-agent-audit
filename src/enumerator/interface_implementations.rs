@@ -168,7 +168,7 @@ pub async fn build_interface_implementation_index(
 
     // Scan ALL Solidity files in the repository
     for sol_file in &repo.sol_files {
-        // Skip files in excluded directories (lib/, node_modules/, etc.)
+        // Skip standard libraries (openzeppelin, forge-std), tests, and mocks
         if should_skip_file(sol_file) {
             total_skipped += 1;
             continue;
@@ -472,19 +472,26 @@ fn extracts_contract_implementing_interface(content: &str, interface_name: &str)
 /// We DO NOT skip:
 /// - Project-specific lib folders like euler-price-oracle
 /// - Files in interfaces/ directory (they may contain implementations!)
+/// - Files in node_modules/ (external libraries may contain implementations, e.g., @flarenetwork/flare-periphery-contracts)
 ///
 /// Note: We used to skip /interfaces/ but that was wrong because:
 /// 1. Contracts can implement interfaces in the same file/folder
 /// 2. We need to scan ALL contracts to find implementations
 /// 3. The interface detection logic already filters out interface definitions
+///
+/// Note: We used to skip node_modules/ but that was wrong because:
+/// 1. External libraries (e.g., @flarenetwork/flare-periphery-contracts) may contain implementations
+/// 2. The inheritance map scans node_modules/ via is_library_file()
+/// 3. We need consistency between inheritance map and interface implementation index
 fn should_skip_file(file: &PathBuf) -> bool {
     use crate::enumerator::parse_solidity::should_exclude_this_library;
 
     let file_str = file.to_string_lossy();
 
     // Use the same standard library exclusion logic as the rest of the codebase
+    // Note: should_exclude_this_library() already excludes OpenZeppelin, Forge, etc.
+    // so we don't need to separately exclude node_modules/
     if should_exclude_this_library(&file_str)
-        || file_str.contains("/node_modules/")
         || file_str.contains("/test/")
         || file_str.contains("/tests/")
         || file_str.contains("/mocks/")

@@ -20,14 +20,6 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
         ## {title_all_caps} VULNERABILITY PATTERNS TO LOOK FOR
         {categories}
 
-        ## Generic Solo / Low-Duplicate Guidance
-        - Prefer **less obvious / less generic** instances of the patterns over the textbook ones. These instances should also be **realistically satisfiable** (current protocol config, common ERC-20s, normal user actions).
-        - Look for **context-dependent** breakages (the pattern only becomes a vuln because of how THIS protocol does state, math, or access control).
-        - Check **multi-step / multi-transaction / cross-contract** flows, not just single-function reads.
-        - Examine **interactions between imported or external libraries** — how arithmetic, math utilities, token wrappers, or accounting helpers are used together. 
-        - Consider **HIGH-impact edge cases** — situations that are rare but, if reached, clearly wreck havoc (i.e. still H/M, not Low/QA under Code4rena rubric).
-        - If you find a very common instance include it, however, **keep searching** for a rarer variant of the same pattern.
-
         ## Governance / Admin Assumptions
         - **Exclude** vulnerabilities that rely on an admin behaving maliciously, making configuration mistakes, or neglecting duties — these are governance risks and out of scope.
         - **Include** vulnerabilities where the admin or privileged function operates **exactly according to the specification**, but the implementation itself introduces a vulnerability.
