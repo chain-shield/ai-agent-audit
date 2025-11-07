@@ -295,7 +295,7 @@ pub const TOP_OBSERVED_PATTERNS: &[VulnerabilityPattern; 8] = &[
     VulnerabilityPattern::ReserveOrPriceDesync,
 ];
 
-pub const RARE_PATTERNS: &[VulnerabilityPattern; 10] = &[
+pub const RARE_PATTERNS: &[VulnerabilityPattern; 12] = &[
     VulnerabilityPattern::AccountingInvariantViolation,
     VulnerabilityPattern::FeeAccountingDrift,
     VulnerabilityPattern::ERC4626SharePriceMismatch,
@@ -306,6 +306,8 @@ pub const RARE_PATTERNS: &[VulnerabilityPattern; 10] = &[
     VulnerabilityPattern::ForcedAssetVsStrictEquality,
     VulnerabilityPattern::UntrustedDelegateCall,
     VulnerabilityPattern::SlippageMissingOrInsufficient,
+    VulnerabilityPattern::PermitMisuse,
+    VulnerabilityPattern::PermitFrontRun,
 ];
 
 pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 15] = &[
