@@ -1,4 +1,4 @@
-**NOTE**: ALL PRIVILEGED ROLES ARE TRUSTED, ONLY FOCUS ON PERMISSIONLESS EXPLOITS
+**NOTE**: ALL PRIVILEGED ROLES ARE TRUSTED, EXCEPT "While Agents undergo KYC, they cannot be considered fully trusted—especially if significant potential gains could incentivize malicious behavior." 
 
 ### Tokens in scope
 

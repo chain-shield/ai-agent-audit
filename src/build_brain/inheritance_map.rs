@@ -13,9 +13,8 @@ use std::{
 use tokio::sync::Mutex;
 
 use crate::{
-    enumerator::utils::SolFileType,
-    prepare_code::git_clone::RepoPaths,
-    utils::display_file::{self, display_file},
+    enumerator::utils::SolFileType, prepare_code::git_clone::RepoPaths,
+    utils::display_file::display_file,
 };
 
 /// DO NOT canonicalize paths! On macOS, /tmp is a symlink to /private/tmp,

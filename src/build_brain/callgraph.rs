@@ -4,20 +4,13 @@
 /// function relationships and building traversable graph structures for code
 /// slice generation and dependency analysis.
 use anyhow::Result;
-use log::warn;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use rusqlite::Connection;
 use serde::Deserialize;
-use std::{
-    collections::{HashMap, HashSet},
-    default::Default,
-    path::Path,
-    sync::Mutex,
-};
+use std::{collections::HashMap, default::Default, path::Path};
 
 use crate::{
-    build_brain::{inheritance, slither_ffi},
+    build_brain::slither_ffi,
     enumerator::utils::get_function_metadata_from_id,
     prepare_code::git_clone::RepoPaths,
     utils::{
@@ -27,17 +20,6 @@ use crate::{
 };
 
 use super::graph_db::SmartContractFunction;
-
-/// Global cache for inheritance map.
-/// Key: project_id, Value: child → parents mapping
-static INHERITANCE_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<String, Vec<String>>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// Global cache for inheritance map.
-/// Key: project_id, Value: parent → children mapping
-static INVERTED_INHERITANCE_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<String, Vec<String>>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-/// Represents a function node in the call graph
 
 #[derive(Debug, Clone, Default)]
 pub struct DotFunc {
@@ -97,203 +79,6 @@ pub async fn generate_call_graph_blobs(repo: &RepoPaths) -> Result<Vec<String>> 
     }
 }
 
-/// Generates inheritance edges (child → parent) for all contracts in the repository.
-///
-/// Uses custom inheritance printer that includes all project code (including lib folders
-/// like euler-price-oracle) while excluding only standard libraries (forge-std,
-/// openzeppelin-contracts, solady). This overrides any slither.config.json exclusions.
-///
-/// # Returns
-/// * `Vec<(String, String)>` - List of (child, parent) tuples representing inheritance edges
-// pub async fn generate_inheritance_edges(repo: &RepoPaths) -> Result<Vec<(String, String)>> {
-//     let folders = repo.extract_monorepo_folders()?;
-//
-//     if folders.is_empty() {
-//         // Use custom inheritance printer with standard library filtering
-//         let json = slither_ffi::run_printer_json_inheritance(&repo, None).await?;
-//         Ok(inheritance::parse_inheritance_json(&json)?)
-//     } else {
-//         let mut total_output = Vec::<(String, String)>::new();
-//         for folder in folders {
-//             if contains_build_config(&folder) {
-//                 // Use custom inheritance printer with standard library filtering
-//                 let json = slither_ffi::run_printer_json_inheritance(&repo, Some(folder)).await?;
-//                 let edges = inheritance::parse_inheritance_json(&json)?;
-//                 if !edges.is_empty() {
-//                     total_output.extend(edges);
-//                 }
-//             }
-//         }
-//         Ok(total_output)
-//     }
-// }
-//
-// /// Get all parent contracts for a given child contract (direct parents only).
-// ///
-// /// # Arguments
-// /// * `child` - The child contract name
-// /// * `inheritance_map` - The inheritance map from get_inheritance_map()
-// ///
-// /// # Returns
-// /// * `Vec<String>` - List of direct parent contracts (empty if no parents)
-// pub async fn _get_parents(child_contract: &str, repo: &RepoPaths) -> Result<Vec<String>> {
-//     let inheritance_map = get_inheritance_map(repo).await?;
-//     if let Some(parents) = inheritance_map.get(child_contract) {
-//         Ok(parents.clone())
-//     } else {
-//         Ok(Vec::new())
-//     }
-// }
-//
-// pub async fn _get_children(parent_contract: &str, repo: &RepoPaths) -> Result<Vec<String>> {
-//     let inheritance_map = get_inverted_inheritance_map(repo).await?;
-//     if let Some(children) = inheritance_map.get(parent_contract) {
-//         Ok(children.clone())
-//     } else {
-//         Ok(Vec::new())
-//     }
-// }
-//
-// /// Retrieves a cached inheritance map: child contract → list of parent contracts.
-// /// Results are cached globally per project to avoid redundant Slither calls.
-// ///
-// /// # Arguments
-// /// * `repo` - Repository paths and metadata
-// ///
-// /// # Returns
-// /// * `HashMap<String, Vec<String>>` - Map of child contract to all its parent contracts
-// pub async fn _get_inheritance_map(repo: &RepoPaths) -> Result<HashMap<String, Vec<String>>> {
-//     // Check cache first
-//     {
-//         let cache = INHERITANCE_MAP_CACHE.lock().unwrap();
-//         if let Some(cached_map) = cache.get(&repo.project_id) {
-//             return Ok(cached_map.clone());
-//         }
-//     }
-//
-//     // Cache miss - compute the result
-//     // log::info!(
-//     //     "Cache miss for get_inheritance_map - running Slither for project {}",
-//     //     repo.project_id
-//     // );
-//
-//     // Get inheritance edges (child, parent) tuples
-//     let edges = generate_inheritance_edges(repo).await?;
-//
-//     // Build child → parents map
-//     let mut inheritance_map: HashMap<String, Vec<String>> = HashMap::new();
-//     for (child, parent) in edges {
-//         inheritance_map
-//             .entry(child)
-//             .or_insert_with(Vec::new)
-//             .push(parent);
-//     }
-//
-//     // Store in cache
-//     {
-//         let mut cache = INHERITANCE_MAP_CACHE.lock().unwrap();
-//         cache.insert(repo.project_id.clone(), inheritance_map.clone());
-//     }
-//
-//     log::info!(
-//         "Cached inheritance map for project {} with {} contracts",
-//         repo.project_id,
-//         inheritance_map.len()
-//     );
-//
-//     Ok(inheritance_map)
-// }
-//
-// // Build parent → children map
-// pub async fn get_inverted_inheritance_map(
-//     repo: &RepoPaths,
-// ) -> Result<HashMap<String, Vec<String>>> {
-//     // Check cache first
-//     {
-//         let cache = INVERTED_INHERITANCE_MAP_CACHE.lock().unwrap();
-//         if let Some(cached_map) = cache.get(&repo.project_id) {
-//             return Ok(cached_map.clone());
-//         }
-//     }
-//
-//     // Get inheritance edges (child, parent) tuples
-//     let edges = generate_inheritance_edges(repo).await?;
-//     let mut tmp: HashMap<String, HashSet<String>> = HashMap::new();
-//     for (child, parent) in edges {
-//         if child == "IPriceOracle" || parent == "IPriceOracle" {
-//             warn!("round 1: key: {}, inserting : {}", parent, child);
-//         }
-//         tmp.entry(parent).or_default().insert(child);
-//     }
-//
-//     // Dedup + deterministic order
-//     let mut inverted_inheritance_map: HashMap<String, Vec<String>> = HashMap::new();
-//     for (parent, children_set) in tmp {
-//         let mut children: Vec<_> = children_set.into_iter().collect();
-//         if parent == "IPriceOracle" {
-//             warn!("parent: {}, children: {:?}", parent, children);
-//         }
-//         children.sort_unstable();
-//         inverted_inheritance_map.insert(parent, children);
-//     }
-//
-//     // cache
-//     INVERTED_INHERITANCE_MAP_CACHE
-//         .lock()
-//         .unwrap()
-//         .insert(repo.project_id.clone(), inverted_inheritance_map.clone());
-//
-//     log::info!(
-//         "Cached inverted inheritance map for project {} with {} parent entries",
-//         repo.project_id,
-//         inverted_inheritance_map.len()
-//     );
-//     // Build parent → children map
-//
-//     Ok(inverted_inheritance_map)
-// }
-// /// Get all ancestors up to a specified depth (parents, grandparents, etc.).
-// ///
-// /// # Arguments
-// /// * `child` - The child contract name
-// /// * `inheritance_map` - The inheritance map from get_inheritance_map()
-// /// * `max_depth` - Maximum depth to traverse (1 = direct parents only, 2 = parents + grandparents)
-// ///
-// /// # Returns
-// /// * `Vec<String>` - List of all ancestor contracts up to max_depth (deduplicated)
-// pub fn get_ancestors(
-//     child: &str,
-//     inheritance_map: &HashMap<String, Vec<String>>,
-//     max_depth: usize,
-// ) -> Vec<String> {
-//     let mut ancestors = Vec::new();
-//     let mut visited = std::collections::HashSet::new();
-//     let mut current_level = vec![child.to_string()];
-//
-//     for _ in 0..max_depth {
-//         let mut next_level = Vec::new();
-//
-//         for contract in &current_level {
-//             if let Some(parents) = inheritance_map.get(contract) {
-//                 for parent in parents {
-//                     if visited.insert(parent.clone()) {
-//                         ancestors.push(parent.clone());
-//                         next_level.push(parent.clone());
-//                     }
-//                 }
-//             }
-//         }
-//
-//         if next_level.is_empty() {
-//             break;
-//         }
-//
-//         current_level = next_level;
-//     }
-//
-//     ancestors
-// }
-//
 /// Step 2: pull every DOT file’s `content` string
 pub fn extract_dot_blobs(json: &str) -> Result<Vec<String>> {
     #[derive(Deserialize)]

@@ -344,6 +344,15 @@ pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
 
 Your task: decide if a reported finding is Valid and to accurately assess its Severity in a {contest} contest.
 
+
+### COFIGURATION CHECK
+    **Does finding rely on constants (time, thresholds, buffers)?**
+    If YES, check:
+    - `// for testnet`, `// for testing`, `// temporary` comments
+    - Suspiciously small values (WEEK=1800 vs 604800, BUFFER=300 vs 3600)
+    - Commented-out production values
+    - Re-assess with production config
+
 ### SCOPE CHECK
     - Is finding in scope? (see scope provided below)
 

@@ -22,8 +22,6 @@ pub mod build_brain {
     pub mod fn_summaries;
     /// Graph database operations for semantic data
     pub mod graph_db;
-    /// Contract inheritance analysis
-    pub mod inheritance;
     /// Inheritance relationship mapping with (contract, file) tuples
     pub mod inheritance_map;
     /// Code parsing utilities

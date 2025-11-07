@@ -299,13 +299,13 @@ pub const RARE_PATTERNS: &[VulnerabilityPattern; 10] = &[
     VulnerabilityPattern::AccountingInvariantViolation,
     VulnerabilityPattern::FeeAccountingDrift,
     VulnerabilityPattern::ERC4626SharePriceMismatch,
-    VulnerabilityPattern::NonStandardERC20Behavior,
     VulnerabilityPattern::ERC20DecimalsMismatch,
     VulnerabilityPattern::MulticallCrossPathReentrancy,
     VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity,
     VulnerabilityPattern::StaleOracleAcceptance,
     VulnerabilityPattern::ForcedAssetVsStrictEquality,
     VulnerabilityPattern::UntrustedDelegateCall,
+    VulnerabilityPattern::SlippageMissingOrInsufficient,
 ];
 
 pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 15] = &[
