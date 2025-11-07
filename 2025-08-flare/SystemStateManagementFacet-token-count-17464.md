@@ -234,258 +234,174 @@ abstract contract AssetManagerBase {
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-
-library CollateralReservation {
-    enum Status {
-        ACTIVE,         // the minting process hasn't finished yet
-        SUCCESSFUL,     // the payment has been confirmed and the FAssets minted
-        DEFAULTED,      // the payment has defaulted and the agent received the collateral reservation fee
-        EXPIRED         // the confirmation time has expired and the agent called unstickMinting
-    }
-
-    struct Data {
-        uint64 valueAMG;
-        uint64 firstUnderlyingBlock;
-        uint64 lastUnderlyingBlock;
-        uint64 lastUnderlyingTimestamp;
-        uint128 underlyingFeeUBA;
-        uint128 reservationFeeNatWei;
-        address agentVault;
-        uint16 poolFeeShareBIPS;
-        address minter;
-        CollateralReservation.Status status;
-        address payable executor;
-        uint64 executorFeeNatGWei;
-        uint64 __handshakeStartTimestamp; // only storage placeholder
-        bytes32 __sourceAddressesRoot; // only storage placeholder
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {IPayment, IBalanceDecreasingTransaction}
-    from "@flarenetwork/flare-periphery-contracts/flare/IFdcVerification.sol";
+import {IIFAsset} from "../../fassetToken/interfaces/IIFAsset.sol";
+import {IWNat} from "../../flareSmartContracts/interfaces/IWNat.sol";
+import {AssetManagerSettings} from "../../userInterfaces/data/AssetManagerSettings.sol";
+import {IAgentOwnerRegistry} from "../../userInterfaces/IAgentOwnerRegistry.sol";
+import {AssetManagerState} from "./data/AssetManagerState.sol";
+import {CollateralTypeInt} from "./data/CollateralTypeInt.sol";
 
 
-library PaymentConfirmations {
-    error PaymentAlreadyConfirmed();
+// global state helpers
+library Globals {
+    bytes32 internal constant ASSET_MANAGER_SETTINGS_POSITION = keccak256("fasset.AssetManager.Settings");
 
-    struct State {
-        // a store of payment hashes to prevent payment being used / challenged twice
-        // structure: map of hash to the next hash in that day
-        mapping(bytes32 => bytes32) verifiedPayments;
-        // a linked list of payment hashes (one list per day) used for cleanup
-        mapping(uint256 => bytes32) __verifiedPaymentsForDay; // only storage placeholder
-        // first day number for which we are tracking verifications
-        uint256 __verifiedPaymentsForDayStart; // only storage placeholder
-    }
-
-    /**
-     * For payment transaction with non-unique payment reference (generated from address, not id),
-     * we record `tx hash`, so that the same transaction can only be used once for payment.
-     */
-    function confirmIncomingPayment(
-        State storage _state,
-        IPayment.Proof calldata _payment
-    )
-        internal
-    {
-        _recordPaymentVerification(_state, _payment.data.requestBody.transactionId);
-    }
-
-    /**
-     * For source decreasing transaction, we record `(source address, tx hash)` pair, since illegal
-     * transactions on utxo chains can have multiple input addresses.
-     */
-    function confirmSourceDecreasingTransaction(
-        State storage _state,
-        IPayment.Proof calldata _payment
-    )
-        internal
-    {
-        bytes32 txKey = transactionKey(_payment.data.responseBody.sourceAddressHash,
-            _payment.data.requestBody.transactionId);
-        _recordPaymentVerification(_state, txKey);
-    }
-
-    /**
-     * Check if source decreasing transaction was already confirmed.
-     */
-    function transactionConfirmed(
-        State storage _state,
-        IBalanceDecreasingTransaction.Proof calldata _transaction
-    )
-        internal view
-        returns (bool)
-    {
-        bytes32 txKey = transactionKey(_transaction.data.responseBody.sourceAddressHash,
-            _transaction.data.requestBody.transactionId);
-        return _state.verifiedPayments[txKey] != 0;
-    }
-
-    // the same transaction hash could perform several underlying payments if it is smart contract
-    // for now this is illegal, but might change for some smart contract chains
-    // therefore the mapping key for transaction is always the combination of
-    // underlying address (from which funds were removed) and transaction hash
-    function transactionKey(bytes32 _underlyingSourceAddressHash, bytes32 _transactionHash)
+    function getSettings()
         internal pure
-        returns (bytes32)
+        returns (AssetManagerSettings.Data storage _settings)
     {
-        return keccak256(abi.encode(_underlyingSourceAddressHash, _transactionHash));
+        bytes32 position = ASSET_MANAGER_SETTINGS_POSITION;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            _settings.slot := position
+        }
     }
 
-    function _recordPaymentVerification(
-        State storage _state,
-        bytes32 _txKey
-    )
-        private
+    function getWNat()
+        internal view
+        returns (IWNat)
     {
-        require(_state.verifiedPayments[_txKey] == 0, PaymentAlreadyConfirmed());
-        _state.verifiedPayments[_txKey] = _txKey; // any non-zero value is fine
-    }
-}
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-library Redemption {
-    enum Status {
-        EMPTY,      // redemption request with this id doesn't exist
-        ACTIVE,     // waiting for confirmation/default
-        DEFAULTED,  // default called, failed or late payment can still be confirmed
-        // final statuses - there can be no valid payment for this redemption anymore
-        SUCCESSFUL, // successful payment confirmed
-        FAILED,     // payment failed
-        BLOCKED,    // payment blocked
-        REJECTED    // redemption request rejected due to invalid redeemer's address
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return IWNat(address(state.collateralTokens[state.poolCollateralIndex].token));
     }
 
-    struct Request {
-        bytes32 redeemerUnderlyingAddressHash;
-        uint128 underlyingValueUBA;
-        uint128 underlyingFeeUBA;
-        uint64 firstUnderlyingBlock;
-        uint64 lastUnderlyingBlock;
-        uint64 lastUnderlyingTimestamp;
-        uint64 valueAMG;
-        address redeemer;
-        uint64 timestamp;
-        address agentVault;
-        Redemption.Status status;
-        bool poolSelfClose;
-        address payable executor;
-        uint64 executorFeeNatGWei;
-        uint64 __rejectionTimestamp; // only storage placeholder
-        uint64 __takeOverTimestamp; // only storage placeholder
-        string redeemerUnderlyingAddressString;
-        bool transferToCoreVault;
-        uint16 poolFeeShareBIPS;
+    function getPoolCollateral()
+        internal view
+        returns (CollateralTypeInt.Data storage)
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return state.collateralTokens[state.poolCollateralIndex];
+    }
+
+    function getFAsset()
+        internal view
+        returns (IIFAsset)
+    {
+        AssetManagerSettings.Data storage settings = Globals.getSettings();
+        return IIFAsset(settings.fAsset);
+    }
+
+    function getAgentOwnerRegistry()
+        internal view
+        returns (IAgentOwnerRegistry)
+    {
+        AssetManagerSettings.Data storage settings = Globals.getSettings();
+        return IAgentOwnerRegistry(settings.agentOwnerRegistry);
+    }
+
+    function getBurnAddress()
+        internal view
+        returns (address payable)
+    {
+        AssetManagerSettings.Data storage settings = Globals.getSettings();
+        return settings.burnAddress;
     }
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {CollateralType} from "../../../userInterfaces/data/CollateralType.sol";
 
-library CollateralReservation {
-    enum Status {
-        ACTIVE,         // the minting process hasn't finished yet
-        SUCCESSFUL,     // the payment has been confirmed and the FAssets minted
-        DEFAULTED,      // the payment has defaulted and the agent received the collateral reservation fee
-        EXPIRED         // the confirmation time has expired and the agent called unstickMinting
-    }
-
+library CollateralTypeInt {
     struct Data {
-        uint64 valueAMG;
-        uint64 firstUnderlyingBlock;
-        uint64 lastUnderlyingBlock;
-        uint64 lastUnderlyingTimestamp;
-        uint128 underlyingFeeUBA;
-        uint128 reservationFeeNatWei;
-        address agentVault;
-        uint16 poolFeeShareBIPS;
-        address minter;
-        CollateralReservation.Status status;
-        address payable executor;
-        uint64 executorFeeNatGWei;
-        uint64 __handshakeStartTimestamp; // only storage placeholder
-        bytes32 __sourceAddressesRoot; // only storage placeholder
+        // The ERC20 token contract for this collateral type.
+        // immutable
+        IERC20 token;
+        // The kind of collateral for this token.
+        // immutable
+        CollateralType.Class collateralClass;
+        // Same as token.decimals(), when that exists.
+        // immutable
+        uint8 decimals;
+        // If some token should not be used anymore as collateral, it has to be announced in advance and it
+        // is still valid until this timestamp. After that time, the corresponding collateral is considered as
+        // zero and the agents that haven't replaced it are liquidated.
+        // When the invalidation has not been announced, this value is 0.
+        uint64 validUntil;
+        // When `true`, the FTSO with symbol `assetFtsoSymbol` returns asset price relative to this token
+        // (such FTSO's will probably exist for major stablecoins).
+        // When `false`, the FTSOs with symbols `assetFtsoSymbol` and `tokenFtsoSymbol` give asset and token
+        // price relative to the same reference currency and the asset/token price is calculated as their ratio.
+        // immutable
+        bool directPricePair;
+        // FTSO symbol for the asset, relative to this token or a reference currency
+        // (it depends on the value of `directPricePair`).
+        // immutable
+        string assetFtsoSymbol;
+        // FTSO symbol for this token in reference currency.
+        // Used for asset/token price calculation when `directPricePair` is `false`.
+        // Otherwise it is irrelevant to asset/token price calculation, but if it is nonempty,
+        // it is still used in calculation of challenger and confirmation rewards
+        // (otherwise we assume it approximates the value of USD and pay directly the USD amount in vault collateral).
+        // immutable
+        string tokenFtsoSymbol;
+        // Minimum collateral ratio for healthy agents.
+        // timelocked
+        uint32 minCollateralRatioBIPS;
+        // Minimum collateral ratio for agent in CCB (Collateral call band).
+        // If the agent's collateral ratio is less than this, skip the CCB and go straight to liquidation.
+        // A bit smaller than minCollateralRatioBIPS.
+        // timelocked
+        uint32 __ccbMinCollateralRatioBIPS; // only storage placeholder
+        // Minimum collateral ratio required to get agent out of liquidation.
+        // Will always be greater than minCollateralRatioBIPS.
+        // timelocked
+        uint32 safetyMinCollateralRatioBIPS;
     }
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+pragma solidity >=0.7.6 <0.9;
 
-library Redemption {
-    enum Status {
-        EMPTY,      // redemption request with this id doesn't exist
-        ACTIVE,     // waiting for confirmation/default
-        DEFAULTED,  // default called, failed or late payment can still be confirmed
-        // final statuses - there can be no valid payment for this redemption anymore
-        SUCCESSFUL, // successful payment confirmed
-        FAILED,     // payment failed
-        BLOCKED,    // payment blocked
-        REJECTED    // redemption request rejected due to invalid redeemer's address
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+
+library CollateralType {
+    enum Class {
+        NONE,   // unused
+        POOL,   // pool collateral type
+        VAULT  // usable as vault collateral
     }
 
-    struct Request {
-        bytes32 redeemerUnderlyingAddressHash;
-        uint128 underlyingValueUBA;
-        uint128 underlyingFeeUBA;
-        uint64 firstUnderlyingBlock;
-        uint64 lastUnderlyingBlock;
-        uint64 lastUnderlyingTimestamp;
-        uint64 valueAMG;
-        address redeemer;
-        uint64 timestamp;
-        address agentVault;
-        Redemption.Status status;
-        bool poolSelfClose;
-        address payable executor;
-        uint64 executorFeeNatGWei;
-        uint64 __rejectionTimestamp; // only storage placeholder
-        uint64 __takeOverTimestamp; // only storage placeholder
-        string redeemerUnderlyingAddressString;
-        bool transferToCoreVault;
-        uint16 poolFeeShareBIPS;
-    }
-}
+    // Collateral token is uniquely identified by the pair (collateralClass, token).
+    struct Data {
+        // The kind of collateral for this token.
+        CollateralType.Class collateralClass;
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+        // The ERC20 token contract for this collateral type.
+        IERC20 token;
 
+        // Same as token.decimals(), when that exists.
+        uint256 decimals;
 
-library UnderlyingAddressOwnership {
-    error InvalidAddressOwnershipProof();
-    error EOAProofRequired();
-    error AddressAlreadyClaimed();
+        // Token invalidation time. Must be 0 on creation.
+        uint256 validUntil;
 
-    struct Ownership {
-        address owner;
+        // When `true`, the FTSO with symbol `assetFtsoSymbol` returns asset price relative to this token
+        // (such FTSO's will probably exist for major stablecoins).
+        // When `false`, the FTSOs with symbols `assetFtsoSymbol` and `tokenFtsoSymbol` give asset and token
+        // price relative to the same reference currency and the asset/token price is calculated as their ratio.
+        bool directPricePair;
 
-        // if not 0, there was a payment proof indicating this is externally owned account
-        uint64 __underlyingBlockOfEOAProof; // only storage placeholder
+        // FTSO symbol for the asset, relative to this token or a reference currency
+        // (it depends on the value of `directPricePair`).
+        string assetFtsoSymbol;
 
-        bool __provedEOA; // only storage placeholder
-    }
+        // FTSO symbol for this token in reference currency.
+        // Used for asset/token price calculation when `directPricePair` is `false`.
+        // Otherwise it is irrelevant to asset/token price calculation, but if it is nonempty,
+        // it is still used in calculation of challenger and confirmation rewards
+        // (otherwise we assume it approximates the value of USD and pay directly the USD amount in vault collateral).
+        string tokenFtsoSymbol;
 
-    struct State {
-        // mapping underlyingAddressHash => Ownership
-        mapping (bytes32 => Ownership) ownership;
-    }
+        // Minimum collateral ratio for healthy agents.
+        uint256 minCollateralRatioBIPS;
 
-    function claimAndTransfer(
-        State storage _state,
-        address _owner,
-        bytes32 _underlyingAddressHash
-    )
-        internal
-    {
-        Ownership storage ownership = _state.ownership[_underlyingAddressHash];
-        // check that currently unclaimed
-        require(ownership.owner == address(0), AddressAlreadyClaimed());
-        // set the new owner
-        ownership.owner = _owner;
+        // Minimum collateral ratio required to get agent out of liquidation.
+        // Will always be greater than minCollateralRatioBIPS.
+        uint256 safetyMinCollateralRatioBIPS;
     }
 }
 
@@ -804,224 +720,122 @@ library AssetManagerSettings {
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {CollateralType} from "../../../userInterfaces/data/CollateralType.sol";
-
-library CollateralTypeInt {
-    struct Data {
-        // The ERC20 token contract for this collateral type.
-        // immutable
-        IERC20 token;
-        // The kind of collateral for this token.
-        // immutable
-        CollateralType.Class collateralClass;
-        // Same as token.decimals(), when that exists.
-        // immutable
-        uint8 decimals;
-        // If some token should not be used anymore as collateral, it has to be announced in advance and it
-        // is still valid until this timestamp. After that time, the corresponding collateral is considered as
-        // zero and the agents that haven't replaced it are liquidated.
-        // When the invalidation has not been announced, this value is 0.
-        uint64 validUntil;
-        // When `true`, the FTSO with symbol `assetFtsoSymbol` returns asset price relative to this token
-        // (such FTSO's will probably exist for major stablecoins).
-        // When `false`, the FTSOs with symbols `assetFtsoSymbol` and `tokenFtsoSymbol` give asset and token
-        // price relative to the same reference currency and the asset/token price is calculated as their ratio.
-        // immutable
-        bool directPricePair;
-        // FTSO symbol for the asset, relative to this token or a reference currency
-        // (it depends on the value of `directPricePair`).
-        // immutable
-        string assetFtsoSymbol;
-        // FTSO symbol for this token in reference currency.
-        // Used for asset/token price calculation when `directPricePair` is `false`.
-        // Otherwise it is irrelevant to asset/token price calculation, but if it is nonempty,
-        // it is still used in calculation of challenger and confirmation rewards
-        // (otherwise we assume it approximates the value of USD and pay directly the USD amount in vault collateral).
-        // immutable
-        string tokenFtsoSymbol;
-        // Minimum collateral ratio for healthy agents.
-        // timelocked
-        uint32 minCollateralRatioBIPS;
-        // Minimum collateral ratio for agent in CCB (Collateral call band).
-        // If the agent's collateral ratio is less than this, skip the CCB and go straight to liquidation.
-        // A bit smaller than minCollateralRatioBIPS.
-        // timelocked
-        uint32 __ccbMinCollateralRatioBIPS; // only storage placeholder
-        // Minimum collateral ratio required to get agent out of liquidation.
-        // Will always be greater than minCollateralRatioBIPS.
-        // timelocked
-        uint32 safetyMinCollateralRatioBIPS;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+import {IPayment, IBalanceDecreasingTransaction}
+    from "@flarenetwork/flare-periphery-contracts/flare/IFdcVerification.sol";
 
 
-library RedemptionQueue {
-    struct Ticket {
-        address agentVault;
-        uint64 valueAMG;
-        uint64 prev;
-        uint64 next;
-        uint64 prevForAgent;
-        uint64 nextForAgent;
-    }
-
-    struct AgentQueue {
-        uint64 firstTicketId;
-        uint64 lastTicketId;
-    }
+library PaymentConfirmations {
+    error PaymentAlreadyConfirmed();
 
     struct State {
-        mapping(uint64 => Ticket) tickets;      // mapping redemption_id=>ticket
-        mapping(address => AgentQueue) agents;  // mapping address=>dl-list
-        uint64 firstTicketId;
-        uint64 lastTicketId;
-        uint64 newTicketId;       // increment before assigning to ticket (to avoid 0)
+        // a store of payment hashes to prevent payment being used / challenged twice
+        // structure: map of hash to the next hash in that day
+        mapping(bytes32 => bytes32) verifiedPayments;
+        // a linked list of payment hashes (one list per day) used for cleanup
+        mapping(uint256 => bytes32) __verifiedPaymentsForDay; // only storage placeholder
+        // first day number for which we are tracking verifications
+        uint256 __verifiedPaymentsForDayStart; // only storage placeholder
     }
 
-    function createRedemptionTicket(
+    /**
+     * For payment transaction with non-unique payment reference (generated from address, not id),
+     * we record `tx hash`, so that the same transaction can only be used once for payment.
+     */
+    function confirmIncomingPayment(
         State storage _state,
-        address _agentVault,
-        uint64 _valueAMG
-    )
-        internal
-        returns (uint64)
-    {
-        AgentQueue storage agent = _state.agents[_agentVault];
-        uint64 ticketId = ++_state.newTicketId;   // pre-increment - id can never be 0
-        // insert new ticket to the last place in global and agent redemption queues
-        _state.tickets[ticketId] = Ticket({
-            agentVault: _agentVault,
-            valueAMG: _valueAMG,
-            prev: _state.lastTicketId,
-            next: 0,
-            prevForAgent: agent.lastTicketId,
-            nextForAgent: 0
-        });
-        // update links in global redemption queue
-        if (_state.firstTicketId == 0) {
-            assert(_state.lastTicketId == 0);    // empty queue - first and last must be 0
-            _state.firstTicketId = ticketId;
-        } else {
-            assert(_state.lastTicketId != 0);    // non-empty queue - first and last must be non-zero
-            _state.tickets[_state.lastTicketId].next = ticketId;
-        }
-        _state.lastTicketId = ticketId;
-        // update links in agent redemption queue
-        if (agent.firstTicketId == 0) {
-            assert(agent.lastTicketId == 0);    // empty queue - first and last must be 0
-            agent.firstTicketId = ticketId;
-        } else {
-            assert(agent.lastTicketId != 0);    // non-empty queue - first and last must be non-zero
-            _state.tickets[agent.lastTicketId].nextForAgent = ticketId;
-        }
-        agent.lastTicketId = ticketId;
-        // return the new redemption ticket's id
-        return ticketId;
-    }
-
-    function deleteRedemptionTicket(
-        State storage _state,
-        uint64 _ticketId
+        IPayment.Proof calldata _payment
     )
         internal
     {
-        Ticket storage ticket = _state.tickets[_ticketId];
-        assert(ticket.agentVault != address(0));
-        AgentQueue storage agent = _state.agents[ticket.agentVault];
-        // unlink from global queue
-        if (ticket.prev == 0) {
-            assert(_ticketId == _state.firstTicketId);     // ticket is first in queue
-            _state.firstTicketId = ticket.next;
-        } else {
-            assert(_ticketId != _state.firstTicketId);     // ticket is not first in queue
-            _state.tickets[ticket.prev].next = ticket.next;
-        }
-        if (ticket.next == 0) {
-            assert(_ticketId == _state.lastTicketId);     // ticket is last in queue
-            _state.lastTicketId = ticket.prev;
-        } else {
-            assert(_ticketId != _state.lastTicketId);     // ticket is not last in queue
-            _state.tickets[ticket.next].prev = ticket.prev;
-        }
-        // unlink from agent queue
-        if (ticket.prevForAgent == 0) {
-            assert(_ticketId == agent.firstTicketId);     // ticket is first in agent queue
-            agent.firstTicketId = ticket.nextForAgent;
-        } else {
-            assert(_ticketId != agent.firstTicketId);     // ticket is not first in agent queue
-            _state.tickets[ticket.prevForAgent].nextForAgent = ticket.nextForAgent;
-        }
-        if (ticket.nextForAgent == 0) {
-            assert(_ticketId == agent.lastTicketId);     // ticket is last in agent queue
-            agent.lastTicketId = ticket.prevForAgent;
-        } else {
-            assert(_ticketId != agent.lastTicketId);     // ticket is not last in agent queue
-            _state.tickets[ticket.nextForAgent].prevForAgent = ticket.prevForAgent;
-        }
-        // delete storage
-        delete _state.tickets[_ticketId];
+        _recordPaymentVerification(_state, _payment.data.requestBody.transactionId);
     }
 
-    function getTicket(State storage _state, uint64 _id) internal view returns (Ticket storage) {
-        return _state.tickets[_id];
+    /**
+     * For source decreasing transaction, we record `(source address, tx hash)` pair, since illegal
+     * transactions on utxo chains can have multiple input addresses.
+     */
+    function confirmSourceDecreasingTransaction(
+        State storage _state,
+        IPayment.Proof calldata _payment
+    )
+        internal
+    {
+        bytes32 txKey = transactionKey(_payment.data.responseBody.sourceAddressHash,
+            _payment.data.requestBody.transactionId);
+        _recordPaymentVerification(_state, txKey);
+    }
+
+    /**
+     * Check if source decreasing transaction was already confirmed.
+     */
+    function transactionConfirmed(
+        State storage _state,
+        IBalanceDecreasingTransaction.Proof calldata _transaction
+    )
+        internal view
+        returns (bool)
+    {
+        bytes32 txKey = transactionKey(_transaction.data.responseBody.sourceAddressHash,
+            _transaction.data.requestBody.transactionId);
+        return _state.verifiedPayments[txKey] != 0;
+    }
+
+    // the same transaction hash could perform several underlying payments if it is smart contract
+    // for now this is illegal, but might change for some smart contract chains
+    // therefore the mapping key for transaction is always the combination of
+    // underlying address (from which funds were removed) and transaction hash
+    function transactionKey(bytes32 _underlyingSourceAddressHash, bytes32 _transactionHash)
+        internal pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(_underlyingSourceAddressHash, _transactionHash));
+    }
+
+    function _recordPaymentVerification(
+        State storage _state,
+        bytes32 _txKey
+    )
+        private
+    {
+        require(_state.verifiedPayments[_txKey] == 0, PaymentAlreadyConfirmed());
+        _state.verifiedPayments[_txKey] = _txKey; // any non-zero value is fine
     }
 }
-
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {CollateralType} from "../../../userInterfaces/data/CollateralType.sol";
+library Redemption {
+    enum Status {
+        EMPTY,      // redemption request with this id doesn't exist
+        ACTIVE,     // waiting for confirmation/default
+        DEFAULTED,  // default called, failed or late payment can still be confirmed
+        // final statuses - there can be no valid payment for this redemption anymore
+        SUCCESSFUL, // successful payment confirmed
+        FAILED,     // payment failed
+        BLOCKED,    // payment blocked
+        REJECTED    // redemption request rejected due to invalid redeemer's address
+    }
 
-library CollateralTypeInt {
-    struct Data {
-        // The ERC20 token contract for this collateral type.
-        // immutable
-        IERC20 token;
-        // The kind of collateral for this token.
-        // immutable
-        CollateralType.Class collateralClass;
-        // Same as token.decimals(), when that exists.
-        // immutable
-        uint8 decimals;
-        // If some token should not be used anymore as collateral, it has to be announced in advance and it
-        // is still valid until this timestamp. After that time, the corresponding collateral is considered as
-        // zero and the agents that haven't replaced it are liquidated.
-        // When the invalidation has not been announced, this value is 0.
-        uint64 validUntil;
-        // When `true`, the FTSO with symbol `assetFtsoSymbol` returns asset price relative to this token
-        // (such FTSO's will probably exist for major stablecoins).
-        // When `false`, the FTSOs with symbols `assetFtsoSymbol` and `tokenFtsoSymbol` give asset and token
-        // price relative to the same reference currency and the asset/token price is calculated as their ratio.
-        // immutable
-        bool directPricePair;
-        // FTSO symbol for the asset, relative to this token or a reference currency
-        // (it depends on the value of `directPricePair`).
-        // immutable
-        string assetFtsoSymbol;
-        // FTSO symbol for this token in reference currency.
-        // Used for asset/token price calculation when `directPricePair` is `false`.
-        // Otherwise it is irrelevant to asset/token price calculation, but if it is nonempty,
-        // it is still used in calculation of challenger and confirmation rewards
-        // (otherwise we assume it approximates the value of USD and pay directly the USD amount in vault collateral).
-        // immutable
-        string tokenFtsoSymbol;
-        // Minimum collateral ratio for healthy agents.
-        // timelocked
-        uint32 minCollateralRatioBIPS;
-        // Minimum collateral ratio for agent in CCB (Collateral call band).
-        // If the agent's collateral ratio is less than this, skip the CCB and go straight to liquidation.
-        // A bit smaller than minCollateralRatioBIPS.
-        // timelocked
-        uint32 __ccbMinCollateralRatioBIPS; // only storage placeholder
-        // Minimum collateral ratio required to get agent out of liquidation.
-        // Will always be greater than minCollateralRatioBIPS.
-        // timelocked
-        uint32 safetyMinCollateralRatioBIPS;
+    struct Request {
+        bytes32 redeemerUnderlyingAddressHash;
+        uint128 underlyingValueUBA;
+        uint128 underlyingFeeUBA;
+        uint64 firstUnderlyingBlock;
+        uint64 lastUnderlyingBlock;
+        uint64 lastUnderlyingTimestamp;
+        uint64 valueAMG;
+        address redeemer;
+        uint64 timestamp;
+        address agentVault;
+        Redemption.Status status;
+        bool poolSelfClose;
+        address payable executor;
+        uint64 executorFeeNatGWei;
+        uint64 __rejectionTimestamp; // only storage placeholder
+        uint64 __takeOverTimestamp; // only storage placeholder
+        string redeemerUnderlyingAddressString;
+        bool transferToCoreVault;
+        uint16 poolFeeShareBIPS;
     }
 }
 
@@ -1144,6 +958,198 @@ library AssetManagerState {
         assembly {
             _state.slot := position
         }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+
+library RedemptionQueue {
+    struct Ticket {
+        address agentVault;
+        uint64 valueAMG;
+        uint64 prev;
+        uint64 next;
+        uint64 prevForAgent;
+        uint64 nextForAgent;
+    }
+
+    struct AgentQueue {
+        uint64 firstTicketId;
+        uint64 lastTicketId;
+    }
+
+    struct State {
+        mapping(uint64 => Ticket) tickets;      // mapping redemption_id=>ticket
+        mapping(address => AgentQueue) agents;  // mapping address=>dl-list
+        uint64 firstTicketId;
+        uint64 lastTicketId;
+        uint64 newTicketId;       // increment before assigning to ticket (to avoid 0)
+    }
+
+    function createRedemptionTicket(
+        State storage _state,
+        address _agentVault,
+        uint64 _valueAMG
+    )
+        internal
+        returns (uint64)
+    {
+        AgentQueue storage agent = _state.agents[_agentVault];
+        uint64 ticketId = ++_state.newTicketId;   // pre-increment - id can never be 0
+        // insert new ticket to the last place in global and agent redemption queues
+        _state.tickets[ticketId] = Ticket({
+            agentVault: _agentVault,
+            valueAMG: _valueAMG,
+            prev: _state.lastTicketId,
+            next: 0,
+            prevForAgent: agent.lastTicketId,
+            nextForAgent: 0
+        });
+        // update links in global redemption queue
+        if (_state.firstTicketId == 0) {
+            assert(_state.lastTicketId == 0);    // empty queue - first and last must be 0
+            _state.firstTicketId = ticketId;
+        } else {
+            assert(_state.lastTicketId != 0);    // non-empty queue - first and last must be non-zero
+            _state.tickets[_state.lastTicketId].next = ticketId;
+        }
+        _state.lastTicketId = ticketId;
+        // update links in agent redemption queue
+        if (agent.firstTicketId == 0) {
+            assert(agent.lastTicketId == 0);    // empty queue - first and last must be 0
+            agent.firstTicketId = ticketId;
+        } else {
+            assert(agent.lastTicketId != 0);    // non-empty queue - first and last must be non-zero
+            _state.tickets[agent.lastTicketId].nextForAgent = ticketId;
+        }
+        agent.lastTicketId = ticketId;
+        // return the new redemption ticket's id
+        return ticketId;
+    }
+
+    function deleteRedemptionTicket(
+        State storage _state,
+        uint64 _ticketId
+    )
+        internal
+    {
+        Ticket storage ticket = _state.tickets[_ticketId];
+        assert(ticket.agentVault != address(0));
+        AgentQueue storage agent = _state.agents[ticket.agentVault];
+        // unlink from global queue
+        if (ticket.prev == 0) {
+            assert(_ticketId == _state.firstTicketId);     // ticket is first in queue
+            _state.firstTicketId = ticket.next;
+        } else {
+            assert(_ticketId != _state.firstTicketId);     // ticket is not first in queue
+            _state.tickets[ticket.prev].next = ticket.next;
+        }
+        if (ticket.next == 0) {
+            assert(_ticketId == _state.lastTicketId);     // ticket is last in queue
+            _state.lastTicketId = ticket.prev;
+        } else {
+            assert(_ticketId != _state.lastTicketId);     // ticket is not last in queue
+            _state.tickets[ticket.next].prev = ticket.prev;
+        }
+        // unlink from agent queue
+        if (ticket.prevForAgent == 0) {
+            assert(_ticketId == agent.firstTicketId);     // ticket is first in agent queue
+            agent.firstTicketId = ticket.nextForAgent;
+        } else {
+            assert(_ticketId != agent.firstTicketId);     // ticket is not first in agent queue
+            _state.tickets[ticket.prevForAgent].nextForAgent = ticket.nextForAgent;
+        }
+        if (ticket.nextForAgent == 0) {
+            assert(_ticketId == agent.lastTicketId);     // ticket is last in agent queue
+            agent.lastTicketId = ticket.prevForAgent;
+        } else {
+            assert(_ticketId != agent.lastTicketId);     // ticket is not last in agent queue
+            _state.tickets[ticket.nextForAgent].prevForAgent = ticket.prevForAgent;
+        }
+        // delete storage
+        delete _state.tickets[_ticketId];
+    }
+
+    function getTicket(State storage _state, uint64 _id) internal view returns (Ticket storage) {
+        return _state.tickets[_id];
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+library Redemption {
+    enum Status {
+        EMPTY,      // redemption request with this id doesn't exist
+        ACTIVE,     // waiting for confirmation/default
+        DEFAULTED,  // default called, failed or late payment can still be confirmed
+        // final statuses - there can be no valid payment for this redemption anymore
+        SUCCESSFUL, // successful payment confirmed
+        FAILED,     // payment failed
+        BLOCKED,    // payment blocked
+        REJECTED    // redemption request rejected due to invalid redeemer's address
+    }
+
+    struct Request {
+        bytes32 redeemerUnderlyingAddressHash;
+        uint128 underlyingValueUBA;
+        uint128 underlyingFeeUBA;
+        uint64 firstUnderlyingBlock;
+        uint64 lastUnderlyingBlock;
+        uint64 lastUnderlyingTimestamp;
+        uint64 valueAMG;
+        address redeemer;
+        uint64 timestamp;
+        address agentVault;
+        Redemption.Status status;
+        bool poolSelfClose;
+        address payable executor;
+        uint64 executorFeeNatGWei;
+        uint64 __rejectionTimestamp; // only storage placeholder
+        uint64 __takeOverTimestamp; // only storage placeholder
+        string redeemerUnderlyingAddressString;
+        bool transferToCoreVault;
+        uint16 poolFeeShareBIPS;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+
+library UnderlyingAddressOwnership {
+    error InvalidAddressOwnershipProof();
+    error EOAProofRequired();
+    error AddressAlreadyClaimed();
+
+    struct Ownership {
+        address owner;
+
+        // if not 0, there was a payment proof indicating this is externally owned account
+        uint64 __underlyingBlockOfEOAProof; // only storage placeholder
+
+        bool __provedEOA; // only storage placeholder
+    }
+
+    struct State {
+        // mapping underlyingAddressHash => Ownership
+        mapping (bytes32 => Ownership) ownership;
+    }
+
+    function claimAndTransfer(
+        State storage _state,
+        address _owner,
+        bytes32 _underlyingAddressHash
+    )
+        internal
+    {
+        Ownership storage ownership = _state.ownership[_underlyingAddressHash];
+        // check that currently unclaimed
+        require(ownership.owner == address(0), AddressAlreadyClaimed());
+        // set the new owner
+        ownership.owner = _owner;
     }
 }
 
@@ -1378,151 +1384,114 @@ library Agents {
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IPayment, IBalanceDecreasingTransaction}
-    from "@flarenetwork/flare-periphery-contracts/flare/IFdcVerification.sol";
 
-
-library PaymentConfirmations {
-    error PaymentAlreadyConfirmed();
-
-    struct State {
-        // a store of payment hashes to prevent payment being used / challenged twice
-        // structure: map of hash to the next hash in that day
-        mapping(bytes32 => bytes32) verifiedPayments;
-        // a linked list of payment hashes (one list per day) used for cleanup
-        mapping(uint256 => bytes32) __verifiedPaymentsForDay; // only storage placeholder
-        // first day number for which we are tracking verifications
-        uint256 __verifiedPaymentsForDayStart; // only storage placeholder
+library CollateralReservation {
+    enum Status {
+        ACTIVE,         // the minting process hasn't finished yet
+        SUCCESSFUL,     // the payment has been confirmed and the FAssets minted
+        DEFAULTED,      // the payment has defaulted and the agent received the collateral reservation fee
+        EXPIRED         // the confirmation time has expired and the agent called unstickMinting
     }
 
-    /**
-     * For payment transaction with non-unique payment reference (generated from address, not id),
-     * we record `tx hash`, so that the same transaction can only be used once for payment.
-     */
-    function confirmIncomingPayment(
-        State storage _state,
-        IPayment.Proof calldata _payment
-    )
-        internal
-    {
-        _recordPaymentVerification(_state, _payment.data.requestBody.transactionId);
-    }
-
-    /**
-     * For source decreasing transaction, we record `(source address, tx hash)` pair, since illegal
-     * transactions on utxo chains can have multiple input addresses.
-     */
-    function confirmSourceDecreasingTransaction(
-        State storage _state,
-        IPayment.Proof calldata _payment
-    )
-        internal
-    {
-        bytes32 txKey = transactionKey(_payment.data.responseBody.sourceAddressHash,
-            _payment.data.requestBody.transactionId);
-        _recordPaymentVerification(_state, txKey);
-    }
-
-    /**
-     * Check if source decreasing transaction was already confirmed.
-     */
-    function transactionConfirmed(
-        State storage _state,
-        IBalanceDecreasingTransaction.Proof calldata _transaction
-    )
-        internal view
-        returns (bool)
-    {
-        bytes32 txKey = transactionKey(_transaction.data.responseBody.sourceAddressHash,
-            _transaction.data.requestBody.transactionId);
-        return _state.verifiedPayments[txKey] != 0;
-    }
-
-    // the same transaction hash could perform several underlying payments if it is smart contract
-    // for now this is illegal, but might change for some smart contract chains
-    // therefore the mapping key for transaction is always the combination of
-    // underlying address (from which funds were removed) and transaction hash
-    function transactionKey(bytes32 _underlyingSourceAddressHash, bytes32 _transactionHash)
-        internal pure
-        returns (bytes32)
-    {
-        return keccak256(abi.encode(_underlyingSourceAddressHash, _transactionHash));
-    }
-
-    function _recordPaymentVerification(
-        State storage _state,
-        bytes32 _txKey
-    )
-        private
-    {
-        require(_state.verifiedPayments[_txKey] == 0, PaymentAlreadyConfirmed());
-        _state.verifiedPayments[_txKey] = _txKey; // any non-zero value is fine
+    struct Data {
+        uint64 valueAMG;
+        uint64 firstUnderlyingBlock;
+        uint64 lastUnderlyingBlock;
+        uint64 lastUnderlyingTimestamp;
+        uint128 underlyingFeeUBA;
+        uint128 reservationFeeNatWei;
+        address agentVault;
+        uint16 poolFeeShareBIPS;
+        address minter;
+        CollateralReservation.Status status;
+        address payable executor;
+        uint64 executorFeeNatGWei;
+        uint64 __handshakeStartTimestamp; // only storage placeholder
+        bytes32 __sourceAddressesRoot; // only storage placeholder
     }
 }
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IIFAsset} from "../../fassetToken/interfaces/IIFAsset.sol";
-import {IWNat} from "../../flareSmartContracts/interfaces/IWNat.sol";
-import {AssetManagerSettings} from "../../userInterfaces/data/AssetManagerSettings.sol";
-import {IAgentOwnerRegistry} from "../../userInterfaces/IAgentOwnerRegistry.sol";
-import {AssetManagerState} from "./data/AssetManagerState.sol";
-import {CollateralTypeInt} from "./data/CollateralTypeInt.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {CollateralType} from "../../../userInterfaces/data/CollateralType.sol";
+
+library CollateralTypeInt {
+    struct Data {
+        // The ERC20 token contract for this collateral type.
+        // immutable
+        IERC20 token;
+        // The kind of collateral for this token.
+        // immutable
+        CollateralType.Class collateralClass;
+        // Same as token.decimals(), when that exists.
+        // immutable
+        uint8 decimals;
+        // If some token should not be used anymore as collateral, it has to be announced in advance and it
+        // is still valid until this timestamp. After that time, the corresponding collateral is considered as
+        // zero and the agents that haven't replaced it are liquidated.
+        // When the invalidation has not been announced, this value is 0.
+        uint64 validUntil;
+        // When `true`, the FTSO with symbol `assetFtsoSymbol` returns asset price relative to this token
+        // (such FTSO's will probably exist for major stablecoins).
+        // When `false`, the FTSOs with symbols `assetFtsoSymbol` and `tokenFtsoSymbol` give asset and token
+        // price relative to the same reference currency and the asset/token price is calculated as their ratio.
+        // immutable
+        bool directPricePair;
+        // FTSO symbol for the asset, relative to this token or a reference currency
+        // (it depends on the value of `directPricePair`).
+        // immutable
+        string assetFtsoSymbol;
+        // FTSO symbol for this token in reference currency.
+        // Used for asset/token price calculation when `directPricePair` is `false`.
+        // Otherwise it is irrelevant to asset/token price calculation, but if it is nonempty,
+        // it is still used in calculation of challenger and confirmation rewards
+        // (otherwise we assume it approximates the value of USD and pay directly the USD amount in vault collateral).
+        // immutable
+        string tokenFtsoSymbol;
+        // Minimum collateral ratio for healthy agents.
+        // timelocked
+        uint32 minCollateralRatioBIPS;
+        // Minimum collateral ratio for agent in CCB (Collateral call band).
+        // If the agent's collateral ratio is less than this, skip the CCB and go straight to liquidation.
+        // A bit smaller than minCollateralRatioBIPS.
+        // timelocked
+        uint32 __ccbMinCollateralRatioBIPS; // only storage placeholder
+        // Minimum collateral ratio required to get agent out of liquidation.
+        // Will always be greater than minCollateralRatioBIPS.
+        // timelocked
+        uint32 safetyMinCollateralRatioBIPS;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
 
 
-// global state helpers
-library Globals {
-    bytes32 internal constant ASSET_MANAGER_SETTINGS_POSITION = keccak256("fasset.AssetManager.Settings");
-
-    function getSettings()
-        internal pure
-        returns (AssetManagerSettings.Data storage _settings)
-    {
-        bytes32 position = ASSET_MANAGER_SETTINGS_POSITION;
-        // solhint-disable-next-line no-inline-assembly
-        assembly {
-            _settings.slot := position
-        }
+library CollateralReservation {
+    enum Status {
+        ACTIVE,         // the minting process hasn't finished yet
+        SUCCESSFUL,     // the payment has been confirmed and the FAssets minted
+        DEFAULTED,      // the payment has defaulted and the agent received the collateral reservation fee
+        EXPIRED         // the confirmation time has expired and the agent called unstickMinting
     }
 
-    function getWNat()
-        internal view
-        returns (IWNat)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return IWNat(address(state.collateralTokens[state.poolCollateralIndex].token));
-    }
-
-    function getPoolCollateral()
-        internal view
-        returns (CollateralTypeInt.Data storage)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return state.collateralTokens[state.poolCollateralIndex];
-    }
-
-    function getFAsset()
-        internal view
-        returns (IIFAsset)
-    {
-        AssetManagerSettings.Data storage settings = Globals.getSettings();
-        return IIFAsset(settings.fAsset);
-    }
-
-    function getAgentOwnerRegistry()
-        internal view
-        returns (IAgentOwnerRegistry)
-    {
-        AssetManagerSettings.Data storage settings = Globals.getSettings();
-        return IAgentOwnerRegistry(settings.agentOwnerRegistry);
-    }
-
-    function getBurnAddress()
-        internal view
-        returns (address payable)
-    {
-        AssetManagerSettings.Data storage settings = Globals.getSettings();
-        return settings.burnAddress;
+    struct Data {
+        uint64 valueAMG;
+        uint64 firstUnderlyingBlock;
+        uint64 lastUnderlyingBlock;
+        uint64 lastUnderlyingTimestamp;
+        uint128 underlyingFeeUBA;
+        uint128 reservationFeeNatWei;
+        address agentVault;
+        uint16 poolFeeShareBIPS;
+        address minter;
+        CollateralReservation.Status status;
+        address payable executor;
+        uint64 executorFeeNatGWei;
+        uint64 __handshakeStartTimestamp; // only storage placeholder
+        bytes32 __sourceAddressesRoot; // only storage placeholder
     }
 }
 
@@ -1645,6 +1614,90 @@ library RedemptionQueue {
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
+import {IPayment, IBalanceDecreasingTransaction}
+    from "@flarenetwork/flare-periphery-contracts/flare/IFdcVerification.sol";
+
+
+library PaymentConfirmations {
+    error PaymentAlreadyConfirmed();
+
+    struct State {
+        // a store of payment hashes to prevent payment being used / challenged twice
+        // structure: map of hash to the next hash in that day
+        mapping(bytes32 => bytes32) verifiedPayments;
+        // a linked list of payment hashes (one list per day) used for cleanup
+        mapping(uint256 => bytes32) __verifiedPaymentsForDay; // only storage placeholder
+        // first day number for which we are tracking verifications
+        uint256 __verifiedPaymentsForDayStart; // only storage placeholder
+    }
+
+    /**
+     * For payment transaction with non-unique payment reference (generated from address, not id),
+     * we record `tx hash`, so that the same transaction can only be used once for payment.
+     */
+    function confirmIncomingPayment(
+        State storage _state,
+        IPayment.Proof calldata _payment
+    )
+        internal
+    {
+        _recordPaymentVerification(_state, _payment.data.requestBody.transactionId);
+    }
+
+    /**
+     * For source decreasing transaction, we record `(source address, tx hash)` pair, since illegal
+     * transactions on utxo chains can have multiple input addresses.
+     */
+    function confirmSourceDecreasingTransaction(
+        State storage _state,
+        IPayment.Proof calldata _payment
+    )
+        internal
+    {
+        bytes32 txKey = transactionKey(_payment.data.responseBody.sourceAddressHash,
+            _payment.data.requestBody.transactionId);
+        _recordPaymentVerification(_state, txKey);
+    }
+
+    /**
+     * Check if source decreasing transaction was already confirmed.
+     */
+    function transactionConfirmed(
+        State storage _state,
+        IBalanceDecreasingTransaction.Proof calldata _transaction
+    )
+        internal view
+        returns (bool)
+    {
+        bytes32 txKey = transactionKey(_transaction.data.responseBody.sourceAddressHash,
+            _transaction.data.requestBody.transactionId);
+        return _state.verifiedPayments[txKey] != 0;
+    }
+
+    // the same transaction hash could perform several underlying payments if it is smart contract
+    // for now this is illegal, but might change for some smart contract chains
+    // therefore the mapping key for transaction is always the combination of
+    // underlying address (from which funds were removed) and transaction hash
+    function transactionKey(bytes32 _underlyingSourceAddressHash, bytes32 _transactionHash)
+        internal pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(_underlyingSourceAddressHash, _transactionHash));
+    }
+
+    function _recordPaymentVerification(
+        State storage _state,
+        bytes32 _txKey
+    )
+        private
+    {
+        require(_state.verifiedPayments[_txKey] == 0, PaymentAlreadyConfirmed());
+        _state.verifiedPayments[_txKey] = _txKey; // any non-zero value is fine
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
 
 library UnderlyingAddressOwnership {
     error InvalidAddressOwnershipProof();
@@ -1677,59 +1730,6 @@ library UnderlyingAddressOwnership {
         require(ownership.owner == address(0), AddressAlreadyClaimed());
         // set the new owner
         ownership.owner = _owner;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-
-library CollateralType {
-    enum Class {
-        NONE,   // unused
-        POOL,   // pool collateral type
-        VAULT  // usable as vault collateral
-    }
-
-    // Collateral token is uniquely identified by the pair (collateralClass, token).
-    struct Data {
-        // The kind of collateral for this token.
-        CollateralType.Class collateralClass;
-
-        // The ERC20 token contract for this collateral type.
-        IERC20 token;
-
-        // Same as token.decimals(), when that exists.
-        uint256 decimals;
-
-        // Token invalidation time. Must be 0 on creation.
-        uint256 validUntil;
-
-        // When `true`, the FTSO with symbol `assetFtsoSymbol` returns asset price relative to this token
-        // (such FTSO's will probably exist for major stablecoins).
-        // When `false`, the FTSOs with symbols `assetFtsoSymbol` and `tokenFtsoSymbol` give asset and token
-        // price relative to the same reference currency and the asset/token price is calculated as their ratio.
-        bool directPricePair;
-
-        // FTSO symbol for the asset, relative to this token or a reference currency
-        // (it depends on the value of `directPricePair`).
-        string assetFtsoSymbol;
-
-        // FTSO symbol for this token in reference currency.
-        // Used for asset/token price calculation when `directPricePair` is `false`.
-        // Otherwise it is irrelevant to asset/token price calculation, but if it is nonempty,
-        // it is still used in calculation of challenger and confirmation rewards
-        // (otherwise we assume it approximates the value of USD and pay directly the USD amount in vault collateral).
-        string tokenFtsoSymbol;
-
-        // Minimum collateral ratio for healthy agents.
-        uint256 minCollateralRatioBIPS;
-
-        // Minimum collateral ratio required to get agent out of liquidation.
-        // Will always be greater than minCollateralRatioBIPS.
-        uint256 safetyMinCollateralRatioBIPS;
     }
 }
 
