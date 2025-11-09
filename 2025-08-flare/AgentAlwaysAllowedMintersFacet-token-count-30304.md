@@ -337,636 +337,6 @@ abstract contract AssetManagerBase {
     }
 }
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-import {IICollateralPool} from "../../../collateralPool/interfaces/IICollateralPool.sol";
-
-
-library Agent {
-    error InvalidAgentVaultAddress();
-
-    enum Status {
-        EMPTY,              // agent does not exist
-        NORMAL,
-        LIQUIDATION,        // liquidation due to CR - ends when agent is healthy
-        FULL_LIQUIDATION,   // illegal payment liquidation - must liquidate all and close vault
-        DESTROYING,         // agent announced destroy, cannot mint again
-        DESTROYED           // agent has been destroyed, cannot do anything except return info
-    }
-
-    // For agents to withdraw NAT collateral, they must first announce it and then wait
-    // withdrawalAnnouncementSeconds.
-    // The announced amount cannot be used as collateral for minting during that time.
-    // This makes sure that agents cannot just remove all collateral if they are challenged.
-    struct WithdrawalAnnouncement {
-        // Announce amount in collateral token's minimum unit (wei).
-        uint128 amountWei;
-
-        // The timestamp when withdrawal can be executed.
-        uint64 allowedAt;
-    }
-
-    // Struct to store agent's pending setting updates.
-    struct SettingUpdate {
-        uint128 value;
-        uint64 validAt;
-    }
-
-    struct State {
-        IICollateralPool collateralPool;
-
-        // Address of the agent owner. This is the management address, which is immutable.
-        // The work address can be retrieved from the global state mapping between
-        // management and work addresses.
-        address ownerManagementAddress;
-
-        // Current underlying address for this agent vault.
-        // The address is immutable.
-        string underlyingAddressString;
-
-        // `underlyingAddressString` is only used for sending the minter a correct payment address;
-        // for matching payment addresses we always use `underlyingAddressHash = keccak256(underlyingAddressString)`
-        bytes32 underlyingAddressHash;
-
-        // Current status of the agent (changes for liquidation).
-        Agent.Status status;
-
-        // Index of collateral vault token.
-        // The data is obtained as state.collateralTokens[vaultCollateralIndex].
-        uint16 vaultCollateralIndex;
-
-        // Index of token in collateral pool. This is always wrapped FLR/SGB, however the wrapping
-        // contract (WNat) may change. In such case we add new collateral token with class POOL but the
-        // agent must call a method to upgrade to new contract, se we must track the actual token used.
-        uint16 poolCollateralIndex;
-
-        // Position of this agent in the list of agents available for minting.
-        // Value is actually `list index + 1`, so that 0 means 'not in the list'.
-        uint32 availableAgentsPos;
-
-        // Minting fee in BIPS (collected in underlying currency).
-        uint16 feeBIPS;
-
-        // Share of the minting fee that goes to the pool as percentage of the minting fee.
-        uint16 poolFeeShareBIPS;
-
-        // Collateral ratio at which we calculate locked collateral and collateral available for minting.
-        // Agent may set own value for minting collateral ratio when entering the available agent list,
-        // but it must always be greater than minimum collateral ratio.
-        uint32 mintingVaultCollateralRatioBIPS;
-
-        // Collateral ratio at which we calculate locked collateral and collateral available for minting.
-        // Agent may set own value for minting collateral ratio when entering the available agent list,
-        // but it must always be greater than minimum collateral ratio.
-        uint32 mintingPoolCollateralRatioBIPS;
-
-        // Timestamp of the startLiquidation (or liquidate) call.
-        uint64 liquidationStartedAt;
-
-        // Liquidation phase at the time when liquidation started.
-        uint8 __initialLiquidationPhase; // only storage placeholder
-
-        // Bitmap signifying which collateral type(s) triggered liquidation (LF_VAULT | LF_POOL).
-        uint8 collateralsUnderwater;
-
-        // Amount of collateral locked by collateral reservation.
-        uint64 reservedAMG;
-
-        // Amount of collateral backing minted fassets.
-        uint64 mintedAMG;
-
-        // The amount of fassets being redeemed. In this case, the fassets were already burned,
-        // but the collateral must still be locked to allow payment in case of redemption failure.
-        // The distinction between 'minted' and 'redeemed' assets is important in case of challenge.
-        uint64 redeemingAMG;
-
-        // The amount of fassets being redeemed EXCEPT those from pool self-close exits.
-        // Unlike normal redemption, pool collateral was already withdrawn, so the redeeming collateral
-        // must only be accounted for / locked for vault collateral.
-        // On redemption payment failure, redeemer will be paid only in vault collateral in this case
-        // (and will be paid less if there isn't enough - small extra risk for pool token holders).
-        // There will always be `poolRedeemingAMG <= redeemingAMG`.
-        uint64 poolRedeemingAMG;
-
-        // When lot size changes, there may be some leftover after redemption that doesn't fit
-        // a whole lot size. It is added to dustAMG and can be recovered via self-close.
-        // Unlike redeemingAMG, dustAMG is still counted in the mintedAMG.
-        uint64 dustAMG;
-
-        // The amount of funds that on the agent's underlying address.
-        // If it is higher than the amount needed to back mintings, it can be withdrawn after announcement.
-        // It is signed int, because unreported deposits combined with other operations can in principle
-        // make it negative. We could truncate it at 0, but if deposit report comes later, this would make
-        // the value wrong.
-        int128 underlyingBalanceUBA;
-
-        // There can be only one announced underlying withdrawal per agent active at any time.
-        // This variable holds the id, or 0 if there is no announced underlying withdrawal going on.
-        uint64 announcedUnderlyingWithdrawalId;
-
-        // The time when ongoing underlying withdrawal was announced.
-        uint64 underlyingWithdrawalAnnouncedAt;
-
-        // Announcement for vault collateral withdrawal.
-        WithdrawalAnnouncement vaultCollateralWithdrawalAnnouncement;
-
-        // Announcement for pool token withdrawal (which also means pool collateral withdrawal).
-        WithdrawalAnnouncement poolTokenWithdrawalAnnouncement;
-
-        // Underlying block when the agent was created.
-        // Challenger's should track underlying address activity since this block
-        // and topups are only valid after this block (both inclusive).
-        uint64 underlyingBlockAtCreation;
-
-        // The time when ongoing agent vault destroy was announced.
-        uint64 destroyAllowedAt;
-
-        // The factor set by the agent to multiply the price at which agent buys f-assets from pool
-        // token holders on self-close exit (when requested or the redeemed amount is less than 1 lot).
-        uint16 buyFAssetByAgentFactorBIPS;
-
-        // The announced time when the agent is exiting available agents list.
-        uint64 exitAvailableAfterTs;
-
-        // The position of the agent in the list of all agents.
-        uint32 allAgentsPos;
-
-        // Agent's pending setting updates.
-        mapping(bytes32 => SettingUpdate) settingUpdates;
-
-        // Agent's handshake type - minting or redeeming can be rejected.
-        // 0 - no verification, 1 - manual verification, ...
-        uint32 __handshakeType; // only storage placeholder
-
-        // There can only be one transfer to core vault per agent active at any time.
-        uint64 activeTransferToCoreVault;
-
-        // the request id of the active return from core vault
-        uint64 activeReturnFromCoreVaultId;
-
-        // part of the agent's reservedAMG for the core vault return
-        uint64 returnFromCoreVaultReservedAMG;
-
-        // The redemption fee share paid to the pool (as FAssets).
-        // In redemption dominated situations (when agent requests return from core vault to earn
-        // from redemption fees), pool can get some share to make it sustainable for pool users.
-        // NOTE: the pool fee share is locked at the redemption request time, but is charged at the redemption
-        // confirmation time. If agent uses all the redemption fee for transaction fees, this could make the
-        // agent's free underlying balance negative.
-        uint16 redemptionPoolFeeShareBIPS;
-
-        EnumerableSet.AddressSet alwaysAllowedMinters;
-
-        // Only used for calculating Agent.State size. See deleteStorage() below.
-        uint256[1] _endMarker;
-    }
-
-    // underwater collateral classes
-    uint8 internal constant LF_VAULT = 1 << 0;
-    uint8 internal constant LF_POOL = 1 << 1;
-
-    // diamond state accessors
-
-    bytes32 internal constant AGENTS_POSITION = keccak256("fasset.AssetManager.Agent");
-
-    // only return valid agent - fail if status is EMPTY or DESTROYED
-    function get(address _address)
-        internal view
-        returns (Agent.State storage)
-    {
-        Agent.State storage agent = getWithoutCheck(_address);
-        Agent.Status status = agent.status;
-        require(status != Agent.Status.EMPTY && status != Agent.Status.DESTROYED, InvalidAgentVaultAddress());
-        return agent;
-    }
-
-    // Like get, but only fail if status is EMPTY.
-    // This is useful for reading agent info after the agent has been destroyed.
-    function getAllowDestroyed(address _address)
-        internal view
-        returns (Agent.State storage)
-    {
-        Agent.State storage agent = getWithoutCheck(_address);
-        require(agent.status != Agent.Status.EMPTY, InvalidAgentVaultAddress());
-        return agent;
-    }
-
-    function getWithoutCheck(address _address)
-        internal pure
-        returns (Agent.State storage _agent)
-    {
-        bytes32 position = bytes32(uint256(AGENTS_POSITION) ^ (uint256(uint160(_address)) << 64));
-        // solhint-disable-next-line no-inline-assembly
-        assembly {
-            _agent.slot := position
-        }
-    }
-
-    function vaultAddress(Agent.State storage _agent)
-        internal pure
-        returns (address)
-    {
-        bytes32 position;
-        // solhint-disable-next-line no-inline-assembly
-        assembly {
-            position := _agent.slot
-        }
-        return address(uint160((uint256(position) ^ uint256(AGENTS_POSITION)) >> 64));
-    }
-}
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {RedemptionQueue} from "./RedemptionQueue.sol";
-import {PaymentConfirmations} from "./PaymentConfirmations.sol";
-import {UnderlyingAddressOwnership} from "./UnderlyingAddressOwnership.sol";
-import {CollateralReservation} from "./CollateralReservation.sol";
-import {Redemption} from "./Redemption.sol";
-import {CollateralTypeInt} from "./CollateralTypeInt.sol";
-
-
-library AssetManagerState {
-    struct State {
-        // All collateral types, used for vault or pool.
-        // Pool collateral (always WNat) has index 0.
-        CollateralTypeInt.Data[] collateralTokens;
-
-        // mapping((collateralClass, tokenAddress) => collateralTokens index + 1)
-        mapping(bytes32 => uint256) collateralTokenIndex;
-
-        // makes sure pool tokens have unique names and symbols
-        mapping(string => bool) reservedPoolTokenSuffixes;
-
-        // A list of all agents (for use by monitoring or challengers).
-        // Type: array of agent vault addresses; when one is deleted, its position is filled with last
-        address[] allAgents;
-
-        // A list of all agents that are available for minting.
-        // Type: array of agent vault addresses; when one is deleted, its position is filled with last
-        address[] availableAgents;
-
-        // Ownership of underlying source addresses is needed to prevent someone
-        // overtaking the payer and presenting an underlying payment as his own.
-        UnderlyingAddressOwnership.State underlyingAddressOwnership;
-
-        // Type: mapping collateralReservationId => collateralReservation
-        mapping(uint256 => CollateralReservation.Data) crts;
-
-        // redemption queue
-        RedemptionQueue.State redemptionQueue;
-
-        // mapping redemptionRequest_id => request
-        mapping(uint256 => Redemption.Request) redemptionRequests;
-
-        // verified payment hashes; expire in 5 days
-        PaymentConfirmations.State paymentConfirmations;
-
-        // New ids (listed together to save storage); all must be incremented before assigning, so 0 means empty
-        uint64 newCrtId;
-        uint64 newRedemptionRequestId;
-        uint64 newPaymentAnnouncementId;
-
-        // Total collateral reservations (in underlying AMG units). Used by minting cap.
-        uint64 totalReservedCollateralAMG;
-
-        // Pool collateral is always wrapped NAT, but the wrapping contract may change.
-        // In this case, new pool collateral token must be added and set as current.
-        uint16 poolCollateralIndex;
-
-        // Current block number and timestamp on the underlying chain
-        uint64 currentUnderlyingBlock;
-        uint64 currentUnderlyingBlockTimestamp;
-
-        // The timestamp (on this network) when the underlying block was last updated
-        uint64 currentUnderlyingBlockUpdatedAt;
-
-        // If non-zero, minting is paused and has been paused at the time indicated by timestamp mintingPausedAt.
-        // When asset manager is paused, no new mintings can be done, but redemptions still work.
-        uint64 mintingPausedAt;
-
-        // If non-zero, asset manager is paused and will be paused until the time indicated.
-        // When asset manager is paused, all dangerous operations ar blocked (mintings, redemptions, etc.).
-        // It is an extreme measure, which can be used in case there is a dangerous hole in the system.
-        uint64 emergencyPausedUntil;
-
-        // When emergency pause is not done by governance, the total allowed pause is limited.
-        // So the caller must state the duration after which the pause will automatically end.
-        // When total pauses exceed the max allowed length, pausing is only allowed by the governance.
-        // An emergencyPause call by the governance optionally resets the total duration counter to 0.
-        uint64 emergencyPausedTotalDuration;
-
-        // When emergency pause was triggered by governance, only governance can unpause.
-        bool emergencyPausedByGovernance;
-
-        // If non-zero, asset manager is paused and will be paused until the time indicated.
-        // When asset manager is paused, all dangerous operations ar blocked (mintings, redemptions, etc.).
-        // It is an extreme measure, which can be used in case there is a dangerous hole in the system.
-        uint64 transfersEmergencyPausedUntil;
-
-        // When emergency pause is not done by governance, the total allowed pause is limited.
-        // So the caller must state the duration after which the pause will automatically end.
-        // When total pauses exceed the max allowed length, pausing is only allowed by the governance.
-        // An emergencyPause call by the governance optionally resets the total duration counter to 0.
-        uint64 transfersEmergencyPausedTotalDuration;
-
-        // When emergency pause was triggered by governance, only governance can unpause.
-        bool transfersEmergencyPausedByGovernance;
-
-        // When true, asset manager has been added to the asset manager controller.
-        // Even though the asset manager controller address is set at the construction time, the manager may not
-        // be able to be added to the controller immediately because the method addAssetManager must be called
-        // by the governance multisig (with timelock).
-        // During this time it is impossible to verify through the controller that the asset manager is legit.
-        // Therefore creating agents and minting is disabled until the asset manager controller notifies
-        // the asset manager that it has been added.
-        bool attached;
-    }
-
-    // diamond state access to state and settings
-
-    bytes32 internal constant STATE_POSITION = keccak256("fasset.AssetManager.State");
-
-    function get() internal pure returns (AssetManagerState.State storage _state) {
-        // Only direct constants are allowed in inline assembly, so we assign it here
-        bytes32 position = STATE_POSITION;
-        // solhint-disable-next-line no-inline-assembly
-        assembly {
-            _state.slot := position
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {SafePct} from "../../utils/library/SafePct.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {AssetManagerState} from "./data/AssetManagerState.sol";
-import {Collateral} from "./data/Collateral.sol";
-import {Globals} from "./Globals.sol";
-import {Conversion} from "./Conversion.sol";
-import {Agent} from "./data/Agent.sol";
-import {RedemptionQueue} from "./data/RedemptionQueue.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {CollateralTypeInt} from "./data/CollateralTypeInt.sol";
-import {IWNat} from "../../flareSmartContracts/interfaces/IWNat.sol";
-import {AgentInfo} from "../../userInterfaces/data/AgentInfo.sol";
-
-library Agents {
-    using SafeCast for uint256;
-    using SafePct for uint256;
-    using Agent for Agent.State;
-    using RedemptionQueue for RedemptionQueue.State;
-
-    error AgentNotWhitelisted();
-    error OnlyAgentVaultOwner();
-    error OnlyCollateralPool();
-
-
-    function getAllAgents(
-        uint256 _start,
-        uint256 _end
-    )
-        internal view
-        returns (address[] memory _agents, uint256 _totalLength)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        _totalLength = state.allAgents.length;
-        _end = Math.min(_end, _totalLength);
-        _start = Math.min(_start, _end);
-        _agents = new address[](_end - _start);
-        for (uint256 i = _start; i < _end; i++) {
-            _agents[i - _start] = state.allAgents[i];
-        }
-    }
-
-    function getAgentStatus(
-        Agent.State storage _agent
-    )
-        internal view
-        returns (AgentInfo.Status)
-    {
-        Agent.Status status = _agent.status;
-        if (status == Agent.Status.NORMAL) {
-            return AgentInfo.Status.NORMAL;
-        } else if (status == Agent.Status.LIQUIDATION) {
-            return AgentInfo.Status.LIQUIDATION;
-        } else if (status == Agent.Status.FULL_LIQUIDATION) {
-            return AgentInfo.Status.FULL_LIQUIDATION;
-        } else if (status == Agent.Status.DESTROYING) {
-            return AgentInfo.Status.DESTROYING;
-        } else {
-            assert (status == Agent.Status.DESTROYED);
-            return AgentInfo.Status.DESTROYED;
-        }
-    }
-
-    function isOwner(
-        Agent.State storage _agent,
-        address _address
-    )
-        internal view
-        returns (bool)
-    {
-        return _address == _agent.ownerManagementAddress || _address == getWorkAddress(_agent);
-    }
-
-    function getWorkAddress(Agent.State storage _agent)
-        internal view
-        returns (address)
-    {
-        return Globals.getAgentOwnerRegistry().getWorkAddress(_agent.ownerManagementAddress);
-    }
-
-    function getOwnerPayAddress(Agent.State storage _agent)
-        internal view
-        returns (address payable)
-    {
-        address workAddress = getWorkAddress(_agent);
-        return workAddress != address(0) ? payable(workAddress) : payable(_agent.ownerManagementAddress);
-    }
-
-    function requireWhitelisted(
-        address _ownerManagementAddress
-    )
-        internal view
-    {
-        require(Globals.getAgentOwnerRegistry().isWhitelisted(_ownerManagementAddress),
-            AgentNotWhitelisted());
-    }
-
-    function requireWhitelistedAgentVaultOwner(
-        Agent.State storage _agent
-    )
-        internal view
-    {
-        requireWhitelisted(_agent.ownerManagementAddress);
-    }
-
-    function requireAgentVaultOwner(
-        address _agentVault
-    )
-        internal view
-    {
-        require(isOwner(Agent.get(_agentVault), msg.sender), OnlyAgentVaultOwner());
-    }
-
-    function requireAgentVaultOwner(
-        Agent.State storage _agent
-    )
-        internal view
-    {
-        require(isOwner(_agent, msg.sender), OnlyAgentVaultOwner());
-    }
-
-    function requireCollateralPool(
-        Agent.State storage _agent
-    )
-        internal view
-    {
-        require(msg.sender == address(_agent.collateralPool), OnlyCollateralPool());
-    }
-
-    function isCollateralToken(
-        Agent.State storage _agent,
-        IERC20 _token
-    )
-        internal view
-        returns (bool)
-    {
-        return _token == getPoolWNat(_agent) || _token == getVaultCollateralToken(_agent);
-    }
-
-    function getVaultCollateralToken(Agent.State storage _agent)
-        internal view
-        returns (IERC20)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return state.collateralTokens[_agent.vaultCollateralIndex].token;
-    }
-
-    function getVaultCollateral(Agent.State storage _agent)
-        internal view
-        returns (CollateralTypeInt.Data storage)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return state.collateralTokens[_agent.vaultCollateralIndex];
-    }
-
-    function convertUSD5ToVaultCollateralWei(Agent.State storage _agent, uint256 _amountUSD5)
-        internal view
-        returns (uint256)
-    {
-        return Conversion.convertFromUSD5(_amountUSD5, getVaultCollateral(_agent));
-    }
-
-    function getPoolWNat(Agent.State storage _agent)
-        internal view
-        returns (IWNat)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return IWNat(address(state.collateralTokens[_agent.poolCollateralIndex].token));
-    }
-
-    function getPoolCollateral(Agent.State storage _agent)
-        internal view
-        returns (CollateralTypeInt.Data storage)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return state.collateralTokens[_agent.poolCollateralIndex];
-    }
-
-    function getCollateral(Agent.State storage _agent, Collateral.Kind _kind)
-        internal view
-        returns (CollateralTypeInt.Data storage)
-    {
-        assert (_kind != Collateral.Kind.AGENT_POOL);   // there is no agent pool collateral token
-        AssetManagerState.State storage state = AssetManagerState.get();
-        if (_kind == Collateral.Kind.VAULT) {
-            return state.collateralTokens[_agent.vaultCollateralIndex];
-        } else {
-            return state.collateralTokens[_agent.poolCollateralIndex];
-        }
-    }
-
-    function collateralUnderwater(Agent.State storage _agent, Collateral.Kind _kind)
-        internal view
-        returns (bool)
-    {
-        if (_kind == Collateral.Kind.VAULT) {
-            return (_agent.collateralsUnderwater & Agent.LF_VAULT) != 0;
-        } else {
-            // AGENT_POOL collateral cannot be underwater (it only affects minting),
-            // so this function will only be used for VAULT and POOL
-            assert(_kind == Collateral.Kind.POOL);
-            return (_agent.collateralsUnderwater & Agent.LF_POOL) != 0;
-        }
-    }
-
-    function withdrawalAnnouncement(Agent.State storage _agent, Collateral.Kind _kind)
-        internal view
-        returns (Agent.WithdrawalAnnouncement storage)
-    {
-        assert (_kind != Collateral.Kind.POOL);     // agent cannot withdraw from pool
-        return _kind == Collateral.Kind.VAULT
-            ? _agent.vaultCollateralWithdrawalAnnouncement
-            : _agent.poolTokenWithdrawalAnnouncement;
-    }
-
-    function totalBackedAMG(Agent.State storage _agent)
-        internal view
-        returns (uint64)
-    {
-        // this must always hold, so assert it is true, otherwise the following line
-        // would need `max(redeemingAMG, poolRedeemingAMG)`
-        assert(_agent.poolRedeemingAMG <= _agent.redeemingAMG);
-        return _agent.mintedAMG + _agent.reservedAMG + _agent.redeemingAMG;
-    }
-}
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-import {IVPToken} from "@flarenetwork/flare-periphery-contracts/flare/IVPToken.sol";
-
-/**
- * @title Wrapped Native token
- * @notice Accept native token deposits and mint ERC20 WNAT (wrapped native) tokens 1-1.
- */
-interface IWNat is IVPToken {
-    /**
-     * @notice Deposit Native and mint wNat ERC20.
-     */
-    function deposit() external payable;
-
-    /**
-     * @notice Deposit Native from msg.sender and mints WNAT ERC20 to recipient address.
-     * @param recipient An address to receive minted WNAT.
-     */
-    function depositTo(address recipient) external payable;
-
-    /**
-     * @notice Withdraw Native and burn WNAT ERC20.
-     * @param amount The amount to withdraw.
-     */
-    function withdraw(uint256 amount) external;
-
-    /**
-     * @notice Withdraw WNAT from an owner and send native tokens to msg.sender given an allowance.
-     * @param owner An address spending the Native tokens.
-     * @param amount The amount to spend.
-     *
-     * Requirements:
-     *
-     * - `owner` must have a balance of at least `amount`.
-     * - the caller must have allowance for `owners`'s tokens of at least
-     * `amount`.
-     */
-    function withdrawFrom(address owner, uint256 amount) external;
-}
-
-// SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
 
@@ -1346,6 +716,953 @@ library Globals {
 }
 
 // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {IICollateralPool} from "../../../collateralPool/interfaces/IICollateralPool.sol";
+
+
+library Agent {
+    error InvalidAgentVaultAddress();
+
+    enum Status {
+        EMPTY,              // agent does not exist
+        NORMAL,
+        LIQUIDATION,        // liquidation due to CR - ends when agent is healthy
+        FULL_LIQUIDATION,   // illegal payment liquidation - must liquidate all and close vault
+        DESTROYING,         // agent announced destroy, cannot mint again
+        DESTROYED           // agent has been destroyed, cannot do anything except return info
+    }
+
+    // For agents to withdraw NAT collateral, they must first announce it and then wait
+    // withdrawalAnnouncementSeconds.
+    // The announced amount cannot be used as collateral for minting during that time.
+    // This makes sure that agents cannot just remove all collateral if they are challenged.
+    struct WithdrawalAnnouncement {
+        // Announce amount in collateral token's minimum unit (wei).
+        uint128 amountWei;
+
+        // The timestamp when withdrawal can be executed.
+        uint64 allowedAt;
+    }
+
+    // Struct to store agent's pending setting updates.
+    struct SettingUpdate {
+        uint128 value;
+        uint64 validAt;
+    }
+
+    struct State {
+        IICollateralPool collateralPool;
+
+        // Address of the agent owner. This is the management address, which is immutable.
+        // The work address can be retrieved from the global state mapping between
+        // management and work addresses.
+        address ownerManagementAddress;
+
+        // Current underlying address for this agent vault.
+        // The address is immutable.
+        string underlyingAddressString;
+
+        // `underlyingAddressString` is only used for sending the minter a correct payment address;
+        // for matching payment addresses we always use `underlyingAddressHash = keccak256(underlyingAddressString)`
+        bytes32 underlyingAddressHash;
+
+        // Current status of the agent (changes for liquidation).
+        Agent.Status status;
+
+        // Index of collateral vault token.
+        // The data is obtained as state.collateralTokens[vaultCollateralIndex].
+        uint16 vaultCollateralIndex;
+
+        // Index of token in collateral pool. This is always wrapped FLR/SGB, however the wrapping
+        // contract (WNat) may change. In such case we add new collateral token with class POOL but the
+        // agent must call a method to upgrade to new contract, se we must track the actual token used.
+        uint16 poolCollateralIndex;
+
+        // Position of this agent in the list of agents available for minting.
+        // Value is actually `list index + 1`, so that 0 means 'not in the list'.
+        uint32 availableAgentsPos;
+
+        // Minting fee in BIPS (collected in underlying currency).
+        uint16 feeBIPS;
+
+        // Share of the minting fee that goes to the pool as percentage of the minting fee.
+        uint16 poolFeeShareBIPS;
+
+        // Collateral ratio at which we calculate locked collateral and collateral available for minting.
+        // Agent may set own value for minting collateral ratio when entering the available agent list,
+        // but it must always be greater than minimum collateral ratio.
+        uint32 mintingVaultCollateralRatioBIPS;
+
+        // Collateral ratio at which we calculate locked collateral and collateral available for minting.
+        // Agent may set own value for minting collateral ratio when entering the available agent list,
+        // but it must always be greater than minimum collateral ratio.
+        uint32 mintingPoolCollateralRatioBIPS;
+
+        // Timestamp of the startLiquidation (or liquidate) call.
+        uint64 liquidationStartedAt;
+
+        // Liquidation phase at the time when liquidation started.
+        uint8 __initialLiquidationPhase; // only storage placeholder
+
+        // Bitmap signifying which collateral type(s) triggered liquidation (LF_VAULT | LF_POOL).
+        uint8 collateralsUnderwater;
+
+        // Amount of collateral locked by collateral reservation.
+        uint64 reservedAMG;
+
+        // Amount of collateral backing minted fassets.
+        uint64 mintedAMG;
+
+        // The amount of fassets being redeemed. In this case, the fassets were already burned,
+        // but the collateral must still be locked to allow payment in case of redemption failure.
+        // The distinction between 'minted' and 'redeemed' assets is important in case of challenge.
+        uint64 redeemingAMG;
+
+        // The amount of fassets being redeemed EXCEPT those from pool self-close exits.
+        // Unlike normal redemption, pool collateral was already withdrawn, so the redeeming collateral
+        // must only be accounted for / locked for vault collateral.
+        // On redemption payment failure, redeemer will be paid only in vault collateral in this case
+        // (and will be paid less if there isn't enough - small extra risk for pool token holders).
+        // There will always be `poolRedeemingAMG <= redeemingAMG`.
+        uint64 poolRedeemingAMG;
+
+        // When lot size changes, there may be some leftover after redemption that doesn't fit
+        // a whole lot size. It is added to dustAMG and can be recovered via self-close.
+        // Unlike redeemingAMG, dustAMG is still counted in the mintedAMG.
+        uint64 dustAMG;
+
+        // The amount of funds that on the agent's underlying address.
+        // If it is higher than the amount needed to back mintings, it can be withdrawn after announcement.
+        // It is signed int, because unreported deposits combined with other operations can in principle
+        // make it negative. We could truncate it at 0, but if deposit report comes later, this would make
+        // the value wrong.
+        int128 underlyingBalanceUBA;
+
+        // There can be only one announced underlying withdrawal per agent active at any time.
+        // This variable holds the id, or 0 if there is no announced underlying withdrawal going on.
+        uint64 announcedUnderlyingWithdrawalId;
+
+        // The time when ongoing underlying withdrawal was announced.
+        uint64 underlyingWithdrawalAnnouncedAt;
+
+        // Announcement for vault collateral withdrawal.
+        WithdrawalAnnouncement vaultCollateralWithdrawalAnnouncement;
+
+        // Announcement for pool token withdrawal (which also means pool collateral withdrawal).
+        WithdrawalAnnouncement poolTokenWithdrawalAnnouncement;
+
+        // Underlying block when the agent was created.
+        // Challenger's should track underlying address activity since this block
+        // and topups are only valid after this block (both inclusive).
+        uint64 underlyingBlockAtCreation;
+
+        // The time when ongoing agent vault destroy was announced.
+        uint64 destroyAllowedAt;
+
+        // The factor set by the agent to multiply the price at which agent buys f-assets from pool
+        // token holders on self-close exit (when requested or the redeemed amount is less than 1 lot).
+        uint16 buyFAssetByAgentFactorBIPS;
+
+        // The announced time when the agent is exiting available agents list.
+        uint64 exitAvailableAfterTs;
+
+        // The position of the agent in the list of all agents.
+        uint32 allAgentsPos;
+
+        // Agent's pending setting updates.
+        mapping(bytes32 => SettingUpdate) settingUpdates;
+
+        // Agent's handshake type - minting or redeeming can be rejected.
+        // 0 - no verification, 1 - manual verification, ...
+        uint32 __handshakeType; // only storage placeholder
+
+        // There can only be one transfer to core vault per agent active at any time.
+        uint64 activeTransferToCoreVault;
+
+        // the request id of the active return from core vault
+        uint64 activeReturnFromCoreVaultId;
+
+        // part of the agent's reservedAMG for the core vault return
+        uint64 returnFromCoreVaultReservedAMG;
+
+        // The redemption fee share paid to the pool (as FAssets).
+        // In redemption dominated situations (when agent requests return from core vault to earn
+        // from redemption fees), pool can get some share to make it sustainable for pool users.
+        // NOTE: the pool fee share is locked at the redemption request time, but is charged at the redemption
+        // confirmation time. If agent uses all the redemption fee for transaction fees, this could make the
+        // agent's free underlying balance negative.
+        uint16 redemptionPoolFeeShareBIPS;
+
+        EnumerableSet.AddressSet alwaysAllowedMinters;
+
+        // Only used for calculating Agent.State size. See deleteStorage() below.
+        uint256[1] _endMarker;
+    }
+
+    // underwater collateral classes
+    uint8 internal constant LF_VAULT = 1 << 0;
+    uint8 internal constant LF_POOL = 1 << 1;
+
+    // diamond state accessors
+
+    bytes32 internal constant AGENTS_POSITION = keccak256("fasset.AssetManager.Agent");
+
+    // only return valid agent - fail if status is EMPTY or DESTROYED
+    function get(address _address)
+        internal view
+        returns (Agent.State storage)
+    {
+        Agent.State storage agent = getWithoutCheck(_address);
+        Agent.Status status = agent.status;
+        require(status != Agent.Status.EMPTY && status != Agent.Status.DESTROYED, InvalidAgentVaultAddress());
+        return agent;
+    }
+
+    // Like get, but only fail if status is EMPTY.
+    // This is useful for reading agent info after the agent has been destroyed.
+    function getAllowDestroyed(address _address)
+        internal view
+        returns (Agent.State storage)
+    {
+        Agent.State storage agent = getWithoutCheck(_address);
+        require(agent.status != Agent.Status.EMPTY, InvalidAgentVaultAddress());
+        return agent;
+    }
+
+    function getWithoutCheck(address _address)
+        internal pure
+        returns (Agent.State storage _agent)
+    {
+        bytes32 position = bytes32(uint256(AGENTS_POSITION) ^ (uint256(uint160(_address)) << 64));
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            _agent.slot := position
+        }
+    }
+
+    function vaultAddress(Agent.State storage _agent)
+        internal pure
+        returns (address)
+    {
+        bytes32 position;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            position := _agent.slot
+        }
+        return address(uint160((uint256(position) ^ uint256(AGENTS_POSITION)) >> 64));
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+pragma abicoder v2;
+
+import {ICollateralPool} from "../../userInterfaces/ICollateralPool.sol";
+import {IIAssetManager} from "../../assetManager/interfaces/IIAssetManager.sol";
+import {IWNat} from "../../flareSmartContracts/interfaces/IWNat.sol";
+
+/**
+ * Collateral pool methods that are only callable by the asset manager or pool token.
+ */
+interface IICollateralPool is ICollateralPool {
+    function setPoolToken(address _poolToken) external;
+
+    function depositNat() external payable;
+
+    function payout(
+        address _receiver,
+        uint256 _amountWei,
+        uint256 _agentResponsibilityWei
+    ) external;
+
+    function destroy(address payable _recipient) external;
+
+    function upgradeWNatContract(IWNat newWNat) external;
+
+    function setExitCollateralRatioBIPS(uint256 _value) external;
+
+    function fAssetFeeDeposited(uint256 _amount) external;
+
+    function wNat() external view returns (IWNat);
+
+    function debtFreeTokensOf(address _account) external view returns (uint256);
+
+    function debtLockedTokensOf(
+        address _account
+    ) external view returns (uint256);
+
+    function assetManager() external view returns (IIAssetManager);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+import {IVPToken} from "@flarenetwork/flare-periphery-contracts/flare/IVPToken.sol";
+
+/**
+ * @title Wrapped Native token
+ * @notice Accept native token deposits and mint ERC20 WNAT (wrapped native) tokens 1-1.
+ */
+interface IWNat is IVPToken {
+    /**
+     * @notice Deposit Native and mint wNat ERC20.
+     */
+    function deposit() external payable;
+
+    /**
+     * @notice Deposit Native from msg.sender and mints WNAT ERC20 to recipient address.
+     * @param recipient An address to receive minted WNAT.
+     */
+    function depositTo(address recipient) external payable;
+
+    /**
+     * @notice Withdraw Native and burn WNAT ERC20.
+     * @param amount The amount to withdraw.
+     */
+    function withdraw(uint256 amount) external;
+
+    /**
+     * @notice Withdraw WNAT from an owner and send native tokens to msg.sender given an allowance.
+     * @param owner An address spending the Native tokens.
+     * @param amount The amount to spend.
+     *
+     * Requirements:
+     *
+     * - `owner` must have a balance of at least `amount`.
+     * - the caller must have allowance for `owners`'s tokens of at least
+     * `amount`.
+     */
+    function withdrawFrom(address owner, uint256 amount) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {SafePct} from "../../utils/library/SafePct.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {AssetManagerState} from "./data/AssetManagerState.sol";
+import {Collateral} from "./data/Collateral.sol";
+import {Globals} from "./Globals.sol";
+import {Conversion} from "./Conversion.sol";
+import {Agent} from "./data/Agent.sol";
+import {RedemptionQueue} from "./data/RedemptionQueue.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {CollateralTypeInt} from "./data/CollateralTypeInt.sol";
+import {IWNat} from "../../flareSmartContracts/interfaces/IWNat.sol";
+import {AgentInfo} from "../../userInterfaces/data/AgentInfo.sol";
+
+library Agents {
+    using SafeCast for uint256;
+    using SafePct for uint256;
+    using Agent for Agent.State;
+    using RedemptionQueue for RedemptionQueue.State;
+
+    error AgentNotWhitelisted();
+    error OnlyAgentVaultOwner();
+    error OnlyCollateralPool();
+
+
+    function getAllAgents(
+        uint256 _start,
+        uint256 _end
+    )
+        internal view
+        returns (address[] memory _agents, uint256 _totalLength)
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        _totalLength = state.allAgents.length;
+        _end = Math.min(_end, _totalLength);
+        _start = Math.min(_start, _end);
+        _agents = new address[](_end - _start);
+        for (uint256 i = _start; i < _end; i++) {
+            _agents[i - _start] = state.allAgents[i];
+        }
+    }
+
+    function getAgentStatus(
+        Agent.State storage _agent
+    )
+        internal view
+        returns (AgentInfo.Status)
+    {
+        Agent.Status status = _agent.status;
+        if (status == Agent.Status.NORMAL) {
+            return AgentInfo.Status.NORMAL;
+        } else if (status == Agent.Status.LIQUIDATION) {
+            return AgentInfo.Status.LIQUIDATION;
+        } else if (status == Agent.Status.FULL_LIQUIDATION) {
+            return AgentInfo.Status.FULL_LIQUIDATION;
+        } else if (status == Agent.Status.DESTROYING) {
+            return AgentInfo.Status.DESTROYING;
+        } else {
+            assert (status == Agent.Status.DESTROYED);
+            return AgentInfo.Status.DESTROYED;
+        }
+    }
+
+    function isOwner(
+        Agent.State storage _agent,
+        address _address
+    )
+        internal view
+        returns (bool)
+    {
+        return _address == _agent.ownerManagementAddress || _address == getWorkAddress(_agent);
+    }
+
+    function getWorkAddress(Agent.State storage _agent)
+        internal view
+        returns (address)
+    {
+        return Globals.getAgentOwnerRegistry().getWorkAddress(_agent.ownerManagementAddress);
+    }
+
+    function getOwnerPayAddress(Agent.State storage _agent)
+        internal view
+        returns (address payable)
+    {
+        address workAddress = getWorkAddress(_agent);
+        return workAddress != address(0) ? payable(workAddress) : payable(_agent.ownerManagementAddress);
+    }
+
+    function requireWhitelisted(
+        address _ownerManagementAddress
+    )
+        internal view
+    {
+        require(Globals.getAgentOwnerRegistry().isWhitelisted(_ownerManagementAddress),
+            AgentNotWhitelisted());
+    }
+
+    function requireWhitelistedAgentVaultOwner(
+        Agent.State storage _agent
+    )
+        internal view
+    {
+        requireWhitelisted(_agent.ownerManagementAddress);
+    }
+
+    function requireAgentVaultOwner(
+        address _agentVault
+    )
+        internal view
+    {
+        require(isOwner(Agent.get(_agentVault), msg.sender), OnlyAgentVaultOwner());
+    }
+
+    function requireAgentVaultOwner(
+        Agent.State storage _agent
+    )
+        internal view
+    {
+        require(isOwner(_agent, msg.sender), OnlyAgentVaultOwner());
+    }
+
+    function requireCollateralPool(
+        Agent.State storage _agent
+    )
+        internal view
+    {
+        require(msg.sender == address(_agent.collateralPool), OnlyCollateralPool());
+    }
+
+    function isCollateralToken(
+        Agent.State storage _agent,
+        IERC20 _token
+    )
+        internal view
+        returns (bool)
+    {
+        return _token == getPoolWNat(_agent) || _token == getVaultCollateralToken(_agent);
+    }
+
+    function getVaultCollateralToken(Agent.State storage _agent)
+        internal view
+        returns (IERC20)
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return state.collateralTokens[_agent.vaultCollateralIndex].token;
+    }
+
+    function getVaultCollateral(Agent.State storage _agent)
+        internal view
+        returns (CollateralTypeInt.Data storage)
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return state.collateralTokens[_agent.vaultCollateralIndex];
+    }
+
+    function convertUSD5ToVaultCollateralWei(Agent.State storage _agent, uint256 _amountUSD5)
+        internal view
+        returns (uint256)
+    {
+        return Conversion.convertFromUSD5(_amountUSD5, getVaultCollateral(_agent));
+    }
+
+    function getPoolWNat(Agent.State storage _agent)
+        internal view
+        returns (IWNat)
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return IWNat(address(state.collateralTokens[_agent.poolCollateralIndex].token));
+    }
+
+    function getPoolCollateral(Agent.State storage _agent)
+        internal view
+        returns (CollateralTypeInt.Data storage)
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return state.collateralTokens[_agent.poolCollateralIndex];
+    }
+
+    function getCollateral(Agent.State storage _agent, Collateral.Kind _kind)
+        internal view
+        returns (CollateralTypeInt.Data storage)
+    {
+        assert (_kind != Collateral.Kind.AGENT_POOL);   // there is no agent pool collateral token
+        AssetManagerState.State storage state = AssetManagerState.get();
+        if (_kind == Collateral.Kind.VAULT) {
+            return state.collateralTokens[_agent.vaultCollateralIndex];
+        } else {
+            return state.collateralTokens[_agent.poolCollateralIndex];
+        }
+    }
+
+    function collateralUnderwater(Agent.State storage _agent, Collateral.Kind _kind)
+        internal view
+        returns (bool)
+    {
+        if (_kind == Collateral.Kind.VAULT) {
+            return (_agent.collateralsUnderwater & Agent.LF_VAULT) != 0;
+        } else {
+            // AGENT_POOL collateral cannot be underwater (it only affects minting),
+            // so this function will only be used for VAULT and POOL
+            assert(_kind == Collateral.Kind.POOL);
+            return (_agent.collateralsUnderwater & Agent.LF_POOL) != 0;
+        }
+    }
+
+    function withdrawalAnnouncement(Agent.State storage _agent, Collateral.Kind _kind)
+        internal view
+        returns (Agent.WithdrawalAnnouncement storage)
+    {
+        assert (_kind != Collateral.Kind.POOL);     // agent cannot withdraw from pool
+        return _kind == Collateral.Kind.VAULT
+            ? _agent.vaultCollateralWithdrawalAnnouncement
+            : _agent.poolTokenWithdrawalAnnouncement;
+    }
+
+    function totalBackedAMG(Agent.State storage _agent)
+        internal view
+        returns (uint64)
+    {
+        // this must always hold, so assert it is true, otherwise the following line
+        // would need `max(redeemingAMG, poolRedeemingAMG)`
+        assert(_agent.poolRedeemingAMG <= _agent.redeemingAMG);
+        return _agent.mintedAMG + _agent.reservedAMG + _agent.redeemingAMG;
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+import {IDiamondCut} from "../../diamond/interfaces/IDiamondCut.sol";
+import {IGoverned} from "../../governance/interfaces/IGoverned.sol";
+import {IAssetManager} from "../../userInterfaces/IAssetManager.sol";
+import {IWNat} from "../../flareSmartContracts/interfaces/IWNat.sol";
+import {IISettingsManagement} from "./IISettingsManagement.sol";
+import {CollateralType} from "../../userInterfaces/data/CollateralType.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+
+/**
+ * Asset Manager methods used internally in AgentVault, CollateralPool and AssetManagerController.
+ */
+interface IIAssetManager is IAssetManager, IGoverned, IDiamondCut, IISettingsManagement {
+    ////////////////////////////////////////////////////////////////////////////////////
+    // Settings update
+
+    /**
+     * When `attached` is true, asset manager has been added to the asset manager controller.
+     * Even though the asset manager controller address is set at the construction time, the manager may not
+     * be able to be added to the controller immediately because the method addAssetManager must be called
+     * by the governance multisig (with timelock). During this time it is impossible to verify through the
+     * controller that the asset manager is legit.
+     * Therefore creating agents and minting is disabled until the asset manager controller notifies
+     * the asset manager that it has been added.
+     * The `attached` can be set to false when the retired asset manager is removed from the controller.
+     * NOTE: this method will be called automatically when the asset manager is added to a controller
+     *      and cannot be called directly.
+     */
+    function attachController(bool attached) external;
+
+    ////////////////////////////////////////////////////////////////////////////////////
+    // Emergency pause
+
+    /**
+     * Trigger pause of most operations.
+     */
+    function emergencyPause(bool _byGovernance, uint256 _duration)
+        external;
+
+    /**
+     * Reset total duration of 3rd party pauses, so that they can trigger pause again.
+     * Otherwise, the total duration is automatically reset emergencyPauseDurationResetAfterSeconds after last pause.
+     */
+    function resetEmergencyPauseTotalDuration()
+        external;
+
+    /**
+     * Emergency pause details, useful for monitors.
+     */
+    function emergencyPauseDetails()
+        external view
+        returns (uint256 _pausedUntil, uint256 _totalPauseDuration, bool _pausedByGovernance);
+
+    ////////////////////////////////////////////////////////////////////////////////////
+    // Emergency transfer pause
+
+    /**
+     * Trigger pause of most operations.
+     */
+    function emergencyPauseTransfers(bool _byGovernance, uint256 _duration)
+        external;
+
+    /**
+     * Reset total duration of 3rd party pauses, so that they can trigger pause again.
+     * Otherwise, the total duration is automatically reset emergencyPauseDurationResetAfterSeconds after last pause.
+     */
+    function resetEmergencyPauseTransfersTotalDuration()
+        external;
+
+    /**
+     * Emergency pause details, useful for monitors.
+     */
+    function emergencyPauseTransfersDetails()
+        external view
+        returns (uint256 _pausedUntil, uint256 _totalPauseDuration, bool _pausedByGovernance);
+
+    ////////////////////////////////////////////////////////////////////////////////////
+    // Upgrade
+
+    /**
+     * When asset manager is paused, no new minting can be made.
+     * All other operations continue normally.
+     * NOTE: may not be called directly - only through asset manager controller by governance.
+     */
+    function pauseMinting() external;
+
+    /**
+     * Minting can continue.
+     * NOTE: may not be called directly - only through asset manager controller by governance.
+     */
+    function unpauseMinting() external;
+
+    /**
+     * When agent vault, collateral pool or collateral pool token factory is upgraded, new agent vaults
+     * automatically get the new implementation from the factory. The existing vaults can be batch updated
+     * by this method.
+     * Parameters `_start` and `_end` allow limiting the upgrades to a selection of all agents, to avoid
+     * breaking the block gas limit.
+     * NOTE: may not be called directly - only through asset manager controller by governance.
+     * @param _start the start index of the list of agent vaults (in getAllAgents()) to upgrade
+     * @param _end the end index (exclusive) of the list of agent vaults to upgrade;
+     *  can be larger then the number of agents, if gas is not an issue
+     */
+    function upgradeAgentVaultsAndPools(
+        uint256 _start,
+        uint256 _end
+    ) external;
+
+    ////////////////////////////////////////////////////////////////////////////////////
+    // Collateral type management
+
+    /**
+     * Add new vault collateral type (new token type and initial collateral ratios).
+     * NOTE: may not be called directly - only through asset manager controller by governance.
+     */
+    function addCollateralType(
+        CollateralType.Data calldata _data
+    ) external;
+
+    /**
+     * Update collateral ratios for collateral type identified by `_collateralClass` and `_token`.
+     * NOTE: may not be called directly - only through asset manager controller by governance.
+     */
+    function setCollateralRatiosForToken(
+        CollateralType.Class _collateralClass,
+        IERC20 _token,
+        uint256 _minCollateralRatioBIPS,
+        uint256 _safetyMinCollateralRatioBIPS
+    ) external;
+
+    /**
+     * Deprecate collateral type identified by `_collateralClass` and `_token`.
+     * After `_invalidationTimeSec` the collateral will become invalid and all the agents
+     * that still use it as collateral will be liquidated.
+     * NOTE: may not be called directly - only through asset manager controller by governance.
+     */
+    function deprecateCollateralType(
+        CollateralType.Class _collateralClass,
+        IERC20 _token,
+        uint256 _invalidationTimeSec
+    ) external;
+
+    ////////////////////////////////////////////////////////////////////////////////////
+    // Collateral pool redemptions
+
+    /**
+     * Create a redemption from a single agent. Used in self-close exit from the collateral pool.
+     * NOTE: only collateral pool can call this method.
+     */
+    function redeemFromAgent(
+        address _agentVault,
+        address _receiver,
+        uint256 _amountUBA,
+        string memory _receiverUnderlyingAddress,
+        address payable _executor
+    ) external payable;
+
+    /**
+     * Burn fassets from  a single agent and get paid in vault collateral by the agent.
+     * Price is FTSO price, multiplied by factor buyFAssetByAgentFactorBIPS (set by agent).
+     * Used in self-close exit from the collateral pool when requested or when self-close amount is less than 1 lot.
+     * NOTE: only collateral pool can call this method.
+     */
+    function redeemFromAgentInCollateral(
+        address _agentVault,
+        address _receiver,
+        uint256 _amountUBA
+    ) external;
+
+    /**
+     * To avoid unlimited work, the maximum number of redemption tickets closed in redemption, self close
+     * or liquidation is limited. This means that a single redemption/self close/liquidation is limited.
+     * This function calculates the maximum single redemption amount.
+     */
+    function maxRedemptionFromAgent(address _agentVault)
+        external view
+        returns (uint256);
+
+    ////////////////////////////////////////////////////////////////////////////////////
+    // Functions, used by agent vault during collateral deposit/withdraw
+
+    /**
+     * Called by AgentVault when agent calls `withdraw()`.
+     * NOTE: may only be called from an agent vault, not from an EOA address.
+     * @param _valueNATWei the withdrawn amount
+     */
+    function beforeCollateralWithdrawal(
+        IERC20 _token,
+        uint256 _valueNATWei
+    ) external;
+
+    /**
+     * Called by AgentVault when there was a deposit.
+     * May pull agent out of liquidation.
+     * NOTE: may only be called from an agent vault or collateral pool, not from an EOA address.
+     */
+    function updateCollateral(
+        address _agentVault,
+        IERC20 _token
+    ) external;
+
+    ////////////////////////////////////////////////////////////////////////////////////
+    // View functions used internally by agent vault and collateral pool.
+
+    /**
+     * Get current WNat contract set in the asset manager.
+     * Used internally by agent vault and collateral pool.
+     * @return WNat contract
+     */
+    function getWNat()
+        external view
+        returns (IWNat);
+
+    /**
+     * Returns price of asset (UBA) in NAT Wei as a fraction.
+     * Used internally by collateral pool.
+     */
+    function assetPriceNatWei()
+        external view
+        returns (uint256 _multiplier, uint256 _divisor);
+
+    /**
+     * Returns the number of f-assets that the agent's pool identified by `_agentVault` is backing.
+     * This is the same as the number of f-assets the agent is backing, but excluding
+     * f-assets being redeemed by pool self-close redemptions.
+     * Used internally by collateral pool.
+     */
+    function getFAssetsBackedByPool(address _agentVault)
+        external view
+        returns (uint256);
+
+    /**
+     * Returns the duration for which the collateral pool tokens are timelocked after minting.
+     * Timelocking is done to battle sandwich attacks aimed at stealing newly deposited f-asset
+     * fees from the pool.
+     */
+    function getCollateralPoolTokenTimelockSeconds()
+        external view
+        returns (uint256);
+
+    /**
+     * Check if `_token` is either vault collateral token for `_agentVault` or the pool token.
+     * These types of tokens cannot be simply transferred from the agent vault, but can only be
+     * withdrawn after announcement if they are not backing any f-assets.
+     * Used internally by agent vault.
+     */
+    function isLockedVaultToken(address _agentVault, IERC20 _token)
+        external view
+        returns (bool);
+
+    /**
+     * Check if `_token` is any of the vault collateral tokens (including already invalidated).
+     */
+    function isVaultCollateralToken(IERC20 _token)
+        external view
+        returns (bool);
+
+    /**
+     * True if `_address` is either work or management address of the owner of the agent identified by `_agentVault`.
+     * Used internally by agent vault.
+     */
+    function isAgentVaultOwner(address _agentVault, address _address)
+        external view
+        returns (bool);
+
+    /**
+     * Return the work address for the given management address.
+     */
+    function getWorkAddress(address _managementAddress)
+        external view
+        returns (address);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {RedemptionQueue} from "./RedemptionQueue.sol";
+import {PaymentConfirmations} from "./PaymentConfirmations.sol";
+import {UnderlyingAddressOwnership} from "./UnderlyingAddressOwnership.sol";
+import {CollateralReservation} from "./CollateralReservation.sol";
+import {Redemption} from "./Redemption.sol";
+import {CollateralTypeInt} from "./CollateralTypeInt.sol";
+
+
+library AssetManagerState {
+    struct State {
+        // All collateral types, used for vault or pool.
+        // Pool collateral (always WNat) has index 0.
+        CollateralTypeInt.Data[] collateralTokens;
+
+        // mapping((collateralClass, tokenAddress) => collateralTokens index + 1)
+        mapping(bytes32 => uint256) collateralTokenIndex;
+
+        // makes sure pool tokens have unique names and symbols
+        mapping(string => bool) reservedPoolTokenSuffixes;
+
+        // A list of all agents (for use by monitoring or challengers).
+        // Type: array of agent vault addresses; when one is deleted, its position is filled with last
+        address[] allAgents;
+
+        // A list of all agents that are available for minting.
+        // Type: array of agent vault addresses; when one is deleted, its position is filled with last
+        address[] availableAgents;
+
+        // Ownership of underlying source addresses is needed to prevent someone
+        // overtaking the payer and presenting an underlying payment as his own.
+        UnderlyingAddressOwnership.State underlyingAddressOwnership;
+
+        // Type: mapping collateralReservationId => collateralReservation
+        mapping(uint256 => CollateralReservation.Data) crts;
+
+        // redemption queue
+        RedemptionQueue.State redemptionQueue;
+
+        // mapping redemptionRequest_id => request
+        mapping(uint256 => Redemption.Request) redemptionRequests;
+
+        // verified payment hashes; expire in 5 days
+        PaymentConfirmations.State paymentConfirmations;
+
+        // New ids (listed together to save storage); all must be incremented before assigning, so 0 means empty
+        uint64 newCrtId;
+        uint64 newRedemptionRequestId;
+        uint64 newPaymentAnnouncementId;
+
+        // Total collateral reservations (in underlying AMG units). Used by minting cap.
+        uint64 totalReservedCollateralAMG;
+
+        // Pool collateral is always wrapped NAT, but the wrapping contract may change.
+        // In this case, new pool collateral token must be added and set as current.
+        uint16 poolCollateralIndex;
+
+        // Current block number and timestamp on the underlying chain
+        uint64 currentUnderlyingBlock;
+        uint64 currentUnderlyingBlockTimestamp;
+
+        // The timestamp (on this network) when the underlying block was last updated
+        uint64 currentUnderlyingBlockUpdatedAt;
+
+        // If non-zero, minting is paused and has been paused at the time indicated by timestamp mintingPausedAt.
+        // When asset manager is paused, no new mintings can be done, but redemptions still work.
+        uint64 mintingPausedAt;
+
+        // If non-zero, asset manager is paused and will be paused until the time indicated.
+        // When asset manager is paused, all dangerous operations ar blocked (mintings, redemptions, etc.).
+        // It is an extreme measure, which can be used in case there is a dangerous hole in the system.
+        uint64 emergencyPausedUntil;
+
+        // When emergency pause is not done by governance, the total allowed pause is limited.
+        // So the caller must state the duration after which the pause will automatically end.
+        // When total pauses exceed the max allowed length, pausing is only allowed by the governance.
+        // An emergencyPause call by the governance optionally resets the total duration counter to 0.
+        uint64 emergencyPausedTotalDuration;
+
+        // When emergency pause was triggered by governance, only governance can unpause.
+        bool emergencyPausedByGovernance;
+
+        // If non-zero, asset manager is paused and will be paused until the time indicated.
+        // When asset manager is paused, all dangerous operations ar blocked (mintings, redemptions, etc.).
+        // It is an extreme measure, which can be used in case there is a dangerous hole in the system.
+        uint64 transfersEmergencyPausedUntil;
+
+        // When emergency pause is not done by governance, the total allowed pause is limited.
+        // So the caller must state the duration after which the pause will automatically end.
+        // When total pauses exceed the max allowed length, pausing is only allowed by the governance.
+        // An emergencyPause call by the governance optionally resets the total duration counter to 0.
+        uint64 transfersEmergencyPausedTotalDuration;
+
+        // When emergency pause was triggered by governance, only governance can unpause.
+        bool transfersEmergencyPausedByGovernance;
+
+        // When true, asset manager has been added to the asset manager controller.
+        // Even though the asset manager controller address is set at the construction time, the manager may not
+        // be able to be added to the controller immediately because the method addAssetManager must be called
+        // by the governance multisig (with timelock).
+        // During this time it is impossible to verify through the controller that the asset manager is legit.
+        // Therefore creating agents and minting is disabled until the asset manager controller notifies
+        // the asset manager that it has been added.
+        bool attached;
+    }
+
+    // diamond state access to state and settings
+
+    bytes32 internal constant STATE_POSITION = keccak256("fasset.AssetManager.State");
+
+    function get() internal pure returns (AssetManagerState.State storage _state) {
+        // Only direct constants are allowed in inline assembly, so we assign it here
+        bytes32 position = STATE_POSITION;
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            _state.slot := position
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 pragma abicoder v2;
 
@@ -1646,605 +1963,8 @@ interface ICollateralPool {
         external view
         returns (uint256);
 }
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-pragma abicoder v2;
-
-import {ICollateralPool} from "../../userInterfaces/ICollateralPool.sol";
-import {IIAssetManager} from "../../assetManager/interfaces/IIAssetManager.sol";
-import {IWNat} from "../../flareSmartContracts/interfaces/IWNat.sol";
-
-/**
- * Collateral pool methods that are only callable by the asset manager or pool token.
- */
-interface IICollateralPool is ICollateralPool {
-    function setPoolToken(address _poolToken) external;
-
-    function depositNat() external payable;
-
-    function payout(
-        address _receiver,
-        uint256 _amountWei,
-        uint256 _agentResponsibilityWei
-    ) external;
-
-    function destroy(address payable _recipient) external;
-
-    function upgradeWNatContract(IWNat newWNat) external;
-
-    function setExitCollateralRatioBIPS(uint256 _value) external;
-
-    function fAssetFeeDeposited(uint256 _amount) external;
-
-    function wNat() external view returns (IWNat);
-
-    function debtFreeTokensOf(address _account) external view returns (uint256);
-
-    function debtLockedTokensOf(
-        address _account
-    ) external view returns (uint256);
-
-    function assetManager() external view returns (IIAssetManager);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-import {IDiamondCut} from "../../diamond/interfaces/IDiamondCut.sol";
-import {IGoverned} from "../../governance/interfaces/IGoverned.sol";
-import {IAssetManager} from "../../userInterfaces/IAssetManager.sol";
-import {IWNat} from "../../flareSmartContracts/interfaces/IWNat.sol";
-import {IISettingsManagement} from "./IISettingsManagement.sol";
-import {CollateralType} from "../../userInterfaces/data/CollateralType.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-
-/**
- * Asset Manager methods used internally in AgentVault, CollateralPool and AssetManagerController.
- */
-interface IIAssetManager is IAssetManager, IGoverned, IDiamondCut, IISettingsManagement {
-    ////////////////////////////////////////////////////////////////////////////////////
-    // Settings update
-
-    /**
-     * When `attached` is true, asset manager has been added to the asset manager controller.
-     * Even though the asset manager controller address is set at the construction time, the manager may not
-     * be able to be added to the controller immediately because the method addAssetManager must be called
-     * by the governance multisig (with timelock). During this time it is impossible to verify through the
-     * controller that the asset manager is legit.
-     * Therefore creating agents and minting is disabled until the asset manager controller notifies
-     * the asset manager that it has been added.
-     * The `attached` can be set to false when the retired asset manager is removed from the controller.
-     * NOTE: this method will be called automatically when the asset manager is added to a controller
-     *      and cannot be called directly.
-     */
-    function attachController(bool attached) external;
-
-    ////////////////////////////////////////////////////////////////////////////////////
-    // Emergency pause
-
-    /**
-     * Trigger pause of most operations.
-     */
-    function emergencyPause(bool _byGovernance, uint256 _duration)
-        external;
-
-    /**
-     * Reset total duration of 3rd party pauses, so that they can trigger pause again.
-     * Otherwise, the total duration is automatically reset emergencyPauseDurationResetAfterSeconds after last pause.
-     */
-    function resetEmergencyPauseTotalDuration()
-        external;
-
-    /**
-     * Emergency pause details, useful for monitors.
-     */
-    function emergencyPauseDetails()
-        external view
-        returns (uint256 _pausedUntil, uint256 _totalPauseDuration, bool _pausedByGovernance);
-
-    ////////////////////////////////////////////////////////////////////////////////////
-    // Emergency transfer pause
-
-    /**
-     * Trigger pause of most operations.
-     */
-    function emergencyPauseTransfers(bool _byGovernance, uint256 _duration)
-        external;
-
-    /**
-     * Reset total duration of 3rd party pauses, so that they can trigger pause again.
-     * Otherwise, the total duration is automatically reset emergencyPauseDurationResetAfterSeconds after last pause.
-     */
-    function resetEmergencyPauseTransfersTotalDuration()
-        external;
-
-    /**
-     * Emergency pause details, useful for monitors.
-     */
-    function emergencyPauseTransfersDetails()
-        external view
-        returns (uint256 _pausedUntil, uint256 _totalPauseDuration, bool _pausedByGovernance);
-
-    ////////////////////////////////////////////////////////////////////////////////////
-    // Upgrade
-
-    /**
-     * When asset manager is paused, no new minting can be made.
-     * All other operations continue normally.
-     * NOTE: may not be called directly - only through asset manager controller by governance.
-     */
-    function pauseMinting() external;
-
-    /**
-     * Minting can continue.
-     * NOTE: may not be called directly - only through asset manager controller by governance.
-     */
-    function unpauseMinting() external;
-
-    /**
-     * When agent vault, collateral pool or collateral pool token factory is upgraded, new agent vaults
-     * automatically get the new implementation from the factory. The existing vaults can be batch updated
-     * by this method.
-     * Parameters `_start` and `_end` allow limiting the upgrades to a selection of all agents, to avoid
-     * breaking the block gas limit.
-     * NOTE: may not be called directly - only through asset manager controller by governance.
-     * @param _start the start index of the list of agent vaults (in getAllAgents()) to upgrade
-     * @param _end the end index (exclusive) of the list of agent vaults to upgrade;
-     *  can be larger then the number of agents, if gas is not an issue
-     */
-    function upgradeAgentVaultsAndPools(
-        uint256 _start,
-        uint256 _end
-    ) external;
-
-    ////////////////////////////////////////////////////////////////////////////////////
-    // Collateral type management
-
-    /**
-     * Add new vault collateral type (new token type and initial collateral ratios).
-     * NOTE: may not be called directly - only through asset manager controller by governance.
-     */
-    function addCollateralType(
-        CollateralType.Data calldata _data
-    ) external;
-
-    /**
-     * Update collateral ratios for collateral type identified by `_collateralClass` and `_token`.
-     * NOTE: may not be called directly - only through asset manager controller by governance.
-     */
-    function setCollateralRatiosForToken(
-        CollateralType.Class _collateralClass,
-        IERC20 _token,
-        uint256 _minCollateralRatioBIPS,
-        uint256 _safetyMinCollateralRatioBIPS
-    ) external;
-
-    /**
-     * Deprecate collateral type identified by `_collateralClass` and `_token`.
-     * After `_invalidationTimeSec` the collateral will become invalid and all the agents
-     * that still use it as collateral will be liquidated.
-     * NOTE: may not be called directly - only through asset manager controller by governance.
-     */
-    function deprecateCollateralType(
-        CollateralType.Class _collateralClass,
-        IERC20 _token,
-        uint256 _invalidationTimeSec
-    ) external;
-
-    ////////////////////////////////////////////////////////////////////////////////////
-    // Collateral pool redemptions
-
-    /**
-     * Create a redemption from a single agent. Used in self-close exit from the collateral pool.
-     * NOTE: only collateral pool can call this method.
-     */
-    function redeemFromAgent(
-        address _agentVault,
-        address _receiver,
-        uint256 _amountUBA,
-        string memory _receiverUnderlyingAddress,
-        address payable _executor
-    ) external payable;
-
-    /**
-     * Burn fassets from  a single agent and get paid in vault collateral by the agent.
-     * Price is FTSO price, multiplied by factor buyFAssetByAgentFactorBIPS (set by agent).
-     * Used in self-close exit from the collateral pool when requested or when self-close amount is less than 1 lot.
-     * NOTE: only collateral pool can call this method.
-     */
-    function redeemFromAgentInCollateral(
-        address _agentVault,
-        address _receiver,
-        uint256 _amountUBA
-    ) external;
-
-    /**
-     * To avoid unlimited work, the maximum number of redemption tickets closed in redemption, self close
-     * or liquidation is limited. This means that a single redemption/self close/liquidation is limited.
-     * This function calculates the maximum single redemption amount.
-     */
-    function maxRedemptionFromAgent(address _agentVault)
-        external view
-        returns (uint256);
-
-    ////////////////////////////////////////////////////////////////////////////////////
-    // Functions, used by agent vault during collateral deposit/withdraw
-
-    /**
-     * Called by AgentVault when agent calls `withdraw()`.
-     * NOTE: may only be called from an agent vault, not from an EOA address.
-     * @param _valueNATWei the withdrawn amount
-     */
-    function beforeCollateralWithdrawal(
-        IERC20 _token,
-        uint256 _valueNATWei
-    ) external;
-
-    /**
-     * Called by AgentVault when there was a deposit.
-     * May pull agent out of liquidation.
-     * NOTE: may only be called from an agent vault or collateral pool, not from an EOA address.
-     */
-    function updateCollateral(
-        address _agentVault,
-        IERC20 _token
-    ) external;
-
-    ////////////////////////////////////////////////////////////////////////////////////
-    // View functions used internally by agent vault and collateral pool.
-
-    /**
-     * Get current WNat contract set in the asset manager.
-     * Used internally by agent vault and collateral pool.
-     * @return WNat contract
-     */
-    function getWNat()
-        external view
-        returns (IWNat);
-
-    /**
-     * Returns price of asset (UBA) in NAT Wei as a fraction.
-     * Used internally by collateral pool.
-     */
-    function assetPriceNatWei()
-        external view
-        returns (uint256 _multiplier, uint256 _divisor);
-
-    /**
-     * Returns the number of f-assets that the agent's pool identified by `_agentVault` is backing.
-     * This is the same as the number of f-assets the agent is backing, but excluding
-     * f-assets being redeemed by pool self-close redemptions.
-     * Used internally by collateral pool.
-     */
-    function getFAssetsBackedByPool(address _agentVault)
-        external view
-        returns (uint256);
-
-    /**
-     * Returns the duration for which the collateral pool tokens are timelocked after minting.
-     * Timelocking is done to battle sandwich attacks aimed at stealing newly deposited f-asset
-     * fees from the pool.
-     */
-    function getCollateralPoolTokenTimelockSeconds()
-        external view
-        returns (uint256);
-
-    /**
-     * Check if `_token` is either vault collateral token for `_agentVault` or the pool token.
-     * These types of tokens cannot be simply transferred from the agent vault, but can only be
-     * withdrawn after announcement if they are not backing any f-assets.
-     * Used internally by agent vault.
-     */
-    function isLockedVaultToken(address _agentVault, IERC20 _token)
-        external view
-        returns (bool);
-
-    /**
-     * Check if `_token` is any of the vault collateral tokens (including already invalidated).
-     */
-    function isVaultCollateralToken(IERC20 _token)
-        external view
-        returns (bool);
-
-    /**
-     * True if `_address` is either work or management address of the owner of the agent identified by `_agentVault`.
-     * Used internally by agent vault.
-     */
-    function isAgentVaultOwner(address _agentVault, address _address)
-        external view
-        returns (bool);
-
-    /**
-     * Return the work address for the given management address.
-     */
-    function getWorkAddress(address _managementAddress)
-        external view
-        returns (address);
-}
-
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {IICollateralPoolToken} from "../interfaces/IICollateralPoolToken.sol";
-import {IICollateralPool} from "../../collateralPool/interfaces/IICollateralPool.sol";
-import {IIAssetManager} from "../../assetManager/interfaces/IIAssetManager.sol";
-import {ICollateralPoolToken} from "../../userInterfaces/ICollateralPoolToken.sol";
-
-
-contract CollateralPoolToken is IICollateralPoolToken, ERC20, UUPSUpgradeable {
-    using SafeCast for uint256;
-
-    error OnlyAssetManager();
-    error InsufficientNonTimelockedBalance();
-    error InsufficientTransferableBalance();
-    error AlreadyInitialized();
-    error OnlyCollateralPool();
-
-    struct Timelock {
-        uint128 amount;
-        uint64 endTime;
-    }
-
-    struct TimelockQueue {
-        mapping(uint256 => Timelock) data;
-        uint128 start;
-        uint128 end;
-    }
-
-    address public collateralPool;  // practically immutable because there is no setter
-
-    string private tokenName;       // practically immutable because there is no setter
-    string private tokenSymbol;     // practically immutable because there is no setter
-
-    mapping(address => TimelockQueue) private timelocksByAccount;
-    bool private ignoreTimelocked;
-    bool private initialized;
-
-    modifier onlyCollateralPool {
-        require(msg.sender == collateralPool, OnlyCollateralPool());
-        _;
-    }
-
-    // Only used in some tests.
-    // The implementation in production will always be deployed with all zero address for collateral pool.
-    constructor(
-        address _collateralPool,
-        string memory _tokenName,
-        string memory _tokenSymbol
-    )
-        ERC20(_tokenName, _tokenSymbol)
-    {
-        initialize(_collateralPool, _tokenName, _tokenSymbol);
-    }
-
-    function initialize(
-        address _collateralPool,
-        string memory _tokenName,
-        string memory _tokenSymbol
-    )
-        public
-    {
-        require(!initialized, AlreadyInitialized());
-        initialized = true;
-        // init vars
-        collateralPool = _collateralPool;
-        tokenName = _tokenName;
-        tokenSymbol = _tokenSymbol;
-    }
-
-    /**
-     * @dev Returns the name of the token.
-     */
-    function name() public view virtual override returns (string memory) {
-        return tokenName;
-    }
-
-    /**
-     * @dev Returns the symbol of the token, usually a shorter version of the
-     * name.
-     */
-    function symbol() public view virtual override returns (string memory) {
-        return tokenSymbol;
-    }
-
-    function mint(
-        address _account,
-        uint256 _amount
-    )
-        external
-        onlyCollateralPool
-        returns (uint256 _timelockExpiresAt)
-    {
-        _mint(_account, _amount);
-        uint256 timelockDuration = _getTimelockDuration();
-        _timelockExpiresAt = block.timestamp + timelockDuration;
-        if (timelockDuration > 0 && _amount > 0) {
-            TimelockQueue storage timelocks = timelocksByAccount[_account];
-            timelocks.data[timelocks.end++] = Timelock({
-                amount: _amount.toUint128(),
-                endTime: _timelockExpiresAt.toUint64()
-            });
-        }
-    }
-
-    function burn(
-        address _account,
-        uint256 _amount,
-        bool _ignoreTimelocked
-    )
-        external
-        onlyCollateralPool
-    {
-        if (_ignoreTimelocked) {
-            ignoreTimelocked = true;
-        }
-        _burn(_account, _amount);
-        if (_ignoreTimelocked) {
-            ignoreTimelocked = false;
-        }
-    }
-
-    function lockedBalanceOf(
-        address _account
-    )
-        external view
-        returns (uint256)
-    {
-        uint256 debtLockedBalance = debtLockedBalanceOf(_account);
-        uint256 timelockedBalance = timelockedBalanceOf(_account);
-        return (debtLockedBalance > timelockedBalance) ? debtLockedBalance : timelockedBalance;
-    }
-
-    function transferableBalanceOf(
-        address _account
-    )
-        external view
-        returns (uint256)
-    {
-        uint256 debtFreeBalance = debtFreeBalanceOf(_account);
-        uint256 nonTimelockedBalance = nonTimelockedBalanceOf(_account);
-        return (debtFreeBalance < nonTimelockedBalance) ? debtFreeBalance : nonTimelockedBalance;
-    }
-
-    function debtFreeBalanceOf(
-        address _account
-    )
-        public view
-        returns (uint256)
-    {
-        return IICollateralPool(collateralPool).debtFreeTokensOf(_account);
-    }
-
-    function debtLockedBalanceOf(
-        address _account
-    )
-        public view
-        returns (uint256)
-    {
-        return IICollateralPool(collateralPool).debtLockedTokensOf(_account);
-    }
-
-    function timelockedBalanceOf(
-        address _account
-    )
-        public view
-        returns (uint256 _timelocked)
-    {
-        TimelockQueue storage timelocks = timelocksByAccount[_account];
-        uint256 end = timelocks.end;
-        for (uint256 i = timelocks.start; i < end; i++) {
-            Timelock storage timelock = timelocks.data[i];
-            if (timelock.endTime > block.timestamp) {
-                _timelocked += timelock.amount;
-            }
-        }
-        // in agent payout, locked tokens can be burnt without a timelock update,
-        // which makes timelockedBalance > totalBalance
-        uint256 totalBalance = balanceOf(_account);
-        _timelocked = (_timelocked < totalBalance) ? _timelocked : totalBalance;
-    }
-
-    function nonTimelockedBalanceOf(
-        address _account
-    )
-        public view
-        returns (uint256)
-    {
-        return balanceOf(_account) - timelockedBalanceOf(_account);
-    }
-
-    function _beforeTokenTransfer(
-        address _from, address /* _to */, uint256 _amount
-    )
-        internal override
-    {
-        if (msg.sender != collateralPool) {
-            uint256 transferable = debtFreeBalanceOf(_from);
-            require(_amount <= transferable, InsufficientTransferableBalance());
-        }
-        // either user transfer or non-minting collateral pool with ignoreTimelocked=false flag
-        if (!ignoreTimelocked && _from != address(0)) {
-            // 10 is some arbitrary number that is usually enough; however, there isn't much damage
-            // if it is too little - just the non-timelocked balance may be too small and you have to call again
-            cleanupExpiredTimelocks(_from, 10);
-            uint256 nonTimelocked = nonTimelockedBalanceOf(_from);
-            require(_amount <= nonTimelocked, InsufficientNonTimelockedBalance());
-        }
-        // if ignoreTimelock, then we are spending from timelocked balance,
-        // the reason why it is not updated is because it might not fit in one transaction
-        // (if timelock data is too large), which could block the asset manager from making
-        // agent payout from the pool
-    }
-
-    // this can be called externally by anyone with different _maxTimelockedEntries,
-    // if there are too many timelocked entries to clear in one transaction
-    // (should be rare, especially if timelock duration is short - e.g. <= day)
-    function cleanupExpiredTimelocks(
-        address _account,
-        uint256 _maxTimelockedEntries
-    )
-        public
-        returns (bool _cleanedAllExpired)
-    {
-        TimelockQueue storage timelocks = timelocksByAccount[_account];
-        uint256 start = timelocks.start;
-        for (uint256 count = 0; count < _maxTimelockedEntries; count++) {
-            if (start >= timelocks.end || timelocks.data[start].endTime > block.timestamp) {
-                break;
-            }
-            delete timelocks.data[start++];
-        }
-        timelocks.start = start.toUint128();
-        return start >= timelocks.end || timelocks.data[start].endTime > block.timestamp;
-    }
-
-    function _getTimelockDuration()
-        internal view
-        returns (uint256)
-    {
-        IIAssetManager assetManager = IICollateralPool(collateralPool).assetManager();
-        return assetManager.getCollateralPoolTokenTimelockSeconds();
-    }
-
-    /**
-     * Implementation of ERC-165 interface.
-     */
-    function supportsInterface(bytes4 _interfaceId)
-        external pure override
-        returns (bool)
-    {
-        return _interfaceId == type(IERC165).interfaceId
-            || _interfaceId == type(IERC20).interfaceId
-            || _interfaceId == type(ICollateralPoolToken).interfaceId;
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////
-    // UUPS proxy upgrade
-
-    function implementation() external view returns (address) {
-        return _getImplementation();
-    }
-
-    /**
-     * Upgrade calls can only arrive through asset manager.
-     * See UUPSUpgradeable._authorizeUpgrade.
-     */
-    function _authorizeUpgrade(address /* _newImplementation */)
-        internal virtual override
-    {
-        IIAssetManager assetManager = IICollateralPool(collateralPool).assetManager();
-        require(msg.sender == address(assetManager), OnlyAssetManager());
-    }
-}
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
@@ -3155,6 +2875,300 @@ contract CollateralPool is IICollateralPool, ReentrancyGuard, UUPSUpgradeable, I
 }
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
+pragma abicoder v2;
+
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {ICollateralPoolToken} from "../../userInterfaces/ICollateralPoolToken.sol";
+
+
+interface IICollateralPoolToken is ICollateralPoolToken, IERC165 {
+
+    function mint(address _account, uint256 _amount) external returns (uint256 _timelockExpiresAt);
+    function burn(address _account, uint256 _amount, bool _ignoreTimelocked) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IICollateralPoolToken} from "../interfaces/IICollateralPoolToken.sol";
+import {IICollateralPool} from "../../collateralPool/interfaces/IICollateralPool.sol";
+import {IIAssetManager} from "../../assetManager/interfaces/IIAssetManager.sol";
+import {ICollateralPoolToken} from "../../userInterfaces/ICollateralPoolToken.sol";
+
+
+contract CollateralPoolToken is IICollateralPoolToken, ERC20, UUPSUpgradeable {
+    using SafeCast for uint256;
+
+    error OnlyAssetManager();
+    error InsufficientNonTimelockedBalance();
+    error InsufficientTransferableBalance();
+    error AlreadyInitialized();
+    error OnlyCollateralPool();
+
+    struct Timelock {
+        uint128 amount;
+        uint64 endTime;
+    }
+
+    struct TimelockQueue {
+        mapping(uint256 => Timelock) data;
+        uint128 start;
+        uint128 end;
+    }
+
+    address public collateralPool;  // practically immutable because there is no setter
+
+    string private tokenName;       // practically immutable because there is no setter
+    string private tokenSymbol;     // practically immutable because there is no setter
+
+    mapping(address => TimelockQueue) private timelocksByAccount;
+    bool private ignoreTimelocked;
+    bool private initialized;
+
+    modifier onlyCollateralPool {
+        require(msg.sender == collateralPool, OnlyCollateralPool());
+        _;
+    }
+
+    // Only used in some tests.
+    // The implementation in production will always be deployed with all zero address for collateral pool.
+    constructor(
+        address _collateralPool,
+        string memory _tokenName,
+        string memory _tokenSymbol
+    )
+        ERC20(_tokenName, _tokenSymbol)
+    {
+        initialize(_collateralPool, _tokenName, _tokenSymbol);
+    }
+
+    function initialize(
+        address _collateralPool,
+        string memory _tokenName,
+        string memory _tokenSymbol
+    )
+        public
+    {
+        require(!initialized, AlreadyInitialized());
+        initialized = true;
+        // init vars
+        collateralPool = _collateralPool;
+        tokenName = _tokenName;
+        tokenSymbol = _tokenSymbol;
+    }
+
+    /**
+     * @dev Returns the name of the token.
+     */
+    function name() public view virtual override returns (string memory) {
+        return tokenName;
+    }
+
+    /**
+     * @dev Returns the symbol of the token, usually a shorter version of the
+     * name.
+     */
+    function symbol() public view virtual override returns (string memory) {
+        return tokenSymbol;
+    }
+
+    function mint(
+        address _account,
+        uint256 _amount
+    )
+        external
+        onlyCollateralPool
+        returns (uint256 _timelockExpiresAt)
+    {
+        _mint(_account, _amount);
+        uint256 timelockDuration = _getTimelockDuration();
+        _timelockExpiresAt = block.timestamp + timelockDuration;
+        if (timelockDuration > 0 && _amount > 0) {
+            TimelockQueue storage timelocks = timelocksByAccount[_account];
+            timelocks.data[timelocks.end++] = Timelock({
+                amount: _amount.toUint128(),
+                endTime: _timelockExpiresAt.toUint64()
+            });
+        }
+    }
+
+    function burn(
+        address _account,
+        uint256 _amount,
+        bool _ignoreTimelocked
+    )
+        external
+        onlyCollateralPool
+    {
+        if (_ignoreTimelocked) {
+            ignoreTimelocked = true;
+        }
+        _burn(_account, _amount);
+        if (_ignoreTimelocked) {
+            ignoreTimelocked = false;
+        }
+    }
+
+    function lockedBalanceOf(
+        address _account
+    )
+        external view
+        returns (uint256)
+    {
+        uint256 debtLockedBalance = debtLockedBalanceOf(_account);
+        uint256 timelockedBalance = timelockedBalanceOf(_account);
+        return (debtLockedBalance > timelockedBalance) ? debtLockedBalance : timelockedBalance;
+    }
+
+    function transferableBalanceOf(
+        address _account
+    )
+        external view
+        returns (uint256)
+    {
+        uint256 debtFreeBalance = debtFreeBalanceOf(_account);
+        uint256 nonTimelockedBalance = nonTimelockedBalanceOf(_account);
+        return (debtFreeBalance < nonTimelockedBalance) ? debtFreeBalance : nonTimelockedBalance;
+    }
+
+    function debtFreeBalanceOf(
+        address _account
+    )
+        public view
+        returns (uint256)
+    {
+        return IICollateralPool(collateralPool).debtFreeTokensOf(_account);
+    }
+
+    function debtLockedBalanceOf(
+        address _account
+    )
+        public view
+        returns (uint256)
+    {
+        return IICollateralPool(collateralPool).debtLockedTokensOf(_account);
+    }
+
+    function timelockedBalanceOf(
+        address _account
+    )
+        public view
+        returns (uint256 _timelocked)
+    {
+        TimelockQueue storage timelocks = timelocksByAccount[_account];
+        uint256 end = timelocks.end;
+        for (uint256 i = timelocks.start; i < end; i++) {
+            Timelock storage timelock = timelocks.data[i];
+            if (timelock.endTime > block.timestamp) {
+                _timelocked += timelock.amount;
+            }
+        }
+        // in agent payout, locked tokens can be burnt without a timelock update,
+        // which makes timelockedBalance > totalBalance
+        uint256 totalBalance = balanceOf(_account);
+        _timelocked = (_timelocked < totalBalance) ? _timelocked : totalBalance;
+    }
+
+    function nonTimelockedBalanceOf(
+        address _account
+    )
+        public view
+        returns (uint256)
+    {
+        return balanceOf(_account) - timelockedBalanceOf(_account);
+    }
+
+    function _beforeTokenTransfer(
+        address _from, address /* _to */, uint256 _amount
+    )
+        internal override
+    {
+        if (msg.sender != collateralPool) {
+            uint256 transferable = debtFreeBalanceOf(_from);
+            require(_amount <= transferable, InsufficientTransferableBalance());
+        }
+        // either user transfer or non-minting collateral pool with ignoreTimelocked=false flag
+        if (!ignoreTimelocked && _from != address(0)) {
+            // 10 is some arbitrary number that is usually enough; however, there isn't much damage
+            // if it is too little - just the non-timelocked balance may be too small and you have to call again
+            cleanupExpiredTimelocks(_from, 10);
+            uint256 nonTimelocked = nonTimelockedBalanceOf(_from);
+            require(_amount <= nonTimelocked, InsufficientNonTimelockedBalance());
+        }
+        // if ignoreTimelock, then we are spending from timelocked balance,
+        // the reason why it is not updated is because it might not fit in one transaction
+        // (if timelock data is too large), which could block the asset manager from making
+        // agent payout from the pool
+    }
+
+    // this can be called externally by anyone with different _maxTimelockedEntries,
+    // if there are too many timelocked entries to clear in one transaction
+    // (should be rare, especially if timelock duration is short - e.g. <= day)
+    function cleanupExpiredTimelocks(
+        address _account,
+        uint256 _maxTimelockedEntries
+    )
+        public
+        returns (bool _cleanedAllExpired)
+    {
+        TimelockQueue storage timelocks = timelocksByAccount[_account];
+        uint256 start = timelocks.start;
+        for (uint256 count = 0; count < _maxTimelockedEntries; count++) {
+            if (start >= timelocks.end || timelocks.data[start].endTime > block.timestamp) {
+                break;
+            }
+            delete timelocks.data[start++];
+        }
+        timelocks.start = start.toUint128();
+        return start >= timelocks.end || timelocks.data[start].endTime > block.timestamp;
+    }
+
+    function _getTimelockDuration()
+        internal view
+        returns (uint256)
+    {
+        IIAssetManager assetManager = IICollateralPool(collateralPool).assetManager();
+        return assetManager.getCollateralPoolTokenTimelockSeconds();
+    }
+
+    /**
+     * Implementation of ERC-165 interface.
+     */
+    function supportsInterface(bytes4 _interfaceId)
+        external pure override
+        returns (bool)
+    {
+        return _interfaceId == type(IERC165).interfaceId
+            || _interfaceId == type(IERC20).interfaceId
+            || _interfaceId == type(ICollateralPoolToken).interfaceId;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////
+    // UUPS proxy upgrade
+
+    function implementation() external view returns (address) {
+        return _getImplementation();
+    }
+
+    /**
+     * Upgrade calls can only arrive through asset manager.
+     * See UUPSUpgradeable._authorizeUpgrade.
+     */
+    function _authorizeUpgrade(address /* _newImplementation */)
+        internal virtual override
+    {
+        IIAssetManager assetManager = IICollateralPool(collateralPool).assetManager();
+        require(msg.sender == address(assetManager), OnlyAssetManager());
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
 
 import {IICleanable} from "@flarenetwork/flare-periphery-contracts/flare/token/interfaces/IICleanable.sol";
 import {IFAsset} from "../../userInterfaces/IFAsset.sol";
@@ -3185,6 +3199,58 @@ interface IIFAsset is IFAsset, IICheckPointable, IICleanable {
      * Usually this will be an instance of CleanupBlockNumberManager.
      */
     function cleanupBlockNumberManager() external view returns (address);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+import "../../IRewardManager.sol";
+
+/**
+ * RewardManager internal interface.
+ */
+interface IIRewardManager is IRewardManager {
+    /**
+     * Claim rewards for `_rewardOwner` and transfer them to `_recipient`.
+     * It can be called only by FtsoRewardManagerProxy contract.
+     * @param _msgSender Address of the message sender.
+     * @param _rewardOwner Address of the reward owner.
+     * @param _recipient Address of the reward recipient.
+     * @param _rewardEpochId Id of the reward epoch up to which the rewards are claimed.
+     * @param _wrap Indicates if the reward should be wrapped (deposited) to the WNAT contract.
+     * @param _proofs Array of reward claims with merkle proofs.
+     * @return _rewardAmountWei Amount of rewarded native tokens (wei).
+     */
+    function claimProxy(
+        address _msgSender,
+        address _rewardOwner,
+        address payable _recipient,
+        uint24 _rewardEpochId,
+        bool _wrap,
+        RewardClaimWithProof[] calldata _proofs
+    ) external returns (uint256 _rewardAmountWei);
+
+    /**
+     * Receives funds from reward offers manager.
+     * @param _rewardEpochId ID of the reward epoch for which the funds are received.
+     * @param _inflation Indicates if the funds come from the inflation (true) or from the community (false).
+     * @dev Only reward offers manager can call this method.
+     */
+    function receiveRewards(
+        uint24 _rewardEpochId,
+        bool _inflation
+    ) external payable;
+
+    /**
+     * Collects funds from expired reward epoch and calculates totals.
+     *
+     * Triggered by FlareSystemsManager on finalization of a reward epoch.
+     * Operation is irreversible: when some reward epoch is closed according to current
+     * settings, it cannot be reopened even if new parameters would
+     * allow it, because `nextRewardEpochIdToExpire` in FlareSystemsManager never decreases.
+     * @param _rewardEpochId Id of the reward epoch to close.
+     */
+    function closeExpiredRewardEpoch(uint256 _rewardEpochId) external;
 }
 
 // SPDX-License-Identifier: MIT
@@ -3444,72 +3510,6 @@ contract FAsset is IIFAsset, IERC165, ERC20, CheckPointable, UUPSUpgradeable, ER
     { // solhint-disable-line no-empty-blocks
     }
 }
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-pragma abicoder v2;
-
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {ICollateralPoolToken} from "../../userInterfaces/ICollateralPoolToken.sol";
-
-
-interface IICollateralPoolToken is ICollateralPoolToken, IERC165 {
-
-    function mint(address _account, uint256 _amount) external returns (uint256 _timelockExpiresAt);
-    function burn(address _account, uint256 _amount, bool _ignoreTimelocked) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-import "../../IRewardManager.sol";
-
-/**
- * RewardManager internal interface.
- */
-interface IIRewardManager is IRewardManager {
-    /**
-     * Claim rewards for `_rewardOwner` and transfer them to `_recipient`.
-     * It can be called only by FtsoRewardManagerProxy contract.
-     * @param _msgSender Address of the message sender.
-     * @param _rewardOwner Address of the reward owner.
-     * @param _recipient Address of the reward recipient.
-     * @param _rewardEpochId Id of the reward epoch up to which the rewards are claimed.
-     * @param _wrap Indicates if the reward should be wrapped (deposited) to the WNAT contract.
-     * @param _proofs Array of reward claims with merkle proofs.
-     * @return _rewardAmountWei Amount of rewarded native tokens (wei).
-     */
-    function claimProxy(
-        address _msgSender,
-        address _rewardOwner,
-        address payable _recipient,
-        uint24 _rewardEpochId,
-        bool _wrap,
-        RewardClaimWithProof[] calldata _proofs
-    ) external returns (uint256 _rewardAmountWei);
-
-    /**
-     * Receives funds from reward offers manager.
-     * @param _rewardEpochId ID of the reward epoch for which the funds are received.
-     * @param _inflation Indicates if the funds come from the inflation (true) or from the community (false).
-     * @dev Only reward offers manager can call this method.
-     */
-    function receiveRewards(
-        uint24 _rewardEpochId,
-        bool _inflation
-    ) external payable;
-
-    /**
-     * Collects funds from expired reward epoch and calculates totals.
-     *
-     * Triggered by FlareSystemsManager on finalization of a reward epoch.
-     * Operation is irreversible: when some reward epoch is closed according to current
-     * settings, it cannot be reopened even if new parameters would
-     * allow it, because `nextRewardEpochIdToExpire` in FlareSystemsManager never decreases.
-     * @param _rewardEpochId Id of the reward epoch to close.
-     */
-    function closeExpiredRewardEpoch(uint256 _rewardEpochId) external;
-}
-
 
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 

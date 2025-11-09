@@ -1,5 +1,7 @@
 ## Hybra Finance audit scope
 
+**NOTE**: NO_VOTING_WINDOW is temporarily set to 0 for convenience. However, in the actual on-chain deployment, NO_VOTING_WINDOW will not be zero — there will be a time buffer before and after each epoch flip during which voting is disabled. This ensures that during the Distributor phase, all voting weights remain fixed and cannot be changed.
+
 The issues identified in [Peckshield's September 2025 audit report](https://github.com/peckshield/publications/blob/master/audit_reports/PeckShield-Audit-Report-Hybra-ve33-v1.0.pdf) are considered publicly known issues and are therefore ineligible for awards, including:
 
 1. Possible ERC7702 Incompatibility in Contract Check

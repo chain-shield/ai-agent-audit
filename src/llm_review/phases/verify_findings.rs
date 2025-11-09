@@ -10,7 +10,7 @@ use crate::{
         findings::{Finding, Findings},
         prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
         semaphore::VERIFY_SEM,
-        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
+        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -344,7 +344,6 @@ pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
 
 Your task: decide if a reported finding is Valid and to accurately assess its Severity in a {contest} contest.
 
-
 ### COFIGURATION CHECK
     **Does finding rely on constants (time, thresholds, buffers)?**
     If YES, check:
@@ -364,6 +363,19 @@ Your task: decide if a reported finding is Valid and to accurately assess its Se
     - Function placement (Emergency/Admin sections)
     - Function naming (emergencyPause, adminOnly)
 
+    **EXCEPTION: Documentation does NOT Always Mean Not a Vulnerability**
+    - Documented behavior can STILL be a valid finding if it creates:
+      • Economic risk/loss for users (e.g., liquidators, LPs, depositors)
+      • Incentive misalignment that harms protocol health
+      • Unfair value extraction or MEV opportunities
+      • Lack of user protection (missing slippage, deadlines, bounds)
+    - Examples of VALID findings despite being "by design":
+      • Liquidations without minOut → liquidator loss risk (Medium)
+      • Auctions without price floors → value extraction (Medium)
+      • Withdrawals without deadlines → MEV/sandwich risk (Medium)
+      • Fee mechanisms that systematically favor one party (Low/Medium)
+    - For this Edge Case, where it is documented behavior but still a vulnerability, mark it as Valid and SohmeWhatConfident
+
 ### VALIDITY CHECK
     - Trace execution path - does attack work?
     - Check safeguards: access control, reentrancy guards, pauses, timelocks, validation
@@ -374,6 +386,11 @@ Your task: decide if a reported finding is Valid and to accurately assess its Se
     - Does finding Impact and Likelihood justify current Severity score?
     - Please use Severity Rubric below to evaluate Severity Score
 
+### WHEN IN DOUBT, LEAN TOWARD VALID, MARK AS SomeWhatConfident
+    - If a finding shows realistic user loss, mark Valid even if documented
+    - If a finding matches historical C4 Medium patterns, mark Valid
+    - If a finding shows missing standard protections, mark Valid
+    - Mark "in doubt" findings as SomeWhatConfident (not VeryConfident or Confident)
 
 Based on your assessment please provided the following:
 

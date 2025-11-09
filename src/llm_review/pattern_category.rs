@@ -1,5 +1,7 @@
 use crate::{
-    config::{MAX_PATTERN_RUN_FREQUENT, MAX_PATTERN_RUN_TOP},
+    config::{
+        MAX_PATTERN_RUN_FREQUENT, MAX_PATTERN_RUN_MOST, MAX_PATTERN_RUN_RARE, MAX_PATTERN_RUN_TOP,
+    },
     llm_review::patterns::VulnerabilityPattern,
 };
 use std::{collections::HashMap, sync::OnceLock};
@@ -137,7 +139,7 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         title: "Top Code4rena",
         issues: RARE_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: MAX_PATTERN_RUN_TOP,
+        runs: MAX_PATTERN_RUN_RARE,
     },
     PatternCategorySpec {
         category: PatternCategory::Frequent,
@@ -151,7 +153,7 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         title: "Most Frequent Code4rena",
         issues: TOP_OBSERVED_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: MAX_PATTERN_RUN_FREQUENT,
+        runs: MAX_PATTERN_RUN_MOST,
     },
 ];
 
@@ -283,8 +285,30 @@ pub const RANDOMNESS: &[VulnerabilityPattern; 2] = &[
 
 //**************************************************
 //**************************************************
+pub const LIBRARY_ANALYSIS_PATTERNS: &[VulnerabilityPattern; 14] = &[
+    // Math & Precision (4)
+    VulnerabilityPattern::PricePrecisionOrRoundingError,
+    VulnerabilityPattern::PrecisionDriftAccumulation,
+    VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath,
+    VulnerabilityPattern::ERC20DecimalsMismatch,
+    // Low-Level & Assembly (2)
+    VulnerabilityPattern::UnsafeAssembyTypeCasts,
+    VulnerabilityPattern::UncheckedLowLevelCallResults,
+    // Standard Compliance (3)
+    VulnerabilityPattern::StandardViolation,
+    VulnerabilityPattern::NonStandardERC20Behavior,
+    VulnerabilityPattern::ERC4626SharePriceMismatch,
+    // Accounting & Invariants (2)
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::FeeAccountingDrift,
+    // Oracle & Price (2)
+    VulnerabilityPattern::StaleOracleAcceptance,
+    VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity,
+    // Input Validation & Edge Cases (1)
+    VulnerabilityPattern::ForcedAssetVsStrictEquality,
+];
 
-pub const TOP_OBSERVED_PATTERNS: &[VulnerabilityPattern; 8] = &[
+pub const TOP_OBSERVED_PATTERNS: &[VulnerabilityPattern; 10] = &[
     VulnerabilityPattern::AccountingInvariantViolation,
     VulnerabilityPattern::GriefableCallbacks,
     VulnerabilityPattern::UnboundedLoops,
@@ -293,9 +317,11 @@ pub const TOP_OBSERVED_PATTERNS: &[VulnerabilityPattern; 8] = &[
     VulnerabilityPattern::AccessControlOrAuthByPass,
     VulnerabilityPattern::FeeOnTransferAssumption,
     VulnerabilityPattern::ReserveOrPriceDesync,
+    VulnerabilityPattern::MaturityorGatingByPass,
+    VulnerabilityPattern::StandardViolation,
 ];
 
-pub const RARE_PATTERNS: &[VulnerabilityPattern; 12] = &[
+pub const RARE_PATTERNS: &[VulnerabilityPattern; 13] = &[
     VulnerabilityPattern::AccountingInvariantViolation,
     VulnerabilityPattern::FeeAccountingDrift,
     VulnerabilityPattern::ERC4626SharePriceMismatch,
@@ -308,6 +334,7 @@ pub const RARE_PATTERNS: &[VulnerabilityPattern; 12] = &[
     VulnerabilityPattern::SlippageMissingOrInsufficient,
     VulnerabilityPattern::PermitMisuse,
     VulnerabilityPattern::PermitFrontRun,
+    VulnerabilityPattern::BeaconOrFactoryAuthorityDrift,
 ];
 
 pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 15] = &[

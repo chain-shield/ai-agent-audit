@@ -8,13 +8,26 @@ Honest Assessment:
 if its in scope then...
 2. honest assessment: is bug legit? does protocol have safeguards against it? carefuly trace code and read natspec + inline comments.
 3. is 'Derived From' pattern/invariant assumption correct? 
-4. is this by design? 
+4. is this by design?
 Check ALL:
 - NatSpec (@dev, @notice, @custom)
 - Inline comments (`// NOTE:`, `// IMPORTANT:`)
 - megapot-docs.md & megapot-scope.md (Known Limitations, Design Decisions)
 - Function placement (Emergency/Admin sections)
 - Function naming (emergencyPause, adminOnly)
+
+**CRITICAL: Documentation ≠ Not a Vulnerability**
+- Documented behavior can STILL be a valid finding if it creates:
+  • Economic risk/loss for users (e.g., liquidators, LPs, depositors)
+  • Incentive misalignment that harms protocol health
+  • Unfair value extraction or MEV opportunities
+  • Lack of user protection (missing slippage, deadlines, bounds)
+- Examples of VALID findings despite being "by design":
+  • Liquidations without minOut → liquidator loss risk (Medium)
+  • Auctions without price floors → value extraction (Medium)
+  • Withdrawals without deadlines → MEV/sandwich risk (Medium)
+  • Fee mechanisms that systematically favor one party (Low/Medium)
+- Only mark Invalid if behavior is BOTH documented AND has no security/economic impact
 
 5. Configuration check: 
 **Does finding rely on constants (time, thresholds, buffers)?**
@@ -28,12 +41,21 @@ If YES, check:
 6. how likely is this attack? For Medium or High severity attack cannot be unliklely, unless its HIGH impact.
 7. is Impact accurately stated?
 
+**WHEN IN DOUBT, LEAN TOWARD VALID**
+- If a finding shows realistic user loss, mark Valid even if documented
+- If a finding matches historical C4 Medium patterns, mark Valid
+- If a finding shows missing standard protections, mark Valid
+- Only mark Invalid if you're VERY confident it's a non-issue
+- Mark "in doubt" findings as SomeWhatConfident (not VeryConfident or Confident)
+- Remember: False negatives (missing real bugs) are worse than false positives
+
 **Please go through verify-checklist.md to fully confirm finding is valid.**
 
 1. is the bug IN SCOPE per client scope? see covenant-scope.md 
 if its in scope then...
 2. honest assessment: is bug legit? does protocol have safeguards against it? carefuly trace code. 
 3. is this by design? (look at natspec comments and megapot-docs.md)
+   **NOTE:** Documented behavior can still be a vulnerability if it creates economic risk or harms users
 4. how likely is this attack? For Medium or High severity attack cannot be unliklely, unless its HIGH impact.
 5. is Impact accurately stated?
 6. is the severity level accurately stated? where severity levels are:  High | Medium | Low | informational ?
