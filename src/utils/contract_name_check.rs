@@ -2,11 +2,13 @@ use regex::Regex;
 
 //  check if content contains at least 1 contract
 //  that does not have 'mock' in its name
-// TODO: INCLUDE ABSTRACT CONTRACT
 pub fn has_non_mock_contract(content: &str) -> bool {
     for line in content.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("contract ") {
+        if trimmed.starts_with("contract ")
+            || trimmed.starts_with("abstract contract ")
+            || trimmed.starts_with("library ")
+        {
             if let Some(name) = trimmed
                 .split_whitespace()
                 .nth(1)

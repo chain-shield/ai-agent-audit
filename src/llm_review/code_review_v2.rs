@@ -2,9 +2,10 @@ use super::{enums::AIAgent, phases};
 use crate::config::CREATE_TESTS;
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
+use crate::llm_review::contract_file_map::ContractType;
 use crate::llm_review::findings::CLAUDE_4_5_SONNET;
 use crate::llm_review::semaphore::CONTRACT_REVEW_SEM;
-use crate::llm_review::utils::contract_in_scope::is_contract_in_scope;
+use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::llm_review::{
     agent_factory::{AgentConfig, AgentFactory},
     analysis_db::FindingsDb,
@@ -72,11 +73,17 @@ pub async fn review_codebase_for_security_issues_v2(
         }
 
         // check contract in inscope!
-        if !is_contract_in_scope(&contract, repo).await? {
-            info!("contract {}  is NOT in scope", contract);
+        let (is_contract_in_scope, contract_type_option) =
+            contract_scope_and_type(&contract, repo).await?;
+
+        let contract_type = contract_type_option.unwrap_or(ContractType::Contract);
+
+        if !is_contract_in_scope {
+            info!("{} {} is NOT in scope", contract_type.to_string(), contract);
             continue;
         }
-        info!("contract {}  is in scope", contract);
+
+        info!("{} {} is in scope", contract_type.to_string(), contract);
 
         // Clone shared state for the spawned task
         let verify_agent = Arc::clone(&ai_verify_agent);
