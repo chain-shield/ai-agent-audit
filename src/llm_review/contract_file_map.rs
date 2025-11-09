@@ -17,7 +17,7 @@ static CONTRACT_TO_FILE: Lazy<Arc<Mutex<HashMap<String, (PathBuf, ContractType)>
 static LIB_CONTRACT_TO_FILE: Lazy<Arc<Mutex<HashMap<String, (PathBuf, ContractType)>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::<String, (PathBuf, ContractType)>::new())));
 
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, strum_macros::Display)]
 pub enum ContractType {
     Contract,
     AbstractContract,

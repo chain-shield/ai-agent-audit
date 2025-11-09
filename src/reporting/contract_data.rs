@@ -2,7 +2,8 @@ use crate::{
     cost::cost_data::get_token_count,
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
-        context_state::get_metadata_context, utils::contract_in_scope::is_contract_in_scope,
+        context_state::get_metadata_context, contract_file_map::ContractType,
+        utils::contract_in_scope::contract_scope_and_type,
     },
     prepare_code::git_clone::RepoPaths,
     reporting::save_file::save_file_locally,
@@ -35,11 +36,22 @@ pub async fn save_contract_and_fn_ir(
 
     for (contract, codeblock) in contracts {
         // check contract in inscope!
-        if !is_contract_in_scope(&contract, repo).await? {
+        let (is_contract_in_scope, contract_type_option) =
+            contract_scope_and_type(&contract, repo).await?;
+
+        let contract_type = contract_type_option.unwrap_or(ContractType::Contract);
+
+        if !is_contract_in_scope {
             continue;
         }
+
         let token_count = get_token_count(&codeblock);
-        let filename = format!("{}-token-count-{}.md", contract, token_count);
+        let filename = format!(
+            "{}-{}-token-count-{}.md",
+            contract_type.to_string(),
+            contract,
+            token_count
+        );
         let full_path = output_dir.join(filename);
         save_file_locally(&codeblock, &full_path)?;
     }

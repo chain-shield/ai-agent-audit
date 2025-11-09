@@ -17,8 +17,10 @@ use crate::enumerator::parse_solidity::{
 use crate::enumerator::utils::{
     get_hashmap_of_contract_to_functions, get_token_count_of_function_ir, SolFileType,
 };
-use crate::llm_review::contract_file_map::{get_file_from_contract, get_file_from_lib_contract};
-use crate::llm_review::utils::contract_in_scope::is_contract_in_scope;
+use crate::llm_review::contract_file_map::{
+    get_file_from_contract, get_file_from_lib_contract, ContractType,
+};
+use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::display_file::display_file;
 use tokio::fs;
@@ -62,7 +64,9 @@ pub async fn generate_codeblock_from_codebase(
 
     for (main_contract, functions_of_contract) in contract_to_func_map {
         // check contract in inscope!
-        if !is_contract_in_scope(&main_contract, repo).await? {
+        let (is_contract_in_scope, _) = contract_scope_and_type(&main_contract, repo).await?;
+
+        if !is_contract_in_scope {
             continue;
         }
 
