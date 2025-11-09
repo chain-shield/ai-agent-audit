@@ -1,5 +1,7 @@
 **NOTE**: ALL PRIVILEGED ROLES ARE TRUSTED, EXCEPT "While Agents undergo KYC, they cannot be considered fully trusted—especially if significant potential gains could incentivize malicious behavior." 
 
+Any misbehaviour of the FTSO oracles should normally be expected to be out of scope given that the documentation of the FTSO system (an intraproject item) does not require time to be validated and highlights that oracles are updated every 90 seconds.
+
 ### Tokens in scope
 
 The FAssets system is able to support wrapped tokens for XRP, BTC and DOGE. However, the initial deployment will only have XRP (FXRP) enabled and that will be the sole scope of this audit competition. Any attacks related to FBTC, FDOGE, or UTXO-based logic in general, are out of scope.

@@ -726,155 +726,6 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
-// solhint-disable gas-custom-errors
-// solhint-disable reason-string
-
-pragma solidity ^0.8.27;
-
-import {IGovernanceSettings} from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
-
-
-/**
- * A special contract that holds Flare governance address.
- * This contract enables updating governance address and timelock only by hard forking the network,
- * meaning only by updating validator code.
- */
-contract GovernanceSettingsMock is IGovernanceSettings {
-
-    address public constant SIGNAL_COINBASE = address(0x00000000000000000000000000000000000dEAD0);
-
-    uint256 internal constant MAX_TIMELOCK = 365 days;
-
-    address internal constant GENESIS_GOVERNANCE = 0xfffEc6C83c8BF5c3F4AE0cCF8c45CE20E4560BD7;
-
-    // governance address set by the validator (set in initialise call, can be changed by fork)
-    address private governanceAddress;
-
-    // global timelock setting (in seconds), also set by validator (set in initialise call, can be changed by fork)
-    uint64 private timelock;
-
-    // prevent double initialisation
-    bool private initialised;
-
-    // executor addresses, changeable anytime by the governance
-    address[] private executors;
-    mapping (address => bool) private executorMap;
-
-    event GovernanceAddressUpdated(
-        uint256 timestamp,
-        address oldGovernanceAddress,
-        address newGovernanceAddress
-    );
-
-    event GovernanceTimelockUpdated(
-        uint256 timestamp,
-        uint256 oldTimelock,
-        uint256 newTimelock
-    );
-
-    event GovernanceExecutorsUpdated(
-        uint256 timestamp,
-        address[] oldExecutors,
-        address[] newExecutors
-    );
-
-    /**
-     * Perform initialisation, which cannot be done in constructor, since this is a genesis contract.
-     * Can only be called once.
-     */
-    function initialise(address _governanceAddress, uint256 _timelock, address[] memory _executors) external {
-        require(msg.sender == GENESIS_GOVERNANCE, "only genesis governance");
-        require(!initialised, "already initialised");
-        require(_timelock < MAX_TIMELOCK, "timelock too large");
-        // set the field values
-        initialised = true;
-        governanceAddress = _governanceAddress;
-        timelock = uint64(_timelock);
-        _setExecutors(_executors);
-    }
-
-    /**
-     * Change the governance address.
-     * Can only be called by validators via fork.
-     */
-    function setGovernanceAddress(address _newGovernance) external {
-        require(governanceAddress != _newGovernance, "governanceAddress == _newGovernance");
-        if (msg.sender == block.coinbase && block.coinbase == SIGNAL_COINBASE) {
-            emit GovernanceAddressUpdated(block.timestamp, governanceAddress, _newGovernance);
-            governanceAddress = _newGovernance;
-        }
-    }
-
-    /**
-     * Change the timelock.
-     * Can only be called by validators via fork.
-     */
-    function setTimelock(uint256 _newTimelock) external {
-        require(timelock != _newTimelock, "timelock == _newTimelock");
-        require(_newTimelock < MAX_TIMELOCK, "timelock too large");
-        if (msg.sender == block.coinbase && block.coinbase == SIGNAL_COINBASE) {
-            emit GovernanceTimelockUpdated(block.timestamp, timelock, _newTimelock);
-            timelock = uint64(_newTimelock);
-        }
-    }
-
-    /**
-     * Set the addresses of the accounts that are allowed to execute the timelocked governance calls
-     * once the timelock period expires.
-     * It isn't very dangerous to allow for anyone to execute timelocked calls, but we reserve the right to
-     * make sure the timing of the execution is under control.
-     * Can only be called by the governance.
-     */
-    function setExecutors(address[] memory _newExecutors) external {
-        require(msg.sender == governanceAddress, "only governance");
-        _setExecutors(_newExecutors);
-    }
-
-    /**
-     * Get the governance account address.
-     */
-    function getGovernanceAddress() external view override returns (address) {
-        return governanceAddress;
-    }
-
-    /**
-     * Get the time that must pass between a governance call and execution.
-     */
-    function getTimelock() external view override returns (uint256) {
-        return timelock;
-    }
-
-    /**
-     * Get the addresses of the accounts that are allowed to execute the timelocked governance calls
-     * once the timelock period expires.
-     */
-    function getExecutors() external view override returns (address[] memory) {
-        return executors;
-    }
-
-    /**
-     * Check whether an address is allowed to execute an governance call after timelock expires.
-     */
-    function isExecutor(address _address) external view override returns (bool) {
-        return executorMap[_address];
-    }
-
-    function _setExecutors(address[] memory _newExecutors) private {
-        emit GovernanceExecutorsUpdated(block.timestamp, executors, _newExecutors);
-        // clear old
-        while (executors.length > 0) {
-            executorMap[executors[executors.length - 1]] = false;
-            executors.pop();
-        }
-        // set new
-        for (uint256 i = 0; i < _newExecutors.length; i++) {
-            executors.push(_newExecutors[i]);
-            executorMap[_newExecutors[i]] = true;
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
 import {IGovernanceSettings} from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
@@ -1369,6 +1220,155 @@ abstract contract AddressUpdatable is IAddressUpdatable, IIAddressUpdatable {
     }
 }
 // SPDX-License-Identifier: MIT
+// solhint-disable gas-custom-errors
+// solhint-disable reason-string
+
+pragma solidity ^0.8.27;
+
+import {IGovernanceSettings} from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
+
+
+/**
+ * A special contract that holds Flare governance address.
+ * This contract enables updating governance address and timelock only by hard forking the network,
+ * meaning only by updating validator code.
+ */
+contract GovernanceSettingsMock is IGovernanceSettings {
+
+    address public constant SIGNAL_COINBASE = address(0x00000000000000000000000000000000000dEAD0);
+
+    uint256 internal constant MAX_TIMELOCK = 365 days;
+
+    address internal constant GENESIS_GOVERNANCE = 0xfffEc6C83c8BF5c3F4AE0cCF8c45CE20E4560BD7;
+
+    // governance address set by the validator (set in initialise call, can be changed by fork)
+    address private governanceAddress;
+
+    // global timelock setting (in seconds), also set by validator (set in initialise call, can be changed by fork)
+    uint64 private timelock;
+
+    // prevent double initialisation
+    bool private initialised;
+
+    // executor addresses, changeable anytime by the governance
+    address[] private executors;
+    mapping (address => bool) private executorMap;
+
+    event GovernanceAddressUpdated(
+        uint256 timestamp,
+        address oldGovernanceAddress,
+        address newGovernanceAddress
+    );
+
+    event GovernanceTimelockUpdated(
+        uint256 timestamp,
+        uint256 oldTimelock,
+        uint256 newTimelock
+    );
+
+    event GovernanceExecutorsUpdated(
+        uint256 timestamp,
+        address[] oldExecutors,
+        address[] newExecutors
+    );
+
+    /**
+     * Perform initialisation, which cannot be done in constructor, since this is a genesis contract.
+     * Can only be called once.
+     */
+    function initialise(address _governanceAddress, uint256 _timelock, address[] memory _executors) external {
+        require(msg.sender == GENESIS_GOVERNANCE, "only genesis governance");
+        require(!initialised, "already initialised");
+        require(_timelock < MAX_TIMELOCK, "timelock too large");
+        // set the field values
+        initialised = true;
+        governanceAddress = _governanceAddress;
+        timelock = uint64(_timelock);
+        _setExecutors(_executors);
+    }
+
+    /**
+     * Change the governance address.
+     * Can only be called by validators via fork.
+     */
+    function setGovernanceAddress(address _newGovernance) external {
+        require(governanceAddress != _newGovernance, "governanceAddress == _newGovernance");
+        if (msg.sender == block.coinbase && block.coinbase == SIGNAL_COINBASE) {
+            emit GovernanceAddressUpdated(block.timestamp, governanceAddress, _newGovernance);
+            governanceAddress = _newGovernance;
+        }
+    }
+
+    /**
+     * Change the timelock.
+     * Can only be called by validators via fork.
+     */
+    function setTimelock(uint256 _newTimelock) external {
+        require(timelock != _newTimelock, "timelock == _newTimelock");
+        require(_newTimelock < MAX_TIMELOCK, "timelock too large");
+        if (msg.sender == block.coinbase && block.coinbase == SIGNAL_COINBASE) {
+            emit GovernanceTimelockUpdated(block.timestamp, timelock, _newTimelock);
+            timelock = uint64(_newTimelock);
+        }
+    }
+
+    /**
+     * Set the addresses of the accounts that are allowed to execute the timelocked governance calls
+     * once the timelock period expires.
+     * It isn't very dangerous to allow for anyone to execute timelocked calls, but we reserve the right to
+     * make sure the timing of the execution is under control.
+     * Can only be called by the governance.
+     */
+    function setExecutors(address[] memory _newExecutors) external {
+        require(msg.sender == governanceAddress, "only governance");
+        _setExecutors(_newExecutors);
+    }
+
+    /**
+     * Get the governance account address.
+     */
+    function getGovernanceAddress() external view override returns (address) {
+        return governanceAddress;
+    }
+
+    /**
+     * Get the time that must pass between a governance call and execution.
+     */
+    function getTimelock() external view override returns (uint256) {
+        return timelock;
+    }
+
+    /**
+     * Get the addresses of the accounts that are allowed to execute the timelocked governance calls
+     * once the timelock period expires.
+     */
+    function getExecutors() external view override returns (address[] memory) {
+        return executors;
+    }
+
+    /**
+     * Check whether an address is allowed to execute an governance call after timelock expires.
+     */
+    function isExecutor(address _address) external view override returns (bool) {
+        return executorMap[_address];
+    }
+
+    function _setExecutors(address[] memory _newExecutors) private {
+        emit GovernanceExecutorsUpdated(block.timestamp, executors, _newExecutors);
+        // clear old
+        while (executors.length > 0) {
+            executorMap[executors[executors.length - 1]] = false;
+            executors.pop();
+        }
+        // set new
+        for (uint256 i = 0; i < _newExecutors.length; i++) {
+            executors.push(_newExecutors[i]);
+            executorMap[_newExecutors[i]] = true;
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
 import {IDiamondCut} from "../../diamond/interfaces/IDiamondCut.sol";
@@ -1642,559 +1642,6 @@ interface IIAssetManager is IAssetManager, IGoverned, IDiamondCut, IISettingsMan
     function getWorkAddress(address _managementAddress)
         external view
         returns (address);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-
-interface IAddressUpdatable {
-
-    error AUAddressZero();
-    error OnlyAddressUpdater();
-
-    /**
-     * Return the address updater managing this contract.
-     */
-    function getAddressUpdater()
-        external view
-        returns (address);
-}
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import { IGovernanceSettings, GovernedBase } from "./GovernedBase.sol";
-
-
-/**
- * Base class for proxy implementations or diamond facets that expose governed methods -
- * prevents initialization of the implementation/facet as contract (to avoid selfdestruct by attackers).
- *
- * The GovernedBase.initialise can later be called only through a proxy. It should be
- * called through proxy constructor or in diamond cut initializer.
- **/
-abstract contract GovernedProxyImplementation is GovernedBase {
-    address private constant EMPTY_ADDRESS = 0x0000000000000000000000000000000000001111;
-
-    // Mark as initialised and set governance to an invalid address.
-    constructor() {
-        initialise(IGovernanceSettings(EMPTY_ADDRESS), EMPTY_ADDRESS);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-import {IGovernanceSettings} from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
-
-
-interface IGoverned {
-
-    error OnlyExecutor();
-    error OnlyGovernance();
-    error TimelockInvalidSelector();
-    error TimelockNotAllowedYet();
-    error AlreadyInProductionMode();
-    error GovernedAlreadyInitialized();
-    error GovernedAddressZero();
-
-    /**
-     * Governance call was timelocked. It can be executed after `allowedAfterTimestamp` by one of the executors.
-     * @param encodedCall ABI encoded call data, to be used in executeGovernanceCall
-     * @param encodedCallHash keccak256 hash of the ABI encoded call data
-     * @param allowedAfterTimestamp the earliest timestamp when the call can be executed
-     */
-    event GovernanceCallTimelocked(bytes encodedCall, bytes32 encodedCallHash, uint256 allowedAfterTimestamp);
-
-    /**
-     * Previously timelocked governance call was executed.
-     * @param encodedCallHash keccak256 hash of the ABI encoded call data
-     *      (same as `GovernanceCallTimelocked.encodedCallHash`)
-     */
-    event TimelockedGovernanceCallExecuted(bytes32 encodedCallHash);
-
-    /**
-     * Previously timelocked governance call was canceled.
-     * @param encodedCallHash keccak256 hash of the ABI encoded call data
-     *      (same as `GovernanceCallTimelocked.encodedCallHash`)
-     */
-    event TimelockedGovernanceCallCanceled(bytes32 encodedCallHash);
-
-    /**
-     * Governed contract was initialised (not yet in production mode).
-     * @param initialGovernance the governance address used until switch to production mode
-     */
-    event GovernanceInitialised(address initialGovernance);
-
-    /**
-     * The governed contract has switched to production mode
-     * Timelocks are now enabled and the governance address is `governanceSettings.getGovernanceAddress()`.
-     * @param governanceSettings the system contract holding governance address, timelock and executors settings
-     */
-    event GovernedProductionModeEntered(address governanceSettings);
-
-    /**
-     * @notice Execute the timelocked governance calls once the timelock period expires.
-     * @dev Only executor can call this method.
-     * @param _encodedCall ABI encoded call data (signature and parameters).
-     *      You should use `encodedCall` parameter from `GovernanceCallTimelocked` event.
-     */
-    function executeGovernanceCall(bytes calldata _encodedCall) external;
-
-    /**
-     * Cancel a timelocked governance call before it has been executed.
-     * @dev Only governance can call this method.
-     * @param _encodedCall ABI encoded call data (signature and parameters).
-     *      You should use `encodedCall` parameter from `GovernanceCallTimelocked` event.
-     */
-    function cancelGovernanceCall(bytes calldata _encodedCall) external;
-
-    /**
-     * Enter the production mode after all the initial governance settings have been set.
-     * This enables timelocks and the governance is afterwards obtained by calling
-     * `governanceSettings.getGovernanceAddress()`.
-     */
-    function switchToProductionMode() external;
-
-    /**
-     * Returns the governance settings contract address.
-     */
-    function governanceSettings() external view returns (IGovernanceSettings);
-
-    /**
-     * True after switching to production mode (see `switchToProductionMode()`).
-     */
-    function productionMode() external view returns (bool);
-
-    /**
-     * Returns the current effective governance address.
-     * Before switching to production, the effective governance is `initialGovernance`,
-     * and afterwards it is `governanceSettings.getGovernanceAddress()`.
-     */
-    function governance() external view returns (address);
-
-    /**
-     * Check if an address is one of the executors defined in `governanceSettings`.
-     */
-    function isExecutor(address _address) external view returns (bool);
-}
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-/******************************************************************************\
-* Author: Nick Mudge <nick@perfectabstractions.com> (https://twitter.com/mudgen)
-* EIP-2535 Diamonds: https://eips.ethereum.org/EIPS/eip-2535
-/******************************************************************************/
-
-import { IDiamond } from "./IDiamond.sol";
-
-interface IDiamondCut is IDiamond {
-
-    /// @notice Add/replace/remove any number of functions and optionally execute
-    ///         a function with delegatecall
-    /// @param _diamondCut Contains the facet addresses and function selectors
-    /// @param _init The address of the contract or facet to execute _calldata
-    /// @param _calldata A function call, including function selector and arguments
-    ///                  _calldata is executed with delegatecall on _init
-    function diamondCut(
-        FacetCut[] calldata _diamondCut,
-        address _init,
-        bytes calldata _calldata
-    ) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-pragma abicoder v2;
-
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {IAssetManagerController} from "../../userInterfaces/IAssetManagerController.sol";
-import {IAddressUpdatable} from "../../flareSmartContracts/interfaces/IAddressUpdatable.sol";
-import {IUUPSUpgradeable} from "../../utils/interfaces/IUUPSUpgradeable.sol";
-import {IIAssetManager} from "../../assetManager/interfaces/IIAssetManager.sol";
-import {IGoverned} from "../../governance/interfaces/IGoverned.sol";
-import {CollateralType} from "../../userInterfaces/data/CollateralType.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-
-
-interface IIAssetManagerController is
-    IERC165,
-    IAssetManagerController,
-    IGoverned,
-    IAddressUpdatable,
-    IUUPSUpgradeable
-{
-    /**
-     * New address in case this controller was replaced.
-     * Note: this code contains no checks that replacedBy==0, because when replaced,
-     * all calls to AssetManager's updateSettings/pause will fail anyway
-     * since they will arrive from wrong controller address.
-     */
-    function replacedBy() external view returns (address);
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Manage list of asset managers
-
-    /**
-     * Add an asset manager to this controller. The asset manager controller address in the settings of the
-     * asset manager must match this. This method automatically marks the asset manager as attached.
-     */
-    function addAssetManager(IIAssetManager _assetManager)
-        external;
-
-    /**
-     * Remove an asset manager from this controller, if it is attached to this controller.
-     * The asset manager won't be attached any more, so it will be unusable.
-     */
-    function removeAssetManager(IIAssetManager _assetManager)
-        external;
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Setters
-
-    function setAgentOwnerRegistry(IIAssetManager[] memory _assetManagers, address _value)
-        external;
-
-    function setAgentVaultFactory(IIAssetManager[] memory _assetManagers, address _value)
-        external;
-
-    function setCollateralPoolFactory(IIAssetManager[] memory _assetManagers, address _value)
-        external;
-
-    function setCollateralPoolTokenFactory(IIAssetManager[] memory _assetManagers, address _value)
-        external;
-
-    function upgradeAgentVaultsAndPools(IIAssetManager[] memory _assetManagers, uint256 _start, uint256 _end)
-        external;
-
-    function setPriceReader(IIAssetManager[] memory _assetManagers, address _value)
-        external;
-
-    function setFdcVerification(IIAssetManager[] memory _assetManagers, address _value)
-        external;
-
-    function setCleanerContract(IIAssetManager[] memory _assetManagers, address _value)
-        external;
-
-    function setCleanupBlockNumberManager(IIAssetManager[] memory _assetManagers, address _value)
-        external;
-
-    // if callData is not empty, it is abi encoded call to init function in the new proxy implementation
-    function upgradeFAssetImplementation(
-        IIAssetManager[] memory _assetManagers,
-        address _implementation,
-        bytes memory _callData
-    ) external;
-
-    function setMinUpdateRepeatTimeSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setLotSizeAmg(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setTimeForPayment(
-        IIAssetManager[] memory _assetManagers,
-        uint256 _underlyingBlocks,
-        uint256 _underlyingSeconds
-    ) external;
-
-    function setPaymentChallengeReward(
-        IIAssetManager[] memory _assetManagers,
-        uint256 _rewardVaultCollateralWei,
-        uint256 _rewardBIPS
-    ) external;
-
-    function setMaxTrustedPriceAgeSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setCollateralReservationFeeBips(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setRedemptionFeeBips(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setRedemptionDefaultFactorVaultCollateralBIPS(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setConfirmationByOthersAfterSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setConfirmationByOthersRewardUSD5(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setMaxRedeemedTickets(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setWithdrawalOrDestroyWaitMinSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setAttestationWindowSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setAverageBlockTimeMS(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setMintingPoolHoldingsRequiredBIPS(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setMintingCapAmg(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setTokenInvalidationTimeMinSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setVaultCollateralBuyForFlareFactorBIPS(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setAgentExitAvailableTimelockSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setAgentFeeChangeTimelockSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setAgentMintingCRChangeTimelockSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setPoolExitCRChangeTimelockSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setAgentTimelockedOperationWindowSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setCollateralPoolTokenTimelockSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setLiquidationStepSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setLiquidationPaymentFactors(
-        IIAssetManager[] memory _assetManagers,
-        uint256[] memory _paymentFactors,
-        uint256[] memory _vaultCollateralFactors
-    ) external;
-
-    function setRedemptionPaymentExtensionSeconds(
-        IIAssetManager[] memory _assetManagers,
-        uint256 _value
-    ) external;
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Collateral tokens
-
-    function addCollateralType(
-        IIAssetManager[] memory _assetManagers,
-        CollateralType.Data calldata _data
-    ) external;
-
-    function setCollateralRatiosForToken(
-        IIAssetManager[] memory _assetManagers,
-        CollateralType.Class _class,
-        IERC20 _token,
-        uint256 _minCollateralRatioBIPS,
-        uint256 _safetyMinCollateralRatioBIPS
-    ) external;
-
-    function deprecateCollateralType(
-        IIAssetManager[] memory _assetManagers,
-        CollateralType.Class _class,
-        IERC20 _token,
-        uint256 _invalidationTimeSec
-    ) external;
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Upgrade (second phase)
-
-    /**
-     * When asset manager is paused, no new minting can be made.
-     * All other operations continue normally.
-     */
-    function pauseMinting(IIAssetManager[] calldata _assetManagers)
-        external;
-
-    /**
-     * Minting can continue.
-     */
-    function unpauseMinting(IIAssetManager[] calldata _assetManagers)
-        external;
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Update contracts
-
-    /**
-     * Can be called to update address updater managed contracts if there are too many asset managers
-     * to update in one block. In such a case, running AddressUpdater.updateContractAddresses will fail
-     * and there will be no way to update contracts. This method allow the update to only change some
-     * of the asset managers.
-     */
-    function updateContracts(IIAssetManager[] calldata _assetManagers)
-        external;
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Emergency pause
-
-    function emergencyPause(IIAssetManager[] memory _assetManagers, uint256 _duration)
-        external;
-
-    function emergencyPauseTransfers(IIAssetManager[] memory _assetManagers, uint256 _duration)
-        external;
-
-    function resetEmergencyPauseTotalDuration(IIAssetManager[] memory _assetManagers)
-        external;
-
-    function addEmergencyPauseSender(address _address)
-        external;
-
-    function removeEmergencyPauseSender(address _address)
-        external;
-
-    function setMaxEmergencyPauseDurationSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-
-    function setEmergencyPauseDurationResetAfterSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
-        external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-pragma abicoder v2;
-
-import {IWNat} from "../../flareSmartContracts/interfaces/IWNat.sol";
-
-
-interface IISettingsManagement {
-    function updateSystemContracts(address _controller, IWNat _wNat)
-        external;
-
-    function setAgentOwnerRegistry(address _value)
-        external;
-
-    function setAgentVaultFactory(address _value)
-        external;
-
-    function setCollateralPoolFactory(address _value)
-        external;
-
-    function setCollateralPoolTokenFactory(address _value)
-        external;
-
-    function setPriceReader(address _value)
-        external;
-
-    function setFdcVerification(address _value)
-        external;
-
-    function setCleanerContract(address _value)
-        external;
-
-    function setCleanupBlockNumberManager(address _value)
-        external;
-
-    function upgradeFAssetImplementation(address _value, bytes memory callData)
-        external;
-
-    function setTimeForPayment(uint256 _underlyingBlocks, uint256 _underlyingSeconds)
-        external;
-
-    function setPaymentChallengeReward(uint256 _rewardNATWei, uint256 _rewardBIPS)
-        external;
-
-    function setMinUpdateRepeatTimeSeconds(uint256 _value)
-        external;
-
-    function setLotSizeAmg(uint256 _value)
-        external;
-
-    function setMaxTrustedPriceAgeSeconds(uint256 _value)
-        external;
-
-    function setCollateralReservationFeeBips(uint256 _value)
-        external;
-
-    function setRedemptionFeeBips(uint256 _value)
-        external;
-
-    function setRedemptionDefaultFactorVaultCollateralBIPS(uint256 _value)
-        external;
-
-    function setConfirmationByOthersAfterSeconds(uint256 _value)
-        external;
-
-    function setConfirmationByOthersRewardUSD5(uint256 _value)
-        external;
-
-    function setMaxRedeemedTickets(uint256 _value)
-        external;
-
-    function setWithdrawalOrDestroyWaitMinSeconds(uint256 _value)
-        external;
-
-    function setAttestationWindowSeconds(uint256 _value)
-        external;
-
-    function setAverageBlockTimeMS(uint256 _value)
-        external;
-
-    function setMintingPoolHoldingsRequiredBIPS(uint256 _value)
-        external;
-
-    function setMintingCapAmg(uint256 _value)
-        external;
-
-    function setTokenInvalidationTimeMinSeconds(uint256 _value)
-        external;
-
-    function setVaultCollateralBuyForFlareFactorBIPS(uint256 _value)
-        external;
-
-    function setAgentExitAvailableTimelockSeconds(uint256 _value)
-        external;
-
-    function setAgentFeeChangeTimelockSeconds(uint256 _value)
-        external;
-
-    function setAgentMintingCRChangeTimelockSeconds(uint256 _value)
-        external;
-
-    function setPoolExitCRChangeTimelockSeconds(uint256 _value)
-        external;
-
-    function setAgentTimelockedOperationWindowSeconds(uint256 _value)
-        external;
-
-    function setCollateralPoolTokenTimelockSeconds(uint256 _value)
-        external;
-
-    function setLiquidationStepSeconds(uint256 _stepSeconds)
-        external;
-
-    function setLiquidationPaymentFactors(
-        uint256[] memory _liquidationFactors,
-        uint256[] memory _vaultCollateralFactors
-    ) external;
-
-    function setMaxEmergencyPauseDurationSeconds(uint256 _value)
-        external;
-
-    function setEmergencyPauseDurationResetAfterSeconds(uint256 _value)
-        external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import { GovernedBase } from "./GovernedBase.sol";
-import { IGovernanceSettings } from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
-
-
-/**
- * @title Governed
- * @dev For deployed, governed contracts, enforce non-zero addresses at create time.
- **/
-abstract contract Governed is GovernedBase {
-    constructor(IGovernanceSettings _governanceSettings, address _initialGovernance) {
-        initialise(_governanceSettings, _initialGovernance);
-    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -3141,42 +2588,554 @@ interface IAssetManager is
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
-import {IVPToken} from "@flarenetwork/flare-periphery-contracts/flare/IVPToken.sol";
+import {IGovernanceSettings} from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
+
+
+interface IGoverned {
+
+    error OnlyExecutor();
+    error OnlyGovernance();
+    error TimelockInvalidSelector();
+    error TimelockNotAllowedYet();
+    error AlreadyInProductionMode();
+    error GovernedAlreadyInitialized();
+    error GovernedAddressZero();
+
+    /**
+     * Governance call was timelocked. It can be executed after `allowedAfterTimestamp` by one of the executors.
+     * @param encodedCall ABI encoded call data, to be used in executeGovernanceCall
+     * @param encodedCallHash keccak256 hash of the ABI encoded call data
+     * @param allowedAfterTimestamp the earliest timestamp when the call can be executed
+     */
+    event GovernanceCallTimelocked(bytes encodedCall, bytes32 encodedCallHash, uint256 allowedAfterTimestamp);
+
+    /**
+     * Previously timelocked governance call was executed.
+     * @param encodedCallHash keccak256 hash of the ABI encoded call data
+     *      (same as `GovernanceCallTimelocked.encodedCallHash`)
+     */
+    event TimelockedGovernanceCallExecuted(bytes32 encodedCallHash);
+
+    /**
+     * Previously timelocked governance call was canceled.
+     * @param encodedCallHash keccak256 hash of the ABI encoded call data
+     *      (same as `GovernanceCallTimelocked.encodedCallHash`)
+     */
+    event TimelockedGovernanceCallCanceled(bytes32 encodedCallHash);
+
+    /**
+     * Governed contract was initialised (not yet in production mode).
+     * @param initialGovernance the governance address used until switch to production mode
+     */
+    event GovernanceInitialised(address initialGovernance);
+
+    /**
+     * The governed contract has switched to production mode
+     * Timelocks are now enabled and the governance address is `governanceSettings.getGovernanceAddress()`.
+     * @param governanceSettings the system contract holding governance address, timelock and executors settings
+     */
+    event GovernedProductionModeEntered(address governanceSettings);
+
+    /**
+     * @notice Execute the timelocked governance calls once the timelock period expires.
+     * @dev Only executor can call this method.
+     * @param _encodedCall ABI encoded call data (signature and parameters).
+     *      You should use `encodedCall` parameter from `GovernanceCallTimelocked` event.
+     */
+    function executeGovernanceCall(bytes calldata _encodedCall) external;
+
+    /**
+     * Cancel a timelocked governance call before it has been executed.
+     * @dev Only governance can call this method.
+     * @param _encodedCall ABI encoded call data (signature and parameters).
+     *      You should use `encodedCall` parameter from `GovernanceCallTimelocked` event.
+     */
+    function cancelGovernanceCall(bytes calldata _encodedCall) external;
+
+    /**
+     * Enter the production mode after all the initial governance settings have been set.
+     * This enables timelocks and the governance is afterwards obtained by calling
+     * `governanceSettings.getGovernanceAddress()`.
+     */
+    function switchToProductionMode() external;
+
+    /**
+     * Returns the governance settings contract address.
+     */
+    function governanceSettings() external view returns (IGovernanceSettings);
+
+    /**
+     * True after switching to production mode (see `switchToProductionMode()`).
+     */
+    function productionMode() external view returns (bool);
+
+    /**
+     * Returns the current effective governance address.
+     * Before switching to production, the effective governance is `initialGovernance`,
+     * and afterwards it is `governanceSettings.getGovernanceAddress()`.
+     */
+    function governance() external view returns (address);
+
+    /**
+     * Check if an address is one of the executors defined in `governanceSettings`.
+     */
+    function isExecutor(address _address) external view returns (bool);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+
+interface IAddressUpdatable {
+
+    error AUAddressZero();
+    error OnlyAddressUpdater();
+
+    /**
+     * Return the address updater managing this contract.
+     */
+    function getAddressUpdater()
+        external view
+        returns (address);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/******************************************************************************\
+* Author: Nick Mudge <nick@perfectabstractions.com> (https://twitter.com/mudgen)
+* EIP-2535 Diamonds: https://eips.ethereum.org/EIPS/eip-2535
+/******************************************************************************/
+
+import { IDiamond } from "./IDiamond.sol";
+
+interface IDiamondCut is IDiamond {
+
+    /// @notice Add/replace/remove any number of functions and optionally execute
+    ///         a function with delegatecall
+    /// @param _diamondCut Contains the facet addresses and function selectors
+    /// @param _init The address of the contract or facet to execute _calldata
+    /// @param _calldata A function call, including function selector and arguments
+    ///                  _calldata is executed with delegatecall on _init
+    function diamondCut(
+        FacetCut[] calldata _diamondCut,
+        address _init,
+        bytes calldata _calldata
+    ) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+pragma abicoder v2;
+
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {IAssetManagerController} from "../../userInterfaces/IAssetManagerController.sol";
+import {IAddressUpdatable} from "../../flareSmartContracts/interfaces/IAddressUpdatable.sol";
+import {IUUPSUpgradeable} from "../../utils/interfaces/IUUPSUpgradeable.sol";
+import {IIAssetManager} from "../../assetManager/interfaces/IIAssetManager.sol";
+import {IGoverned} from "../../governance/interfaces/IGoverned.sol";
+import {CollateralType} from "../../userInterfaces/data/CollateralType.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+
+
+interface IIAssetManagerController is
+    IERC165,
+    IAssetManagerController,
+    IGoverned,
+    IAddressUpdatable,
+    IUUPSUpgradeable
+{
+    /**
+     * New address in case this controller was replaced.
+     * Note: this code contains no checks that replacedBy==0, because when replaced,
+     * all calls to AssetManager's updateSettings/pause will fail anyway
+     * since they will arrive from wrong controller address.
+     */
+    function replacedBy() external view returns (address);
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Manage list of asset managers
+
+    /**
+     * Add an asset manager to this controller. The asset manager controller address in the settings of the
+     * asset manager must match this. This method automatically marks the asset manager as attached.
+     */
+    function addAssetManager(IIAssetManager _assetManager)
+        external;
+
+    /**
+     * Remove an asset manager from this controller, if it is attached to this controller.
+     * The asset manager won't be attached any more, so it will be unusable.
+     */
+    function removeAssetManager(IIAssetManager _assetManager)
+        external;
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Setters
+
+    function setAgentOwnerRegistry(IIAssetManager[] memory _assetManagers, address _value)
+        external;
+
+    function setAgentVaultFactory(IIAssetManager[] memory _assetManagers, address _value)
+        external;
+
+    function setCollateralPoolFactory(IIAssetManager[] memory _assetManagers, address _value)
+        external;
+
+    function setCollateralPoolTokenFactory(IIAssetManager[] memory _assetManagers, address _value)
+        external;
+
+    function upgradeAgentVaultsAndPools(IIAssetManager[] memory _assetManagers, uint256 _start, uint256 _end)
+        external;
+
+    function setPriceReader(IIAssetManager[] memory _assetManagers, address _value)
+        external;
+
+    function setFdcVerification(IIAssetManager[] memory _assetManagers, address _value)
+        external;
+
+    function setCleanerContract(IIAssetManager[] memory _assetManagers, address _value)
+        external;
+
+    function setCleanupBlockNumberManager(IIAssetManager[] memory _assetManagers, address _value)
+        external;
+
+    // if callData is not empty, it is abi encoded call to init function in the new proxy implementation
+    function upgradeFAssetImplementation(
+        IIAssetManager[] memory _assetManagers,
+        address _implementation,
+        bytes memory _callData
+    ) external;
+
+    function setMinUpdateRepeatTimeSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setLotSizeAmg(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setTimeForPayment(
+        IIAssetManager[] memory _assetManagers,
+        uint256 _underlyingBlocks,
+        uint256 _underlyingSeconds
+    ) external;
+
+    function setPaymentChallengeReward(
+        IIAssetManager[] memory _assetManagers,
+        uint256 _rewardVaultCollateralWei,
+        uint256 _rewardBIPS
+    ) external;
+
+    function setMaxTrustedPriceAgeSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setCollateralReservationFeeBips(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setRedemptionFeeBips(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setRedemptionDefaultFactorVaultCollateralBIPS(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setConfirmationByOthersAfterSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setConfirmationByOthersRewardUSD5(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setMaxRedeemedTickets(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setWithdrawalOrDestroyWaitMinSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setAttestationWindowSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setAverageBlockTimeMS(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setMintingPoolHoldingsRequiredBIPS(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setMintingCapAmg(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setTokenInvalidationTimeMinSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setVaultCollateralBuyForFlareFactorBIPS(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setAgentExitAvailableTimelockSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setAgentFeeChangeTimelockSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setAgentMintingCRChangeTimelockSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setPoolExitCRChangeTimelockSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setAgentTimelockedOperationWindowSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setCollateralPoolTokenTimelockSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setLiquidationStepSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setLiquidationPaymentFactors(
+        IIAssetManager[] memory _assetManagers,
+        uint256[] memory _paymentFactors,
+        uint256[] memory _vaultCollateralFactors
+    ) external;
+
+    function setRedemptionPaymentExtensionSeconds(
+        IIAssetManager[] memory _assetManagers,
+        uint256 _value
+    ) external;
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Collateral tokens
+
+    function addCollateralType(
+        IIAssetManager[] memory _assetManagers,
+        CollateralType.Data calldata _data
+    ) external;
+
+    function setCollateralRatiosForToken(
+        IIAssetManager[] memory _assetManagers,
+        CollateralType.Class _class,
+        IERC20 _token,
+        uint256 _minCollateralRatioBIPS,
+        uint256 _safetyMinCollateralRatioBIPS
+    ) external;
+
+    function deprecateCollateralType(
+        IIAssetManager[] memory _assetManagers,
+        CollateralType.Class _class,
+        IERC20 _token,
+        uint256 _invalidationTimeSec
+    ) external;
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Upgrade (second phase)
+
+    /**
+     * When asset manager is paused, no new minting can be made.
+     * All other operations continue normally.
+     */
+    function pauseMinting(IIAssetManager[] calldata _assetManagers)
+        external;
+
+    /**
+     * Minting can continue.
+     */
+    function unpauseMinting(IIAssetManager[] calldata _assetManagers)
+        external;
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Update contracts
+
+    /**
+     * Can be called to update address updater managed contracts if there are too many asset managers
+     * to update in one block. In such a case, running AddressUpdater.updateContractAddresses will fail
+     * and there will be no way to update contracts. This method allow the update to only change some
+     * of the asset managers.
+     */
+    function updateContracts(IIAssetManager[] calldata _assetManagers)
+        external;
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Emergency pause
+
+    function emergencyPause(IIAssetManager[] memory _assetManagers, uint256 _duration)
+        external;
+
+    function emergencyPauseTransfers(IIAssetManager[] memory _assetManagers, uint256 _duration)
+        external;
+
+    function resetEmergencyPauseTotalDuration(IIAssetManager[] memory _assetManagers)
+        external;
+
+    function addEmergencyPauseSender(address _address)
+        external;
+
+    function removeEmergencyPauseSender(address _address)
+        external;
+
+    function setMaxEmergencyPauseDurationSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+
+    function setEmergencyPauseDurationResetAfterSeconds(IIAssetManager[] memory _assetManagers, uint256 _value)
+        external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import { IGovernanceSettings, GovernedBase } from "./GovernedBase.sol";
+
 
 /**
- * @title Wrapped Native token
- * @notice Accept native token deposits and mint ERC20 WNAT (wrapped native) tokens 1-1.
- */
-interface IWNat is IVPToken {
-    /**
-     * @notice Deposit Native and mint wNat ERC20.
-     */
-    function deposit() external payable;
+ * Base class for proxy implementations or diamond facets that expose governed methods -
+ * prevents initialization of the implementation/facet as contract (to avoid selfdestruct by attackers).
+ *
+ * The GovernedBase.initialise can later be called only through a proxy. It should be
+ * called through proxy constructor or in diamond cut initializer.
+ **/
+abstract contract GovernedProxyImplementation is GovernedBase {
+    address private constant EMPTY_ADDRESS = 0x0000000000000000000000000000000000001111;
 
-    /**
-     * @notice Deposit Native from msg.sender and mints WNAT ERC20 to recipient address.
-     * @param recipient An address to receive minted WNAT.
-     */
-    function depositTo(address recipient) external payable;
+    // Mark as initialised and set governance to an invalid address.
+    constructor() {
+        initialise(IGovernanceSettings(EMPTY_ADDRESS), EMPTY_ADDRESS);
+    }
+}
 
-    /**
-     * @notice Withdraw Native and burn WNAT ERC20.
-     * @param amount The amount to withdraw.
-     */
-    function withdraw(uint256 amount) external;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
 
-    /**
-     * @notice Withdraw WNAT from an owner and send native tokens to msg.sender given an allowance.
-     * @param owner An address spending the Native tokens.
-     * @param amount The amount to spend.
-     *
-     * Requirements:
-     *
-     * - `owner` must have a balance of at least `amount`.
-     * - the caller must have allowance for `owners`'s tokens of at least
-     * `amount`.
-     */
-    function withdrawFrom(address owner, uint256 amount) external;
+import { GovernedBase } from "./GovernedBase.sol";
+import { IGovernanceSettings } from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
+
+
+/**
+ * @title Governed
+ * @dev For deployed, governed contracts, enforce non-zero addresses at create time.
+ **/
+abstract contract Governed is GovernedBase {
+    constructor(IGovernanceSettings _governanceSettings, address _initialGovernance) {
+        initialise(_governanceSettings, _initialGovernance);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+pragma abicoder v2;
+
+import {IWNat} from "../../flareSmartContracts/interfaces/IWNat.sol";
+
+
+interface IISettingsManagement {
+    function updateSystemContracts(address _controller, IWNat _wNat)
+        external;
+
+    function setAgentOwnerRegistry(address _value)
+        external;
+
+    function setAgentVaultFactory(address _value)
+        external;
+
+    function setCollateralPoolFactory(address _value)
+        external;
+
+    function setCollateralPoolTokenFactory(address _value)
+        external;
+
+    function setPriceReader(address _value)
+        external;
+
+    function setFdcVerification(address _value)
+        external;
+
+    function setCleanerContract(address _value)
+        external;
+
+    function setCleanupBlockNumberManager(address _value)
+        external;
+
+    function upgradeFAssetImplementation(address _value, bytes memory callData)
+        external;
+
+    function setTimeForPayment(uint256 _underlyingBlocks, uint256 _underlyingSeconds)
+        external;
+
+    function setPaymentChallengeReward(uint256 _rewardNATWei, uint256 _rewardBIPS)
+        external;
+
+    function setMinUpdateRepeatTimeSeconds(uint256 _value)
+        external;
+
+    function setLotSizeAmg(uint256 _value)
+        external;
+
+    function setMaxTrustedPriceAgeSeconds(uint256 _value)
+        external;
+
+    function setCollateralReservationFeeBips(uint256 _value)
+        external;
+
+    function setRedemptionFeeBips(uint256 _value)
+        external;
+
+    function setRedemptionDefaultFactorVaultCollateralBIPS(uint256 _value)
+        external;
+
+    function setConfirmationByOthersAfterSeconds(uint256 _value)
+        external;
+
+    function setConfirmationByOthersRewardUSD5(uint256 _value)
+        external;
+
+    function setMaxRedeemedTickets(uint256 _value)
+        external;
+
+    function setWithdrawalOrDestroyWaitMinSeconds(uint256 _value)
+        external;
+
+    function setAttestationWindowSeconds(uint256 _value)
+        external;
+
+    function setAverageBlockTimeMS(uint256 _value)
+        external;
+
+    function setMintingPoolHoldingsRequiredBIPS(uint256 _value)
+        external;
+
+    function setMintingCapAmg(uint256 _value)
+        external;
+
+    function setTokenInvalidationTimeMinSeconds(uint256 _value)
+        external;
+
+    function setVaultCollateralBuyForFlareFactorBIPS(uint256 _value)
+        external;
+
+    function setAgentExitAvailableTimelockSeconds(uint256 _value)
+        external;
+
+    function setAgentFeeChangeTimelockSeconds(uint256 _value)
+        external;
+
+    function setAgentMintingCRChangeTimelockSeconds(uint256 _value)
+        external;
+
+    function setPoolExitCRChangeTimelockSeconds(uint256 _value)
+        external;
+
+    function setAgentTimelockedOperationWindowSeconds(uint256 _value)
+        external;
+
+    function setCollateralPoolTokenTimelockSeconds(uint256 _value)
+        external;
+
+    function setLiquidationStepSeconds(uint256 _stepSeconds)
+        external;
+
+    function setLiquidationPaymentFactors(
+        uint256[] memory _liquidationFactors,
+        uint256[] memory _vaultCollateralFactors
+    ) external;
+
+    function setMaxEmergencyPauseDurationSeconds(uint256 _value)
+        external;
+
+    function setEmergencyPauseDurationResetAfterSeconds(uint256 _value)
+        external;
 }
 
 // SPDX-License-Identifier: MIT
@@ -3221,87 +3180,604 @@ interface IDiamondLoupe {
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
-import {IERC1967} from "@openzeppelin/contracts/interfaces/IERC1967.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+library AgentInfo {
+    enum Status {
+        // agent is operating normally
+        NORMAL,
+        // liquidation due to collateral ratio - ends when agent is healthy
+        LIQUIDATION,
+        // illegal payment liquidation - always liquidates all and then agent must close vault
+        FULL_LIQUIDATION,
+        // agent announced destroy, cannot mint again; all existing mintings have been redeemed before
+        DESTROYING,
+        // agent has been destroyed, cannot do anything except return info
+        // owner can still withdraw tokens from the vault
+        DESTROYED
+    }
 
-interface IUUPSUpgradeable is IERC1967 {
-    /**
-     * Upgrade proxy to new implementation.
-     */
-    function upgradeTo(address _newImplementation) external;
-
-    /**
-     * Upgrade proxy to new implementation and call an initialization method (via delegatecall).
-     * @param _newImplementation the new implementation address
-     * @param _initializeCall abi encoded call of some initialization method (as created by `abi.encodeCall`);
-     *   if empty string is passed, no call is made
-     */
-    function upgradeToAndCall(address _newImplementation, bytes memory _initializeCall) external payable;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-import {IAssetManager} from "./IAssetManager.sol";
-
-
-interface IAssetManagerController {
-    /**
-     * Return the list of all asset managers managed by this controller.
-     */
-    function getAssetManagers()
-        external view
-        returns (IAssetManager[] memory);
-
-    /**
-     * Check whether the asset manager is managed by this controller.
-     * @param _assetManager an asset manager address
-     */
-    function assetManagerExists(address _assetManager)
-        external view
-        returns (bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-
-library RedemptionTicketInfo {
-    struct Data {
-        // The id of the ticket, same as returned in RedemptionTicketCreated/Updated/Deleted events.
-        uint256 redemptionTicketId;
-
-        // Backing agent vault address.
-        address agentVault;
-
-        // The amount of FAsset on the ticket.
-        uint256 ticketValueUBA;
+    struct Info {
+        // Current agent's status.
+        AgentInfo.Status status;
+        // Agent vault owner's management address, used for occasional administration.
+        // Immutable.
+        address ownerManagementAddress;
+        // Agent vault owner's work address, used for automatic operations.
+        // Can be changed by a call from the owner's management address.
+        address ownerWorkAddress;
+        // Agent's collateral pool address
+        address collateralPool;
+        // Agent collateral pool's pool token address
+        address collateralPoolToken;
+        // Underlying address as string - to be used for minting payments.
+        // For most other purposes, you use underlyingAddressHash, which is `keccak256(underlyingAddressString)`.
+        string underlyingAddressString;
+        // If true, anybody can mint against this agent.
+        // If false, the agent can only self-mint.
+        // Once minted, all redemption tickets go to the same (public) queue, regardless of this flag.
+        bool publiclyAvailable;
+        // Current fee the agent charges for minting (paid in underlying currency).
+        uint256 feeBIPS;
+        // Share of the minting fee that goes to the pool as percentage of the minting fee.
+        // This share of fee is minted as f-assets and belongs to the pool.
+        uint256 poolFeeShareBIPS;
+        // The token identifier of the agent's current vault collateral.
+        // Token identifier can be used to call AssetManager.getCollateralType().
+        IERC20 vaultCollateralToken;
+        // Amount, set by agent, at which locked and free collateral are calculated for new mintings.
+        // For agent's vault collateral.
+        uint256 mintingVaultCollateralRatioBIPS;
+        // Amount, set by agent, at which locked and free collateral are calculated for new mintings.
+        // For pool collateral.
+        uint256 mintingPoolCollateralRatioBIPS;
+        // The maximum number of lots that the agent can mint.
+        // This can change any moment due to minting, redemption or price changes.
+        uint256 freeCollateralLots;
+        // Total amount of vault collateral in agent's vault.
+        uint256 totalVaultCollateralWei;
+        // Free collateral, available for new mintings.
+        // Note: this value doesn't tell you anything about agent being near liquidation, since it is
+        // calculated at agentMinCollateralRatio, not minCollateralRatio.
+        // Use collateralRatioBIPS to see whether the agent is near liquidation.
+        uint256 freeVaultCollateralWei;
+        // The actual agent's collateral ratio, as it is used in liquidation.
+        // For calculation, the system checks both FTSO prices and trusted provider's prices and uses
+        // the ones that give higher ratio.
+        uint256 vaultCollateralRatioBIPS;
+        // The token identifier of the agent's current vault collateral.
+        // Token identifier can be used to call AssetManager.getCollateralType().
+        IERC20 poolWNatToken;
+        // Total amount of NAT collateral in agent's pool.
+        uint256 totalPoolCollateralNATWei;
+        // Free NAT pool collateral (see vault collateral for details).
+        uint256 freePoolCollateralNATWei;
+        // The actual pool collateral ratio (see vault collateral for details).
+        uint256 poolCollateralRatioBIPS;
+        // The amount of pool tokens that belong to agent's vault. This limits the amount of possible
+        // minting: to be able to mint, the NAT value of all backed fassets together with new ones, times
+        // mintingPoolHoldingsRequiredBIPS, must be smaller than the agent's pool tokens amount converted to NAT.
+        // Note: the amount of agent's pool tokens only affects minting, not liquidation.
+        uint256 totalAgentPoolTokensWei;
+        // The amount of vault collateral that will be withdrawn by the agent.
+        uint256 announcedVaultCollateralWithdrawalWei;
+        // The amount of pool tokens that will be withdrawn by the agent.
+        uint256 announcedPoolTokensWithdrawalWei;
+        // Free agent's pool tokens.
+        uint256 freeAgentPoolTokensWei;
+        // Total amount of minted f-assets.
+        uint256 mintedUBA;
+        // Total amount reserved for ongoing mintings.
+        uint256 reservedUBA;
+        // Total amount of ongoing redemptions.
+        uint256 redeemingUBA;
+        // Total amount of ongoing redemptions that lock the pool collateral.
+        // (In pool self-close exits, pool collateral is not locked. So the amount of locked
+        // collateral in the pool can be less than the amount of locked vault collateral.)
+        uint256 poolRedeemingUBA;
+        // Total amount of dust (unredeemable minted f-assets).
+        // Note: dustUBA is part of mintedUBA, so the amount of redeemable f-assets is calculated as
+        // `mintedUBA - dustUBA`
+        uint256 dustUBA;
+        // Liquidation info
+        // If the agent is in LIQUIDATION or FULL_LIQUIDATION, the time agent entered liquidation.
+        // If status is neither of that, returns 0.
+        // Can be used for calculating current liquidation premium, which depends on time since liquidation started.
+        uint256 liquidationStartTimestamp;
+        // When agent is in liquidation, this is the amount o FAssets that need to be liquidated to bring the agent's
+        // position to safety. When performing liquidation, only up to this amount of FAssets will be liquidated.
+        // If not in liquidation, this value is 0.
+        // Since the liquidation state may need to be upgraded by, call `startLiquidation` before
+        // `getAgentInfo` to get the value that will actually be used in liquidation.
+        uint256 maxLiquidationAmountUBA;
+        // When agent is in liquidation, this is the factor (in BIPS) of the converted value of the liquidated
+        // FAssets paid by the vault collateral. If not in liquidation, this value is 0.
+        uint256 liquidationPaymentFactorVaultBIPS;
+        // When agent is in liquidation, this is the factor (in BIPS) of the converted value of the liquidated
+        // FAssets paid by the pool collateral. If not in liquidation, this value is 0.
+        uint256 liquidationPaymentFactorPoolBIPS;
+        // Total underlying balance (backing and free).
+        int256 underlyingBalanceUBA;
+        // The minimum underlying balance that has to be held by the agent. Below this, agent is liquidated.
+        uint256 requiredUnderlyingBalanceUBA;
+        // Underlying balance not backing anything (can be used for gas/fees or withdrawn after announcement).
+        int256 freeUnderlyingBalanceUBA;
+        // Current underlying withdrawal announcement (or 0 if no announcement was made).
+        uint256 announcedUnderlyingWithdrawalId;
+        // The factor set by the agent to multiply the price at which agent buys f-assets from pool
+        // token holders on self-close exit (when requested or the redeemed amount is less than 1 lot).
+        uint256 buyFAssetByAgentFactorBIPS;
+        // The minimum collateral ratio above which a staker can exit the pool
+        // (this is CR that must be left after exit).
+        // Must be higher than system minimum collateral ratio for pool collateral.
+        uint256 poolExitCollateralRatioBIPS;
+        // The redemption fee share paid to the pool (as FAssets).
+        // In redemption dominated situations (when agent requests return from core vault to earn
+        // from redemption fees), pool can get some share to make it sustainable for pool users.
+        // NOTE: the pool fee share is locked at the redemption request time, but is charged at the redemption
+        // confirmation time. If agent uses all the redemption fee for transaction fees, this could make the
+        // agent's free underlying balance negative.
+        uint256 redemptionPoolFeeShareBIPS;
     }
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
-import {AgentInfo} from "./AgentInfo.sol";
+import {IPayment} from "@flarenetwork/flare-periphery-contracts/flare/IFdcVerification.sol";
 
-library AvailableAgentInfo {
+
+/**
+ * Core vault
+ */
+interface ICoreVaultClient {
+    /**
+     * Agent has requested transfer of (some of) their backing to the core vault.
+     */
+    event TransferToCoreVaultStarted(
+        address indexed agentVault,
+        uint256 indexed transferRedemptionRequestId,
+        uint256 valueUBA);
+
+    /**
+     * Agent has cancelled transfer to the core vault without paying.
+     * The amount of `valueUBA` has been re-minted./
+     */
+    event TransferToCoreVaultDefaulted(
+        address indexed agentVault,
+        uint256 indexed transferRedemptionRequestId,
+        uint256 remintedUBA);
+
+    /**
+     * The transfer of underlying to the core vault was successfully completed.
+     */
+    event TransferToCoreVaultSuccessful(
+        address indexed agentVault,
+        uint256 indexed transferRedemptionRequestId,
+        uint256 valueUBA);
+
+    /**
+     * The agent has requested return of some of the underlying from the core vault to the agent's underlying address.
+     */
+    event ReturnFromCoreVaultRequested(
+        address indexed agentVault,
+        uint256 indexed requestId,
+        bytes32 paymentReference,
+        uint256 valueUBA);
+
+    /**
+     * The agent has cancelled the return request.
+     */
+    event ReturnFromCoreVaultCancelled(
+        address indexed agentVault,
+        uint256 indexed requestId);
+
+    /**
+     * The payment from core vault to the agent's underlying address has been confirmed.
+     */
+    event ReturnFromCoreVaultConfirmed(
+        address indexed agentVault,
+        uint256 indexed requestId,
+        uint256 receivedUnderlyingUBA,
+        uint256 remintedUBA);
+
+    /**
+     * Redemption was requested from a core vault.
+     * Can only be redeemed to a payment address from to the `allowedDestinations` list in the core vault manager.
+     */
+    event CoreVaultRedemptionRequested(
+        address indexed redeemer,
+        string paymentAddress,
+        bytes32 paymentReference,
+        uint256 valueUBA,
+        uint256 feeUBA);
+
+    /**
+     * Agent can transfer their backing to core vault.
+     * They then get a redemption requests which the owner pays just like any other redemption request.
+     * After that, the agent's collateral is released.
+     * NOTE: only agent vault owner can call
+     * @param _agentVault the agent vault address
+     * @param _amountUBA the amount to transfer to the core vault
+     */
+    function transferToCoreVault(address _agentVault, uint256 _amountUBA)
+        external;
+
+    /**
+     * Request that core vault transfers funds to the agent's underlying address,
+     * which makes them available for redemptions. This method reserves agent's collateral.
+     * This may be sent by an agent when redemptions dominate mintings, so that the agents
+     * are empty but want to earn from redemptions.
+     * NOTE: only agent vault owner can call
+     * NOTE: there can be only one active return request (until it is confirmed or cancelled).
+     * @param _agentVault the agent vault address
+     * @param _lots number of lots (same lots as for minting and redemptions)
+     */
+    function requestReturnFromCoreVault(address _agentVault, uint256 _lots)
+        external;
+
+    /**
+     * Before the return request is processed, it can be cancelled, releasing the agent's reserved collateral.
+     * @param _agentVault the agent vault address
+     */
+    function cancelReturnFromCoreVault(address _agentVault)
+        external;
+
+    /**
+     * Confirm the payment from core vault to the agent's underlying address.
+     * This adds the reserved funds to the agent's backing.
+     * @param _payment FDC payment proof
+     * @param _agentVault the agent vault address
+     */
+    function confirmReturnFromCoreVault(IPayment.Proof calldata _payment, address _agentVault)
+        external;
+
+    /**
+     * Directly redeem from core vault by a user holding FAssets.
+     * This is like ordinary redemption, but the redemption time is much longer (a day or more)
+     * and there is no possibility of redemption default.
+     * @param _lots the number of lots, must be larger than `coreVaultMinimumRedeemLots` setting
+     * @param _redeemerUnderlyingAddress the underlying address to which the assets will be redeemed;
+     *      must have been added to the `allowedDestinations` list in the core vault manager by
+     *      the governance before the redemption request.
+     */
+    function redeemFromCoreVault(uint256 _lots, string memory _redeemerUnderlyingAddress)
+        external;
+
+    /**
+     * Return the maximum amount that can be transferred and the minimum amount that
+     * has to remain on the agent vault's underlying address.
+     * @param _agentVault the agent vault address
+     * @return _maximumTransferUBA maximum amount that can be transferred
+     * @return _minimumLeftAmountUBA the minimum amount that has to remain on the agent vault's underlying address
+     *  after the transfer
+     */
+    function maximumTransferToCoreVault(
+        address _agentVault
+    ) external view
+        returns (uint256 _maximumTransferUBA, uint256 _minimumLeftAmountUBA);
+
+    /**
+     * Returns the amount available on the core vault - this is the maximum amount that can be returned to agent or
+     * redeemed directly from the core vault.
+     * @return _immediatelyAvailableUBA the amount on the core vault operating account - returns and redemptions
+     * within this amount will be paid out quickly
+     * @return _totalAvailableUBA the total amount on the core vault, including all escrows
+     */
+    function coreVaultAvailableAmount()
+        external view
+        returns (uint256 _immediatelyAvailableUBA, uint256 _totalAvailableUBA);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+
+library AssetManagerSettings {
     struct Data {
-        // Agent vault address.
-        address agentVault;
-        // The management address of the agent vault's owner.
-        address ownerManagementAddress;
-        // Agent's minting fee in BIPS.
-        uint256 feeBIPS;
-        // Minimum agent vault collateral ratio needed for minting.
-        uint256 mintingVaultCollateralRatioBIPS;
-        // Minimum pool collateral ratio needed for minting.
-        uint256 mintingPoolCollateralRatioBIPS;
-        // The number of lots that can be minted by this agent.
-        // Note: the value is only informative since it can can change at any time
-        // due to price changes, reservation, minting, redemption, or even lot size change.
-        uint256 freeCollateralLots;
-        // The agent status, as for getAgentInfo().
-        AgentInfo.Status status;
+        // Required contracts.
+        // Only used to verify that calls come from assetManagerController.
+        // Type: AssetManagerController
+        // changed via address updater
+        address assetManagerController;
+
+        // The f-asset contract managed by this asset manager.
+        // Type: IIFAsset
+        // immutable
+        address fAsset;
+
+        // Factory for creating new agent vaults.
+        // Type: IIAgentVaultFactory
+        // timelocked
+        address agentVaultFactory;
+
+        // Factory for creating new agent collateral pools.
+        // Type: IICollateralPoolFactory
+        // timelocked
+        address collateralPoolFactory;
+
+        // Factory for creating new agent collateral pool tokens.
+        // Type: IICollateralPoolTokenFactory
+        // timelocked
+        address collateralPoolTokenFactory;
+
+        // The suffix to pool token name and symbol that identifies new vault's collateral pool token.
+        // When vault is created, the owner passes own suffix which will be appended to this.
+        string poolTokenSuffix;
+
+        // If set, the whitelist contains a list of accounts that can call public methods
+        // (minting, redeeming, challenging, etc.)
+        // This can be `address(0)`, in which case no whitelist checks are done.
+        // Type: IWhitelist
+        // timelocked
+        address __whitelist; // only storage placeholder
+
+        // If set, the owner address registry contains a list of allowed agent owner's
+        // management addresses and mappings from management to work address.
+        // Type: IAgentOwnerRegistry
+        // timelocked
+        address agentOwnerRegistry;
+
+        // Attestation client verifies and decodes attestation proofs.
+        // Type: IFdcVerification
+        // changed via address updater
+        address fdcVerification;
+
+        // The address where burned NAT is sent.
+        // immutable
+        address payable burnAddress;
+
+        // The contract that reads prices from FTSO system in an FTSO version independent way.
+        // Type: IPriceReader
+        // timelocked
+        address priceReader;
+
+        // Same as assetToken.decimals()
+        // immutable
+        uint8 assetDecimals;
+
+        // Number of decimals of precision of minted amounts.
+        // assetMintingGranularityUBA = 10 ** (assetDecimals - assetMintingDecimals)
+        // immutable
+        uint8 assetMintingDecimals;
+
+        // Must match attestation data chainId.
+        // immutable
+        bytes32 chainId;
+
+        // Average time between two successive blocks on the underlying chain, in milliseconds.
+        // rate-limited
+        uint32 averageBlockTimeMS;
+
+        // The minimum amount of pool tokens the agent must hold to be able to mint.
+        // To be able to mint, the NAT value of all backed fassets together with new ones times this percentage
+        // must be smaller than the agent's pool tokens' amount converted to NAT.
+        // rate-limited
+        uint32 mintingPoolHoldingsRequiredBIPS;
+
+        // Collateral reservation fee that must be paid by the minter.
+        // Payment is in NAT, but is proportional to the value of assets to be minted.
+        // rate-limited
+        uint16 collateralReservationFeeBIPS;
+
+        // Asset unit value (e.g. 1 BTC or 1 ETH) in UBA = 10 ** assetToken.decimals()
+        // immutable
+        uint64 assetUnitUBA;
+
+        // The granularity in which lots are measured = the value of AMG (asset minting granularity) in UBA.
+        // Can only be changed via redeploy of AssetManager.
+        // AMG is used internally instead of UBA so that minted quantities fit into 64bits to reduce storage.
+        // So assetMintingGranularityUBA should be set so that the max supply in AMG of this currency
+        // in foreseeable time (say 100yr) cannot overflow 64 bits.
+        // immutable
+        uint64 assetMintingGranularityUBA;
+
+        // Lot size in asset minting granularity. May change, which affects subsequent mintings and redemptions.
+        // timelocked
+        uint64 lotSizeAMG;
+
+        // The percentage of minted f-assets that the agent must hold in his underlying address.
+        uint16 __minUnderlyingBackingBIPS; // only storage placeholder
+
+        // for some chains (e.g. Ethereum) we require that agent proves that underlying address is an EOA address
+        // this must be done by presenting a payment proof from that address
+        // immutable
+        bool __requireEOAAddressProof; // only storage placeholder
+
+        // Maximum minted amount of the f-asset.
+        // rate-limited
+        uint64 mintingCapAMG;
+
+        // Number of underlying blocks that the minter or agent is allowed to pay underlying value.
+        // If payment not reported in that time, minting/redemption can be challenged and default action triggered.
+        // CAREFUL: Count starts from the current proved block height, so the minters and agents should
+        // make sure that current block height is fresh, otherwise they might not have enough time for payment.
+        // timelocked
+        uint64 underlyingBlocksForPayment;
+
+        // Minimum time to allow agent to pay for redemption or minter to pay for minting.
+        // This is useful for fast chains, when there can be more than one block per second.
+        // Redemption/minting payment failure can be called only after underlyingSecondsForPayment have elapsed
+        // on underlying chain.
+        // CAREFUL: Count starts from the current proved block timestamp, so the minters and agents should
+        // make sure that current block timestamp is fresh, otherwise they might not have enough time for payment.
+        // This is partially mitigated by adding local duration since the last block height update to
+        // the current underlying block timestamp.
+        // timelocked
+        uint64 underlyingSecondsForPayment;
+
+        // Redemption fee in underlying currency base amount (UBA).
+        // rate-limited
+        uint16 redemptionFeeBIPS;
+
+        // On redemption underlying payment failure, redeemer is compensated with
+        // redemption value recalculated in flare/sgb times redemption failure factor.
+        // Expressed in BIPS, e.g. 12000 for factor of 1.2.
+        // This is the part of factor paid from agent's vault collateral.
+        // rate-limited
+        uint32 redemptionDefaultFactorVaultCollateralBIPS;
+
+        // This is the part of redemption factor paid from agent's pool collateral.
+        // rate-limited
+        uint32 __redemptionDefaultFactorPoolBIPS; // only storage placeholder
+
+        // If the agent or redeemer becomes unresponsive, we still need payment or non-payment confirmations
+        // to be presented eventually to properly track agent's underlying balance.
+        // Therefore we allow anybody to confirm payments/non-payments this many seconds after request was made.
+        // rate-limited
+        uint64 confirmationByOthersAfterSeconds;
+
+        // The user who makes abandoned redemption confirmations gets rewarded by the following amount.
+        // rate-limited
+        uint128 confirmationByOthersRewardUSD5;
+
+        // To prevent unbounded work, the number of tickets redeemed in a single request is limited.
+        // rate-limited
+        // >= 1
+        uint16 maxRedeemedTickets;
+
+        // Challenge reward can be composed of two part - fixed and proportional (any of them can be zero).
+        // This is the proportional part (in BIPS).
+        // rate-limited
+        uint16 paymentChallengeRewardBIPS;
+
+        // Challenge reward can be composed of two part - fixed and proportional (any of them can be zero).
+        // This is the fixed part (in vault collateral token wei).
+        // rate-limited
+        uint128 paymentChallengeRewardUSD5;
+
+        // Agent has to announce any collateral withdrawal ar vault destroy and then wait for at least
+        // withdrawalWaitMinSeconds. This prevents challenged agent to remove all collateral before
+        // challenge can be proved.
+        // rate-limited
+        uint64 withdrawalWaitMinSeconds;
+
+        // Maximum age that trusted price feed is valid.
+        // Otherwise (if there were no trusted votes for that long) just use generic ftso price feed.
+        // rate-limited
+        uint64 maxTrustedPriceAgeSeconds;
+
+        // Agent can remain in CCB for this much time, after that liquidation starts automatically.
+        // rate-limited
+        uint64 __ccbTimeSeconds; // only storage placeholder
+
+        // Amount of seconds (typically 1 day) that the payment/non-payment proofs must be available.
+        // This setting is used in `unstickMinting` and `finishRedemptionWithoutPayment` to prove that the time when
+        // payment/non-payment could be proved has already passed.
+        // rate-limited
+        uint64 attestationWindowSeconds;
+
+        // Minimum time after an update of a setting before the same setting can be updated again.
+        // timelocked
+        uint64 minUpdateRepeatTimeSeconds;
+
+        // Ratio at which the agents can buy back their collateral when f-asset is terminated.
+        // Typically a bit more than 1 to incentivize agents to buy f-assets and self-close instead.
+        // immutable
+        uint64 __buybackCollateralFactorBIPS; // only storage placeholder
+
+        // Minimum time that has to pass between underlying withdrawal announcement and the confirmation.
+        // Any value is ok, but higher values give more security against multiple announcement attack by a miner.
+        // Shouldn't be much bigger than Flare data connector response time, so that payments can be confirmed without
+        // extra wait. Should be smaller than confirmationByOthersAfterSeconds (e.g. less than 1 hour).
+        // rate-limited
+        uint64 __announcedUnderlyingConfirmationMinSeconds;
+
+        // Minimum time from the moment token is deprecated to when it becomes invalid and agents still using
+        // it as vault collateral get liquidated.
+        // timelocked
+        uint64 tokenInvalidationTimeMinSeconds;
+
+        // On some rare occasions (stuck minting), the agent has to unlock collateral.
+        // For this, part of collateral corresponding to FTSO asset value is burned and the rest is released.
+        // However, we cannot burn typical vault collateral (stablecoins), so the agent must buy them for NAT
+        // at FTSO price multiplied with this factor (should be a bit above 1) and then we burn the NATs.
+        // timelocked
+        uint32 vaultCollateralBuyForFlareFactorBIPS;
+
+        // Amount of seconds that have to pass between available list exit announcement and execution.
+        // rate-limited
+        uint64 agentExitAvailableTimelockSeconds;
+
+        // Amount of seconds that have to pass between agent fee and pool fee share change announcement and execution.
+        // rate-limited
+        uint64 agentFeeChangeTimelockSeconds;
+
+        // Amount of seconds that have to pass between agent-set minting collateral ratio (vault or pool)
+        // change announcement and execution.
+        // rate-limited
+        uint64 agentMintingCRChangeTimelockSeconds;
+
+        // Amount of seconds that have to pass between agent-set settings for pool exit collateral ratio
+        // change announcement and execution.
+        // rate-limited
+        uint64 poolExitCRChangeTimelockSeconds;
+
+        // Amount of seconds that an agent is allowed to execute an update once it is allowed.
+        // rate-limited
+        uint64 agentTimelockedOperationWindowSeconds;
+
+        // duration of the timelock for collateral pool tokens after minting
+        uint32 collateralPoolTokenTimelockSeconds;
+
+        // If there was no liquidator for the current liquidation offer,
+        // go to the next step of liquidation after a certain period of time.
+        // rate-limited
+        uint64 liquidationStepSeconds;
+
+        // Factor with which to multiply the asset price in native currency to obtain the payment
+        // to the liquidator.
+        // Expressed in BIPS, e.g. [12000, 16000, 20000] means that the liquidator will be paid 1.2, 1.6 and 2.0
+        // times the market price of the liquidated assets after each `liquidationStepSeconds`.
+        // Values in the array must increase and be greater than 100%.
+        // rate-limited
+        uint256[] liquidationCollateralFactorBIPS;
+
+        // How much of the liquidation is paid in vault collateral.
+        // The remainder will be paid in pool NAT collateral.
+        uint256[] liquidationFactorVaultCollateralBIPS;
+
+        // Minimum time that the system must wait before performing diamond cut.
+        // The actual timelock is the maximum of this setting and GovernanceSettings.timelock.
+        uint64 diamondCutMinTimelockSeconds;
+
+        // The maximum total pause that can be triggered by non-governance (but governance allowed) caller.
+        // The duration count can be reset by the governance.
+        uint64 maxEmergencyPauseDurationSeconds;
+
+        // The amount of time since last emergency pause after which the total pause duration counter
+        // will reset automatically.
+        uint64 emergencyPauseDurationResetAfterSeconds;
+
+        // The amount of time after which the collateral reservation can be cancelled if the
+        // handshake is not completed.
+        // rate-limited
+        uint64 __cancelCollateralReservationAfterSeconds; // only storage placeholder
+
+        // The amount of collateral reservation fee returned to the minter in case of rejection or cancellation.
+        // Expressed in BIPS, e.g. 9500 for factor of 0.95, max 10000 for factor of 1.0.
+        // rate-limited
+        uint16 __rejectOrCancelCollateralReservationReturnFactorBIPS; // only storage placeholder
+
+        // Time window inside which the agent can reject the redemption request.
+        // rate-limited
+        uint64 __rejectRedemptionRequestWindowSeconds; // only storage placeholder
+
+        // Time window inside which the agent can take over the redemption request from another agent
+        // that has rejected it.
+        // rate-limited
+        uint64 __takeOverRedemptionRequestWindowSeconds; // only storage placeholder
+
+        // On redemption rejection, without take over, redeemer is compensated with
+        // redemption value recalculated in flare/sgb times redemption failure factor.
+        // Expressed in BIPS, e.g. 12000 for factor of 1.2.
+        // This is the part of factor paid from agent's vault collateral.
+        // rate-limited
+        uint32 __rejectedRedemptionDefaultFactorVaultCollateralBIPS; // only storage placeholder
+
+        // This is the part of rejected redemption factor paid from agent's pool collateral.
+        // rate-limited
+        uint32 __rejectedRedemptionDefaultFactorPoolBIPS; // only storage placeholder
     }
 }
 
@@ -3834,54 +4310,63 @@ interface IAssetManagerEvents {
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+/**
+ * Core vault settings
+ */
+interface ICoreVaultClientSettings {
+    function setCoreVaultManager(address _coreVaultManager)
+        external;
 
+    function setCoreVaultNativeAddress(address payable _nativeAddress)
+        external;
 
-library CollateralType {
-    enum Class {
-        NONE,   // unused
-        POOL,   // pool collateral type
-        VAULT  // usable as vault collateral
-    }
+    function setCoreVaultTransferTimeExtensionSeconds(uint256 _transferTimeExtensionSeconds)
+        external;
 
-    // Collateral token is uniquely identified by the pair (collateralClass, token).
-    struct Data {
-        // The kind of collateral for this token.
-        CollateralType.Class collateralClass;
+    function setCoreVaultRedemptionFeeBIPS(uint256 _redemptionFeeBIPS)
+        external;
 
-        // The ERC20 token contract for this collateral type.
-        IERC20 token;
+    function setCoreVaultMinimumAmountLeftBIPS(uint256 _minimumAmountLeftBIPS)
+        external;
 
-        // Same as token.decimals(), when that exists.
-        uint256 decimals;
+    function setCoreVaultMinimumRedeemLots(uint256 _minimumRedeemLots)
+        external;
 
-        // Token invalidation time. Must be 0 on creation.
-        uint256 validUntil;
+    function getCoreVaultManager()
+        external view
+        returns (address);
 
-        // When `true`, the FTSO with symbol `assetFtsoSymbol` returns asset price relative to this token
-        // (such FTSO's will probably exist for major stablecoins).
-        // When `false`, the FTSOs with symbols `assetFtsoSymbol` and `tokenFtsoSymbol` give asset and token
-        // price relative to the same reference currency and the asset/token price is calculated as their ratio.
-        bool directPricePair;
+    function getCoreVaultNativeAddress()
+        external view
+        returns (address);
 
-        // FTSO symbol for the asset, relative to this token or a reference currency
-        // (it depends on the value of `directPricePair`).
-        string assetFtsoSymbol;
+    function getCoreVaultTransferTimeExtensionSeconds()
+        external view
+        returns (uint256);
 
-        // FTSO symbol for this token in reference currency.
-        // Used for asset/token price calculation when `directPricePair` is `false`.
-        // Otherwise it is irrelevant to asset/token price calculation, but if it is nonempty,
-        // it is still used in calculation of challenger and confirmation rewards
-        // (otherwise we assume it approximates the value of USD and pay directly the USD amount in vault collateral).
-        string tokenFtsoSymbol;
+    function getCoreVaultRedemptionFeeBIPS()
+        external view
+        returns (uint256);
 
-        // Minimum collateral ratio for healthy agents.
-        uint256 minCollateralRatioBIPS;
+    function getCoreVaultMinimumAmountLeftBIPS()
+        external view
+        returns (uint256);
 
-        // Minimum collateral ratio required to get agent out of liquidation.
-        // Will always be greater than minCollateralRatioBIPS.
-        uint256 safetyMinCollateralRatioBIPS;
-    }
+    function getCoreVaultMinimumRedeemLots()
+        external view
+        returns (uint256);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+interface IRedemptionTimeExtension {
+    function setRedemptionPaymentExtensionSeconds(uint256 _value)
+        external;
+
+    function redemptionPaymentExtensionSeconds()
+        external view
+        returns (uint256);
 }
 
 // SPDX-License-Identifier: MIT
@@ -3949,149 +4434,238 @@ library CollateralReservationInfo {
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
-import {IPayment} from "@flarenetwork/flare-periphery-contracts/flare/IFdcVerification.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+library AgentSettings {
+    struct Data {
+        // The token used as vault collateral. Must be one of the tokens obtained by `getCollateralTypes()`,
+        // with class VAULT.
+        IERC20 vaultCollateralToken;
+        // The suffix to pool token name and symbol that identifies new vault's collateral pool token.
+        // Must be unique within an asset manager.
+        string poolTokenSuffix;
+        // Minting fee. Normally charged to minters for publicly available agents, but must be set
+        // also for self-minting agents to pay part of it to collateral pool.
+        // Fee is paid in underlying currency along with backing assets.
+        uint256 feeBIPS;
+        // Share of the minting fee that goes to the pool as percentage of the minting fee.
+        // This share of fee is minted as f-assets and belongs to the pool.
+        uint256 poolFeeShareBIPS;
+        // Collateral ratio at which we calculate locked collateral and collateral available for minting.
+        // Agent may set own value for minting collateral ratio on creation.
+        // The value must always be greater than system minimum collateral ratio for vault collateral.
+        // Warning: having this value near global min collateral ratio can quickly lead to liquidation for public
+        // agents, so it is advisable to set it significantly higher.
+        uint256 mintingVaultCollateralRatioBIPS;
+        // Collateral ratio at which we calculate locked collateral and collateral available for minting.
+        // Agent may set own value for minting collateral ratio on creation.
+        // The value must always be greater than system minimum collateral ratio for pool collateral.
+        // Warning: having this value near global min collateral ratio can quickly lead to liquidation for public
+        // agents, so it is advisable to set it significantly higher.
+        uint256 mintingPoolCollateralRatioBIPS;
+        // The factor set by the agent to multiply the price at which agent buys f-assets from pool
+        // token holders on self-close exit (when requested or the redeemed amount is less than 1 lot).
+        uint256 buyFAssetByAgentFactorBIPS;
+        // The minimum collateral ratio above which a staker can exit the pool
+        // (this is CR that must be left after exit).
+        // Must be higher than system minimum collateral ratio for pool collateral.
+        uint256 poolExitCollateralRatioBIPS;
+        // The redemption fee share paid to the pool (as FAssets).
+        // In redemption dominated situations (when agent requests return from core vault to earn
+        // from redemption fees), pool can get some share to make it sustainable for pool users.
+        // NOTE: the pool fee share is locked at the redemption request time, but is charged at the redemption
+        // confirmation time. If agent uses all the redemption fee for transaction fees, this could make the
+        // agent's free underlying balance negative.
+        uint256 redemptionPoolFeeShareBIPS;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/******************************************************************************\
+* Author: Nick Mudge <nick@perfectabstractions.com> (https://twitter.com/mudgen)
+* EIP-2535 Diamonds: https://eips.ethereum.org/EIPS/eip-2535
+/******************************************************************************/
+
+interface IDiamond {
+    enum FacetCutAction {Add, Replace, Remove}
+    // Add=0, Replace=1, Remove=2
+
+    struct FacetCut {
+        address facetAddress;
+        FacetCutAction action;
+        bytes4[] functionSelectors;
+    }
+
+    event DiamondCut(FacetCut[] _diamondCut, address _init, bytes _calldata);
+}
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+import {IERC1967} from "@openzeppelin/contracts/interfaces/IERC1967.sol";
+
+
+interface IUUPSUpgradeable is IERC1967 {
+    /**
+     * Upgrade proxy to new implementation.
+     */
+    function upgradeTo(address _newImplementation) external;
+
+    /**
+     * Upgrade proxy to new implementation and call an initialization method (via delegatecall).
+     * @param _newImplementation the new implementation address
+     * @param _initializeCall abi encoded call of some initialization method (as created by `abi.encodeCall`);
+     *   if empty string is passed, no call is made
+     */
+    function upgradeToAndCall(address _newImplementation, bytes memory _initializeCall) external payable;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+
+library CollateralType {
+    enum Class {
+        NONE,   // unused
+        POOL,   // pool collateral type
+        VAULT  // usable as vault collateral
+    }
+
+    // Collateral token is uniquely identified by the pair (collateralClass, token).
+    struct Data {
+        // The kind of collateral for this token.
+        CollateralType.Class collateralClass;
+
+        // The ERC20 token contract for this collateral type.
+        IERC20 token;
+
+        // Same as token.decimals(), when that exists.
+        uint256 decimals;
+
+        // Token invalidation time. Must be 0 on creation.
+        uint256 validUntil;
+
+        // When `true`, the FTSO with symbol `assetFtsoSymbol` returns asset price relative to this token
+        // (such FTSO's will probably exist for major stablecoins).
+        // When `false`, the FTSOs with symbols `assetFtsoSymbol` and `tokenFtsoSymbol` give asset and token
+        // price relative to the same reference currency and the asset/token price is calculated as their ratio.
+        bool directPricePair;
+
+        // FTSO symbol for the asset, relative to this token or a reference currency
+        // (it depends on the value of `directPricePair`).
+        string assetFtsoSymbol;
+
+        // FTSO symbol for this token in reference currency.
+        // Used for asset/token price calculation when `directPricePair` is `false`.
+        // Otherwise it is irrelevant to asset/token price calculation, but if it is nonempty,
+        // it is still used in calculation of challenger and confirmation rewards
+        // (otherwise we assume it approximates the value of USD and pay directly the USD amount in vault collateral).
+        string tokenFtsoSymbol;
+
+        // Minimum collateral ratio for healthy agents.
+        uint256 minCollateralRatioBIPS;
+
+        // Minimum collateral ratio required to get agent out of liquidation.
+        // Will always be greater than minCollateralRatioBIPS.
+        uint256 safetyMinCollateralRatioBIPS;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+interface IAgentPing {
+    /**
+     * Agent bot liveness check.
+     * @param agentVault the agent vault whose owner bot to ping
+     * @param sender the account that triggered ping; helps bot decide whether it is important to answer
+     * @param query off-chain defined id of the query
+     */
+    event AgentPing(
+        address indexed agentVault,
+        address indexed sender,
+        uint256 query);
+
+    /**
+     * Response to agent bot liveness check.
+     * @param agentVault the pinged agent vault
+     * @param owner owner of the agent vault (management address)
+     * @param query repeated `query` from the AgentPing event
+     * @param response response data to the query
+     */
+    event AgentPingResponse(
+        address indexed agentVault,
+        address indexed owner,
+        uint256 query,
+        string response);
+
+    /**
+     * Used for liveness checks, simply emits AgentPing event.
+     * @param _agentVault the agent vault whose owner bot to ping
+     * @param _query off-chain defined id of the query
+     */
+    function agentPing(
+        address _agentVault,
+        uint256 _query
+    ) external;
+
+    /**
+     * Used for liveness checks, the bot's response to AgentPing event.
+     * Simply emits AgentPingResponse event identifying the owner.
+     * NOTE: may only be called by the agent vault owner
+     * @param _agentVault the pinged agent vault
+     * @param _query repeated `_query` from the agentPing
+     * @param _response response data to the query
+     */
+    function agentPingResponse(
+        address _agentVault,
+        uint256 _query,
+        string memory _response
+    ) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+import {IVPToken} from "@flarenetwork/flare-periphery-contracts/flare/IVPToken.sol";
 
 /**
- * Core vault
+ * @title Wrapped Native token
+ * @notice Accept native token deposits and mint ERC20 WNAT (wrapped native) tokens 1-1.
  */
-interface ICoreVaultClient {
+interface IWNat is IVPToken {
     /**
-     * Agent has requested transfer of (some of) their backing to the core vault.
+     * @notice Deposit Native and mint wNat ERC20.
      */
-    event TransferToCoreVaultStarted(
-        address indexed agentVault,
-        uint256 indexed transferRedemptionRequestId,
-        uint256 valueUBA);
+    function deposit() external payable;
 
     /**
-     * Agent has cancelled transfer to the core vault without paying.
-     * The amount of `valueUBA` has been re-minted./
+     * @notice Deposit Native from msg.sender and mints WNAT ERC20 to recipient address.
+     * @param recipient An address to receive minted WNAT.
      */
-    event TransferToCoreVaultDefaulted(
-        address indexed agentVault,
-        uint256 indexed transferRedemptionRequestId,
-        uint256 remintedUBA);
+    function depositTo(address recipient) external payable;
 
     /**
-     * The transfer of underlying to the core vault was successfully completed.
+     * @notice Withdraw Native and burn WNAT ERC20.
+     * @param amount The amount to withdraw.
      */
-    event TransferToCoreVaultSuccessful(
-        address indexed agentVault,
-        uint256 indexed transferRedemptionRequestId,
-        uint256 valueUBA);
+    function withdraw(uint256 amount) external;
 
     /**
-     * The agent has requested return of some of the underlying from the core vault to the agent's underlying address.
+     * @notice Withdraw WNAT from an owner and send native tokens to msg.sender given an allowance.
+     * @param owner An address spending the Native tokens.
+     * @param amount The amount to spend.
+     *
+     * Requirements:
+     *
+     * - `owner` must have a balance of at least `amount`.
+     * - the caller must have allowance for `owners`'s tokens of at least
+     * `amount`.
      */
-    event ReturnFromCoreVaultRequested(
-        address indexed agentVault,
-        uint256 indexed requestId,
-        bytes32 paymentReference,
-        uint256 valueUBA);
-
-    /**
-     * The agent has cancelled the return request.
-     */
-    event ReturnFromCoreVaultCancelled(
-        address indexed agentVault,
-        uint256 indexed requestId);
-
-    /**
-     * The payment from core vault to the agent's underlying address has been confirmed.
-     */
-    event ReturnFromCoreVaultConfirmed(
-        address indexed agentVault,
-        uint256 indexed requestId,
-        uint256 receivedUnderlyingUBA,
-        uint256 remintedUBA);
-
-    /**
-     * Redemption was requested from a core vault.
-     * Can only be redeemed to a payment address from to the `allowedDestinations` list in the core vault manager.
-     */
-    event CoreVaultRedemptionRequested(
-        address indexed redeemer,
-        string paymentAddress,
-        bytes32 paymentReference,
-        uint256 valueUBA,
-        uint256 feeUBA);
-
-    /**
-     * Agent can transfer their backing to core vault.
-     * They then get a redemption requests which the owner pays just like any other redemption request.
-     * After that, the agent's collateral is released.
-     * NOTE: only agent vault owner can call
-     * @param _agentVault the agent vault address
-     * @param _amountUBA the amount to transfer to the core vault
-     */
-    function transferToCoreVault(address _agentVault, uint256 _amountUBA)
-        external;
-
-    /**
-     * Request that core vault transfers funds to the agent's underlying address,
-     * which makes them available for redemptions. This method reserves agent's collateral.
-     * This may be sent by an agent when redemptions dominate mintings, so that the agents
-     * are empty but want to earn from redemptions.
-     * NOTE: only agent vault owner can call
-     * NOTE: there can be only one active return request (until it is confirmed or cancelled).
-     * @param _agentVault the agent vault address
-     * @param _lots number of lots (same lots as for minting and redemptions)
-     */
-    function requestReturnFromCoreVault(address _agentVault, uint256 _lots)
-        external;
-
-    /**
-     * Before the return request is processed, it can be cancelled, releasing the agent's reserved collateral.
-     * @param _agentVault the agent vault address
-     */
-    function cancelReturnFromCoreVault(address _agentVault)
-        external;
-
-    /**
-     * Confirm the payment from core vault to the agent's underlying address.
-     * This adds the reserved funds to the agent's backing.
-     * @param _payment FDC payment proof
-     * @param _agentVault the agent vault address
-     */
-    function confirmReturnFromCoreVault(IPayment.Proof calldata _payment, address _agentVault)
-        external;
-
-    /**
-     * Directly redeem from core vault by a user holding FAssets.
-     * This is like ordinary redemption, but the redemption time is much longer (a day or more)
-     * and there is no possibility of redemption default.
-     * @param _lots the number of lots, must be larger than `coreVaultMinimumRedeemLots` setting
-     * @param _redeemerUnderlyingAddress the underlying address to which the assets will be redeemed;
-     *      must have been added to the `allowedDestinations` list in the core vault manager by
-     *      the governance before the redemption request.
-     */
-    function redeemFromCoreVault(uint256 _lots, string memory _redeemerUnderlyingAddress)
-        external;
-
-    /**
-     * Return the maximum amount that can be transferred and the minimum amount that
-     * has to remain on the agent vault's underlying address.
-     * @param _agentVault the agent vault address
-     * @return _maximumTransferUBA maximum amount that can be transferred
-     * @return _minimumLeftAmountUBA the minimum amount that has to remain on the agent vault's underlying address
-     *  after the transfer
-     */
-    function maximumTransferToCoreVault(
-        address _agentVault
-    ) external view
-        returns (uint256 _maximumTransferUBA, uint256 _minimumLeftAmountUBA);
-
-    /**
-     * Returns the amount available on the core vault - this is the maximum amount that can be returned to agent or
-     * redeemed directly from the core vault.
-     * @return _immediatelyAvailableUBA the amount on the core vault operating account - returns and redemptions
-     * within this amount will be paid out quickly
-     * @return _totalAvailableUBA the total amount on the core vault, including all escrows
-     */
-    function coreVaultAvailableAmount()
-        external view
-        returns (uint256 _immediatelyAvailableUBA, uint256 _totalAvailableUBA);
+    function withdrawFrom(address owner, uint256 amount) external;
 }
 
 // SPDX-License-Identifier: MIT
@@ -4169,641 +4743,67 @@ library RedemptionRequestInfo {
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
-interface IAgentPing {
-    /**
-     * Agent bot liveness check.
-     * @param agentVault the agent vault whose owner bot to ping
-     * @param sender the account that triggered ping; helps bot decide whether it is important to answer
-     * @param query off-chain defined id of the query
-     */
-    event AgentPing(
-        address indexed agentVault,
-        address indexed sender,
-        uint256 query);
+import {AgentInfo} from "./AgentInfo.sol";
 
-    /**
-     * Response to agent bot liveness check.
-     * @param agentVault the pinged agent vault
-     * @param owner owner of the agent vault (management address)
-     * @param query repeated `query` from the AgentPing event
-     * @param response response data to the query
-     */
-    event AgentPingResponse(
-        address indexed agentVault,
-        address indexed owner,
-        uint256 query,
-        string response);
-
-    /**
-     * Used for liveness checks, simply emits AgentPing event.
-     * @param _agentVault the agent vault whose owner bot to ping
-     * @param _query off-chain defined id of the query
-     */
-    function agentPing(
-        address _agentVault,
-        uint256 _query
-    ) external;
-
-    /**
-     * Used for liveness checks, the bot's response to AgentPing event.
-     * Simply emits AgentPingResponse event identifying the owner.
-     * NOTE: may only be called by the agent vault owner
-     * @param _agentVault the pinged agent vault
-     * @param _query repeated `_query` from the agentPing
-     * @param _response response data to the query
-     */
-    function agentPingResponse(
-        address _agentVault,
-        uint256 _query,
-        string memory _response
-    ) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-/******************************************************************************\
-* Author: Nick Mudge <nick@perfectabstractions.com> (https://twitter.com/mudgen)
-* EIP-2535 Diamonds: https://eips.ethereum.org/EIPS/eip-2535
-/******************************************************************************/
-
-interface IDiamond {
-    enum FacetCutAction {Add, Replace, Remove}
-    // Add=0, Replace=1, Remove=2
-
-    struct FacetCut {
-        address facetAddress;
-        FacetCutAction action;
-        bytes4[] functionSelectors;
-    }
-
-    event DiamondCut(FacetCut[] _diamondCut, address _init, bytes _calldata);
-}
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-library AgentInfo {
-    enum Status {
-        // agent is operating normally
-        NORMAL,
-        // liquidation due to collateral ratio - ends when agent is healthy
-        LIQUIDATION,
-        // illegal payment liquidation - always liquidates all and then agent must close vault
-        FULL_LIQUIDATION,
-        // agent announced destroy, cannot mint again; all existing mintings have been redeemed before
-        DESTROYING,
-        // agent has been destroyed, cannot do anything except return info
-        // owner can still withdraw tokens from the vault
-        DESTROYED
-    }
-
-    struct Info {
-        // Current agent's status.
-        AgentInfo.Status status;
-        // Agent vault owner's management address, used for occasional administration.
-        // Immutable.
+library AvailableAgentInfo {
+    struct Data {
+        // Agent vault address.
+        address agentVault;
+        // The management address of the agent vault's owner.
         address ownerManagementAddress;
-        // Agent vault owner's work address, used for automatic operations.
-        // Can be changed by a call from the owner's management address.
-        address ownerWorkAddress;
-        // Agent's collateral pool address
-        address collateralPool;
-        // Agent collateral pool's pool token address
-        address collateralPoolToken;
-        // Underlying address as string - to be used for minting payments.
-        // For most other purposes, you use underlyingAddressHash, which is `keccak256(underlyingAddressString)`.
-        string underlyingAddressString;
-        // If true, anybody can mint against this agent.
-        // If false, the agent can only self-mint.
-        // Once minted, all redemption tickets go to the same (public) queue, regardless of this flag.
-        bool publiclyAvailable;
-        // Current fee the agent charges for minting (paid in underlying currency).
+        // Agent's minting fee in BIPS.
         uint256 feeBIPS;
-        // Share of the minting fee that goes to the pool as percentage of the minting fee.
-        // This share of fee is minted as f-assets and belongs to the pool.
-        uint256 poolFeeShareBIPS;
-        // The token identifier of the agent's current vault collateral.
-        // Token identifier can be used to call AssetManager.getCollateralType().
-        IERC20 vaultCollateralToken;
-        // Amount, set by agent, at which locked and free collateral are calculated for new mintings.
-        // For agent's vault collateral.
+        // Minimum agent vault collateral ratio needed for minting.
         uint256 mintingVaultCollateralRatioBIPS;
-        // Amount, set by agent, at which locked and free collateral are calculated for new mintings.
-        // For pool collateral.
+        // Minimum pool collateral ratio needed for minting.
         uint256 mintingPoolCollateralRatioBIPS;
-        // The maximum number of lots that the agent can mint.
-        // This can change any moment due to minting, redemption or price changes.
+        // The number of lots that can be minted by this agent.
+        // Note: the value is only informative since it can can change at any time
+        // due to price changes, reservation, minting, redemption, or even lot size change.
         uint256 freeCollateralLots;
-        // Total amount of vault collateral in agent's vault.
-        uint256 totalVaultCollateralWei;
-        // Free collateral, available for new mintings.
-        // Note: this value doesn't tell you anything about agent being near liquidation, since it is
-        // calculated at agentMinCollateralRatio, not minCollateralRatio.
-        // Use collateralRatioBIPS to see whether the agent is near liquidation.
-        uint256 freeVaultCollateralWei;
-        // The actual agent's collateral ratio, as it is used in liquidation.
-        // For calculation, the system checks both FTSO prices and trusted provider's prices and uses
-        // the ones that give higher ratio.
-        uint256 vaultCollateralRatioBIPS;
-        // The token identifier of the agent's current vault collateral.
-        // Token identifier can be used to call AssetManager.getCollateralType().
-        IERC20 poolWNatToken;
-        // Total amount of NAT collateral in agent's pool.
-        uint256 totalPoolCollateralNATWei;
-        // Free NAT pool collateral (see vault collateral for details).
-        uint256 freePoolCollateralNATWei;
-        // The actual pool collateral ratio (see vault collateral for details).
-        uint256 poolCollateralRatioBIPS;
-        // The amount of pool tokens that belong to agent's vault. This limits the amount of possible
-        // minting: to be able to mint, the NAT value of all backed fassets together with new ones, times
-        // mintingPoolHoldingsRequiredBIPS, must be smaller than the agent's pool tokens amount converted to NAT.
-        // Note: the amount of agent's pool tokens only affects minting, not liquidation.
-        uint256 totalAgentPoolTokensWei;
-        // The amount of vault collateral that will be withdrawn by the agent.
-        uint256 announcedVaultCollateralWithdrawalWei;
-        // The amount of pool tokens that will be withdrawn by the agent.
-        uint256 announcedPoolTokensWithdrawalWei;
-        // Free agent's pool tokens.
-        uint256 freeAgentPoolTokensWei;
-        // Total amount of minted f-assets.
-        uint256 mintedUBA;
-        // Total amount reserved for ongoing mintings.
-        uint256 reservedUBA;
-        // Total amount of ongoing redemptions.
-        uint256 redeemingUBA;
-        // Total amount of ongoing redemptions that lock the pool collateral.
-        // (In pool self-close exits, pool collateral is not locked. So the amount of locked
-        // collateral in the pool can be less than the amount of locked vault collateral.)
-        uint256 poolRedeemingUBA;
-        // Total amount of dust (unredeemable minted f-assets).
-        // Note: dustUBA is part of mintedUBA, so the amount of redeemable f-assets is calculated as
-        // `mintedUBA - dustUBA`
-        uint256 dustUBA;
-        // Liquidation info
-        // If the agent is in LIQUIDATION or FULL_LIQUIDATION, the time agent entered liquidation.
-        // If status is neither of that, returns 0.
-        // Can be used for calculating current liquidation premium, which depends on time since liquidation started.
-        uint256 liquidationStartTimestamp;
-        // When agent is in liquidation, this is the amount o FAssets that need to be liquidated to bring the agent's
-        // position to safety. When performing liquidation, only up to this amount of FAssets will be liquidated.
-        // If not in liquidation, this value is 0.
-        // Since the liquidation state may need to be upgraded by, call `startLiquidation` before
-        // `getAgentInfo` to get the value that will actually be used in liquidation.
-        uint256 maxLiquidationAmountUBA;
-        // When agent is in liquidation, this is the factor (in BIPS) of the converted value of the liquidated
-        // FAssets paid by the vault collateral. If not in liquidation, this value is 0.
-        uint256 liquidationPaymentFactorVaultBIPS;
-        // When agent is in liquidation, this is the factor (in BIPS) of the converted value of the liquidated
-        // FAssets paid by the pool collateral. If not in liquidation, this value is 0.
-        uint256 liquidationPaymentFactorPoolBIPS;
-        // Total underlying balance (backing and free).
-        int256 underlyingBalanceUBA;
-        // The minimum underlying balance that has to be held by the agent. Below this, agent is liquidated.
-        uint256 requiredUnderlyingBalanceUBA;
-        // Underlying balance not backing anything (can be used for gas/fees or withdrawn after announcement).
-        int256 freeUnderlyingBalanceUBA;
-        // Current underlying withdrawal announcement (or 0 if no announcement was made).
-        uint256 announcedUnderlyingWithdrawalId;
-        // The factor set by the agent to multiply the price at which agent buys f-assets from pool
-        // token holders on self-close exit (when requested or the redeemed amount is less than 1 lot).
-        uint256 buyFAssetByAgentFactorBIPS;
-        // The minimum collateral ratio above which a staker can exit the pool
-        // (this is CR that must be left after exit).
-        // Must be higher than system minimum collateral ratio for pool collateral.
-        uint256 poolExitCollateralRatioBIPS;
-        // The redemption fee share paid to the pool (as FAssets).
-        // In redemption dominated situations (when agent requests return from core vault to earn
-        // from redemption fees), pool can get some share to make it sustainable for pool users.
-        // NOTE: the pool fee share is locked at the redemption request time, but is charged at the redemption
-        // confirmation time. If agent uses all the redemption fee for transaction fees, this could make the
-        // agent's free underlying balance negative.
-        uint256 redemptionPoolFeeShareBIPS;
+        // The agent status, as for getAgentInfo().
+        AgentInfo.Status status;
     }
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
-interface IRedemptionTimeExtension {
-    function setRedemptionPaymentExtensionSeconds(uint256 _value)
-        external;
+import {IAssetManager} from "./IAssetManager.sol";
 
-    function redemptionPaymentExtensionSeconds()
+
+interface IAssetManagerController {
+    /**
+     * Return the list of all asset managers managed by this controller.
+     */
+    function getAssetManagers()
         external view
-        returns (uint256);
+        returns (IAssetManager[] memory);
+
+    /**
+     * Check whether the asset manager is managed by this controller.
+     * @param _assetManager an asset manager address
+     */
+    function assetManagerExists(address _assetManager)
+        external view
+        returns (bool);
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
 
-library AssetManagerSettings {
+library RedemptionTicketInfo {
     struct Data {
-        // Required contracts.
-        // Only used to verify that calls come from assetManagerController.
-        // Type: AssetManagerController
-        // changed via address updater
-        address assetManagerController;
+        // The id of the ticket, same as returned in RedemptionTicketCreated/Updated/Deleted events.
+        uint256 redemptionTicketId;
 
-        // The f-asset contract managed by this asset manager.
-        // Type: IIFAsset
-        // immutable
-        address fAsset;
+        // Backing agent vault address.
+        address agentVault;
 
-        // Factory for creating new agent vaults.
-        // Type: IIAgentVaultFactory
-        // timelocked
-        address agentVaultFactory;
-
-        // Factory for creating new agent collateral pools.
-        // Type: IICollateralPoolFactory
-        // timelocked
-        address collateralPoolFactory;
-
-        // Factory for creating new agent collateral pool tokens.
-        // Type: IICollateralPoolTokenFactory
-        // timelocked
-        address collateralPoolTokenFactory;
-
-        // The suffix to pool token name and symbol that identifies new vault's collateral pool token.
-        // When vault is created, the owner passes own suffix which will be appended to this.
-        string poolTokenSuffix;
-
-        // If set, the whitelist contains a list of accounts that can call public methods
-        // (minting, redeeming, challenging, etc.)
-        // This can be `address(0)`, in which case no whitelist checks are done.
-        // Type: IWhitelist
-        // timelocked
-        address __whitelist; // only storage placeholder
-
-        // If set, the owner address registry contains a list of allowed agent owner's
-        // management addresses and mappings from management to work address.
-        // Type: IAgentOwnerRegistry
-        // timelocked
-        address agentOwnerRegistry;
-
-        // Attestation client verifies and decodes attestation proofs.
-        // Type: IFdcVerification
-        // changed via address updater
-        address fdcVerification;
-
-        // The address where burned NAT is sent.
-        // immutable
-        address payable burnAddress;
-
-        // The contract that reads prices from FTSO system in an FTSO version independent way.
-        // Type: IPriceReader
-        // timelocked
-        address priceReader;
-
-        // Same as assetToken.decimals()
-        // immutable
-        uint8 assetDecimals;
-
-        // Number of decimals of precision of minted amounts.
-        // assetMintingGranularityUBA = 10 ** (assetDecimals - assetMintingDecimals)
-        // immutable
-        uint8 assetMintingDecimals;
-
-        // Must match attestation data chainId.
-        // immutable
-        bytes32 chainId;
-
-        // Average time between two successive blocks on the underlying chain, in milliseconds.
-        // rate-limited
-        uint32 averageBlockTimeMS;
-
-        // The minimum amount of pool tokens the agent must hold to be able to mint.
-        // To be able to mint, the NAT value of all backed fassets together with new ones times this percentage
-        // must be smaller than the agent's pool tokens' amount converted to NAT.
-        // rate-limited
-        uint32 mintingPoolHoldingsRequiredBIPS;
-
-        // Collateral reservation fee that must be paid by the minter.
-        // Payment is in NAT, but is proportional to the value of assets to be minted.
-        // rate-limited
-        uint16 collateralReservationFeeBIPS;
-
-        // Asset unit value (e.g. 1 BTC or 1 ETH) in UBA = 10 ** assetToken.decimals()
-        // immutable
-        uint64 assetUnitUBA;
-
-        // The granularity in which lots are measured = the value of AMG (asset minting granularity) in UBA.
-        // Can only be changed via redeploy of AssetManager.
-        // AMG is used internally instead of UBA so that minted quantities fit into 64bits to reduce storage.
-        // So assetMintingGranularityUBA should be set so that the max supply in AMG of this currency
-        // in foreseeable time (say 100yr) cannot overflow 64 bits.
-        // immutable
-        uint64 assetMintingGranularityUBA;
-
-        // Lot size in asset minting granularity. May change, which affects subsequent mintings and redemptions.
-        // timelocked
-        uint64 lotSizeAMG;
-
-        // The percentage of minted f-assets that the agent must hold in his underlying address.
-        uint16 __minUnderlyingBackingBIPS; // only storage placeholder
-
-        // for some chains (e.g. Ethereum) we require that agent proves that underlying address is an EOA address
-        // this must be done by presenting a payment proof from that address
-        // immutable
-        bool __requireEOAAddressProof; // only storage placeholder
-
-        // Maximum minted amount of the f-asset.
-        // rate-limited
-        uint64 mintingCapAMG;
-
-        // Number of underlying blocks that the minter or agent is allowed to pay underlying value.
-        // If payment not reported in that time, minting/redemption can be challenged and default action triggered.
-        // CAREFUL: Count starts from the current proved block height, so the minters and agents should
-        // make sure that current block height is fresh, otherwise they might not have enough time for payment.
-        // timelocked
-        uint64 underlyingBlocksForPayment;
-
-        // Minimum time to allow agent to pay for redemption or minter to pay for minting.
-        // This is useful for fast chains, when there can be more than one block per second.
-        // Redemption/minting payment failure can be called only after underlyingSecondsForPayment have elapsed
-        // on underlying chain.
-        // CAREFUL: Count starts from the current proved block timestamp, so the minters and agents should
-        // make sure that current block timestamp is fresh, otherwise they might not have enough time for payment.
-        // This is partially mitigated by adding local duration since the last block height update to
-        // the current underlying block timestamp.
-        // timelocked
-        uint64 underlyingSecondsForPayment;
-
-        // Redemption fee in underlying currency base amount (UBA).
-        // rate-limited
-        uint16 redemptionFeeBIPS;
-
-        // On redemption underlying payment failure, redeemer is compensated with
-        // redemption value recalculated in flare/sgb times redemption failure factor.
-        // Expressed in BIPS, e.g. 12000 for factor of 1.2.
-        // This is the part of factor paid from agent's vault collateral.
-        // rate-limited
-        uint32 redemptionDefaultFactorVaultCollateralBIPS;
-
-        // This is the part of redemption factor paid from agent's pool collateral.
-        // rate-limited
-        uint32 __redemptionDefaultFactorPoolBIPS; // only storage placeholder
-
-        // If the agent or redeemer becomes unresponsive, we still need payment or non-payment confirmations
-        // to be presented eventually to properly track agent's underlying balance.
-        // Therefore we allow anybody to confirm payments/non-payments this many seconds after request was made.
-        // rate-limited
-        uint64 confirmationByOthersAfterSeconds;
-
-        // The user who makes abandoned redemption confirmations gets rewarded by the following amount.
-        // rate-limited
-        uint128 confirmationByOthersRewardUSD5;
-
-        // To prevent unbounded work, the number of tickets redeemed in a single request is limited.
-        // rate-limited
-        // >= 1
-        uint16 maxRedeemedTickets;
-
-        // Challenge reward can be composed of two part - fixed and proportional (any of them can be zero).
-        // This is the proportional part (in BIPS).
-        // rate-limited
-        uint16 paymentChallengeRewardBIPS;
-
-        // Challenge reward can be composed of two part - fixed and proportional (any of them can be zero).
-        // This is the fixed part (in vault collateral token wei).
-        // rate-limited
-        uint128 paymentChallengeRewardUSD5;
-
-        // Agent has to announce any collateral withdrawal ar vault destroy and then wait for at least
-        // withdrawalWaitMinSeconds. This prevents challenged agent to remove all collateral before
-        // challenge can be proved.
-        // rate-limited
-        uint64 withdrawalWaitMinSeconds;
-
-        // Maximum age that trusted price feed is valid.
-        // Otherwise (if there were no trusted votes for that long) just use generic ftso price feed.
-        // rate-limited
-        uint64 maxTrustedPriceAgeSeconds;
-
-        // Agent can remain in CCB for this much time, after that liquidation starts automatically.
-        // rate-limited
-        uint64 __ccbTimeSeconds; // only storage placeholder
-
-        // Amount of seconds (typically 1 day) that the payment/non-payment proofs must be available.
-        // This setting is used in `unstickMinting` and `finishRedemptionWithoutPayment` to prove that the time when
-        // payment/non-payment could be proved has already passed.
-        // rate-limited
-        uint64 attestationWindowSeconds;
-
-        // Minimum time after an update of a setting before the same setting can be updated again.
-        // timelocked
-        uint64 minUpdateRepeatTimeSeconds;
-
-        // Ratio at which the agents can buy back their collateral when f-asset is terminated.
-        // Typically a bit more than 1 to incentivize agents to buy f-assets and self-close instead.
-        // immutable
-        uint64 __buybackCollateralFactorBIPS; // only storage placeholder
-
-        // Minimum time that has to pass between underlying withdrawal announcement and the confirmation.
-        // Any value is ok, but higher values give more security against multiple announcement attack by a miner.
-        // Shouldn't be much bigger than Flare data connector response time, so that payments can be confirmed without
-        // extra wait. Should be smaller than confirmationByOthersAfterSeconds (e.g. less than 1 hour).
-        // rate-limited
-        uint64 __announcedUnderlyingConfirmationMinSeconds;
-
-        // Minimum time from the moment token is deprecated to when it becomes invalid and agents still using
-        // it as vault collateral get liquidated.
-        // timelocked
-        uint64 tokenInvalidationTimeMinSeconds;
-
-        // On some rare occasions (stuck minting), the agent has to unlock collateral.
-        // For this, part of collateral corresponding to FTSO asset value is burned and the rest is released.
-        // However, we cannot burn typical vault collateral (stablecoins), so the agent must buy them for NAT
-        // at FTSO price multiplied with this factor (should be a bit above 1) and then we burn the NATs.
-        // timelocked
-        uint32 vaultCollateralBuyForFlareFactorBIPS;
-
-        // Amount of seconds that have to pass between available list exit announcement and execution.
-        // rate-limited
-        uint64 agentExitAvailableTimelockSeconds;
-
-        // Amount of seconds that have to pass between agent fee and pool fee share change announcement and execution.
-        // rate-limited
-        uint64 agentFeeChangeTimelockSeconds;
-
-        // Amount of seconds that have to pass between agent-set minting collateral ratio (vault or pool)
-        // change announcement and execution.
-        // rate-limited
-        uint64 agentMintingCRChangeTimelockSeconds;
-
-        // Amount of seconds that have to pass between agent-set settings for pool exit collateral ratio
-        // change announcement and execution.
-        // rate-limited
-        uint64 poolExitCRChangeTimelockSeconds;
-
-        // Amount of seconds that an agent is allowed to execute an update once it is allowed.
-        // rate-limited
-        uint64 agentTimelockedOperationWindowSeconds;
-
-        // duration of the timelock for collateral pool tokens after minting
-        uint32 collateralPoolTokenTimelockSeconds;
-
-        // If there was no liquidator for the current liquidation offer,
-        // go to the next step of liquidation after a certain period of time.
-        // rate-limited
-        uint64 liquidationStepSeconds;
-
-        // Factor with which to multiply the asset price in native currency to obtain the payment
-        // to the liquidator.
-        // Expressed in BIPS, e.g. [12000, 16000, 20000] means that the liquidator will be paid 1.2, 1.6 and 2.0
-        // times the market price of the liquidated assets after each `liquidationStepSeconds`.
-        // Values in the array must increase and be greater than 100%.
-        // rate-limited
-        uint256[] liquidationCollateralFactorBIPS;
-
-        // How much of the liquidation is paid in vault collateral.
-        // The remainder will be paid in pool NAT collateral.
-        uint256[] liquidationFactorVaultCollateralBIPS;
-
-        // Minimum time that the system must wait before performing diamond cut.
-        // The actual timelock is the maximum of this setting and GovernanceSettings.timelock.
-        uint64 diamondCutMinTimelockSeconds;
-
-        // The maximum total pause that can be triggered by non-governance (but governance allowed) caller.
-        // The duration count can be reset by the governance.
-        uint64 maxEmergencyPauseDurationSeconds;
-
-        // The amount of time since last emergency pause after which the total pause duration counter
-        // will reset automatically.
-        uint64 emergencyPauseDurationResetAfterSeconds;
-
-        // The amount of time after which the collateral reservation can be cancelled if the
-        // handshake is not completed.
-        // rate-limited
-        uint64 __cancelCollateralReservationAfterSeconds; // only storage placeholder
-
-        // The amount of collateral reservation fee returned to the minter in case of rejection or cancellation.
-        // Expressed in BIPS, e.g. 9500 for factor of 0.95, max 10000 for factor of 1.0.
-        // rate-limited
-        uint16 __rejectOrCancelCollateralReservationReturnFactorBIPS; // only storage placeholder
-
-        // Time window inside which the agent can reject the redemption request.
-        // rate-limited
-        uint64 __rejectRedemptionRequestWindowSeconds; // only storage placeholder
-
-        // Time window inside which the agent can take over the redemption request from another agent
-        // that has rejected it.
-        // rate-limited
-        uint64 __takeOverRedemptionRequestWindowSeconds; // only storage placeholder
-
-        // On redemption rejection, without take over, redeemer is compensated with
-        // redemption value recalculated in flare/sgb times redemption failure factor.
-        // Expressed in BIPS, e.g. 12000 for factor of 1.2.
-        // This is the part of factor paid from agent's vault collateral.
-        // rate-limited
-        uint32 __rejectedRedemptionDefaultFactorVaultCollateralBIPS; // only storage placeholder
-
-        // This is the part of rejected redemption factor paid from agent's pool collateral.
-        // rate-limited
-        uint32 __rejectedRedemptionDefaultFactorPoolBIPS; // only storage placeholder
+        // The amount of FAsset on the ticket.
+        uint256 ticketValueUBA;
     }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-library AgentSettings {
-    struct Data {
-        // The token used as vault collateral. Must be one of the tokens obtained by `getCollateralTypes()`,
-        // with class VAULT.
-        IERC20 vaultCollateralToken;
-        // The suffix to pool token name and symbol that identifies new vault's collateral pool token.
-        // Must be unique within an asset manager.
-        string poolTokenSuffix;
-        // Minting fee. Normally charged to minters for publicly available agents, but must be set
-        // also for self-minting agents to pay part of it to collateral pool.
-        // Fee is paid in underlying currency along with backing assets.
-        uint256 feeBIPS;
-        // Share of the minting fee that goes to the pool as percentage of the minting fee.
-        // This share of fee is minted as f-assets and belongs to the pool.
-        uint256 poolFeeShareBIPS;
-        // Collateral ratio at which we calculate locked collateral and collateral available for minting.
-        // Agent may set own value for minting collateral ratio on creation.
-        // The value must always be greater than system minimum collateral ratio for vault collateral.
-        // Warning: having this value near global min collateral ratio can quickly lead to liquidation for public
-        // agents, so it is advisable to set it significantly higher.
-        uint256 mintingVaultCollateralRatioBIPS;
-        // Collateral ratio at which we calculate locked collateral and collateral available for minting.
-        // Agent may set own value for minting collateral ratio on creation.
-        // The value must always be greater than system minimum collateral ratio for pool collateral.
-        // Warning: having this value near global min collateral ratio can quickly lead to liquidation for public
-        // agents, so it is advisable to set it significantly higher.
-        uint256 mintingPoolCollateralRatioBIPS;
-        // The factor set by the agent to multiply the price at which agent buys f-assets from pool
-        // token holders on self-close exit (when requested or the redeemed amount is less than 1 lot).
-        uint256 buyFAssetByAgentFactorBIPS;
-        // The minimum collateral ratio above which a staker can exit the pool
-        // (this is CR that must be left after exit).
-        // Must be higher than system minimum collateral ratio for pool collateral.
-        uint256 poolExitCollateralRatioBIPS;
-        // The redemption fee share paid to the pool (as FAssets).
-        // In redemption dominated situations (when agent requests return from core vault to earn
-        // from redemption fees), pool can get some share to make it sustainable for pool users.
-        // NOTE: the pool fee share is locked at the redemption request time, but is charged at the redemption
-        // confirmation time. If agent uses all the redemption fee for transaction fees, this could make the
-        // agent's free underlying balance negative.
-        uint256 redemptionPoolFeeShareBIPS;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-/**
- * Core vault settings
- */
-interface ICoreVaultClientSettings {
-    function setCoreVaultManager(address _coreVaultManager)
-        external;
-
-    function setCoreVaultNativeAddress(address payable _nativeAddress)
-        external;
-
-    function setCoreVaultTransferTimeExtensionSeconds(uint256 _transferTimeExtensionSeconds)
-        external;
-
-    function setCoreVaultRedemptionFeeBIPS(uint256 _redemptionFeeBIPS)
-        external;
-
-    function setCoreVaultMinimumAmountLeftBIPS(uint256 _minimumAmountLeftBIPS)
-        external;
-
-    function setCoreVaultMinimumRedeemLots(uint256 _minimumRedeemLots)
-        external;
-
-    function getCoreVaultManager()
-        external view
-        returns (address);
-
-    function getCoreVaultNativeAddress()
-        external view
-        returns (address);
-
-    function getCoreVaultTransferTimeExtensionSeconds()
-        external view
-        returns (uint256);
-
-    function getCoreVaultRedemptionFeeBIPS()
-        external view
-        returns (uint256);
-
-    function getCoreVaultMinimumAmountLeftBIPS()
-        external view
-        returns (uint256);
-
-    function getCoreVaultMinimumRedeemLots()
-        external view
-        returns (uint256);
 }
 
 // SPDX-License-Identifier: MIT
@@ -4824,291 +4824,6 @@ interface IAgentAlwaysAllowedMinters {
 
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-/**
- * A special contract that holds Flare governance address.
- * This contract enables updating governance address and timelock only by hard forking the network,
- * meaning only by updating validator code.
- */
-interface IGovernanceSettings {
-    /**
-     * Get the governance account address.
-     * The governance address can only be changed by a hardfork.
-     */
-    function getGovernanceAddress() external view returns (address);
-
-    /**
-     * Get the time in seconds that must pass between a governance call and execution.
-     * The timelock value can only be changed by a hardfork.
-     */
-    function getTimelock() external view returns (uint256);
-
-    /**
-     * Get the addresses of the accounts that are allowed to execute the timelocked governance calls
-     * once the timelock period expires.
-     * Executors can be changed without a hardfork, via a normal governance call.
-     */
-    function getExecutors() external view returns (address[] memory);
-
-    /**
-     * Check whether an address is one of the executors.
-     */
-    function isExecutor(address _address) external view returns (bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-interface IIAddressUpdatable {
-    /**
-     * @notice Updates contract addresses - should be called only from AddressUpdater contract
-     * @param _contractNameHashes       list of keccak256(abi.encode(...)) contract names
-     * @param _contractAddresses        list of contract addresses corresponding to the contract names
-     */
-    function updateContractAddresses(
-        bytes32[] memory _contractNameHashes,
-        address[] memory _contractAddresses
-    ) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-/**
- * @custom:name IAddressValidity
- * @custom:id 0x05
- * @custom:supported BTC, DOGE, XRP
- * @author Flare
- * @notice An assertion whether a string represents a valid address on an external chain.
- * @custom:verification The address is checked against all validity criteria of the chain with `sourceId`.
- * Indicator of validity is provided.
- * If the address is valid, its standard form and standard hash are computed.
- * Validity criteria for each supported chain:
- * - [BTC](/specs/attestations/external-chains/address-validity/BTC.md)
- * - [DOGE](/specs/attestations/external-chains/address-validity/DOGE.md)
- * - [XRPL](/specs/attestations/external-chains/address-validity/XRPL.md)
- * @custom:lut `0xffffffffffffffff` ($2^{64}-1$ in hex)
- * @custom:lutlimit `0xffffffffffffffff`, `0xffffffffffffffff`, `0xffffffffffffffff`
- */
-interface IAddressValidity {
-    /**
-     * @notice Toplevel request
-     * @param attestationType ID of the attestation type.
-     * @param sourceId Id of the data source.
-     * @param messageIntegrityCode `MessageIntegrityCode` that is derived from the expected response.
-     * @param requestBody Data defining the request. Type and interpretation is determined by the `attestationType`.
-     */
-    struct Request {
-        bytes32 attestationType;
-        bytes32 sourceId;
-        bytes32 messageIntegrityCode;
-        RequestBody requestBody;
-    }
-
-    /**
-     * @notice Toplevel response
-     * @param attestationType Extracted from the request.
-     * @param sourceId Extracted from the request.
-     * @param votingRound The ID of the State Connector round in which the request was considered.
-     * @param lowestUsedTimestamp The lowest timestamp used to generate the response.
-     * @param requestBody Extracted from the request.
-     * @param responseBody Data defining the response. The verification rules for the construction of the
-     * response body and the type are defined per specific `attestationType`.
-     */
-    struct Response {
-        bytes32 attestationType;
-        bytes32 sourceId;
-        uint64 votingRound;
-        uint64 lowestUsedTimestamp;
-        RequestBody requestBody;
-        ResponseBody responseBody;
-    }
-
-    /**
-     * @notice Toplevel proof
-     * @param merkleProof Merkle proof corresponding to the attestation response.
-     * @param data Attestation response.
-     */
-    struct Proof {
-        bytes32[] merkleProof;
-        Response data;
-    }
-
-    /**
-     * @notice Request body for IAddressValidity attestation type
-     * @param addressStr Address to be verified.
-     */
-    struct RequestBody {
-        string addressStr;
-    }
-
-    /**
-     * @notice Response body for IAddressValidity attestation type
-     * @param isValid Boolean indicator of the address validity.
-     * @param standardAddress If `isValid`, standard form of the validated address. Otherwise an empty string.
-     * @param standardAddressHash If `isValid`, standard address hash of the validated address.
-     * Otherwise a zero bytes32 string.
-     */
-    struct ResponseBody {
-        bool isValid;
-        string standardAddress;
-        bytes32 standardAddressHash;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-/**
- * @custom:name IConfirmedBlockHeightExists
- * @custom:id 0x02
- * @custom:supported BTC, DOGE, XRP
- * @author Flare
- * @notice An assertion that a block with `blockNumber` is confirmed.
- * It also provides data to compute the block production rate in the given time range.
- * @custom:verification It is checked that the block with `blockNumber` is confirmed by at
- * least `numberOfConfirmations`.
- * If it is not, the request is rejected. We note a block on the tip of the chain is confirmed by 1 block.
- * Then `lowestQueryWindowBlock` is determined and its number and timestamp are extracted.
- *
- *
- * Current confirmation heights consensus:
- *
- *
- * | `Chain` | `chainId` | `numberOfConfirmations` | `timestamp ` |
- * | ------- | --------- | ----------------------- | ------------ |
- * | `BTC`   | 0         | 6                       | mediantime   |
- * | `DOGE`  | 2         | 60                      | mediantime   |
- * | `XRP`   | 3         | 3                       | close_time   |
- *
- *
- * @custom:lut `lowestQueryWindowBlockTimestamp`
- * @custom:lutlimit `0x127500`, `0x127500`, `0x127500`
- */
-interface IConfirmedBlockHeightExists {
-    /**
-     * @notice Toplevel request
-     * @param attestationType ID of the attestation type.
-     * @param sourceId ID of the data source.
-     * @param messageIntegrityCode `MessageIntegrityCode` that is derived from the expected response as defined.
-     * @param requestBody Data defining the request. Type and interpretation is determined by the `attestationType`.
-     */
-    struct Request {
-        bytes32 attestationType;
-        bytes32 sourceId;
-        bytes32 messageIntegrityCode;
-        RequestBody requestBody;
-    }
-
-    /**
-     * @notice Toplevel response
-     * @param attestationType Extracted from the request.
-     * @param sourceId Extracted from the request.
-     * @param votingRound The ID of the State Connector round in which the request was considered.
-     * @param lowestUsedTimestamp The lowest timestamp used to generate the response.
-     * @param requestBody Extracted from the request.
-     * @param responseBody Data defining the response. The verification rules for the construction of the
-     * response body and the type are defined per specific `attestationType`.
-     */
-    struct Response {
-        bytes32 attestationType;
-        bytes32 sourceId;
-        uint64 votingRound;
-        uint64 lowestUsedTimestamp;
-        RequestBody requestBody;
-        ResponseBody responseBody;
-    }
-
-    /**
-     * @notice Toplevel proof
-     * @param merkleProof Merkle proof corresponding to the attestation response.
-     * @param data Attestation response.
-     */
-    struct Proof {
-        bytes32[] merkleProof;
-        Response data;
-    }
-
-    /**
-     * @notice Request body for ConfirmedBlockHeightExistsType attestation type
-     * @param blockNumber The number of the block the request wants a confirmation of.
-     * @param queryWindow The length of the period in which the block production rate is to be computed.
-     */
-    struct RequestBody {
-        uint64 blockNumber;
-        uint64 queryWindow;
-    }
-
-    /**
-     * @notice Response body for ConfirmedBlockHeightExistsType attestation type
-     * @custom:below `blockNumber`, `lowestQueryWindowBlockNumber`, `blockTimestamp`, `lowestQueryWindowBlockTimestamp`
-     * can be used to compute the average block production time in the specified block range.
-     * @param blockTimestamp The timestamp of the block with `blockNumber`.
-     * @param numberOfConfirmations The depth at which a block is considered confirmed depending on the chain.
-     * All attestation providers must agree on this number.
-     * @param lowestQueryWindowBlockNumber The block number of the latest block that has a timestamp strictly smaller
-     * than `blockTimestamp` - `queryWindow`.
-     * @param lowestQueryWindowBlockTimestamp The timestamp of the block at height `lowestQueryWindowBlockNumber`.
-     */
-    struct ResponseBody {
-        uint64 blockTimestamp;
-        uint64 numberOfConfirmations;
-        uint64 lowestQueryWindowBlockNumber;
-        uint64 lowestQueryWindowBlockTimestamp;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-pragma abicoder v2;
-
-interface IIAddressUpdater {
-    /**
-     * @notice Returns all contract names and corresponding addresses
-     */
-    function getContractNamesAndAddresses()
-        external
-        view
-        returns (
-            string[] memory _contractNames,
-            address[] memory _contractAddresses
-        );
-
-    /**
-     * @notice Returns contract address for the given name - might be address(0)
-     * @param _name             name of the contract
-     */
-    function getContractAddress(
-        string calldata _name
-    ) external view returns (address);
-
-    /**
-     * @notice Returns contract address for the given name hash - might be address(0)
-     * @param _nameHash         hash of the contract name (keccak256(abi.encode(name))
-     */
-    function getContractAddressByHash(
-        bytes32 _nameHash
-    ) external view returns (address);
-
-    /**
-     * @notice Returns contract addresses for the given names - might be address(0)
-     * @param _names            names of the contracts
-     */
-    function getContractAddresses(
-        string[] calldata _names
-    ) external view returns (address[] memory);
-
-    /**
-     * @notice Returns contract addresses for the given name hashes - might be address(0)
-     * @param _nameHashes       hashes of the contract names (keccak256(abi.encode(name))
-     */
-    function getContractAddressesByHash(
-        bytes32[] calldata _nameHashes
-    ) external view returns (address[] memory);
-}
-
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
@@ -5255,6 +4970,165 @@ interface IReferencedPaymentNonexistence {
 pragma solidity >=0.7.6 <0.9;
 
 /**
+ * @custom:name IPayment
+ * @custom:id 0x01
+ * @custom:supported BTC, DOGE, XRP
+ * @author Flare
+ * @notice A relay of a transaction on an external chain that is considered a payment in a native currency.
+ * Various blockchains support different types of native payments. For each blockchain, it is specified how a payment
+ * transaction should be formed to be provable by this attestation type.
+ * The provable payments emulate traditional banking payments from entity A to entity B in native currency with an
+ * optional payment reference.
+ * @custom:verification The transaction with `transactionId` is fetched from the API of the blockchain node or
+ * relevant indexer.
+ * If the transaction cannot be fetched or the transaction is in a block that does not have a sufficient
+ * [number of confirmations](/specs/attestations/configs.md#finalityconfirmation), the attestation request is rejected.
+ *
+ * Once the transaction is received, the payment summary is computed according to the rules for the source chain.
+ * If the summary is successfully calculated, the response is assembled from the summary.
+ * `blockNumber` and `blockTimestamp` are retrieved from the block if they are not included in the transaction data.
+ * For Bitcoin and Dogecoin, `blockTimestamp` is mediantime of the block.
+ * For XRPL, `blockTimestamp` is close time of the ledger converted to UNIX time.
+ *
+ * If the summary is not successfully calculated, the attestation request is rejected.
+ * @custom:lut `blockTimestamp`
+ * @custom:lutlimit `0x127500`, `0x127500`, `0x127500`
+ */
+interface IPayment {
+    /**
+     * @notice Toplevel request
+     * @param attestationType ID of the attestation type.
+     * @param sourceId ID of the data source.
+     * @param messageIntegrityCode `MessageIntegrityCode` that is derived from the expected response.
+     * @param requestBody Data defining the request. Type (struct) and interpretation is determined
+     * by the `attestationType`.
+     */
+    struct Request {
+        bytes32 attestationType;
+        bytes32 sourceId;
+        bytes32 messageIntegrityCode;
+        RequestBody requestBody;
+    }
+
+    /**
+     * @notice Toplevel response
+     * @param attestationType Extracted from the request.
+     * @param sourceId Extracted from the request.
+     * @param votingRound The ID of the State Connector round in which the request was considered.
+     * @param lowestUsedTimestamp The lowest timestamp used to generate the response.
+     * @param requestBody Extracted from the request.
+     * @param responseBody Data defining the response. The verification rules for the construction
+     * of the response body and the type are defined per specific `attestationType`.
+     */
+    struct Response {
+        bytes32 attestationType;
+        bytes32 sourceId;
+        uint64 votingRound;
+        uint64 lowestUsedTimestamp;
+        RequestBody requestBody;
+        ResponseBody responseBody;
+    }
+
+    /**
+     * @notice Toplevel proof
+     * @param merkleProof Merkle proof corresponding to the attestation response.
+     * @param data Attestation response.
+     */
+    struct Proof {
+        bytes32[] merkleProof;
+        Response data;
+    }
+
+    /**
+     * @notice Request body for Payment attestation type
+     * @param transactionId ID of the payment transaction.
+     * @param inUtxo For UTXO chains, this is the index of the transaction input with source address.
+     * Always 0 for the non-utxo chains.
+     * @param utxo For UTXO chains, this is the index of the transaction output with receiving address.
+     * Always 0 for the non-utxo chains.
+     */
+    struct RequestBody {
+        bytes32 transactionId;
+        uint256 inUtxo;
+        uint256 utxo;
+    }
+
+    /**
+     * @notice Response body for Payment attestation type
+     * @param blockNumber Number of the block in which the transaction is included.
+     * @param blockTimestamp The timestamp of the block in which the transaction is included.
+     * @param sourceAddressHash Standard address hash of the source address.
+     * @param sourceAddressesRoot The root of the Merkle tree of the source addresses.
+     * @param receivingAddressHash Standard address hash of the receiving address.
+     * The zero 32-byte string if there is no receivingAddress (if `status` is not success).
+     * @param intendedReceivingAddressHash Standard address hash of the intended receiving address.
+     * Relevant if the transaction is unsuccessful.
+     * @param spentAmount Amount in minimal units spent by the source address.
+     * @param intendedSpentAmount Amount in minimal units to be spent by the source address.
+     * Relevant if the transaction status is unsuccessful.
+     * @param receivedAmount Amount in minimal units received by the receiving address.
+     * @param intendedReceivedAmount Amount in minimal units intended to be received by the receiving address.
+     * Relevant if the transaction is unsuccessful.
+     * @param standardPaymentReference Standard payment reference of the transaction.
+     * @param oneToOne Indicator whether only one source and one receiver are involved in the transaction.
+     * @param status Succes status of the transaction: 0 - success, 1 - failed by sender's fault,
+     * 2 - failed by receiver's fault.
+     */
+    struct ResponseBody {
+        uint64 blockNumber;
+        uint64 blockTimestamp;
+        bytes32 sourceAddressHash;
+        bytes32 sourceAddressesRoot;
+        bytes32 receivingAddressHash;
+        bytes32 intendedReceivingAddressHash;
+        int256 spentAmount;
+        int256 intendedSpentAmount;
+        int256 receivedAmount;
+        int256 intendedReceivedAmount;
+        bytes32 standardPaymentReference;
+        bool oneToOne;
+        uint8 status;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+/**
+ * A special contract that holds Flare governance address.
+ * This contract enables updating governance address and timelock only by hard forking the network,
+ * meaning only by updating validator code.
+ */
+interface IGovernanceSettings {
+    /**
+     * Get the governance account address.
+     * The governance address can only be changed by a hardfork.
+     */
+    function getGovernanceAddress() external view returns (address);
+
+    /**
+     * Get the time in seconds that must pass between a governance call and execution.
+     * The timelock value can only be changed by a hardfork.
+     */
+    function getTimelock() external view returns (uint256);
+
+    /**
+     * Get the addresses of the accounts that are allowed to execute the timelocked governance calls
+     * once the timelock period expires.
+     * Executors can be changed without a hardfork, via a normal governance call.
+     */
+    function getExecutors() external view returns (address[] memory);
+
+    /**
+     * Check whether an address is one of the executors.
+     */
+    function isExecutor(address _address) external view returns (bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+/**
  * @custom:name IBalanceDecreasingTransaction
  * @custom:id 0x02
  * @custom:supported BTC, DOGE, XRP
@@ -5371,6 +5245,140 @@ interface IBalanceDecreasingTransaction {
         int256 spentAmount;
         bytes32 standardPaymentReference;
     }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+/**
+ * @custom:name IAddressValidity
+ * @custom:id 0x05
+ * @custom:supported BTC, DOGE, XRP
+ * @author Flare
+ * @notice An assertion whether a string represents a valid address on an external chain.
+ * @custom:verification The address is checked against all validity criteria of the chain with `sourceId`.
+ * Indicator of validity is provided.
+ * If the address is valid, its standard form and standard hash are computed.
+ * Validity criteria for each supported chain:
+ * - [BTC](/specs/attestations/external-chains/address-validity/BTC.md)
+ * - [DOGE](/specs/attestations/external-chains/address-validity/DOGE.md)
+ * - [XRPL](/specs/attestations/external-chains/address-validity/XRPL.md)
+ * @custom:lut `0xffffffffffffffff` ($2^{64}-1$ in hex)
+ * @custom:lutlimit `0xffffffffffffffff`, `0xffffffffffffffff`, `0xffffffffffffffff`
+ */
+interface IAddressValidity {
+    /**
+     * @notice Toplevel request
+     * @param attestationType ID of the attestation type.
+     * @param sourceId Id of the data source.
+     * @param messageIntegrityCode `MessageIntegrityCode` that is derived from the expected response.
+     * @param requestBody Data defining the request. Type and interpretation is determined by the `attestationType`.
+     */
+    struct Request {
+        bytes32 attestationType;
+        bytes32 sourceId;
+        bytes32 messageIntegrityCode;
+        RequestBody requestBody;
+    }
+
+    /**
+     * @notice Toplevel response
+     * @param attestationType Extracted from the request.
+     * @param sourceId Extracted from the request.
+     * @param votingRound The ID of the State Connector round in which the request was considered.
+     * @param lowestUsedTimestamp The lowest timestamp used to generate the response.
+     * @param requestBody Extracted from the request.
+     * @param responseBody Data defining the response. The verification rules for the construction of the
+     * response body and the type are defined per specific `attestationType`.
+     */
+    struct Response {
+        bytes32 attestationType;
+        bytes32 sourceId;
+        uint64 votingRound;
+        uint64 lowestUsedTimestamp;
+        RequestBody requestBody;
+        ResponseBody responseBody;
+    }
+
+    /**
+     * @notice Toplevel proof
+     * @param merkleProof Merkle proof corresponding to the attestation response.
+     * @param data Attestation response.
+     */
+    struct Proof {
+        bytes32[] merkleProof;
+        Response data;
+    }
+
+    /**
+     * @notice Request body for IAddressValidity attestation type
+     * @param addressStr Address to be verified.
+     */
+    struct RequestBody {
+        string addressStr;
+    }
+
+    /**
+     * @notice Response body for IAddressValidity attestation type
+     * @param isValid Boolean indicator of the address validity.
+     * @param standardAddress If `isValid`, standard form of the validated address. Otherwise an empty string.
+     * @param standardAddressHash If `isValid`, standard address hash of the validated address.
+     * Otherwise a zero bytes32 string.
+     */
+    struct ResponseBody {
+        bool isValid;
+        string standardAddress;
+        bytes32 standardAddressHash;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+pragma abicoder v2;
+
+interface IIAddressUpdater {
+    /**
+     * @notice Returns all contract names and corresponding addresses
+     */
+    function getContractNamesAndAddresses()
+        external
+        view
+        returns (
+            string[] memory _contractNames,
+            address[] memory _contractAddresses
+        );
+
+    /**
+     * @notice Returns contract address for the given name - might be address(0)
+     * @param _name             name of the contract
+     */
+    function getContractAddress(
+        string calldata _name
+    ) external view returns (address);
+
+    /**
+     * @notice Returns contract address for the given name hash - might be address(0)
+     * @param _nameHash         hash of the contract name (keccak256(abi.encode(name))
+     */
+    function getContractAddressByHash(
+        bytes32 _nameHash
+    ) external view returns (address);
+
+    /**
+     * @notice Returns contract addresses for the given names - might be address(0)
+     * @param _names            names of the contracts
+     */
+    function getContractAddresses(
+        string[] calldata _names
+    ) external view returns (address[] memory);
+
+    /**
+     * @notice Returns contract addresses for the given name hashes - might be address(0)
+     * @param _nameHashes       hashes of the contract names (keccak256(abi.encode(name))
+     */
+    function getContractAddressesByHash(
+        bytes32[] calldata _nameHashes
+    ) external view returns (address[] memory);
 }
 
 // SPDX-License-Identifier: MIT
@@ -5656,38 +5664,38 @@ interface IVPToken is IERC20 {
 pragma solidity >=0.7.6 <0.9;
 
 /**
- * @custom:name IPayment
- * @custom:id 0x01
+ * @custom:name IConfirmedBlockHeightExists
+ * @custom:id 0x02
  * @custom:supported BTC, DOGE, XRP
  * @author Flare
- * @notice A relay of a transaction on an external chain that is considered a payment in a native currency.
- * Various blockchains support different types of native payments. For each blockchain, it is specified how a payment
- * transaction should be formed to be provable by this attestation type.
- * The provable payments emulate traditional banking payments from entity A to entity B in native currency with an
- * optional payment reference.
- * @custom:verification The transaction with `transactionId` is fetched from the API of the blockchain node or
- * relevant indexer.
- * If the transaction cannot be fetched or the transaction is in a block that does not have a sufficient
- * [number of confirmations](/specs/attestations/configs.md#finalityconfirmation), the attestation request is rejected.
+ * @notice An assertion that a block with `blockNumber` is confirmed.
+ * It also provides data to compute the block production rate in the given time range.
+ * @custom:verification It is checked that the block with `blockNumber` is confirmed by at
+ * least `numberOfConfirmations`.
+ * If it is not, the request is rejected. We note a block on the tip of the chain is confirmed by 1 block.
+ * Then `lowestQueryWindowBlock` is determined and its number and timestamp are extracted.
  *
- * Once the transaction is received, the payment summary is computed according to the rules for the source chain.
- * If the summary is successfully calculated, the response is assembled from the summary.
- * `blockNumber` and `blockTimestamp` are retrieved from the block if they are not included in the transaction data.
- * For Bitcoin and Dogecoin, `blockTimestamp` is mediantime of the block.
- * For XRPL, `blockTimestamp` is close time of the ledger converted to UNIX time.
  *
- * If the summary is not successfully calculated, the attestation request is rejected.
- * @custom:lut `blockTimestamp`
+ * Current confirmation heights consensus:
+ *
+ *
+ * | `Chain` | `chainId` | `numberOfConfirmations` | `timestamp ` |
+ * | ------- | --------- | ----------------------- | ------------ |
+ * | `BTC`   | 0         | 6                       | mediantime   |
+ * | `DOGE`  | 2         | 60                      | mediantime   |
+ * | `XRP`   | 3         | 3                       | close_time   |
+ *
+ *
+ * @custom:lut `lowestQueryWindowBlockTimestamp`
  * @custom:lutlimit `0x127500`, `0x127500`, `0x127500`
  */
-interface IPayment {
+interface IConfirmedBlockHeightExists {
     /**
      * @notice Toplevel request
      * @param attestationType ID of the attestation type.
      * @param sourceId ID of the data source.
-     * @param messageIntegrityCode `MessageIntegrityCode` that is derived from the expected response.
-     * @param requestBody Data defining the request. Type (struct) and interpretation is determined
-     * by the `attestationType`.
+     * @param messageIntegrityCode `MessageIntegrityCode` that is derived from the expected response as defined.
+     * @param requestBody Data defining the request. Type and interpretation is determined by the `attestationType`.
      */
     struct Request {
         bytes32 attestationType;
@@ -5703,8 +5711,8 @@ interface IPayment {
      * @param votingRound The ID of the State Connector round in which the request was considered.
      * @param lowestUsedTimestamp The lowest timestamp used to generate the response.
      * @param requestBody Extracted from the request.
-     * @param responseBody Data defining the response. The verification rules for the construction
-     * of the response body and the type are defined per specific `attestationType`.
+     * @param responseBody Data defining the response. The verification rules for the construction of the
+     * response body and the type are defined per specific `attestationType`.
      */
     struct Response {
         bytes32 attestationType;
@@ -5726,377 +5734,378 @@ interface IPayment {
     }
 
     /**
-     * @notice Request body for Payment attestation type
-     * @param transactionId ID of the payment transaction.
-     * @param inUtxo For UTXO chains, this is the index of the transaction input with source address.
-     * Always 0 for the non-utxo chains.
-     * @param utxo For UTXO chains, this is the index of the transaction output with receiving address.
-     * Always 0 for the non-utxo chains.
+     * @notice Request body for ConfirmedBlockHeightExistsType attestation type
+     * @param blockNumber The number of the block the request wants a confirmation of.
+     * @param queryWindow The length of the period in which the block production rate is to be computed.
      */
     struct RequestBody {
-        bytes32 transactionId;
-        uint256 inUtxo;
-        uint256 utxo;
+        uint64 blockNumber;
+        uint64 queryWindow;
     }
 
     /**
-     * @notice Response body for Payment attestation type
-     * @param blockNumber Number of the block in which the transaction is included.
-     * @param blockTimestamp The timestamp of the block in which the transaction is included.
-     * @param sourceAddressHash Standard address hash of the source address.
-     * @param sourceAddressesRoot The root of the Merkle tree of the source addresses.
-     * @param receivingAddressHash Standard address hash of the receiving address.
-     * The zero 32-byte string if there is no receivingAddress (if `status` is not success).
-     * @param intendedReceivingAddressHash Standard address hash of the intended receiving address.
-     * Relevant if the transaction is unsuccessful.
-     * @param spentAmount Amount in minimal units spent by the source address.
-     * @param intendedSpentAmount Amount in minimal units to be spent by the source address.
-     * Relevant if the transaction status is unsuccessful.
-     * @param receivedAmount Amount in minimal units received by the receiving address.
-     * @param intendedReceivedAmount Amount in minimal units intended to be received by the receiving address.
-     * Relevant if the transaction is unsuccessful.
-     * @param standardPaymentReference Standard payment reference of the transaction.
-     * @param oneToOne Indicator whether only one source and one receiver are involved in the transaction.
-     * @param status Succes status of the transaction: 0 - success, 1 - failed by sender's fault,
-     * 2 - failed by receiver's fault.
+     * @notice Response body for ConfirmedBlockHeightExistsType attestation type
+     * @custom:below `blockNumber`, `lowestQueryWindowBlockNumber`, `blockTimestamp`, `lowestQueryWindowBlockTimestamp`
+     * can be used to compute the average block production time in the specified block range.
+     * @param blockTimestamp The timestamp of the block with `blockNumber`.
+     * @param numberOfConfirmations The depth at which a block is considered confirmed depending on the chain.
+     * All attestation providers must agree on this number.
+     * @param lowestQueryWindowBlockNumber The block number of the latest block that has a timestamp strictly smaller
+     * than `blockTimestamp` - `queryWindow`.
+     * @param lowestQueryWindowBlockTimestamp The timestamp of the block at height `lowestQueryWindowBlockNumber`.
      */
     struct ResponseBody {
-        uint64 blockNumber;
         uint64 blockTimestamp;
-        bytes32 sourceAddressHash;
-        bytes32 sourceAddressesRoot;
-        bytes32 receivingAddressHash;
-        bytes32 intendedReceivingAddressHash;
-        int256 spentAmount;
-        int256 intendedSpentAmount;
-        int256 receivedAmount;
-        int256 intendedReceivedAmount;
-        bytes32 standardPaymentReference;
-        bool oneToOne;
-        uint8 status;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {IGovernanceSettings} from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {ReentrancyGuard} from "../../openzeppelin/security/ReentrancyGuard.sol";
-import {CollateralTypes} from "../library/CollateralTypes.sol";
-import {SettingsInitializer} from "../library/SettingsInitializer.sol";
-import {IIAssetManager} from "../../assetManager/interfaces/IIAssetManager.sol";
-import {IDiamondCut} from "../../diamond/interfaces/IDiamondCut.sol";
-import {IDiamondLoupe} from "../../diamond/interfaces/IDiamondLoupe.sol";
-import {LibDiamond} from "../../diamond/library/LibDiamond.sol";
-import {IGoverned} from "../../governance/interfaces/IGoverned.sol";
-import {GovernedBase} from "../../governance/implementation/GovernedBase.sol";
-import {GovernedProxyImplementation} from "../../governance/implementation/GovernedProxyImplementation.sol";
-import {AssetManagerSettings} from "../../userInterfaces/data/AssetManagerSettings.sol";
-import {CollateralType} from "../../userInterfaces/data/CollateralType.sol";
-import {IAgentPing} from "../../userInterfaces/IAgentPing.sol";
-import {IAssetManager} from "../../userInterfaces/IAssetManager.sol";
-
-
-contract AssetManagerInit is GovernedProxyImplementation, ReentrancyGuard {
-    error NotInitialized();
-
-    function init(
-        IGovernanceSettings _governanceSettings,
-        address _initialGovernance,
-        AssetManagerSettings.Data memory _settings,
-        CollateralType.Data[] memory _initialCollateralTypes
-    )
-        external
-    {
-        GovernedBase.initialise(_governanceSettings, _initialGovernance);
-        ReentrancyGuard.initializeReentrancyGuard();
-        SettingsInitializer.validateAndSet(_settings);
-        CollateralTypes.initialize(_initialCollateralTypes);
-        _initIERC165();
-    }
-
-    /**
-     * If a diamond cut adds methods to one of the declared interfaces, it should call this method in initialization.
-     * In this way ERC165 identifiers for both old and new version of interface will be marked as supported,
-     * which is correct since the new interface should be backward compatible with the old one.
-     */
-    function upgradeERC165Identifiers() external {
-        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
-        require(ds.supportedInterfaces[type(IERC165).interfaceId], NotInitialized());
-        ds.supportedInterfaces[type(IGoverned).interfaceId] = true;
-        ds.supportedInterfaces[type(IAssetManager).interfaceId] = true;
-        ds.supportedInterfaces[type(IIAssetManager).interfaceId] = true;
-        ds.supportedInterfaces[type(IAgentPing).interfaceId] = true;
-    }
-
-    function _initIERC165() private {
-        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
-        ds.supportedInterfaces[type(IERC165).interfaceId] = true;
-        ds.supportedInterfaces[type(IDiamondLoupe).interfaceId] = true;
-        ds.supportedInterfaces[type(IDiamondCut).interfaceId] = true;
-        ds.supportedInterfaces[type(IGoverned).interfaceId] = true;
-        ds.supportedInterfaces[type(IAssetManager).interfaceId] = true;
-        ds.supportedInterfaces[type(IIAssetManager).interfaceId] = true;
-        ds.supportedInterfaces[type(IAgentPing).interfaceId] = true;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-/******************************************************************************\
-* Author: Nick Mudge <nick@perfectabstractions.com> (https://twitter.com/mudgen)
-* EIP-2535 Diamonds: https://eips.ethereum.org/EIPS/eip-2535
-/******************************************************************************/
-
-// The functions in DiamondLoupeFacet MUST be added to a diamond.
-// The EIP-2535 Diamond standard requires these functions.
-
-import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import { IDiamondLoupe } from "../interfaces/IDiamondLoupe.sol";
-import { LibDiamond } from  "../library/LibDiamond.sol";
-
-// solhint-disable no-inline-assembly
-contract DiamondLoupeFacet is IDiamondLoupe, IERC165 {
-    // Diamond Loupe Functions
-    ////////////////////////////////////////////////////////////////////
-    /// These functions are expected to be called frequently by tools.
-    //
-    // struct Facet {
-    //     address facetAddress;
-    //     bytes4[] functionSelectors;
-    // }
-
-    /// @notice Gets all facets and their selectors.
-    /// @return facets_ Facet
-    function facets()
-        external override view
-        returns (Facet[] memory facets_)
-    {
-        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
-        uint256 selectorCount = ds.selectors.length;
-        // create an array set to the maximum size possible
-        facets_ = new Facet[](selectorCount);
-        // create an array for counting the number of selectors for each facet
-        uint16[] memory numFacetSelectors = new uint16[](selectorCount);
-        // total number of facets
-        uint256 numFacets;
-        // loop through function selectors
-        for (uint256 selectorIndex; selectorIndex < selectorCount; selectorIndex++) {
-            bytes4 selector = ds.selectors[selectorIndex];
-            address facetAddress_ = ds.facetAddressAndSelectorPosition[selector].facetAddress;
-            bool continueLoop = false;
-            // find the functionSelectors array for selector and add selector to it
-            for (uint256 facetIndex; facetIndex < numFacets; facetIndex++) {
-                if (facets_[facetIndex].facetAddress == facetAddress_) {
-                    facets_[facetIndex].functionSelectors[numFacetSelectors[facetIndex]] = selector;
-                    numFacetSelectors[facetIndex]++;
-                    continueLoop = true;
-                    break;
-                }
-            }
-            // if functionSelectors array exists for selector then continue loop
-            if (continueLoop) {
-                continueLoop = false;
-                continue;
-            }
-            // create a new functionSelectors array for selector
-            facets_[numFacets].facetAddress = facetAddress_;
-            facets_[numFacets].functionSelectors = new bytes4[](selectorCount);
-            facets_[numFacets].functionSelectors[0] = selector;
-            numFacetSelectors[numFacets] = 1;
-            numFacets++;
-        }
-        for (uint256 facetIndex; facetIndex < numFacets; facetIndex++) {
-            uint256 numSelectors = numFacetSelectors[facetIndex];
-            bytes4[] memory selectors = facets_[facetIndex].functionSelectors;
-            // setting the number of selectors
-            assembly {
-                mstore(selectors, numSelectors)
-            }
-        }
-        // setting the number of facets
-        assembly {
-            mstore(facets_, numFacets)
-        }
-    }
-
-    /// @notice Gets all the function selectors supported by a specific facet.
-    /// @param _facet The facet address.
-    /// @return _facetFunctionSelectors The selectors associated with a facet address.
-    function facetFunctionSelectors(address _facet)
-        external override view
-        returns (bytes4[] memory _facetFunctionSelectors)
-    {
-        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
-        uint256 selectorCount = ds.selectors.length;
-        uint256 numSelectors;
-        _facetFunctionSelectors = new bytes4[](selectorCount);
-        // loop through function selectors
-        for (uint256 selectorIndex; selectorIndex < selectorCount; selectorIndex++) {
-            bytes4 selector = ds.selectors[selectorIndex];
-            address facetAddress_ = ds.facetAddressAndSelectorPosition[selector].facetAddress;
-            if (_facet == facetAddress_) {
-                _facetFunctionSelectors[numSelectors] = selector;
-                numSelectors++;
-            }
-        }
-        // Set the number of selectors in the array
-        assembly {
-            mstore(_facetFunctionSelectors, numSelectors)
-        }
-    }
-
-    /// @notice Get all the facet addresses used by a diamond.
-    /// @return facetAddresses_
-    function facetAddresses()
-        external override view
-        returns (address[] memory facetAddresses_)
-    {
-        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
-        uint256 selectorCount = ds.selectors.length;
-        // create an array set to the maximum size possible
-        facetAddresses_ = new address[](selectorCount);
-        uint256 numFacets;
-        // loop through function selectors
-        for (uint256 selectorIndex; selectorIndex < selectorCount; selectorIndex++) {
-            bytes4 selector = ds.selectors[selectorIndex];
-            address facetAddress_ = ds.facetAddressAndSelectorPosition[selector].facetAddress;
-            bool continueLoop = false;
-            // see if we have collected the address already and break out of loop if we have
-            for (uint256 facetIndex; facetIndex < numFacets; facetIndex++) {
-                if (facetAddress_ == facetAddresses_[facetIndex]) {
-                    continueLoop = true;
-                    break;
-                }
-            }
-            // continue loop if we already have the address
-            if (continueLoop) {
-                continueLoop = false;
-                continue;
-            }
-            // include address
-            facetAddresses_[numFacets] = facetAddress_;
-            numFacets++;
-        }
-        // Set the number of facet addresses in the array
-        assembly {
-            mstore(facetAddresses_, numFacets)
-        }
-    }
-
-    /// @notice Gets the facet address that supports the given selector.
-    /// @dev If facet is not found return address(0).
-    /// @param _functionSelector The function selector.
-    /// @return facetAddress_ The facet address.
-    function facetAddress(bytes4 _functionSelector)
-        external override view
-        returns (address facetAddress_)
-    {
-        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
-        facetAddress_ = ds.facetAddressAndSelectorPosition[_functionSelector].facetAddress;
-    }
-
-    // This implements ERC-165.
-    function supportsInterface(bytes4 _interfaceId)
-        external override view
-        returns (bool)
-    {
-        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
-        return ds.supportedInterfaces[_interfaceId];
+        uint64 numberOfConfirmations;
+        uint64 lowestQueryWindowBlockNumber;
+        uint64 lowestQueryWindowBlockTimestamp;
     }
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.7.6 <0.9;
 
-import "../../IVPToken.sol";
-import "../../IGovernanceVotePower.sol";
-import "./IIVPContract.sol";
-import "./IIGovernanceVotePower.sol";
-import "./IICleanable.sol";
-
-interface IIVPToken is IVPToken, IICleanable {
+interface IIAddressUpdatable {
     /**
-     * Set the contract that is allowed to set cleanupBlockNumber.
-     * Usually this will be an instance of CleanupBlockNumberManager.
+     * @notice Updates contract addresses - should be called only from AddressUpdater contract
+     * @param _contractNameHashes       list of keccak256(abi.encode(...)) contract names
+     * @param _contractAddresses        list of contract addresses corresponding to the contract names
      */
-    function setCleanupBlockNumberManager(
-        address _cleanupBlockNumberManager
+    function updateContractAddresses(
+        bytes32[] memory _contractNameHashes,
+        address[] memory _contractAddresses
     ) external;
-
-    /**
-     * Sets new governance vote power contract that allows token owners to participate in governance voting
-     * and delegate governance vote power.
-     */
-    function setGovernanceVotePower(
-        IIGovernanceVotePower _governanceVotePower
-    ) external;
-
-    /**
-     * @notice Get the total vote power at block `_blockNumber` using cache.
-     *   It tries to read the cached value and if not found, reads the actual value and stores it in cache.
-     *   Can only be used if `_blockNumber` is in the past, otherwise reverts.
-     * @param _blockNumber The block number at which to fetch.
-     * @return The total vote power at the block (sum of all accounts' vote powers).
-     */
-    function totalVotePowerAtCached(
-        uint256 _blockNumber
-    ) external returns (uint256);
-
-    /**
-     * @notice Get the vote power of `_owner` at block `_blockNumber` using cache.
-     *   It tries to read the cached value and if not found, reads the actual value and stores it in cache.
-     *   Can only be used if _blockNumber is in the past, otherwise reverts.
-     * @param _owner The address to get voting power.
-     * @param _blockNumber The block number at which to fetch.
-     * @return Vote power of `_owner` at `_blockNumber`.
-     */
-    function votePowerOfAtCached(
-        address _owner,
-        uint256 _blockNumber
-    ) external returns (uint256);
-
-    /**
-     * Return vote powers for several addresses in a batch.
-     * @param _owners The list of addresses to fetch vote power of.
-     * @param _blockNumber The block number at which to fetch.
-     * @return A list of vote powers.
-     */
-    function batchVotePowerOfAt(
-        address[] memory _owners,
-        uint256 _blockNumber
-    ) external view returns (uint256[] memory);
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IAgentPing} from "../../userInterfaces/IAgentPing.sol";
-import {AssetManagerBase} from "./AssetManagerBase.sol";
-import {Agent} from "../../assetManager/library/data/Agent.sol";
+import { UUPSUpgradeable } from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import { GovernedProxyImplementation } from "./GovernedProxyImplementation.sol";
+import { IUUPSUpgradeable } from "../../utils/interfaces/IUUPSUpgradeable.sol";
 
+/**
+ * Implementation of UUPS proxy that uses Flare governance with timelock.
+ **/
+abstract contract GovernedUUPSProxyImplementation is
+    UUPSUpgradeable,
+    GovernedProxyImplementation,
+    IUUPSUpgradeable
+{
+    constructor()
+        GovernedProxyImplementation()
+    {}
 
-contract AgentPingFacet is AssetManagerBase, IAgentPing {
     /**
-     * @inheritdoc IAgentPing
+     * See UUPSUpgradeable.upgradeTo
      */
-    function agentPing(address _agentVault, uint256 _query) external {
-        emit AgentPing(_agentVault, msg.sender, _query);
+    function upgradeTo(address newImplementation)
+        public override (IUUPSUpgradeable, UUPSUpgradeable)
+        onlyGovernance
+        onlyProxy
+    {
+        _upgradeToAndCallUUPS(newImplementation, new bytes(0), false);
     }
 
     /**
-     * @inheritdoc IAgentPing
+     * See UUPSUpgradeable.upgradeToAndCall
      */
-    function agentPingResponse(address _agentVault, uint256 _query, string memory _response)
-        external
-        onlyAgentVaultOwner(_agentVault)
+    function upgradeToAndCall(address newImplementation, bytes memory data)
+        public payable override (IUUPSUpgradeable, UUPSUpgradeable)
+        onlyGovernance
+        onlyProxy
     {
-        Agent.State storage agent = Agent.get(_agentVault);
-        emit AgentPingResponse(_agentVault, agent.ownerManagementAddress, _query, _response);
+        _upgradeToAndCallUUPS(newImplementation, data, true);
+    }
+
+    /**
+     * Unused. Only present to satisfy UUPSUpgradeable requirement.
+     * The real check is in onlyGovernance modifier on upgradeTo and upgradeToAndCall.
+     */
+    function _authorizeUpgrade(address  /* _newImplementation */)
+        internal pure override
+    {
+        assert(false);
     }
 }
 
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {Diamond} from "../../diamond/implementation/Diamond.sol";
+import {LibDiamond} from "../../diamond/library/LibDiamond.sol";
+import {IAssetManagerEvents} from "../../userInterfaces/IAssetManagerEvents.sol";
+import {IDiamondCut} from "../../diamond/interfaces/IDiamondCut.sol";
+
+/**
+ * The contract that can mint and burn f-assets while managing collateral and backing funds.
+ * There is one instance of AssetManager per f-asset type.
+ */
+contract AssetManager is Diamond, IAssetManagerEvents {
+    // IAssetManagerEvents interface is included so that blockchain explorers will be able
+    // to decode events for verified AssetManager instances.
+    constructor(IDiamondCut.FacetCut[] memory _diamondCut, address _init, bytes memory _initCalldata) payable {
+        LibDiamond.diamondCut(_diamondCut, _init, _initCalldata);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {IERC5267} from "@openzeppelin/contracts/interfaces/IERC5267.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {IIFAsset} from "../interfaces/IIFAsset.sol";
+import {ERC20Permit} from "../../openzeppelin/token/ERC20Permit.sol";
+import {CheckPointable} from "./CheckPointable.sol";
+import {IAssetManager} from "../../userInterfaces/IAssetManager.sol";
+import {IICleanable} from "@flarenetwork/flare-periphery-contracts/flare/token/interfaces/IICleanable.sol";
+import {IFAsset} from "../../userInterfaces/IFAsset.sol";
+import {IICheckPointable} from "../interfaces/IICheckPointable.sol";
+
+
+contract FAsset is IIFAsset, IERC165, ERC20, CheckPointable, UUPSUpgradeable, ERC20Permit {
+    error OnlyAssetManager();
+    error AlreadyInitialized();
+    error AlreadyUpgraded();
+    error OnlyDeployer();
+    error ZeroAssetManager();
+    error CannotReplaceAssetManager();
+    error OnlyCleanupBlockManager();
+    error FAssetTerminated();
+    error FAssetBalanceTooLow();
+    error CannotTransferToSelf();
+    error EmergencyPauseOfTransfersActive();
+
+    /**
+     * The name of the underlying asset.
+     */
+    string public override assetName;
+
+    /**
+     * The symbol of the underlying asset.
+     */
+    string public override assetSymbol;
+
+    /**
+     * The contract that is allowed to set cleanupBlockNumber.
+     * Usually this will be an instance of CleanupBlockNumberManager.
+     */
+    address public cleanupBlockNumberManager;
+
+    /**
+     * Get the asset manager, corresponding to this fAsset.
+     * fAssets and asset managers are in 1:1 correspondence.
+     */
+    address public override assetManager;
+
+    uint64 private __terminatedAt; // only storage placeholder
+
+    string private _name;
+    string private _symbol;
+    uint8 private _decimals;
+
+    // the address that created this contract and is allowed to set initial settings
+    address private _deployer;
+    bool private _initialized;
+    uint16 private _version;
+
+    modifier onlyAssetManager() {
+        require(msg.sender == assetManager, OnlyAssetManager());
+        _;
+    }
+
+    constructor()
+        ERC20("", "")
+    {
+        _initialized = true;
+        _version = 1000;
+    }
+
+    function initialize(
+        string memory name_,
+        string memory symbol_,
+        string memory assetName_,
+        string memory assetSymbol_,
+        uint8 decimals_
+    )
+        external
+    {
+        require(!_initialized, AlreadyInitialized());
+        _initialized = true;
+        _deployer = msg.sender;
+        _name = name_;
+        _symbol = symbol_;
+        _decimals = decimals_;
+        assetName = assetName_;
+        assetSymbol = assetSymbol_;
+        initializeV1r1();
+    }
+
+    function initializeV1r1() public {
+        require(_version == 0, AlreadyUpgraded());
+        _version = 1;
+        initializeEIP712(_name, "1");
+    }
+
+    /**
+     * Set asset manager contract this can be done only once and must be just after deploy
+     * (otherwise nothing can be minted).
+     */
+    function setAssetManager(address _assetManager)
+        external
+    {
+        require (msg.sender == _deployer, OnlyDeployer());
+        require(_assetManager != address(0), ZeroAssetManager());
+        require(assetManager == address(0), CannotReplaceAssetManager());
+        assetManager = _assetManager;
+    }
+
+    /**
+     * Mints `_amount` od fAsset.
+     * Only the assetManager corresponding to this fAsset may call `mint()`.
+     */
+    function mint(address _owner, uint256 _amount)
+        external override
+        onlyAssetManager
+    {
+        _mint(_owner, _amount);
+    }
+
+    /**
+     * Burns `_amount` od fAsset.
+     * Only the assetManager corresponding to this fAsset may call `burn()`.
+     */
+    function burn(address _owner, uint256 _amount)
+        external override
+        onlyAssetManager
+    {
+        _burn(_owner, _amount);
+    }
+
+    /**
+     * Returns the name of the token.
+     */
+    function name() public view virtual override(ERC20, IERC20Metadata) returns (string memory) {
+        return _name;
+    }
+
+    /**
+     * Returns the symbol of the token, usually a shorter version of the name.
+     */
+    function symbol() public view virtual override(ERC20, IERC20Metadata) returns (string memory) {
+        return _symbol;
+    }
+    /**
+     * Implements IERC20Metadata method and returns configurable number of decimals.
+     */
+    function decimals() public view virtual override(ERC20, IERC20Metadata) returns (uint8) {
+        return _decimals;
+    }
+
+    /**
+     * Set the cleanup block number.
+     * Historic data for the blocks before `cleanupBlockNumber` can be erased,
+     * history before that block should never be used since it can be inconsistent.
+     * In particular, cleanup block number must be before current vote power block.
+     * @param _blockNumber The new cleanup block number.
+     */
+    function setCleanupBlockNumber(uint256 _blockNumber)
+        external override
+    {
+        require(msg.sender == cleanupBlockNumberManager, OnlyCleanupBlockManager());
+        _setCleanupBlockNumber(_blockNumber);
+    }
+
+    /**
+     * Get the current cleanup block number.
+     */
+    function cleanupBlockNumber()
+        external view override
+        returns (uint256)
+    {
+        return _cleanupBlockNumber();
+    }
+
+    /**
+     * Set the contract that is allowed to call history cleaning methods.
+     */
+    function setCleanerContract(address _cleanerContract)
+        external override
+        onlyAssetManager
+    {
+        _setCleanerContract(_cleanerContract);
+    }
+
+    /**
+     * Set the contract that is allowed to set cleanupBlockNumber.
+     * Usually this will be an instance of CleanupBlockNumberManager.
+     */
+    function setCleanupBlockNumberManager(address _cleanupBlockNumberManager)
+        external
+        onlyAssetManager
+    {
+        cleanupBlockNumberManager = _cleanupBlockNumberManager;
+    }
+
+    function _beforeTokenTransfer(address _from, address _to, uint256 _amount)
+        internal override
+    {
+        require(_from == address(0) || balanceOf(_from) >= _amount, FAssetBalanceTooLow());
+        require(_from != _to, CannotTransferToSelf());
+        // mint and redeem are allowed on transfer pause, but not transfer
+        require(_from == address(0) || _to == address(0) || !IAssetManager(assetManager).transfersEmergencyPaused(),
+            EmergencyPauseOfTransfersActive());
+        // update balance history
+        _updateBalanceHistoryAtTransfer(_from, _to, _amount);
+    }
+
+    /**
+     * Implementation of ERC-165 interface.
+     */
+    function supportsInterface(bytes4 _interfaceId)
+        external pure override
+        returns (bool)
+    {
+        return _interfaceId == type(IERC165).interfaceId
+            || _interfaceId == type(IERC20).interfaceId
+            || _interfaceId == type(IERC20Metadata).interfaceId
+            || _interfaceId == type(IERC5267).interfaceId
+            || _interfaceId == type(IERC20Permit).interfaceId
+            || _interfaceId == type(IICheckPointable).interfaceId
+            || _interfaceId == type(IFAsset).interfaceId
+            || _interfaceId == type(IIFAsset).interfaceId
+            || _interfaceId == type(IICleanable).interfaceId;
+    }
+
+    // support for ERC20Permit
+    function _approve(address _owner, address _spender, uint256 _amount)
+        internal virtual override (ERC20, ERC20Permit)
+    {
+        ERC20._approve(_owner, _spender, _amount);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////
+    // UUPS proxy upgrade
+
+    function implementation() external view returns (address) {
+        return _getImplementation();
+    }
+
+    /**
+     * Upgrade calls can only arrive through asset manager.
+     * See UUPSUpgradeable._authorizeUpgrade.
+     */
+    function _authorizeUpgrade(address /* _newImplementation */)
+        internal virtual override
+        onlyAssetManager
+    { // solhint-disable-line no-empty-blocks
+    }
+}
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
@@ -6901,255 +6910,739 @@ contract SettingsManagementFacet is AssetManagerBase, IAssetManagerEvents, IISet
     }
 }
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.27;
 
-/******************************************************************************\
-* Author: Nick Mudge <nick@perfectabstractions.com> (https://twitter.com/mudgen)
-* EIP-2535 Diamonds: https://eips.ethereum.org/EIPS/eip-2535
-/******************************************************************************/
+import {IAgentOwnerRegistry} from "../../userInterfaces/IAgentOwnerRegistry.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {GovernedUUPSProxyImplementation} from "../../governance/implementation/GovernedUUPSProxyImplementation.sol";
+import {IGovernanceSettings} from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
 
-import { Globals } from "../library/Globals.sol";
-import { IDiamondCut } from "../../diamond/interfaces/IDiamondCut.sol";
-import { LibDiamond } from "../../diamond/library/LibDiamond.sol";
-import { GovernedProxyImplementation } from "../../governance/implementation/GovernedProxyImplementation.sol";
 
-// DiamondCutFacet that also respects diamondCutMinTimelockSeconds setting.
+contract AgentOwnerRegistry is GovernedUUPSProxyImplementation, IERC165, IAgentOwnerRegistry {
 
-// Remember to add the loupe functions from DiamondLoupeFacet to the diamond.
-// The loupe functions are required by the EIP2535 Diamonds standard
+    event ManagerChanged(address manager);
 
-contract AssetManagerDiamondCutFacet is IDiamondCut, GovernedProxyImplementation {
-    /// @notice Add/replace/remove any number of functions and optionally execute
-    ///         a function with delegatecall
-    /// @param _diamondCut Contains the facet addresses and function selectors
-    /// @param _init The address of the contract or facet to execute _calldata
-    /// @param _calldata A function call, including function selector and arguments
-    ///                  _calldata is executed with delegatecall on _init
-    function diamondCut(
-        FacetCut[] calldata _diamondCut,
-        address _init,
-        bytes calldata _calldata
+    error AddressZero();
+    error OnlyGovernanceOrManager();
+
+    /**
+     * When nonzero, this is the address that can perform whitelisting operations
+     * instead of the governance.
+     */
+    address public manager;
+
+    mapping(address => bool) private whitelist;
+
+    mapping(address => address) private workToMgmtAddress;
+    mapping(address => address) private mgmtToWorkAddress;
+
+    mapping(address => string) private agentName;
+    mapping(address => string) private agentDescription;
+    mapping(address => string) private agentIconUrl;
+    mapping(address => string) private agentTouUrl;
+
+    modifier onlyGovernanceOrManager {
+        require(msg.sender == manager || msg.sender == governance(), OnlyGovernanceOrManager());
+        _;
+    }
+
+    function initialize(IGovernanceSettings _governanceSettings, address _initialGovernance) external {
+        initialise(_governanceSettings, _initialGovernance);    // also marks as initialized
+    }
+
+    function revokeAddress(address _address) external onlyGovernanceOrManager {
+        _removeAddressFromWhitelist(_address);
+    }
+
+    function setManager(address _manager) external onlyGovernance {
+        manager = _manager;
+        emit ManagerChanged(_manager);
+    }
+
+    /**
+     * Add agent to the whitelist and set data for agent presentation.
+     * If the agent is already whitelisted, only updates agent presentation data.
+     * @param _managementAddress the agent owner's address
+     * @param _name agent owner's name
+     * @param _description agent owner's description
+     * @param _iconUrl url of the agent owner's icon image; governance or manager should check it is in correct format
+     *      and size and it is on a server where it cannot change or be deleted
+     * @param _touUrl url of the agent's page with terms of use; similar considerations apply as for icon url
+     */
+    function whitelistAndDescribeAgent(
+        address _managementAddress,
+        string memory _name,
+        string memory _description,
+        string memory _iconUrl,
+        string memory _touUrl
     )
-        external override
-        onlyGovernanceWithTimelockAtLeast(Globals.getSettings().diamondCutMinTimelockSeconds)
+        external
+        onlyGovernanceOrManager
     {
-        LibDiamond.diamondCut(_diamondCut, _init, _calldata);
+        _addAddressToWhitelist(_managementAddress);
+        _setAgentData(_managementAddress, _name, _description, _iconUrl, _touUrl);
+    }
+
+    /**
+     * Associate a work address with the agent owner's management address.
+     * Every owner (management address) can have only one work address, so as soon as the new one is set, the old
+     * one stops working.
+     * NOTE: May only be called by an agent on the allowed agent list and only from the management address.
+     */
+    function setWorkAddress(address _ownerWorkAddress)
+        external
+    {
+        require(isWhitelisted(msg.sender), AgentNotWhitelisted());
+        require(_ownerWorkAddress == address(0) || workToMgmtAddress[_ownerWorkAddress] == address(0),
+               WorkAddressInUse());
+        // delete old work to management mapping
+        address oldWorkAddress = mgmtToWorkAddress[msg.sender];
+        if (oldWorkAddress != address(0)) {
+            workToMgmtAddress[oldWorkAddress] = address(0);
+        }
+        // create a new bidirectional mapping
+        mgmtToWorkAddress[msg.sender] = _ownerWorkAddress;
+        if (_ownerWorkAddress != address(0)) {
+            workToMgmtAddress[_ownerWorkAddress] = msg.sender;
+        }
+        emit WorkAddressChanged(msg.sender, oldWorkAddress, _ownerWorkAddress);
+    }
+
+    /**
+     * Set agent owner's name.
+     * @param _managementAddress agent owner's management address
+     * @param _name new agent owner's name
+     */
+    function setAgentName(address _managementAddress, string memory _name)
+        external
+        onlyGovernanceOrManager
+    {
+        agentName[_managementAddress] = _name;
+        _emitDataChanged(_managementAddress);
+    }
+
+    /**
+     * Set agent owner's description.
+     * @param _managementAddress agent owner's management address
+     * @param _description new agent owner's description
+     */
+    function setAgentDescription(address _managementAddress, string memory _description)
+        external
+        onlyGovernanceOrManager
+    {
+        agentDescription[_managementAddress] = _description;
+        _emitDataChanged(_managementAddress);
+    }
+
+    /**
+     * Set url of the agent owner's icon.
+     * @param _managementAddress agent owner's management address
+     * @param _iconUrl new url of the agent owner's icon
+     */
+    function setAgentIconUrl(address _managementAddress, string memory _iconUrl)
+        external
+        onlyGovernanceOrManager
+    {
+        agentIconUrl[_managementAddress] = _iconUrl;
+        _emitDataChanged(_managementAddress);
+    }
+
+    /**
+     * Set url of the agent's page with terms of use.
+     * @param _managementAddress agent owner's management address
+     * @param _touUrl new url of the agent's page with terms of use
+     */
+    function setAgentTermsOfUseUrl(address _managementAddress, string memory _touUrl)
+        external
+        onlyGovernanceOrManager
+    {
+        agentTouUrl[_managementAddress] = _touUrl;
+        _emitDataChanged(_managementAddress);
+    }
+
+    /**
+     * Return agent owner's name.
+     * @param _managementAddress agent owner's management address
+     */
+    function getAgentName(address _managementAddress)
+        external view override
+        returns (string memory)
+    {
+        return agentName[_managementAddress];
+    }
+
+    /**
+     * Return agent owner's description.
+     * @param _managementAddress agent owner's management address
+     */
+    function getAgentDescription(address _managementAddress)
+        external view override
+        returns (string memory)
+    {
+        return agentDescription[_managementAddress];
+    }
+
+    /**
+     * Return url of the agent owner's icon.
+     * @param _managementAddress agent owner's management address
+     */
+    function getAgentIconUrl(address _managementAddress)
+        external view override
+        returns (string memory)
+    {
+        return agentIconUrl[_managementAddress];
+    }
+
+    /**
+     * Return url of the agent's page with terms of use.
+     * @param _managementAddress agent owner's management address
+     */
+    function getAgentTermsOfUseUrl(address _managementAddress)
+        external view override
+        returns (string memory)
+    {
+        return agentTouUrl[_managementAddress];
+    }
+
+    /**
+     * Get the (unique) work address for the given management address.
+     */
+    function getWorkAddress(address _managementAddress)
+        external view override
+        returns (address)
+    {
+        return mgmtToWorkAddress[_managementAddress];
+    }
+
+    /**
+     * Get the (unique) management address for the given work address.
+     */
+    function getManagementAddress(address _workAddress)
+        external view override
+        returns (address)
+    {
+        return workToMgmtAddress[_workAddress];
+    }
+
+    function isWhitelisted(address _address) public view override returns (bool) {
+        return whitelist[_address];
+    }
+
+    function _addAddressToWhitelist(address _address) internal {
+        require(_address != address(0), AddressZero());
+        if (whitelist[_address]) return;
+        whitelist[_address] = true;
+        emit Whitelisted(_address);
+    }
+
+    function _removeAddressFromWhitelist(address _address) internal {
+        if (!whitelist[_address]) return;
+        delete whitelist[_address];
+        emit WhitelistingRevoked(_address);
+    }
+
+    function _setAgentData(
+        address _managementAddress,
+        string memory _name,
+        string memory _description,
+        string memory _iconUrl,
+        string memory _touUrl
+    ) private {
+        agentName[_managementAddress] = _name;
+        agentDescription[_managementAddress] = _description;
+        agentIconUrl[_managementAddress] = _iconUrl;
+        agentTouUrl[_managementAddress] = _touUrl;
+        emit AgentDataChanged(_managementAddress, _name, _description, _iconUrl, _touUrl);
+    }
+
+    function _emitDataChanged(address _managementAddress) private {
+        emit AgentDataChanged(_managementAddress,
+            agentName[_managementAddress],
+            agentDescription[_managementAddress],
+            agentIconUrl[_managementAddress],
+            agentTouUrl[_managementAddress]);
+    }
+
+    /**
+     * Implementation of ERC-165 interface.
+     */
+    function supportsInterface(bytes4 _interfaceId)
+        public pure override
+        returns (bool)
+    {
+        return _interfaceId == type(IERC165).interfaceId
+            || _interfaceId == type(IAgentOwnerRegistry).interfaceId;
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {IAgentPing} from "../../userInterfaces/IAgentPing.sol";
+import {AssetManagerBase} from "./AssetManagerBase.sol";
+import {Agent} from "../../assetManager/library/data/Agent.sol";
+
+
+contract AgentPingFacet is AssetManagerBase, IAgentPing {
+    /**
+     * @inheritdoc IAgentPing
+     */
+    function agentPing(address _agentVault, uint256 _query) external {
+        emit AgentPing(_agentVault, msg.sender, _query);
+    }
+
+    /**
+     * @inheritdoc IAgentPing
+     */
+    function agentPingResponse(address _agentVault, uint256 _query, string memory _response)
+        external
+        onlyAgentVaultOwner(_agentVault)
+    {
+        Agent.State storage agent = Agent.get(_agentVault);
+        emit AgentPingResponse(_agentVault, agent.ownerManagementAddress, _query, _response);
     }
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {IERC5267} from "@openzeppelin/contracts/interfaces/IERC5267.sol";
-import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
-import {IIFAsset} from "../interfaces/IIFAsset.sol";
-import {ERC20Permit} from "../../openzeppelin/token/ERC20Permit.sol";
-import {CheckPointable} from "./CheckPointable.sol";
-import {IAssetManager} from "../../userInterfaces/IAssetManager.sol";
-import {IICleanable} from "@flarenetwork/flare-periphery-contracts/flare/token/interfaces/IICleanable.sol";
-import {IFAsset} from "../../userInterfaces/IFAsset.sol";
-import {IICheckPointable} from "../interfaces/IICheckPointable.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {IRelay} from "@flarenetwork/flare-periphery-contracts/flare/IRelay.sol";
+import {GovernedUUPSProxyImplementation} from "../../governance/implementation/GovernedUUPSProxyImplementation.sol";
+import {AddressUpdatable} from "../../flareSmartContracts/implementation/AddressUpdatable.sol";
+import {IPriceReader} from "../../ftso/interfaces/IPriceReader.sol";
+import {IPricePublisher} from "../interfaces/IPricePublisher.sol";
+import {IGovernanceSettings} from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
 
 
-contract FAsset is IIFAsset, IERC165, ERC20, CheckPointable, UUPSUpgradeable, ERC20Permit {
-    error OnlyAssetManager();
-    error AlreadyInitialized();
-    error AlreadyUpgraded();
-    error OnlyDeployer();
-    error ZeroAssetManager();
-    error CannotReplaceAssetManager();
-    error OnlyCleanupBlockManager();
-    error FAssetTerminated();
-    error FAssetBalanceTooLow();
-    error CannotTransferToSelf();
-    error EmergencyPauseOfTransfersActive();
+contract FtsoV2PriceStore is
+    GovernedUUPSProxyImplementation,
+    IPriceReader,
+    IPricePublisher,
+    IERC165,
+    AddressUpdatable
+{
+    using MerkleProof for bytes32[];
 
-    /**
-     * The name of the underlying asset.
-     */
-    string public override assetName;
+    uint256 internal constant MAX_BIPS = 1e4;
 
-    /**
-     * The symbol of the underlying asset.
-     */
-    string public override assetSymbol;
+    struct PriceStore {
+        uint32 votingRoundId;
+        uint32 value;
+        int8 decimals;
 
-    /**
-     * The contract that is allowed to set cleanupBlockNumber.
-     * Usually this will be an instance of CleanupBlockNumberManager.
-     */
-    address public cleanupBlockNumberManager;
-
-    /**
-     * Get the asset manager, corresponding to this fAsset.
-     * fAssets and asset managers are in 1:1 correspondence.
-     */
-    address public override assetManager;
-
-    uint64 private __terminatedAt; // only storage placeholder
-
-    string private _name;
-    string private _symbol;
-    uint8 private _decimals;
-
-    // the address that created this contract and is allowed to set initial settings
-    address private _deployer;
-    bool private _initialized;
-    uint16 private _version;
-
-    modifier onlyAssetManager() {
-        require(msg.sender == assetManager, OnlyAssetManager());
-        _;
+        uint32 trustedVotingRoundId;
+        uint32 trustedValue;
+        int8 trustedDecimals;
+        uint8 numberOfSubmits;
     }
+
+    error InvalidStartTime();
+    error VotingEpochDurationTooShort();
+    error WrongNumberOfProofs();
+    error PricesAlreadyPublished();
+    error SubmissionWindowNotClosed();
+    error VotingRoundIdMismatch();
+    error FeedIdMismatch();
+    error ValueMustBeNonNegative();
+    error MerkleProofInvalid();
+    error OnlyTrustedProvider();
+    error AllPricesMustBeProvided();
+    error SubmissionWindowClosed();
+    error AlreadySubmitted();
+    error DecimalsMismatch();
+    error LengthMismatch();
+    error MaxSpreadTooBig();
+    error TooManyTrustedProviders();
+    error ThresholdTooHigh();
+    error SymbolNotSupported();
+
+    /// Timestamp when the first voting epoch started, in seconds since UNIX epoch.
+    uint64 public firstVotingRoundStartTs;
+    /// Duration of voting epochs, in seconds.
+    uint64 public votingEpochDurationSeconds;
+    /// Duration of a window for submitting trusted prices, in seconds.
+    uint64 public submitTrustedPricesWindowSeconds;
+    /// The FTSO protocol id.
+    uint8 public ftsoProtocolId;
+
+    /// The list of required feed ids to be published.
+    bytes21[] internal feedIds;
+    /// Mapping from symbol to feed id - used for price lookups (backwards compatibility).
+    mapping(string symbol => bytes21 feedId) internal symbolToFeedId;
+    /// Mapping from feed id to symbol - used for list of supported symbols.
+    mapping(bytes21 feedId => string symbol) internal feedIdToSymbol;
+    /// Mapping from feed id to price store which holds the latest published FTSO scaling price and trusted price.
+    mapping(bytes21 feedId => PriceStore) internal latestPrices;
+    /// Mapping from feed id to submitted trusted prices for the given voting round.
+    mapping(bytes21 feedId => mapping (uint32 votingRoundId => bytes)) internal submittedTrustedPrices;
+    /// Mapping from trusted provider to the last submitted voting epoch id.
+    mapping(address trustedProvider => uint256 lastVotingEpochId) internal lastVotingEpochIdByProvider;
+
+    /// The list of trusted providers.
+    address[] internal trustedProviders;
+    mapping(address trustedProvider => bool isTrustedProvider) internal trustedProvidersMap;
+    /// Trusted providers threshold for calculating the median price.
+    uint8 public trustedProvidersThreshold;
+    /// The maximum spread between the median price and the nearby trusted prices in BIPS in order to update the price.
+    uint16 public maxSpreadBIPS;
+
+    /// The Relay contract.
+    IRelay public relay;
+    /// The last published voting round id.
+    uint32 public lastPublishedVotingRoundId;
+
+    event PricesPublished(uint32 indexed votingRoundId);
 
     constructor()
-        ERC20("", "")
-    {
-        _initialized = true;
-        _version = 1000;
-    }
+        GovernedUUPSProxyImplementation()   // marks as initialized
+        AddressUpdatable(address(0))
+    {}
 
     function initialize(
-        string memory name_,
-        string memory symbol_,
-        string memory assetName_,
-        string memory assetSymbol_,
-        uint8 decimals_
+        IGovernanceSettings _governanceSettings,
+        address _initialGovernance,
+        address _addressUpdater,
+        uint64 _firstVotingRoundStartTs,
+        uint8 _votingEpochDurationSeconds,
+        uint8 _ftsoProtocolId
     )
         external
     {
-        require(!_initialized, AlreadyInitialized());
-        _initialized = true;
-        _deployer = msg.sender;
-        _name = name_;
-        _symbol = symbol_;
-        _decimals = decimals_;
-        assetName = assetName_;
-        assetSymbol = assetSymbol_;
-        initializeV1r1();
-    }
+        require(_firstVotingRoundStartTs + _votingEpochDurationSeconds <= block.timestamp, InvalidStartTime());
+        require(_votingEpochDurationSeconds > 1, VotingEpochDurationTooShort()); // 90 s
 
-    function initializeV1r1() public {
-        require(_version == 0, AlreadyUpgraded());
-        _version = 1;
-        initializeEIP712(_name, "1");
+        initialise(_governanceSettings, _initialGovernance);    // also marks as initialized
+        setAddressUpdaterValue(_addressUpdater);
+        firstVotingRoundStartTs = _firstVotingRoundStartTs;
+        votingEpochDurationSeconds = _votingEpochDurationSeconds;
+        submitTrustedPricesWindowSeconds = _votingEpochDurationSeconds / 2; // 45 s
+        ftsoProtocolId = _ftsoProtocolId;
+        lastPublishedVotingRoundId = _getPreviousVotingEpochId();
     }
 
     /**
-     * Set asset manager contract this can be done only once and must be just after deploy
-     * (otherwise nothing can be minted).
+     * @inheritdoc IPricePublisher
      */
-    function setAssetManager(address _assetManager)
-        external
+    function publishPrices(FeedWithProof[] calldata _proofs) external {
+        uint32 votingRoundId = 0;
+        require(_proofs.length == feedIds.length, WrongNumberOfProofs());
+        for (uint256 i = 0; i < _proofs.length; i++) {
+            FeedWithProof calldata proof = _proofs[i];
+            Feed calldata feed = proof.body;
+            if (i == 0) {
+                votingRoundId = feed.votingRoundId;
+                require(votingRoundId > lastPublishedVotingRoundId, PricesAlreadyPublished());
+                require(_getEndTimestamp(votingRoundId) + submitTrustedPricesWindowSeconds <= block.timestamp,
+                    SubmissionWindowNotClosed());
+                // update last published voting round id
+                lastPublishedVotingRoundId = votingRoundId;
+                // emit event
+                emit PricesPublished(votingRoundId);
+            } else {
+                require(feed.votingRoundId == votingRoundId, VotingRoundIdMismatch());
+            }
+            bytes21 feedId = feedIds[i];
+            require(feed.id == feedId, FeedIdMismatch());
+            require(feed.value >= 0, ValueMustBeNonNegative());
+
+            bytes32 feedHash = keccak256(abi.encode(feed));
+            bytes32 merkleRoot = relay.merkleRoots(ftsoProtocolId, votingRoundId);
+            require(proof.proof.verifyCalldata(merkleRoot, feedHash), MerkleProofInvalid());
+
+            PriceStore storage priceStore = latestPrices[feedId];
+            priceStore.votingRoundId = feed.votingRoundId;
+            priceStore.value = uint32(feed.value);
+            priceStore.decimals = feed.decimals;
+
+            // calculate trusted prices for the same voting round
+            bytes memory trustedPrices = submittedTrustedPrices[feedId][votingRoundId];
+            if (trustedPrices.length > 0 && trustedPrices.length >= 4 * trustedProvidersThreshold) {
+                // calculate median price
+                (uint256 medianPrice, bool priceOk) = _calculateMedian(trustedPrices);
+                if (priceOk) {
+                    // store the median price
+                    priceStore.trustedVotingRoundId = votingRoundId;
+                    priceStore.trustedValue = uint32(medianPrice);
+                    priceStore.numberOfSubmits = uint8(trustedPrices.length / 4);
+                }
+                // delete submitted trusted prices
+                delete submittedTrustedPrices[feedId][votingRoundId];
+            }
+        }
+    }
+
+    /**
+     * @inheritdoc IPricePublisher
+     * @dev The function can be called by trusted providers only.
+     */
+    function submitTrustedPrices(uint32 _votingRoundId, TrustedProviderFeed[] calldata _feeds) external {
+        require(trustedProvidersMap[msg.sender], OnlyTrustedProvider());
+        require(_feeds.length == feedIds.length, AllPricesMustBeProvided());
+        uint32 previousVotingEpochId = _getPreviousVotingEpochId();
+        require(_votingRoundId == previousVotingEpochId, VotingRoundIdMismatch());
+        // end of previous voting epoch = start of current voting epoch
+        uint256 startTimestamp = _getEndTimestamp(previousVotingEpochId);
+        uint256 endTimestamp = startTimestamp + submitTrustedPricesWindowSeconds;
+        require(block.timestamp >= startTimestamp && block.timestamp < endTimestamp, SubmissionWindowClosed());
+        require(lastVotingEpochIdByProvider[msg.sender] < previousVotingEpochId, AlreadySubmitted());
+        // mark the trusted provider submission
+        lastVotingEpochIdByProvider[msg.sender] = previousVotingEpochId;
+
+        for (uint256 i = 0; i < _feeds.length; i++) {
+            TrustedProviderFeed calldata feed = _feeds[i];
+            bytes21 feedId = feedIds[i];
+            require(feed.id == feedId, FeedIdMismatch());
+            require(feed.decimals == latestPrices[feedId].trustedDecimals, DecimalsMismatch());
+            submittedTrustedPrices[feedId][previousVotingEpochId] =
+                bytes.concat(submittedTrustedPrices[feedId][previousVotingEpochId], bytes4(feed.value));
+        }
+    }
+
+    /**
+     * Updates the settings.
+     * @param _feedIds The list of feed ids.
+     * @param _symbols The list of symbols.
+     * @param _trustedDecimals The list of trusted decimals.
+     * @param _maxSpreadBIPS The maximum spread between the median price and the nearby trusted prices in BIPS.
+     * @dev Can only be called by the governance.
+     */
+    function updateSettings(
+        bytes21[] calldata _feedIds,
+        string[] calldata _symbols,
+        int8[] calldata _trustedDecimals,
+        uint16 _maxSpreadBIPS
+    )
+        external onlyGovernance
     {
-        require (msg.sender == _deployer, OnlyDeployer());
-        require(_assetManager != address(0), ZeroAssetManager());
-        require(assetManager == address(0), CannotReplaceAssetManager());
-        assetManager = _assetManager;
+        require(_feedIds.length == _symbols.length && _feedIds.length == _trustedDecimals.length, LengthMismatch());
+        require(_maxSpreadBIPS <= MAX_BIPS, MaxSpreadTooBig());
+        maxSpreadBIPS = _maxSpreadBIPS;
+        feedIds = _feedIds;
+        for (uint256 i = 0; i < _feedIds.length; i++) {
+            bytes21 feedId = _feedIds[i];
+            symbolToFeedId[_symbols[i]] = feedId;
+            feedIdToSymbol[feedId] = _symbols[i];
+            PriceStore storage latestPrice = latestPrices[feedId];
+            if (latestPrice.trustedDecimals != _trustedDecimals[i]) {
+                latestPrice.trustedDecimals = _trustedDecimals[i];
+                latestPrice.trustedValue = 0;
+                latestPrice.trustedVotingRoundId = 0;
+                // delete all submitted trusted prices for the symbol
+                for (uint32 j = lastPublishedVotingRoundId + 1; j <= _getPreviousVotingEpochId(); j++) {
+                    delete submittedTrustedPrices[feedId][j];
+                }
+            }
+        }
     }
 
     /**
-     * Mints `_amount` od fAsset.
-     * Only the assetManager corresponding to this fAsset may call `mint()`.
+     * Sets the trusted providers.
+     * @param _trustedProviders The list of trusted providers.
+     * @param _trustedProvidersThreshold The trusted providers threshold for calculating the median price.
+     * @dev Can only be called by the governance.
      */
-    function mint(address _owner, uint256 _amount)
-        external override
-        onlyAssetManager
+    function setTrustedProviders(
+        address[] calldata _trustedProviders,
+        uint8 _trustedProvidersThreshold
+    )
+        external onlyGovernance
     {
-        _mint(_owner, _amount);
+        require(_trustedProviders.length < 2**8, TooManyTrustedProviders());
+        require(_trustedProviders.length >= _trustedProvidersThreshold, ThresholdTooHigh());
+        trustedProvidersThreshold = _trustedProvidersThreshold;
+        // reset all trusted providers
+        for (uint256 i = 0; i < trustedProviders.length; i++) {
+            trustedProvidersMap[trustedProviders[i]] = false;
+        }
+        // set new trusted providers
+        trustedProviders = _trustedProviders;
+        for (uint256 i = 0; i < _trustedProviders.length; i++) {
+            trustedProvidersMap[_trustedProviders[i]] = true;
+        }
     }
 
     /**
-     * Burns `_amount` od fAsset.
-     * Only the assetManager corresponding to this fAsset may call `burn()`.
+     * @inheritdoc IPriceReader
      */
-    function burn(address _owner, uint256 _amount)
-        external override
-        onlyAssetManager
+    function getPrice(string memory _symbol)
+        external view
+        returns (uint256 _price, uint256 _timestamp, uint256 _priceDecimals)
     {
-        _burn(_owner, _amount);
+        bytes21 feedId = symbolToFeedId[_symbol];
+        require(feedId != bytes21(0), SymbolNotSupported());
+        PriceStore storage feed = latestPrices[feedId];
+        _price = feed.value;
+        _timestamp = _getEndTimestamp(feed.votingRoundId);
+        int256 decimals = feed.decimals; // int8
+        if (decimals < 0) {
+            _priceDecimals = 0;
+            _price *= 10 ** uint256(-decimals);
+        } else {
+            _priceDecimals = uint256(decimals);
+        }
     }
 
     /**
-     * Returns the name of the token.
+     * @inheritdoc IPriceReader
      */
-    function name() public view virtual override(ERC20, IERC20Metadata) returns (string memory) {
-        return _name;
-    }
-
-    /**
-     * Returns the symbol of the token, usually a shorter version of the name.
-     */
-    function symbol() public view virtual override(ERC20, IERC20Metadata) returns (string memory) {
-        return _symbol;
-    }
-    /**
-     * Implements IERC20Metadata method and returns configurable number of decimals.
-     */
-    function decimals() public view virtual override(ERC20, IERC20Metadata) returns (uint8) {
-        return _decimals;
-    }
-
-    /**
-     * Set the cleanup block number.
-     * Historic data for the blocks before `cleanupBlockNumber` can be erased,
-     * history before that block should never be used since it can be inconsistent.
-     * In particular, cleanup block number must be before current vote power block.
-     * @param _blockNumber The new cleanup block number.
-     */
-    function setCleanupBlockNumber(uint256 _blockNumber)
-        external override
+    function getPriceFromTrustedProviders(string memory _symbol)
+        external view
+        returns (uint256 _price, uint256 _timestamp, uint256 _priceDecimals)
     {
-        require(msg.sender == cleanupBlockNumberManager, OnlyCleanupBlockManager());
-        _setCleanupBlockNumber(_blockNumber);
+        bytes21 feedId = symbolToFeedId[_symbol];
+        require(feedId != bytes21(0), SymbolNotSupported());
+        PriceStore storage feed = latestPrices[feedId];
+        (_price, _timestamp, _priceDecimals) = _getPriceFromTrustedProviders(feed);
     }
 
     /**
-     * Get the current cleanup block number.
+     * @inheritdoc IPriceReader
      */
-    function cleanupBlockNumber()
-        external view override
-        returns (uint256)
+    function getPriceFromTrustedProvidersWithQuality(string memory _symbol)
+        external view
+        returns (uint256 _price, uint256 _timestamp, uint256 _priceDecimals, uint8 _numberOfSubmits)
     {
-        return _cleanupBlockNumber();
+        bytes21 feedId = symbolToFeedId[_symbol];
+        require(feedId != bytes21(0), SymbolNotSupported());
+        PriceStore storage feed = latestPrices[feedId];
+        (_price, _timestamp, _priceDecimals) = _getPriceFromTrustedProviders(feed);
+        _numberOfSubmits = feed.numberOfSubmits;
     }
 
     /**
-     * Set the contract that is allowed to call history cleaning methods.
+     * @inheritdoc IPricePublisher
      */
-    function setCleanerContract(address _cleanerContract)
-        external override
-        onlyAssetManager
-    {
-        _setCleanerContract(_cleanerContract);
+    function getFeedIds() external view returns (bytes21[] memory) {
+        return feedIds;
     }
 
     /**
-     * Set the contract that is allowed to set cleanupBlockNumber.
-     * Usually this will be an instance of CleanupBlockNumberManager.
+     * @inheritdoc IPricePublisher
      */
-    function setCleanupBlockNumberManager(address _cleanupBlockNumberManager)
-        external
-        onlyAssetManager
-    {
-        cleanupBlockNumberManager = _cleanupBlockNumberManager;
+    function getFeedIdsWithDecimals() external view returns (bytes21[] memory _feedIds, int8[] memory _decimals) {
+        _feedIds = feedIds;
+        _decimals = new int8[](_feedIds.length);
+        for (uint256 i = 0; i < _feedIds.length; i++) {
+            _decimals[i] = latestPrices[_feedIds[i]].trustedDecimals;
+        }
     }
 
-    function _beforeTokenTransfer(address _from, address _to, uint256 _amount)
+    /**
+     * @inheritdoc IPricePublisher
+     */
+    function getSymbols() external view returns (string[] memory _symbols) {
+        _symbols = new string[](feedIds.length);
+        for (uint256 i = 0; i < feedIds.length; i++) {
+            _symbols[i] = feedIdToSymbol[feedIds[i]];
+        }
+    }
+
+    /**
+     * @inheritdoc IPricePublisher
+     */
+    function getFeedId(string memory _symbol) external view returns (bytes21) {
+        return symbolToFeedId[_symbol];
+    }
+
+    /**
+     * @inheritdoc IPricePublisher
+     */
+    function getTrustedProviders() external view returns (address[] memory) {
+        return trustedProviders;
+    }
+
+    /**
+     * @notice virtual method that a contract extending AddressUpdatable must implement
+     */
+    function _updateContractAddresses(
+        bytes32[] memory _contractNameHashes,
+        address[] memory _contractAddresses
+    )
         internal override
     {
-        require(_from == address(0) || balanceOf(_from) >= _amount, FAssetBalanceTooLow());
-        require(_from != _to, CannotTransferToSelf());
-        // mint and redeem are allowed on transfer pause, but not transfer
-        require(_from == address(0) || _to == address(0) || !IAssetManager(assetManager).transfersEmergencyPaused(),
-            EmergencyPauseOfTransfersActive());
-        // update balance history
-        _updateBalanceHistoryAtTransfer(_from, _to, _amount);
+        relay = IRelay(_getContractAddress(_contractNameHashes, _contractAddresses, "Relay"));
+    }
+
+    /**
+     * Returns the previous voting epoch id.
+     */
+    function _getPreviousVotingEpochId() internal view returns(uint32) {
+        return uint32((block.timestamp - firstVotingRoundStartTs) / votingEpochDurationSeconds) - 1;
+    }
+
+    /**
+     * Returns the end timestamp for the given voting epoch id.
+     */
+    function _getEndTimestamp(uint256 _votingEpochId) internal view returns(uint256) {
+        return firstVotingRoundStartTs + (_votingEpochId + 1) * votingEpochDurationSeconds;
+    }
+
+    /**
+     * Returns price data from trusted providers.
+     */
+    function _getPriceFromTrustedProviders(PriceStore storage _feed)
+        internal view
+        returns (uint256 _price, uint256 _timestamp, uint256 _priceDecimals)
+    {
+        _price = _feed.trustedValue;
+        _timestamp = _getEndTimestamp(_feed.trustedVotingRoundId);
+        int256 decimals = _feed.trustedDecimals; // int8
+        if (decimals < 0) {
+            _priceDecimals = 0;
+            _price *= 10 ** uint256(-decimals);
+        } else {
+            _priceDecimals = uint256(decimals);
+        }
+    }
+
+    /**
+     * @notice Calculates the simple median price (using insertion sort) - sorts original array
+     * @param _prices positional array of prices to be sorted
+     * @return _medianPrice median price
+     * @return _priceOk true if the median price is within the spread
+     */
+    function _calculateMedian(bytes memory _prices) internal view returns (uint256 _medianPrice, bool _priceOk) {
+        uint256 length = _prices.length;
+        assert(length > 0 && length % 4 == 0);
+        length /= 4;
+        uint256[] memory prices = new uint256[](length);
+        for (uint256 i = 0; i < length; i++) {
+            bytes memory price = new bytes(4);
+            for (uint256 j = 0; j < 4; j++) {
+                price[j] = _prices[i * 4 + j];
+            }
+            prices[i] = uint32(bytes4(price));
+        }
+
+        for (uint256 i = 1; i < length; i++) {
+            // price to sort next
+            uint256 currentPrice = prices[i];
+
+            // shift bigger prices right
+            uint256 j = i;
+            while (j > 0 && prices[j - 1] > currentPrice) {
+                prices[j] = prices[j - 1];
+                j--; // no underflow
+            }
+            // insert
+            prices[j] = currentPrice;
+        }
+
+        uint256 spread = 0;
+        uint256 middleIndex = length / 2;
+        if (length % 2 == 1) {
+            _medianPrice = prices[middleIndex];
+            if (length >= 3) {
+                spread = (prices[middleIndex + 1] - prices[middleIndex - 1]) / 2;
+            }
+        } else {
+            // if median is "in the middle", take the average price of the two consecutive prices
+            _medianPrice = (prices[middleIndex - 1] + prices[middleIndex]) / 2;
+            spread = prices[middleIndex] - prices[middleIndex - 1];
+        }
+        // check if spread is within the limit
+        _priceOk = spread <= maxSpreadBIPS * _medianPrice / MAX_BIPS; // no overflow
     }
 
     /**
@@ -7160,709 +7653,8 @@ contract FAsset is IIFAsset, IERC165, ERC20, CheckPointable, UUPSUpgradeable, ER
         returns (bool)
     {
         return _interfaceId == type(IERC165).interfaceId
-            || _interfaceId == type(IERC20).interfaceId
-            || _interfaceId == type(IERC20Metadata).interfaceId
-            || _interfaceId == type(IERC5267).interfaceId
-            || _interfaceId == type(IERC20Permit).interfaceId
-            || _interfaceId == type(IICheckPointable).interfaceId
-            || _interfaceId == type(IFAsset).interfaceId
-            || _interfaceId == type(IIFAsset).interfaceId
-            || _interfaceId == type(IICleanable).interfaceId;
-    }
-
-    // support for ERC20Permit
-    function _approve(address _owner, address _spender, uint256 _amount)
-        internal virtual override (ERC20, ERC20Permit)
-    {
-        ERC20._approve(_owner, _spender, _amount);
-    }
-
-    ////////////////////////////////////////////////////////////////////////////////////
-    // UUPS proxy upgrade
-
-    function implementation() external view returns (address) {
-        return _getImplementation();
-    }
-
-    /**
-     * Upgrade calls can only arrive through asset manager.
-     * See UUPSUpgradeable._authorizeUpgrade.
-     */
-    function _authorizeUpgrade(address /* _newImplementation */)
-        internal virtual override
-        onlyAssetManager
-    { // solhint-disable-line no-empty-blocks
-    }
-}
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import { UUPSUpgradeable } from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
-import { GovernedProxyImplementation } from "./GovernedProxyImplementation.sol";
-import { IUUPSUpgradeable } from "../../utils/interfaces/IUUPSUpgradeable.sol";
-
-/**
- * Implementation of UUPS proxy that uses Flare governance with timelock.
- **/
-abstract contract GovernedUUPSProxyImplementation is
-    UUPSUpgradeable,
-    GovernedProxyImplementation,
-    IUUPSUpgradeable
-{
-    constructor()
-        GovernedProxyImplementation()
-    {}
-
-    /**
-     * See UUPSUpgradeable.upgradeTo
-     */
-    function upgradeTo(address newImplementation)
-        public override (IUUPSUpgradeable, UUPSUpgradeable)
-        onlyGovernance
-        onlyProxy
-    {
-        _upgradeToAndCallUUPS(newImplementation, new bytes(0), false);
-    }
-
-    /**
-     * See UUPSUpgradeable.upgradeToAndCall
-     */
-    function upgradeToAndCall(address newImplementation, bytes memory data)
-        public payable override (IUUPSUpgradeable, UUPSUpgradeable)
-        onlyGovernance
-        onlyProxy
-    {
-        _upgradeToAndCallUUPS(newImplementation, data, true);
-    }
-
-    /**
-     * Unused. Only present to satisfy UUPSUpgradeable requirement.
-     * The real check is in onlyGovernance modifier on upgradeTo and upgradeToAndCall.
-     */
-    function _authorizeUpgrade(address  /* _newImplementation */)
-        internal pure override
-    {
-        assert(false);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {Diamond} from "../../diamond/implementation/Diamond.sol";
-import {LibDiamond} from "../../diamond/library/LibDiamond.sol";
-import {IAssetManagerEvents} from "../../userInterfaces/IAssetManagerEvents.sol";
-import {IDiamondCut} from "../../diamond/interfaces/IDiamondCut.sol";
-
-/**
- * The contract that can mint and burn f-assets while managing collateral and backing funds.
- * There is one instance of AssetManager per f-asset type.
- */
-contract AssetManager is Diamond, IAssetManagerEvents {
-    // IAssetManagerEvents interface is included so that blockchain explorers will be able
-    // to decode events for verified AssetManager instances.
-    constructor(IDiamondCut.FacetCut[] memory _diamondCut, address _init, bytes memory _initCalldata) payable {
-        LibDiamond.diamondCut(_diamondCut, _init, _initCalldata);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {AssetManagerBase} from "./AssetManagerBase.sol";
-import {Globals} from "../library/Globals.sol";
-import {AssetManagerState} from "../library/data/AssetManagerState.sol";
-import {AssetManagerSettings} from "../../userInterfaces/data/AssetManagerSettings.sol";
-import {IAssetManagerEvents} from "../../userInterfaces/IAssetManagerEvents.sol";
-
-
-contract EmergencyPauseFacet is AssetManagerBase, IAssetManagerEvents {
-    using SafeCast for uint256;
-
-    error PausedByGovernance();
-
-    function emergencyPause(bool _byGovernance, uint256 _duration)
-        external
-        onlyAssetManagerController
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        bool pausedAtStart = _paused();
-        if (_byGovernance) {
-            state.emergencyPausedUntil = (block.timestamp + _duration).toUint64();
-            state.emergencyPausedByGovernance = true;
-        } else {
-            if (pausedAtStart && state.emergencyPausedByGovernance) {
-                revert PausedByGovernance();
-            }
-            AssetManagerSettings.Data storage settings = Globals.getSettings();
-            if (state.emergencyPausedUntil + settings.emergencyPauseDurationResetAfterSeconds <= block.timestamp) {
-                state.emergencyPausedTotalDuration = 0;
-            }
-            uint256 currentPauseEndTime = Math.max(state.emergencyPausedUntil, block.timestamp);
-            uint256 projectedStartTime =
-                Math.min(currentPauseEndTime - state.emergencyPausedTotalDuration, block.timestamp);
-            uint256 maxEndTime = projectedStartTime + settings.maxEmergencyPauseDurationSeconds;
-            uint256 endTime = Math.min(block.timestamp + _duration, maxEndTime);
-            state.emergencyPausedUntil = endTime.toUint64();
-            state.emergencyPausedTotalDuration = (endTime - projectedStartTime).toUint64();
-            state.emergencyPausedByGovernance = false;
-        }
-        if (_paused()) {
-            emit EmergencyPauseTriggered(state.emergencyPausedUntil);
-        } else if (pausedAtStart) {
-            emit EmergencyPauseCanceled();
-        }
-    }
-
-    function resetEmergencyPauseTotalDuration()
-        external
-        onlyAssetManagerController
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        state.emergencyPausedTotalDuration = 0;
-    }
-
-    function emergencyPaused()
-        external view
-        returns (bool)
-    {
-        return _paused();
-    }
-
-    function emergencyPausedUntil()
-        external view
-        returns (uint256)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return _paused() ? state.emergencyPausedUntil : 0;
-    }
-
-    function emergencyPauseDetails()
-        external view
-        returns (uint256 _pausedUntil, uint256 _totalPauseDuration, bool _pausedByGovernance)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return (state.emergencyPausedUntil, state.emergencyPausedTotalDuration, state.emergencyPausedByGovernance);
-    }
-
-    function _paused() private view returns (bool) {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return state.emergencyPausedUntil > block.timestamp;
-    }
-}
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {AssetManagerBase} from "./AssetManagerBase.sol";
-import {Globals} from "../library/Globals.sol";
-import {SettingsUpdater} from "../library/SettingsUpdater.sol";
-import {RedemptionTimeExtension} from "../library/data/RedemptionTimeExtension.sol";
-import {LibDiamond} from "../../diamond/library/LibDiamond.sol";
-import {AssetManagerSettings} from "../../userInterfaces/data/AssetManagerSettings.sol";
-import {IAssetManagerEvents} from "../../userInterfaces/IAssetManagerEvents.sol";
-import {IRedemptionTimeExtension} from "../../userInterfaces/IRedemptionTimeExtension.sol";
-
-
-contract RedemptionTimeExtensionFacet is AssetManagerBase, IRedemptionTimeExtension {
-
-    error ValueMustBeNonzero();
-    error DecreaseTooBig();
-    error IncreaseTooBig();
-    error AlreadyInitialized();
-    error DiamondNotInitialized();
-
-    constructor() {
-        // implementation initialization - to prevent reinitialization
-        RedemptionTimeExtension.setRedemptionPaymentExtensionSeconds(1);
-    }
-
-    // this method is not accessible through diamond proxy
-    // it is only used for initialization when the contract is added after proxy deploy
-    function initRedemptionTimeExtensionFacet(uint256 _redemptionPaymentExtensionSeconds)
-        external
-    {
-        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
-        require(ds.supportedInterfaces[type(IERC165).interfaceId], DiamondNotInitialized());
-        ds.supportedInterfaces[type(IRedemptionTimeExtension).interfaceId] = true;
-        require(RedemptionTimeExtension.redemptionPaymentExtensionSeconds() == 0, AlreadyInitialized());
-        // init settings
-        RedemptionTimeExtension.setRedemptionPaymentExtensionSeconds(_redemptionPaymentExtensionSeconds);
-    }
-
-    function setRedemptionPaymentExtensionSeconds(uint256 _value)
-        external
-        onlyAssetManagerController
-    {
-        SettingsUpdater.checkEnoughTimeSinceLastUpdate();
-        // validate
-        AssetManagerSettings.Data storage settings = Globals.getSettings();
-        uint256 currentValue = RedemptionTimeExtension.redemptionPaymentExtensionSeconds();
-        require(_value <= currentValue * 4 + settings.averageBlockTimeMS / 1000, IncreaseTooBig());
-        require(_value >= currentValue / 4, DecreaseTooBig());
-        require(_value > 0, ValueMustBeNonzero());
-        // update
-        RedemptionTimeExtension.setRedemptionPaymentExtensionSeconds(_value);
-        emit IAssetManagerEvents.SettingChanged("redemptionPaymentExtensionSeconds", _value);
-    }
-
-    function redemptionPaymentExtensionSeconds()
-        external view
-        returns (uint256)
-    {
-        return RedemptionTimeExtension.redemptionPaymentExtensionSeconds();
-    }
-}
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-import {ICoreVaultManager} from "../../userInterfaces/ICoreVaultManager.sol";
-
-/**
- * Core vault manager internal interface
- */
-interface IICoreVaultManager is ICoreVaultManager {
-
-    /**
-     * Requests transfer from core vault to destination address.
-     * @param _destinationAddress destination address
-     * @param _paymentReference payment reference
-     * @param _amount amount
-     * @param _cancelable cancelable flag (if true, the request can be canceled)
-     * @return _actualPaymentReference the actual payment reference that will be used - for non-cancelable requests
-     *  it can differ from the requested payment reference, because multiple queued payments to the same address
-     *  are merged in which case the reference of the previous payment to the same address will be used
-     * NOTE: destination address must be allowed otherwise the request will revert.
-     * NOTE: may only be called by the asset manager.
-     */
-    function requestTransferFromCoreVault(
-        string memory _destinationAddress,
-        bytes32 _paymentReference,
-        uint128 _amount,
-        bool _cancelable
-    )
-        external
-        returns (bytes32 _actualPaymentReference);
-
-    /**
-     * Cancels transfer request from core vault.
-     * @param _destinationAddress destination address
-     * NOTE: if the request does not exist (anymore), the call will revert.
-     * NOTE: may only be called by the asset manager.
-     */
-    function cancelTransferRequestFromCoreVault(
-        string memory _destinationAddress
-    )
-        external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6 <0.9;
-
-import "../../IRelay.sol";
-
-/**
- * Relay internal interface.
- */
-interface IIRelay is IRelay {
-    struct SigningPolicy {
-        uint24 rewardEpochId; // Reward epoch id.
-        uint32 startVotingRoundId; // First voting round id of validity.
-        // Usually it is the first voting round of reward epoch rID.
-        // It can be later,
-        // if the confirmation of the signing policy on Flare blockchain gets delayed.
-        uint16 threshold; // Confirmation threshold (absolute value of noramalised weights).
-        uint256 seed; // Random seed.
-        address[] voters; // The list of eligible voters in the canonical order.
-        uint16[] weights; // The corresponding list of normalised signing weights of eligible voters.
-        // Normalisation is done by compressing the weights from 32-byte values to 2 bytes,
-        // while approximately keeping the weight relations.
-    }
-
-    /**
-     * Sets the signing policy.
-     * @param _signingPolicy Signing policy.
-     * @return Returns signing policy hash.
-     * @dev This method can only be called by the signing policy setter.
-     */
-    function setSigningPolicy(
-        SigningPolicy memory _signingPolicy
-    ) external returns (bytes32);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {AssetManagerBase} from "./AssetManagerBase.sol";
-import {Globals} from "../library/Globals.sol";
-import {AssetManagerState} from "../library/data/AssetManagerState.sol";
-import {AssetManagerSettings} from "../../userInterfaces/data/AssetManagerSettings.sol";
-import {IAssetManagerEvents} from "../../userInterfaces/IAssetManagerEvents.sol";
-
-
-contract EmergencyPauseTransfersFacet is AssetManagerBase, IAssetManagerEvents {
-    using SafeCast for uint256;
-
-    error PausedByGovernance();
-
-    function emergencyPauseTransfers(bool _byGovernance, uint256 _duration)
-        external
-        onlyAssetManagerController
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        bool pausedAtStart = _transfersPaused();
-        if (_byGovernance) {
-            state.transfersEmergencyPausedUntil = (block.timestamp + _duration).toUint64();
-            state.transfersEmergencyPausedByGovernance = true;
-        } else {
-            if (pausedAtStart && state.transfersEmergencyPausedByGovernance) {
-                revert PausedByGovernance();
-            }
-            AssetManagerSettings.Data storage settings = Globals.getSettings();
-            uint256 resetTs = state.transfersEmergencyPausedUntil + settings.emergencyPauseDurationResetAfterSeconds;
-            if (resetTs <= block.timestamp) {
-                state.transfersEmergencyPausedTotalDuration = 0;
-            }
-            uint256 currentPauseEndTime = Math.max(state.transfersEmergencyPausedUntil, block.timestamp);
-            uint256 projectedStartTime =
-                Math.min(currentPauseEndTime - state.transfersEmergencyPausedTotalDuration, block.timestamp);
-            uint256 maxEndTime = projectedStartTime + settings.maxEmergencyPauseDurationSeconds;
-            uint256 endTime = Math.min(block.timestamp + _duration, maxEndTime);
-            state.transfersEmergencyPausedUntil = endTime.toUint64();
-            state.transfersEmergencyPausedTotalDuration = (endTime - projectedStartTime).toUint64();
-            state.transfersEmergencyPausedByGovernance = false;
-        }
-        if (_transfersPaused()) {
-            emit EmergencyPauseTransfersTriggered(state.transfersEmergencyPausedUntil);
-        } else if (pausedAtStart) {
-            emit EmergencyPauseTransfersCanceled();
-        }
-    }
-
-    function resetEmergencyPauseTransfersTotalDuration()
-        external
-        onlyAssetManagerController
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        state.transfersEmergencyPausedTotalDuration = 0;
-    }
-
-    function transfersEmergencyPaused()
-        external view
-        returns (bool)
-    {
-        return _transfersPaused();
-    }
-
-    function transfersEmergencyPausedUntil()
-        external view
-        returns (uint256)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return _transfersPaused() ? state.transfersEmergencyPausedUntil : 0;
-    }
-
-    function emergencyPauseTransfersDetails()
-        external view
-        returns (uint256 _pausedUntil, uint256 _totalPauseDuration, bool _pausedByGovernance)
-    {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return (state.transfersEmergencyPausedUntil, state.transfersEmergencyPausedTotalDuration,
-            state.transfersEmergencyPausedByGovernance);
-    }
-
-    function _transfersPaused() private view returns (bool) {
-        AssetManagerState.State storage state = AssetManagerState.get();
-        return state.transfersEmergencyPausedUntil > block.timestamp;
-    }
-}
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {IPayment} from "@flarenetwork/flare-periphery-contracts/flare/IFdcVerification.sol";
-import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {ICoreVaultClient} from "../../userInterfaces/ICoreVaultClient.sol";
-import {AssetManagerBase} from "./AssetManagerBase.sol";
-import {ReentrancyGuard} from "../../openzeppelin/security/ReentrancyGuard.sol";
-import {Conversion} from "../library/Conversion.sol";
-import {CoreVaultClient} from "../library/CoreVaultClient.sol";
-import {Agent} from "../library/data/Agent.sol";
-import {SafePct} from "../../utils/library/SafePct.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {AssetManagerState} from "../library/data/AssetManagerState.sol";
-import {PaymentReference} from "../library/data/PaymentReference.sol";
-import {AgentCollateral} from "../library/AgentCollateral.sol";
-import {Redemptions} from "../library/Redemptions.sol";
-import {RedemptionRequests} from "../library/RedemptionRequests.sol";
-import {UnderlyingBalance} from "../library/UnderlyingBalance.sol";
-import {Collateral} from "../library/data/Collateral.sol";
-import {PaymentConfirmations} from "../library/data/PaymentConfirmations.sol";
-import {AgentBacking} from "../library/AgentBacking.sol";
-import {SafeMath64} from "../../utils/library/SafeMath64.sol";
-import {TransactionAttestation} from "../library/TransactionAttestation.sol";
-import {UnderlyingBlockUpdater} from "../library/UnderlyingBlockUpdater.sol";
-
-
-contract CoreVaultClientFacet is AssetManagerBase, ReentrancyGuard, ICoreVaultClient {
-    using SafePct for uint256;
-    using SafeCast for uint256;
-    using SafeCast for int256;
-    using AgentCollateral for Collateral.CombinedData;
-    using PaymentConfirmations for PaymentConfirmations.State;
-
-    error CannotReturnZeroLots();
-    error InvalidAgentStatus();
-    error InvalidPaymentReference();
-    error NoActiveReturnRequest();
-    error NotEnoughAvailableOnCoreVault();
-    error NotEnoughFreeCollateral();
-    error NotEnoughUnderlying();
-    error NothingMinted();
-    error PaymentNotFromCoreVault();
-    error PaymentNotToAgentsAddress();
-    error RequestedAmountTooSmall();
-    error ReturnFromCoreVaultAlreadyRequested();
-    error TooLittleMintingLeftAfterTransfer();
-    error TransferAlreadyActive();
-    error ZeroTransferNotAllowed();
-
-    // core vault may not be enabled on all chains
-    modifier onlyEnabled {
-        CoreVaultClient.checkEnabled();
-        _;
-    }
-
-    // prevent initialization of implementation contract
-    constructor() {
-        CoreVaultClient.State storage state = CoreVaultClient.getState();
-        state.initialized = true;
-    }
-
-    /**
-     * Agent can transfer their backing to core vault.
-     * They then get a redemption requests which the owner pays just like any other redemption request.
-     * After that, the agent's collateral is released.
-     * NOTE: only agent vault owner can call
-     * @param _agentVault the agent vault address
-     * @param _amountUBA the amount to transfer to the core vault
-     */
-    function transferToCoreVault(
-        address _agentVault,
-        uint256 _amountUBA
-    )
-        external
-        onlyEnabled
-        notEmergencyPaused
-        nonReentrant
-        onlyAgentVaultOwner(_agentVault)
-    {
-        Agent.State storage agent = Agent.get(_agentVault);
-        CoreVaultClient.State storage state = CoreVaultClient.getState();
-        // for agent in full liquidation, the system cannot know if there is enough underlying for the transfer
-        require(agent.status != Agent.Status.FULL_LIQUIDATION, InvalidAgentStatus());
-        // forbid 0 transfer
-        require(_amountUBA > 0, ZeroTransferNotAllowed());
-        // agent must have enough underlying for the transfer (if the required backing < 100%, they may have less)
-        require(_amountUBA.toInt256() <= agent.underlyingBalanceUBA, NotEnoughUnderlying());
-        // only one transfer can be active
-        require(agent.activeTransferToCoreVault == 0, TransferAlreadyActive());
-        // close agent's redemption tickets
-        uint64 amountAMG = Conversion.convertUBAToAmg(_amountUBA);
-        (uint64 transferredAMG,) = Redemptions.closeTickets(agent, amountAMG, false);
-        require(transferredAMG > 0, NothingMinted());
-        // check the remaining amount
-        (uint256 maximumTransferAMG,) = CoreVaultClient.maximumTransferToCoreVaultAMG(agent);
-        require(transferredAMG <= maximumTransferAMG, TooLittleMintingLeftAfterTransfer());
-        // create ordinary redemption request to core vault address
-        string memory underlyingAddress = state.coreVaultManager.coreVaultAddress();
-        // NOTE: there will be no redemption fee, so the agent needs enough free underlying for the
-        // underlying transaction fee, otherwise they will go into full liquidation
-        uint64 redemptionRequestId = RedemptionRequests.createRedemptionRequest(
-            RedemptionRequests.AgentRedemptionData(_agentVault, transferredAMG),
-            state.nativeAddress, underlyingAddress, false, payable(address(0)), 0,
-            state.transferTimeExtensionSeconds, true);
-        // set the active request
-        agent.activeTransferToCoreVault = redemptionRequestId;
-        // send event
-        uint256 transferredUBA = Conversion.convertAmgToUBA(transferredAMG);
-        emit TransferToCoreVaultStarted(_agentVault, redemptionRequestId, transferredUBA);
-    }
-
-    /**
-     * Request that core vault transfers funds to the agent's underlying address,
-     * which makes them available for redemptions. This method reserves agent's collateral.
-     * This may be sent by an agent when redemptions dominate mintings, so that the agents
-     * are empty but want to earn from redemptions.
-     * NOTE: only agent vault owner can call
-     * NOTE: there can be only one active return request (until it is confirmed or cancelled).
-     * @param _agentVault the agent vault address
-     * @param _lots number of lots (same lots as for minting and redemptions)
-     */
-    function requestReturnFromCoreVault(
-        address _agentVault,
-        uint256 _lots
-    )
-        external
-        onlyEnabled
-        notEmergencyPaused
-        nonReentrant
-        onlyAgentVaultOwner(_agentVault)
-    {
-        Agent.State storage agent = Agent.get(_agentVault);
-        CoreVaultClient.State storage state = CoreVaultClient.getState();
-        require(agent.activeReturnFromCoreVaultId == 0, ReturnFromCoreVaultAlreadyRequested());
-        Collateral.CombinedData memory collateralData = AgentCollateral.combinedData(agent);
-        require(_lots > 0, CannotReturnZeroLots());
-        require(agent.status == Agent.Status.NORMAL, InvalidAgentStatus());
-        require(collateralData.freeCollateralLotsOptionalFee(agent, false) >= _lots, NotEnoughFreeCollateral());
-        uint256 availableLots = CoreVaultClient.coreVaultAmountLots();
-        require(_lots <= availableLots, NotEnoughAvailableOnCoreVault());
-        // create new request id
-        state.newTransferFromCoreVaultId += PaymentReference.randomizedIdSkip();
-        uint64 requestId = state.newTransferFromCoreVaultId;
-        agent.activeReturnFromCoreVaultId = requestId;
-        // reserve collateral
-        assert(agent.returnFromCoreVaultReservedAMG == 0);
-        uint64 amountAMG = Conversion.convertLotsToAMG(_lots);
-        agent.returnFromCoreVaultReservedAMG = amountAMG;
-        agent.reservedAMG += amountAMG;
-        // request
-        bytes32 paymentReference = PaymentReference.returnFromCoreVault(requestId);
-        uint128 amountUBA = Conversion.convertAmgToUBA(amountAMG).toUint128();
-        state.coreVaultManager.requestTransferFromCoreVault(
-            agent.underlyingAddressString, paymentReference, amountUBA, true);
-        emit ReturnFromCoreVaultRequested(_agentVault, requestId, paymentReference, amountUBA);
-    }
-
-    /**
-     * Before the return request is processed, it can be cancelled, releasing the agent's reserved collateral.
-     * @param _agentVault the agent vault address
-     */
-    function cancelReturnFromCoreVault(
-        address _agentVault
-    )
-        external
-        onlyEnabled
-        nonReentrant
-        onlyAgentVaultOwner(_agentVault)
-    {
-        Agent.State storage agent = Agent.get(_agentVault);
-        CoreVaultClient.State storage state = CoreVaultClient.getState();
-        uint256 requestId = agent.activeReturnFromCoreVaultId;
-        require(requestId != 0, NoActiveReturnRequest());
-        state.coreVaultManager.cancelTransferRequestFromCoreVault(agent.underlyingAddressString);
-        CoreVaultClient.deleteReturnFromCoreVaultRequest(agent);
-        emit ReturnFromCoreVaultCancelled(_agentVault, requestId);
-    }
-
-    /**
-     * Confirm the payment from core vault to the agent's underlying address.
-     * This adds the reserved funds to the agent's backing.
-     * @param _payment FDC payment proof
-     * @param _agentVault the agent vault address
-     */
-    function confirmReturnFromCoreVault(
-        IPayment.Proof calldata _payment,
-        address _agentVault
-    )
-        external
-        onlyEnabled
-        nonReentrant
-        onlyAgentVaultOwner(_agentVault)
-    {
-        Agent.State storage agent = Agent.get(_agentVault);
-        CoreVaultClient.State storage state = CoreVaultClient.getState();
-        TransactionAttestation.verifyPaymentSuccess(_payment);
-        uint64 requestId = agent.activeReturnFromCoreVaultId;
-        require(requestId != 0, NoActiveReturnRequest());
-        require(_payment.data.responseBody.sourceAddressHash == state.coreVaultManager.coreVaultAddressHash(),
-            PaymentNotFromCoreVault());
-        require(_payment.data.responseBody.receivingAddressHash == agent.underlyingAddressHash,
-            PaymentNotToAgentsAddress());
-        require(_payment.data.responseBody.standardPaymentReference == PaymentReference.returnFromCoreVault(requestId),
-            InvalidPaymentReference());
-        // make sure payment isn't used again
-        AssetManagerState.get().paymentConfirmations.confirmIncomingPayment(_payment);
-        // we account for the option that CV pays more or less than the reserved amount:
-        // - if less, only the amount received gets converted to redemption ticket
-        // - if more, the extra amount becomes the agent's free underlying
-        uint256 receivedAmountUBA = _payment.data.responseBody.receivedAmount.toUint256();
-        uint64 receivedAmountAMG = Conversion.convertUBAToAmg(receivedAmountUBA);
-        uint64 remintedAMG = SafeMath64.min64(agent.returnFromCoreVaultReservedAMG, receivedAmountAMG);
-        // create redemption ticket
-        AgentBacking.createNewMinting(agent, remintedAMG);
-        // update underlying amount
-        UnderlyingBalance.increaseBalance(agent, receivedAmountUBA);
-        // update underlying block
-        UnderlyingBlockUpdater.updateCurrentBlockForVerifiedPayment(_payment);
-        // clear the reservation
-        CoreVaultClient.deleteReturnFromCoreVaultRequest(agent);
-        // send event
-        uint256 remintedUBA = Conversion.convertAmgToUBA(remintedAMG);
-        emit ReturnFromCoreVaultConfirmed(_agentVault, requestId, receivedAmountUBA, remintedUBA);
-    }
-
-    /**
-     * Directly redeem from core vault by a user holding FAssets.
-     * This is like ordinary redemption, but the redemption time is much longer (a day or more)
-     * and there is no possibility of redemption.
-     * @param _lots the number of lots, must be larger than `coreVaultMinimumRedeemLots` setting
-     * @param _redeemerUnderlyingAddress the underlying address to which the assets will be redeemed;
-     *      must have been added to the `allowedDestinations` list in the core vault manager by
-     *      the governance before the redemption request.
-     */
-    function redeemFromCoreVault(
-        uint256 _lots,
-        string memory _redeemerUnderlyingAddress
-    )
-        external
-        onlyEnabled
-        notEmergencyPaused
-        nonReentrant
-    {
-        CoreVaultClient.State storage state = CoreVaultClient.getState();
-        uint256 availableLots = CoreVaultClient.coreVaultAmountLots();
-        require(_lots <= availableLots, NotEnoughAvailableOnCoreVault());
-        uint256 minimumRedeemLots = Math.min(state.minimumRedeemLots, availableLots);
-        require(_lots >= minimumRedeemLots, RequestedAmountTooSmall());
-        // burn the senders fassets
-        uint256 redeemedUBA = Conversion.convertLotsToUBA(_lots);
-        Redemptions.burnFAssets(msg.sender, redeemedUBA);
-        // subtract the redemption fee
-        uint256 redemptionFeeUBA = redeemedUBA.mulBips(state.redemptionFeeBIPS);
-        uint128 paymentUBA = (redeemedUBA - redemptionFeeUBA).toUint128();
-        // create new request id
-        state.newRedemptionFromCoreVaultId += PaymentReference.randomizedIdSkip();
-        bytes32 paymentReference = PaymentReference.redemptionFromCoreVault(state.newRedemptionFromCoreVaultId);
-        // transfer from core vault (paymentReference may change when the request is merged)
-        paymentReference = state.coreVaultManager.requestTransferFromCoreVault(
-            _redeemerUnderlyingAddress, paymentReference, paymentUBA, false);
-        emit CoreVaultRedemptionRequested(msg.sender, _redeemerUnderlyingAddress, paymentReference,
-            redeemedUBA, redemptionFeeUBA);
-    }
-
-    function maximumTransferToCoreVault(
-        address _agentVault
-    )
-        external view
-        returns (uint256 _maximumTransferUBA, uint256 _minimumLeftAmountUBA)
-    {
-        Agent.State storage agent = Agent.get(_agentVault);
-        (uint256 _maximumTransferAMG, uint256 _minimumLeftAmountAMG) =
-             CoreVaultClient.maximumTransferToCoreVaultAMG(agent);
-        _maximumTransferUBA = Conversion.convertAmgToUBA(_maximumTransferAMG.toUint64());
-        _minimumLeftAmountUBA = Conversion.convertAmgToUBA(_minimumLeftAmountAMG.toUint64());
-    }
-
-    function coreVaultAvailableAmount()
-        external view
-        returns (uint256 _immediatelyAvailableUBA, uint256 _totalAvailableUBA)
-    {
-        return CoreVaultClient.coreVaultAvailableAmount();
+            || _interfaceId == type(IPriceReader).interfaceId
+            || _interfaceId == type(IPricePublisher).interfaceId;
     }
 }
 // SPDX-License-Identifier: MIT
@@ -8765,721 +8557,929 @@ contract CoreVaultManager is
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
-import {IRelay} from "@flarenetwork/flare-periphery-contracts/flare/IRelay.sol";
-import {GovernedUUPSProxyImplementation} from "../../governance/implementation/GovernedUUPSProxyImplementation.sol";
-import {AddressUpdatable} from "../../flareSmartContracts/implementation/AddressUpdatable.sol";
-import {IPriceReader} from "../../ftso/interfaces/IPriceReader.sol";
-import {IPricePublisher} from "../interfaces/IPricePublisher.sol";
-import {IGovernanceSettings} from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {AssetManagerBase} from "./AssetManagerBase.sol";
+import {Globals} from "../library/Globals.sol";
+import {AssetManagerState} from "../library/data/AssetManagerState.sol";
+import {AssetManagerSettings} from "../../userInterfaces/data/AssetManagerSettings.sol";
+import {IAssetManagerEvents} from "../../userInterfaces/IAssetManagerEvents.sol";
 
 
-contract FtsoV2PriceStore is
-    GovernedUUPSProxyImplementation,
-    IPriceReader,
-    IPricePublisher,
-    IERC165,
-    AddressUpdatable
-{
-    using MerkleProof for bytes32[];
+contract EmergencyPauseFacet is AssetManagerBase, IAssetManagerEvents {
+    using SafeCast for uint256;
 
-    uint256 internal constant MAX_BIPS = 1e4;
+    error PausedByGovernance();
 
-    struct PriceStore {
-        uint32 votingRoundId;
-        uint32 value;
-        int8 decimals;
-
-        uint32 trustedVotingRoundId;
-        uint32 trustedValue;
-        int8 trustedDecimals;
-        uint8 numberOfSubmits;
-    }
-
-    error InvalidStartTime();
-    error VotingEpochDurationTooShort();
-    error WrongNumberOfProofs();
-    error PricesAlreadyPublished();
-    error SubmissionWindowNotClosed();
-    error VotingRoundIdMismatch();
-    error FeedIdMismatch();
-    error ValueMustBeNonNegative();
-    error MerkleProofInvalid();
-    error OnlyTrustedProvider();
-    error AllPricesMustBeProvided();
-    error SubmissionWindowClosed();
-    error AlreadySubmitted();
-    error DecimalsMismatch();
-    error LengthMismatch();
-    error MaxSpreadTooBig();
-    error TooManyTrustedProviders();
-    error ThresholdTooHigh();
-    error SymbolNotSupported();
-
-    /// Timestamp when the first voting epoch started, in seconds since UNIX epoch.
-    uint64 public firstVotingRoundStartTs;
-    /// Duration of voting epochs, in seconds.
-    uint64 public votingEpochDurationSeconds;
-    /// Duration of a window for submitting trusted prices, in seconds.
-    uint64 public submitTrustedPricesWindowSeconds;
-    /// The FTSO protocol id.
-    uint8 public ftsoProtocolId;
-
-    /// The list of required feed ids to be published.
-    bytes21[] internal feedIds;
-    /// Mapping from symbol to feed id - used for price lookups (backwards compatibility).
-    mapping(string symbol => bytes21 feedId) internal symbolToFeedId;
-    /// Mapping from feed id to symbol - used for list of supported symbols.
-    mapping(bytes21 feedId => string symbol) internal feedIdToSymbol;
-    /// Mapping from feed id to price store which holds the latest published FTSO scaling price and trusted price.
-    mapping(bytes21 feedId => PriceStore) internal latestPrices;
-    /// Mapping from feed id to submitted trusted prices for the given voting round.
-    mapping(bytes21 feedId => mapping (uint32 votingRoundId => bytes)) internal submittedTrustedPrices;
-    /// Mapping from trusted provider to the last submitted voting epoch id.
-    mapping(address trustedProvider => uint256 lastVotingEpochId) internal lastVotingEpochIdByProvider;
-
-    /// The list of trusted providers.
-    address[] internal trustedProviders;
-    mapping(address trustedProvider => bool isTrustedProvider) internal trustedProvidersMap;
-    /// Trusted providers threshold for calculating the median price.
-    uint8 public trustedProvidersThreshold;
-    /// The maximum spread between the median price and the nearby trusted prices in BIPS in order to update the price.
-    uint16 public maxSpreadBIPS;
-
-    /// The Relay contract.
-    IRelay public relay;
-    /// The last published voting round id.
-    uint32 public lastPublishedVotingRoundId;
-
-    event PricesPublished(uint32 indexed votingRoundId);
-
-    constructor()
-        GovernedUUPSProxyImplementation()   // marks as initialized
-        AddressUpdatable(address(0))
-    {}
-
-    function initialize(
-        IGovernanceSettings _governanceSettings,
-        address _initialGovernance,
-        address _addressUpdater,
-        uint64 _firstVotingRoundStartTs,
-        uint8 _votingEpochDurationSeconds,
-        uint8 _ftsoProtocolId
-    )
+    function emergencyPause(bool _byGovernance, uint256 _duration)
         external
+        onlyAssetManagerController
     {
-        require(_firstVotingRoundStartTs + _votingEpochDurationSeconds <= block.timestamp, InvalidStartTime());
-        require(_votingEpochDurationSeconds > 1, VotingEpochDurationTooShort()); // 90 s
-
-        initialise(_governanceSettings, _initialGovernance);    // also marks as initialized
-        setAddressUpdaterValue(_addressUpdater);
-        firstVotingRoundStartTs = _firstVotingRoundStartTs;
-        votingEpochDurationSeconds = _votingEpochDurationSeconds;
-        submitTrustedPricesWindowSeconds = _votingEpochDurationSeconds / 2; // 45 s
-        ftsoProtocolId = _ftsoProtocolId;
-        lastPublishedVotingRoundId = _getPreviousVotingEpochId();
-    }
-
-    /**
-     * @inheritdoc IPricePublisher
-     */
-    function publishPrices(FeedWithProof[] calldata _proofs) external {
-        uint32 votingRoundId = 0;
-        require(_proofs.length == feedIds.length, WrongNumberOfProofs());
-        for (uint256 i = 0; i < _proofs.length; i++) {
-            FeedWithProof calldata proof = _proofs[i];
-            Feed calldata feed = proof.body;
-            if (i == 0) {
-                votingRoundId = feed.votingRoundId;
-                require(votingRoundId > lastPublishedVotingRoundId, PricesAlreadyPublished());
-                require(_getEndTimestamp(votingRoundId) + submitTrustedPricesWindowSeconds <= block.timestamp,
-                    SubmissionWindowNotClosed());
-                // update last published voting round id
-                lastPublishedVotingRoundId = votingRoundId;
-                // emit event
-                emit PricesPublished(votingRoundId);
-            } else {
-                require(feed.votingRoundId == votingRoundId, VotingRoundIdMismatch());
-            }
-            bytes21 feedId = feedIds[i];
-            require(feed.id == feedId, FeedIdMismatch());
-            require(feed.value >= 0, ValueMustBeNonNegative());
-
-            bytes32 feedHash = keccak256(abi.encode(feed));
-            bytes32 merkleRoot = relay.merkleRoots(ftsoProtocolId, votingRoundId);
-            require(proof.proof.verifyCalldata(merkleRoot, feedHash), MerkleProofInvalid());
-
-            PriceStore storage priceStore = latestPrices[feedId];
-            priceStore.votingRoundId = feed.votingRoundId;
-            priceStore.value = uint32(feed.value);
-            priceStore.decimals = feed.decimals;
-
-            // calculate trusted prices for the same voting round
-            bytes memory trustedPrices = submittedTrustedPrices[feedId][votingRoundId];
-            if (trustedPrices.length > 0 && trustedPrices.length >= 4 * trustedProvidersThreshold) {
-                // calculate median price
-                (uint256 medianPrice, bool priceOk) = _calculateMedian(trustedPrices);
-                if (priceOk) {
-                    // store the median price
-                    priceStore.trustedVotingRoundId = votingRoundId;
-                    priceStore.trustedValue = uint32(medianPrice);
-                    priceStore.numberOfSubmits = uint8(trustedPrices.length / 4);
-                }
-                // delete submitted trusted prices
-                delete submittedTrustedPrices[feedId][votingRoundId];
-            }
-        }
-    }
-
-    /**
-     * @inheritdoc IPricePublisher
-     * @dev The function can be called by trusted providers only.
-     */
-    function submitTrustedPrices(uint32 _votingRoundId, TrustedProviderFeed[] calldata _feeds) external {
-        require(trustedProvidersMap[msg.sender], OnlyTrustedProvider());
-        require(_feeds.length == feedIds.length, AllPricesMustBeProvided());
-        uint32 previousVotingEpochId = _getPreviousVotingEpochId();
-        require(_votingRoundId == previousVotingEpochId, VotingRoundIdMismatch());
-        // end of previous voting epoch = start of current voting epoch
-        uint256 startTimestamp = _getEndTimestamp(previousVotingEpochId);
-        uint256 endTimestamp = startTimestamp + submitTrustedPricesWindowSeconds;
-        require(block.timestamp >= startTimestamp && block.timestamp < endTimestamp, SubmissionWindowClosed());
-        require(lastVotingEpochIdByProvider[msg.sender] < previousVotingEpochId, AlreadySubmitted());
-        // mark the trusted provider submission
-        lastVotingEpochIdByProvider[msg.sender] = previousVotingEpochId;
-
-        for (uint256 i = 0; i < _feeds.length; i++) {
-            TrustedProviderFeed calldata feed = _feeds[i];
-            bytes21 feedId = feedIds[i];
-            require(feed.id == feedId, FeedIdMismatch());
-            require(feed.decimals == latestPrices[feedId].trustedDecimals, DecimalsMismatch());
-            submittedTrustedPrices[feedId][previousVotingEpochId] =
-                bytes.concat(submittedTrustedPrices[feedId][previousVotingEpochId], bytes4(feed.value));
-        }
-    }
-
-    /**
-     * Updates the settings.
-     * @param _feedIds The list of feed ids.
-     * @param _symbols The list of symbols.
-     * @param _trustedDecimals The list of trusted decimals.
-     * @param _maxSpreadBIPS The maximum spread between the median price and the nearby trusted prices in BIPS.
-     * @dev Can only be called by the governance.
-     */
-    function updateSettings(
-        bytes21[] calldata _feedIds,
-        string[] calldata _symbols,
-        int8[] calldata _trustedDecimals,
-        uint16 _maxSpreadBIPS
-    )
-        external onlyGovernance
-    {
-        require(_feedIds.length == _symbols.length && _feedIds.length == _trustedDecimals.length, LengthMismatch());
-        require(_maxSpreadBIPS <= MAX_BIPS, MaxSpreadTooBig());
-        maxSpreadBIPS = _maxSpreadBIPS;
-        feedIds = _feedIds;
-        for (uint256 i = 0; i < _feedIds.length; i++) {
-            bytes21 feedId = _feedIds[i];
-            symbolToFeedId[_symbols[i]] = feedId;
-            feedIdToSymbol[feedId] = _symbols[i];
-            PriceStore storage latestPrice = latestPrices[feedId];
-            if (latestPrice.trustedDecimals != _trustedDecimals[i]) {
-                latestPrice.trustedDecimals = _trustedDecimals[i];
-                latestPrice.trustedValue = 0;
-                latestPrice.trustedVotingRoundId = 0;
-                // delete all submitted trusted prices for the symbol
-                for (uint32 j = lastPublishedVotingRoundId + 1; j <= _getPreviousVotingEpochId(); j++) {
-                    delete submittedTrustedPrices[feedId][j];
-                }
-            }
-        }
-    }
-
-    /**
-     * Sets the trusted providers.
-     * @param _trustedProviders The list of trusted providers.
-     * @param _trustedProvidersThreshold The trusted providers threshold for calculating the median price.
-     * @dev Can only be called by the governance.
-     */
-    function setTrustedProviders(
-        address[] calldata _trustedProviders,
-        uint8 _trustedProvidersThreshold
-    )
-        external onlyGovernance
-    {
-        require(_trustedProviders.length < 2**8, TooManyTrustedProviders());
-        require(_trustedProviders.length >= _trustedProvidersThreshold, ThresholdTooHigh());
-        trustedProvidersThreshold = _trustedProvidersThreshold;
-        // reset all trusted providers
-        for (uint256 i = 0; i < trustedProviders.length; i++) {
-            trustedProvidersMap[trustedProviders[i]] = false;
-        }
-        // set new trusted providers
-        trustedProviders = _trustedProviders;
-        for (uint256 i = 0; i < _trustedProviders.length; i++) {
-            trustedProvidersMap[_trustedProviders[i]] = true;
-        }
-    }
-
-    /**
-     * @inheritdoc IPriceReader
-     */
-    function getPrice(string memory _symbol)
-        external view
-        returns (uint256 _price, uint256 _timestamp, uint256 _priceDecimals)
-    {
-        bytes21 feedId = symbolToFeedId[_symbol];
-        require(feedId != bytes21(0), SymbolNotSupported());
-        PriceStore storage feed = latestPrices[feedId];
-        _price = feed.value;
-        _timestamp = _getEndTimestamp(feed.votingRoundId);
-        int256 decimals = feed.decimals; // int8
-        if (decimals < 0) {
-            _priceDecimals = 0;
-            _price *= 10 ** uint256(-decimals);
+        AssetManagerState.State storage state = AssetManagerState.get();
+        bool pausedAtStart = _paused();
+        if (_byGovernance) {
+            state.emergencyPausedUntil = (block.timestamp + _duration).toUint64();
+            state.emergencyPausedByGovernance = true;
         } else {
-            _priceDecimals = uint256(decimals);
+            if (pausedAtStart && state.emergencyPausedByGovernance) {
+                revert PausedByGovernance();
+            }
+            AssetManagerSettings.Data storage settings = Globals.getSettings();
+            if (state.emergencyPausedUntil + settings.emergencyPauseDurationResetAfterSeconds <= block.timestamp) {
+                state.emergencyPausedTotalDuration = 0;
+            }
+            uint256 currentPauseEndTime = Math.max(state.emergencyPausedUntil, block.timestamp);
+            uint256 projectedStartTime =
+                Math.min(currentPauseEndTime - state.emergencyPausedTotalDuration, block.timestamp);
+            uint256 maxEndTime = projectedStartTime + settings.maxEmergencyPauseDurationSeconds;
+            uint256 endTime = Math.min(block.timestamp + _duration, maxEndTime);
+            state.emergencyPausedUntil = endTime.toUint64();
+            state.emergencyPausedTotalDuration = (endTime - projectedStartTime).toUint64();
+            state.emergencyPausedByGovernance = false;
+        }
+        if (_paused()) {
+            emit EmergencyPauseTriggered(state.emergencyPausedUntil);
+        } else if (pausedAtStart) {
+            emit EmergencyPauseCanceled();
         }
     }
 
-    /**
-     * @inheritdoc IPriceReader
-     */
-    function getPriceFromTrustedProviders(string memory _symbol)
+    function resetEmergencyPauseTotalDuration()
+        external
+        onlyAssetManagerController
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        state.emergencyPausedTotalDuration = 0;
+    }
+
+    function emergencyPaused()
         external view
-        returns (uint256 _price, uint256 _timestamp, uint256 _priceDecimals)
-    {
-        bytes21 feedId = symbolToFeedId[_symbol];
-        require(feedId != bytes21(0), SymbolNotSupported());
-        PriceStore storage feed = latestPrices[feedId];
-        (_price, _timestamp, _priceDecimals) = _getPriceFromTrustedProviders(feed);
-    }
-
-    /**
-     * @inheritdoc IPriceReader
-     */
-    function getPriceFromTrustedProvidersWithQuality(string memory _symbol)
-        external view
-        returns (uint256 _price, uint256 _timestamp, uint256 _priceDecimals, uint8 _numberOfSubmits)
-    {
-        bytes21 feedId = symbolToFeedId[_symbol];
-        require(feedId != bytes21(0), SymbolNotSupported());
-        PriceStore storage feed = latestPrices[feedId];
-        (_price, _timestamp, _priceDecimals) = _getPriceFromTrustedProviders(feed);
-        _numberOfSubmits = feed.numberOfSubmits;
-    }
-
-    /**
-     * @inheritdoc IPricePublisher
-     */
-    function getFeedIds() external view returns (bytes21[] memory) {
-        return feedIds;
-    }
-
-    /**
-     * @inheritdoc IPricePublisher
-     */
-    function getFeedIdsWithDecimals() external view returns (bytes21[] memory _feedIds, int8[] memory _decimals) {
-        _feedIds = feedIds;
-        _decimals = new int8[](_feedIds.length);
-        for (uint256 i = 0; i < _feedIds.length; i++) {
-            _decimals[i] = latestPrices[_feedIds[i]].trustedDecimals;
-        }
-    }
-
-    /**
-     * @inheritdoc IPricePublisher
-     */
-    function getSymbols() external view returns (string[] memory _symbols) {
-        _symbols = new string[](feedIds.length);
-        for (uint256 i = 0; i < feedIds.length; i++) {
-            _symbols[i] = feedIdToSymbol[feedIds[i]];
-        }
-    }
-
-    /**
-     * @inheritdoc IPricePublisher
-     */
-    function getFeedId(string memory _symbol) external view returns (bytes21) {
-        return symbolToFeedId[_symbol];
-    }
-
-    /**
-     * @inheritdoc IPricePublisher
-     */
-    function getTrustedProviders() external view returns (address[] memory) {
-        return trustedProviders;
-    }
-
-    /**
-     * @notice virtual method that a contract extending AddressUpdatable must implement
-     */
-    function _updateContractAddresses(
-        bytes32[] memory _contractNameHashes,
-        address[] memory _contractAddresses
-    )
-        internal override
-    {
-        relay = IRelay(_getContractAddress(_contractNameHashes, _contractAddresses, "Relay"));
-    }
-
-    /**
-     * Returns the previous voting epoch id.
-     */
-    function _getPreviousVotingEpochId() internal view returns(uint32) {
-        return uint32((block.timestamp - firstVotingRoundStartTs) / votingEpochDurationSeconds) - 1;
-    }
-
-    /**
-     * Returns the end timestamp for the given voting epoch id.
-     */
-    function _getEndTimestamp(uint256 _votingEpochId) internal view returns(uint256) {
-        return firstVotingRoundStartTs + (_votingEpochId + 1) * votingEpochDurationSeconds;
-    }
-
-    /**
-     * Returns price data from trusted providers.
-     */
-    function _getPriceFromTrustedProviders(PriceStore storage _feed)
-        internal view
-        returns (uint256 _price, uint256 _timestamp, uint256 _priceDecimals)
-    {
-        _price = _feed.trustedValue;
-        _timestamp = _getEndTimestamp(_feed.trustedVotingRoundId);
-        int256 decimals = _feed.trustedDecimals; // int8
-        if (decimals < 0) {
-            _priceDecimals = 0;
-            _price *= 10 ** uint256(-decimals);
-        } else {
-            _priceDecimals = uint256(decimals);
-        }
-    }
-
-    /**
-     * @notice Calculates the simple median price (using insertion sort) - sorts original array
-     * @param _prices positional array of prices to be sorted
-     * @return _medianPrice median price
-     * @return _priceOk true if the median price is within the spread
-     */
-    function _calculateMedian(bytes memory _prices) internal view returns (uint256 _medianPrice, bool _priceOk) {
-        uint256 length = _prices.length;
-        assert(length > 0 && length % 4 == 0);
-        length /= 4;
-        uint256[] memory prices = new uint256[](length);
-        for (uint256 i = 0; i < length; i++) {
-            bytes memory price = new bytes(4);
-            for (uint256 j = 0; j < 4; j++) {
-                price[j] = _prices[i * 4 + j];
-            }
-            prices[i] = uint32(bytes4(price));
-        }
-
-        for (uint256 i = 1; i < length; i++) {
-            // price to sort next
-            uint256 currentPrice = prices[i];
-
-            // shift bigger prices right
-            uint256 j = i;
-            while (j > 0 && prices[j - 1] > currentPrice) {
-                prices[j] = prices[j - 1];
-                j--; // no underflow
-            }
-            // insert
-            prices[j] = currentPrice;
-        }
-
-        uint256 spread = 0;
-        uint256 middleIndex = length / 2;
-        if (length % 2 == 1) {
-            _medianPrice = prices[middleIndex];
-            if (length >= 3) {
-                spread = (prices[middleIndex + 1] - prices[middleIndex - 1]) / 2;
-            }
-        } else {
-            // if median is "in the middle", take the average price of the two consecutive prices
-            _medianPrice = (prices[middleIndex - 1] + prices[middleIndex]) / 2;
-            spread = prices[middleIndex] - prices[middleIndex - 1];
-        }
-        // check if spread is within the limit
-        _priceOk = spread <= maxSpreadBIPS * _medianPrice / MAX_BIPS; // no overflow
-    }
-
-    /**
-     * Implementation of ERC-165 interface.
-     */
-    function supportsInterface(bytes4 _interfaceId)
-        external pure override
         returns (bool)
     {
-        return _interfaceId == type(IERC165).interfaceId
-            || _interfaceId == type(IPriceReader).interfaceId
-            || _interfaceId == type(IPricePublisher).interfaceId;
+        return _paused();
+    }
+
+    function emergencyPausedUntil()
+        external view
+        returns (uint256)
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return _paused() ? state.emergencyPausedUntil : 0;
+    }
+
+    function emergencyPauseDetails()
+        external view
+        returns (uint256 _pausedUntil, uint256 _totalPauseDuration, bool _pausedByGovernance)
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return (state.emergencyPausedUntil, state.emergencyPausedTotalDuration, state.emergencyPausedByGovernance);
+    }
+
+    function _paused() private view returns (bool) {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return state.emergencyPausedUntil > block.timestamp;
     }
 }
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IAgentOwnerRegistry} from "../../userInterfaces/IAgentOwnerRegistry.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {GovernedUUPSProxyImplementation} from "../../governance/implementation/GovernedUUPSProxyImplementation.sol";
 import {IGovernanceSettings} from "@flarenetwork/flare-periphery-contracts/flare/IGovernanceSettings.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {ReentrancyGuard} from "../../openzeppelin/security/ReentrancyGuard.sol";
+import {CollateralTypes} from "../library/CollateralTypes.sol";
+import {SettingsInitializer} from "../library/SettingsInitializer.sol";
+import {IIAssetManager} from "../../assetManager/interfaces/IIAssetManager.sol";
+import {IDiamondCut} from "../../diamond/interfaces/IDiamondCut.sol";
+import {IDiamondLoupe} from "../../diamond/interfaces/IDiamondLoupe.sol";
+import {LibDiamond} from "../../diamond/library/LibDiamond.sol";
+import {IGoverned} from "../../governance/interfaces/IGoverned.sol";
+import {GovernedBase} from "../../governance/implementation/GovernedBase.sol";
+import {GovernedProxyImplementation} from "../../governance/implementation/GovernedProxyImplementation.sol";
+import {AssetManagerSettings} from "../../userInterfaces/data/AssetManagerSettings.sol";
+import {CollateralType} from "../../userInterfaces/data/CollateralType.sol";
+import {IAgentPing} from "../../userInterfaces/IAgentPing.sol";
+import {IAssetManager} from "../../userInterfaces/IAssetManager.sol";
 
 
-contract AgentOwnerRegistry is GovernedUUPSProxyImplementation, IERC165, IAgentOwnerRegistry {
+contract AssetManagerInit is GovernedProxyImplementation, ReentrancyGuard {
+    error NotInitialized();
 
-    event ManagerChanged(address manager);
-
-    error AddressZero();
-    error OnlyGovernanceOrManager();
+    function init(
+        IGovernanceSettings _governanceSettings,
+        address _initialGovernance,
+        AssetManagerSettings.Data memory _settings,
+        CollateralType.Data[] memory _initialCollateralTypes
+    )
+        external
+    {
+        GovernedBase.initialise(_governanceSettings, _initialGovernance);
+        ReentrancyGuard.initializeReentrancyGuard();
+        SettingsInitializer.validateAndSet(_settings);
+        CollateralTypes.initialize(_initialCollateralTypes);
+        _initIERC165();
+    }
 
     /**
-     * When nonzero, this is the address that can perform whitelisting operations
-     * instead of the governance.
+     * If a diamond cut adds methods to one of the declared interfaces, it should call this method in initialization.
+     * In this way ERC165 identifiers for both old and new version of interface will be marked as supported,
+     * which is correct since the new interface should be backward compatible with the old one.
      */
-    address public manager;
+    function upgradeERC165Identifiers() external {
+        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
+        require(ds.supportedInterfaces[type(IERC165).interfaceId], NotInitialized());
+        ds.supportedInterfaces[type(IGoverned).interfaceId] = true;
+        ds.supportedInterfaces[type(IAssetManager).interfaceId] = true;
+        ds.supportedInterfaces[type(IIAssetManager).interfaceId] = true;
+        ds.supportedInterfaces[type(IAgentPing).interfaceId] = true;
+    }
 
-    mapping(address => bool) private whitelist;
+    function _initIERC165() private {
+        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
+        ds.supportedInterfaces[type(IERC165).interfaceId] = true;
+        ds.supportedInterfaces[type(IDiamondLoupe).interfaceId] = true;
+        ds.supportedInterfaces[type(IDiamondCut).interfaceId] = true;
+        ds.supportedInterfaces[type(IGoverned).interfaceId] = true;
+        ds.supportedInterfaces[type(IAssetManager).interfaceId] = true;
+        ds.supportedInterfaces[type(IIAssetManager).interfaceId] = true;
+        ds.supportedInterfaces[type(IAgentPing).interfaceId] = true;
+    }
+}
 
-    mapping(address => address) private workToMgmtAddress;
-    mapping(address => address) private mgmtToWorkAddress;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+/******************************************************************************\
+* Author: Nick Mudge <nick@perfectabstractions.com> (https://twitter.com/mudgen)
+* EIP-2535 Diamonds: https://eips.ethereum.org/EIPS/eip-2535
+/******************************************************************************/
 
-    mapping(address => string) private agentName;
-    mapping(address => string) private agentDescription;
-    mapping(address => string) private agentIconUrl;
-    mapping(address => string) private agentTouUrl;
+// The functions in DiamondLoupeFacet MUST be added to a diamond.
+// The EIP-2535 Diamond standard requires these functions.
 
-    modifier onlyGovernanceOrManager {
-        require(msg.sender == manager || msg.sender == governance(), OnlyGovernanceOrManager());
+import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import { IDiamondLoupe } from "../interfaces/IDiamondLoupe.sol";
+import { LibDiamond } from  "../library/LibDiamond.sol";
+
+// solhint-disable no-inline-assembly
+contract DiamondLoupeFacet is IDiamondLoupe, IERC165 {
+    // Diamond Loupe Functions
+    ////////////////////////////////////////////////////////////////////
+    /// These functions are expected to be called frequently by tools.
+    //
+    // struct Facet {
+    //     address facetAddress;
+    //     bytes4[] functionSelectors;
+    // }
+
+    /// @notice Gets all facets and their selectors.
+    /// @return facets_ Facet
+    function facets()
+        external override view
+        returns (Facet[] memory facets_)
+    {
+        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
+        uint256 selectorCount = ds.selectors.length;
+        // create an array set to the maximum size possible
+        facets_ = new Facet[](selectorCount);
+        // create an array for counting the number of selectors for each facet
+        uint16[] memory numFacetSelectors = new uint16[](selectorCount);
+        // total number of facets
+        uint256 numFacets;
+        // loop through function selectors
+        for (uint256 selectorIndex; selectorIndex < selectorCount; selectorIndex++) {
+            bytes4 selector = ds.selectors[selectorIndex];
+            address facetAddress_ = ds.facetAddressAndSelectorPosition[selector].facetAddress;
+            bool continueLoop = false;
+            // find the functionSelectors array for selector and add selector to it
+            for (uint256 facetIndex; facetIndex < numFacets; facetIndex++) {
+                if (facets_[facetIndex].facetAddress == facetAddress_) {
+                    facets_[facetIndex].functionSelectors[numFacetSelectors[facetIndex]] = selector;
+                    numFacetSelectors[facetIndex]++;
+                    continueLoop = true;
+                    break;
+                }
+            }
+            // if functionSelectors array exists for selector then continue loop
+            if (continueLoop) {
+                continueLoop = false;
+                continue;
+            }
+            // create a new functionSelectors array for selector
+            facets_[numFacets].facetAddress = facetAddress_;
+            facets_[numFacets].functionSelectors = new bytes4[](selectorCount);
+            facets_[numFacets].functionSelectors[0] = selector;
+            numFacetSelectors[numFacets] = 1;
+            numFacets++;
+        }
+        for (uint256 facetIndex; facetIndex < numFacets; facetIndex++) {
+            uint256 numSelectors = numFacetSelectors[facetIndex];
+            bytes4[] memory selectors = facets_[facetIndex].functionSelectors;
+            // setting the number of selectors
+            assembly {
+                mstore(selectors, numSelectors)
+            }
+        }
+        // setting the number of facets
+        assembly {
+            mstore(facets_, numFacets)
+        }
+    }
+
+    /// @notice Gets all the function selectors supported by a specific facet.
+    /// @param _facet The facet address.
+    /// @return _facetFunctionSelectors The selectors associated with a facet address.
+    function facetFunctionSelectors(address _facet)
+        external override view
+        returns (bytes4[] memory _facetFunctionSelectors)
+    {
+        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
+        uint256 selectorCount = ds.selectors.length;
+        uint256 numSelectors;
+        _facetFunctionSelectors = new bytes4[](selectorCount);
+        // loop through function selectors
+        for (uint256 selectorIndex; selectorIndex < selectorCount; selectorIndex++) {
+            bytes4 selector = ds.selectors[selectorIndex];
+            address facetAddress_ = ds.facetAddressAndSelectorPosition[selector].facetAddress;
+            if (_facet == facetAddress_) {
+                _facetFunctionSelectors[numSelectors] = selector;
+                numSelectors++;
+            }
+        }
+        // Set the number of selectors in the array
+        assembly {
+            mstore(_facetFunctionSelectors, numSelectors)
+        }
+    }
+
+    /// @notice Get all the facet addresses used by a diamond.
+    /// @return facetAddresses_
+    function facetAddresses()
+        external override view
+        returns (address[] memory facetAddresses_)
+    {
+        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
+        uint256 selectorCount = ds.selectors.length;
+        // create an array set to the maximum size possible
+        facetAddresses_ = new address[](selectorCount);
+        uint256 numFacets;
+        // loop through function selectors
+        for (uint256 selectorIndex; selectorIndex < selectorCount; selectorIndex++) {
+            bytes4 selector = ds.selectors[selectorIndex];
+            address facetAddress_ = ds.facetAddressAndSelectorPosition[selector].facetAddress;
+            bool continueLoop = false;
+            // see if we have collected the address already and break out of loop if we have
+            for (uint256 facetIndex; facetIndex < numFacets; facetIndex++) {
+                if (facetAddress_ == facetAddresses_[facetIndex]) {
+                    continueLoop = true;
+                    break;
+                }
+            }
+            // continue loop if we already have the address
+            if (continueLoop) {
+                continueLoop = false;
+                continue;
+            }
+            // include address
+            facetAddresses_[numFacets] = facetAddress_;
+            numFacets++;
+        }
+        // Set the number of facet addresses in the array
+        assembly {
+            mstore(facetAddresses_, numFacets)
+        }
+    }
+
+    /// @notice Gets the facet address that supports the given selector.
+    /// @dev If facet is not found return address(0).
+    /// @param _functionSelector The function selector.
+    /// @return facetAddress_ The facet address.
+    function facetAddress(bytes4 _functionSelector)
+        external override view
+        returns (address facetAddress_)
+    {
+        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
+        facetAddress_ = ds.facetAddressAndSelectorPosition[_functionSelector].facetAddress;
+    }
+
+    // This implements ERC-165.
+    function supportsInterface(bytes4 _interfaceId)
+        external override view
+        returns (bool)
+    {
+        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
+        return ds.supportedInterfaces[_interfaceId];
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {AssetManagerBase} from "./AssetManagerBase.sol";
+import {Globals} from "../library/Globals.sol";
+import {SettingsUpdater} from "../library/SettingsUpdater.sol";
+import {RedemptionTimeExtension} from "../library/data/RedemptionTimeExtension.sol";
+import {LibDiamond} from "../../diamond/library/LibDiamond.sol";
+import {AssetManagerSettings} from "../../userInterfaces/data/AssetManagerSettings.sol";
+import {IAssetManagerEvents} from "../../userInterfaces/IAssetManagerEvents.sol";
+import {IRedemptionTimeExtension} from "../../userInterfaces/IRedemptionTimeExtension.sol";
+
+
+contract RedemptionTimeExtensionFacet is AssetManagerBase, IRedemptionTimeExtension {
+
+    error ValueMustBeNonzero();
+    error DecreaseTooBig();
+    error IncreaseTooBig();
+    error AlreadyInitialized();
+    error DiamondNotInitialized();
+
+    constructor() {
+        // implementation initialization - to prevent reinitialization
+        RedemptionTimeExtension.setRedemptionPaymentExtensionSeconds(1);
+    }
+
+    // this method is not accessible through diamond proxy
+    // it is only used for initialization when the contract is added after proxy deploy
+    function initRedemptionTimeExtensionFacet(uint256 _redemptionPaymentExtensionSeconds)
+        external
+    {
+        LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
+        require(ds.supportedInterfaces[type(IERC165).interfaceId], DiamondNotInitialized());
+        ds.supportedInterfaces[type(IRedemptionTimeExtension).interfaceId] = true;
+        require(RedemptionTimeExtension.redemptionPaymentExtensionSeconds() == 0, AlreadyInitialized());
+        // init settings
+        RedemptionTimeExtension.setRedemptionPaymentExtensionSeconds(_redemptionPaymentExtensionSeconds);
+    }
+
+    function setRedemptionPaymentExtensionSeconds(uint256 _value)
+        external
+        onlyAssetManagerController
+    {
+        SettingsUpdater.checkEnoughTimeSinceLastUpdate();
+        // validate
+        AssetManagerSettings.Data storage settings = Globals.getSettings();
+        uint256 currentValue = RedemptionTimeExtension.redemptionPaymentExtensionSeconds();
+        require(_value <= currentValue * 4 + settings.averageBlockTimeMS / 1000, IncreaseTooBig());
+        require(_value >= currentValue / 4, DecreaseTooBig());
+        require(_value > 0, ValueMustBeNonzero());
+        // update
+        RedemptionTimeExtension.setRedemptionPaymentExtensionSeconds(_value);
+        emit IAssetManagerEvents.SettingChanged("redemptionPaymentExtensionSeconds", _value);
+    }
+
+    function redemptionPaymentExtensionSeconds()
+        external view
+        returns (uint256)
+    {
+        return RedemptionTimeExtension.redemptionPaymentExtensionSeconds();
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+import "../../IRelay.sol";
+
+/**
+ * Relay internal interface.
+ */
+interface IIRelay is IRelay {
+    struct SigningPolicy {
+        uint24 rewardEpochId; // Reward epoch id.
+        uint32 startVotingRoundId; // First voting round id of validity.
+        // Usually it is the first voting round of reward epoch rID.
+        // It can be later,
+        // if the confirmation of the signing policy on Flare blockchain gets delayed.
+        uint16 threshold; // Confirmation threshold (absolute value of noramalised weights).
+        uint256 seed; // Random seed.
+        address[] voters; // The list of eligible voters in the canonical order.
+        uint16[] weights; // The corresponding list of normalised signing weights of eligible voters.
+        // Normalisation is done by compressing the weights from 32-byte values to 2 bytes,
+        // while approximately keeping the weight relations.
+    }
+
+    /**
+     * Sets the signing policy.
+     * @param _signingPolicy Signing policy.
+     * @return Returns signing policy hash.
+     * @dev This method can only be called by the signing policy setter.
+     */
+    function setSigningPolicy(
+        SigningPolicy memory _signingPolicy
+    ) external returns (bytes32);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+import {ICoreVaultManager} from "../../userInterfaces/ICoreVaultManager.sol";
+
+/**
+ * Core vault manager internal interface
+ */
+interface IICoreVaultManager is ICoreVaultManager {
+
+    /**
+     * Requests transfer from core vault to destination address.
+     * @param _destinationAddress destination address
+     * @param _paymentReference payment reference
+     * @param _amount amount
+     * @param _cancelable cancelable flag (if true, the request can be canceled)
+     * @return _actualPaymentReference the actual payment reference that will be used - for non-cancelable requests
+     *  it can differ from the requested payment reference, because multiple queued payments to the same address
+     *  are merged in which case the reference of the previous payment to the same address will be used
+     * NOTE: destination address must be allowed otherwise the request will revert.
+     * NOTE: may only be called by the asset manager.
+     */
+    function requestTransferFromCoreVault(
+        string memory _destinationAddress,
+        bytes32 _paymentReference,
+        uint128 _amount,
+        bool _cancelable
+    )
+        external
+        returns (bytes32 _actualPaymentReference);
+
+    /**
+     * Cancels transfer request from core vault.
+     * @param _destinationAddress destination address
+     * NOTE: if the request does not exist (anymore), the call will revert.
+     * NOTE: may only be called by the asset manager.
+     */
+    function cancelTransferRequestFromCoreVault(
+        string memory _destinationAddress
+    )
+        external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.7.6 <0.9;
+
+import "../../IVPToken.sol";
+import "../../IGovernanceVotePower.sol";
+import "./IIVPContract.sol";
+import "./IIGovernanceVotePower.sol";
+import "./IICleanable.sol";
+
+interface IIVPToken is IVPToken, IICleanable {
+    /**
+     * Set the contract that is allowed to set cleanupBlockNumber.
+     * Usually this will be an instance of CleanupBlockNumberManager.
+     */
+    function setCleanupBlockNumberManager(
+        address _cleanupBlockNumberManager
+    ) external;
+
+    /**
+     * Sets new governance vote power contract that allows token owners to participate in governance voting
+     * and delegate governance vote power.
+     */
+    function setGovernanceVotePower(
+        IIGovernanceVotePower _governanceVotePower
+    ) external;
+
+    /**
+     * @notice Get the total vote power at block `_blockNumber` using cache.
+     *   It tries to read the cached value and if not found, reads the actual value and stores it in cache.
+     *   Can only be used if `_blockNumber` is in the past, otherwise reverts.
+     * @param _blockNumber The block number at which to fetch.
+     * @return The total vote power at the block (sum of all accounts' vote powers).
+     */
+    function totalVotePowerAtCached(
+        uint256 _blockNumber
+    ) external returns (uint256);
+
+    /**
+     * @notice Get the vote power of `_owner` at block `_blockNumber` using cache.
+     *   It tries to read the cached value and if not found, reads the actual value and stores it in cache.
+     *   Can only be used if _blockNumber is in the past, otherwise reverts.
+     * @param _owner The address to get voting power.
+     * @param _blockNumber The block number at which to fetch.
+     * @return Vote power of `_owner` at `_blockNumber`.
+     */
+    function votePowerOfAtCached(
+        address _owner,
+        uint256 _blockNumber
+    ) external returns (uint256);
+
+    /**
+     * Return vote powers for several addresses in a batch.
+     * @param _owners The list of addresses to fetch vote power of.
+     * @param _blockNumber The block number at which to fetch.
+     * @return A list of vote powers.
+     */
+    function batchVotePowerOfAt(
+        address[] memory _owners,
+        uint256 _blockNumber
+    ) external view returns (uint256[] memory);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {IPayment} from "@flarenetwork/flare-periphery-contracts/flare/IFdcVerification.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {ICoreVaultClient} from "../../userInterfaces/ICoreVaultClient.sol";
+import {AssetManagerBase} from "./AssetManagerBase.sol";
+import {ReentrancyGuard} from "../../openzeppelin/security/ReentrancyGuard.sol";
+import {Conversion} from "../library/Conversion.sol";
+import {CoreVaultClient} from "../library/CoreVaultClient.sol";
+import {Agent} from "../library/data/Agent.sol";
+import {SafePct} from "../../utils/library/SafePct.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {AssetManagerState} from "../library/data/AssetManagerState.sol";
+import {PaymentReference} from "../library/data/PaymentReference.sol";
+import {AgentCollateral} from "../library/AgentCollateral.sol";
+import {Redemptions} from "../library/Redemptions.sol";
+import {RedemptionRequests} from "../library/RedemptionRequests.sol";
+import {UnderlyingBalance} from "../library/UnderlyingBalance.sol";
+import {Collateral} from "../library/data/Collateral.sol";
+import {PaymentConfirmations} from "../library/data/PaymentConfirmations.sol";
+import {AgentBacking} from "../library/AgentBacking.sol";
+import {SafeMath64} from "../../utils/library/SafeMath64.sol";
+import {TransactionAttestation} from "../library/TransactionAttestation.sol";
+import {UnderlyingBlockUpdater} from "../library/UnderlyingBlockUpdater.sol";
+
+
+contract CoreVaultClientFacet is AssetManagerBase, ReentrancyGuard, ICoreVaultClient {
+    using SafePct for uint256;
+    using SafeCast for uint256;
+    using SafeCast for int256;
+    using AgentCollateral for Collateral.CombinedData;
+    using PaymentConfirmations for PaymentConfirmations.State;
+
+    error CannotReturnZeroLots();
+    error InvalidAgentStatus();
+    error InvalidPaymentReference();
+    error NoActiveReturnRequest();
+    error NotEnoughAvailableOnCoreVault();
+    error NotEnoughFreeCollateral();
+    error NotEnoughUnderlying();
+    error NothingMinted();
+    error PaymentNotFromCoreVault();
+    error PaymentNotToAgentsAddress();
+    error RequestedAmountTooSmall();
+    error ReturnFromCoreVaultAlreadyRequested();
+    error TooLittleMintingLeftAfterTransfer();
+    error TransferAlreadyActive();
+    error ZeroTransferNotAllowed();
+
+    // core vault may not be enabled on all chains
+    modifier onlyEnabled {
+        CoreVaultClient.checkEnabled();
         _;
     }
 
-    function initialize(IGovernanceSettings _governanceSettings, address _initialGovernance) external {
-        initialise(_governanceSettings, _initialGovernance);    // also marks as initialized
-    }
-
-    function revokeAddress(address _address) external onlyGovernanceOrManager {
-        _removeAddressFromWhitelist(_address);
-    }
-
-    function setManager(address _manager) external onlyGovernance {
-        manager = _manager;
-        emit ManagerChanged(_manager);
+    // prevent initialization of implementation contract
+    constructor() {
+        CoreVaultClient.State storage state = CoreVaultClient.getState();
+        state.initialized = true;
     }
 
     /**
-     * Add agent to the whitelist and set data for agent presentation.
-     * If the agent is already whitelisted, only updates agent presentation data.
-     * @param _managementAddress the agent owner's address
-     * @param _name agent owner's name
-     * @param _description agent owner's description
-     * @param _iconUrl url of the agent owner's icon image; governance or manager should check it is in correct format
-     *      and size and it is on a server where it cannot change or be deleted
-     * @param _touUrl url of the agent's page with terms of use; similar considerations apply as for icon url
+     * Agent can transfer their backing to core vault.
+     * They then get a redemption requests which the owner pays just like any other redemption request.
+     * After that, the agent's collateral is released.
+     * NOTE: only agent vault owner can call
+     * @param _agentVault the agent vault address
+     * @param _amountUBA the amount to transfer to the core vault
      */
-    function whitelistAndDescribeAgent(
-        address _managementAddress,
-        string memory _name,
-        string memory _description,
-        string memory _iconUrl,
-        string memory _touUrl
+    function transferToCoreVault(
+        address _agentVault,
+        uint256 _amountUBA
     )
         external
-        onlyGovernanceOrManager
+        onlyEnabled
+        notEmergencyPaused
+        nonReentrant
+        onlyAgentVaultOwner(_agentVault)
     {
-        _addAddressToWhitelist(_managementAddress);
-        _setAgentData(_managementAddress, _name, _description, _iconUrl, _touUrl);
+        Agent.State storage agent = Agent.get(_agentVault);
+        CoreVaultClient.State storage state = CoreVaultClient.getState();
+        // for agent in full liquidation, the system cannot know if there is enough underlying for the transfer
+        require(agent.status != Agent.Status.FULL_LIQUIDATION, InvalidAgentStatus());
+        // forbid 0 transfer
+        require(_amountUBA > 0, ZeroTransferNotAllowed());
+        // agent must have enough underlying for the transfer (if the required backing < 100%, they may have less)
+        require(_amountUBA.toInt256() <= agent.underlyingBalanceUBA, NotEnoughUnderlying());
+        // only one transfer can be active
+        require(agent.activeTransferToCoreVault == 0, TransferAlreadyActive());
+        // close agent's redemption tickets
+        uint64 amountAMG = Conversion.convertUBAToAmg(_amountUBA);
+        (uint64 transferredAMG,) = Redemptions.closeTickets(agent, amountAMG, false);
+        require(transferredAMG > 0, NothingMinted());
+        // check the remaining amount
+        (uint256 maximumTransferAMG,) = CoreVaultClient.maximumTransferToCoreVaultAMG(agent);
+        require(transferredAMG <= maximumTransferAMG, TooLittleMintingLeftAfterTransfer());
+        // create ordinary redemption request to core vault address
+        string memory underlyingAddress = state.coreVaultManager.coreVaultAddress();
+        // NOTE: there will be no redemption fee, so the agent needs enough free underlying for the
+        // underlying transaction fee, otherwise they will go into full liquidation
+        uint64 redemptionRequestId = RedemptionRequests.createRedemptionRequest(
+            RedemptionRequests.AgentRedemptionData(_agentVault, transferredAMG),
+            state.nativeAddress, underlyingAddress, false, payable(address(0)), 0,
+            state.transferTimeExtensionSeconds, true);
+        // set the active request
+        agent.activeTransferToCoreVault = redemptionRequestId;
+        // send event
+        uint256 transferredUBA = Conversion.convertAmgToUBA(transferredAMG);
+        emit TransferToCoreVaultStarted(_agentVault, redemptionRequestId, transferredUBA);
     }
 
     /**
-     * Associate a work address with the agent owner's management address.
-     * Every owner (management address) can have only one work address, so as soon as the new one is set, the old
-     * one stops working.
-     * NOTE: May only be called by an agent on the allowed agent list and only from the management address.
+     * Request that core vault transfers funds to the agent's underlying address,
+     * which makes them available for redemptions. This method reserves agent's collateral.
+     * This may be sent by an agent when redemptions dominate mintings, so that the agents
+     * are empty but want to earn from redemptions.
+     * NOTE: only agent vault owner can call
+     * NOTE: there can be only one active return request (until it is confirmed or cancelled).
+     * @param _agentVault the agent vault address
+     * @param _lots number of lots (same lots as for minting and redemptions)
      */
-    function setWorkAddress(address _ownerWorkAddress)
+    function requestReturnFromCoreVault(
+        address _agentVault,
+        uint256 _lots
+    )
         external
+        onlyEnabled
+        notEmergencyPaused
+        nonReentrant
+        onlyAgentVaultOwner(_agentVault)
     {
-        require(isWhitelisted(msg.sender), AgentNotWhitelisted());
-        require(_ownerWorkAddress == address(0) || workToMgmtAddress[_ownerWorkAddress] == address(0),
-               WorkAddressInUse());
-        // delete old work to management mapping
-        address oldWorkAddress = mgmtToWorkAddress[msg.sender];
-        if (oldWorkAddress != address(0)) {
-            workToMgmtAddress[oldWorkAddress] = address(0);
+        Agent.State storage agent = Agent.get(_agentVault);
+        CoreVaultClient.State storage state = CoreVaultClient.getState();
+        require(agent.activeReturnFromCoreVaultId == 0, ReturnFromCoreVaultAlreadyRequested());
+        Collateral.CombinedData memory collateralData = AgentCollateral.combinedData(agent);
+        require(_lots > 0, CannotReturnZeroLots());
+        require(agent.status == Agent.Status.NORMAL, InvalidAgentStatus());
+        require(collateralData.freeCollateralLotsOptionalFee(agent, false) >= _lots, NotEnoughFreeCollateral());
+        uint256 availableLots = CoreVaultClient.coreVaultAmountLots();
+        require(_lots <= availableLots, NotEnoughAvailableOnCoreVault());
+        // create new request id
+        state.newTransferFromCoreVaultId += PaymentReference.randomizedIdSkip();
+        uint64 requestId = state.newTransferFromCoreVaultId;
+        agent.activeReturnFromCoreVaultId = requestId;
+        // reserve collateral
+        assert(agent.returnFromCoreVaultReservedAMG == 0);
+        uint64 amountAMG = Conversion.convertLotsToAMG(_lots);
+        agent.returnFromCoreVaultReservedAMG = amountAMG;
+        agent.reservedAMG += amountAMG;
+        // request
+        bytes32 paymentReference = PaymentReference.returnFromCoreVault(requestId);
+        uint128 amountUBA = Conversion.convertAmgToUBA(amountAMG).toUint128();
+        state.coreVaultManager.requestTransferFromCoreVault(
+            agent.underlyingAddressString, paymentReference, amountUBA, true);
+        emit ReturnFromCoreVaultRequested(_agentVault, requestId, paymentReference, amountUBA);
+    }
+
+    /**
+     * Before the return request is processed, it can be cancelled, releasing the agent's reserved collateral.
+     * @param _agentVault the agent vault address
+     */
+    function cancelReturnFromCoreVault(
+        address _agentVault
+    )
+        external
+        onlyEnabled
+        nonReentrant
+        onlyAgentVaultOwner(_agentVault)
+    {
+        Agent.State storage agent = Agent.get(_agentVault);
+        CoreVaultClient.State storage state = CoreVaultClient.getState();
+        uint256 requestId = agent.activeReturnFromCoreVaultId;
+        require(requestId != 0, NoActiveReturnRequest());
+        state.coreVaultManager.cancelTransferRequestFromCoreVault(agent.underlyingAddressString);
+        CoreVaultClient.deleteReturnFromCoreVaultRequest(agent);
+        emit ReturnFromCoreVaultCancelled(_agentVault, requestId);
+    }
+
+    /**
+     * Confirm the payment from core vault to the agent's underlying address.
+     * This adds the reserved funds to the agent's backing.
+     * @param _payment FDC payment proof
+     * @param _agentVault the agent vault address
+     */
+    function confirmReturnFromCoreVault(
+        IPayment.Proof calldata _payment,
+        address _agentVault
+    )
+        external
+        onlyEnabled
+        nonReentrant
+        onlyAgentVaultOwner(_agentVault)
+    {
+        Agent.State storage agent = Agent.get(_agentVault);
+        CoreVaultClient.State storage state = CoreVaultClient.getState();
+        TransactionAttestation.verifyPaymentSuccess(_payment);
+        uint64 requestId = agent.activeReturnFromCoreVaultId;
+        require(requestId != 0, NoActiveReturnRequest());
+        require(_payment.data.responseBody.sourceAddressHash == state.coreVaultManager.coreVaultAddressHash(),
+            PaymentNotFromCoreVault());
+        require(_payment.data.responseBody.receivingAddressHash == agent.underlyingAddressHash,
+            PaymentNotToAgentsAddress());
+        require(_payment.data.responseBody.standardPaymentReference == PaymentReference.returnFromCoreVault(requestId),
+            InvalidPaymentReference());
+        // make sure payment isn't used again
+        AssetManagerState.get().paymentConfirmations.confirmIncomingPayment(_payment);
+        // we account for the option that CV pays more or less than the reserved amount:
+        // - if less, only the amount received gets converted to redemption ticket
+        // - if more, the extra amount becomes the agent's free underlying
+        uint256 receivedAmountUBA = _payment.data.responseBody.receivedAmount.toUint256();
+        uint64 receivedAmountAMG = Conversion.convertUBAToAmg(receivedAmountUBA);
+        uint64 remintedAMG = SafeMath64.min64(agent.returnFromCoreVaultReservedAMG, receivedAmountAMG);
+        // create redemption ticket
+        AgentBacking.createNewMinting(agent, remintedAMG);
+        // update underlying amount
+        UnderlyingBalance.increaseBalance(agent, receivedAmountUBA);
+        // update underlying block
+        UnderlyingBlockUpdater.updateCurrentBlockForVerifiedPayment(_payment);
+        // clear the reservation
+        CoreVaultClient.deleteReturnFromCoreVaultRequest(agent);
+        // send event
+        uint256 remintedUBA = Conversion.convertAmgToUBA(remintedAMG);
+        emit ReturnFromCoreVaultConfirmed(_agentVault, requestId, receivedAmountUBA, remintedUBA);
+    }
+
+    /**
+     * Directly redeem from core vault by a user holding FAssets.
+     * This is like ordinary redemption, but the redemption time is much longer (a day or more)
+     * and there is no possibility of redemption.
+     * @param _lots the number of lots, must be larger than `coreVaultMinimumRedeemLots` setting
+     * @param _redeemerUnderlyingAddress the underlying address to which the assets will be redeemed;
+     *      must have been added to the `allowedDestinations` list in the core vault manager by
+     *      the governance before the redemption request.
+     */
+    function redeemFromCoreVault(
+        uint256 _lots,
+        string memory _redeemerUnderlyingAddress
+    )
+        external
+        onlyEnabled
+        notEmergencyPaused
+        nonReentrant
+    {
+        CoreVaultClient.State storage state = CoreVaultClient.getState();
+        uint256 availableLots = CoreVaultClient.coreVaultAmountLots();
+        require(_lots <= availableLots, NotEnoughAvailableOnCoreVault());
+        uint256 minimumRedeemLots = Math.min(state.minimumRedeemLots, availableLots);
+        require(_lots >= minimumRedeemLots, RequestedAmountTooSmall());
+        // burn the senders fassets
+        uint256 redeemedUBA = Conversion.convertLotsToUBA(_lots);
+        Redemptions.burnFAssets(msg.sender, redeemedUBA);
+        // subtract the redemption fee
+        uint256 redemptionFeeUBA = redeemedUBA.mulBips(state.redemptionFeeBIPS);
+        uint128 paymentUBA = (redeemedUBA - redemptionFeeUBA).toUint128();
+        // create new request id
+        state.newRedemptionFromCoreVaultId += PaymentReference.randomizedIdSkip();
+        bytes32 paymentReference = PaymentReference.redemptionFromCoreVault(state.newRedemptionFromCoreVaultId);
+        // transfer from core vault (paymentReference may change when the request is merged)
+        paymentReference = state.coreVaultManager.requestTransferFromCoreVault(
+            _redeemerUnderlyingAddress, paymentReference, paymentUBA, false);
+        emit CoreVaultRedemptionRequested(msg.sender, _redeemerUnderlyingAddress, paymentReference,
+            redeemedUBA, redemptionFeeUBA);
+    }
+
+    function maximumTransferToCoreVault(
+        address _agentVault
+    )
+        external view
+        returns (uint256 _maximumTransferUBA, uint256 _minimumLeftAmountUBA)
+    {
+        Agent.State storage agent = Agent.get(_agentVault);
+        (uint256 _maximumTransferAMG, uint256 _minimumLeftAmountAMG) =
+             CoreVaultClient.maximumTransferToCoreVaultAMG(agent);
+        _maximumTransferUBA = Conversion.convertAmgToUBA(_maximumTransferAMG.toUint64());
+        _minimumLeftAmountUBA = Conversion.convertAmgToUBA(_minimumLeftAmountAMG.toUint64());
+    }
+
+    function coreVaultAvailableAmount()
+        external view
+        returns (uint256 _immediatelyAvailableUBA, uint256 _totalAvailableUBA)
+    {
+        return CoreVaultClient.coreVaultAvailableAmount();
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/******************************************************************************\
+* Author: Nick Mudge <nick@perfectabstractions.com> (https://twitter.com/mudgen)
+* EIP-2535 Diamonds: https://eips.ethereum.org/EIPS/eip-2535
+/******************************************************************************/
+
+import { Globals } from "../library/Globals.sol";
+import { IDiamondCut } from "../../diamond/interfaces/IDiamondCut.sol";
+import { LibDiamond } from "../../diamond/library/LibDiamond.sol";
+import { GovernedProxyImplementation } from "../../governance/implementation/GovernedProxyImplementation.sol";
+
+// DiamondCutFacet that also respects diamondCutMinTimelockSeconds setting.
+
+// Remember to add the loupe functions from DiamondLoupeFacet to the diamond.
+// The loupe functions are required by the EIP2535 Diamonds standard
+
+contract AssetManagerDiamondCutFacet is IDiamondCut, GovernedProxyImplementation {
+    /// @notice Add/replace/remove any number of functions and optionally execute
+    ///         a function with delegatecall
+    /// @param _diamondCut Contains the facet addresses and function selectors
+    /// @param _init The address of the contract or facet to execute _calldata
+    /// @param _calldata A function call, including function selector and arguments
+    ///                  _calldata is executed with delegatecall on _init
+    function diamondCut(
+        FacetCut[] calldata _diamondCut,
+        address _init,
+        bytes calldata _calldata
+    )
+        external override
+        onlyGovernanceWithTimelockAtLeast(Globals.getSettings().diamondCutMinTimelockSeconds)
+    {
+        LibDiamond.diamondCut(_diamondCut, _init, _calldata);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {AssetManagerBase} from "./AssetManagerBase.sol";
+import {Globals} from "../library/Globals.sol";
+import {AssetManagerState} from "../library/data/AssetManagerState.sol";
+import {AssetManagerSettings} from "../../userInterfaces/data/AssetManagerSettings.sol";
+import {IAssetManagerEvents} from "../../userInterfaces/IAssetManagerEvents.sol";
+
+
+contract EmergencyPauseTransfersFacet is AssetManagerBase, IAssetManagerEvents {
+    using SafeCast for uint256;
+
+    error PausedByGovernance();
+
+    function emergencyPauseTransfers(bool _byGovernance, uint256 _duration)
+        external
+        onlyAssetManagerController
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        bool pausedAtStart = _transfersPaused();
+        if (_byGovernance) {
+            state.transfersEmergencyPausedUntil = (block.timestamp + _duration).toUint64();
+            state.transfersEmergencyPausedByGovernance = true;
+        } else {
+            if (pausedAtStart && state.transfersEmergencyPausedByGovernance) {
+                revert PausedByGovernance();
+            }
+            AssetManagerSettings.Data storage settings = Globals.getSettings();
+            uint256 resetTs = state.transfersEmergencyPausedUntil + settings.emergencyPauseDurationResetAfterSeconds;
+            if (resetTs <= block.timestamp) {
+                state.transfersEmergencyPausedTotalDuration = 0;
+            }
+            uint256 currentPauseEndTime = Math.max(state.transfersEmergencyPausedUntil, block.timestamp);
+            uint256 projectedStartTime =
+                Math.min(currentPauseEndTime - state.transfersEmergencyPausedTotalDuration, block.timestamp);
+            uint256 maxEndTime = projectedStartTime + settings.maxEmergencyPauseDurationSeconds;
+            uint256 endTime = Math.min(block.timestamp + _duration, maxEndTime);
+            state.transfersEmergencyPausedUntil = endTime.toUint64();
+            state.transfersEmergencyPausedTotalDuration = (endTime - projectedStartTime).toUint64();
+            state.transfersEmergencyPausedByGovernance = false;
         }
-        // create a new bidirectional mapping
-        mgmtToWorkAddress[msg.sender] = _ownerWorkAddress;
-        if (_ownerWorkAddress != address(0)) {
-            workToMgmtAddress[_ownerWorkAddress] = msg.sender;
+        if (_transfersPaused()) {
+            emit EmergencyPauseTransfersTriggered(state.transfersEmergencyPausedUntil);
+        } else if (pausedAtStart) {
+            emit EmergencyPauseTransfersCanceled();
         }
-        emit WorkAddressChanged(msg.sender, oldWorkAddress, _ownerWorkAddress);
     }
 
-    /**
-     * Set agent owner's name.
-     * @param _managementAddress agent owner's management address
-     * @param _name new agent owner's name
-     */
-    function setAgentName(address _managementAddress, string memory _name)
+    function resetEmergencyPauseTransfersTotalDuration()
         external
-        onlyGovernanceOrManager
+        onlyAssetManagerController
     {
-        agentName[_managementAddress] = _name;
-        _emitDataChanged(_managementAddress);
+        AssetManagerState.State storage state = AssetManagerState.get();
+        state.transfersEmergencyPausedTotalDuration = 0;
     }
 
-    /**
-     * Set agent owner's description.
-     * @param _managementAddress agent owner's management address
-     * @param _description new agent owner's description
-     */
-    function setAgentDescription(address _managementAddress, string memory _description)
-        external
-        onlyGovernanceOrManager
-    {
-        agentDescription[_managementAddress] = _description;
-        _emitDataChanged(_managementAddress);
-    }
-
-    /**
-     * Set url of the agent owner's icon.
-     * @param _managementAddress agent owner's management address
-     * @param _iconUrl new url of the agent owner's icon
-     */
-    function setAgentIconUrl(address _managementAddress, string memory _iconUrl)
-        external
-        onlyGovernanceOrManager
-    {
-        agentIconUrl[_managementAddress] = _iconUrl;
-        _emitDataChanged(_managementAddress);
-    }
-
-    /**
-     * Set url of the agent's page with terms of use.
-     * @param _managementAddress agent owner's management address
-     * @param _touUrl new url of the agent's page with terms of use
-     */
-    function setAgentTermsOfUseUrl(address _managementAddress, string memory _touUrl)
-        external
-        onlyGovernanceOrManager
-    {
-        agentTouUrl[_managementAddress] = _touUrl;
-        _emitDataChanged(_managementAddress);
-    }
-
-    /**
-     * Return agent owner's name.
-     * @param _managementAddress agent owner's management address
-     */
-    function getAgentName(address _managementAddress)
-        external view override
-        returns (string memory)
-    {
-        return agentName[_managementAddress];
-    }
-
-    /**
-     * Return agent owner's description.
-     * @param _managementAddress agent owner's management address
-     */
-    function getAgentDescription(address _managementAddress)
-        external view override
-        returns (string memory)
-    {
-        return agentDescription[_managementAddress];
-    }
-
-    /**
-     * Return url of the agent owner's icon.
-     * @param _managementAddress agent owner's management address
-     */
-    function getAgentIconUrl(address _managementAddress)
-        external view override
-        returns (string memory)
-    {
-        return agentIconUrl[_managementAddress];
-    }
-
-    /**
-     * Return url of the agent's page with terms of use.
-     * @param _managementAddress agent owner's management address
-     */
-    function getAgentTermsOfUseUrl(address _managementAddress)
-        external view override
-        returns (string memory)
-    {
-        return agentTouUrl[_managementAddress];
-    }
-
-    /**
-     * Get the (unique) work address for the given management address.
-     */
-    function getWorkAddress(address _managementAddress)
-        external view override
-        returns (address)
-    {
-        return mgmtToWorkAddress[_managementAddress];
-    }
-
-    /**
-     * Get the (unique) management address for the given work address.
-     */
-    function getManagementAddress(address _workAddress)
-        external view override
-        returns (address)
-    {
-        return workToMgmtAddress[_workAddress];
-    }
-
-    function isWhitelisted(address _address) public view override returns (bool) {
-        return whitelist[_address];
-    }
-
-    function _addAddressToWhitelist(address _address) internal {
-        require(_address != address(0), AddressZero());
-        if (whitelist[_address]) return;
-        whitelist[_address] = true;
-        emit Whitelisted(_address);
-    }
-
-    function _removeAddressFromWhitelist(address _address) internal {
-        if (!whitelist[_address]) return;
-        delete whitelist[_address];
-        emit WhitelistingRevoked(_address);
-    }
-
-    function _setAgentData(
-        address _managementAddress,
-        string memory _name,
-        string memory _description,
-        string memory _iconUrl,
-        string memory _touUrl
-    ) private {
-        agentName[_managementAddress] = _name;
-        agentDescription[_managementAddress] = _description;
-        agentIconUrl[_managementAddress] = _iconUrl;
-        agentTouUrl[_managementAddress] = _touUrl;
-        emit AgentDataChanged(_managementAddress, _name, _description, _iconUrl, _touUrl);
-    }
-
-    function _emitDataChanged(address _managementAddress) private {
-        emit AgentDataChanged(_managementAddress,
-            agentName[_managementAddress],
-            agentDescription[_managementAddress],
-            agentIconUrl[_managementAddress],
-            agentTouUrl[_managementAddress]);
-    }
-
-    /**
-     * Implementation of ERC-165 interface.
-     */
-    function supportsInterface(bytes4 _interfaceId)
-        public pure override
+    function transfersEmergencyPaused()
+        external view
         returns (bool)
     {
-        return _interfaceId == type(IERC165).interfaceId
-            || _interfaceId == type(IAgentOwnerRegistry).interfaceId;
+        return _transfersPaused();
+    }
+
+    function transfersEmergencyPausedUntil()
+        external view
+        returns (uint256)
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return _transfersPaused() ? state.transfersEmergencyPausedUntil : 0;
+    }
+
+    function emergencyPauseTransfersDetails()
+        external view
+        returns (uint256 _pausedUntil, uint256 _totalPauseDuration, bool _pausedByGovernance)
+    {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return (state.transfersEmergencyPausedUntil, state.transfersEmergencyPausedTotalDuration,
+            state.transfersEmergencyPausedByGovernance);
+    }
+
+    function _transfersPaused() private view returns (bool) {
+        AssetManagerState.State storage state = AssetManagerState.get();
+        return state.transfersEmergencyPausedUntil > block.timestamp;
     }
 }
 

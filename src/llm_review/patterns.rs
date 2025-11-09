@@ -308,7 +308,12 @@ impl EnumData for VulnerabilityPattern {
             ],
 
             // Token Standard / Allowance
-            VulnerabilityPattern::StandardViolation => &[VulnerabilityType::StandardViolation],
+            VulnerabilityPattern::StandardViolation => &[
+                VulnerabilityType::StandardViolation,
+                VulnerabilityType::Dos, // ERC-4337 factory revert causes DoS
+                VulnerabilityType::UncheckedERC20Return, // ERC-20 missing return bool
+                VulnerabilityType::ERC4626SharePrice, // ERC-4626 preview function violations
+            ],
             VulnerabilityPattern::AllowanceRace => &[VulnerabilityType::AllowanceRace],
             VulnerabilityPattern::PermitMisuse => &[
                 VulnerabilityType::SignatureReplay,
@@ -749,10 +754,15 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
             "totalSupply != sum(balances)",
             "emitted != claimed + unclaimed",
             "index decreases",
+            "token/asset address changes without accounting migration",
+            "balance tracking references different token than actual holdings",
+            "accounting state not updated when underlying asset is swapped/upgraded",
         ],
         examples: &[
             "burnFrom doesn't reduce totalSupply",
             "unauthorized validator increases rewards share",
+            "token upgrade leaves accounting tracking old address while holding new token",
+            "collateral swapped but totalCollateral unchanged",
         ],
         impact_hint: ImpactHint::HighMedium,
     },
@@ -779,14 +789,30 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
     // E) Token Standard & Allowances
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::StandardViolation,
-        definition: "ERC20/721/4626/Votes spec deviation enabling theft, stuck funds, or broken integrations.",
+        definition: "ERC-20/721/4337/4626 spec deviation enabling theft, stuck funds, DoS, or broken integrations.",
         static_signals: &[
             "wrong totalSupply/balance invariants",
-            "incorrect return values/events",
+            "incorrect return values/events per standard spec",
+            "deterministic deployment reverts on collision instead of returning existing address",
+            "CREATE2 deployment not idempotent (reverts on re-deploy)",
+            "transfer/transferFrom missing return bool",
+            "safeTransferFrom missing receiver callback check",
+            "preview/view functions modify state (breaks simulations)",
+            "deterministic address allows front-running to DoS deployment",
+            "factory/deployer reverts when contract already exists",
+            "standard-required function missing or has wrong signature",
         ],
         examples: &[
             "burnFrom without totalSupply decrement",
             "transfer returns false silently",
+            "factory reverts on collision instead of returning address",
+            "attacker front-runs deterministic deployment causing DoS",
+            "transfer() doesn't return bool (breaks DEX integrations)",
+            "safeTransferFrom doesn't call onReceived callback",
+            "previewDeposit() modifies state (breaks off-chain simulations)",
+            "deterministic deployment DoS via front-run pre-creation",
+            "simulation/bundler fails due to revert instead of address return",
+            "permit() missing deadline check",
         ],
         impact_hint: ImpactHint::HighMedium,
     },
@@ -853,10 +879,32 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
     // G) Lifecycle & State Machines
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::MaturityorGatingByPass,
-        definition: "Lifecycle flags (launch/maturity) ignored or bypassable, enabling early/late actions.",
-        static_signals: &["no require(isLaunched/hasMatured) on gated funcs"],
-        examples: &["withdraw before maturity"],
-        impact_hint: ImpactHint::Medium,
+        definition: "Bypasses maturity/vesting/cooldown/state-gate via edge-case, missing check, or state confusion, enabling unauthorized early/late actions or challenge mechanism bypass.",
+        static_signals: &[
+            "no require(isLaunched/hasMatured) on gated funcs",
+            "vesting/maturity check missing or incomplete",
+            "cooldown period bypassable via reentrancy or state manipulation",
+            "payment/action can occur before request/state is created",
+            "timestamp validation only checks action >= request, not that request existed",
+            "DEFAULTED/CANCELLED/REJECTED status still considered 'active'/'open' for some checks",
+            "challenge mechanism fails when action precedes request or due to state confusion",
+            "accounting subtracts value without verifying recipient/destination matches request",
+            "timelock delay bypassable via queue/cancel/re-queue",
+            "deadline parameter missing or not enforced",
+        ],
+        examples: &[
+            "withdraw before maturity",
+            "claim vested tokens before vesting period ends",
+            "bypass cooldown via reentrancy to same function",
+            "agent makes payment with predicted reference before creating request",
+            "illegalPaymentChallenge reverts because DEFAULTED redemption considered 'open'",
+            "freeBalanceChallenge subtracts redemptionValue despite payment to wrong address",
+            "vault owner delays switching invalid collateral to reduce liquidation liability",
+            "timelock bypass via cancel and immediate re-execution",
+            "pause mechanism bypassable via delegatecall to unpaused contract",
+            "deposit cap bypass via flash loan and same-block withdrawal",
+        ],
+        impact_hint: ImpactHint::HighMedium,
     },
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::EpochOrIndexMonotonicity,
@@ -1220,11 +1268,15 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
             "delegatecall target pulled from registry without allowlist",
             "upgrade path controlled by different admin than core protocol",
             "no codehash/impl allowlist; no immutability on critical addresses",
+            "critical asset/token address mutable by external actor",
+            "collateral/reserve token address changeable without migration logic",
         ],
         examples: &[
             "setBeacon(newBeacon) public → attacker points to malicious impl",
             "factory.createProxy(impl=unvetted) then protocol delegatecalls",
             "beacon owner not protocol governance; can swap impl at will",
+            "oracle/registry updates token address → accounting tracks stale reference",
+            "asset upgrade function swaps underlying token without state migration",
         ],
         impact_hint: ImpactHint::High,
     },
