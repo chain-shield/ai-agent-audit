@@ -1733,168 +1733,6 @@ contract Jackpot is IJackpot, Ownable2Step, ReentrancyGuardTransient {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: Apache 2
-pragma solidity ^0.8.0;
-
-import "./EntropyEvents.sol";
-import "./EntropyEventsV2.sol";
-import "./EntropyStructsV2.sol";
-
-interface IEntropyV2 is EntropyEventsV2 {
-    /// @notice Request a random number using the default provider with default gas limit
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2()`) as msg.value.
-    /// Note that the fee can change over time. Callers of this method should explicitly compute `getFeeV2()`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    ///
-    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
-    /// This approach modifies the security guarantees such that a dishonest validator and provider can
-    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
-    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
-    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
-    function requestV2()
-        external
-        payable
-        returns (uint64 assignedSequenceNumber);
-
-    /// @notice Request a random number using the default provider with specified gas limit
-    /// @param gasLimit The gas limit for the callback function.
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(gasLimit)`) as msg.value.
-    /// Note that the fee can change over time. Callers of this method should explicitly compute `getFeeV2(gasLimit)`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    ///
-    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
-    /// This approach modifies the security guarantees such that a dishonest validator and provider can
-    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
-    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
-    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
-    function requestV2(
-        uint32 gasLimit
-    ) external payable returns (uint64 assignedSequenceNumber);
-
-    /// @notice Request a random number from a specific provider with specified gas limit
-    /// @param provider The address of the provider to request from
-    /// @param gasLimit The gas limit for the callback function
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(provider, gasLimit)`) as msg.value.
-    /// Note that provider fees can change over time. Callers of this method should explicitly compute `getFeeV2(provider, gasLimit)`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    ///
-    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
-    /// This approach modifies the security guarantees such that a dishonest validator and provider can
-    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
-    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
-    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
-    function requestV2(
-        address provider,
-        uint32 gasLimit
-    ) external payable returns (uint64 assignedSequenceNumber);
-
-    /// @notice Request a random number from a specific provider with a user-provided random number and gas limit
-    /// @param provider The address of the provider to request from
-    /// @param userRandomNumber A random number provided by the user for additional entropy
-    /// @param gasLimit The gas limit for the callback function. Pass 0 to get a sane default value -- see note below.
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(provider, gasLimit)`) as msg.value.
-    /// Note that provider fees can change over time. Callers of this method should explicitly compute `getFeeV2(provider, gasLimit)`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    function requestV2(
-        address provider,
-        bytes32 userRandomNumber,
-        uint32 gasLimit
-    ) external payable returns (uint64 assignedSequenceNumber);
-
-    /// @notice Get information about a specific entropy provider
-    /// @param provider The address of the provider to query
-    /// @return info The provider information including configuration, fees, and operational status
-    /// @dev This method returns detailed information about a provider's configuration and capabilities.
-    /// The returned ProviderInfo struct contains information such as the provider's fee structure and gas limits.
-    function getProviderInfoV2(
-        address provider
-    ) external view returns (EntropyStructsV2.ProviderInfo memory info);
-
-    /// @notice Get the address of the default entropy provider
-    /// @return provider The address of the default provider
-    /// @dev This method returns the address of the provider that will be used when no specific provider is specified
-    /// in the requestV2 calls. The default provider can be used to get the base fee and gas limit information.
-    function getDefaultProvider() external view returns (address provider);
-
-    /// @notice Get information about a specific request
-    /// @param provider The address of the provider that handled the request
-    /// @param sequenceNumber The unique identifier of the request
-    /// @return req The request information including status, random number, and other metadata
-    /// @dev This method allows querying the state of a previously made request. The returned Request struct
-    /// contains information about whether the request was fulfilled, the generated random number (if available),
-    /// and other metadata about the request.
-    function getRequestV2(
-        address provider,
-        uint64 sequenceNumber
-    ) external view returns (EntropyStructsV2.Request memory req);
-
-    /// @notice Get the fee charged by the default provider for the default gas limit
-    /// @return feeAmount The fee amount in wei
-    /// @dev This method returns the base fee required to make a request using the default provider with
-    /// the default gas limit. This fee should be passed as msg.value when calling requestV2().
-    /// The fee can change over time, so this method should be called before each request.
-    function getFeeV2() external view returns (uint128 feeAmount);
-
-    /// @notice Get the fee charged by the default provider for a specific gas limit
-    /// @param gasLimit The gas limit for the callback function
-    /// @return feeAmount The fee amount in wei
-    /// @dev This method returns the fee required to make a request using the default provider with
-    /// the specified gas limit. This fee should be passed as msg.value when calling requestV2(gasLimit).
-    /// The fee can change over time, so this method should be called before each request.
-    function getFeeV2(
-        uint32 gasLimit
-    ) external view returns (uint128 feeAmount);
-
-    /// @notice Get the fee charged by a specific provider for a request with a given gas limit
-    /// @param provider The address of the provider to query
-    /// @param gasLimit The gas limit for the callback function
-    /// @return feeAmount The fee amount in wei
-    /// @dev This method returns the fee required to make a request using the specified provider with
-    /// the given gas limit. This fee should be passed as msg.value when calling requestV2(provider, gasLimit)
-    /// or requestV2(provider, userRandomNumber, gasLimit). The fee can change over time, so this method
-    /// should be called before each request.
-    function getFeeV2(
-        address provider,
-        uint32 gasLimit
-    ) external view returns (uint128 feeAmount);
-}
-
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -2439,29 +2277,51 @@ contract JackpotLPManager is IJackpotLPManager, Ownable {
 
 /*
 Copyright (C) 2025 Coordination Inc.
-Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
+All rights reserved.
 
-Change Date: 2029-12-01
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
 
-On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
+For licensing inquiries: legal@coordinationlabs.com
 */
 
 pragma solidity ^0.8.28;
 
-interface IPayoutCalculator {
-    function calculateAndStoreDrawingUserWinnings(
-        uint256 _drawingId,
-        uint256 _prizePool,
-        uint8 _ballMax,
-        uint8 _bonusballMax,
-        uint256[] memory _result,
-        uint256[] memory _dupResult
-    ) external returns (uint256);
+/**
+ * @title UintCasts
+ * @notice Minimal helpers for safely downcasting uint256 values to uint8.
+ * @dev Reverts with Uint8OutOfBounds() if a value exceeds uint8's max (255).
+ */
+library UintCasts {
+    /// @notice Raised when a value cannot be represented as uint8 (value > 255)
+    error Uint8OutOfBounds();
 
-    function setDrawingTierInfo(uint256 _drawingId) external;
+    /**
+     * @notice Safely cast a uint256 to uint8.
+     * @param _value The value to cast.
+     * @return out The value as uint8 (reverts if out of range).
+     */
+    function toUint8(uint256 _value) internal pure returns (uint8) {
+        if (_value > type(uint8).max) revert Uint8OutOfBounds();
+        return uint8(_value);
+    }
 
-    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
+    /**
+     * @notice Safely cast an array of uint256 to uint8[] element-wise.
+     * @param _values The array of values to cast.
+     * @return out The cast array (reverts if any element is out of range).
+     */
+    function toUint8Array(uint256[] memory _values) internal pure returns (uint8[] memory) {
+        uint256 len = _values.length;
+        uint8[] memory out = new uint8[](len);
+        for (uint256 i = 0; i < len; ) {
+            out[i] = toUint8(_values[i]);
+            unchecked { ++i; }
+        }
+        return out;
+    }
 }
+
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -2669,349 +2529,32 @@ contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
         });
     }
 }
-// SPDX-License-Identifier: MIT
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
+
+Change Date: 2029-12-01
+
+On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
+*/
+
 pragma solidity ^0.8.28;
 
-import { Combinations } from "./Combinations.sol";
-import { LibBit } from "solady/src/utils/LibBit.sol";
-
-/**
- * @title TicketComboTracker
- * @notice Library for tracking jackpot ticket combinations and calculating win distributions efficiently
- * @dev Implements scalable settlement calculations using bit vectors and inclusion-exclusion principle:
- *      - Stores ticket combinations as bit vectors for efficient subset operations
- *      - Tracks both unique and duplicate ticket counts per combination subset
- *      - Uses inclusion-exclusion principle to avoid double-counting when calculating payouts
- *      - Enables O(1) duplicate detection and efficient tier-based payout calculations
- *      - Supports configurable normal ball ranges and bonusball values
- *      - Optimized for gas efficiency in high-volume jackpot scenarios
- */
-library TicketComboTracker {
-    struct ComboCount {
-        uint128 count;
-        uint128 dupCount;
-    }
-
-    struct Tracker {
-        uint8 normalMax;
-        uint8 bonusballMax;
-        uint8 normalTiers;
-        mapping(uint8 => mapping(uint256 => ComboCount)) comboCounts;
-        mapping(uint8 => ComboCount) bonusballTicketCounts;
-    }
-
-    /**
-     * @notice Initializes a combo tracker with jackpot configuration parameters
-     * @dev Sets up the tracker with ball ranges and tier configuration for efficient combo tracking.
-     *      Must be called before using any other tracker functions.
-     * @param tracker Storage reference to the tracker being initialized
-     * @param _normalMax Maximum value for normal balls (1 to this value)
-     * @param _bonusballMax Maximum value for bonusball (1 to this value)
-     * @param _normalTiers Number of normal balls per ticket (typically 5)
-     * @custom:effects
-     * - Configures tracker parameters for combo calculations
-     * - Prepares tracker for ticket insertion and counting operations
-     * @custom:security
-     * - No validation as this is internal initialization
-     * - Caller responsible for providing valid parameters
-     */
-    function init(
-        Tracker storage tracker,
-        uint8 _normalMax,
+interface IPayoutCalculator {
+    function calculateAndStoreDrawingUserWinnings(
+        uint256 _drawingId,
+        uint256 _prizePool,
+        uint8 _ballMax,
         uint8 _bonusballMax,
-        uint8 _normalTiers
-    ) internal {
-        tracker.normalMax = _normalMax;
-        tracker.bonusballMax = _bonusballMax;
-        tracker.normalTiers = _normalTiers;
-    }
-
-    /**
-     * @notice Converts an array of normal ball numbers to a bit vector representation
-     * @dev Creates a bit vector where each bit position represents a ball number.
-     *      Validates no duplicates and all numbers are within valid range.
-     * @param _set Array of ball numbers to convert
-     * @param _maxNormalBall Maximum valid ball number
-     * @return Bit vector representation where bit N is set if ball N is selected
-     * @custom:requirements
-     * - Set must not be empty
-     * - All numbers must be > 0 and <= _maxNormalBall
-     * - No duplicate numbers allowed
-     * @custom:security
-     * - Validates range and uniqueness to prevent invalid combinations
-     * - Uses bit operations for efficient duplicate detection
-     */
-    function toNormalsBitVector(
-        uint8[] memory _set,
-        uint256 _maxNormalBall
-    )
-        internal
-        pure
-        returns (uint256)
-    {
-        require(_set.length != 0, "Invalid set length");
-        uint256 bitVector = 0;
-        for (uint256 i; i < _set.length; ++i) {
-            require(_set[i] <= _maxNormalBall && _set[i] > 0, "Invalid set selection");
-            require((bitVector & (1 << _set[i])) == 0, "Duplicate number in set");
-            bitVector |= 1 << _set[i];
-        }
-        return bitVector;
-    }
-
-    /**
-     * @notice Inserts a ticket combination into the tracker and updates subset counts
-     * @dev Converts ticket to bit vector, generates all subsets, and updates counts.
-     *      Distinguishes between first purchase of a ticket (unique) and duplicates for
-     *      payout calculations. 
-     * @param _tracker Storage reference to the tracker
-     * @param _normalBalls Array of normal ball numbers
-     * @param _bonusball Bonusball number
-     * @return ticketNumbers Bit vector representation of the complete ticket
-     * @return isDup True if this exact combination was already inserted
-     * @custom:requirements
-     * - Normal balls array length must match tracker.normalTiers
-     * - All ball numbers must be valid per tracker configuration
-     * @custom:effects
-     * - Updates counts for all subset combinations of the ticket
-     * - Increments either unique or duplicate counts based on prior existence
-     * - Tracks bonusball-specific subset counts for tier calculations
-     * @custom:security
-     * - Validates ticket format matches tracker configuration
-     * - Prevents invalid combinations through bit vector validation
-     */
-    function insert(
-        Tracker storage _tracker,
-        uint8[] memory _normalBalls,
-        uint8 _bonusball
-    )
-        internal
-        returns (uint256 ticketNumbers, bool isDup)
-    {
-        require(_normalBalls.length == _tracker.normalTiers, "Invalid pick length");
-        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
-        // Iterate over all tier combos and store the combo counts
-        isDup = _tracker.comboCounts[_bonusball][set].count > 0;
-        for (uint8 i = 1; i <= _tracker.normalTiers; i++) {
-            uint256[] memory subsets = Combinations.generateSubsets(set, i);
-            for (uint256 j = 0; j < subsets.length; j++) {
-                if (isDup) {
-                    _tracker.comboCounts[_bonusball][subsets[j]].dupCount++;
-                } else {
-                    _tracker.comboCounts[_bonusball][subsets[j]].count++;
-                }
-            }
-        }
-
-        if (isDup) {
-            _tracker.bonusballTicketCounts[_bonusball].dupCount++;
-        } else {
-            _tracker.bonusballTicketCounts[_bonusball].count++;
-        }
-
-        // Add the bonusball to the bit vector
-        ticketNumbers = set |= 1 << (_bonusball + _tracker.normalMax);
-    }
-
-    function _countSubsetMatches(
-        Tracker storage _tracker,
-        uint256 _normalBallsBitVector,
-        uint8 _bonusball
-    )
-        private
-        view
-        returns (uint256[] memory matches, uint256[] memory dupMatches)
-    {
-        matches = new uint256[]((_tracker.normalTiers+1)*2);
-        dupMatches = new uint256[]((_tracker.normalTiers+1)*2);
-        
-        for (uint8 i = 1; i <= _tracker.bonusballMax; i++) {
-            for (uint8 k = 1; k <= _tracker.normalTiers; k++) {
-                uint256[] memory subsets = Combinations.generateSubsets(_normalBallsBitVector, k);
-                for (uint256 l = 0; l < subsets.length; l++) {
-                    if (i == _bonusball) {
-                        matches[(k*2)+1] += _tracker.comboCounts[i][subsets[l]].count;
-                        dupMatches[k*2+1] += _tracker.comboCounts[i][subsets[l]].dupCount;
-                    } else {
-                        matches[(k*2)] += _tracker.comboCounts[i][subsets[l]].count;
-                        dupMatches[k*2] += _tracker.comboCounts[i][subsets[l]].dupCount;
-                    }
-                }
-            }
-        }
-    }
-
-    function _applyInclusionExclusionPrinciple(
-        Tracker storage _tracker,
-        uint256[] memory _matches,
-        uint256[] memory _dupMatches
-    )
-        private
-        view
-        returns (uint256[] memory result, uint256[] memory dupResult)
-    {
-        result = new uint256[](_matches.length);
-        dupResult = new uint256[](_dupMatches.length);
-        
-        // Solve top-down (starting from "all matched")
-        for (uint256 k = _tracker.normalTiers; k >= 1; --k) {
-            uint256 s = _matches[2*k];
-            uint256 sp = _matches[2*k+1];
-            uint256 sd = _dupMatches[2*k];
-            uint256 sdp = _dupMatches[2*k+1];
-            
-            // Repeatedly subtract higher-tier counts that spill over into this tier
-            for (uint256 m = k + 1; m <= _tracker.normalTiers; ++m) {
-                // Each higher-tier ticket contributes C(m,k) subsets to this tier
-                uint256 c = Combinations.choose(m, k);
-                s -= c * result[2*m];
-                sp -= c * result[2*m+1];
-                sd -= c * dupResult[2*m];
-                sdp -= c * dupResult[2*m+1];
-            }
-            
-            result[2*k] = s;
-            result[2*k+1] = sp;
-            dupResult[2*k] = sd;
-            dupResult[2*k+1] = sdp;
-        }
-    }
-
-    function _calculateBonusballOnlyMatches(
-        Tracker storage _tracker,
-        uint8 _bonusball,
-        uint256[] memory _uniqueResult,
+        uint256[] memory _result,
         uint256[] memory _dupResult
-    )
-        private
-        view
-    {
-        // Start with all bonusball-only tickets
-        _uniqueResult[1] = _tracker.bonusballTicketCounts[_bonusball].count;
-        _dupResult[1] = _tracker.bonusballTicketCounts[_bonusball].dupCount;
-        
-        // Subtract tickets that also match normal balls (they're counted in higher tiers)
-        for (uint256 i = 1; i <= _tracker.normalTiers; i++) {
-            _uniqueResult[1] -= _uniqueResult[2*i + 1];
-            _dupResult[1] -= _dupResult[2*i + 1];
-        }
-    }
+    ) external returns (uint256);
 
-    /**
-     * @notice Calculates winning ticket counts across all tiers for given winning numbers
-     * @dev Implements three-phase calculation to determine exact winner counts per tier:
-     *      1. Count all subset matches across bonusball values
-     *      2. Apply inclusion-exclusion principle to remove double-counting
-     *      3. Calculate bonusball-only matches (0 normal matches + bonusball)
-     * @param _tracker Storage reference to the tracker
-     * @param _normalBalls Array of winning normal ball numbers
-     * @param _bonusball Winning bonusball number
-     * @return winningTicket Bit vector representation of the winning combination
-     * @return uniqueResult Array of unique winner counts per tier (indexed by tier ID)
-     * @return dupResult Array of duplicate winner counts per tier (indexed by tier ID)
-     * @custom:effects
-     * - Generates comprehensive winner statistics for payout calculations
-     * - Separates unique and duplicate winners for accurate settlement
-     * - Covers all 12 tiers: matches(0-5) + bonusball(0/1)
-     * @custom:security
-     * - Read-only operation with no state changes
-     * - Uses mathematical inclusion-exclusion for accurate counting
-     * - Prevents over-counting tickets in multiple tiers
-     */
-    function countTierMatchesWithBonusball(
-        Tracker storage _tracker,
-        uint8[] memory _normalBalls,
-        uint8 _bonusball
-    )
-        internal
-        view
-        returns (uint256 winningTicket, uint256[] memory uniqueResult, uint256[] memory dupResult)
-    {
-        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
-        winningTicket = set | (1 << (_bonusball + _tracker.normalMax));
+    function setDrawingTierInfo(uint256 _drawingId) external;
 
-        // Step 1: Count all subset matches across all bonusballs
-        (uint256[] memory matches, uint256[] memory dupMatches) = _countSubsetMatches(_tracker, set, _bonusball);
-        
-        // Step 2: Apply inclusion-exclusion principle to remove double counting
-        (uniqueResult, dupResult) = _applyInclusionExclusionPrinciple(_tracker, matches, dupMatches);
-        
-        // Step 3: Calculate bonusball-only matches (no normal balls matched)
-        _calculateBonusballOnlyMatches(_tracker, _bonusball, uniqueResult, dupResult);
-    }
-
-    /**
-     * @notice Checks if a ticket combination has already been inserted into the tracker
-     * @dev Efficiently determines duplicate status by checking if the exact combination
-     *      has a non-zero count in the tracker's storage.
-     * @param _tracker Storage reference to the tracker
-     * @param _normalBalls Array of normal ball numbers to check
-     * @param _bonusball Bonusball number to check
-     * @return True if this exact combination exists in the tracker
-     * @custom:requirements
-     * - Normal balls array length must match tracker configuration
-     * - All ball numbers must be valid per tracker setup
-     * @custom:security
-     * - Read-only operation with no state changes
-     * - Validates input format before processing
-     * - Uses efficient bit vector lookup for O(1) duplicate detection
-     */
-    function isDuplicate(
-        Tracker storage _tracker,
-        uint8[] memory _normalBalls,
-        uint8 _bonusball
-    )
-        internal
-        view
-        returns (bool)
-    {
-        require(_normalBalls.length == _tracker.normalTiers, "Invalid set length");
-        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
-        return _tracker.comboCounts[_bonusball][set].count > 0;
-    }
-
-    /**
-     * @notice Unpacks a bit vector representation back into separate normal balls and bonusball number
-     * @dev Extracts individual ball numbers from a packed ticket by scanning bit positions.
-     *      Normal balls are stored at bit positions 1 to _normalMax, bonusball at position (_normalMax + bonusball_value).
-     *      Uses LibBit operations for efficient bit scanning and counting to reconstruct original ticket.
-     * @param _packedTicket Bit vector representation of the complete ticket
-     * @param _normalMax Maximum value for normal balls (defines boundary between normal and bonusball bits)
-     * @return normalBalls Array of normal ball numbers extracted from bit positions 1 to _normalMax
-     * @return bonusball Bonusball number calculated from highest set bit position minus _normalMax
-     * @custom:requirements
-     * - Packed ticket must contain valid bit pattern with at least one bonusball bit set
-     * - Normal ball bits must be within positions 1 to _normalMax if present
-     * - Bonusball bit must be at position > _normalMax
-     * @custom:effects
-     * - Scans bit vector to extract individual ball numbers in ascending order
-     * - Reconstructs original ticket structure from packed representation
-     * - No state changes as this is a pure function
-     * @custom:security
-     * - Read-only operation with no side effects or external calls
-     * - Uses efficient LibBit operations to prevent gas issues with large bit vectors
-     * - Handles edge cases like single-ball tickets and sparse patterns gracefully
-     */
-    function unpackTicket(
-        uint256 _packedTicket,
-        uint8 _normalMax
-    )
-        internal
-        pure
-        returns (uint8[] memory normalBalls, uint8 bonusball)
-    {
-        uint256 ballCount = LibBit.popCount(_packedTicket);
-        normalBalls = new uint8[](ballCount - 1);
-        uint256 p;
-        for (uint256 i = 1; i <= _normalMax; i++) {
-            if (_packedTicket & (1 << i) != 0) {
-                normalBalls[p++] = uint8(i);
-            }
-        }
-
-        // Find the bonusball bit position and subtract _normalMax to get the bonusball value
-        bonusball = uint8(LibBit.fls(_packedTicket) - _normalMax);
-    }
+    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
 }
 //SPDX-License-Identifier: UNLICENSED
 
@@ -3354,125 +2897,168 @@ contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsu
         return result;
     }
 }
-//SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: Apache 2
+pragma solidity ^0.8.0;
 
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
+import "./EntropyEvents.sol";
+import "./EntropyEventsV2.sol";
+import "./EntropyStructsV2.sol";
 
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
+interface IEntropyV2 is EntropyEventsV2 {
+    /// @notice Request a random number using the default provider with default gas limit
+    /// @return assignedSequenceNumber A unique identifier for this request
+    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
+    /// the generated random number.
+    ///
+    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
+    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
+    /// by the provider's configured default limit.
+    ///
+    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2()`) as msg.value.
+    /// Note that the fee can change over time. Callers of this method should explicitly compute `getFeeV2()`
+    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
+    ///
+    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
+    /// This approach modifies the security guarantees such that a dishonest validator and provider can
+    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
+    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
+    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
+    function requestV2()
+        external
+        payable
+        returns (uint64 assignedSequenceNumber);
 
-For licensing inquiries: legal@coordinationlabs.com
-*/
+    /// @notice Request a random number using the default provider with specified gas limit
+    /// @param gasLimit The gas limit for the callback function.
+    /// @return assignedSequenceNumber A unique identifier for this request
+    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
+    /// the generated random number.
+    ///
+    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
+    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
+    /// by the provider's configured default limit.
+    ///
+    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(gasLimit)`) as msg.value.
+    /// Note that the fee can change over time. Callers of this method should explicitly compute `getFeeV2(gasLimit)`
+    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
+    ///
+    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
+    /// This approach modifies the security guarantees such that a dishonest validator and provider can
+    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
+    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
+    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
+    function requestV2(
+        uint32 gasLimit
+    ) external payable returns (uint64 assignedSequenceNumber);
 
-pragma solidity ^0.8.28;
+    /// @notice Request a random number from a specific provider with specified gas limit
+    /// @param provider The address of the provider to request from
+    /// @param gasLimit The gas limit for the callback function
+    /// @return assignedSequenceNumber A unique identifier for this request
+    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
+    /// the generated random number.
+    ///
+    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
+    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
+    /// by the provider's configured default limit.
+    ///
+    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(provider, gasLimit)`) as msg.value.
+    /// Note that provider fees can change over time. Callers of this method should explicitly compute `getFeeV2(provider, gasLimit)`
+    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
+    ///
+    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
+    /// This approach modifies the security guarantees such that a dishonest validator and provider can
+    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
+    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
+    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
+    function requestV2(
+        address provider,
+        uint32 gasLimit
+    ) external payable returns (uint64 assignedSequenceNumber);
 
-/**
- * @title UintCasts
- * @notice Minimal helpers for safely downcasting uint256 values to uint8.
- * @dev Reverts with Uint8OutOfBounds() if a value exceeds uint8's max (255).
- */
-library UintCasts {
-    /// @notice Raised when a value cannot be represented as uint8 (value > 255)
-    error Uint8OutOfBounds();
+    /// @notice Request a random number from a specific provider with a user-provided random number and gas limit
+    /// @param provider The address of the provider to request from
+    /// @param userRandomNumber A random number provided by the user for additional entropy
+    /// @param gasLimit The gas limit for the callback function. Pass 0 to get a sane default value -- see note below.
+    /// @return assignedSequenceNumber A unique identifier for this request
+    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
+    /// the generated random number.
+    ///
+    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
+    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
+    /// by the provider's configured default limit.
+    ///
+    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(provider, gasLimit)`) as msg.value.
+    /// Note that provider fees can change over time. Callers of this method should explicitly compute `getFeeV2(provider, gasLimit)`
+    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
+    function requestV2(
+        address provider,
+        bytes32 userRandomNumber,
+        uint32 gasLimit
+    ) external payable returns (uint64 assignedSequenceNumber);
 
-    /**
-     * @notice Safely cast a uint256 to uint8.
-     * @param _value The value to cast.
-     * @return out The value as uint8 (reverts if out of range).
-     */
-    function toUint8(uint256 _value) internal pure returns (uint8) {
-        if (_value > type(uint8).max) revert Uint8OutOfBounds();
-        return uint8(_value);
-    }
+    /// @notice Get information about a specific entropy provider
+    /// @param provider The address of the provider to query
+    /// @return info The provider information including configuration, fees, and operational status
+    /// @dev This method returns detailed information about a provider's configuration and capabilities.
+    /// The returned ProviderInfo struct contains information such as the provider's fee structure and gas limits.
+    function getProviderInfoV2(
+        address provider
+    ) external view returns (EntropyStructsV2.ProviderInfo memory info);
 
-    /**
-     * @notice Safely cast an array of uint256 to uint8[] element-wise.
-     * @param _values The array of values to cast.
-     * @return out The cast array (reverts if any element is out of range).
-     */
-    function toUint8Array(uint256[] memory _values) internal pure returns (uint8[] memory) {
-        uint256 len = _values.length;
-        uint8[] memory out = new uint8[](len);
-        for (uint256 i = 0; i < len; ) {
-            out[i] = toUint8(_values[i]);
-            unchecked { ++i; }
-        }
-        return out;
-    }
+    /// @notice Get the address of the default entropy provider
+    /// @return provider The address of the default provider
+    /// @dev This method returns the address of the provider that will be used when no specific provider is specified
+    /// in the requestV2 calls. The default provider can be used to get the base fee and gas limit information.
+    function getDefaultProvider() external view returns (address provider);
+
+    /// @notice Get information about a specific request
+    /// @param provider The address of the provider that handled the request
+    /// @param sequenceNumber The unique identifier of the request
+    /// @return req The request information including status, random number, and other metadata
+    /// @dev This method allows querying the state of a previously made request. The returned Request struct
+    /// contains information about whether the request was fulfilled, the generated random number (if available),
+    /// and other metadata about the request.
+    function getRequestV2(
+        address provider,
+        uint64 sequenceNumber
+    ) external view returns (EntropyStructsV2.Request memory req);
+
+    /// @notice Get the fee charged by the default provider for the default gas limit
+    /// @return feeAmount The fee amount in wei
+    /// @dev This method returns the base fee required to make a request using the default provider with
+    /// the default gas limit. This fee should be passed as msg.value when calling requestV2().
+    /// The fee can change over time, so this method should be called before each request.
+    function getFeeV2() external view returns (uint128 feeAmount);
+
+    /// @notice Get the fee charged by the default provider for a specific gas limit
+    /// @param gasLimit The gas limit for the callback function
+    /// @return feeAmount The fee amount in wei
+    /// @dev This method returns the fee required to make a request using the default provider with
+    /// the specified gas limit. This fee should be passed as msg.value when calling requestV2(gasLimit).
+    /// The fee can change over time, so this method should be called before each request.
+    function getFeeV2(
+        uint32 gasLimit
+    ) external view returns (uint128 feeAmount);
+
+    /// @notice Get the fee charged by a specific provider for a request with a given gas limit
+    /// @param provider The address of the provider to query
+    /// @param gasLimit The gas limit for the callback function
+    /// @return feeAmount The fee amount in wei
+    /// @dev This method returns the fee required to make a request using the specified provider with
+    /// the given gas limit. This fee should be passed as msg.value when calling requestV2(provider, gasLimit)
+    /// or requestV2(provider, userRandomNumber, gasLimit). The fee can change over time, so this method
+    /// should be called before each request.
+    function getFeeV2(
+        address provider,
+        uint32 gasLimit
+    ) external view returns (uint128 feeAmount);
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8;
-
-import { LibBit } from "solady/src/utils/LibBit.sol";
-
-library Combinations {
-    uint256 constant UINT256_BIT_WIDTH = 256;
-    /// @notice Compute number of combinations of size k from a set of n
-    /// @param n Size of set to choose from
-    /// @param k Size of subsets to choose
-    function choose(
-        uint256 n,
-        uint256 k
-    ) internal pure returns (uint256 result) {
-        assert(n >= k);
-        assert(n <= 128); // Artificial limit to avoid overflow
-        // "How to calculate binomial coefficients"
-        // From: https://blog.plover.com/math/choose.html
-        // This algorithm computes multiplication and division in alternation
-        // to avoid overflow as much as possible.
-        unchecked {
-            uint256 out = 1;
-            for (uint256 d = 1; d <= k; ++d) {
-                out *= n--;
-                out /= d;
-            }
-            return out;
-        }
-    }
-
-    /// @notice Generate all possible subsets of size k from a bit vector.
-    /// @param set Bit vector to generate subsets from
-    /// @param k Size of subsets to generate
-    function generateSubsets(
-        uint256 set,
-        uint256 k
-    ) internal pure returns (uint256[] memory subsets) {
-        unchecked {
-            uint256 n = LibBit.popCount(set);
-            assert(k <= n);
-            subsets = new uint256[](choose(n, k));
-
-            uint256 bound = 1 << n;
-            uint256 comb = (1 << k) - 1;
-            uint256 count;
-            while (comb < bound) {
-                uint256 mapped;
-                uint256 _set = set;
-                uint256 _comb = comb;
-                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
-                    if (_set & 1 == 1) {
-                        if (_comb & 1 == 1) {
-                            mapped |= (1 << i);
-                        }
-                        _comb >>= 1;
-                    }
-                    _set >>= 1;
-                }
-
-                subsets[count++] = mapped;
-
-                // "Gosper's hack"
-                uint256 c = comb & uint256(-int256(comb));
-                uint256 r = comb + c;
-                comb = (((r ^ comb) >> 2) / c) | r;
-            }
-            assert(count == choose(n, k));
-        }
-    }
-}
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
@@ -3759,402 +3345,6 @@ library LibBit {
     }
 }
 
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
-
-pragma solidity ^0.8.20;
-
-import {Context} from "../utils/Context.sol";
-
-/**
- * @dev Contract module which provides a basic access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * The initial owner is set to the address provided by the deployer. This can
- * later be changed with {transferOwnership}.
- *
- * This module is used through inheritance. It will make available the modifier
- * `onlyOwner`, which can be applied to your functions to restrict their use to
- * the owner.
- */
-abstract contract Ownable is Context {
-    address private _owner;
-
-    /**
-     * @dev The caller account is not authorized to perform an operation.
-     */
-    error OwnableUnauthorizedAccount(address account);
-
-    /**
-     * @dev The owner is not a valid owner account. (eg. `address(0)`)
-     */
-    error OwnableInvalidOwner(address owner);
-
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Initializes the contract setting the address provided by the deployer as the initial owner.
-     */
-    constructor(address initialOwner) {
-        if (initialOwner == address(0)) {
-            revert OwnableInvalidOwner(address(0));
-        }
-        _transferOwnership(initialOwner);
-    }
-
-    /**
-     * @dev Throws if called by any account other than the owner.
-     */
-    modifier onlyOwner() {
-        _checkOwner();
-        _;
-    }
-
-    /**
-     * @dev Returns the address of the current owner.
-     */
-    function owner() public view virtual returns (address) {
-        return _owner;
-    }
-
-    /**
-     * @dev Throws if the sender is not the owner.
-     */
-    function _checkOwner() internal view virtual {
-        if (owner() != _msgSender()) {
-            revert OwnableUnauthorizedAccount(_msgSender());
-        }
-    }
-
-    /**
-     * @dev Leaves the contract without owner. It will not be possible to call
-     * `onlyOwner` functions. Can only be called by the current owner.
-     *
-     * NOTE: Renouncing ownership will leave the contract without an owner,
-     * thereby disabling any functionality that is only available to the owner.
-     */
-    function renounceOwnership() public virtual onlyOwner {
-        _transferOwnership(address(0));
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Can only be called by the current owner.
-     */
-    function transferOwnership(address newOwner) public virtual onlyOwner {
-        if (newOwner == address(0)) {
-            revert OwnableInvalidOwner(address(0));
-        }
-        _transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual {
-        address oldOwner = _owner;
-        _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
-
-pragma solidity ^0.8.20;
-
-import {Ownable} from "./Ownable.sol";
-
-/**
- * @dev Contract module which provides access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * This extension of the {Ownable} contract includes a two-step mechanism to transfer
- * ownership, where the new owner must call {acceptOwnership} in order to replace the
- * old one. This can help prevent common mistakes, such as transfers of ownership to
- * incorrect accounts, or to contracts that are unable to interact with the
- * permission system.
- *
- * The initial owner is specified at deployment time in the constructor for `Ownable`. This
- * can later be changed with {transferOwnership} and {acceptOwnership}.
- *
- * This module is used through inheritance. It will make available all functions
- * from parent (Ownable).
- */
-abstract contract Ownable2Step is Ownable {
-    address private _pendingOwner;
-
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Returns the address of the pending owner.
-     */
-    function pendingOwner() public view virtual returns (address) {
-        return _pendingOwner;
-    }
-
-    /**
-     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
-     * Can only be called by the current owner.
-     *
-     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
-     */
-    function transferOwnership(address newOwner) public virtual override onlyOwner {
-        _pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner(), newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual override {
-        delete _pendingOwner;
-        super._transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev The new owner accepts the ownership transfer.
-     */
-    function acceptOwnership() public virtual {
-        address sender = _msgSender();
-        if (pendingOwner() != sender) {
-            revert OwnableUnauthorizedAccount(sender);
-        }
-        _transferOwnership(sender);
-    }
-}
-
-// SPDX-License-Identifier: Apache 2
-pragma solidity ^0.8.0;
-
-abstract contract IEntropyConsumer {
-    // This method is called by Entropy to provide the random number to the consumer.
-    // It asserts that the msg.sender is the Entropy contract. It is not meant to be
-    // override by the consumer.
-    function _entropyCallback(
-        uint64 sequence,
-        address provider,
-        bytes32 randomNumber
-    ) external {
-        address entropy = getEntropy();
-        require(entropy != address(0), "Entropy address not set");
-        require(msg.sender == entropy, "Only Entropy can call this function");
-
-        entropyCallback(sequence, provider, randomNumber);
-    }
-
-    // getEntropy returns Entropy contract address. The method is being used to check that the
-    // callback is indeed from Entropy contract. The consumer is expected to implement this method.
-    // Entropy address can be found here - https://docs.pyth.network/entropy/contract-addresses
-    function getEntropy() internal view virtual returns (address);
-
-    // This method is expected to be implemented by the consumer to handle the random number.
-    // It will be called by _entropyCallback after _entropyCallback ensures that the call is
-    // indeed from Entropy contract.
-    function entropyCallback(
-        uint64 sequence,
-        address provider,
-        bytes32 randomNumber
-    ) internal virtual;
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
-
-pragma solidity ^0.8.24;
-
-import {TransientSlot} from "./TransientSlot.sol";
-
-/**
- * @dev Variant of {ReentrancyGuard} that uses transient storage.
- *
- * NOTE: This variant only works on networks where EIP-1153 is available.
- *
- * _Available since v5.1._
- */
-abstract contract ReentrancyGuardTransient {
-    using TransientSlot for *;
-
-    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.ReentrancyGuard")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant REENTRANCY_GUARD_STORAGE =
-        0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
-
-    /**
-     * @dev Unauthorized reentrant call.
-     */
-    error ReentrancyGuardReentrantCall();
-
-    /**
-     * @dev Prevents a contract from calling itself, directly or indirectly.
-     * Calling a `nonReentrant` function from another `nonReentrant`
-     * function is not supported. It is possible to prevent this from happening
-     * by making the `nonReentrant` function external, and making it call a
-     * `private` function that does the actual work.
-     */
-    modifier nonReentrant() {
-        _nonReentrantBefore();
-        _;
-        _nonReentrantAfter();
-    }
-
-    function _nonReentrantBefore() private {
-        // On the first call to nonReentrant, REENTRANCY_GUARD_STORAGE.asBoolean().tload() will be false
-        if (_reentrancyGuardEntered()) {
-            revert ReentrancyGuardReentrantCall();
-        }
-
-        // Any calls to nonReentrant after this point will fail
-        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(true);
-    }
-
-    function _nonReentrantAfter() private {
-        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(false);
-    }
-
-    /**
-     * @dev Returns true if the reentrancy guard is currently set to "entered", which indicates there is a
-     * `nonReentrant` function in the call stack.
-     */
-    function _reentrancyGuardEntered() internal view returns (bool) {
-        return REENTRANCY_GUARD_STORAGE.asBoolean().tload();
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8;
-
-import { LibBit } from "solady/src/utils/LibBit.sol";
-
-library Combinations {
-    uint256 constant UINT256_BIT_WIDTH = 256;
-    /// @notice Compute number of combinations of size k from a set of n
-    /// @param n Size of set to choose from
-    /// @param k Size of subsets to choose
-    function choose(
-        uint256 n,
-        uint256 k
-    ) internal pure returns (uint256 result) {
-        assert(n >= k);
-        assert(n <= 128); // Artificial limit to avoid overflow
-        // "How to calculate binomial coefficients"
-        // From: https://blog.plover.com/math/choose.html
-        // This algorithm computes multiplication and division in alternation
-        // to avoid overflow as much as possible.
-        unchecked {
-            uint256 out = 1;
-            for (uint256 d = 1; d <= k; ++d) {
-                out *= n--;
-                out /= d;
-            }
-            return out;
-        }
-    }
-
-    /// @notice Generate all possible subsets of size k from a bit vector.
-    /// @param set Bit vector to generate subsets from
-    /// @param k Size of subsets to generate
-    function generateSubsets(
-        uint256 set,
-        uint256 k
-    ) internal pure returns (uint256[] memory subsets) {
-        unchecked {
-            uint256 n = LibBit.popCount(set);
-            assert(k <= n);
-            subsets = new uint256[](choose(n, k));
-
-            uint256 bound = 1 << n;
-            uint256 comb = (1 << k) - 1;
-            uint256 count;
-            while (comb < bound) {
-                uint256 mapped;
-                uint256 _set = set;
-                uint256 _comb = comb;
-                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
-                    if (_set & 1 == 1) {
-                        if (_comb & 1 == 1) {
-                            mapped |= (1 << i);
-                        }
-                        _comb >>= 1;
-                    }
-                    _set >>= 1;
-                }
-
-                subsets[count++] = mapped;
-
-                // "Gosper's hack"
-                uint256 c = comb & uint256(-int256(comb));
-                uint256 r = comb + c;
-                comb = (((r ^ comb) >> 2) / c) | r;
-            }
-            assert(count == choose(n, k));
-        }
-    }
-}
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpotTicketNFT {
-
-    struct TrackedTicket {
-        uint256 drawingId;
-        uint256 packedTicket;
-        bytes32 referralScheme;
-    }
-
-    struct ExtendedTrackedTicket {
-        uint256 ticketId;
-        TrackedTicket ticket;
-        uint8[] normals;
-        uint8 bonusball;
-    }
-
-    function mintTicket(
-        address recipient, 
-        uint256 ticketId, 
-        uint256 drawingId,
-        uint256 packedTicket, 
-        bytes32 referralScheme
-    ) external;
-    
-    function burnTicket(uint256 ticketId) external;
-    function getTicketInfo(uint256 ticketId) external view returns (TrackedTicket memory);
-    function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
-}
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpot {
-
-    struct Ticket {
-        uint8[] normals;
-        uint8 bonusball;
-    }
-
-    function buyTickets(
-        Ticket[] memory _tickets,
-        address _recipient,
-        address[] memory _referrers,
-        uint256[] memory _referralSplitBps,
-        bytes32 _source
-    )
-        external
-        returns (uint256[] memory ticketIds);
-
-    function claimWinnings(
-        uint256[] memory _userTicketIds
-    )
-        external;
-
-    function ticketPrice() external view returns (uint256);
-    function currentDrawingId() external view returns (uint256);
-    function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
-}
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
@@ -4499,97 +3689,196 @@ library TicketComboTracker {
         bonusball = uint8(LibBit.fls(_packedTicket) - _normalMax);
     }
 }
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8;
+
+import { LibBit } from "solady/src/utils/LibBit.sol";
+
+library Combinations {
+    uint256 constant UINT256_BIT_WIDTH = 256;
+    /// @notice Compute number of combinations of size k from a set of n
+    /// @param n Size of set to choose from
+    /// @param k Size of subsets to choose
+    function choose(
+        uint256 n,
+        uint256 k
+    ) internal pure returns (uint256 result) {
+        assert(n >= k);
+        assert(n <= 128); // Artificial limit to avoid overflow
+        // "How to calculate binomial coefficients"
+        // From: https://blog.plover.com/math/choose.html
+        // This algorithm computes multiplication and division in alternation
+        // to avoid overflow as much as possible.
+        unchecked {
+            uint256 out = 1;
+            for (uint256 d = 1; d <= k; ++d) {
+                out *= n--;
+                out /= d;
+            }
+            return out;
+        }
+    }
+
+    /// @notice Generate all possible subsets of size k from a bit vector.
+    /// @param set Bit vector to generate subsets from
+    /// @param k Size of subsets to generate
+    function generateSubsets(
+        uint256 set,
+        uint256 k
+    ) internal pure returns (uint256[] memory subsets) {
+        unchecked {
+            uint256 n = LibBit.popCount(set);
+            assert(k <= n);
+            subsets = new uint256[](choose(n, k));
+
+            uint256 bound = 1 << n;
+            uint256 comb = (1 << k) - 1;
+            uint256 count;
+            while (comb < bound) {
+                uint256 mapped;
+                uint256 _set = set;
+                uint256 _comb = comb;
+                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
+                    if (_set & 1 == 1) {
+                        if (_comb & 1 == 1) {
+                            mapped |= (1 << i);
+                        }
+                        _comb >>= 1;
+                    }
+                    _set >>= 1;
+                }
+
+                subsets[count++] = mapped;
+
+                // "Gosper's hack"
+                uint256 c = comb & uint256(-int256(comb));
+                uint256 r = comb + c;
+                comb = (((r ^ comb) >> 2) / c) | r;
+            }
+            assert(count == choose(n, k));
+        }
+    }
+}
 //SPDX-License-Identifier: UNLICENSED
 
 pragma solidity ^0.8.28;
 
-interface IScaledEntropyProvider {
-    struct SetRequest {
-        uint8 samples;
-        uint256 minRange;
-        uint256 maxRange;
-        bool withReplacement;
+interface IJackpot {
+
+    struct Ticket {
+        uint8[] normals;
+        uint8 bonusball;
     }
-    function requestAndCallbackScaledRandomness(
-        uint32 _gasLimit,
-        SetRequest[] memory _requests,
-        bytes4 _selector,
-        bytes memory _context
+
+    function buyTickets(
+        Ticket[] memory _tickets,
+        address _recipient,
+        address[] memory _referrers,
+        uint256[] memory _referralSplitBps,
+        bytes32 _source
     )
         external
-        payable
-        returns (uint64 requestId);
-    function getFee(uint32 _gasLimit) external view returns (uint256);
+        returns (uint256[] memory ticketIds);
+
+    function claimWinnings(
+        uint256[] memory _userTicketIds
+    )
+        external;
+
+    function ticketPrice() external view returns (uint256);
+    function currentDrawingId() external view returns (uint256);
+    function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
 }
-// SPDX-License-Identifier: Apache 2
+//SPDX-License-Identifier: UNLICENSED
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.28;
 
-contract EntropyStructsV2 {
-    struct ProviderInfo {
-        uint128 feeInWei;
-        uint128 accruedFeesInWei;
-        // The commitment that the provider posted to the blockchain, and the sequence number
-        // where they committed to this. This value is not advanced after the provider commits,
-        // and instead is stored to help providers track where they are in the hash chain.
-        bytes32 originalCommitment;
-        uint64 originalCommitmentSequenceNumber;
-        // Metadata for the current commitment. Providers may optionally use this field to help
-        // manage rotations (i.e., to pick the sequence number from the correct hash chain).
-        bytes commitmentMetadata;
-        // Optional URI where clients can retrieve revelations for the provider.
-        // Client SDKs can use this field to automatically determine how to retrieve random values for each provider.
-        // TODO: specify the API that must be implemented at this URI
-        bytes uri;
-        // The first sequence number that is *not* included in the current commitment (i.e., an exclusive end index).
-        // The contract maintains the invariant that sequenceNumber <= endSequenceNumber.
-        // If sequenceNumber == endSequenceNumber, the provider must rotate their commitment to add additional random values.
-        uint64 endSequenceNumber;
-        // The sequence number that will be assigned to the next inbound user request.
-        uint64 sequenceNumber;
-        // The current commitment represents an index/value in the provider's hash chain.
-        // These values are used to verify requests for future sequence numbers. Note that
-        // currentCommitmentSequenceNumber < sequenceNumber.
-        //
-        // The currentCommitment advances forward through the provider's hash chain as values
-        // are revealed on-chain.
-        bytes32 currentCommitment;
-        uint64 currentCommitmentSequenceNumber;
-        // An address that is authorized to set / withdraw fees on behalf of this provider.
-        address feeManager;
-        // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
-        // the provider supports for callbacks.
-        uint32 maxNumHashes;
-        // Default gas limit to use for callbacks.
-        uint32 defaultGasLimit;
+interface IJackpotTicketNFT {
+
+    struct TrackedTicket {
+        uint256 drawingId;
+        uint256 packedTicket;
+        bytes32 referralScheme;
     }
 
-    struct Request {
-        // Storage slot 1 //
-        address provider;
-        uint64 sequenceNumber;
-        // The number of hashes required to verify the provider revelation.
-        uint32 numHashes;
-        // Storage slot 2 //
-        // The commitment is keccak256(userCommitment, providerCommitment). Storing the hash instead of both saves 20k gas by
-        // eliminating 1 store.
-        bytes32 commitment;
-        // Storage slot 3 //
-        // The number of the block where this request was created.
-        // Note that we're using a uint64 such that we have an additional space for an address and other fields in
-        // this storage slot. Although block.number returns a uint256, 64 bits should be plenty to index all of the
-        // blocks ever generated.
-        uint64 blockNumber;
-        // The address that requested this random number.
-        address requester;
-        // If true, incorporate the blockhash of blockNumber into the generated random value.
-        bool useBlockhash;
-        // Status flag for requests with callbacks. See EntropyConstants for the possible values of this flag.
-        uint8 callbackStatus;
-        // The gasLimit in units of 10k gas. (i.e., 2 = 20k gas). We're using units of 10k in order to fit this
-        // field into the remaining 2 bytes of this storage slot. The dynamic range here is 10k - 655M, which should
-        // cover all real-world use cases.
-        uint16 gasLimit10k;
+    struct ExtendedTrackedTicket {
+        uint256 ticketId;
+        TrackedTicket ticket;
+        uint8[] normals;
+        uint8 bonusball;
+    }
+
+    function mintTicket(
+        address recipient, 
+        uint256 ticketId, 
+        uint256 drawingId,
+        uint256 packedTicket, 
+        bytes32 referralScheme
+    ) external;
+    
+    function burnTicket(uint256 ticketId) external;
+    function getTicketInfo(uint256 ticketId) external view returns (TrackedTicket memory);
+    function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
+}
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
+
+pragma solidity ^0.8.24;
+
+import {TransientSlot} from "./TransientSlot.sol";
+
+/**
+ * @dev Variant of {ReentrancyGuard} that uses transient storage.
+ *
+ * NOTE: This variant only works on networks where EIP-1153 is available.
+ *
+ * _Available since v5.1._
+ */
+abstract contract ReentrancyGuardTransient {
+    using TransientSlot for *;
+
+    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.ReentrancyGuard")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant REENTRANCY_GUARD_STORAGE =
+        0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
+
+    /**
+     * @dev Unauthorized reentrant call.
+     */
+    error ReentrancyGuardReentrantCall();
+
+    /**
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and making it call a
+     * `private` function that does the actual work.
+     */
+    modifier nonReentrant() {
+        _nonReentrantBefore();
+        _;
+        _nonReentrantAfter();
+    }
+
+    function _nonReentrantBefore() private {
+        // On the first call to nonReentrant, REENTRANCY_GUARD_STORAGE.asBoolean().tload() will be false
+        if (_reentrancyGuardEntered()) {
+            revert ReentrancyGuardReentrantCall();
+        }
+
+        // Any calls to nonReentrant after this point will fail
+        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(true);
+    }
+
+    function _nonReentrantAfter() private {
+        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(false);
+    }
+
+    /**
+     * @dev Returns true if the reentrancy guard is currently set to "entered", which indicates there is a
+     * `nonReentrant` function in the call stack.
+     */
+    function _reentrancyGuardEntered() internal view returns (bool) {
+        return REENTRANCY_GUARD_STORAGE.asBoolean().tload();
     }
 }
 
@@ -4629,6 +3918,375 @@ interface IJackpotLPManager {
     function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
     function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
 }
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
+
+pragma solidity ^0.8.20;
+
+import {Context} from "../utils/Context.sol";
+
+/**
+ * @dev Contract module which provides a basic access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * The initial owner is set to the address provided by the deployer. This can
+ * later be changed with {transferOwnership}.
+ *
+ * This module is used through inheritance. It will make available the modifier
+ * `onlyOwner`, which can be applied to your functions to restrict their use to
+ * the owner.
+ */
+abstract contract Ownable is Context {
+    address private _owner;
+
+    /**
+     * @dev The caller account is not authorized to perform an operation.
+     */
+    error OwnableUnauthorizedAccount(address account);
+
+    /**
+     * @dev The owner is not a valid owner account. (eg. `address(0)`)
+     */
+    error OwnableInvalidOwner(address owner);
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Initializes the contract setting the address provided by the deployer as the initial owner.
+     */
+    constructor(address initialOwner) {
+        if (initialOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(initialOwner);
+    }
+
+    /**
+     * @dev Throws if called by any account other than the owner.
+     */
+    modifier onlyOwner() {
+        _checkOwner();
+        _;
+    }
+
+    /**
+     * @dev Returns the address of the current owner.
+     */
+    function owner() public view virtual returns (address) {
+        return _owner;
+    }
+
+    /**
+     * @dev Throws if the sender is not the owner.
+     */
+    function _checkOwner() internal view virtual {
+        if (owner() != _msgSender()) {
+            revert OwnableUnauthorizedAccount(_msgSender());
+        }
+    }
+
+    /**
+     * @dev Leaves the contract without owner. It will not be possible to call
+     * `onlyOwner` functions. Can only be called by the current owner.
+     *
+     * NOTE: Renouncing ownership will leave the contract without an owner,
+     * thereby disabling any functionality that is only available to the owner.
+     */
+    function renounceOwnership() public virtual onlyOwner {
+        _transferOwnership(address(0));
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`).
+     * Can only be called by the current owner.
+     */
+    function transferOwnership(address newOwner) public virtual onlyOwner {
+        if (newOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`).
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual {
+        address oldOwner = _owner;
+        _owner = newOwner;
+        emit OwnershipTransferred(oldOwner, newOwner);
+    }
+}
+
+// SPDX-License-Identifier: Apache 2
+pragma solidity ^0.8.0;
+
+abstract contract IEntropyConsumer {
+    // This method is called by Entropy to provide the random number to the consumer.
+    // It asserts that the msg.sender is the Entropy contract. It is not meant to be
+    // override by the consumer.
+    function _entropyCallback(
+        uint64 sequence,
+        address provider,
+        bytes32 randomNumber
+    ) external {
+        address entropy = getEntropy();
+        require(entropy != address(0), "Entropy address not set");
+        require(msg.sender == entropy, "Only Entropy can call this function");
+
+        entropyCallback(sequence, provider, randomNumber);
+    }
+
+    // getEntropy returns Entropy contract address. The method is being used to check that the
+    // callback is indeed from Entropy contract. The consumer is expected to implement this method.
+    // Entropy address can be found here - https://docs.pyth.network/entropy/contract-addresses
+    function getEntropy() internal view virtual returns (address);
+
+    // This method is expected to be implemented by the consumer to handle the random number.
+    // It will be called by _entropyCallback after _entropyCallback ensures that the call is
+    // indeed from Entropy contract.
+    function entropyCallback(
+        uint64 sequence,
+        address provider,
+        bytes32 randomNumber
+    ) internal virtual;
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
+
+pragma solidity ^0.8.20;
+
+import {Ownable} from "./Ownable.sol";
+
+/**
+ * @dev Contract module which provides access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * This extension of the {Ownable} contract includes a two-step mechanism to transfer
+ * ownership, where the new owner must call {acceptOwnership} in order to replace the
+ * old one. This can help prevent common mistakes, such as transfers of ownership to
+ * incorrect accounts, or to contracts that are unable to interact with the
+ * permission system.
+ *
+ * The initial owner is specified at deployment time in the constructor for `Ownable`. This
+ * can later be changed with {transferOwnership} and {acceptOwnership}.
+ *
+ * This module is used through inheritance. It will make available all functions
+ * from parent (Ownable).
+ */
+abstract contract Ownable2Step is Ownable {
+    address private _pendingOwner;
+
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Returns the address of the pending owner.
+     */
+    function pendingOwner() public view virtual returns (address) {
+        return _pendingOwner;
+    }
+
+    /**
+     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
+     * Can only be called by the current owner.
+     *
+     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
+     */
+    function transferOwnership(address newOwner) public virtual override onlyOwner {
+        _pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner(), newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual override {
+        delete _pendingOwner;
+        super._transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev The new owner accepts the ownership transfer.
+     */
+    function acceptOwnership() public virtual {
+        address sender = _msgSender();
+        if (pendingOwner() != sender) {
+            revert OwnableUnauthorizedAccount(sender);
+        }
+        _transferOwnership(sender);
+    }
+}
+
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IScaledEntropyProvider {
+    struct SetRequest {
+        uint8 samples;
+        uint256 minRange;
+        uint256 maxRange;
+        bool withReplacement;
+    }
+    function requestAndCallbackScaledRandomness(
+        uint32 _gasLimit,
+        SetRequest[] memory _requests,
+        bytes4 _selector,
+        bytes memory _context
+    )
+        external
+        payable
+        returns (uint64 requestId);
+    function getFee(uint32 _gasLimit) external view returns (uint256);
+}
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+library JackpotErrors {
+    // =============================================================
+    //                            ERRORS
+    // =============================================================
+
+    error JackpotLocked();
+    error DrawingNotDue();
+    error InvalidRecipient();
+    error InvalidTicketCount();
+    error ReferralSplitLengthMismatch();
+    error TooManyReferrers();
+    error ReferralSplitSumInvalid();
+    error InvalidBonusball();
+    error TicketAlreadyMinted();
+    error NoTicketsToClaim();
+    error NotTicketOwner();
+    error TicketFromFutureDrawing();
+    error DepositAmountZero();
+    error ExceedsPoolCap();
+    error WithdrawAmountZero();
+    error InsufficientShares();
+    error NothingToWithdraw();
+    error UnauthorizedEntropyCaller();
+    error EntropyAlreadyCalled();
+    error JackpotNotLocked();
+    error ContractAlreadyInitialized();
+    error ZeroAddress();
+    error ContractNotInitialized();
+    error LPDepositsAlreadyInitialized();
+    error LPDepositsNotInitialized();
+    error JackpotAlreadyInitialized();
+    error TicketPurchasesDisabled();
+    error InvalidTierWeights();
+    error InvalidReferralSplitBps();
+    error InvalidNormalsCount();
+    error InsufficientEntropyFee();
+    error NoReferralFeesToClaim();
+    error NoPrizePool();
+    error TicketPurchasesAlreadyEnabled();
+    error TicketPurchasesAlreadyDisabled();
+    error InvalidNormalBallMax();
+    error InvalidDrawingDuration();
+    error InvalidBonusballMin();
+    error InvalidLpEdgeTarget();
+    error InvalidReserveRatio();
+    error InvalidReferralFee();
+    error InvalidReferralWinShare();
+    error InvalidTicketPrice();
+    error InvalidMaxReferrers();
+    error EmergencyEnabled();
+    error EmergencyModeNotEngaged();
+    error EmergencyModeAlreadyEnabled();
+    error EmergencyModeAlreadyDisabled();
+    error NoLPDeposits();
+    error InvalidProtocolFee();
+    error InvalidGovernancePoolCap();
+    error TicketNotEligibleForRefund();
+    error NoTicketsProvided();
+}
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.0;
+
+import "./EntropyStructs.sol";
+
+// Deprecated -- these events are still emitted, but the lack of indexing
+// makes them hard to use.
+interface EntropyEvents {
+    event Registered(EntropyStructs.ProviderInfo provider);
+
+    event Requested(EntropyStructs.Request request);
+    event RequestedWithCallback(
+        address indexed provider,
+        address indexed requestor,
+        uint64 indexed sequenceNumber,
+        bytes32 userRandomNumber,
+        EntropyStructs.Request request
+    );
+
+    event Revealed(
+        EntropyStructs.Request request,
+        bytes32 userRevelation,
+        bytes32 providerRevelation,
+        bytes32 blockHash,
+        bytes32 randomNumber
+    );
+    event RevealedWithCallback(
+        EntropyStructs.Request request,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation,
+        bytes32 randomNumber
+    );
+
+    event CallbackFailed(
+        address indexed provider,
+        address indexed requestor,
+        uint64 indexed sequenceNumber,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation,
+        bytes32 randomNumber,
+        bytes errorCode
+    );
+
+    event ProviderFeeUpdated(address provider, uint128 oldFee, uint128 newFee);
+
+    event ProviderDefaultGasLimitUpdated(
+        address indexed provider,
+        uint32 oldDefaultGasLimit,
+        uint32 newDefaultGasLimit
+    );
+
+    event ProviderUriUpdated(address provider, bytes oldUri, bytes newUri);
+
+    event ProviderFeeManagerUpdated(
+        address provider,
+        address oldFeeManager,
+        address newFeeManager
+    );
+    event ProviderMaxNumHashesAdvanced(
+        address provider,
+        uint32 oldMaxNumHashes,
+        uint32 newMaxNumHashes
+    );
+
+    event Withdrawal(
+        address provider,
+        address recipient,
+        uint128 withdrawnAmount
+    );
+}
+
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.0;
 
@@ -4780,270 +4438,6 @@ interface EntropyEventsV2 {
     );
 }
 
-// SPDX-License-Identifier: Apache 2
-
-pragma solidity ^0.8.0;
-
-// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
-// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
-// the Entropy contract.
-//
-// See EntropyStructsV2 for the struct definitions currently in use.
-contract EntropyStructs {
-    struct ProviderInfo {
-        uint128 feeInWei;
-        uint128 accruedFeesInWei;
-        // The commitment that the provider posted to the blockchain, and the sequence number
-        // where they committed to this. This value is not advanced after the provider commits,
-        // and instead is stored to help providers track where they are in the hash chain.
-        bytes32 originalCommitment;
-        uint64 originalCommitmentSequenceNumber;
-        // Metadata for the current commitment. Providers may optionally use this field to help
-        // manage rotations (i.e., to pick the sequence number from the correct hash chain).
-        bytes commitmentMetadata;
-        // Optional URI where clients can retrieve revelations for the provider.
-        // Client SDKs can use this field to automatically determine how to retrieve random values for each provider.
-        // TODO: specify the API that must be implemented at this URI
-        bytes uri;
-        // The first sequence number that is *not* included in the current commitment (i.e., an exclusive end index).
-        // The contract maintains the invariant that sequenceNumber <= endSequenceNumber.
-        // If sequenceNumber == endSequenceNumber, the provider must rotate their commitment to add additional random values.
-        uint64 endSequenceNumber;
-        // The sequence number that will be assigned to the next inbound user request.
-        uint64 sequenceNumber;
-        // The current commitment represents an index/value in the provider's hash chain.
-        // These values are used to verify requests for future sequence numbers. Note that
-        // currentCommitmentSequenceNumber < sequenceNumber.
-        //
-        // The currentCommitment advances forward through the provider's hash chain as values
-        // are revealed on-chain.
-        bytes32 currentCommitment;
-        uint64 currentCommitmentSequenceNumber;
-        // An address that is authorized to set / withdraw fees on behalf of this provider.
-        address feeManager;
-        // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
-        // the provider supports for callbacks.
-        uint32 maxNumHashes;
-    }
-
-    struct Request {
-        // Storage slot 1 //
-        address provider;
-        uint64 sequenceNumber;
-        // The number of hashes required to verify the provider revelation.
-        uint32 numHashes;
-        // Storage slot 2 //
-        // The commitment is keccak256(userCommitment, providerCommitment). Storing the hash instead of both saves 20k gas by
-        // eliminating 1 store.
-        bytes32 commitment;
-        // Storage slot 3 //
-        // The number of the block where this request was created.
-        // Note that we're using a uint64 such that we have an additional space for an address and other fields in
-        // this storage slot. Although block.number returns a uint256, 64 bits should be plenty to index all of the
-        // blocks ever generated.
-        uint64 blockNumber;
-        // The address that requested this random number.
-        address requester;
-        // If true, incorporate the blockhash of blockNumber into the generated random value.
-        bool useBlockhash;
-        // True if this is a request that expects a callback.
-        bool isRequestWithCallback;
-    }
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
-
-import "./EntropyStructs.sol";
-
-// Deprecated -- these events are still emitted, but the lack of indexing
-// makes them hard to use.
-interface EntropyEvents {
-    event Registered(EntropyStructs.ProviderInfo provider);
-
-    event Requested(EntropyStructs.Request request);
-    event RequestedWithCallback(
-        address indexed provider,
-        address indexed requestor,
-        uint64 indexed sequenceNumber,
-        bytes32 userRandomNumber,
-        EntropyStructs.Request request
-    );
-
-    event Revealed(
-        EntropyStructs.Request request,
-        bytes32 userRevelation,
-        bytes32 providerRevelation,
-        bytes32 blockHash,
-        bytes32 randomNumber
-    );
-    event RevealedWithCallback(
-        EntropyStructs.Request request,
-        bytes32 userRandomNumber,
-        bytes32 providerRevelation,
-        bytes32 randomNumber
-    );
-
-    event CallbackFailed(
-        address indexed provider,
-        address indexed requestor,
-        uint64 indexed sequenceNumber,
-        bytes32 userRandomNumber,
-        bytes32 providerRevelation,
-        bytes32 randomNumber,
-        bytes errorCode
-    );
-
-    event ProviderFeeUpdated(address provider, uint128 oldFee, uint128 newFee);
-
-    event ProviderDefaultGasLimitUpdated(
-        address indexed provider,
-        uint32 oldDefaultGasLimit,
-        uint32 newDefaultGasLimit
-    );
-
-    event ProviderUriUpdated(address provider, bytes oldUri, bytes newUri);
-
-    event ProviderFeeManagerUpdated(
-        address provider,
-        address oldFeeManager,
-        address newFeeManager
-    );
-    event ProviderMaxNumHashesAdvanced(
-        address provider,
-        uint32 oldMaxNumHashes,
-        uint32 newMaxNumHashes
-    );
-
-    event Withdrawal(
-        address provider,
-        address recipient,
-        uint128 withdrawnAmount
-    );
-}
-
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-library JackpotErrors {
-    // =============================================================
-    //                            ERRORS
-    // =============================================================
-
-    error JackpotLocked();
-    error DrawingNotDue();
-    error InvalidRecipient();
-    error InvalidTicketCount();
-    error ReferralSplitLengthMismatch();
-    error TooManyReferrers();
-    error ReferralSplitSumInvalid();
-    error InvalidBonusball();
-    error TicketAlreadyMinted();
-    error NoTicketsToClaim();
-    error NotTicketOwner();
-    error TicketFromFutureDrawing();
-    error DepositAmountZero();
-    error ExceedsPoolCap();
-    error WithdrawAmountZero();
-    error InsufficientShares();
-    error NothingToWithdraw();
-    error UnauthorizedEntropyCaller();
-    error EntropyAlreadyCalled();
-    error JackpotNotLocked();
-    error ContractAlreadyInitialized();
-    error ZeroAddress();
-    error ContractNotInitialized();
-    error LPDepositsAlreadyInitialized();
-    error LPDepositsNotInitialized();
-    error JackpotAlreadyInitialized();
-    error TicketPurchasesDisabled();
-    error InvalidTierWeights();
-    error InvalidReferralSplitBps();
-    error InvalidNormalsCount();
-    error InsufficientEntropyFee();
-    error NoReferralFeesToClaim();
-    error NoPrizePool();
-    error TicketPurchasesAlreadyEnabled();
-    error TicketPurchasesAlreadyDisabled();
-    error InvalidNormalBallMax();
-    error InvalidDrawingDuration();
-    error InvalidBonusballMin();
-    error InvalidLpEdgeTarget();
-    error InvalidReserveRatio();
-    error InvalidReferralFee();
-    error InvalidReferralWinShare();
-    error InvalidTicketPrice();
-    error InvalidMaxReferrers();
-    error EmergencyEnabled();
-    error EmergencyModeNotEngaged();
-    error EmergencyModeAlreadyEnabled();
-    error EmergencyModeAlreadyDisabled();
-    error NoLPDeposits();
-    error InvalidProtocolFee();
-    error InvalidGovernancePoolCap();
-    error TicketNotEligibleForRefund();
-    error NoTicketsProvided();
-}
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-/**
- * @title UintCasts
- * @notice Minimal helpers for safely downcasting uint256 values to uint8.
- * @dev Reverts with Uint8OutOfBounds() if a value exceeds uint8's max (255).
- */
-library UintCasts {
-    /// @notice Raised when a value cannot be represented as uint8 (value > 255)
-    error Uint8OutOfBounds();
-
-    /**
-     * @notice Safely cast a uint256 to uint8.
-     * @param _value The value to cast.
-     * @return out The value as uint8 (reverts if out of range).
-     */
-    function toUint8(uint256 _value) internal pure returns (uint8) {
-        if (_value > type(uint8).max) revert Uint8OutOfBounds();
-        return uint8(_value);
-    }
-
-    /**
-     * @notice Safely cast an array of uint256 to uint8[] element-wise.
-     * @param _values The array of values to cast.
-     * @return out The cast array (reverts if any element is out of range).
-     */
-    function toUint8Array(uint256[] memory _values) internal pure returns (uint8[] memory) {
-        uint256 len = _values.length;
-        uint8[] memory out = new uint8[](len);
-        for (uint256 i = 0; i < len; ) {
-            out[i] = toUint8(_values[i]);
-            unchecked { ++i; }
-        }
-        return out;
-    }
-}
-
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
@@ -5134,206 +4528,763 @@ library FisherYatesRejection {
     }
 }
 
-
-## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
-
-## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 // SPDX-License-Identifier: Apache 2
+
 pragma solidity ^0.8.0;
 
-abstract contract IEntropyConsumer {
-    // This method is called by Entropy to provide the random number to the consumer.
-    // It asserts that the msg.sender is the Entropy contract. It is not meant to be
-    // override by the consumer.
-    function _entropyCallback(
-        uint64 sequence,
-        address provider,
-        bytes32 randomNumber
-    ) external {
-        address entropy = getEntropy();
-        require(entropy != address(0), "Entropy address not set");
-        require(msg.sender == entropy, "Only Entropy can call this function");
-
-        entropyCallback(sequence, provider, randomNumber);
+contract EntropyStructsV2 {
+    struct ProviderInfo {
+        uint128 feeInWei;
+        uint128 accruedFeesInWei;
+        // The commitment that the provider posted to the blockchain, and the sequence number
+        // where they committed to this. This value is not advanced after the provider commits,
+        // and instead is stored to help providers track where they are in the hash chain.
+        bytes32 originalCommitment;
+        uint64 originalCommitmentSequenceNumber;
+        // Metadata for the current commitment. Providers may optionally use this field to help
+        // manage rotations (i.e., to pick the sequence number from the correct hash chain).
+        bytes commitmentMetadata;
+        // Optional URI where clients can retrieve revelations for the provider.
+        // Client SDKs can use this field to automatically determine how to retrieve random values for each provider.
+        // TODO: specify the API that must be implemented at this URI
+        bytes uri;
+        // The first sequence number that is *not* included in the current commitment (i.e., an exclusive end index).
+        // The contract maintains the invariant that sequenceNumber <= endSequenceNumber.
+        // If sequenceNumber == endSequenceNumber, the provider must rotate their commitment to add additional random values.
+        uint64 endSequenceNumber;
+        // The sequence number that will be assigned to the next inbound user request.
+        uint64 sequenceNumber;
+        // The current commitment represents an index/value in the provider's hash chain.
+        // These values are used to verify requests for future sequence numbers. Note that
+        // currentCommitmentSequenceNumber < sequenceNumber.
+        //
+        // The currentCommitment advances forward through the provider's hash chain as values
+        // are revealed on-chain.
+        bytes32 currentCommitment;
+        uint64 currentCommitmentSequenceNumber;
+        // An address that is authorized to set / withdraw fees on behalf of this provider.
+        address feeManager;
+        // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
+        // the provider supports for callbacks.
+        uint32 maxNumHashes;
+        // Default gas limit to use for callbacks.
+        uint32 defaultGasLimit;
     }
 
-    // getEntropy returns Entropy contract address. The method is being used to check that the
-    // callback is indeed from Entropy contract. The consumer is expected to implement this method.
-    // Entropy address can be found here - https://docs.pyth.network/entropy/contract-addresses
-    function getEntropy() internal view virtual returns (address);
-
-    // This method is expected to be implemented by the consumer to handle the random number.
-    // It will be called by _entropyCallback after _entropyCallback ensures that the call is
-    // indeed from Entropy contract.
-    function entropyCallback(
-        uint64 sequence,
-        address provider,
-        bytes32 randomNumber
-    ) internal virtual;
+    struct Request {
+        // Storage slot 1 //
+        address provider;
+        uint64 sequenceNumber;
+        // The number of hashes required to verify the provider revelation.
+        uint32 numHashes;
+        // Storage slot 2 //
+        // The commitment is keccak256(userCommitment, providerCommitment). Storing the hash instead of both saves 20k gas by
+        // eliminating 1 store.
+        bytes32 commitment;
+        // Storage slot 3 //
+        // The number of the block where this request was created.
+        // Note that we're using a uint64 such that we have an additional space for an address and other fields in
+        // this storage slot. Although block.number returns a uint256, 64 bits should be plenty to index all of the
+        // blocks ever generated.
+        uint64 blockNumber;
+        // The address that requested this random number.
+        address requester;
+        // If true, incorporate the blockhash of blockNumber into the generated random value.
+        bool useBlockhash;
+        // Status flag for requests with callbacks. See EntropyConstants for the possible values of this flag.
+        uint8 callbackStatus;
+        // The gasLimit in units of 10k gas. (i.e., 2 = 20k gas). We're using units of 10k in order to fit this
+        // field into the remaining 2 bytes of this storage slot. The dynamic range here is 10k - 655M, which should
+        // cover all real-world use cases.
+        uint16 gasLimit10k;
+    }
 }
 
+// SPDX-License-Identifier: Apache 2
+
+pragma solidity ^0.8.0;
+
+// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
+// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
+// the Entropy contract.
+//
+// See EntropyStructsV2 for the struct definitions currently in use.
+contract EntropyStructs {
+    struct ProviderInfo {
+        uint128 feeInWei;
+        uint128 accruedFeesInWei;
+        // The commitment that the provider posted to the blockchain, and the sequence number
+        // where they committed to this. This value is not advanced after the provider commits,
+        // and instead is stored to help providers track where they are in the hash chain.
+        bytes32 originalCommitment;
+        uint64 originalCommitmentSequenceNumber;
+        // Metadata for the current commitment. Providers may optionally use this field to help
+        // manage rotations (i.e., to pick the sequence number from the correct hash chain).
+        bytes commitmentMetadata;
+        // Optional URI where clients can retrieve revelations for the provider.
+        // Client SDKs can use this field to automatically determine how to retrieve random values for each provider.
+        // TODO: specify the API that must be implemented at this URI
+        bytes uri;
+        // The first sequence number that is *not* included in the current commitment (i.e., an exclusive end index).
+        // The contract maintains the invariant that sequenceNumber <= endSequenceNumber.
+        // If sequenceNumber == endSequenceNumber, the provider must rotate their commitment to add additional random values.
+        uint64 endSequenceNumber;
+        // The sequence number that will be assigned to the next inbound user request.
+        uint64 sequenceNumber;
+        // The current commitment represents an index/value in the provider's hash chain.
+        // These values are used to verify requests for future sequence numbers. Note that
+        // currentCommitmentSequenceNumber < sequenceNumber.
+        //
+        // The currentCommitment advances forward through the provider's hash chain as values
+        // are revealed on-chain.
+        bytes32 currentCommitment;
+        uint64 currentCommitmentSequenceNumber;
+        // An address that is authorized to set / withdraw fees on behalf of this provider.
+        address feeManager;
+        // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
+        // the provider supports for callbacks.
+        uint32 maxNumHashes;
+    }
+
+    struct Request {
+        // Storage slot 1 //
+        address provider;
+        uint64 sequenceNumber;
+        // The number of hashes required to verify the provider revelation.
+        uint32 numHashes;
+        // Storage slot 2 //
+        // The commitment is keccak256(userCommitment, providerCommitment). Storing the hash instead of both saves 20k gas by
+        // eliminating 1 store.
+        bytes32 commitment;
+        // Storage slot 3 //
+        // The number of the block where this request was created.
+        // Note that we're using a uint64 such that we have an additional space for an address and other fields in
+        // this storage slot. Although block.number returns a uint256, 64 bits should be plenty to index all of the
+        // blocks ever generated.
+        uint64 blockNumber;
+        // The address that requested this random number.
+        address requester;
+        // If true, incorporate the blockhash of blockNumber into the generated random value.
+        bool useBlockhash;
+        // True if this is a request that expects a callback.
+        bool isRequestWithCallback;
+    }
+}
+
+
+## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
 // SPDX-License-Identifier: Apache 2
 pragma solidity ^0.8.0;
 
 import "./EntropyEvents.sol";
 import "./EntropyEventsV2.sol";
 import "./EntropyStructsV2.sol";
+import "./IEntropyV2.sol";
 
-interface IEntropyV2 is EntropyEventsV2 {
-    /// @notice Request a random number using the default provider with default gas limit
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2()`) as msg.value.
-    /// Note that the fee can change over time. Callers of this method should explicitly compute `getFeeV2()`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    ///
-    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
-    /// This approach modifies the security guarantees such that a dishonest validator and provider can
-    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
-    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
-    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
-    function requestV2()
-        external
-        payable
-        returns (uint64 assignedSequenceNumber);
+interface IEntropy is EntropyEvents, EntropyEventsV2, IEntropyV2 {
+    // Register msg.sender as a randomness provider. The arguments are the provider's configuration parameters
+    // and initial commitment. Re-registering the same provider rotates the provider's commitment (and updates
+    // the feeInWei).
+    //
+    // chainLength is the number of values in the hash chain *including* the commitment, that is, chainLength >= 1.
+    function register(
+        uint128 feeInWei,
+        bytes32 commitment,
+        bytes calldata commitmentMetadata,
+        uint64 chainLength,
+        bytes calldata uri
+    ) external;
 
-    /// @notice Request a random number using the default provider with specified gas limit
-    /// @param gasLimit The gas limit for the callback function.
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(gasLimit)`) as msg.value.
-    /// Note that the fee can change over time. Callers of this method should explicitly compute `getFeeV2(gasLimit)`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    ///
-    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
-    /// This approach modifies the security guarantees such that a dishonest validator and provider can
-    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
-    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
-    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
-    function requestV2(
-        uint32 gasLimit
+    // Withdraw a portion of the accumulated fees for the provider msg.sender.
+    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
+    // balance of fees in the contract).
+    function withdraw(uint128 amount) external;
+
+    // Withdraw a portion of the accumulated fees for provider. The msg.sender must be the fee manager for this provider.
+    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
+    // balance of fees in the contract).
+    function withdrawAsFeeManager(address provider, uint128 amount) external;
+
+    // As a user, request a random number from `provider`. Prior to calling this method, the user should
+    // generate a random number x and keep it secret. The user should then compute hash(x) and pass that
+    // as the userCommitment argument. (You may call the constructUserCommitment method to compute the hash.)
+    //
+    // This method returns a sequence number. The user should pass this sequence number to
+    // their chosen provider (the exact method for doing so will depend on the provider) to retrieve the provider's
+    // number. The user should then call fulfillRequest to construct the final random number.
+    //
+    // This method will revert unless the caller provides a sufficient fee (at least getFee(provider)) as msg.value.
+    // Note that excess value is *not* refunded to the caller.
+    function request(
+        address provider,
+        bytes32 userCommitment,
+        bool useBlockHash
     ) external payable returns (uint64 assignedSequenceNumber);
 
-    /// @notice Request a random number from a specific provider with specified gas limit
-    /// @param provider The address of the provider to request from
-    /// @param gasLimit The gas limit for the callback function
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(provider, gasLimit)`) as msg.value.
-    /// Note that provider fees can change over time. Callers of this method should explicitly compute `getFeeV2(provider, gasLimit)`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    ///
-    /// Note that this method uses an in-contract PRNG to generate the user's contribution to the random number.
-    /// This approach modifies the security guarantees such that a dishonest validator and provider can
-    /// collude to manipulate the result (as opposed to a malicious user and provider). That is, the user
-    /// now trusts the validator honestly draw a random number. If you wish to avoid this trust assumption,
-    /// call a variant of `requestV2` that accepts a `userRandomNumber` parameter.
-    function requestV2(
+    // Request a random number. The method expects the provider address and a secret random number
+    // in the arguments. It returns a sequence number.
+    //
+    // The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    // The `entropyCallback` method on that interface will receive a callback with the generated random number.
+    // `entropyCallback` will be run with the provider's default gas limit (see `getProviderInfo(provider).defaultGasLimit`).
+    // If your callback needs additional gas, please use `requestWithCallbackAndGasLimit`.
+    //
+    // This method will revert unless the caller provides a sufficient fee (at least `getFee(provider)`) as msg.value.
+    // Note that excess value is *not* refunded to the caller.
+    function requestWithCallback(
         address provider,
-        uint32 gasLimit
+        bytes32 userRandomNumber
     ) external payable returns (uint64 assignedSequenceNumber);
 
-    /// @notice Request a random number from a specific provider with a user-provided random number and gas limit
-    /// @param provider The address of the provider to request from
-    /// @param userRandomNumber A random number provided by the user for additional entropy
-    /// @param gasLimit The gas limit for the callback function. Pass 0 to get a sane default value -- see note below.
-    /// @return assignedSequenceNumber A unique identifier for this request
-    /// @dev The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    /// The `entropyCallback` method on that interface will receive a callback with the returned sequence number and
-    /// the generated random number.
-    ///
-    /// `entropyCallback` will be run with the `gasLimit` provided to this function.
-    /// The `gasLimit` will be rounded up to a multiple of 10k (e.g., 19000 -> 20000), and furthermore is lower bounded
-    /// by the provider's configured default limit.
-    ///
-    /// This method will revert unless the caller provides a sufficient fee (at least `getFeeV2(provider, gasLimit)`) as msg.value.
-    /// Note that provider fees can change over time. Callers of this method should explicitly compute `getFeeV2(provider, gasLimit)`
-    /// prior to each invocation (as opposed to hardcoding a value). Further note that excess value is *not* refunded to the caller.
-    function requestV2(
+    // Fulfill a request for a random number. This method validates the provided userRandomness and provider's proof
+    // against the corresponding commitments in the in-flight request. If both values are validated, this function returns
+    // the corresponding random number.
+    //
+    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
+    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
+    // If you need to use the returned random number more than once, you are responsible for storing it.
+    function reveal(
         address provider,
+        uint64 sequenceNumber,
+        bytes32 userRevelation,
+        bytes32 providerRevelation
+    ) external returns (bytes32 randomNumber);
+
+    // Fulfill a request for a random number. This method validates the provided userRandomness
+    // and provider's revelation against the corresponding commitment in the in-flight request. If both values are validated
+    // and the requestor address is a contract address, this function calls the requester's entropyCallback method with the
+    // sequence number, provider address and the random number as arguments. Else if the requestor is an EOA, it won't call it.
+    //
+    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
+    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
+    // If you need to use the returned random number more than once, you are responsible for storing it.
+    //
+    // Anyone can call this method to fulfill a request, but the callback will only be made to the original requester.
+    function revealWithCallback(
+        address provider,
+        uint64 sequenceNumber,
         bytes32 userRandomNumber,
-        uint32 gasLimit
-    ) external payable returns (uint64 assignedSequenceNumber);
+        bytes32 providerRevelation
+    ) external;
 
-    /// @notice Get information about a specific entropy provider
-    /// @param provider The address of the provider to query
-    /// @return info The provider information including configuration, fees, and operational status
-    /// @dev This method returns detailed information about a provider's configuration and capabilities.
-    /// The returned ProviderInfo struct contains information such as the provider's fee structure and gas limits.
-    function getProviderInfoV2(
+    function getProviderInfo(
         address provider
-    ) external view returns (EntropyStructsV2.ProviderInfo memory info);
+    ) external view returns (EntropyStructs.ProviderInfo memory info);
 
-    /// @notice Get the address of the default entropy provider
-    /// @return provider The address of the default provider
-    /// @dev This method returns the address of the provider that will be used when no specific provider is specified
-    /// in the requestV2 calls. The default provider can be used to get the base fee and gas limit information.
-    function getDefaultProvider() external view returns (address provider);
-
-    /// @notice Get information about a specific request
-    /// @param provider The address of the provider that handled the request
-    /// @param sequenceNumber The unique identifier of the request
-    /// @return req The request information including status, random number, and other metadata
-    /// @dev This method allows querying the state of a previously made request. The returned Request struct
-    /// contains information about whether the request was fulfilled, the generated random number (if available),
-    /// and other metadata about the request.
-    function getRequestV2(
+    function getRequest(
         address provider,
         uint64 sequenceNumber
-    ) external view returns (EntropyStructsV2.Request memory req);
+    ) external view returns (EntropyStructs.Request memory req);
 
-    /// @notice Get the fee charged by the default provider for the default gas limit
-    /// @return feeAmount The fee amount in wei
-    /// @dev This method returns the base fee required to make a request using the default provider with
-    /// the default gas limit. This fee should be passed as msg.value when calling requestV2().
-    /// The fee can change over time, so this method should be called before each request.
-    function getFeeV2() external view returns (uint128 feeAmount);
+    // Get the fee charged by provider for a request with the default gasLimit (`request` or `requestWithCallback`).
+    // If you are calling any of the `requestV2` methods, please use `getFeeV2`.
+    function getFee(address provider) external view returns (uint128 feeAmount);
 
-    /// @notice Get the fee charged by the default provider for a specific gas limit
-    /// @param gasLimit The gas limit for the callback function
-    /// @return feeAmount The fee amount in wei
-    /// @dev This method returns the fee required to make a request using the default provider with
-    /// the specified gas limit. This fee should be passed as msg.value when calling requestV2(gasLimit).
-    /// The fee can change over time, so this method should be called before each request.
-    function getFeeV2(
-        uint32 gasLimit
-    ) external view returns (uint128 feeAmount);
+    function getAccruedPythFees()
+        external
+        view
+        returns (uint128 accruedPythFeesInWei);
 
-    /// @notice Get the fee charged by a specific provider for a request with a given gas limit
-    /// @param provider The address of the provider to query
-    /// @param gasLimit The gas limit for the callback function
-    /// @return feeAmount The fee amount in wei
-    /// @dev This method returns the fee required to make a request using the specified provider with
-    /// the given gas limit. This fee should be passed as msg.value when calling requestV2(provider, gasLimit)
-    /// or requestV2(provider, userRandomNumber, gasLimit). The fee can change over time, so this method
-    /// should be called before each request.
-    function getFeeV2(
+    function setProviderFee(uint128 newFeeInWei) external;
+
+    function setProviderFeeAsFeeManager(
         address provider,
-        uint32 gasLimit
-    ) external view returns (uint128 feeAmount);
+        uint128 newFeeInWei
+    ) external;
+
+    function setProviderUri(bytes calldata newUri) external;
+
+    // Set manager as the fee manager for the provider msg.sender.
+    // After calling this function, manager will be able to set the provider's fees and withdraw them.
+    // Only one address can be the fee manager for a provider at a time -- calling this function again with a new value
+    // will override the previous value. Call this function with the all-zero address to disable the fee manager role.
+    function setFeeManager(address manager) external;
+
+    // Set the maximum number of hashes to record in a request. This should be set according to the maximum gas limit
+    // the provider supports for callbacks.
+    function setMaxNumHashes(uint32 maxNumHashes) external;
+
+    // Set the default gas limit for a request. If 0, no
+    function setDefaultGasLimit(uint32 gasLimit) external;
+
+    // Advance the provider commitment and increase the sequence number.
+    // This is used to reduce the `numHashes` required for future requests which leads to reduced gas usage.
+    function advanceProviderCommitment(
+        address provider,
+        uint64 advancedSequenceNumber,
+        bytes32 providerRevelation
+    ) external;
+
+    function constructUserCommitment(
+        bytes32 userRandomness
+    ) external pure returns (bytes32 userCommitment);
+
+    function combineRandomValues(
+        bytes32 userRandomness,
+        bytes32 providerRandomness,
+        bytes32 blockHash
+    ) external pure returns (bytes32 combinedRandomness);
 }
 
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+
+import { Combinations } from "./lib/Combinations.sol";
+import { IJackpot } from "./interfaces/IJackpot.sol";
+import { IPayoutCalculator } from "./interfaces/IPayoutCalculator.sol";
+
+/**
+ * @title GuaranteedMinimumPayoutCalculator
+ * @notice Calculates prize payouts using a two-tier system with guaranteed minimums and premium allocation
+ * @dev Implements a 12-tier payout system based on jackpot match combinations:
+ *      - Tiers 0-11: matches(0-5) × bonusball(no/yes) = matches*2 + (bonusballMatch ? 1 : 0)
+ *      - Each tier has configurable minimum payouts and premium pool allocation weights
+ *      - Premium pool is allocated proportionally after minimum payouts are satisfied
+ *      - Includes both user-owned and LP-owned winning tickets in allocation calculations
+ *      - Supports owner-configurable payout parameters that can be updated between drawings
+ */
+contract GuaranteedMinimumPayoutCalculator is IPayoutCalculator, Ownable {
+
+    // =============================================================
+    //                          STRUCTS
+    // =============================================================
+
+    struct DrawingTierInfo {
+        uint256 minPayout;
+        uint256 premiumTierMinAllocation;
+        bool[12] minPayoutTiers;
+        uint256[12] premiumTierWeights;
+    }
+
+    // =============================================================
+    //                          ERRORS
+    // =============================================================
+
+    error UnauthorizedCaller();
+    error ZeroAddress();
+    error InvalidTierWeights();
+    error InvalidPremiumTierMinimumAllocation();
+
+    // =============================================================
+    //                          CONSTANTS
+    // =============================================================
+
+    uint256 public constant PRECISE_UNIT = 1e18;
+    uint8 constant NORMAL_BALL_COUNT = 5;
+    uint8 constant TOTAL_TIER_COUNT = 12; // matches(0,1,2,3,4,5) * bonusball(0,1) = 6 * 2 = 12
+
+    // =============================================================
+    //                          STATE VARIABLES
+    // =============================================================
+    
+    // Note:drawingId --> tierId (matches*2 + {1 if bonusball match}) → tier payout
+    mapping(uint256=>DrawingTierInfo) public drawingTierInfo;
+    mapping(uint256=>mapping(uint256 => uint256)) tierPayouts;
+
+    // Must be 12 elements long (matches(0,1,2,3,4,5) * bonusball(0,1))
+    // Allocation of remaining prize pool after minimum payout is accounted for
+    uint256[TOTAL_TIER_COUNT] public premiumTierWeights;
+    // All tiers eligible for the minimum payout, true if eligible, false if not
+    bool[TOTAL_TIER_COUNT] public minPayoutTiers;
+    uint256 public minimumPayout;
+    uint256 public premiumTierMinAllocation;
+
+    IJackpot public immutable jackpot;
+
+    // =============================================================
+    //                          MODIFIERS
+    // =============================================================
+    
+    modifier onlyJackpot() {
+        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
+        _;
+    }
+
+    // =============================================================
+    //                          CONSTRUCTOR
+    // =============================================================
+    
+    /**
+     * @notice Initializes the GuaranteedMinimumPayoutCalculator with payout configuration
+     * @dev Sets up the connection to the Jackpot contract and initial payout parameters.
+     *      Premium tier weights must sum to PRECISE_UNIT for proper allocation.
+     * @param _jackpot Address of the main Jackpot contract (immutable reference)
+     * @param _minimumPayout Base minimum payout amount for eligible tiers
+     * @param _premiumTierMinAllocation Minimum allocation of prize pool for premium tier (in PRECISE_UNIT scale)
+     * @param _minPayoutTiers Boolean array indicating which tiers receive minimum payouts (12 elements)
+     * @param _premiumTierWeights Weight allocation for premium pool distribution (12 elements, must sum to PRECISE_UNIT)
+     * @custom:requirements
+     * - Jackpot address must not be zero
+     * - Premium tier weights must sum exactly to PRECISE_UNIT
+     * - Arrays must be exactly 12 elements (TOTAL_TIER_COUNT)
+     * @custom:effects
+     * - Sets immutable jackpot contract reference
+     * - Initializes minimum payout configuration
+     * - Sets up premium tier allocation weights
+     * - Sets deployer as contract owner
+     * @custom:security
+     * - Immutable jackpot reference prevents unauthorized contract changes
+     * - Weight sum validation ensures proper allocation
+     */
+    constructor(
+        IJackpot _jackpot,
+        uint256 _minimumPayout,
+        uint256 _premiumTierMinAllocation,
+        bool[TOTAL_TIER_COUNT] memory _minPayoutTiers,
+        uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights
+    ) Ownable(msg.sender) {
+        if (_jackpot == IJackpot(address(0))) revert ZeroAddress();
+        if (_premiumTierMinAllocation > PRECISE_UNIT) revert InvalidPremiumTierMinimumAllocation();
+        jackpot = _jackpot;
+        minimumPayout = _minimumPayout;
+        premiumTierMinAllocation = _premiumTierMinAllocation;
+        minPayoutTiers = _minPayoutTiers;
+        _setPremiumTierWeights(_premiumTierWeights);
+    }
+
+    // =============================================================
+    //                       EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Calculates and stores payout amounts for a completed drawing
+     * @dev Two-phase payout calculation with premium-protection threshold:
+     *      1) Compute total winning tickets per tier, including duplicate user tickets, to avoid under-collateralization.
+     *      2) Compute the minimum payout allocation across eligible tiers. Apply minimum payouts only if:
+     *         (prizePool * premiumTierMinAllocation / 1e18) + minimumPayoutAllocation < prizePool.
+     *         - If the inequality is false (i.e., equality or greater), minimum payouts are disabled for this drawing and the
+     *           entire prize pool is allocated by premium weights. This ensures the premium tier receives at least its
+     *           configured minimum allocation and avoids arithmetic underflow.
+     *      Integer division is used for the premium minimum allocation term; any truncation favors premium protection.
+     * @param _drawingId Drawing to calculate payouts for
+     * @param _prizePool Total prize pool available for distribution
+     * @param _normalMax Maximum normal ball number for combination calculations (assumed valid per Jackpot constraints)
+     * @param _bonusballMax Maximum bonusball number for combination calculations (assumed valid per Jackpot constraints)
+     * @param _uniqueResult Array of unique winner counts per tier (12 elements, user-owned tickets)
+     * @param _dupResult Array of duplicate winner counts per tier (12 elements, user-owned tickets)
+     * @return totalPayout Total amount allocated to all user-owned winning tickets
+     * @custom:requirements
+     * - Caller must be the Jackpot contract
+     * - Tier parameters must be snapshotted via setDrawingTierInfo(_drawingId)
+     * - `_uniqueResult.length == 12` and `_dupResult.length == 12`
+     * - `_normalMax` and `_bonusballMax` provided by Jackpot must be valid for combination math
+     * @custom:effects
+     * - Calculates total winning ticket counts per tier (LP + users; duplicates included)
+     * - Applies minimum payouts only if the premium-protection threshold is satisfied
+     * - Distributes the remaining or full prize pool by premium tier weights
+     * - Stores per-tier payout amounts in `tierPayouts`
+     * - Returns the sum owed to user-owned winning tickets only (unique + duplicate)
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Duplicate winners included in denominator to prevent under-collateralization
+     * - Guards against underflow by disabling minimum payouts when insufficient pool remains
+     */
+    function calculateAndStoreDrawingUserWinnings(
+        uint256 _drawingId,
+        uint256 _prizePool,
+        uint8 _normalMax,
+        uint8 _bonusballMax,
+        uint256[] memory _uniqueResult,
+        uint256[] memory _dupResult
+    )
+        external
+        onlyJackpot
+        returns (uint256 totalPayout)
+    {   
+        DrawingTierInfo storage tierInfo = drawingTierInfo[_drawingId];
+
+        // First calculate the total number of winners for each tier including duplicates and use that to determine guaranteed
+        // minimum payouts
+        uint256[TOTAL_TIER_COUNT] memory tierWinners;
+        uint256 minimumPayoutAllocation = 0;
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            // If tier is not eligible for minimum payout AND gets no part of premium allocation then no winners
+            if (!tierInfo.minPayoutTiers[i] && tierInfo.premiumTierWeights[i] == 0) {
+                tierWinners[i] = 0;
+                continue;
+            }
+            // Derived from index formula which is matches*2 + {1 if bonusball match} (i/2 is always floored)
+            uint256 matches = i / 2;
+
+            // Including _dupResult[i] here takes money from the premium tier pool, if we don't include it we take money from the
+            // LP pool reducing edge for LPs. Including here eliminates chances of under-collateralization. The amount of winners within
+            // a tier is the total amount of winning tickets available for that tier plus any duplicate winners from that tier. The logic
+            // here is that some of the non-duplicate winners are held by LPs and some are held by users. All of the duplicate winners
+            // are held by users.
+            uint256 tierWinningTickets = _calculateTierTotalWinningCombos(matches, _normalMax, _bonusballMax, i % 2 == 1) + _dupResult[i];
+            tierWinners[i] = tierWinningTickets;
+            if (tierInfo.minPayoutTiers[i]) {
+                minimumPayoutAllocation += tierWinningTickets * tierInfo.minPayout;
+            }
+        }
+        
+        // Only use minimum payouts if the premium tier minimum allocation + minimum payout allocation is less than the prize pool
+        bool useMinimumPayouts = ((_prizePool * tierInfo.premiumTierMinAllocation / PRECISE_UNIT) + minimumPayoutAllocation) < _prizePool;
+
+        totalPayout = _calculateAndStoreTierPayouts(
+            _drawingId,
+            useMinimumPayouts ? _prizePool - minimumPayoutAllocation : _prizePool,
+            useMinimumPayouts ? tierInfo.minPayout : 0,
+            tierWinners,
+            _uniqueResult,
+            _dupResult
+        );
+    }
+
+    /**
+     * @notice Snapshots current payout configuration for a specific drawing
+     * @dev Freezes current minimumPayout, minPayoutTiers, and premiumTierWeights into drawingTierInfo,
+     *      allowing future configuration changes without affecting this drawing's payout calculations.
+     * @param _drawingId Drawing to set up tier information for
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - Should be called before drawing execution
+     * @custom:emits None
+     * @custom:effects
+     * - Creates immutable snapshot of current payout configuration
+     * - Enables payout calculations for the specific drawing
+     * - Allows future parameter updates without affecting this drawing
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Ensures drawing payout consistency regardless of future changes
+     */
+    function setDrawingTierInfo(uint256 _drawingId) external onlyJackpot {
+        drawingTierInfo[_drawingId] = DrawingTierInfo({
+            minPayout: minimumPayout,
+            premiumTierMinAllocation: premiumTierMinAllocation,
+            minPayoutTiers: minPayoutTiers,
+            premiumTierWeights: premiumTierWeights
+        });
+    }
+
+    // =============================================================
+    //                        ADMIN FUNCTIONS
+    // =============================================================
+    
+    /**
+     * @notice Updates the base minimum payout amount
+     * @dev Changes the guaranteed minimum payout for all eligible tiers in future drawings.
+     *      Does not affect drawings that have already had tier info set.
+     * @param _minimumPayout New minimum payout amount (in USDC wei)
+     * @custom:requirements
+     * - Only owner can call
+     * @custom:emits None
+     * @custom:effects
+     * - Updates global minimum payout configuration
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * @custom:security
+     * - Owner-only access restriction
+     */
+    function setMinimumPayout(uint256 _minimumPayout) external onlyOwner {
+        minimumPayout = _minimumPayout;
+    }
+    
+    /**
+     * @notice Updates which tiers are eligible for minimum guaranteed payouts
+     * @dev Configures which of the 12 tiers receive minimum payout guarantees in future drawings.
+     *      Tiers with false values rely solely on premium pool allocation.
+     * @param _minPayoutTiers Boolean array indicating minimum payout eligibility (12 elements)
+     * @custom:requirements
+     * - Only owner can call
+     * - Array must be exactly 12 elements (TOTAL_TIER_COUNT)
+     * @custom:emits None
+     * @custom:effects
+     * - Updates minimum payout tier configuration
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * - Tiers set to false will only receive premium pool allocation
+     * @custom:security
+     * - Owner-only access restriction
+     * - Array length validation
+     */
+    function setMinPayoutTiers(bool[TOTAL_TIER_COUNT] memory _minPayoutTiers) external onlyOwner {
+        minPayoutTiers = _minPayoutTiers;
+    }
+
+    /**
+     * @notice Updates the minimum allocation of the prize pool reserved for premium tier distribution
+     * @dev Sets the minimum percentage of the total prize pool that must be allocated to premium tiers.
+     *      This ensures premium tiers receive adequate funding even when minimum payouts consume most of the pool.
+     *      The allocation is enforced during payout calculations by making sure the minimum payout allocation + 
+     *      minimum premium allocation is less than the prize pool. If this equality fails then minimum payouts
+     *      are disabled and the entire prize pool is distributed to the premium tiers.
+     * @param _premiumTierMinAllocation Minimum allocation percentage in PRECISE_UNIT scale (e.g., 0.1e18 = 10%)
+     * @custom:requirements
+     * - Only owner can call
+     * - Allocation percentage must not exceed 100% (PRECISE_UNIT)
+     * @custom:emits None
+     * @custom:effects
+     * - Updates global premium tier minimum allocation configuration
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * - Changes how prize pool is split between minimum payouts and premium allocation
+     * @custom:security
+     * - Owner-only access restriction
+     * - Upper bound validation prevents invalid allocation percentages
+     * - Ensures balanced distribution between guaranteed minimums and premium rewards
+     */
+    function setPremiumTierMinAllocation(uint256 _premiumTierMinAllocation) external onlyOwner {
+        if (_premiumTierMinAllocation > PRECISE_UNIT) revert InvalidPremiumTierMinimumAllocation();
+        premiumTierMinAllocation = _premiumTierMinAllocation;
+    }
+
+    /**
+     * @notice Updates premium tier weight allocation
+     * @dev Changes how the premium prize pool (after minimum payouts) is distributed across tiers.
+     *      Weights must sum to PRECISE_UNIT to ensure complete allocation.
+     * @param _premiumTierWeights Array of allocation weights (12 elements, must sum to PRECISE_UNIT)
+     * @custom:requirements
+     * - Only owner can call
+     * - Array must be exactly 12 elements (TOTAL_TIER_COUNT)
+     * - Weights must sum exactly to PRECISE_UNIT (1e18)
+     * @custom:emits None
+     * @custom:effects
+     * - Updates premium pool allocation weights
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * - Changes how remaining prize pool is distributed after minimum payouts
+     * @custom:security
+     * - Owner-only access restriction
+     * - Weight sum validation ensures complete allocation
+     * - Array length validation
+     */
+    function setPremiumTierWeights(uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights) external onlyOwner {
+        _setPremiumTierWeights(_premiumTierWeights);
+    }
+
+    // =============================================================
+    //                        VIEW FUNCTIONS
+    // =============================================================
+    
+    /**
+     * @notice Returns the calculated payout amount for a specific tier in a drawing
+     * @dev Retrieves the final payout amount per winning ticket for the specified tier.
+     *      Returns 0 if no payout has been calculated or tier had no winners.
+     * @param _drawingId Drawing to query
+     * @param _tierId Tier to query (0-11, calculated as matches*2 + bonusballMatch)
+     * @return Payout amount per winning ticket for the tier (in USDC wei)
+     */
+    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256) {
+        return tierPayouts[_drawingId][_tierId];
+    }
+
+    /**
+     * @notice Returns all tier payouts for a specific drawing
+     * @dev Retrieves the complete array of payout amounts for all 12 tiers in a drawing.
+     *      Useful for displaying complete payout structure or performing batch calculations.
+     * @param _drawingId Drawing to query
+     * @return Array of payout amounts for all tiers (12 elements, in USDC wei)
+     */
+    function getDrawingTierPayouts(uint256 _drawingId) external view returns (uint256[TOTAL_TIER_COUNT] memory) {
+        uint256[TOTAL_TIER_COUNT] memory drawingTierPayouts;
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            drawingTierPayouts[i] = tierPayouts[_drawingId][i];
+        }
+        return drawingTierPayouts;
+    }
+
+    /**
+     * @notice Returns current minimum payout tier configuration
+     * @dev Shows which tiers are currently eligible for minimum guaranteed payouts.
+     *      This reflects the current configuration, not necessarily what was used for past drawings.
+     * @return Boolean array indicating minimum payout eligibility for each tier (12 elements)
+     */
+    function getMinPayoutTiers() external view returns (bool[TOTAL_TIER_COUNT] memory) {
+        return minPayoutTiers;
+    }
+
+    /**
+     * @notice Returns current premium tier weight configuration
+     * @dev Shows current premium pool allocation weights across all tiers.
+     *      This reflects the current configuration, not necessarily what was used for past drawings.
+     * @return Array of premium pool allocation weights (12 elements, sum to PRECISE_UNIT)
+     */
+    function getPremiumTierWeights() external view returns (uint256[TOTAL_TIER_COUNT] memory) {
+        return premiumTierWeights;
+    }
+
+    /**
+     * @notice Returns the complete tier configuration used for a specific drawing
+     * @dev Retrieves the snapshot of payout configuration that was frozen for the drawing.
+     *      This shows the exact parameters used for payout calculations.
+     * @param _drawingId Drawing to query
+     * @return DrawingTierInfo struct containing minimum payout, tier eligibility, and premium weights
+     */
+    function getDrawingTierInfo(uint256 _drawingId) external view returns (DrawingTierInfo memory) {
+        return drawingTierInfo[_drawingId];
+    }
+
+    // =============================================================
+    //                        INTERNAL FUNCTIONS
+    // =============================================================
+    function _setPremiumTierWeights(uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights) internal {
+        uint256 tierWeightSum = 0;
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            tierWeightSum += _premiumTierWeights[i];
+        }
+        if (tierWeightSum != PRECISE_UNIT) revert InvalidTierWeights();
+
+        premiumTierWeights = _premiumTierWeights;
+    }
+
+    function _calculateAndStoreTierPayouts(
+        uint256 _drawingId,
+        uint256 _remainingPrizePool,
+        uint256 _minPayout,
+        uint256[TOTAL_TIER_COUNT] memory _tierWinners,
+        uint256[] memory _uniqueResult,
+        uint256[] memory _dupResult
+    )
+        internal
+        returns(uint256 totalPayout)
+    {
+        DrawingTierInfo storage tierInfo = drawingTierInfo[_drawingId];
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            // If no winners then no payout
+            if (_tierWinners[i] != 0) {
+                // Calculate the payout for each tier from the (remaining prize pool * weight) / total winning tickets
+                //(including LP-owned winning tickets)
+                uint256 premiumTierPayoutAmount = _remainingPrizePool * tierInfo.premiumTierWeights[i] / (PRECISE_UNIT * _tierWinners[i]);
+                // Add the premium tier payout to the minimum payout if the tier is eligible for the minimum payout
+                uint256 tierPayout = tierInfo.minPayoutTiers[i] ? _minPayout + premiumTierPayoutAmount : premiumTierPayoutAmount;
+                // Store the payout for the tier in the mapping so it can be queried later and add the total tier payout to the total payout
+                tierPayouts[_drawingId][i] = tierPayout;
+                // the total amount of user-owned winning tickets for a given tier is the sum of result and dupResult
+                totalPayout += tierPayout * (_uniqueResult[i] + _dupResult[i]);
+            }
+        }
+    }
+
+    function _calculateTierTotalWinningCombos(
+        uint256 _matches,
+        uint8 _normalMax, 
+        uint8 _bonusballMax,
+        bool _bonusballMatch
+    )
+        internal
+        pure
+        returns(uint256)
+    {
+        if (_bonusballMatch) {
+            return Combinations.choose(NORMAL_BALL_COUNT, _matches) * Combinations.choose(_normalMax - NORMAL_BALL_COUNT, NORMAL_BALL_COUNT - _matches);
+        } else {
+            return Combinations.choose(NORMAL_BALL_COUNT, _matches) * Combinations.choose(_normalMax - NORMAL_BALL_COUNT, NORMAL_BALL_COUNT - _matches) * (_bonusballMax - 1);
+        }
+    }
+}
+
+
+## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 
 END OF SUPPORTING CONTRACTS AND INTERFACES
 

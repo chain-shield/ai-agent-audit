@@ -345,96 +345,6 @@ contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsu
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
-
-/**
- * @title FisherYatesRejection
- * @notice Library implementing Fisher-Yates shuffle with rejection sampling for unbiased random selection
- * @dev Provides cryptographically secure random number selection without modulo bias:
- *      - Uses Fisher-Yates shuffle algorithm for uniform distribution
- *      - Implements rejection sampling to eliminate modulo bias
- *      - Supports configurable range and sample count
- *      - Ensures each selected number has equal probability
- *      - Optimized for jackpot drawing and other applications requiring provable fairness
- *      - Returns selections without replacement (no duplicates)
- */
-library FisherYatesRejection {
-    uint256 constant MAX_UINT = type(uint256).max;
-
-    /**
-     * @notice Generates random numbers using Fisher-Yates shuffle with rejection sampling
-     * @dev Implements unbiased random selection by:
-     *      1. Building a pool of all numbers in the specified range
-     *      2. Using Fisher-Yates shuffle with rejection sampling to avoid modulo bias
-     *      3. Selecting the first 'count' numbers from the shuffled pool
-     *      The rejection sampling ensures uniform distribution by rejecting random values
-     *      that would create bias when reduced to the required range. Developer needs to ensure
-     *      that the range is not too large to be able to build an array of the appropriate size
-     *      in memory.
-     * @param minRange Minimum value in the selection range (inclusive)
-     * @param maxRange Maximum value in the selection range (inclusive)
-     * @param count Number of unique values to select
-     * @param seed Cryptographic seed for random number generation
-     * @return result Array of selected numbers in the order they were shuffled
-     * @custom:requirements
-     * - count must be <= (maxRange - minRange + 1) to ensure sufficient pool size
-     * - minRange must be <= maxRange for valid range
-     * - seed should be cryptographically secure for unbiased results
-     * @custom:effects
-     * - Returns 'count' unique numbers from the specified range
-     * - Each number in range has equal probability of selection
-     * - No duplicates in the result array
-     * @custom:security
-     * - Rejection sampling eliminates modulo bias
-     * - Fisher-Yates algorithm ensures uniform distribution
-     * - Deterministic output for given seed enables verification
-     * - Gas usage scales with rejection rate (worst case for biased ranges)
-     */
-    function draw(
-        uint256 minRange,
-        uint256 maxRange,
-        uint256 count,
-        uint256 seed
-    ) external pure returns (uint256[] memory result) {
-        require(count <= maxRange - minRange + 1, "Too many draws");
-
-        // Build pool [1, 2, ..., range]
-        uint256 rangeSize = maxRange - minRange + 1;
-        uint256[] memory pool = new uint256[](rangeSize);
-        for (uint256 i = 0; i < rangeSize; i++) {
-            pool[i] = i + minRange;
-        }
-
-        uint256 nonce = 0;
-
-        // Fisher-Yates shuffle with rejection sampling
-        for (uint256 i = rangeSize - 1; i > 0; i--) {
-            uint256 rand;
-            while (true) {
-                rand = uint256(keccak256(abi.encode(seed, nonce)));
-                uint256 limit = (MAX_UINT / (i + 1)) * (i + 1);
-
-                if (rand < limit) {
-                    rand = rand % (i + 1);
-                    break;
-                }
-                nonce++;
-            }
-
-            // Swap pool[i] and pool[rand]
-            (pool[i], pool[rand]) = (pool[rand], pool[i]);
-            nonce++;
-        }
-
-        // Take first `count` numbers
-        result = new uint256[](count);
-        for (uint256 j = 0; j < count; j++) {
-            result[j] = pool[j];
-        }
-    }
-}
-
 // SPDX-License-Identifier: Apache 2
 pragma solidity ^0.8.0;
 
@@ -597,28 +507,96 @@ interface IEntropyV2 is EntropyEventsV2 {
     ) external view returns (uint128 feeAmount);
 }
 
-//SPDX-License-Identifier: UNLICENSED
-
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-interface IScaledEntropyProvider {
-    struct SetRequest {
-        uint8 samples;
-        uint256 minRange;
-        uint256 maxRange;
-        bool withReplacement;
+/**
+ * @title FisherYatesRejection
+ * @notice Library implementing Fisher-Yates shuffle with rejection sampling for unbiased random selection
+ * @dev Provides cryptographically secure random number selection without modulo bias:
+ *      - Uses Fisher-Yates shuffle algorithm for uniform distribution
+ *      - Implements rejection sampling to eliminate modulo bias
+ *      - Supports configurable range and sample count
+ *      - Ensures each selected number has equal probability
+ *      - Optimized for jackpot drawing and other applications requiring provable fairness
+ *      - Returns selections without replacement (no duplicates)
+ */
+library FisherYatesRejection {
+    uint256 constant MAX_UINT = type(uint256).max;
+
+    /**
+     * @notice Generates random numbers using Fisher-Yates shuffle with rejection sampling
+     * @dev Implements unbiased random selection by:
+     *      1. Building a pool of all numbers in the specified range
+     *      2. Using Fisher-Yates shuffle with rejection sampling to avoid modulo bias
+     *      3. Selecting the first 'count' numbers from the shuffled pool
+     *      The rejection sampling ensures uniform distribution by rejecting random values
+     *      that would create bias when reduced to the required range. Developer needs to ensure
+     *      that the range is not too large to be able to build an array of the appropriate size
+     *      in memory.
+     * @param minRange Minimum value in the selection range (inclusive)
+     * @param maxRange Maximum value in the selection range (inclusive)
+     * @param count Number of unique values to select
+     * @param seed Cryptographic seed for random number generation
+     * @return result Array of selected numbers in the order they were shuffled
+     * @custom:requirements
+     * - count must be <= (maxRange - minRange + 1) to ensure sufficient pool size
+     * - minRange must be <= maxRange for valid range
+     * - seed should be cryptographically secure for unbiased results
+     * @custom:effects
+     * - Returns 'count' unique numbers from the specified range
+     * - Each number in range has equal probability of selection
+     * - No duplicates in the result array
+     * @custom:security
+     * - Rejection sampling eliminates modulo bias
+     * - Fisher-Yates algorithm ensures uniform distribution
+     * - Deterministic output for given seed enables verification
+     * - Gas usage scales with rejection rate (worst case for biased ranges)
+     */
+    function draw(
+        uint256 minRange,
+        uint256 maxRange,
+        uint256 count,
+        uint256 seed
+    ) external pure returns (uint256[] memory result) {
+        require(count <= maxRange - minRange + 1, "Too many draws");
+
+        // Build pool [1, 2, ..., range]
+        uint256 rangeSize = maxRange - minRange + 1;
+        uint256[] memory pool = new uint256[](rangeSize);
+        for (uint256 i = 0; i < rangeSize; i++) {
+            pool[i] = i + minRange;
+        }
+
+        uint256 nonce = 0;
+
+        // Fisher-Yates shuffle with rejection sampling
+        for (uint256 i = rangeSize - 1; i > 0; i--) {
+            uint256 rand;
+            while (true) {
+                rand = uint256(keccak256(abi.encode(seed, nonce)));
+                uint256 limit = (MAX_UINT / (i + 1)) * (i + 1);
+
+                if (rand < limit) {
+                    rand = rand % (i + 1);
+                    break;
+                }
+                nonce++;
+            }
+
+            // Swap pool[i] and pool[rand]
+            (pool[i], pool[rand]) = (pool[rand], pool[i]);
+            nonce++;
+        }
+
+        // Take first `count` numbers
+        result = new uint256[](count);
+        for (uint256 j = 0; j < count; j++) {
+            result[j] = pool[j];
+        }
     }
-    function requestAndCallbackScaledRandomness(
-        uint32 _gasLimit,
-        SetRequest[] memory _requests,
-        bytes4 _selector,
-        bytes memory _context
-    )
-        external
-        payable
-        returns (uint64 requestId);
-    function getFee(uint32 _gasLimit) external view returns (uint256);
 }
+
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
 
@@ -720,6 +698,28 @@ abstract contract Ownable is Context {
     }
 }
 
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IScaledEntropyProvider {
+    struct SetRequest {
+        uint8 samples;
+        uint256 minRange;
+        uint256 maxRange;
+        bool withReplacement;
+    }
+    function requestAndCallbackScaledRandomness(
+        uint32 _gasLimit,
+        SetRequest[] memory _requests,
+        bytes4 _selector,
+        bytes memory _context
+    )
+        external
+        payable
+        returns (uint64 requestId);
+    function getFee(uint32 _gasLimit) external view returns (uint256);
+}
 // SPDX-License-Identifier: Apache 2
 pragma solidity ^0.8.0;
 
@@ -752,148 +752,6 @@ abstract contract IEntropyConsumer {
         address provider,
         bytes32 randomNumber
     ) internal virtual;
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
-
-import "./EntropyStructs.sol";
-
-// Deprecated -- these events are still emitted, but the lack of indexing
-// makes them hard to use.
-interface EntropyEvents {
-    event Registered(EntropyStructs.ProviderInfo provider);
-
-    event Requested(EntropyStructs.Request request);
-    event RequestedWithCallback(
-        address indexed provider,
-        address indexed requestor,
-        uint64 indexed sequenceNumber,
-        bytes32 userRandomNumber,
-        EntropyStructs.Request request
-    );
-
-    event Revealed(
-        EntropyStructs.Request request,
-        bytes32 userRevelation,
-        bytes32 providerRevelation,
-        bytes32 blockHash,
-        bytes32 randomNumber
-    );
-    event RevealedWithCallback(
-        EntropyStructs.Request request,
-        bytes32 userRandomNumber,
-        bytes32 providerRevelation,
-        bytes32 randomNumber
-    );
-
-    event CallbackFailed(
-        address indexed provider,
-        address indexed requestor,
-        uint64 indexed sequenceNumber,
-        bytes32 userRandomNumber,
-        bytes32 providerRevelation,
-        bytes32 randomNumber,
-        bytes errorCode
-    );
-
-    event ProviderFeeUpdated(address provider, uint128 oldFee, uint128 newFee);
-
-    event ProviderDefaultGasLimitUpdated(
-        address indexed provider,
-        uint32 oldDefaultGasLimit,
-        uint32 newDefaultGasLimit
-    );
-
-    event ProviderUriUpdated(address provider, bytes oldUri, bytes newUri);
-
-    event ProviderFeeManagerUpdated(
-        address provider,
-        address oldFeeManager,
-        address newFeeManager
-    );
-    event ProviderMaxNumHashesAdvanced(
-        address provider,
-        uint32 oldMaxNumHashes,
-        uint32 newMaxNumHashes
-    );
-
-    event Withdrawal(
-        address provider,
-        address recipient,
-        uint128 withdrawnAmount
-    );
-}
-
-// SPDX-License-Identifier: Apache 2
-
-pragma solidity ^0.8.0;
-
-// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
-// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
-// the Entropy contract.
-//
-// See EntropyStructsV2 for the struct definitions currently in use.
-contract EntropyStructs {
-    struct ProviderInfo {
-        uint128 feeInWei;
-        uint128 accruedFeesInWei;
-        // The commitment that the provider posted to the blockchain, and the sequence number
-        // where they committed to this. This value is not advanced after the provider commits,
-        // and instead is stored to help providers track where they are in the hash chain.
-        bytes32 originalCommitment;
-        uint64 originalCommitmentSequenceNumber;
-        // Metadata for the current commitment. Providers may optionally use this field to help
-        // manage rotations (i.e., to pick the sequence number from the correct hash chain).
-        bytes commitmentMetadata;
-        // Optional URI where clients can retrieve revelations for the provider.
-        // Client SDKs can use this field to automatically determine how to retrieve random values for each provider.
-        // TODO: specify the API that must be implemented at this URI
-        bytes uri;
-        // The first sequence number that is *not* included in the current commitment (i.e., an exclusive end index).
-        // The contract maintains the invariant that sequenceNumber <= endSequenceNumber.
-        // If sequenceNumber == endSequenceNumber, the provider must rotate their commitment to add additional random values.
-        uint64 endSequenceNumber;
-        // The sequence number that will be assigned to the next inbound user request.
-        uint64 sequenceNumber;
-        // The current commitment represents an index/value in the provider's hash chain.
-        // These values are used to verify requests for future sequence numbers. Note that
-        // currentCommitmentSequenceNumber < sequenceNumber.
-        //
-        // The currentCommitment advances forward through the provider's hash chain as values
-        // are revealed on-chain.
-        bytes32 currentCommitment;
-        uint64 currentCommitmentSequenceNumber;
-        // An address that is authorized to set / withdraw fees on behalf of this provider.
-        address feeManager;
-        // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
-        // the provider supports for callbacks.
-        uint32 maxNumHashes;
-    }
-
-    struct Request {
-        // Storage slot 1 //
-        address provider;
-        uint64 sequenceNumber;
-        // The number of hashes required to verify the provider revelation.
-        uint32 numHashes;
-        // Storage slot 2 //
-        // The commitment is keccak256(userCommitment, providerCommitment). Storing the hash instead of both saves 20k gas by
-        // eliminating 1 store.
-        bytes32 commitment;
-        // Storage slot 3 //
-        // The number of the block where this request was created.
-        // Note that we're using a uint64 such that we have an additional space for an address and other fields in
-        // this storage slot. Although block.number returns a uint256, 64 bits should be plenty to index all of the
-        // blocks ever generated.
-        uint64 blockNumber;
-        // The address that requested this random number.
-        address requester;
-        // If true, incorporate the blockhash of blockNumber into the generated random value.
-        bool useBlockhash;
-        // True if this is a request that expects a callback.
-        bool isRequestWithCallback;
-    }
 }
 
 // SPDX-License-Identifier: Apache 2
@@ -965,6 +823,77 @@ contract EntropyStructsV2 {
         // field into the remaining 2 bytes of this storage slot. The dynamic range here is 10k - 655M, which should
         // cover all real-world use cases.
         uint16 gasLimit10k;
+    }
+}
+
+// SPDX-License-Identifier: Apache 2
+
+pragma solidity ^0.8.0;
+
+// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
+// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
+// the Entropy contract.
+//
+// See EntropyStructsV2 for the struct definitions currently in use.
+contract EntropyStructs {
+    struct ProviderInfo {
+        uint128 feeInWei;
+        uint128 accruedFeesInWei;
+        // The commitment that the provider posted to the blockchain, and the sequence number
+        // where they committed to this. This value is not advanced after the provider commits,
+        // and instead is stored to help providers track where they are in the hash chain.
+        bytes32 originalCommitment;
+        uint64 originalCommitmentSequenceNumber;
+        // Metadata for the current commitment. Providers may optionally use this field to help
+        // manage rotations (i.e., to pick the sequence number from the correct hash chain).
+        bytes commitmentMetadata;
+        // Optional URI where clients can retrieve revelations for the provider.
+        // Client SDKs can use this field to automatically determine how to retrieve random values for each provider.
+        // TODO: specify the API that must be implemented at this URI
+        bytes uri;
+        // The first sequence number that is *not* included in the current commitment (i.e., an exclusive end index).
+        // The contract maintains the invariant that sequenceNumber <= endSequenceNumber.
+        // If sequenceNumber == endSequenceNumber, the provider must rotate their commitment to add additional random values.
+        uint64 endSequenceNumber;
+        // The sequence number that will be assigned to the next inbound user request.
+        uint64 sequenceNumber;
+        // The current commitment represents an index/value in the provider's hash chain.
+        // These values are used to verify requests for future sequence numbers. Note that
+        // currentCommitmentSequenceNumber < sequenceNumber.
+        //
+        // The currentCommitment advances forward through the provider's hash chain as values
+        // are revealed on-chain.
+        bytes32 currentCommitment;
+        uint64 currentCommitmentSequenceNumber;
+        // An address that is authorized to set / withdraw fees on behalf of this provider.
+        address feeManager;
+        // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
+        // the provider supports for callbacks.
+        uint32 maxNumHashes;
+    }
+
+    struct Request {
+        // Storage slot 1 //
+        address provider;
+        uint64 sequenceNumber;
+        // The number of hashes required to verify the provider revelation.
+        uint32 numHashes;
+        // Storage slot 2 //
+        // The commitment is keccak256(userCommitment, providerCommitment). Storing the hash instead of both saves 20k gas by
+        // eliminating 1 store.
+        bytes32 commitment;
+        // Storage slot 3 //
+        // The number of the block where this request was created.
+        // Note that we're using a uint64 such that we have an additional space for an address and other fields in
+        // this storage slot. Although block.number returns a uint256, 64 bits should be plenty to index all of the
+        // blocks ever generated.
+        uint64 blockNumber;
+        // The address that requested this random number.
+        address requester;
+        // If true, incorporate the blockhash of blockNumber into the generated random value.
+        bool useBlockhash;
+        // True if this is a request that expects a callback.
+        bool isRequestWithCallback;
     }
 }
 
@@ -1119,8 +1048,232 @@ interface EntropyEventsV2 {
     );
 }
 
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.0;
+
+import "./EntropyStructs.sol";
+
+// Deprecated -- these events are still emitted, but the lack of indexing
+// makes them hard to use.
+interface EntropyEvents {
+    event Registered(EntropyStructs.ProviderInfo provider);
+
+    event Requested(EntropyStructs.Request request);
+    event RequestedWithCallback(
+        address indexed provider,
+        address indexed requestor,
+        uint64 indexed sequenceNumber,
+        bytes32 userRandomNumber,
+        EntropyStructs.Request request
+    );
+
+    event Revealed(
+        EntropyStructs.Request request,
+        bytes32 userRevelation,
+        bytes32 providerRevelation,
+        bytes32 blockHash,
+        bytes32 randomNumber
+    );
+    event RevealedWithCallback(
+        EntropyStructs.Request request,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation,
+        bytes32 randomNumber
+    );
+
+    event CallbackFailed(
+        address indexed provider,
+        address indexed requestor,
+        uint64 indexed sequenceNumber,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation,
+        bytes32 randomNumber,
+        bytes errorCode
+    );
+
+    event ProviderFeeUpdated(address provider, uint128 oldFee, uint128 newFee);
+
+    event ProviderDefaultGasLimitUpdated(
+        address indexed provider,
+        uint32 oldDefaultGasLimit,
+        uint32 newDefaultGasLimit
+    );
+
+    event ProviderUriUpdated(address provider, bytes oldUri, bytes newUri);
+
+    event ProviderFeeManagerUpdated(
+        address provider,
+        address oldFeeManager,
+        address newFeeManager
+    );
+    event ProviderMaxNumHashesAdvanced(
+        address provider,
+        uint32 oldMaxNumHashes,
+        uint32 newMaxNumHashes
+    );
+
+    event Withdrawal(
+        address provider,
+        address recipient,
+        uint128 withdrawnAmount
+    );
+}
+
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
+// SPDX-License-Identifier: Apache 2
+pragma solidity ^0.8.0;
+
+import "./EntropyEvents.sol";
+import "./EntropyEventsV2.sol";
+import "./EntropyStructsV2.sol";
+import "./IEntropyV2.sol";
+
+interface IEntropy is EntropyEvents, EntropyEventsV2, IEntropyV2 {
+    // Register msg.sender as a randomness provider. The arguments are the provider's configuration parameters
+    // and initial commitment. Re-registering the same provider rotates the provider's commitment (and updates
+    // the feeInWei).
+    //
+    // chainLength is the number of values in the hash chain *including* the commitment, that is, chainLength >= 1.
+    function register(
+        uint128 feeInWei,
+        bytes32 commitment,
+        bytes calldata commitmentMetadata,
+        uint64 chainLength,
+        bytes calldata uri
+    ) external;
+
+    // Withdraw a portion of the accumulated fees for the provider msg.sender.
+    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
+    // balance of fees in the contract).
+    function withdraw(uint128 amount) external;
+
+    // Withdraw a portion of the accumulated fees for provider. The msg.sender must be the fee manager for this provider.
+    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
+    // balance of fees in the contract).
+    function withdrawAsFeeManager(address provider, uint128 amount) external;
+
+    // As a user, request a random number from `provider`. Prior to calling this method, the user should
+    // generate a random number x and keep it secret. The user should then compute hash(x) and pass that
+    // as the userCommitment argument. (You may call the constructUserCommitment method to compute the hash.)
+    //
+    // This method returns a sequence number. The user should pass this sequence number to
+    // their chosen provider (the exact method for doing so will depend on the provider) to retrieve the provider's
+    // number. The user should then call fulfillRequest to construct the final random number.
+    //
+    // This method will revert unless the caller provides a sufficient fee (at least getFee(provider)) as msg.value.
+    // Note that excess value is *not* refunded to the caller.
+    function request(
+        address provider,
+        bytes32 userCommitment,
+        bool useBlockHash
+    ) external payable returns (uint64 assignedSequenceNumber);
+
+    // Request a random number. The method expects the provider address and a secret random number
+    // in the arguments. It returns a sequence number.
+    //
+    // The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    // The `entropyCallback` method on that interface will receive a callback with the generated random number.
+    // `entropyCallback` will be run with the provider's default gas limit (see `getProviderInfo(provider).defaultGasLimit`).
+    // If your callback needs additional gas, please use `requestWithCallbackAndGasLimit`.
+    //
+    // This method will revert unless the caller provides a sufficient fee (at least `getFee(provider)`) as msg.value.
+    // Note that excess value is *not* refunded to the caller.
+    function requestWithCallback(
+        address provider,
+        bytes32 userRandomNumber
+    ) external payable returns (uint64 assignedSequenceNumber);
+
+    // Fulfill a request for a random number. This method validates the provided userRandomness and provider's proof
+    // against the corresponding commitments in the in-flight request. If both values are validated, this function returns
+    // the corresponding random number.
+    //
+    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
+    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
+    // If you need to use the returned random number more than once, you are responsible for storing it.
+    function reveal(
+        address provider,
+        uint64 sequenceNumber,
+        bytes32 userRevelation,
+        bytes32 providerRevelation
+    ) external returns (bytes32 randomNumber);
+
+    // Fulfill a request for a random number. This method validates the provided userRandomness
+    // and provider's revelation against the corresponding commitment in the in-flight request. If both values are validated
+    // and the requestor address is a contract address, this function calls the requester's entropyCallback method with the
+    // sequence number, provider address and the random number as arguments. Else if the requestor is an EOA, it won't call it.
+    //
+    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
+    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
+    // If you need to use the returned random number more than once, you are responsible for storing it.
+    //
+    // Anyone can call this method to fulfill a request, but the callback will only be made to the original requester.
+    function revealWithCallback(
+        address provider,
+        uint64 sequenceNumber,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation
+    ) external;
+
+    function getProviderInfo(
+        address provider
+    ) external view returns (EntropyStructs.ProviderInfo memory info);
+
+    function getRequest(
+        address provider,
+        uint64 sequenceNumber
+    ) external view returns (EntropyStructs.Request memory req);
+
+    // Get the fee charged by provider for a request with the default gasLimit (`request` or `requestWithCallback`).
+    // If you are calling any of the `requestV2` methods, please use `getFeeV2`.
+    function getFee(address provider) external view returns (uint128 feeAmount);
+
+    function getAccruedPythFees()
+        external
+        view
+        returns (uint128 accruedPythFeesInWei);
+
+    function setProviderFee(uint128 newFeeInWei) external;
+
+    function setProviderFeeAsFeeManager(
+        address provider,
+        uint128 newFeeInWei
+    ) external;
+
+    function setProviderUri(bytes calldata newUri) external;
+
+    // Set manager as the fee manager for the provider msg.sender.
+    // After calling this function, manager will be able to set the provider's fees and withdraw them.
+    // Only one address can be the fee manager for a provider at a time -- calling this function again with a new value
+    // will override the previous value. Call this function with the all-zero address to disable the fee manager role.
+    function setFeeManager(address manager) external;
+
+    // Set the maximum number of hashes to record in a request. This should be set according to the maximum gas limit
+    // the provider supports for callbacks.
+    function setMaxNumHashes(uint32 maxNumHashes) external;
+
+    // Set the default gas limit for a request. If 0, no
+    function setDefaultGasLimit(uint32 gasLimit) external;
+
+    // Advance the provider commitment and increase the sequence number.
+    // This is used to reduce the `numHashes` required for future requests which leads to reduced gas usage.
+    function advanceProviderCommitment(
+        address provider,
+        uint64 advancedSequenceNumber,
+        bytes32 providerRevelation
+    ) external;
+
+    function constructUserCommitment(
+        bytes32 userRandomness
+    ) external pure returns (bytes32 userCommitment);
+
+    function combineRandomValues(
+        bytes32 userRandomness,
+        bytes32 providerRandomness,
+        bytes32 blockHash
+    ) external pure returns (bytes32 combinedRandomness);
+}
+
 
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 

@@ -1,6 +1,7 @@
 use crate::{
     config::{
-        MAX_PATTERN_RUN_FREQUENT, MAX_PATTERN_RUN_MOST, MAX_PATTERN_RUN_RARE, MAX_PATTERN_RUN_TOP,
+        MAX_PATTERN_LIBRARY, MAX_PATTERN_NICHE, MAX_PATTERN_RUN_FREQUENT, MAX_PATTERN_RUN_MOST,
+        MAX_PATTERN_RUN_RARE, MAX_PATTERN_RUN_TOP,
     },
     llm_review::patterns::VulnerabilityPattern,
 };
@@ -14,21 +15,30 @@ use strum_macros::EnumIter;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EnumIter)]
 pub enum PatternCategory {
-    EconomicHit,
-    CallOrder,
-    AuthByPass,
-    AccountingMess,
-    TokenHit,
-    PermitExpired,
-    Gasy,
-    BrokenMachine,
-    UpgradeFlop,
-    Evm,
-    Randomness,
+    SignatureValidation,
+    OraclePriceFeed,
+    TokenTransferLibrary,
+    GovernanceTimeLock,
+    ProxyUpgradeable,
+    StakingRewards,
+    BridgeCrossChain,
+    AMMDex,
+    LendingBorrowing,
+    FactoryDeployer,
+    MathLibrary,
+    VaultShareBased,
+    ERC20Token,
+    NFTCollection,
+    AirdropDistributor,
+    EscrowVesting,
+    MarketplaceExchange,
+    RandomnessRaffleLottery,
+    General,
     Top,
     Rare,
     Frequent,
     MostObserved,
+    Library,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -51,81 +61,137 @@ pub struct PatternCategorySpec {
 
 pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
     PatternCategorySpec {
-        category: PatternCategory::EconomicHit,
-        title: "Economic, Market, & Oracle",
-        issues: ECONOMIC_HIT,
+        category: PatternCategory::SignatureValidation,
+        title: "Signature Validation",
+        issues: SIGNATURE_VALIDATION_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: 2,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
-        category: PatternCategory::CallOrder,
-        title: "Call Order and Reentrancy",
-        issues: CALL_ORDER,
+        category: PatternCategory::VaultShareBased,
+        title: "Vault Share-Based",
+        issues: VAULT_SHARE_BASED_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: 2,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
-        category: PatternCategory::AuthByPass,
-        title: "Access Control and Authorization Bypass",
-        issues: AUTH_BYPASS,
+        category: PatternCategory::OraclePriceFeed,
+        title: "Oracle Price Feed",
+        issues: ORACLE_PRICE_FEED_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: 2,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
-        category: PatternCategory::AccountingMess,
-        title: "Accounting and Precision",
-        issues: ACCOUNTING_MISS,
-        tier: PatternTier::Tier2,
-        runs: 1,
+        category: PatternCategory::MathLibrary,
+        title: "Math Library",
+        issues: MATH_LIBRARY_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
-        category: PatternCategory::TokenHit,
-        title: "Token Standard and Allowance",
-        issues: TOKEN_HIT,
-        tier: PatternTier::Tier2,
-        runs: 1,
+        category: PatternCategory::TokenTransferLibrary,
+        title: "Token Transfer Library",
+        issues: TOKEN_TRANSFER_LIBRARY_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
-        category: PatternCategory::PermitExpired,
-        title: "Permit and Signature",
-        issues: PERMIT_EXPIRED,
-        tier: PatternTier::Tier2,
-        runs: 1,
+        category: PatternCategory::GovernanceTimeLock,
+        title: "Governance TimeLock",
+        issues: GOVERNANCE_TIMELOCK_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
-        category: PatternCategory::Gasy,
-        title: "Gas Consumption and DoS Vectors",
-        issues: GASY,
-        tier: PatternTier::Tier3,
-        runs: 0,
+        category: PatternCategory::ProxyUpgradeable,
+        title: "Proxy Upgradeable",
+        issues: PROXY_UPGRADEABLE_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
-        category: PatternCategory::BrokenMachine,
-        title: "State Machine and Epoch Monotonicity",
-        issues: BROKEN_MACHINE,
-        tier: PatternTier::Tier3,
-        runs: 0,
+        category: PatternCategory::StakingRewards,
+        title: "Staking Rewards",
+        issues: STAKING_REWARDS_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
-        category: PatternCategory::UpgradeFlop,
-        title: "Upgrade and Proxy Misconfiguration",
-        issues: UPGRADE_FLOP,
-        tier: PatternTier::Tier3,
-        runs: 0,
+        category: PatternCategory::BridgeCrossChain,
+        title: "Bridge Cross-Chain",
+        issues: BRIDGE_CROSS_CHAIN_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
-        category: PatternCategory::Evm,
-        title: "EVM-Level and Low-level Call Risks",
-        issues: EVM,
-        tier: PatternTier::Tier4,
-        runs: 0,
+        category: PatternCategory::AMMDex,
+        title: "AMM DEX",
+        issues: AMM_DEX_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
-        category: PatternCategory::Randomness,
-        title: "Randomness and Timestamp Manipulation",
-        issues: RANDOMNESS,
-        tier: PatternTier::Tier4,
-        runs: 0,
+        category: PatternCategory::LendingBorrowing,
+        title: "Lending Borrowing",
+        issues: LENDING_BORROWING_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::FactoryDeployer,
+        title: "Factory Deployer",
+        issues: FACTORY_DEPLOYER_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::ERC20Token,
+        title: "ERC20 Token",
+        issues: ERC20_TOKEN_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::NFTCollection,
+        title: "NFT Collection",
+        issues: NFT_COLLECTION_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::AirdropDistributor,
+        title: "Airdrop Distributor",
+        issues: AIRDROP_DISTRIBUTOR_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::EscrowVesting,
+        title: "Escrow Vesting",
+        issues: ESCROW_VESTING_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::MarketplaceExchange,
+        title: "Marketplace Exchange",
+        issues: MARKETPLACE_EXCHANGE_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::RandomnessRaffleLottery,
+        title: "Randomness Raffle Lottery",
+        issues: RANDOMNESS_RAFFLE_LOTTERY_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::General,
+        title: "Common High/Medium Vulnerabilities",
+        issues: COMMON_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_NICHE,
     },
     PatternCategorySpec {
         category: PatternCategory::Top,
@@ -155,21 +221,18 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         tier: PatternTier::Tier1,
         runs: MAX_PATTERN_RUN_MOST,
     },
+    PatternCategorySpec {
+        category: PatternCategory::Library,
+        title: "Most Frequent Library",
+        issues: LIBRARY_ANALYSIS_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_LIBRARY,
+    },
 ];
 
 /// One-time initialized map from PatternCategory -> &'static PatternCategorySpec
 static PATTERN_CATEGORY_MAP: OnceLock<HashMap<PatternCategory, &'static PatternCategorySpec>> =
     OnceLock::new();
-
-/// Initialize the category map; safe to call multiple times (subsequent calls are no-ops)
-pub fn init_pattern_categories() {
-    let _ = PATTERN_CATEGORY_MAP.set(
-        PATTERN_CATEGORY_LIBRARY
-            .iter()
-            .map(|spec| (spec.category.clone(), spec))
-            .collect::<HashMap<_, _>>(),
-    );
-}
 
 /// Get a reference to the category map (initializes lazily if not yet set)
 pub fn pattern_category_map() -> &'static HashMap<PatternCategory, &'static PatternCategorySpec> {
@@ -188,104 +251,276 @@ pub fn get_category_library_spec(cat: &PatternCategory) -> Option<&'static Patte
 
 //**************************************************
 //**************************************************
-// TIER 1 -> 3 LLM RUNS
-pub const ECONOMIC_HIT: &[VulnerabilityPattern; 7] = &[
-    VulnerabilityPattern::FlashLoanEconomicManipulation,
-    VulnerabilityPattern::FeeOnTransferAssumption,
-    VulnerabilityPattern::ReserveOrPriceDesync,
-    VulnerabilityPattern::OracleUsingDEXorTWAP,
-    VulnerabilityPattern::SlippageMissingOrInsufficient,
-    VulnerabilityPattern::StaleOracleAcceptance,
-    VulnerabilityPattern::SandwichableOracle,
-];
 
-// TIER 1 -> 2 LLM RUNS
-pub const CALL_ORDER: &[VulnerabilityPattern; 2] = &[
-    VulnerabilityPattern::Reentrancy,
-    VulnerabilityPattern::ExternalCallAfterStateChange,
-];
-
-// TIER 1 -> 3 rounds
-pub const AUTH_BYPASS: &[VulnerabilityPattern; 4] = &[
+pub const SIGNATURE_VALIDATION_PATTERNS: &[VulnerabilityPattern; 10] = &[
     VulnerabilityPattern::AccessControlOrAuthByPass,
-    VulnerabilityPattern::GovernanceDelegationFlaw,
-    VulnerabilityPattern::DoubleExecutionOrReplay,
+    VulnerabilityPattern::PermitOrSignatureReplay,
     VulnerabilityPattern::EIP1271ByPass,
+    VulnerabilityPattern::DoubleExecutionOrReplay,
+    VulnerabilityPattern::PermitMisuse,
+    VulnerabilityPattern::ChainIdorDomainDrift,
+    VulnerabilityPattern::PermitFrontRun,
+    VulnerabilityPattern::UnsafeAssembyTypeCasts,
+    VulnerabilityPattern::StandardViolation,
+    VulnerabilityPattern::ReplayAcrossForksOrL2s,
 ];
-//**************************************************
-//**************************************************
 
-//**************************************************
-//**************************************************
-// TIER 2
-pub const ACCOUNTING_MISS: &[VulnerabilityPattern; 5] = &[
+pub const VAULT_SHARE_BASED_PATTERNS: &[VulnerabilityPattern; 12] = &[
+    VulnerabilityPattern::ERC4626SharePriceMismatch,
+    VulnerabilityPattern::PricePrecisionOrRoundingError,
     VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::SlippageMissingOrInsufficient,
+    VulnerabilityPattern::FlashLoanEconomicManipulation,
+    VulnerabilityPattern::PrecisionDriftAccumulation,
+    VulnerabilityPattern::FeeAccountingDrift,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::NonStandardERC20Behavior,
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::Reentrancy,
+    VulnerabilityPattern::ReadOnlyReentrancy,
+];
+
+pub const ORACLE_PRICE_FEED_PATTERNS: &[VulnerabilityPattern; 9] = &[
+    VulnerabilityPattern::StaleOracleAcceptance,
+    VulnerabilityPattern::OracleUsingDEXorTWAP,
+    VulnerabilityPattern::SandwichableOracle,
+    VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity,
+    VulnerabilityPattern::PricePrecisionOrRoundingError,
+    VulnerabilityPattern::ReserveOrPriceDesync,
+    VulnerabilityPattern::TimestampOrBlockManipulation,
+    VulnerabilityPattern::UncheckedLowLevelCallResults,
+    VulnerabilityPattern::ERC20DecimalsMismatch,
+];
+
+pub const MATH_LIBRARY_PATTERNS: &[VulnerabilityPattern; 7] = &[
+    VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath,
     VulnerabilityPattern::PricePrecisionOrRoundingError,
     VulnerabilityPattern::PrecisionDriftAccumulation,
-    VulnerabilityPattern::ERC4626SharePriceMismatch,
+    VulnerabilityPattern::ERC20DecimalsMismatch,
+    VulnerabilityPattern::UnsafeAssembyTypeCasts,
+    VulnerabilityPattern::FeeAccountingDrift,
+    VulnerabilityPattern::AccountingInvariantViolation,
+];
+
+pub const TOKEN_TRANSFER_LIBRARY_PATTERNS: &[VulnerabilityPattern; 9] = &[
+    VulnerabilityPattern::NonStandardERC20Behavior,
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::UncheckedLowLevelCallResults,
+    VulnerabilityPattern::EthVsWethConfusion,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::ERC777HookReentrancy,
+    VulnerabilityPattern::AllowanceRace,
+    VulnerabilityPattern::StandardViolation,
+    VulnerabilityPattern::PullorPushPaymentbugs,
+];
+
+pub const GOVERNANCE_TIMELOCK_PATTERNS: &[VulnerabilityPattern; 9] = &[
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::TimelockEdgeCase,
+    VulnerabilityPattern::DoubleExecutionOrReplay,
+    VulnerabilityPattern::GovernanceDelegationFlaw,
+    VulnerabilityPattern::MaturityorGatingByPass,
+    VulnerabilityPattern::TimestampOrBlockManipulation,
+    VulnerabilityPattern::ConfigFootgun,
+    VulnerabilityPattern::UnprotectedPauseOrStop,
+    VulnerabilityPattern::EpochOrIndexMonotonicity,
+];
+
+pub const PROXY_UPGRADEABLE_PATTERNS: &[VulnerabilityPattern; 8] = &[
+    VulnerabilityPattern::UpgradeAuthBypass,
+    VulnerabilityPattern::InitOrderOrUnintialized,
+    VulnerabilityPattern::StorageCollisionOrSelectorClash,
+    VulnerabilityPattern::BeaconOrFactoryAuthorityDrift,
+    VulnerabilityPattern::UntrustedDelegateCall,
+    VulnerabilityPattern::SelfdestructOrMetamorphicFootguns,
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::ConfigFootgun,
+];
+
+pub const STAKING_REWARDS_PATTERNS: &[VulnerabilityPattern; 10] = &[
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::PrecisionDriftAccumulation,
+    VulnerabilityPattern::FeeAccountingDrift,
+    VulnerabilityPattern::EpochOrIndexMonotonicity,
+    VulnerabilityPattern::FlashLoanEconomicManipulation,
+    VulnerabilityPattern::Reentrancy,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::NonStandardERC20Behavior,
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::TimestampOrBlockManipulation,
+];
+
+pub const BRIDGE_CROSS_CHAIN_PATTERNS: &[VulnerabilityPattern; 8] = &[
+    VulnerabilityPattern::CrossChainMessageSpoofing,
+    VulnerabilityPattern::FinalityOrReplayAcrossDomains,
+    VulnerabilityPattern::ReplayAcrossForksOrL2s,
+    VulnerabilityPattern::ChainIdorDomainDrift,
+    VulnerabilityPattern::DoubleExecutionOrReplay,
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::UncheckedLowLevelCallResults,
+    VulnerabilityPattern::AccountingInvariantViolation,
+];
+
+pub const AMM_DEX_PATTERNS: &[VulnerabilityPattern; 14] = &[
+    VulnerabilityPattern::SlippageMissingOrInsufficient,
+    VulnerabilityPattern::FlashLoanEconomicManipulation,
+    VulnerabilityPattern::OracleUsingDEXorTWAP,
+    VulnerabilityPattern::SandwichableOracle,
+    VulnerabilityPattern::Reentrancy,
+    VulnerabilityPattern::ReadOnlyReentrancy,
+    VulnerabilityPattern::MulticallCrossPathReentrancy,
+    VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity,
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::PricePrecisionOrRoundingError,
+    VulnerabilityPattern::NonStandardERC20Behavior,
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::UnsafeRecipient,
     VulnerabilityPattern::FeeAccountingDrift,
 ];
 
-// Token Standard / ALLOWANCE
-// TIER 2
-pub const TOKEN_HIT: &[VulnerabilityPattern; 4] = &[
+pub const LENDING_BORROWING_PATTERNS: &[VulnerabilityPattern; 13] = &[
+    VulnerabilityPattern::SlippageMissingOrInsufficient,
+    VulnerabilityPattern::StaleOracleAcceptance,
+    VulnerabilityPattern::FlashLoanEconomicManipulation,
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::PrecisionDriftAccumulation,
+    VulnerabilityPattern::Reentrancy,
+    VulnerabilityPattern::ReadOnlyReentrancy,
+    VulnerabilityPattern::MulticallCrossPathReentrancy,
+    VulnerabilityPattern::NonStandardERC20Behavior,
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::FeeAccountingDrift,
+    VulnerabilityPattern::ERC20DecimalsMismatch,
+];
+
+pub const FACTORY_DEPLOYER_PATTERNS: &[VulnerabilityPattern; 6] = &[
+    VulnerabilityPattern::BeaconOrFactoryAuthorityDrift,
+    VulnerabilityPattern::InitOrderOrUnintialized,
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::StorageCollisionOrSelectorClash,
+    VulnerabilityPattern::SelfdestructOrMetamorphicFootguns,
+    VulnerabilityPattern::ConfigFootgun,
+];
+
+pub const ERC20_TOKEN_PATTERNS: &[VulnerabilityPattern; 12] = &[
     VulnerabilityPattern::StandardViolation,
     VulnerabilityPattern::NonStandardERC20Behavior,
-    VulnerabilityPattern::ERC20DecimalsMismatch,
-    VulnerabilityPattern::ERC777HookReentrancy,
-];
-
-// TIER 2
-pub const PERMIT_EXPIRED: &[VulnerabilityPattern; 3] = &[
-    VulnerabilityPattern::PermitOrSignatureReplay,
+    VulnerabilityPattern::AllowanceRace,
     VulnerabilityPattern::PermitFrontRun,
     VulnerabilityPattern::PermitMisuse,
-];
-//**************************************************
-//**************************************************
-
-//**************************************************
-//**************************************************
-// TIER 3
-pub const GASY: &[VulnerabilityPattern; 3] = &[
+    VulnerabilityPattern::ERC20DecimalsMismatch,
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::ConfigFootgun,
+    VulnerabilityPattern::UnprotectedPauseOrStop,
     VulnerabilityPattern::UnboundedLoops,
-    VulnerabilityPattern::GriefableCallbacks,
     VulnerabilityPattern::StateGrowthOrStorageBloat,
+    VulnerabilityPattern::AccountingInvariantViolation,
 ];
 
-// TIER 3
-pub const BROKEN_MACHINE: &[VulnerabilityPattern; 2] = &[
-    VulnerabilityPattern::EpochOrIndexMonotonicity,
-    VulnerabilityPattern::SelfdestructOrMetamorphicFootguns,
-];
-
-// TIER 3
-pub const UPGRADE_FLOP: &[VulnerabilityPattern; 3] = &[
-    VulnerabilityPattern::InitOrderOrUnintialized,
-    VulnerabilityPattern::UpgradeAuthBypass,
-    VulnerabilityPattern::StorageCollisionOrSelectorClash,
-];
-//**************************************************
-//**************************************************
-
-//**************************************************
-//**************************************************
-// TIER 4
-pub const EVM: &[VulnerabilityPattern; 3] = &[
-    VulnerabilityPattern::UntrustedDelegateCall,
-    VulnerabilityPattern::UnsafeAssembyTypeCasts,
-    VulnerabilityPattern::UncheckedLowLevelCallResults,
-];
-
-// TIER 4
-pub const RANDOMNESS: &[VulnerabilityPattern; 2] = &[
+pub const NFT_COLLECTION_PATTERNS: &[VulnerabilityPattern; 11] = &[
+    VulnerabilityPattern::StandardViolation,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::MaturityorGatingByPass,
+    VulnerabilityPattern::UnboundedLoops,
+    VulnerabilityPattern::StateGrowthOrStorageBloat,
     VulnerabilityPattern::TimestampOrBlockManipulation,
-    VulnerabilityPattern::BlockhashOrPRNGWeakness,
+    VulnerabilityPattern::GriefableCallbacks,
+    VulnerabilityPattern::Reentrancy,
+    VulnerabilityPattern::CEIViolation,
+    VulnerabilityPattern::ExternalCallAfterStateChange,
 ];
 
-//**************************************************
-//**************************************************
-pub const LIBRARY_ANALYSIS_PATTERNS: &[VulnerabilityPattern; 14] = &[
+pub const AIRDROP_DISTRIBUTOR_PATTERNS: &[VulnerabilityPattern; 11] = &[
+    VulnerabilityPattern::DoubleExecutionOrReplay,
+    VulnerabilityPattern::EpochOrIndexMonotonicity,
+    VulnerabilityPattern::MaturityorGatingByPass,
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::UnboundedLoops,
+    VulnerabilityPattern::StateGrowthOrStorageBloat,
+    VulnerabilityPattern::UncheckedLowLevelCallResults,
+    VulnerabilityPattern::NonStandardERC20Behavior,
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::TimestampOrBlockManipulation,
+];
+
+pub const ESCROW_VESTING_PATTERNS: &[VulnerabilityPattern; 9] = &[
+    VulnerabilityPattern::TimestampOrBlockManipulation,
+    VulnerabilityPattern::MaturityorGatingByPass,
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::ConfigFootgun,
+    VulnerabilityPattern::UnboundedLoops,
+    VulnerabilityPattern::StateGrowthOrStorageBloat,
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::ExternalCallAfterStateChange,
+];
+
+pub const MARKETPLACE_EXCHANGE_PATTERNS: &[VulnerabilityPattern; 14] = &[
+    VulnerabilityPattern::PermitOrSignatureReplay,
+    VulnerabilityPattern::EIP1271ByPass,
+    VulnerabilityPattern::DoubleExecutionOrReplay,
+    VulnerabilityPattern::MulticallCrossPathReentrancy,
+    VulnerabilityPattern::Reentrancy,
+    VulnerabilityPattern::CEIViolation,
+    VulnerabilityPattern::ExternalCallAfterStateChange,
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::FeeAccountingDrift,
+    VulnerabilityPattern::NonStandardERC20Behavior,
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::TimestampOrBlockManipulation,
+    VulnerabilityPattern::ForcedAssetVsStrictEquality,
+];
+
+pub const RANDOMNESS_RAFFLE_LOTTERY_PATTERNS: &[VulnerabilityPattern; 10] = &[
+    VulnerabilityPattern::BlockhashOrPRNGWeakness,
+    VulnerabilityPattern::TimestampOrBlockManipulation,
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::MaturityorGatingByPass,
+    VulnerabilityPattern::UnboundedLoops,
+    VulnerabilityPattern::StateGrowthOrStorageBloat,
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::UncheckedLowLevelCallResults,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::ConfigFootgun,
+];
+
+pub const COMMON_PATTERNS: &[VulnerabilityPattern; 20] = &[
+    // Core Access Control & Auth (3 patterns) - Keep most critical, remove signature-specific
+    VulnerabilityPattern::AccessControlOrAuthByPass, // High - universal auth bypass
+    VulnerabilityPattern::DoubleExecutionOrReplay,   // HighMedium - replay attacks
+    VulnerabilityPattern::UnprotectedPauseOrStop,    // HighMedium - emergency controls
+    // Reentrancy & Call Order (3 patterns) - Consolidate overlaps
+    VulnerabilityPattern::Reentrancy, // High - covers CEIViolation + classic reentrancy
+    VulnerabilityPattern::MulticallCrossPathReentrancy,
+    VulnerabilityPattern::ExternalCallAfterStateChange, // Medium - CEI violations
+    // Economic & Flash Loans (2 patterns) - Remove oracle-specific patterns
+    VulnerabilityPattern::FlashLoanEconomicManipulation, // High - universal economic attack
+    VulnerabilityPattern::SlippageMissingOrInsufficient, // Medium - common in any swap/trade
+    // Accounting & Invariants (3 patterns) - Remove vault-specific
+    VulnerabilityPattern::AccountingInvariantViolation, // HighMedium - universal accounting
+    VulnerabilityPattern::FeeAccountingDrift,
+    VulnerabilityPattern::PrecisionDriftAccumulation, // Medium - rounding errors
+    VulnerabilityPattern::UnsafeRecipient,            // HighMedium - recipient validation
+    // Token Standards (2 patterns) - Keep most common
+    VulnerabilityPattern::AllowanceRace, // Medium - approve race condition
+    // Upgradeability & Proxies (2 patterns) - Keep highest impact, remove proxy-specific
+    VulnerabilityPattern::UpgradeAuthBypass, // High - universal upgrade risk
+    VulnerabilityPattern::InitOrderOrUnintialized, // HighMedium - init vulnerabilities
+    // DoS & Complexity (2 patterns) - Keep most common
+    VulnerabilityPattern::UnboundedLoops,     // Medium - gas/DoS
+    VulnerabilityPattern::GriefableCallbacks, // Medium - callback griefing
+    // Low-Level & Assembly (2 patterns) - Keep critical
+    VulnerabilityPattern::UncheckedLowLevelCallResults, // Medium - silent failures
+    VulnerabilityPattern::UnsafeAssembyTypeCasts,       // HighMedium - type safety
+    // Universal Edge Cases (1 pattern)
+    VulnerabilityPattern::ForcedAssetVsStrictEquality, // High - strict equality bugs
+];
+
+pub const LIBRARY_ANALYSIS_PATTERNS: &[VulnerabilityPattern; 20] = &[
     // Math & Precision (4)
     VulnerabilityPattern::PricePrecisionOrRoundingError,
     VulnerabilityPattern::PrecisionDriftAccumulation,
@@ -301,11 +536,18 @@ pub const LIBRARY_ANALYSIS_PATTERNS: &[VulnerabilityPattern; 14] = &[
     // Accounting & Invariants (2)
     VulnerabilityPattern::AccountingInvariantViolation,
     VulnerabilityPattern::FeeAccountingDrift,
-    // Oracle & Price (2)
+    // Oracle & Price (1)
     VulnerabilityPattern::StaleOracleAcceptance,
-    VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity,
-    // Input Validation & Edge Cases (1)
+    // Input Validation & Edge Cases (3)
     VulnerabilityPattern::ForcedAssetVsStrictEquality,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::ExternalCallAfterStateChange,
+    // Auth & Signature Validation (5)
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::PermitOrSignatureReplay,
+    VulnerabilityPattern::EIP1271ByPass,
+    VulnerabilityPattern::DoubleExecutionOrReplay,
+    VulnerabilityPattern::PermitMisuse,
 ];
 
 pub const TOP_OBSERVED_PATTERNS: &[VulnerabilityPattern; 10] = &[

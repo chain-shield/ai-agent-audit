@@ -17,9 +17,7 @@ use crate::enumerator::parse_solidity::{
 use crate::enumerator::utils::{
     get_hashmap_of_contract_to_functions, get_token_count_of_function_ir, SolFileType,
 };
-use crate::llm_review::contract_file_map::{
-    get_file_from_contract, get_file_from_lib_contract, ContractType,
-};
+use crate::llm_review::contract_file_map::{get_file_from_contract, get_file_from_lib_contract};
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::display_file::display_file;
