@@ -30,9 +30,11 @@ pub const CREATE_TESTS: bool = false;
 pub const DISCOVERY_RUNS: usize = 1;
 pub const INVARIANT_RUNS: usize = 0;
 pub const MAX_PATTERN_RUN_TOP: usize = 0;
-pub const MAX_PATTERN_RUN_RARE: usize = 10;
+pub const MAX_PATTERN_RUN_RARE: usize = 0;
 pub const MAX_PATTERN_RUN_MOST: usize = 0;
 pub const MAX_PATTERN_RUN_FREQUENT: usize = 0;
+pub const MAX_PATTERN_LIBRARY: usize = 10;
+pub const MAX_PATTERN_NICHE: usize = 5;
 
 pub const MAX_FILE_RUNS: usize = 1;
 

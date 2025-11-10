@@ -52,7 +52,7 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these failed
-    let custom_scoped_contracts = Some(vec!["GovernanceHYBR".to_string()]);
+    let custom_scoped_contracts = Some(vec!["BaseSig".to_string()]);
     // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     let (ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent) =
@@ -67,7 +67,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
         if let Some(scoped_contracts) = &custom_scoped_contracts {
             if !scoped_contracts.contains(&contract) {
-                info!("contract {}  is NOT in scope", contract);
+                info!("contract {} is NOT in scope", contract);
                 continue;
             }
         }
@@ -103,10 +103,44 @@ pub async fn review_codebase_for_security_issues_v2(
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async move {
                 // Run pattern and invariant analysis concurrently within this task
-                let (patterns_res, invariants_res) = tokio::join!(
-                    process_patterns(&codeblock, &discovery_agent, &verify_agent, &repo_clone),
-                    process_invariants(&codeblock, &discovery_agent, &verify_agent, &repo_clone)
-                );
+                let (patterns_res, invariants_res) = if contract_type != ContractType::Library {
+                    let pattern_categories: Vec<PatternCategory> = PatternCategory::iter()
+                        .filter(|p| {
+                            *p == PatternCategory::Top
+                                || *p == PatternCategory::Frequent
+                                || *p == PatternCategory::MostObserved
+                                || *p == PatternCategory::Rare
+                        })
+                        .collect();
+                    tokio::join!(
+                        process_patterns(
+                            &codeblock,
+                            pattern_categories,
+                            &discovery_agent,
+                            &verify_agent,
+                            &repo_clone
+                        ),
+                        process_invariants(
+                            &codeblock,
+                            &discovery_agent,
+                            &verify_agent,
+                            &repo_clone
+                        )
+                    )
+                } else {
+                    // handle library contract
+                    (
+                        process_patterns(
+                            &codeblock,
+                            vec![PatternCategory::Library],
+                            &discovery_agent,
+                            &verify_agent,
+                            &repo_clone,
+                        )
+                        .await,
+                        Ok(Findings::default()),
+                    )
+                };
 
                 let mut raw_findings = Findings::default();
                 if let Ok(pats) = patterns_res {
@@ -299,20 +333,12 @@ rigorous PoC tests that validate the findings.";
 /// Process pattern analysis: generate, verify, and convert to findings
 async fn process_patterns(
     codeblock: &str,
+    pattern_categories: Vec<PatternCategory>,
     ai_discovery_agent: &Arc<AIAgent>,
     ai_verify_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
-    let pattern_category_c4: Vec<PatternCategory> = PatternCategory::iter()
-        .filter(|p| {
-            *p == PatternCategory::Top
-                || *p == PatternCategory::Frequent
-                || *p == PatternCategory::MostObserved
-                || *p == PatternCategory::Rare
-        })
-        .collect();
-
-    let pattern_prompt = IssuePrompt::Pattern(pattern_category_c4);
+    let pattern_prompt = IssuePrompt::Pattern(pattern_categories);
 
     // Phase 1: Generate patterns
     info!("PHASE 1: GENERATE PATTERNS");

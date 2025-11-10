@@ -10,7 +10,7 @@ use crate::{
         findings::{Finding, Findings},
         prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
         semaphore::VERIFY_SEM,
-        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
+        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -342,70 +342,49 @@ pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
         r#"
         {pre_verify_json}
 
-Your task: decide if a reported finding is Valid and to accurately assess its Severity in a {contest} contest.
+    Your task: decide if a reported finding is Valid and to accurately assess its Severity in a {contest} contest.
 
-### COFIGURATION CHECK
-    **Does finding rely on constants (time, thresholds, buffers)?**
-    If YES, check:
-    - `// for testnet`, `// for testing`, `// temporary` comments
-    - Suspiciously small values (WEEK=1800 vs 604800, BUFFER=300 vs 3600)
-    - Commented-out production values
-    - Re-assess with production config
+    ### SCOPE CHECK
+        - Is finding in scope? (see scope provided below)
 
-### SCOPE CHECK
-    - Is finding in scope? (see scope provided below)
+    ### VALIDITY CHECK
+        - Trace execution path - does attack work?
+        - Check safeguards: access control, reentrancy guards, pauses, timelocks, validation
+        - Verify root cause is correct
+        - Check external dependencies - are assumptions reasonable?
 
-### BY DESIGN CHECK
-    Check ALL:
-    - NatSpec (@dev, @notice, @custom)
-    - Inline comments (`// NOTE:`, `// IMPORTANT:`)
-    - docs and scope provided below (Known Limitations, Design Decisions)
-    - Function placement (Emergency/Admin sections)
-    - Function naming (emergencyPause, adminOnly)
+    ### COFIGURATION CHECK
+        **Does finding rely on constants (time, thresholds, buffers)?**
+        If YES, check:
+        - `// for testnet`, `// for testing`, `// temporary` comments
+        - Suspiciously small values (WEEK=1800 vs 604800, BUFFER=300 vs 3600)
+        - Commented-out production values
+        - Re-assess with production config
 
-    **EXCEPTION: Documentation does NOT Always Mean Not a Vulnerability**
-    - Documented behavior can STILL be a valid finding if it creates:
-      • Economic risk/loss for users (e.g., liquidators, LPs, depositors)
-      • Incentive misalignment that harms protocol health
-      • Unfair value extraction or MEV opportunities
-      • Lack of user protection (missing slippage, deadlines, bounds)
-    - Examples of VALID findings despite being "by design":
-      • Liquidations without minOut → liquidator loss risk (Medium)
-      • Auctions without price floors → value extraction (Medium)
-      • Withdrawals without deadlines → MEV/sandwich risk (Medium)
-      • Fee mechanisms that systematically favor one party (Low/Medium)
-    - For this Edge Case, where it is documented behavior but still a vulnerability, mark it as Valid and SohmeWhatConfident
+    ### SEVERITY && LIKELIHOOD CHECK
+        - Does finding Impact and Likelihood justify current Severity score?
+        - Please use Severity Rubric below to evaluate Severity Score
 
-### VALIDITY CHECK
-    - Trace execution path - does attack work?
-    - Check safeguards: access control, reentrancy guards, pauses, timelocks, validation
-    - Verify root cause is correct
-    - Check external dependencies - are assumptions reasonable?
+    ### WHEN IN DOUBT, LEAN TOWARD VALID, MARK AS SomeWhatConfident
+        - If a finding shows realistic user loss, mark Valid even if documented
+        - If a finding matches historical C4 Medium patterns, mark Valid
+        - If a finding shows missing standard protections, mark Valid
+        - Mark "in doubt" findings as SomeWhatConfident (not VeryConfident or Confident)
 
-### 5. SEVERITY && LIKELIHOOD CHECK
-    - Does finding Impact and Likelihood justify current Severity score?
-    - Please use Severity Rubric below to evaluate Severity Score
+    Based on your assessment please provided the following:
 
-### WHEN IN DOUBT, LEAN TOWARD VALID, MARK AS SomeWhatConfident
-    - If a finding shows realistic user loss, mark Valid even if documented
-    - If a finding matches historical C4 Medium patterns, mark Valid
-    - If a finding shows missing standard protections, mark Valid
-    - Mark "in doubt" findings as SomeWhatConfident (not VeryConfident or Confident)
+    *Severity:* {severity_list} 
+    *Finding Severity Justification:* Explain why you assigned this severity. 
+    *Finding Status:* {finding_status_list}
+    *Status Justification:* if invalid, out of scope, or needs more info, please explain why.
+    *Finding Status Confidence:* {finding_confidence_list}
+    *Finding Status Confidence Justification:* if Somewhat Confident, please explain why. 
+    *Finding Complexity:* How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty.
 
-Based on your assessment please provided the following:
+    ## {contest} Guidelines
+    # {contest} Severity Rubric (What {contest} Actually Pays For)
 
-*Severity:* {severity_list} 
-*Finding Severity Justification:* Explain why you assigned this severity. 
-*Finding Status:* {finding_status_list}
-*Status Justification:* if invalid, out of scope, or needs more info, please explain why.
-*Finding Status Confidence:* {finding_confidence_list}
-*Finding Status Confidence Justification:* if Somewhat Confident, please explain why. 
-*Finding Complexity:* How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty.
-
-## {contest} Guidelines
-# {contest} Severity Rubric (What {contest} Actually Pays For)
-
-{severity_rubic}
+    {severity_rubic}
 "#
     )
 }

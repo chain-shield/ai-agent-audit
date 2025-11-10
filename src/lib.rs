@@ -83,6 +83,7 @@ pub mod llm_review {
     pub mod code_review_v2;
     /// Global context management
     pub mod context_state;
+    pub mod contract_category;
     pub mod contract_file_map;
     /// AI agent and vulnerability type enums
     pub mod enums;

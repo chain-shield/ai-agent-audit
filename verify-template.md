@@ -16,7 +16,7 @@ Check ALL:
 - Function placement (Emergency/Admin sections)
 - Function naming (emergencyPause, adminOnly)
 
-**CRITICAL: Documentation ≠ Not a Vulnerability**
+**EXCEPTION: Documentation does NOT Always Mean Not a Vulnerability**
 - Documented behavior can STILL be a valid finding if it creates:
   • Economic risk/loss for users (e.g., liquidators, LPs, depositors)
   • Incentive misalignment that harms protocol health
@@ -27,7 +27,14 @@ Check ALL:
   • Auctions without price floors → value extraction (Medium)
   • Withdrawals without deadlines → MEV/sandwich risk (Medium)
   • Fee mechanisms that systematically favor one party (Low/Medium)
-- Only mark Invalid if behavior is BOTH documented AND has no security/economic impact
+- For this Edge Case, where it is documented behavior but still a vulnerability, mark it as Valid and SohmeWhatConfident
+
+**EXCEPTION: Standard Compliance - Interface Declaration ≠ Implementation Requirement**
+- Standards often allow flexibility: declaring an interface as view/pure does NOT mean all implementations must be view/pure
+- StandardViolation is VALID if code breaks composability with legitimate standard-compliant contracts (e.g., STATICCALL to interfaces that allow stateful implementations)
+- Do NOT reject just because documentation says "non-standard implementations not supported" - compatibility breaks are still valid findings
+
+**NOTE**: If there is any ambiguity about whether this finding is not a valid because its "by design", then mark as valid BUT mark as SomeWhatConfident
 
 5. Configuration check: 
 **Does finding rely on constants (time, thresholds, buffers)?**
