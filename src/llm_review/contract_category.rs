@@ -4,11 +4,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
-use crate::llm_review::{pattern_category::PatternCategory, patterns::VulnerabilityPattern};
+use crate::llm_review::pattern_category::PatternCategory;
 
 #[derive(
     Debug,
     Clone,
+    Copy,
     Serialize,
     Deserialize,
     JsonSchema,
@@ -62,7 +63,9 @@ fn contract_category_map() -> &'static HashMap<ContractCategory, &'static Contra
     })
 }
 
-pub fn get_contract_library_spec(cat: &ContractCategory) -> Option<&'static ContractCategorySpec> {
+pub fn get_contract_spec_from_category(
+    cat: &ContractCategory,
+) -> Option<&'static ContractCategorySpec> {
     contract_category_map().get(cat).copied()
 }
 

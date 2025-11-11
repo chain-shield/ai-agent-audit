@@ -129,7 +129,9 @@ async fn test_parse_covenant_curator_imports() {
     );
 
     assert!(
-        deps.interfaces.contains_key("IPriceOracle"),
+        deps.interfaces
+            .iter()
+            .any(|(name, _)| name == "IPriceOracle"),
         "Should detect IPriceOracle as interface"
     );
 
@@ -225,7 +227,9 @@ async fn test_parse_covenant_curator_imports() {
     );
 
     assert!(
-        deps.interfaces.contains_key("ICovenantPriceOracle"),
+        deps.interfaces
+            .iter()
+            .any(|(name, _)| name == "ICovenantPriceOracle"),
         "Should detect ICovenantPriceOracle as interface"
     );
 
@@ -268,15 +272,21 @@ contract MyContract is Ownable2Step {
     }
 
     assert_eq!(named_imports.len(), 5, "Should find 5 named imports");
-    assert!(named_imports
-        .iter()
-        .any(|(_, path)| path.contains("@openzeppelin")));
-    assert!(named_imports
-        .iter()
-        .any(|(_, path)| path.contains("./interfaces")));
-    assert!(named_imports
-        .iter()
-        .any(|(_, path)| path.contains("../libraries")));
+    assert!(
+        named_imports
+            .iter()
+            .any(|(_, path)| path.contains("@openzeppelin"))
+    );
+    assert!(
+        named_imports
+            .iter()
+            .any(|(_, path)| path.contains("./interfaces"))
+    );
+    assert!(
+        named_imports
+            .iter()
+            .any(|(_, path)| path.contains("../libraries"))
+    );
 
     // Test simple imports
     let mut simple_imports = Vec::new();
@@ -288,9 +298,11 @@ contract MyContract is Ownable2Step {
         }
     }
 
-    assert!(simple_imports
-        .iter()
-        .any(|path| path.contains("./utils/Helper.sol")));
+    assert!(
+        simple_imports
+            .iter()
+            .any(|path| path.contains("./utils/Helper.sol"))
+    );
 
     println!("Unit test passed!");
 }

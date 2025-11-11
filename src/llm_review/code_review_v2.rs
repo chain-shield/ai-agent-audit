@@ -2,6 +2,7 @@ use super::{enums::AIAgent, phases};
 use crate::config::CREATE_TESTS;
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
+use crate::llm_review::contract_category::{get_contract_spec_from_category, ContractCategory};
 use crate::llm_review::contract_file_map::ContractType;
 use crate::llm_review::findings::CLAUDE_4_5_SONNET;
 use crate::llm_review::semaphore::CONTRACT_REVEW_SEM;
@@ -89,12 +90,9 @@ pub async fn review_codebase_for_security_issues_v2(
         let verify_agent = Arc::clone(&ai_verify_agent);
         let finding_verify_agent = Arc::clone(&finding_ai_verify_agent);
         let discovery_agent = Arc::clone(&ai_discovery_agent);
-        // let scope = Arc::clone(&audit_scope);
         let results_db = Arc::clone(&findings_db);
         let all_issues = Arc::clone(&all_security_issues);
         let repo_clone = repo.clone();
-        // let contract_clone = contract.clone();
-        // let codeblock_clone = codeblock.clone();
 
         // semaphore
         let sem = Arc::clone(&CONTRACT_REVEW_SEM);
@@ -328,6 +326,25 @@ rigorous PoC tests that validate the findings.";
     // info!("Created {} discovery agents", ai_discovery_agents.len());
 
     Ok((ai_verify_agent.clone(), ai_discovery_agent, ai_verify_agent))
+}
+
+// TODO:: setup once we have contract category info
+fn get_pattern_category_from_contract_category(
+    contract_category: ContractCategory,
+) -> Vec<PatternCategory> {
+    if let Some(contract_spec) = get_contract_spec_from_category(&contract_category) {
+        vec![
+            contract_spec.pattern_category.clone(),
+            PatternCategory::General,
+        ]
+    } else {
+        vec![
+            PatternCategory::Top,
+            PatternCategory::MostObserved,
+            PatternCategory::Rare,
+            PatternCategory::Frequent,
+        ]
+    }
 }
 
 /// Process pattern analysis: generate, verify, and convert to findings
