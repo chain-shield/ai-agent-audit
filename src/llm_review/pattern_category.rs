@@ -13,7 +13,7 @@ use std::{collections::HashMap, sync::OnceLock};
 /// configuration like API keys and URLs.
 use strum_macros::EnumIter;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, EnumIter)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, EnumIter)]
 pub enum PatternCategory {
     SignatureValidation,
     OraclePriceFeed,
@@ -33,6 +33,7 @@ pub enum PatternCategory {
     EscrowVesting,
     MarketplaceExchange,
     RandomnessRaffleLottery,
+    #[default]
     General,
     Top,
     Rare,
