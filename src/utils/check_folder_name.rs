@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::prepare_code::git_clone::extract_list_of_files;
+use crate::prepare_code::git_clone::{extract_list_of_files, RepoPaths};
 
 /// Returns true if the file path contains exactly ONE occurrence of any segment from the list.
 /// This prevents matching files in nested lib folders (e.g., /lib/.../lib/).
@@ -264,8 +264,13 @@ pub fn extract_package_name_from_node_modules(file: &Path) -> Option<String> {
 /// * `root` - The repository root path
 ///
 /// # Returns
-/// * `true` if the file is in exactly ONE library folder segment
+/// * `true` if the file is in exactly ONE library folder segment AND is NOT in code source folder
 /// * `false` if in nested library folders or not in a library folder at all
-pub fn is_library_file(file: &Path, root: &Path) -> bool {
-    path_has_one_segment(file, root, &["lib", "library", "libraries", "node_modules"])
+pub fn is_library_file(file: &Path, repo: &RepoPaths) -> bool {
+    let is_source = repo.source_code_folders.iter().any(|f| file.starts_with(f));
+    path_has_one_segment(
+        file,
+        &repo.root,
+        &["lib", "library", "libraries", "node_modules"],
+    ) && !is_source
 }
