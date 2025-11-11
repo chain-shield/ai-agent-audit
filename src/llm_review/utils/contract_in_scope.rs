@@ -26,7 +26,8 @@ pub async fn contract_scope_and_type(
 
             let is_in_scope = scoped_files.contains(&file);
 
-            // skip if contract if does not have have at least one line that start with contract and contract
+            // skip if contract if does not have have at least one line that start with: contract,
+            // abstract contract, or library
             // name does NOT contain 'mock' (case insensative)
             let content = fs::read_to_string(&file)?;
             let has_non_mock_contract = has_non_mock_contract(&content);
