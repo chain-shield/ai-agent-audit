@@ -3,7 +3,7 @@ use tokio::sync::Semaphore;
 
 // increase once hit higher openai teir
 const MAX_CONCURRENTS_VERIFY: usize = 75;
-const MAX_CONCURRENTS_REVIEW: usize = 3;
+const MAX_CONCURRENTS_REVIEW: usize = 6;
 const MAX_CONCURRENTS_POC: usize = 1; // Run PoC tests atomically to avoid cross-file compilation errors
 const MAX_CONCURRENTS_GENERAL: usize = 75;
 
