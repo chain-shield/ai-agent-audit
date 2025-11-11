@@ -22,8 +22,11 @@ use crate::{
         get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
         insert_file_summary_to_db,
     },
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
-    llm_review::enums::AgentMetadata,
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    llm_review::{
+        contract_category::{generate_formated_list_of_contract_categories, ContractCategory},
+        enums::{all_enum_variants, generate_enum_list, AgentMetadata},
+    },
     prepare_code::git_clone::RepoPaths,
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
@@ -43,6 +46,7 @@ pub struct SrcFileSummary {
     pub filename: String,
     /// AI-generated summary of the file's purpose and functionality
     pub summary: String,
+    pub contract_category: Option<ContractCategory>,
     pub file_type: Option<FileSummaryType>,
 }
 
@@ -51,6 +55,7 @@ pub struct SrcFileSummary {
 pub struct FileSummary {
     /// The generated summary text
     pub summary: String,
+    pub contract_category: ContractCategory,
 }
 
 // pub const MAX_WORDS_CONTRACT_SUMMARY: u16 = 300;
@@ -63,6 +68,14 @@ pub const MAX_CHARS_STORAGE_DESC: u16 = 20;
 pub async fn summarize_src_files(
     repo: &RepoPaths,
     semantics_path: &Path,
+) -> Result<Vec<SrcFileSummary>> {
+    summarize_src_files_with_model(repo, semantics_path, "gpt-5-mini").await
+}
+
+pub async fn summarize_src_files_with_model(
+    repo: &RepoPaths,
+    semantics_path: &Path,
+    model: &str,
 ) -> Result<Vec<SrcFileSummary>> {
     // pull summaries from db if avaliable
     let summaries = get_summaries_from_db(repo)?;
@@ -82,10 +95,30 @@ pub async fn summarize_src_files(
     context.push_str("\n ## DOCUMENTATION: \n\n ");
     context.push_str(&documentation);
 
-    // info!("slither metadata => {:#?}", context);
+    let contract_category_enum_list =
+        generate_enum_list(all_enum_variants::<ContractCategory>().as_slice());
+
+    let contract_category_descriptions = generate_formated_list_of_contract_categories(
+        all_enum_variants::<ContractCategory>().as_slice(),
+    );
+
     info!("generate summmary of all major files and docs in repo...");
     let preamble_source_summary = format!(
-        "You are a senior solidity dev. Please summarize below source code. Format in markdown for easy reading. Start with a {MAX_WORDS_CONTRACT_SUMMARY} word or less summary of the contract, that includes  purpose trust model (user funds? admin?), also major entrypoints. Then list storage vars plus optional {MAX_CHARS_STORAGE_DESC} max chars description for each. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add {MAX_WORDS_FUNCTION_SUMMARY} word max natspec for EACH function. Respond only with valid JSON matching the schema!"
+        r#"You are a senior solidity dev. 
+
+        ## Tasks
+
+
+        1. Please summarize below source code. Format in markdown for easy reading. Start with a {MAX_WORDS_CONTRACT_SUMMARY} word or less summary of the contract, that includes  purpose trust model (user funds? admin?), also major entrypoints. Then list storage vars plus optional {MAX_CHARS_STORAGE_DESC} max chars description for each. For EACH function provide full interface; it should include visibility, modifiers, and mutability. Adjacent to function interface, add {MAX_WORDS_FUNCTION_SUMMARY} word max natspec for EACH function. Respond only with valid JSON matching the schema!
+
+        2. Determine which Category the contract falls into from the list below:
+        {contract_category_descriptions}
+
+        ## DELIVERABLES
+        1. summary of code
+        2. Contract Category, pick one: {contract_category_enum_list}
+
+        "#
     );
     let preamble_deploy_script_summary = format!(
         r#"
@@ -104,13 +137,13 @@ Respond only with valid JSON matching the schema!
     );
 
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>("gpt-5")
+        .extractor::<FileSummary>(model)
         .preamble(&preamble_source_summary)
         .context(&context)
         .build();
 
     let ai_deploy_summary_agent = openai_client
-        .extractor::<FileSummary>("gpt-5")
+        .extractor::<FileSummary>(model)
         .preamble(&preamble_deploy_script_summary)
         .context(&context)
         .build();
@@ -241,6 +274,7 @@ Respond only with valid JSON matching the schema!
                     Some(SrcFileSummary {
                         filename,
                         summary: res.summary,
+                        contract_category: Some(res.contract_category),
                         file_type: Some(file_type),
                     })
                 }
@@ -266,6 +300,10 @@ Respond only with valid JSON matching the schema!
 
     for summary in &summaries {
         info!("filename: {}", summary.filename);
+        info!(
+            "contract category: {}",
+            summary.contract_category.unwrap_or_default().to_string()
+        );
         info!("summary size: {}", summary.summary.len())
     }
 

@@ -33,6 +33,14 @@ pub enum PatternCategory {
     EscrowVesting,
     MarketplaceExchange,
     RandomnessRaffleLottery,
+    // Utility library categories (custom)
+    ByteManipulationLibrary,
+    EncodingDecodingLibrary,
+    StorageHelperLibrary,
+    ErrorDefinitionLibrary,
+    AccessControlModifier,
+    ReentrancyGuardLibrary,
+    SimulationTestingHelper,
     #[default]
     General,
     Top,
@@ -186,6 +194,56 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         issues: RANDOMNESS_RAFFLE_LOTTERY_PATTERNS,
         tier: PatternTier::Tier1,
         runs: MAX_PATTERN_NICHE,
+    },
+    // Custom utility library categories
+    PatternCategorySpec {
+        category: PatternCategory::ByteManipulationLibrary,
+        title: "Byte Manipulation Library",
+        issues: BYTE_MANIPULATION_LIBRARY_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_LIBRARY,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::EncodingDecodingLibrary,
+        title: "Encoding/Decoding Library",
+        issues: ENCODING_DECODING_LIBRARY_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_LIBRARY,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::StorageHelperLibrary,
+        title: "Storage Helper Library",
+        issues: STORAGE_HELPER_LIBRARY_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_LIBRARY,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::ErrorDefinitionLibrary,
+        title: "Error Definition Library",
+        issues: ERROR_DEFINITION_LIBRARY_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_LIBRARY,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::AccessControlModifier,
+        title: "Access Control Modifier",
+        issues: ACCESS_CONTROL_MODIFIER_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_LIBRARY,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::ReentrancyGuardLibrary,
+        title: "Reentrancy Guard Library",
+        issues: REENTRANCY_GUARD_LIBRARY_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_LIBRARY,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::SimulationTestingHelper,
+        title: "Simulation/Testing Helper",
+        issues: SIMULATION_TESTING_HELPER_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_LIBRARY,
     },
     PatternCategorySpec {
         category: PatternCategory::General,
@@ -600,6 +658,56 @@ pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 15] = &[
 ];
 
 // TOP VULNERABILITY PATTERNS
+
+// Custom utility library pattern sets
+pub const BYTE_MANIPULATION_LIBRARY_PATTERNS: &[VulnerabilityPattern; 5] = &[
+    VulnerabilityPattern::UnsafeAssembyTypeCasts,
+    VulnerabilityPattern::UncheckedLowLevelCallResults,
+    VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath, // covers out-of-bounds via overflow/underflow
+    VulnerabilityPattern::StandardViolation,
+    VulnerabilityPattern::AccountingInvariantViolation, // dirty values causing incorrect state
+];
+
+pub const ENCODING_DECODING_LIBRARY_PATTERNS: &[VulnerabilityPattern; 4] = &[
+    VulnerabilityPattern::UnsafeAssembyTypeCasts,
+    VulnerabilityPattern::StandardViolation,
+    VulnerabilityPattern::UncheckedLowLevelCallResults,
+    VulnerabilityPattern::ForcedAssetVsStrictEquality,
+];
+
+pub const STORAGE_HELPER_LIBRARY_PATTERNS: &[VulnerabilityPattern; 4] = &[
+    VulnerabilityPattern::StorageCollisionOrSelectorClash,
+    VulnerabilityPattern::InitOrderOrUnintialized,
+    VulnerabilityPattern::UnsafeAssembyTypeCasts,
+    VulnerabilityPattern::ConfigFootgun,
+];
+
+pub const ERROR_DEFINITION_LIBRARY_PATTERNS: &[VulnerabilityPattern; 1] =
+    &[VulnerabilityPattern::StandardViolation];
+
+pub const ACCESS_CONTROL_MODIFIER_PATTERNS: &[VulnerabilityPattern; 5] = &[
+    VulnerabilityPattern::AccessControlOrAuthByPass,
+    VulnerabilityPattern::UnprotectedPauseOrStop,
+    VulnerabilityPattern::UntrustedDelegateCall, // delegatecall context issues (msg.sender spoofing)
+    VulnerabilityPattern::GovernanceDelegationFlaw,
+    VulnerabilityPattern::ConfigFootgun,
+];
+
+pub const REENTRANCY_GUARD_LIBRARY_PATTERNS: &[VulnerabilityPattern; 4] = &[
+    VulnerabilityPattern::Reentrancy,
+    VulnerabilityPattern::ReadOnlyReentrancy,
+    VulnerabilityPattern::MulticallCrossPathReentrancy,
+    VulnerabilityPattern::CEIViolation,
+];
+
+pub const SIMULATION_TESTING_HELPER_PATTERNS: &[VulnerabilityPattern; 5] = &[
+    VulnerabilityPattern::ExternalCallAfterStateChange,
+    VulnerabilityPattern::UnboundedLoops,
+    VulnerabilityPattern::UncheckedLowLevelCallResults,
+    VulnerabilityPattern::GriefableCallbacks,
+    VulnerabilityPattern::StateGrowthOrStorageBloat,
+];
+
 pub const TOP_PAID_PATTERNS: &[VulnerabilityPattern; 16] = &[
     VulnerabilityPattern::AccessControlOrAuthByPass,
     VulnerabilityPattern::GovernanceDelegationFlaw,

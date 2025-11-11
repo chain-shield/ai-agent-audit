@@ -93,6 +93,7 @@ async fn main() -> Result<()> {
     // save metadata
     contract_data::save_metadata(&repo).await?;
 
+    return Ok(());
     // ────────────────────────────────
     // 3. Code Slice Generation
     // ────────────────────────────────
