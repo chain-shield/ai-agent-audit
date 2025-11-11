@@ -1,5 +1,5 @@
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use log::info;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -15,20 +15,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::enumerator::libraries::ParsedLibrary;
 use crate::enumerator::libraries::generate_library_to_code_mapping;
 use crate::enumerator::libraries::get_library_code_for_library_calls;
-use crate::llm_review::contract_file_map::ContractType;
+use crate::enumerator::libraries::ParsedLibrary;
 use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
 use crate::llm_review::contract_file_map::insert_lib_contract_to_file_mapping;
+use crate::llm_review::contract_file_map::ContractType;
 
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::check_folder_name::is_library_file;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
 use crate::utils::get_fn_name::get_function_name_from_interface;
-use crate::utils::parse_library_file::LibCall;
 use crate::utils::parse_library_file::parse_library_text;
+use crate::utils::parse_library_file::LibCall;
 use crate::{
     build_brain::{
         self,
@@ -650,14 +650,12 @@ async fn process_inheritance_relationships(
             if let Some(import_path) = import_map.get(&parent) {
                 if let Some(parent_file) = resolve_import_to_file(import_path, file, repo) {
                     // Determine parent file type (unused but kept for potential future use)
-                    let _parent_file_type = if crate::utils::check_folder_name::is_library_file(
-                        &parent_file,
-                        &repo.root,
-                    ) {
-                        SolFileType::LibFolder
-                    } else {
-                        SolFileType::Standard
-                    };
+                    let _parent_file_type =
+                        if crate::utils::check_folder_name::is_library_file(&parent_file, repo) {
+                            SolFileType::LibFolder
+                        } else {
+                            SolFileType::Standard
+                        };
 
                     // Extract actual contract name from parent file
                     // The `parent` variable might be an alias, so we need to get the real contract name
@@ -829,10 +827,10 @@ pub async fn contracts_in_source_folder(repo: &RepoPaths) -> Result<Vec<String>>
 
     for file in &repo.sol_files {
         // Determine file type: Standard (in source folder) or LibFolder (in lib/ but not nested)
-        let is_lib = is_library_file(file, &repo.root);
+        let is_lib = is_library_file(file, repo);
         let is_source = repo.source_code_folders.iter().any(|f| file.starts_with(f));
 
-        let file_type = if is_lib {
+        let file_type = if is_lib && !is_source {
             // File is in a library folder (lib, library, or libraries) but NOT nested
             log::debug!("📚 Processing library file: {}", file.display());
             SolFileType::LibFolder
@@ -1105,12 +1103,11 @@ mod tests {
         } from "./Contracts.sol";"#;
         let caps = SOLIDITY_REGEXES.import_named.captures(source).unwrap();
         assert!(caps.get(1).unwrap().as_str().contains("ContractA"));
-        assert!(
-            caps.get(1)
-                .unwrap()
-                .as_str()
-                .contains("ContractB as AliasB")
-        );
+        assert!(caps
+            .get(1)
+            .unwrap()
+            .as_str()
+            .contains("ContractB as AliasB"));
         assert!(caps.get(1).unwrap().as_str().contains("ContractC"));
     }
 

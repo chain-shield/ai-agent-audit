@@ -487,7 +487,7 @@ pub async fn get_contract_type(
 }
 
 pub fn get_file_type(file: &PathBuf, repo: &RepoPaths) -> SolFileType {
-    let file_type = if is_library_file(file, &repo.root) {
+    let file_type = if is_library_file(file, repo) {
         SolFileType::LibFolder
     } else {
         SolFileType::Standard

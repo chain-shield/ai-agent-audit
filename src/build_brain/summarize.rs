@@ -22,7 +22,7 @@ use crate::{
         get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
         insert_file_summary_to_db,
     },
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::enums::AgentMetadata,
     prepare_code::git_clone::RepoPaths,
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
@@ -104,13 +104,13 @@ Respond only with valid JSON matching the schema!
     );
 
     let ai_summary_agent = openai_client
-        .extractor::<FileSummary>("gpt-5")
+        .extractor::<FileSummary>("gpt-5-mini")
         .preamble(&preamble_source_summary)
         .context(&context)
         .build();
 
     let ai_deploy_summary_agent = openai_client
-        .extractor::<FileSummary>("gpt-5")
+        .extractor::<FileSummary>("gpt-5-mini")
         .preamble(&preamble_deploy_script_summary)
         .context(&context)
         .build();
@@ -134,7 +134,7 @@ Respond only with valid JSON matching the schema!
         }
 
         // check if lib folder or test files
-        if file.to_string_lossy().contains("lib") || file.to_string_lossy().contains("t.sol") {
+        if file.to_string_lossy().contains(".t.sol") {
             continue;
         }
 
@@ -143,7 +143,7 @@ Respond only with valid JSON matching the schema!
             && !file
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with("t.sol"))
+                .map_or(false, |n| n.ends_with(".t.sol"))
         {
             if is_script_file(file) {
                 current_file_summary_type = FileSummaryType::DeployScript;

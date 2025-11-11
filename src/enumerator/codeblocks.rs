@@ -65,6 +65,10 @@ pub async fn generate_codeblock_from_codebase(
         let (is_contract_in_scope, _) = contract_scope_and_type(&main_contract, repo).await?;
 
         if !is_contract_in_scope {
+            info!(
+                "{} is not in scope , so no creating codeblock",
+                main_contract
+            );
             continue;
         }
 
