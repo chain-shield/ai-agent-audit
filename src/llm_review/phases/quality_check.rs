@@ -9,7 +9,7 @@ use crate::{
         enums::AIAgent,
         findings::{Finding, Findings},
         semaphore::GENERAL_SEM,
-        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
+        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -309,7 +309,8 @@ mod tests {
 
         let json = serde_json::to_string(&quality_check).expect("Failed to serialize");
         assert!(json.contains(r#""is_quality_check_passed":false"#));
-        assert!(json.contains(r#""severity":"High""#));
+        assert!(json.contains(r#""where_quality_lacks":"PoC needs improvement""#));
+        assert!(json.contains(r#""impact":"Updated impact description""#));
     }
 
     /// Test VulnerabilityQualityCheck deserialization with boolean as string

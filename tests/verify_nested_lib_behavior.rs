@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 use ai_agent_audit::utils::check_folder_name::is_library_package_json;
@@ -21,7 +20,7 @@ fn test_verify_segment_counting_behavior() {
     fs::create_dir_all(&case1).unwrap();
     let case1_pkg = case1.join("package.json");
     fs::write(&case1_pkg, "{}").unwrap();
-    
+
     println!("Case 1: root/lib/package.json");
     println!("  Segments: lib");
     println!("  Count: 1");
@@ -33,11 +32,15 @@ fn test_verify_segment_counting_behavior() {
     // Path components: root -> packages -> contracts -> lib -> utils -> package.json
     // Segments matching: 1 (just "lib")
     // Expected: ACCEPT (count == 1)
-    let case2 = root.join("packages").join("contracts").join("lib").join("utils");
+    let case2 = root
+        .join("packages")
+        .join("contracts")
+        .join("lib")
+        .join("utils");
     fs::create_dir_all(&case2).unwrap();
     let case2_pkg = case2.join("package.json");
     fs::write(&case2_pkg, "{}").unwrap();
-    
+
     println!("Case 2: root/packages/contracts/lib/utils/package.json");
     println!("  Segments: lib");
     println!("  Count: 1");
@@ -53,7 +56,7 @@ fn test_verify_segment_counting_behavior() {
     fs::create_dir_all(&case3).unwrap();
     let case3_pkg = case3.join("package.json");
     fs::write(&case3_pkg, "{}").unwrap();
-    
+
     println!("Case 3: root/lib/some-package/lib/package.json");
     println!("  Segments: lib, lib");
     println!("  Count: 2");
@@ -69,7 +72,7 @@ fn test_verify_segment_counting_behavior() {
     fs::create_dir_all(&case4).unwrap();
     let case4_pkg = case4.join("package.json");
     fs::write(&case4_pkg, "{}").unwrap();
-    
+
     println!("Case 4: root/library/lib/package.json");
     println!("  Segments: library, lib");
     println!("  Count: 2");
@@ -85,7 +88,7 @@ fn test_verify_segment_counting_behavior() {
     fs::create_dir_all(&case5).unwrap();
     let case5_pkg = case5.join("package.json");
     fs::write(&case5_pkg, "{}").unwrap();
-    
+
     println!("Case 5: root/lib/libraries/package.json");
     println!("  Segments: lib, libraries");
     println!("  Count: 2");
@@ -101,7 +104,7 @@ fn test_verify_segment_counting_behavior() {
     fs::create_dir_all(&case6).unwrap();
     let case6_pkg = case6.join("package.json");
     fs::write(&case6_pkg, "{}").unwrap();
-    
+
     println!("Case 6: root/node_modules/lib/package.json");
     println!("  Segments: lib");
     println!("  Count: 1");
@@ -117,7 +120,7 @@ fn test_verify_segment_counting_behavior() {
     fs::create_dir_all(&case7).unwrap();
     let case7_pkg = case7.join("package.json");
     fs::write(&case7_pkg, "{}").unwrap();
-    
+
     println!("Case 7: root/src/package.json");
     println!("  Segments: (none)");
     println!("  Count: 0");
@@ -131,7 +134,7 @@ fn test_verify_segment_counting_behavior() {
     // Expected: REJECT (count == 0, not 1)
     let case8_pkg = root.join("package.json");
     fs::write(&case8_pkg, "{}").unwrap();
-    
+
     println!("Case 8: root/package.json");
     println!("  Segments: (none)");
     println!("  Count: 0");
@@ -141,4 +144,3 @@ fn test_verify_segment_counting_behavior() {
 
     println!("=== All verification tests passed ===\n");
 }
-

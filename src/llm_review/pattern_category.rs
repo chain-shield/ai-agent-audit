@@ -1,7 +1,7 @@
 use crate::{
     config::{
-        MAX_PATTERN_LIBRARY, MAX_PATTERN_NICHE, MAX_PATTERN_RUN_FREQUENT, MAX_PATTERN_RUN_MOST,
-        MAX_PATTERN_RUN_RARE, MAX_PATTERN_RUN_TOP,
+        MAX_PATTERN_GENERAL, MAX_PATTERN_LIBRARY, MAX_PATTERN_NICHE, MAX_PATTERN_RUN_FREQUENT,
+        MAX_PATTERN_RUN_MOST, MAX_PATTERN_RUN_RARE, MAX_PATTERN_RUN_TOP,
     },
     llm_review::patterns::VulnerabilityPattern,
 };
@@ -192,7 +192,7 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         title: "Common High/Medium Vulnerabilities",
         issues: COMMON_PATTERNS,
         tier: PatternTier::Tier1,
-        runs: MAX_PATTERN_NICHE,
+        runs: MAX_PATTERN_GENERAL,
     },
     PatternCategorySpec {
         category: PatternCategory::Top,

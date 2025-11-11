@@ -109,7 +109,7 @@ fn print_invariant_prompts() {
 
 #[test]
 fn print_pattern_prompts() {
-    let category = PatternCategory::EconomicHit;
+    let category = PatternCategory::Top;
     let cat_prompt = pat_prompts::generate_pattern_category_prompt(&category);
     println!(
         "\n===== Pattern Category Prompt ({:?}) =====\n{}\n",
