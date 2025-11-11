@@ -28,12 +28,12 @@ pub const CREATE_TESTS: bool = false;
 
 /// Number of discovery rounds per contract during analysis
 pub const DISCOVERY_RUNS: usize = 1;
-pub const INVARIANT_RUNS: usize = 0;
+pub const INVARIANT_RUNS: usize = 3;
 pub const MAX_PATTERN_RUN_TOP: usize = 5;
 pub const MAX_PATTERN_RUN_RARE: usize = 5;
 pub const MAX_PATTERN_RUN_MOST: usize = 5;
 pub const MAX_PATTERN_RUN_FREQUENT: usize = 5;
-pub const MAX_PATTERN_LIBRARY: usize = 10;
+pub const MAX_PATTERN_LIBRARY: usize = 4;
 pub const MAX_PATTERN_NICHE: usize = 10;
 pub const MAX_PATTERN_GENERAL: usize = 10;
 

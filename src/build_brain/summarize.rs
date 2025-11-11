@@ -167,7 +167,7 @@ Respond only with valid JSON matching the schema!
         }
 
         // check if lib folder or test files
-        if file.to_string_lossy().contains("lib") || file.to_string_lossy().contains("t.sol") {
+        if file.to_string_lossy().contains(".t.sol") {
             continue;
         }
 
@@ -176,7 +176,7 @@ Respond only with valid JSON matching the schema!
             && !file
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map_or(false, |n| n.ends_with("t.sol"))
+                .map_or(false, |n| n.ends_with(".t.sol"))
         {
             if is_script_file(file) {
                 current_file_summary_type = FileSummaryType::DeployScript;
