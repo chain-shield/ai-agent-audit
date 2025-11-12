@@ -7,6 +7,8 @@ This format is aligned with what judges look for in **primary findings**, includ
 ## General Guidelines
 - be concise and to the point, while still providing all necessary details.
 - professional presentation, no icons.
+- No more than 600 words in length, **not counting code snippets** (most top C4 submission are ~200 words)
+- do NOT add additional sections (proof of code etc), strictly follow template below.
 
 ## Descriptive Issue Title
 
