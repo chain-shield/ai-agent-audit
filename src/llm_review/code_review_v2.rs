@@ -1,5 +1,5 @@
 use super::{enums::AIAgent, phases};
-use crate::config::CREATE_TESTS;
+use crate::config::{CREATE_TESTS, NICHE_PATTERN_ANALYSIS};
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
 use crate::llm_review::contract_category::{get_contract_spec_from_category, ContractCategory};
@@ -63,7 +63,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
     let mut contract_handles = Vec::new();
 
-    for (contract, codeblock) in contracts.into_iter() {
+    for (contract, (codeblock, contract_category)) in contracts.into_iter() {
         info!("\n\n-------- contract {} ---------------\n\n", contract);
 
         if let Some(scoped_contracts) = &custom_scoped_contracts {
@@ -101,15 +101,9 @@ pub async fn review_codebase_for_security_issues_v2(
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async move {
                 // Run pattern and invariant analysis concurrently within this task
-                let (patterns_res, invariants_res) = if contract_type != ContractType::Library {
-                    let pattern_categories: Vec<PatternCategory> = PatternCategory::iter()
-                        .filter(|p| {
-                            *p == PatternCategory::Top
-                                || *p == PatternCategory::Frequent
-                                || *p == PatternCategory::MostObserved
-                                || *p == PatternCategory::Rare
-                        })
-                        .collect();
+                let (patterns_res, invariants_res) = {
+                    let pattern_categories =
+                        get_pattern_category_from_contract_category(contract_category);
                     tokio::join!(
                         process_patterns(
                             &codeblock,
@@ -124,19 +118,6 @@ pub async fn review_codebase_for_security_issues_v2(
                             &verify_agent,
                             &repo_clone
                         )
-                    )
-                } else {
-                    // handle library contract
-                    (
-                        process_patterns(
-                            &codeblock,
-                            vec![PatternCategory::Library],
-                            &discovery_agent,
-                            &verify_agent,
-                            &repo_clone,
-                        )
-                        .await,
-                        Ok(Findings::default()),
                     )
                 };
 
@@ -328,22 +309,28 @@ rigorous PoC tests that validate the findings.";
     Ok((ai_verify_agent.clone(), ai_discovery_agent, ai_verify_agent))
 }
 
-// TODO:: setup once we have contract category info
 fn get_pattern_category_from_contract_category(
     contract_category: ContractCategory,
 ) -> Vec<PatternCategory> {
+    let default_pattern_categories = vec![
+        PatternCategory::Top,
+        PatternCategory::MostObserved,
+        PatternCategory::Rare,
+        PatternCategory::Frequent,
+    ];
+
+    // if NICHE_PATTERN_ANALYSIS is false than always return default_pattern_categories
+    if contract_category == ContractCategory::Unknown || !NICHE_PATTERN_ANALYSIS {
+        return default_pattern_categories;
+    }
+
     if let Some(contract_spec) = get_contract_spec_from_category(&contract_category) {
         vec![
             contract_spec.pattern_category.clone(),
             PatternCategory::General,
         ]
     } else {
-        vec![
-            PatternCategory::Top,
-            PatternCategory::MostObserved,
-            PatternCategory::Rare,
-            PatternCategory::Frequent,
-        ]
+        default_pattern_categories
     }
 }
 
@@ -409,7 +396,7 @@ async fn process_invariants(
 
     // Phase 1: Generate invariants
     info!("PHASE 1: GENERATE INVARIANTS");
-    let raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
+    let mut raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
         invariant_prompt,
         codeblock,
         ai_discovery_agent,
@@ -430,11 +417,14 @@ async fn process_invariants(
         .map(|inv| inv.to_owned())
         .collect();
 
-    // raw_invariants = ContractInvariants {
-    //     invariants: violations,
-    // };
+    raw_invariants = ContractInvariants {
+        invariants: violations,
+    };
 
-    info!("{} invariant violations found!", violations.len());
+    info!(
+        "{} invariant violations found!",
+        raw_invariants.invariants.len()
+    );
 
     // Phase 2: Verify invariants
     info!("PHASE 2: VERIFY INVARIANTS");

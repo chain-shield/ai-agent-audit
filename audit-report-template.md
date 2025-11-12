@@ -5,11 +5,8 @@ Use the following template for each **High** or **Medium** severity issue you su
 This format is aligned with what judges look for in **primary findings**, including all necessary details.
 
 ## General Guidelines
-- be CONCISE and to the point, while still providing all necessary details.
-- maximum 500 words (excluding code snippets) - most top C4 submission are just ~200 words long.
+- be concise and to the point, while still providing all necessary details.
 - professional presentation, no icons.
-- DO NOT add extra sections like 'Proof of Code', etc. Follow template structure exactly.
-- please, no extra examples outside of exploitation scenario
 
 ## Descriptive Issue Title
 
@@ -62,7 +59,7 @@ Describe step-by-step how an attacker or user can exploit this issue.
 
 This step-by-step explanation from root cause to impact is **exactly what judges look for** in a high-quality report.
 
-### Relevant Context (Optional)
+### Relevant Context
 
 If needed, mention any contextual details:
 
