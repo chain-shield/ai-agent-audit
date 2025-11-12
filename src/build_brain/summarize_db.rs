@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::Path;
 
 use crate::{
@@ -30,6 +30,23 @@ impl SummaryDb {
             );
             "#,
         )?;
+
+        // Migration: Add contract_category column if it doesn't exist (for existing databases)
+        // SQLite doesn't have "ADD COLUMN IF NOT EXISTS", so we check first
+        let column_exists: Result<i64, _> = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('summaries') WHERE name='contract_category'",
+            [],
+            |row| row.get(0),
+        );
+
+        if let Ok(0) = column_exists {
+            // Column doesn't exist, add it
+            conn.execute(
+                "ALTER TABLE summaries ADD COLUMN contract_category TEXT",
+                [],
+            )?;
+        }
+
         Ok(Self(conn))
     }
 
