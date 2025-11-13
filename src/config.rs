@@ -29,7 +29,7 @@ pub const NICHE_PATTERN_ANALYSIS: bool = true;
 
 /// Number of discovery rounds per contract during analysis
 pub const DISCOVERY_RUNS: usize = 1;
-pub const INVARIANT_RUNS: usize = 3;
+pub const INVARIANT_RUNS: usize = 0;
 pub const MAX_PATTERN_RUN_TOP: usize = 5;
 pub const MAX_PATTERN_RUN_RARE: usize = 5;
 pub const MAX_PATTERN_RUN_MOST: usize = 5;

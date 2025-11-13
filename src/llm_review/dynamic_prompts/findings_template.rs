@@ -3,6 +3,7 @@ use crate::{
     llm_review::{
         enums::{
             all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData, Severity,
+            VulnerabilityType,
         },
         findings::PrivilegeLevel,
         prompt_support::severity_rubics::{
@@ -63,6 +64,59 @@ pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
         pattern_def = issue_definition,
         exploit_bullets = exploit_bullets,
         full_spec = issue_full_spec,
+        title_all_caps = issue_type.to_uppercase()
+    )
+}
+
+pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Display>(
+    issue_type: &str,
+    full_spec_of_issues: &str,
+    enum_issues: &[T],
+    repo: &RepoPaths,
+) -> String {
+    let exploit_enums: Vec<VulnerabilityType> = enum_issues
+        .iter()
+        .flat_map(|e| e.to_types())
+        .copied()
+        .collect();
+    let exploit_bullets = generate_enum_bulleted_list(&exploit_enums); // "- Oracle\n- Reentrancy\n..."
+    let severity_rubic = match repo.audit_type {
+        AuditType::Sherlock => SHERLOCK_SEVERITY_RUBRIC,
+        AuditType::Cantina => CANTINA_SEVERITY_RUBRIC,
+        _ => CODE4RENA_SEVERITY_RUBRIC,
+    };
+
+    format!(
+        r#"Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
+
+        ## Rules
+        - Only report exploits tied to the below {pattern_type}.
+        - Prefer **unprivileged EOAs**; consider untrusted roles if in audit scope.
+        - Present-state only (fixture state). No deployment/upgrade-only windows unless reopenable permissionlessly.
+        - Valid exploit: High/Medium severity, reproducible Foundry test, clear profit or state break. No log-only PoCs.
+        - If nothing qualifies, return: `{{"findings":[]}}`.
+
+        ## Severity rubric
+        {rubric}
+
+        ## Exploit guidelines
+        - Severity priority: Theft > DoS > accounting mismatch.
+        - Bigger blast radius and simpler execution are more valuable.
+        - Assert with `assertGt` / `assertEq`, not logs.
+        - Proof must be a compilable Foundry test (`forge-std`, `vm.prank(attacker)`).
+
+        ## {pattern_type} Overview
+
+        ### Common Exploits
+        {exploit_bullets}
+
+        ## {title_all_caps} TO ANALYZE
+        {full_spec}
+        "#,
+        pattern_type = issue_type,
+        rubric = severity_rubic,
+        exploit_bullets = exploit_bullets,
+        full_spec = full_spec_of_issues,
         title_all_caps = issue_type.to_uppercase()
     )
 }
@@ -129,5 +183,72 @@ where
         issues = issue_list,
         privileges = privilege_enum_list,
         severity = severity_list,
+    )
+}
+
+pub fn get_json_requirement_for_multipattern<T>(
+    patterns: &[T],
+    pattern_type: &str,
+    repo: &RepoPaths,
+) -> String
+where
+    T: std::fmt::Display + EnumData,
+{
+    let vulnerabities: Vec<VulnerabilityType> = patterns
+        .iter()
+        .flat_map(|p| p.to_types())
+        .copied()
+        .collect();
+    let issue_list = generate_enum_list(&vulnerabities);
+    let privilege_enum_list = generate_enum_list(all_enum_variants::<PrivilegeLevel>().as_slice());
+    let severity_enums_standard: Vec<Severity> = Severity::iter()
+        .filter(|s| *s != Severity::Critical)
+        .collect();
+    let severity_enums_list_standard = generate_enum_list(severity_enums_standard.as_slice());
+    let severity_list = match repo.audit_type {
+        AuditType::Code4rena => severity_enums_list_standard,
+        AuditType::Sherlock => severity_enums_list_standard,
+        AuditType::Cantina => severity_enums_list_standard,
+        _ => generate_enum_list(all_enum_variants::<Severity>().as_slice()),
+    };
+
+    format!(
+        r#"
+
+        ## OUTPUT REQUIREMENTS 
+
+        *Please respond with ONLY valid JSON in the following exact format:*
+
+        {{
+        "findings": [
+            {{
+            "derived_from": "Insert Title (or Predicate) of most relevant {pattern_type} this finding derives from",
+            "title": "200 chars or less audit report friendly title i.e. DOS due to unbounded loop in <contract_name>.<function_name> bricking withdrawals",
+            "description": "Detailed explanation + vulnerable snippet",
+            "exploit_type": "{issue_list}",
+            "privilege": "{privilege_enum_list}",
+            "contract": "{{contract_name}}", 
+            "function": "{{function_name}}", 
+            "impact": "monetary/functional consequences",
+            "proof_of_concept": "Step-by-step exploitation scenario",
+            "proof_of_code": "compilable Foundry unit test",
+            "severity": "{severity_list}",
+            "mitigation": "concrete code fix"
+            }}
+        ]
+        }}
+
+        - Keep "derived_from" exactly as shown
+        - *privilege* -> least privilege to trigger vulnerability
+        - If no vulnerabilities are found, return: 
+
+        {{
+        "findings": []
+        }}
+
+        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
+        they match up correctly.
+       "#
     )
 }
