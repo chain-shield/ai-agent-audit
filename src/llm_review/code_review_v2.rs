@@ -7,6 +7,7 @@ use crate::llm_review::contract_file_map::ContractType;
 use crate::llm_review::findings::CLAUDE_4_5_SONNET;
 use crate::llm_review::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
+use crate::llm_review::utils::prompt_context::generate_formatted_abbreviated_patterns;
 use crate::llm_review::{
     agent_factory::{AgentConfig, AgentFactory},
     analysis_db::FindingsDb,
@@ -367,6 +368,11 @@ async fn process_patterns(
     } else {
         Patterns::default()
     };
+
+    let list_of_validated_patterns =
+        generate_formatted_abbreviated_patterns(&verified_patterns.patterns);
+
+    println!("{}", list_of_validated_patterns);
 
     info!("PHASE 3: GENERATE FINDINGS FROM PATTERNS");
 
