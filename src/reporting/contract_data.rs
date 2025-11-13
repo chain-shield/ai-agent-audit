@@ -34,7 +34,7 @@ pub async fn save_contract_and_fn_ir(
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     let output_dir = Path::new(&repo.repo_name);
 
-    for (contract, codeblock) in contracts {
+    for (contract, (codeblock, contract_category)) in contracts {
         // check contract in inscope!
         let (is_contract_in_scope, contract_type_option) =
             contract_scope_and_type(&contract, repo).await?;
@@ -47,9 +47,10 @@ pub async fn save_contract_and_fn_ir(
 
         let token_count = get_token_count(&codeblock);
         let filename = format!(
-            "{}-{}-token-count-{}.md",
+            "{}-{}-{}-size-{}.md",
             contract_type.to_string(),
             contract,
+            contract_category.to_string(),
             token_count
         );
         let full_path = output_dir.join(filename);
