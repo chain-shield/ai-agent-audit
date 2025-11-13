@@ -1,245 +1,265 @@
 
 ## PROTOCOL OVERVIEW:
 
-## Sequence Smart Wallet Protocol – Detailed Technical Overview
+# Sequence v3 Wallet Protocol – Technical Overview
 
-### Introduction
-Sequence v3 is a **modular, fully-on-chain smart-contract wallet** designed around three core ideas:
-
-1.  Image-hash based configurations (Merkkle-root of a sparse tree) that capture *everything* required to authorise the wallet: signers + weights, thresholds, checkpoints, extensions, pre-authorised digests, checkpointer address, etc.
-2.  Flexible, gas-efficient **signature encoding** able to express many signer types (EOA, ERC-1271 contracts, Sapient extensions, nested multisigs) *and* chain configuration updates together in a single “state-channel-like” proof – the **chained signature**.
-3.  An execution engine that can interpret **compact, binary-encoded payloads** (transactions / messages / config updates / digests) and run them through a battle-tested permission system, ERC-4337 account-abstraction entrypoints, hook delegates, smart-sessions, passkeys, recovery, etc.
-
-Everything lives in a single Wallet proxy that self-upgrades from Stage 1 (counter-factual deployment) to Stage 2 (live wallet). Ownership always sits with the wallet’s configuration; there is **no privileged admin key** in the contracts.
+*Last updated: 2025-11-13 – covers repository root `2025-10-sequence/`*
 
 ---
 
-## 1.  Life-cycle & Deployment
+## 1. Purpose & High-Level Architecture
 
-1. **Factory.deploy(mainModule, salt)** – uses CREATE2 where `salt == imageHash`.  The deterministic address is therefore *bound* to the configuration root.
-2. **Stage1Module (initial implementation)** validates that the wallet’s address is indeed derived from the claimed `imageHash`.  Once a first valid signature is presented, Stage 1 stores the hash and **self-upgrades** the proxy to Stage2Module.
-3. **Stage2Module** enables the full feature-set: Calls batching, ERC-4337 v0.7, ReentrancyGuard, Hooks, Sessions, Passkeys, Recovery, etc.
-4.  The wallet can then be driven either directly (execute) or through the EntryPoint (validateUserOp + executeUserOp).
+Sequence v3 is a **modular, up-gradable smart-wallet stack** that turns a normal EOA-like wallet into a programmable account-abstraction vault that works **across all EVM chains**.  Its design goals are:
 
----
+1. **Zero-gas configuration changes** – wallet owners can update signers, thresholds or extensions off-chain, then *prove* those changes with so-called **chained signatures** when they are first used.
+2. **True multi-chain state** – a single wallet address lives on every EVM chain.  A light-weight **checkpointer** contract tells each chain "the most recent configuration you must at least recognise" so that slow chains cannot be exploited.
+3. **Fine-grained session permissions** – owners delegate time-boxed / value-bounded capabilities to dApps through **smart sessions** (explicit & implicit).
+4. **Composable extensions** – passkeys, social-recovery, custom hooks, ERC-4337 entrypoint support, etc. are implemented as *pure libraries* or *delegate-extensions* that the wallet may or may not enable.
 
-## 2.  Configuration Tree ( `imageHash` )
+The codebase is therefore split across **four logical layers**:
 
-A sparse Merkle tree encodes:
+| Layer | Key Modules / Files | Responsibility |
+|-------|---------------------|----------------|
+| **Wallet Proxy** | `src/Wallet.sol` (Huff delegate-proxy) | Immutable storage layout; forwards every call to current implementation address. |
+| **Auth & Upgrade** | `Stage1Auth`, `Stage2Auth`, `Implementation` | Stores the **imageHash** (Merkle root of configuration) and, once authorised, upgrades the implementation address. |
+| **Core Logic (Stage2Module)** | `Calls`, `Nonce`, `ReentrancyGuard`, `Hooks`, `ERC4337v07` | Executes batched calls, manages nonces, integrates with EntryPoint, exposes user hooks, guards re-entrancy. |
+| **Extensions (opt-in)** | `sessions`, `passkeys`, `recovery`, plus any custom delegate-extension | Provide extra signing mechanisms or run‐time features; each extension yields an **imageHash leaf** so it is opt-in per wallet. |
 
-* `checkpointer` (20 bytes) – optional.
-* `checkpoint` (uint) – monotonic version counter.
-* `threshold` – how many *weight* points are required for a signature.
-* Any number of leaves:
-  * **Signer leaf** – address & weight.
-  * **Nested config** – inner root + internal threshold + external weight (N-of-M subgroup).
-  * **Sapient signer** – contract address, weight, and that contract’s *own* root.
-  * **Hard-coded subdigest** – pre-authorised payload hash (or “any address” variant for counter-factual approval).
-
-Because the root is all that is stored on-chain, every signature must supply the **proof** for the leaves it touches so the wallet can recompute the root.
-
-### Checkpoint rules
-
-* Each config carries a `checkpoint` integer.
-* Chained signatures **must** go strictly upwards: later chunks must have a strictly larger checkpoint so old channel segments cannot be replayed.
-* A *checkpointer* contract may publish the “latest known good” `{imageHash, checkpoint}` snapshot for multi-chain wallets.  Wallet logic enforces that signatures are either ahead of, or pass exactly through, that snapshot.
+A new wallet is created counter-factually by the **Factory** (`src/Factory.sol`) via `CREATE2`, embedding the desired first `imageHash` as the salt, yielding deterministic addresses on every chain.
 
 ---
 
-## 3.  Signature Encoding
+## 2. Configuration Merkle Tree ( `imageHash` )
+
+All wallet behaviour is encoded inside a **sparse binary Merkle tree** whose root is the `imageHash`.
+
+Top-level fixed leaves:
+
+1. **checkpointer address** – optional, `address(0)` means no checkpointer.
+2. **checkpoint (uintN)** – monotonically increasing index of the configuration.
+3. **threshold (uintN)** – weight required for a signature to be valid.
+
+Below those, an unlimited number of leaves can be added:
+
+* **Signer leaf** – `(address, weight)`
+* **Nested config leaf** – `(subTreeRoot, subThreshold, externalWeight)` for multi-level multisig.
+* **Static digest leaf** – pre-authorised `subdigest` that counts for `MAX_UINT` weight.
+* **Any-address static digest** – same but counter-factual (domain separator uses `address(0)`).
+* **Sapient signer leaf** – `(contract, weight, expectedSapientRoot)` allowing contracts such as Passkeys or SessionManager to act as signers when they *produce* their own image root at verification time.
+
+Because every element is hashed with a domain prefix ( e.g. `"Sequence signer:\n" || address || weight` ) the tree is collision-resistant.
+
+### Out-of-band upgrades – Chained signatures
+
+When owners want to move from configuration *A* (checkpoint 4) to configuration *B* (checkpoint 5) they:
+
+1. Build `imageHashB` off-chain.
+2. Produce a **config-update payload** that embeds `imageHashB` and has `KIND_CONFIG_UPDATE`.
+3. Sign *that* payload with signers of *A* → yields Signature₁.
+4. Optionally, sign something else with *B* (e.g. a transaction) → Signature₂.
+5. Concatenate `[Signature₂,Signature₁]` into a **chained signature** (reverse order), set the *global flag bit0 = 1*.
+
+During validation the contract:
+
+* Recovers Signature₂ from the user payload → obtains `imageHashB`, confirms that `checkpointB (5) > checkpointSnapshot` etc.
+* Recovers Signature₁ over the CONFIG_UPDATE subdigest → confirms writers had authority at checkpoint 4.
+* Ensures each successive checkpoint is strictly higher.
+
+Thus **no on-chain state is modified**; the user simply proves a path through the state-channel of configurations that ends at the wallet’s current root.
+
+### Checkpointer contract
+
+Long-unused chains may have wallets stuck at old checkpoints.  A **Checkpointer** contract allows any party to supply a *proof* (merkle, zk, oracle) that "the latest safe configuration has checkpoint ≥ X and imageHash = Y".  The wallet calls `ICheckpointer.snapshotFor(wallet,data)` once per signature; if the snapshot is *newer* than the on-chain configuration but *consistent* with one of the configs inside the chained signature, the wallet enforces that the chain *crosses* that snapshot.  The snapshot can also be **disabled** by publishing `imageHash == 0`, acting as an escape hatch.
+
+---
+
+## 3. Signature Encoding
+
+One byte – `signatureFlag` – precedes every top-level (or chained chunk) signature.
 
 ```
-[globalFlag][opt checkpointer addr + data][opt checkpoint][opt threshold][branch bytes]
+bit7 0x80  static-signature (pre-stored, cheap replay)
+bit6 0x40  checkpointer present?
+bit5 0x20  threshold size (0=1 byte, 1=2 bytes)
+bit4..2    checkpoint size (0-7 bytes)
+bit1 0x02  "no chainId" domain (for 0-id subdigests)
+bit0 0x01  chained signature flag
 ```
 
-Bit-layout of `globalFlag` (LSB-first):
+Immediately after those optional fields, the **branch** encoding starts.  Every branch item is itself prefixed by *one byte* where the **high nibble** is the flag:
 
-* bit 0 – `IS_CHAINED` (1 = the following bytes are a chain of signatures)
-* bit 1 – `NO_CHAIN_ID` (signs over a 0 chainId domain)
-* bits 2-4 – `CHECKPOINT_SIZE` (0-7 → number of bytes that encode checkpoint)
-* bit 5 – `THRESHOLD_IS_2_BYTES`
-* bit 6 – `HAS_CHECKPOINTER`
-* bit 7 – `STATIC_SIGNATURE` (pre-stored in wallet storage, zero-gas path)
+| Flag | Meaning | Extra data |
+|------|---------|------------|
+|0|ECDSA ERC-2098 against opHash|free nibble = weight (0 => dynamic 1 byte)|
+|1|Raw address leaf|same weight encoding|
+|2|ERC-1271 contract check|free nibble bits split: weight & signature-length sizeSize|
+|3|Raw 32-byte node|no weight|
+|4|Nested branch|free nibble = bytes of *size* field|
+|5|Hard-coded subdigest|if matches, grants MAX weight|
+|6|Nested config leaf|free bits: externalWeight & internalThreshold size|
+|7|ETH-sign message|same as flag 0 but hash is `\x19Ethereum Signed Message` prefixed|
+|8|Any-address subdigest|counter-factual hard-coded digest leaf|
+|9|Sapient signature|delegates to external ISapient contract|
+|10|SapientCompact|delegates to ISapientCompact (pass only opHash)|
 
-### Branch format (parsed iteratively)
-
-Each item starts with one byte whose **top nibble** is the *flag*, bottom nibble provides item-specific data (weight, length size &c).
-
-Flag definitions (selected):
-
-0.  `FLAG_SIGNATURE_HASH` – EIP-2098 compact ECDSA over `_opHash`
-1.  `FLAG_ADDRESS` – counts weight without signature (used inside nested groups)
-2.  `FLAG_SIGNATURE_ERC1271`
-4.  `FLAG_BRANCH` – nested branch with its own byte length field
-5.  `FLAG_SUBDIGEST` – hard-coded digest leaf (infinite weight if matches)
-6.  `FLAG_NESTED` – nested configuration leaf
-7.  `FLAG_SIGNATURE_ETH_SIGN` – eth-sign prefix
-8.  `FLAG_SIGNATURE_ANY_ADDRESS_SUBDIGEST` – counter-factual variant
-9.  `FLAG_SIGNATURE_SAPIENT` – calls `ISapient.recoverSapientSignature`
-10. `FLAG_SIGNATURE_SAPIENT_COMPACT` – compact version passing only digest
-
-### Chained signatures
-
-If `IS_CHAINED` is set the byte-stream turns into:
-
-```
-[3-byte len][sig1][3-byte len][sig2]…[3-byte len][sigN]
-```
-
-* `sig1` signs the **payload**.
-* `sig2` signs an *image-hash + KIND_CONFIG_UPDATE* payload, authorising `sig1`’s configuration, and so on…
-* The final chunk must recover to the wallet’s on-chain configuration.
-
-This lets users stage multiple configuration updates off-chain and push them atomically only when they need to spend.
+Weight is accumulated; if `weight ≥ threshold` and final `imageHash` equals wallet storage, the signature is valid.
 
 ---
 
-## 4.  Payload System
+## 4. Payload System (Transactions / Messages / Config Updates)
 
-Four kinds:
+`Payload.sol` defines a compact binary format for four kinds:
 
-| Kind | Purpose |
-|------|---------|
-| 0x00 | Transactions (batched calls) |
-| 0x01 | Message (arbitrary bytes) |
-| 0x02 | Config update (new `imageHash`) |
-| 0x03 | Digest (pre-hashed message for ERC-1271) |
+1. **Transactions** – batch of `Call` objects.  Each call itself has a 1-byte flag (`delegateCall`, `onlyFallback`, `behaviorOnError`, etc.), optional `value`, `data`, and `gasLimit`.  Nonce *space* and *number* are encoded up-front to give replay protection equivalent to EOAs.
+2. **Message** – arbitrary bytes for off-chain signatures.
+3. **ConfigUpdate** – carries a new `imageHash` (used only inside chained signatures).
+4. **Digest** – pre-hashed 32-byte value for ERC-1271.
 
-Transactions are compact-encoded for gas:
+All payloads implement EIP-712: `hash = keccak256( "\x19\x01" || domainSeparator || structHash )` where the domain separator optionally omits `chainId` when the signer encoded `noChainId`.
 
-```
-[globalFlag][opt space][opt nonce][opt callCount][call…]
-call := [callFlags][opt addr][opt value][opt dataSize+data][opt gasLimit]
+Execution flow inside `Calls.execute`:
+
+```text
+validate(sig) -> consumeNonce(space, nonce)
+for each Call:
+    if onlyFallback && !errorFlag -> mark Skipped
+    enforce gasLimit if specified (revert NotEnoughGas)
+    perform (delegate)call via LibOptim
+    switch behaviorOnError
+        - Ignore: set errorFlag but continue
+        - Revert: revert whole batch with return data
+        - Abort:  emit event & return early
 ```
 
-Per-call flags embed *delegateCall*, *onlyFallback*, *behaviorOnError*, etc.  This reduces calldata by >70 % compared to naïve ABI.
+`Simulator.sol` & `Estimator.sol` replay the same interpreter but without state-changes to let dApps estimate gas or preview results.
 
-The library returns a `Decoded` struct used everywhere:
+---
 
-```solidity
-struct Decoded {
-    uint8 kind;
-    bool noChainId;
-    Call[] calls;
-    uint256 space;
-    uint256 nonce;
-    bytes message;
-    bytes32 imageHash;
-    bytes32 digest;
-    address[] parentWallets; // recursion for sapients
-}
+## 5. Smart Sessions
+
+Smart sessions let a wallet hand out **least-privilege delegations**.
+
+### 5.1 Explicit Sessions
+
+An **ExplicitSession** is itself a leaf inside the wallet’s `imageHash`.  It stores a list of `SessionPermissions`:
+
+* `signer` – the hot key authorised during the session.
+* `valueLimit`, `deadline` – coarse limits.
+* Array of `Permission` objects.  Each Permission ≥ one target address and *zero or more* `ParameterRule`s.
+
+A `ParameterRule` examines calldata at `offset`, masks it, and compares (`==, !=, ≥, ≤`).  If the `cumulative` bit is set, usage is tracked over time with `incrementUsageLimit()` helper to mutate on-chain counters.
+
+Encoding is extremely compact:
+
+```
+┌flag byte (0x00)┐ signer(20) value(32) deadline(32) │Permission[]│
+```
+
+When a call is executed, `SessionManager.recoverSapientSignature()` does:
+
+1. Decode session config, blacklist & identity signer.
+2. For each call, check its session signature (ECDSA 64-byte compact) binds to callHash+replayProtection.
+3. Verify permission list & maintain cumulative usage array.
+4. Ensure first call is `incrementUsageLimit` when cumulative rules changed.
+
+### 5.2 Implicit Sessions
+
+Implicit sessions rely on an **attestation** signed by the wallet’s identity signer *off-chain* (e.g., during OAuth).  The wallet passes the attestation plus call signature; the callee (usually a dApp contract) must implement `acceptImplicitRequest(attestation)` returning a deterministic magic hash.  If the session signer or target is in the **blacklist** node, the call is rejected.
+
+This dual-mode system allows dApps to start with implicit sessions (cheap) and later escalate to explicit once user approves bigger limits.
+
+---
+
+## 6. Extensions as Sapient Signers
+
+`ISapient` / `ISapientCompact` are interfaces that let *any* contract act like a signer if it can deterministically return an `imageHash` given the payload (or subdigest).
+
+* **Passkeys** – verifies a WebAuthn assertion (P-256 signature via RIP-7212 precompile) and returns a root that commits to public key + metadata.
+* **Recovery** – queue-based social recovery: signers enqueue a payload with `queuePayload`, wait `requiredDelta`, then sign again to actually execute.  The last step’s signature recovers a root that proves the queue is ready.
+* **SessionManager** – described above; acts as a signer whose weight equals the session’s configured weight.
+
+Because their roots are part of the main Merkle tree, a wallet decides per-configuration which extensions it trusts.
+
+---
+
+## 7. Upgrade & Proxy Flow
+
+1. **Deployment** – `Factory.deploy(mainModule,salt=imageHash)` wraps the Huff `Wallet` proxy creation code with one 20-byte constructor param (implementation address) and calls `CREATE2`.  The resulting proxy already stores `mainModule` in slot==address(proxy).
+2. **Stage 1 (fresh wallet)** – Implementation address points to **Stage1Module** which:
+   * validates that the given `imageHash` matches the CREATE2 salt (guaranteed by factory)
+   * exposes `updateImageHash` that: (a) writes imageHash to storage, (b) upgrades implementation to **Stage2Module**.
+3. **Stage 2 (normal operation)** – All day-to-day logic lives in Stage2Module & delegates (calls, sessions, hooks, etc.).  Future upgrades are triggered by a self-call to `updateImplementation(newImpl)` protected by `onlySelf`; thus owners must include such a call inside a normal payload signed by the wallet.
+
+---
+
+## 8. ERC-4337 Integration
+
+`ERC4337v07` provides the account hooks expected by **EntryPoint v0.7**.
+
+* `validateUserOp` – EntryPoint calls this during `simulateValidation`.
+  * If wallet balance is low and `missingAccountFunds != 0`, the contract auto-deposits.
+  * Calls `isValidSignature(userOpHash,signature)` (re-uses wallet signature logic).
+* `executeUserOp` – After validation, EntryPoint invokes execution path `selfExecute(payload)`; the usual `Calls.execute` machinery runs.
+
+If a wallet sets `entrypoint = address(0)`, 4337 is considered **disabled**.
+
+---
+
+## 9. Security Considerations & Invariants
+
+1. **Checkpoint monotonicity** – Every chained signature step must increase checkpoint; BaseSig reverts `WrongChainedCheckpointOrder` otherwise.
+2. **Weight ≥ Threshold** – Enforced both per-chunk (chained) and final signature; else `LowWeightChainedSignature`.
+3. **Checkpointer snapshot consumption** – Snapshot must either be matched or surpassed; unused snapshot triggers `UnusedSnapshot`.
+4. **Re-entrancy** – All external entrypoints (`execute`, `estimate`, `simulate`, `executeUserOp`) are protected by `ReentrancyGuard`.
+5. **Nonce** – `_consumeNonce` ensures exact match then increments.  Nonce space is 160-bit (`address`) plus 96-bit counter giving 2²⁵⁶ unique ops.
+6. **Delegatecall containment** – Only allowed through explicit `delegateCall` flag and is forwarded to contracts that implement `IDelegatedExtension.handleSequenceDelegateCall`, giving extension authors a fixed ABI and reduces foot-guns.
+7. **Session safety** – Implicit sessions forbidden to send value or delegatecall; explicit sessions must include permission for value and cannot delegatecall.
+
+---
+
+## 10. Gas Optimisations
+
+* Heavy use of **inline assembly** & `LibOptim.fkeccak256(a,b)` for 2-word hashing.
+* **ERC-2098** compact signatures – 64 bytes instead of 65.
+* Dynamic-length fields encoded with **3-byte size prefixes** instead of full `uint256`.
+* **Sparse Merkle tree** keeps popular leaves (threshold, checkpoint) near root → shorter proofs.
+* **Pre-hash leaves** (FLAG_NODE) allow clients to skip unused sub-trees in calldata.
+* **RIP-7212** precompile for P-256 passkey validation cuts gas by ~6× vs Solidity verifier.
+
+---
+
+## 11. File Map
+
+*Core contracts*
+```
+src/Factory.sol              – CREATE2 deployer
+src/Wallet.sol               – Huff proxy bytecode host
+src/Stage1Module.sol         – Bootstrapping implementation
+src/Stage2Module.sol         – Main wallet logic
+```
+*Execution & auth*
+```
+src/modules/Calls.sol        – batched call executor
+src/modules/Nonce.sol        – nonce storage
+src/modules/auth/*           – imageHash storage, signature validation
+src/modules/ERC4337v07.sol   – 4337 account hooks
+```
+*Extensions*
+```
+src/extensions/passkeys/Passkeys.sol              – WebAuthn signer
+src/extensions/recovery/Recovery.sol              – social recovery queue
+src/extensions/sessions/**/*                      – smart sessions framework
+```
+*Utilities*
+```
+src/utils/*  (LibBytes, Base64, LibOptim, P256, WebAuthn, etc.)
 ```
 
 ---
 
-## 5.  Execution Flow (Calls.sol)
+## 12. Conclusion
 
-1.  **decode payload** → `Decoded`
-2.  **_consumeNonce** (replay protection)
-3.  **signatureValidation** via BaseAuth → ensures `weight ≥ threshold` and `imageHash` = wallet storage.
-4.  Loop over calls:
-   * choose `to` (self vs external), compute gas limit.
-   * `delegatecall` goes through IDelegatedExtension interface so extensions can differentiate context.
-   * on failure apply `behaviorOnError`: IGNORE, REVERT_ALL, or ABORT_REST.
-   * emit events per outcome.
-
-ReentrancyGuard protects the whole `execute` entry.
-
----
-
-## 6.  Extensions
-
-### Hooks
-
-Map `bytes4 selector → implementation`.  Fallback delegatecalls to that address, giving the wallet infinite extensibility while keeping storage unified.
-
-### ERC-4337 (module `ERC4337v07.sol`)
-
-Implements `validateUserOp` + `executeUserOp` restricted to a single immutable EntryPoint.  Signature checking simply forwards to wallet’s `isValidSignature` (
-`IERC1271`).  Missing funds are auto-deposited.
-
-### Smart Sessions
-
-Two modes:
-
-* **Explicit sessions** – a special sapient signer whose configuration is embedded inside the signature itself.  Permissions are explicit leaves (target → rules[], valueLimit, deadline…); validation happens in `ExplicitSessionManager` and cumulative limits can be persisted on-chain.
-* **Implicit sessions** – off-chain attestation signed by an **identity signer** authorises a session signer.  Every call must carry an attestation index.  Additional safety: mandatory sorted blacklist, no value, no delegatecall, and the *target contract* must return a magic value from `acceptImplicitRequest`.
-
-Session signatures are decoded by `SessionSig` then re-validated by `SessionManager` which enforces limits, blacklist and per-call rules.
-
-### Passkeys (WebAuthn)
-
-`Passkeys.sol` implements an `ISapientCompact` signer.  Signatures include authenticatorData / clientDataJSON indexes, R + S, P-256 public key, and optional metadata.  Verification is done with `WebAuthn.verify` + P-256 precompile (RIP-7212).  The resulting imageHash leaf is deterministic on (x, y, requireUV, metadata).
-
-### Recovery
-
-`Recovery.sol` is a sapient signer that introduces a **time-delay queue**:
-
-* Any signer may `queuePayload(wallet, payloadHash)` with their signature.
-* A merkle leaf encodes `minDelay` & `minTimestamp`.
-* Later, during `recoverSapientSignatureCompact`, the Recovery contract walks the merkle proof and checks that `block.timestamp ≥ queuedTimestamp + minDelay` before considering weight.
-
-This provides a social-recovery escape hatch without new on-chain configuration.
-
----
-
-## 7.  Security Model
-
-* **Threshold / weight** – Every branch returns a total weight; if below threshold, signature is rejected.
-* **Checkpoint monotonicity** – prevents “state channel” replay of past configurations.
-* **Checkpointer** – optional oracle that rejects signatures older than published snapshot, protecting inactive chains.
-* **Nonce spaces** – independent replay-protection domains so sessions can run in their own counters.
-* **Gas limits per call** – prevents griefing by burning unlimited gas.
-* **ReentrancyGuard & onlySelf** – internal mutations require delegate-call from wallet itself.
-* **Static signatures** – explicitly bound to `caller` (msg.sender) and `expires`, so leaked calldata cannot be reused.
-* **Blacklist & target-side acceptance (implicit sessions)** – blocks phishing targets and enforces app-level approval.
-* **Low-s normalisation (P-256) and `s ≤ n/2` check** – mitigate malleability.
-
----
-
-## 8.  Gas & Storage Footprint
-
-* Sparse tree + selective proof → minimal calldata.
-* Flag-based payload encoding → ~3 bytes overhead per call vs 68 bytes in ABI.
-* ERC-2098 compact ECDSA (64 bytes) used everywhere.
-* Only one storage write per successful execute: nonce++ (plus optional limit usage writes).
-* Reentrancy-guard status stored at deterministic slot for EIP-2200 refund.
-
----
-
-## 9.  Upgrade & Extensibility Strategy
-
-* Wallet is a **self-upgradable proxy** (`Implementation.sol`) – only the wallet (i.e.
- a signed config update) can change its implementation address.
-* Hook table lets users map arbitrary selectors to delegate-extensions without upgrade.
-* New signer types or leaf kinds can be added by allocating a new `FLAG_*` value (>10) – the BaseSig parser will need a new case but existing signatures remain valid.
-* Payload format is versionless; new per-call flags can use reserved bits.
-* Sessions configs are tag-tree based – unknown tags can be ignored / pre-hashed to stay forward-compatible.
-
----
-
-## 10.  Integration Guidelines
-
-1.  To **deploy** a counter-factual wallet:
-    * Build configuration tree → get `imageHash`.
-    * `Factory.deploy(mainModule, imageHash)` using the Stage1Module bytecode as `mainModule`.
-2.  To **send a tx**:
-    * Encode calls with `Payload.fromPackedCalls`.
-    * Prepare signature (single or chained) following rules; include checkpointer data if wallet uses one.
-    * `wallet.execute(payloadBytes, signature)` **or** craft an ERC-4337 `UserOperation` where `callData = wallet.executeUserOp(payloadBytes)`.
-3.  To **update signer set**:
-    * Build new tree with higher `checkpoint`.
-    * Create a `KIND_CONFIG_UPDATE` payload.
-    * Authorise with current signers; optionally chain the signature with a spend payload so update & spend happen atomically.
-4.  To **use smart sessions**:
-    * For explicit – embed session config + per-call signatures via SessionSig library.
-    * For implicit – obtain an attestation signed by identity signer, encode calls with flag byte MSB =1 referencing that attestation index.
-
----
-
-## Conclusion
-
-Sequence v3 combines **Merkle-root configurations**, **state-channel-style chained signatures**, **compact payload encoding**, and a rich catalogue of extensions (sessions, passkeys, recovery, ERC-4337, hooks) to deliver a **truly programmable, multi-sig smart-wallet** that stays gas-competitive and upgrade-ready.  The protocol enforces strict replay & configuration ordering guarantees while remaining flexible enough to integrate new signer modalities or permission systems without redeployment.  All critical paths are permission-less and self-custodial—only the signers defined in the current `imageHash` control the wallet.
+Sequence v3 turns a single proxy address into a **multi-chain, up-gradable, permissioned account** whose entire security model is captured by a Merkle root (`imageHash`).  Off-chain “state-channel” updates, enforced on-chain by **chained signatures** + optional **checkpointer**, give gas-less configuration changes while maintaining strong replay & downgrade protection.  Layered modules (Stage1 → Stage2) isolate bootstrapping risk, and *extensions as sapient signers* let wallets adopt new authentication methods (passkeys, smart sessions) without further upgrades.  The net result is a highly-flexible yet audit-friendly protocol whose critical invariants are enforced by ~20 core contracts and libraries.
 
 
 

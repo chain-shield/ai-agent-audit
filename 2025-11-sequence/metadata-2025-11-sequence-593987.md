@@ -1,137 +1,114 @@
 
 ## PROTOCOL OVERVIEW:
 
-## Trails Protocol – Detailed Technical Overview
-
-*(~3 250 words)*
+## Trails Protocol – Detailed Technical Summary
 
 ### 1. What is Trails?
-Trails is a non-custodial transaction-orchestration layer that lets any wallet execute **one-click, cross-chain, cross-token flows**. A user expresses an *intent* (e.g. “mint NFT on Base using USDC I hold on Optimism”), signs **one confirmation**, and Trails automatically discovers the optimal bridge → swap → contract-call pipeline, routes the liquidity, pays gas (optionally in ERC-20s), and returns the final result. Under the hood Trails stitches together best-in-class bridges (CCTP, Relay, LiFi, …), DEXs, and relayers while inheriting the security and flexibility of the [Sequence v3] account-abstraction stack.
+Trails is a cross-chain transaction orchestration layer that turns a multi-step, multi-chain operation (swaps, bridges, contract calls) into a single **intent** that a user approves once.  Under the hood it stitches together the user’s existing wallet (EOA or smart wallet), liquidity venues (DEXs, RFQ makers, bridges such as CCTPv2, LiFi, Relay) and a network of relayers/solvers.  The end result is a *1-click* experience where “Ethereum works as one”, meaning assets and dApps on different chains interact as if they were on the same chain.
 
-Key goals:
-1. Remove chain & liquidity fragmentation (“Ethereum works as one”).
-2. Preserve self-custody – user funds never touch Trails.
-3. Be wallet-agnostic – works for EOAs, smart-wallets, ERC-7702 wallets, embedded in-app wallets, etc.
-4. Provide an extensible, pluggable architecture so new bridges / DEXs can be added without redeploying integrators.
+Trails is built on top of Sequence v3 account-abstraction contracts.  Those contracts allow arbitrary call graphs to be authorised via Merkle proofs, which is the key building block that lets Trails collapse an entire cross-chain saga into a single transaction hash that the user signs.
 
-### 2. End-to-End Flow (from UX to chain)
-1. **Define Intent** – dApp builds a JSON payload describing the desired outcome (token, amount, destination chain, calldata for a target contract…).
-2. **Trails Inspects** – SDK checks balances, allowances, gas availability, and decides if orchestration is needed.
-   • Same-chain & already funded? → Pass-through (single normal tx).
-   • Otherwise → Continue orchestrating.
-3. **Select Route** – Solver engine scores candidate routes across supported bridges / DEXs; UI shows cost, ETA, fees. User can override.
-4. **Orchestrate Payment** – Trails turns the chosen route into a concrete execution plan: swap → bridge → execute.
-5. **Execute Transaction** – User signs once; relayers post the required transactions on every chain; intents verify proofs & enforce atomicity.
+### 2. High-Level Flow
+```
+User ➜ defines intent (pay X to contract Y on chain Z, in token T)
+       ▼
+Trails SDK ➜ queries balances, fees, bridges, DEX quotes
+       ▼
+Solver layer ➜ proposes optimal route (bridge A, swap B, …)
+       ▼
+Relayers ➜ submit Merkle proofs on origin + dest chains
+       ▼
+Intent contracts (Sequence) ➜ verify proofs & execute calls
+       ▼
+Final state reached (funds delivered / tx completed)
+```
+A single EIP-712 signature from the user authorises *only* the calldata encoded in the intent.  Relayers have zero latitude to modify parameters; they simply fund gas and surface proofs.
 
-Behind the scenes multiple contracts & chains can be touched, but the user signs exactly one bundle and receives a single UX confirmation.
+### 3. Contract Breakdown
+1. **TrailsIntentEntrypoint.sol** – stateless verifier & deposit helper
+   • Verifies off-chain signed intents (EIP-712) and prevents replay (usedIntents mapping + per-user nonces).  
+   • Optionally calls `permit()` so users can pay gas & deposit with any EIP-2612 token.  
+   • Transfers user funds (deposit + optional fee) directly to the *intent contract address* and fee collector; the entrypoint never escrows assets.
 
-### 3. Core On-chain Components
-Trails uses a minimal set of **stateless** contracts that live at deterministic addresses (ERC-2470 factory). The contracts never retain ownership or upgradeability controls; their only purpose is validation & fund movement within the user’s own wallet-context.
+2. **TrailsRouter.sol** – execution & utility router
+   • Wraps Multicall3 (aggregate3Value) with extra validation (disallows `allowFailure=true`) and value forwarding.  
+   • Pulls funds from caller (`pullAndExecute`, `pullAmountAndExecute`) or injects its own balance into downstream calls (`injectAndCall`).  
+   • Provides sweeping utilities that can only be used *via delegatecall* inside a Sequence wallet, guaranteeing they operate on the wallet’s storage/balance, not the Router contract itself.  
+   • Emits sentinels into storage (via `TrailsSentinelLib`) so later steps can verify that a prior operation succeeded before sweeping leftovers.
 
-#### 3.1 TrailsRouter (src/TrailsRouter.sol)
-• Acts as the *brain* executed **inside the wallet** via `delegatecall` (Sequence delegated-extension module). 
-• Provides helpers to
-  – run a restricted **Multicall3.aggregate3Value** bundle atomically (no `allowFailure=true`).
-  – pull assets from the calling user (`pullAndExecute`, `pullAmountAndExecute`).
-  – inject dynamic amounts into calldata (gas-less ERC-20 approvals + placeholder-replacement) so a downstream DEX/bridge receives the exact balance.
-  – sweep or refund residual balances once the operation succeeds (`sweep`, `refundAndSweep`).
-• Enforces safety:
-  – Multicall selector gated, disallows failures.
-  – All sweeping / refund functions are `onlyDelegatecall`, meaning they *must* execute from the wallet context, never from the router contract directly.
-  – Optional `validateOpHashAndSweep` checks a **success sentinel** (see 3.3) before sweeping to solver/relayer, ensuring they are paid only after successful completion.
+3. **TrailsRouterShim.sol** – thin Sequence *Delegated Extension*
+   • Stores immutable `ROUTER` address.  
+   • Exposes `handleSequenceDelegateCall` which the Sequence kernel routes to when the intent tree demands it.  It simply decodes the forwarded payload, delegate-calls the Router and writes the SUCCESS sentinel.
 
-#### 3.2 TrailsRouterShim (src/TrailsRouterShim.sol)
-• A 65-line lightweight **shim** that forwards delegated extension calls to a fixed `TrailsRouter` address and writes a *success sentinel* for a given `opHash`.
-• Immutable `ROUTER` is set in the constructor – no upgrade path → reduces supply-chain risk.
-• Also inherits `DelegatecallGuard` so it can only run when embedded via delegatecall.
+4. **DelegatecallGuard.sol** – utility inherited by Router & Shim ensuring certain functions *must* be executed via `delegatecall`.  This prevents misuse on the implementation contract directly.
 
-#### 3.3 TrailsSentinelLib (src/libraries/TrailsSentinelLib.sol)
-• Pure library that deterministically maps `opHash` → storage slot (`keccak256("trails.sentinel"||opHash)`).
-• A value of `1` in that slot = operation finished; it is read by `TrailsRouter` before sweeping funds to relayers.
+5. **TrailsSentinelLib.sol** – pure library that defines a namespace constant and the numeric `SUCCESS_VALUE` (`hex"0001"`).  Given an `opHash` it deterministically computes the storage slot where that op’s success flag must be stored (`keccak256(namespace || opHash)`).  In practice, the shim writes this flag and the Router checks it before sweeping.
 
-#### 3.4 TrailsIntentEntrypoint (src/TrailsIntentEntrypoint.sol)
-Handles **ERC-20 deposits** into a freshly computed *intent address* (a counterfactual Sequence account). Features:
-• Supports EIP-2612 permit flow (`depositToIntentWithPermit`) or standard allowance (`depositToIntent`).
-• Uses EIP-712 typed data to bind chainId, token, amount, fee, feeCollector, user-nonce. Intent is invalid after `deadline`.
-• Maintains two anti-replay maps:
-  – `nonces[user]` (monotonic).
-  – `usedIntents[digest]` (one-shot per payload).
-• Transfers the `amount` directly from the user to `intentAddress`; an optional `feeAmount` is transferred to `feeCollector`.
-• No owner, no treasury, no lingering funds – token flows 100 % user → intent / feeCollector.
+6. **Interfaces** – `ITrailsIntentEntrypoint`, `ITrailsRouter`, `ITrailsRouterShim`, `IMulticall3` provide ABI surface for external tooling and for the Sequence kernel at runtime.
 
-#### 3.5 DelegatecallGuard (src/guards/DelegatecallGuard.sol)
-A 10-line utility inheritable contract that stores `_SELF` and reverts unless `address(this) != _SELF`, i.e. **must be delegatecalled**. Used by Router/Shim to guarantee they are running in wallet storage context.
+### 4. How Execution Works In Practice
+1. **Intent Creation**: the dApp (via Trails SDK) builds a Merkle tree where each leaf is a `handleSequenceDelegateCall` to the RouterShim with calldata that eventually ends up executing `router.execute(aggregate3Value)` or one of the other helper functions.
+2. **User Signature**: user signs the root hash (EIP-712 typed data).  The signed digest plus auxiliary params (amounts, deadlines, fee, etc.) is handed to `depositToIntent(WithPermit)`.
+3. **Fund Deposit**: the entrypoint transfers funds to the *counterfactual* intent address (derived exactly like a Sequence wallet address would be).  At this moment the intent contract has enough balance to cover the first leg (gas + bridged token).
+4. **Relayer Action**: off-chain relayers monitor mempool / API, see that the intent address is now funded, and submit the Merkle proofs on the origin chain.  Each proof eventually gets routed by the Sequence kernel into the Shim which calls the Router and sets the sentinel.
+5. **On-Chain Calls**: the Router executes the validated multicall (swaps, bridge sends, etc.).  When done it performs `sweep()` so that any dust or bridged tokens are moved to the next bridge contract or to the destination address.
+6. **Destination Chain**: another relayer repeats the process on the destination chain.  Finally the Router validates that the origin opHash succeeded (`validateOpHashAndSweep`), claiming the bridged funds and delivering them to the user / dApp contract.
 
-### 4. Sequence v3 Integration & Intent Addresses
-Sequence v3 AA wallets allow execution if the caller provides a **Merkle proof** that a given `(module, digest)` leaf exists in the wallet’s configuration tree. Trails exploits that by creating a **counterfactual wallet** where one leaf authorises the shim contract + a specific `opHash`. Until the user signs, the wallet doesn’t exist; once signed, relayers can deploy it at a deterministic `intentAddress` and feed proofs for both origin & destination chains. Because the leaf binds the calldata hash, relayers cannot tamper – they either post the exact bytes or the wallet rejects.
+The entire process either completes fully or reverts; because every leg records a sentinel, later legs can programmatically check and abort if a precursor failed.
 
-Result: even an EOA user gains AA superpowers (batched call, paying gas in ERC-20, cross-chain proofs) without upgrading their existing wallet.
+### 5. Security Design
+• **Non-custodial** – neither the entrypoint nor the Router/Shim ever hold user funds long-term.  Assets live in the intent (Sequence wallet) contract owned by the user’s key material.  
+• **Delegate-only functions** – `onlyDelegatecall` ensures sweep/refund functions can *only* touch the caller’s storage context, not the Router contract itself.  
+• **Replay protection** – intents are unique (`usedIntents` mapping) and per-user `nonce` increments.  
+• **Selective authorisation** – the Merkle tree encodes exact calldata; relayers cannot replace parameters or routes.  Any mismatch causes on-chain reversion.  
+• **Audited base layer** – built on Sequence v3 which has undergone multiple audits; Trails contracts are smaller extensions on top.
 
-### 5. Cross-Chain Atomicity & Relayers
-1. Relayers listen for signed intents off-chain.
-2. They fund gas on the **origin** chain and execute the router shim in the user’s wallet via Sequence delegated call.
-3. The shim writes success sentinel for `opHash` and possibly emits events / messages to destination chains.
-4. Other relayers pick up those events, execute counterpart transactions on **destination** chain(s).
-5. Finally, after `validateOpHashAndSweep` passes, the solver’s fee is swept to them – guaranteeing they are only paid after end-to-end success.
-Failure at any stage → wallet keeps funds, sentinel is not written, relayers can’t sweep.
+### 6. Gas & Token Flexibility
+Because deposits are done through `depositToIntentWithPermit`, the protocol supports paying gas in *any* EIP-2612 token (USDC, USDT, etc.).  The Router’s injection helpers automatically approve & pass that same token down to bridges/DEXs.  This removes the common *no-native-gas* UX hurdle when landing on a new chain.
 
-### 6. Gas Abstraction – “Pay with Any Token”
-Because the router runs in the wallet context and can pull arbitrary ERC-20s, Trails can subsidise the native gas using a relayer, then immediately reimburse itself in e.g. USDC via `refundAndSweep`. Optional **permit** saves an approval click. This solves the classic “bridged but no gas” problem for new chains and makes dApp tokens more useful.
+### 7. Upgrade / Deployment Model
+All contracts are deployed as singletons via ERC-2470 factory, giving deterministic addresses across chains.  The Router/Shim are *stateless* (except immutable addresses) so they don’t need upgradeability proxies.  Any future upgrade would involve deploying a new version and referencing it in newly generated intents while old intents continue to use the previous binaries (immutable & safe).
 
-### 7. Security Review
-1. **Non-custodial** – contracts do not hold balances except transiently inside the user’s own wallet storage.
-2. **Deterministic addresses** – deployed via ERC-2470 Factory, so identical bytecode on all chains. Reduces risk of supply-chain attack via different artifacts.
-3. **No owners / upgraders** – all critical fields are `immutable`; no proxy pattern.
-4. **Delegatecall guard** – prevents attackers from calling `sweep` directly on the router contract.
-5. **Sentinel gating** – relayers only paid after success bit set, preventing DoS by malicious relayer.
-6. **EIP-712 + nonces + usedIntents** – strong replay and signature validity checks for deposits.
-7. **Audits** – built on audited Sequence v3 & third-party audits were conducted (links in docs).
+### 8. How to Integrate as a dApp Developer
+1. Import the Trails SDK (npm) and call `sdk.createIntent({...})` with your desired target chain, token, and calldata.  
+2. Present the generated typed-data to the user for signing.  
+3. Submit the signature + parameters to `TrailsIntentEntrypoint.depositToIntentWithPermit` (or `.depositToIntent`).  
+4. Listen to the SDK’s `status()` stream or on-chain events; once the intent is settled you receive a final `TransactionCompleted` callback.
 
-### 8. Developer Integration Path
-1. Import the JS/TS SDK.
-2. Ask user for *intent* payload and signature (SDK handles EIP-712 typing & wallet prompts).
-3. Submit the signed payload to Sequence API → receives proposed routes.
-4. Present route(s) in UI; once user accepts, forward intent to relayer network (or run your own relayer).
-5. Listen to events on origin chain (`IntentDeposit`, Sequence execution logs) for completion status.
+No bridging/DEX code is required on the dApp side; you describe *what* you want, not *how* to get there.
 
-No backend changes needed when Trails adds new bridges – it’s automatically surfaced through the solver layer.
+### 9. File Relationship Diagram
+```
+                   ┌────────────────────┐
+                   │User Wallet / SDK   │
+                   └────────┬───────────┘
+                            │EIP-712 Sig
+┌───────────────────────────▼────────────────────────────┐
+│ TrailsIntentEntrypoint (deposit & verify)              │
+└───────────────────────────┬────────────────────────────┘
+                            │funds + calldata
+             Counterfactual Intent (Sequence v3 wallet)
+                            │delegatecalls
+┌───────────────────────────▼────────────────────────────┐
+│ TrailsRouterShim  (Sequence DelegatedExtension)        │
+└───────────────────────────┬────────────────────────────┘
+                            │delegatecall
+┌───────────────────────────▼────────────────────────────┐
+│ TrailsRouter (exec + sweep + inject)                   │
+└──────────────────────────┬─────────────────────────────┘
+                           │ERC20 transfers / native
+                 External Protocols (DEX, Bridge, etc.)
+```
 
-### 9. Contract Reference Cheat-Sheet
-| Contract | Key Responsibility | Requires delegatecall? | Holds funds? |
-|----------|-------------------|------------------------|--------------|
-| TrailsRouter | Execute multicall, pull/inject balances, sweep/refund | Yes (critical paths) | Only while inside wallet |
-| TrailsRouterShim | Minimal dispatcher writing success sentinel | Yes | No |
-| TrailsIntentEntrypoint | Validate EIP-712 & move ERC-20 from user to intent | No | No |
-| TrailsSentinelLib | Pure library (slot calc) | N/A | No |
-| DelegatecallGuard | Guard modifier | N/A | No |
+### 10. Conclusion
+Trails abstracts away the complexity of fragmented liquidity and disparate gas tokens by combining:
+• Sequence v3 AA for powerful intent execution;
+• A stateless Router/Shim pair for safe multicall orchestration;
+• A deposit entrypoint that supports any EIP-2612 token;
+• Off-chain solvers/relayers that supply gas and compete on best route.
 
-### 10. Why the Design Matters
-• **AA without waiting for ERC-4337 / 7702 adoption** – Trails delivers account-abstraction UX today for any EOA.
-• **Solver competition** – Intents don’t bind to a single relayer; anyone can satisfy them, improving price & reliability.
-• **Extensibility** – adding a new bridge is off-chain; on-chain code remains untouched because router just executes arbitrary calldata.
-• **Cost efficiency** – Batching via Multicall3 + gas-token reimbursement minimises user cost.
+The end-user gets a single confirmation, developers integrate a single endpoint, and under the hood an extensible, trust-minimised system achieves atomic cross-chain settlement.
 
-### 11. Future Roadmap
-1. Support for non-EVM chains (e.g. Solana, Cosmos) by adding new intent leaf types & cross-chain proof bridges.
-2. Privacy features (eg. shielded intents, ZK proofs of solvency).
-3. MEV-resistant order-flow auctions so solvers compete fairly without leaking routes.
-4. Integrate paymaster-style sponsored gas so some flows become **truly gasless** from the user perspective.
-
----
-
-### 12. Glossary
-• **Intent** – declarative description of the desired outcome without prescribing how to achieve it.
-• **Solver** – off-chain agent that bids to fulfil an intent using its own liquidity & gas.
-• **Relayer** – entity that submits on-chain transactions, optionally fronting gas.
-• **Sentinel** – storage slot toggled to record success; protects post-exec fund movement.
-• **Shim** – small dispatcher used as Sequence module; forwards calls to router.
-
----
-
-### 13. Conclusion
-Trails marries the power of Sequence account-abstraction with a lean, stateless set of Solidity helpers to deliver seamless, one-click cross-chain UX. The contracts are small, immutable, and purpose-built: a guarded router that only runs *inside* the user’s wallet, a permit-aware ERC-20 deposit entrypoint, and a sentinel system to guarantee solver payments. Everything else – routing logic, bridge selection, gas sponsorship – lives off-chain in the SDK & solver network, giving the protocol flexibility to evolve without further on-chain migrations.
-
-The result is an ecosystem-level “transaction bus” where any wallet, on any chain, can unlock complex flows with the simplicity of a single confirmation.
 
 
 ## Main List of Files in Project

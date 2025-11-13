@@ -40,6 +40,14 @@ pub enum ContractCategory {
     EscrowVesting,
     MarketplaceExchange,
     RandomnessRaffleLottery,
+    // Utility library categories
+    ByteManipulationLibrary,
+    EncodingDecodingLibrary,
+    StorageHelperLibrary,
+    ErrorDefinitionLibrary,
+    AccessControlModifier,
+    ReentrancyGuardLibrary,
+    SimulationTestingHelper,
     #[default]
     Unknown,
 }
@@ -80,7 +88,7 @@ pub fn generate_formated_list_of_contract_categories(
 
     let mut category_list = String::new();
 
-    category_list.push_str("### Contract Categories\n");
+    category_list.push_str("\n### Contract Category Descriptions\n\n");
     for category_spec in category_specs {
         category_list.push_str(&format!("Category: {}\n", category_spec.category));
         category_list.push_str(&format!("Description: {}\n", category_spec.description));
@@ -182,8 +190,43 @@ pub static CONTRACT_CATEGORY_LIBRARY: &[ContractCategorySpec] = &[
         pattern_category: PatternCategory::RandomnessRaffleLottery,
     },
     ContractCategorySpec {
+        category: ContractCategory::ByteManipulationLibrary,
+        description: "Pure libraries for reading/writing primitive types from bytes/calldata (e.g., LibBytes, BytesLib). Focus on out-of-bounds reads, dirty values from unchecked indices, and endianness issues.",
+        pattern_category: PatternCategory::ByteManipulationLibrary,
+    },
+    ContractCategorySpec {
+        category: ContractCategory::EncodingDecodingLibrary,
+        description: "Libraries for encoding/decoding structured data, ABI packing/unpacking, or custom serialization formats. Focus on malformed input handling, buffer overflows, and type confusion.",
+        pattern_category: PatternCategory::EncodingDecodingLibrary,
+    },
+    ContractCategorySpec {
+        category: ContractCategory::StorageHelperLibrary,
+        description: "Libraries providing low-level storage slot read/write helpers or custom storage patterns. Focus on storage collision risks, uninitialized slots, and cross-contract storage assumptions.",
+        pattern_category: PatternCategory::StorageHelperLibrary,
+    },
+    ContractCategorySpec {
+        category: ContractCategory::ErrorDefinitionLibrary,
+        description: "Libraries or contracts that only define custom errors, events, or constants for use across a protocol. Focus on ensuring these are informational-only with no executable logic vulnerabilities.",
+        pattern_category: PatternCategory::ErrorDefinitionLibrary,
+    },
+    ContractCategorySpec {
+        category: ContractCategory::AccessControlModifier,
+        description: "Abstract contracts or libraries providing access control modifiers (e.g., onlySelf, onlyOwner, onlyGovernance). Focus on modifier bypass, msg.sender spoofing, and delegatecall context issues.",
+        pattern_category: PatternCategory::AccessControlModifier,
+    },
+    ContractCategorySpec {
+        category: ContractCategory::ReentrancyGuardLibrary,
+        description: "Reentrancy protection libraries or abstract contracts using storage/transient slots for nonReentrant modifiers. Focus on guard bypass, cross-function reentrancy, and read-only reentrancy.",
+        pattern_category: PatternCategory::ReentrancyGuardLibrary,
+    },
+    ContractCategorySpec {
+        category: ContractCategory::SimulationTestingHelper,
+        description: "Helper contracts for simulating transactions, estimating gas, or testing execution paths (not production contracts). Focus on ensuring these don't introduce state changes or bypass production guards.",
+        pattern_category: PatternCategory::SimulationTestingHelper,
+    },
+    ContractCategorySpec {
         category: ContractCategory::Unknown,
         description: "Contracts that don't fit into specific categories or have mixed functionality. Use broad pattern coverage for general security analysis.",
-        pattern_category:PatternCategory::General
+        pattern_category: PatternCategory::General,
     },
 ];

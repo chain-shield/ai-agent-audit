@@ -25,6 +25,7 @@ pub const MAX_DEPTH: usize = 3;
 /// Maximum token budget per codeblock + context to stay within LLM context limits
 pub const TOKEN_BUDGET: usize = 200_000;
 pub const CREATE_TESTS: bool = false;
+pub const NICHE_PATTERN_ANALYSIS: bool = true;
 
 /// Number of discovery rounds per contract during analysis
 pub const DISCOVERY_RUNS: usize = 1;

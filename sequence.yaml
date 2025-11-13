@@ -2,11 +2,11 @@
 # Repository: https://github.com/sherlock-audit/2025-10-index-fun-order-book-contest-chainshieldai.git
 # https://github.com/code-423n4/2025-10-sequence.git --custom-doc sequence-docs.md --scoped-files sequence-scope.txt --audit-scope sequence-scope.md --builder custom --build-cmd "npm i -g pnpm && pnpm i && forge build"
 # Git repository URL
-repo: "https://github.com/code-423n4/2025-10-sequence.git"
+repo: "https://github.com/code-423n4/2025-10-sequence"
 
 # Project is in a subfolder
 # subfolder: "orderbook-solidity"
-
+      
 # Custom documentation file (should be in current directory)
 custom_doc: "audit-docs/sequence-docs.md"
 
@@ -42,7 +42,7 @@ build_cmd: "npm i -g pnpm && pnpm i && forge build"
 #   - "script"
 
 # Optional: PoC configuration
-poc_instructions: "puppy-test.md"
+poc_instructions: "audit-docs/sequence-test.md"
 # poc_template: "poc-template.sol"
 # test_folder: "test"
 
