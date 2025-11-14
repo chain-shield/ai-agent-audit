@@ -47,26 +47,14 @@ fn anthropic_key_present() -> bool {
 
 #[tokio::test]
 async fn test_claude_4_5_with_thinking_enabled() {
-    // Load environment variables
-    dotenv().ok();
-
     // Skip if no Anthropic API key present
     if !anthropic_key_present() {
         eprintln!("⚠️ Skipping test_claude_4_5_with_thinking_enabled - no ANTHROPIC_API_KEY found");
         return;
     }
 
-    // Initialize logger (avoid panic if another test already set the logger)
-    let _ = env_logger::try_init();
-
-    // Initialize configuration from environment
-    init_config().expect("init_config() should succeed when Anthropic API key is present");
-
-    // Initialize LLM clients (use a static flag to avoid double-init errors in test suite)
-    static INIT_ONCE: std::sync::Once = std::sync::Once::new();
-    INIT_ONCE.call_once(|| {
-        init_llm_clients().expect("init_llm_clients() should succeed");
-    });
+    // Initialize runtime (dotenv, logger, config, clients) idempotently
+    ensure_runtime_initialized();
 
     println!("\n🧪 Testing Claude 4.5 Sonnet with extended thinking enabled...\n");
 
@@ -244,26 +232,14 @@ Return your response in this JSON format:
 
 #[tokio::test]
 async fn test_claude_thinking_vs_disabled() {
-    // Load environment variables
-    dotenv().ok();
-
     // Skip if no Anthropic API key present
     if !anthropic_key_present() {
         eprintln!("⚠️ Skipping test_claude_thinking_vs_disabled - no ANTHROPIC_API_KEY found");
         return;
     }
 
-    // Initialize logger
-    let _ = env_logger::try_init();
-
-    // Initialize configuration
-    init_config().expect("init_config() should succeed");
-
-    // Initialize LLM clients
-    static INIT_ONCE: std::sync::Once = std::sync::Once::new();
-    INIT_ONCE.call_once(|| {
-        init_llm_clients().expect("init_llm_clients() should succeed");
-    });
+    // Initialize runtime (dotenv, logger, config, clients) idempotently
+    ensure_runtime_initialized();
 
     println!("\n🧪 Comparing Claude 4.5 with thinking enabled vs disabled...\n");
 
