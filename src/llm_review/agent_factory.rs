@@ -6,7 +6,7 @@ use crate::ai_bot::file_picker::FilePickerTool;
 /// LLM providers (OpenAI, Anthropic, Gemini, DeepSeek) with consistent configuration
 /// and error handling.
 use crate::ai_bot::file_retrival::FileRetrievalTool;
-use crate::config::audit_config;
+use crate::config::{audit_config, OPENAI_MODEL};
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use rig::{
@@ -28,7 +28,7 @@ use std::sync::OnceLock;
 const VALID_THINKING_SETTING: &[&str] = &["enabled", "disabled"];
 
 /// Default OpenAI model for agents
-const DEFAULT_OPENAI_MODEL: &str = "gpt-5.1";
+const DEFAULT_OPENAI_MODEL: &str = OPENAI_MODEL;
 
 /// Valid OpenAI service tiers (for most accounts)
 /// - "auto": Let OpenAI choose automatically

@@ -84,6 +84,75 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
+/// @title LibOptim
+/// @author Agustin Aguilar
+/// @notice Library for optimized EVM operations
+library LibOptim {
+
+  /**
+   * @notice Computes the keccak256 hash of two 32-byte inputs.
+   * @dev It uses only scratch memory space.
+   * @param _a The first 32 bytes of the hash.
+   * @param _b The second 32 bytes of the hash.
+   * @return c The keccak256 hash of the two 32-byte inputs.
+   */
+  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
+    assembly {
+      mstore(0, _a)
+      mstore(32, _b)
+      c := keccak256(0, 64)
+    }
+  }
+
+  /**
+   * @notice Returns the return data from the last call.
+   * @return r The return data from the last call.
+   */
+  function returnData() internal pure returns (bytes memory r) {
+    assembly {
+      let size := returndatasize()
+      r := mload(0x40)
+      let start := add(r, 32)
+      mstore(0x40, add(start, size))
+      mstore(r, size)
+      returndatacopy(start, 0, size)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _val The value to send to the contract.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters, using delegatecall.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
 /// @title Library for reading data from bytes arrays
 /// @author Agustin Aguilar (aa@horizon.io), Michael Standen (mstan@horizon.io)
 /// @notice This library contains functions for reading data from bytes arrays.
@@ -198,75 +267,6 @@ library LibBytes {
     uint256 yParity = uint256(yParityAndS >> 255);
     s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
     v = uint8(yParity) + 27;
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title LibOptim
-/// @author Agustin Aguilar
-/// @notice Library for optimized EVM operations
-library LibOptim {
-
-  /**
-   * @notice Computes the keccak256 hash of two 32-byte inputs.
-   * @dev It uses only scratch memory space.
-   * @param _a The first 32 bytes of the hash.
-   * @param _b The second 32 bytes of the hash.
-   * @return c The keccak256 hash of the two 32-byte inputs.
-   */
-  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
-    assembly {
-      mstore(0, _a)
-      mstore(32, _b)
-      c := keccak256(0, 64)
-    }
-  }
-
-  /**
-   * @notice Returns the return data from the last call.
-   * @return r The return data from the last call.
-   */
-  function returnData() internal pure returns (bytes memory r) {
-    assembly {
-      let size := returndatasize()
-      r := mload(0x40)
-      let start := add(r, 32)
-      mstore(0x40, add(start, size))
-      mstore(r, size)
-      returndatacopy(start, 0, size)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _val The value to send to the contract.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters, using delegatecall.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
-    }
   }
 
 }
@@ -550,29 +550,42 @@ library Payload {
 
 }
 
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-/// @title IDelegatedExtension
-/// @author Agustin Aguilar
-/// @notice Interface for the delegated extension module
-interface IDelegatedExtension {
+import { Storage } from "./Storage.sol";
 
-  /// @notice Handle a sequence delegate call
-  /// @param _opHash The operation hash
-  /// @param _startingGas The starting gas
-  /// @param _index The index
-  /// @param _numCalls The number of calls
-  /// @param _space The space
-  /// @param _data The data
-  function handleSequenceDelegateCall(
-    bytes32 _opHash,
-    uint256 _startingGas,
-    uint256 _index,
-    uint256 _numCalls,
-    uint256 _space,
-    bytes calldata _data
-  ) external;
+abstract contract ReentrancyGuard {
+
+  bytes32 private constant _INITIAL_VALUE = bytes32(0);
+  bytes32 private constant _NOT_ENTERED = bytes32(uint256(1));
+  bytes32 private constant _ENTERED = bytes32(uint256(2));
+
+  /// @dev keccak256("org.sequence.module.reentrancyguard.status")
+  bytes32 private constant STATUS_KEY = bytes32(0xfc6e07e3992c7c3694a921dc9e412b6cfe475380556756a19805a9e3ddfe2fde);
+
+  /// @notice Error thrown when a reentrant call is detected
+  error ReentrantCall();
+
+  /// @notice Prevents a contract from calling itself, directly or indirectly
+  modifier nonReentrant() {
+    // On the first call to nonReentrant
+    // _status will be _NOT_ENTERED or _INITIAL_VALUE
+    if (Storage.readBytes32(STATUS_KEY) == _ENTERED) {
+      revert ReentrantCall();
+    }
+
+    // Any calls to nonReentrant after this point will fail
+    Storage.writeBytes32(STATUS_KEY, _ENTERED);
+
+    _;
+
+    // By storing the original value once again, a refund is triggered (see
+    // https://eips.ethereum.org/EIPS/eip-2200)
+    // Notice that because constructors are not available
+    // we always start with _INITIAL_VALUE, not _NOT_ENTERED
+    Storage.writeBytes32(STATUS_KEY, _NOT_ENTERED);
+  }
 
 }
 
@@ -697,45 +710,6 @@ abstract contract Calls is ReentrancyGuard, BaseAuth, Nonce {
 
       emit CallSucceeded(_opHash, i);
     }
-  }
-
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
-
-import { Storage } from "./Storage.sol";
-
-abstract contract ReentrancyGuard {
-
-  bytes32 private constant _INITIAL_VALUE = bytes32(0);
-  bytes32 private constant _NOT_ENTERED = bytes32(uint256(1));
-  bytes32 private constant _ENTERED = bytes32(uint256(2));
-
-  /// @dev keccak256("org.sequence.module.reentrancyguard.status")
-  bytes32 private constant STATUS_KEY = bytes32(0xfc6e07e3992c7c3694a921dc9e412b6cfe475380556756a19805a9e3ddfe2fde);
-
-  /// @notice Error thrown when a reentrant call is detected
-  error ReentrantCall();
-
-  /// @notice Prevents a contract from calling itself, directly or indirectly
-  modifier nonReentrant() {
-    // On the first call to nonReentrant
-    // _status will be _NOT_ENTERED or _INITIAL_VALUE
-    if (Storage.readBytes32(STATUS_KEY) == _ENTERED) {
-      revert ReentrantCall();
-    }
-
-    // Any calls to nonReentrant after this point will fail
-    Storage.writeBytes32(STATUS_KEY, _ENTERED);
-
-    _;
-
-    // By storing the original value once again, a refund is triggered (see
-    // https://eips.ethereum.org/EIPS/eip-2200)
-    // Notice that because constructors are not available
-    // we always start with _INITIAL_VALUE, not _NOT_ENTERED
-    Storage.writeBytes32(STATUS_KEY, _NOT_ENTERED);
   }
 
 }
@@ -961,6 +935,32 @@ contract Nonce {
       return;
     }
   }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+/// @title IDelegatedExtension
+/// @author Agustin Aguilar
+/// @notice Interface for the delegated extension module
+interface IDelegatedExtension {
+
+  /// @notice Handle a sequence delegate call
+  /// @param _opHash The operation hash
+  /// @param _startingGas The starting gas
+  /// @param _index The index
+  /// @param _numCalls The number of calls
+  /// @param _space The space
+  /// @param _data The data
+  function handleSequenceDelegateCall(
+    bytes32 _opHash,
+    uint256 _startingGas,
+    uint256 _index,
+    uint256 _numCalls,
+    uint256 _space,
+    bytes calldata _data
+  ) external;
 
 }
 

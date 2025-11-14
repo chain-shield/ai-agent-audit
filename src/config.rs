@@ -40,6 +40,8 @@ pub const MAX_PATTERN_LIBRARY: usize = 1;
 pub const MAX_PATTERN_NICHE: usize = 10;
 pub const MAX_PATTERN_GENERAL: usize = 1;
 
+pub const OPENAI_MODEL: &str = "gpt-5";
+
 pub const MAX_FILE_RUNS: usize = 1;
 
 pub const MAX_RAG_QUERY_CONTENT_LENGTH: usize = 8192; // 8192 token limit for embedding
