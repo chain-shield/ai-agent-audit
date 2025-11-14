@@ -128,6 +128,176 @@ contract Passkeys is ISapientCompact {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
+/// @notice Library to encode strings in Base64.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/Base64.sol)
+/// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/main/src/utils/Base64.sol)
+/// @author Modified from (https://github.com/Brechtpd/base64/blob/main/base64.sol) by Brecht Devos - <brecht@loopring.org>.
+library Base64 {
+
+  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
+  /// See: https://datatracker.ietf.org/doc/html/rfc4648
+  /// @param fileSafe  Whether to replace '+' with '-' and '/' with '_'.
+  /// @param noPadding Whether to strip away the padding.
+  function encode(bytes memory data, bool fileSafe, bool noPadding) internal pure returns (string memory result) {
+    /// @solidity memory-safe-assembly
+    assembly {
+      let dataLength := mload(data)
+
+      if dataLength {
+        // Multiply by 4/3 rounded up.
+        // The `shl(2, ...)` is equivalent to multiplying by 4.
+        let encodedLength := shl(2, div(add(dataLength, 2), 3))
+
+        // Set `result` to point to the start of the free memory.
+        result := mload(0x40)
+
+        // Store the table into the scratch space.
+        // Offsetted by -1 byte so that the `mload` will load the character.
+        // We will rewrite the free memory pointer at `0x40` later with
+        // the allocated size.
+        // The magic constant 0x0670 will turn "-_" into "+/".
+        mstore(0x1f, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef")
+        mstore(0x3f, xor("ghijklmnopqrstuvwxyz0123456789-_", mul(iszero(fileSafe), 0x0670)))
+
+        // Skip the first slot, which stores the length.
+        let ptr := add(result, 0x20)
+        let end := add(ptr, encodedLength)
+
+        let dataEnd := add(add(0x20, data), dataLength)
+        let dataEndValue := mload(dataEnd) // Cache the value at the `dataEnd` slot.
+        mstore(dataEnd, 0x00) // Zeroize the `dataEnd` slot to clear dirty bits.
+
+        // Run over the input, 3 bytes at a time.
+        for { } 1 { } {
+          data := add(data, 3) // Advance 3 bytes.
+          let input := mload(data)
+
+          // Write 4 bytes. Optimized for fewer stack operations.
+          mstore8(0, mload(and(shr(18, input), 0x3F)))
+          mstore8(1, mload(and(shr(12, input), 0x3F)))
+          mstore8(2, mload(and(shr(6, input), 0x3F)))
+          mstore8(3, mload(and(input, 0x3F)))
+          mstore(ptr, mload(0x00))
+
+          ptr := add(ptr, 4) // Advance 4 bytes.
+          if iszero(lt(ptr, end)) { break }
+        }
+        mstore(dataEnd, dataEndValue) // Restore the cached value at `dataEnd`.
+        mstore(0x40, add(end, 0x20)) // Allocate the memory.
+        // Equivalent to `o = [0, 2, 1][dataLength % 3]`.
+        let o := div(2, mod(dataLength, 3))
+        // Offset `ptr` and pad with '='. We can simply write over the end.
+        mstore(sub(ptr, o), shl(240, 0x3d3d))
+        // Set `o` to zero if there is padding.
+        o := mul(iszero(iszero(noPadding)), o)
+        mstore(sub(ptr, o), 0) // Zeroize the slot after the string.
+        mstore(result, sub(encodedLength, o)) // Store the length.
+      }
+    }
+  }
+
+  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
+  /// Equivalent to `encode(data, false, false)`.
+  function encode(
+    bytes memory data
+  ) internal pure returns (string memory result) {
+    result = encode(data, false, false);
+  }
+
+  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
+  /// Equivalent to `encode(data, fileSafe, false)`.
+  function encode(bytes memory data, bool fileSafe) internal pure returns (string memory result) {
+    result = encode(data, fileSafe, false);
+  }
+
+  /// @dev Decodes base64 encoded `data`.
+  ///
+  /// Supports:
+  /// - RFC 4648 (both standard and file-safe mode).
+  /// - RFC 3501 (63: ',').
+  ///
+  /// Does not support:
+  /// - Line breaks.
+  ///
+  /// Note: For performance reasons,
+  /// this function will NOT revert on invalid `data` inputs.
+  /// Outputs for invalid inputs will simply be undefined behaviour.
+  /// It is the user's responsibility to ensure that the `data`
+  /// is a valid base64 encoded string.
+  function decode(
+    string memory data
+  ) internal pure returns (bytes memory result) {
+    /// @solidity memory-safe-assembly
+    assembly {
+      let dataLength := mload(data)
+
+      if dataLength {
+        let decodedLength := mul(shr(2, dataLength), 3)
+
+        for { } 1 { } {
+          // If padded.
+          if iszero(and(dataLength, 3)) {
+            let t := xor(mload(add(data, dataLength)), 0x3d3d)
+            // forgefmt: disable-next-item
+            decodedLength := sub(
+                            decodedLength,
+                            add(iszero(byte(30, t)), iszero(byte(31, t)))
+                        )
+            break
+          }
+          // If non-padded.
+          decodedLength := add(decodedLength, sub(and(dataLength, 3), 1))
+          break
+        }
+        result := mload(0x40)
+
+        // Write the length of the bytes.
+        mstore(result, decodedLength)
+
+        // Skip the first slot, which stores the length.
+        let ptr := add(result, 0x20)
+        let end := add(ptr, decodedLength)
+
+        // Load the table into the scratch space.
+        // Constants are optimized for smaller bytecode with zero gas overhead.
+        // `m` also doubles as the mask of the upper 6 bits.
+        let m := 0xfc000000fc00686c7074787c8084888c9094989ca0a4a8acb0b4b8bcc0c4c8cc
+        mstore(0x5b, m)
+        mstore(0x3b, 0x04080c1014181c2024282c3034383c4044484c5054585c6064)
+        mstore(0x1a, 0xf8fcf800fcd0d4d8dce0e4e8ecf0f4)
+
+        for { } 1 { } {
+          // Read 4 bytes.
+          data := add(data, 4)
+          let input := mload(data)
+
+          // Write 3 bytes.
+          // forgefmt: disable-next-item
+          mstore(ptr, or(
+                        and(m, mload(byte(28, input))),
+                        shr(6, or(
+                            and(m, mload(byte(29, input))),
+                            shr(6, or(
+                                and(m, mload(byte(30, input))),
+                                shr(6, mload(byte(31, input)))
+                            ))
+                        ))
+                    ))
+          ptr := add(ptr, 3)
+          if iszero(lt(ptr, end)) { break }
+        }
+        mstore(0x40, add(end, 0x20)) // Allocate the memory.
+        mstore(end, 0) // Zeroize the slot after the bytes.
+        mstore(0x60, 0) // Restore the zero slot.
+      }
+    }
+  }
+
+}
+
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
@@ -245,160 +415,6 @@ library LibBytes {
     uint256 yParity = uint256(yParityAndS >> 255);
     s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
     v = uint8(yParity) + 27;
-  }
-
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
-
-/// @notice Gas optimized P256 wrapper.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/P256.sol)
-/// @author Modified from Daimo P256 Verifier (https://github.com/daimo-eth/p256-verifier/blob/master/src/P256.sol)
-/// @author Modified from OpenZeppelin (https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/cryptography/P256.sol)
-library P256 {
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                        CUSTOM ERRORS                       */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Unable to verify the P256 signature, due to missing
-  /// RIP-7212 P256 verifier precompile and missing Solidity P256 verifier.
-  error P256VerificationFailed();
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                         CONSTANTS                          */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Address of the Solidity P256 verifier.
-  /// Please make sure the contract is deployed onto the chain you are working on.
-  /// See: https://gist.github.com/Vectorized/599b0d8a94d21bc74700eb1354e2f55c
-  /// Unlike RIP-7212, this verifier returns `uint256(0)` on failure, to
-  /// facilitate easier existence check. This verifier will also never revert.
-  address internal constant VERIFIER = 0x000000000000D01eA45F9eFD5c54f037Fa57Ea1a;
-
-  /// @dev Address of the RIP-7212 P256 verifier precompile.
-  /// Currently, we don't support EIP-7212's precompile at 0x0b as it has not been finalized.
-  /// See: https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md
-  address internal constant RIP_PRECOMPILE = 0x0000000000000000000000000000000000000100;
-
-  /// @dev The order of the secp256r1 elliptic curve.
-  uint256 internal constant N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551;
-
-  /// @dev `N/2`. Used for checking the malleability of the signature.
-  uint256 private constant _HALF_N = 0x7fffffff800000007fffffffffffffffde737d56d38bcf4279dce5617e3192a8;
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                P256 VERIFICATION OPERATIONS                */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Returns if the signature (`r`, `s`) is valid for `hash` and public key (`x`, `y`).
-  /// Does NOT include the malleability check.
-  function verifySignatureAllowMalleability(
-    bytes32 hash,
-    bytes32 r,
-    bytes32 s,
-    bytes32 x,
-    bytes32 y
-  ) internal view returns (bool isValid) {
-    /// @solidity memory-safe-assembly
-    assembly {
-      let m := mload(0x40)
-      mstore(m, hash)
-      mstore(add(m, 0x20), r)
-      mstore(add(m, 0x40), s)
-      mstore(add(m, 0x60), x)
-      mstore(add(m, 0x80), y)
-      mstore(0x00, 0) // Zeroize the return slot before the staticcalls.
-      pop(staticcall(gas(), RIP_PRECOMPILE, m, 0xa0, 0x00, 0x20))
-      // RIP-7212 dictates that success returns `uint256(1)`.
-      // But failure returns zero returndata, which is ambiguous.
-      if iszero(returndatasize()) {
-        pop(staticcall(gas(), VERIFIER, m, 0xa0, returndatasize(), 0x20))
-        // Unlike RIP-7212, the verifier returns `uint256(0)` on failure,
-        // allowing us to use the returndatasize to determine existence.
-        if iszero(returndatasize()) {
-          mstore(returndatasize(), 0xd0d5039b) // `P256VerificationFailed()`.
-          revert(0x1c, 0x04)
-        }
-      }
-      isValid := eq(1, mload(0x00))
-    }
-  }
-
-  /// @dev Returns if the signature (`r`, `s`) is valid for `hash` and public key (`x`, `y`).
-  /// Includes the malleability check.
-  function verifySignature(
-    bytes32 hash,
-    bytes32 r,
-    bytes32 s,
-    bytes32 x,
-    bytes32 y
-  ) internal view returns (bool isValid) {
-    /// @solidity memory-safe-assembly
-    assembly {
-      let m := mload(0x40)
-      mstore(m, hash)
-      mstore(add(m, 0x20), r)
-      mstore(add(m, 0x40), s)
-      mstore(add(m, 0x60), x)
-      mstore(add(m, 0x80), y)
-      mstore(0x00, 0) // Zeroize the return slot before the staticcalls.
-      pop(staticcall(gas(), RIP_PRECOMPILE, m, 0xa0, 0x00, 0x20))
-      // RIP-7212 dictates that success returns `uint256(1)`.
-      // But failure returns zero returndata, which is ambiguous.
-      if iszero(returndatasize()) {
-        pop(staticcall(gas(), VERIFIER, m, 0xa0, returndatasize(), 0x20))
-        // Unlike RIP-7212, the verifier returns `uint256(0)` on failure,
-        // allowing us to use the returndatasize to determine existence.
-        if iszero(returndatasize()) {
-          mstore(returndatasize(), 0xd0d5039b) // `P256VerificationFailed()`.
-          revert(0x1c, 0x04)
-        }
-      }
-      // Optimize for happy path. Users are unlikely to pass in malleable signatures.
-      isValid := lt(gt(s, _HALF_N), eq(1, mload(0x00)))
-    }
-  }
-
-  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-  /*                      OTHER OPERATIONS                      */
-  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-  /// @dev Returns `s` normalized to the lower half of the curve.
-  function normalized(
-    bytes32 s
-  ) internal pure returns (bytes32 result) {
-    /// @solidity memory-safe-assembly
-    assembly {
-      result := xor(s, mul(xor(sub(N, s), s), gt(s, _HALF_N)))
-    }
-  }
-
-  /// @dev Helper function for `abi.decode(encoded, (bytes32, bytes32))`.
-  /// If `encoded.length < 64`, `(x, y)` will be `(0, 0)`, which is an invalid point.
-  function tryDecodePoint(
-    bytes memory encoded
-  ) internal pure returns (bytes32 x, bytes32 y) {
-    /// @solidity memory-safe-assembly
-    assembly {
-      let t := gt(mload(encoded), 0x3f)
-      x := mul(mload(add(encoded, 0x20)), t)
-      y := mul(mload(add(encoded, 0x40)), t)
-    }
-  }
-
-  /// @dev Helper function for `abi.decode(encoded, (bytes32, bytes32))`.
-  /// If `encoded.length < 64`, `(x, y)` will be `(0, 0)`, which is an invalid point.
-  function tryDecodePointCalldata(
-    bytes calldata encoded
-  ) internal pure returns (bytes32 x, bytes32 y) {
-    /// @solidity memory-safe-assembly
-    assembly {
-      let t := gt(encoded.length, 0x3f)
-      x := mul(calldataload(encoded.offset), t)
-      y := mul(calldataload(add(encoded.offset, 0x20)), t)
-    }
   }
 
 }
@@ -737,6 +753,160 @@ library WebAuthn {
 
 }
 
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
+/// @notice Gas optimized P256 wrapper.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/P256.sol)
+/// @author Modified from Daimo P256 Verifier (https://github.com/daimo-eth/p256-verifier/blob/master/src/P256.sol)
+/// @author Modified from OpenZeppelin (https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/cryptography/P256.sol)
+library P256 {
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                        CUSTOM ERRORS                       */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Unable to verify the P256 signature, due to missing
+  /// RIP-7212 P256 verifier precompile and missing Solidity P256 verifier.
+  error P256VerificationFailed();
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                         CONSTANTS                          */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Address of the Solidity P256 verifier.
+  /// Please make sure the contract is deployed onto the chain you are working on.
+  /// See: https://gist.github.com/Vectorized/599b0d8a94d21bc74700eb1354e2f55c
+  /// Unlike RIP-7212, this verifier returns `uint256(0)` on failure, to
+  /// facilitate easier existence check. This verifier will also never revert.
+  address internal constant VERIFIER = 0x000000000000D01eA45F9eFD5c54f037Fa57Ea1a;
+
+  /// @dev Address of the RIP-7212 P256 verifier precompile.
+  /// Currently, we don't support EIP-7212's precompile at 0x0b as it has not been finalized.
+  /// See: https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md
+  address internal constant RIP_PRECOMPILE = 0x0000000000000000000000000000000000000100;
+
+  /// @dev The order of the secp256r1 elliptic curve.
+  uint256 internal constant N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551;
+
+  /// @dev `N/2`. Used for checking the malleability of the signature.
+  uint256 private constant _HALF_N = 0x7fffffff800000007fffffffffffffffde737d56d38bcf4279dce5617e3192a8;
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                P256 VERIFICATION OPERATIONS                */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Returns if the signature (`r`, `s`) is valid for `hash` and public key (`x`, `y`).
+  /// Does NOT include the malleability check.
+  function verifySignatureAllowMalleability(
+    bytes32 hash,
+    bytes32 r,
+    bytes32 s,
+    bytes32 x,
+    bytes32 y
+  ) internal view returns (bool isValid) {
+    /// @solidity memory-safe-assembly
+    assembly {
+      let m := mload(0x40)
+      mstore(m, hash)
+      mstore(add(m, 0x20), r)
+      mstore(add(m, 0x40), s)
+      mstore(add(m, 0x60), x)
+      mstore(add(m, 0x80), y)
+      mstore(0x00, 0) // Zeroize the return slot before the staticcalls.
+      pop(staticcall(gas(), RIP_PRECOMPILE, m, 0xa0, 0x00, 0x20))
+      // RIP-7212 dictates that success returns `uint256(1)`.
+      // But failure returns zero returndata, which is ambiguous.
+      if iszero(returndatasize()) {
+        pop(staticcall(gas(), VERIFIER, m, 0xa0, returndatasize(), 0x20))
+        // Unlike RIP-7212, the verifier returns `uint256(0)` on failure,
+        // allowing us to use the returndatasize to determine existence.
+        if iszero(returndatasize()) {
+          mstore(returndatasize(), 0xd0d5039b) // `P256VerificationFailed()`.
+          revert(0x1c, 0x04)
+        }
+      }
+      isValid := eq(1, mload(0x00))
+    }
+  }
+
+  /// @dev Returns if the signature (`r`, `s`) is valid for `hash` and public key (`x`, `y`).
+  /// Includes the malleability check.
+  function verifySignature(
+    bytes32 hash,
+    bytes32 r,
+    bytes32 s,
+    bytes32 x,
+    bytes32 y
+  ) internal view returns (bool isValid) {
+    /// @solidity memory-safe-assembly
+    assembly {
+      let m := mload(0x40)
+      mstore(m, hash)
+      mstore(add(m, 0x20), r)
+      mstore(add(m, 0x40), s)
+      mstore(add(m, 0x60), x)
+      mstore(add(m, 0x80), y)
+      mstore(0x00, 0) // Zeroize the return slot before the staticcalls.
+      pop(staticcall(gas(), RIP_PRECOMPILE, m, 0xa0, 0x00, 0x20))
+      // RIP-7212 dictates that success returns `uint256(1)`.
+      // But failure returns zero returndata, which is ambiguous.
+      if iszero(returndatasize()) {
+        pop(staticcall(gas(), VERIFIER, m, 0xa0, returndatasize(), 0x20))
+        // Unlike RIP-7212, the verifier returns `uint256(0)` on failure,
+        // allowing us to use the returndatasize to determine existence.
+        if iszero(returndatasize()) {
+          mstore(returndatasize(), 0xd0d5039b) // `P256VerificationFailed()`.
+          revert(0x1c, 0x04)
+        }
+      }
+      // Optimize for happy path. Users are unlikely to pass in malleable signatures.
+      isValid := lt(gt(s, _HALF_N), eq(1, mload(0x00)))
+    }
+  }
+
+  /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+  /*                      OTHER OPERATIONS                      */
+  /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+  /// @dev Returns `s` normalized to the lower half of the curve.
+  function normalized(
+    bytes32 s
+  ) internal pure returns (bytes32 result) {
+    /// @solidity memory-safe-assembly
+    assembly {
+      result := xor(s, mul(xor(sub(N, s), s), gt(s, _HALF_N)))
+    }
+  }
+
+  /// @dev Helper function for `abi.decode(encoded, (bytes32, bytes32))`.
+  /// If `encoded.length < 64`, `(x, y)` will be `(0, 0)`, which is an invalid point.
+  function tryDecodePoint(
+    bytes memory encoded
+  ) internal pure returns (bytes32 x, bytes32 y) {
+    /// @solidity memory-safe-assembly
+    assembly {
+      let t := gt(mload(encoded), 0x3f)
+      x := mul(mload(add(encoded, 0x20)), t)
+      y := mul(mload(add(encoded, 0x40)), t)
+    }
+  }
+
+  /// @dev Helper function for `abi.decode(encoded, (bytes32, bytes32))`.
+  /// If `encoded.length < 64`, `(x, y)` will be `(0, 0)`, which is an invalid point.
+  function tryDecodePointCalldata(
+    bytes calldata encoded
+  ) internal pure returns (bytes32 x, bytes32 y) {
+    /// @solidity memory-safe-assembly
+    assembly {
+      let t := gt(encoded.length, 0x3f)
+      x := mul(calldataload(encoded.offset), t)
+      y := mul(calldataload(add(encoded.offset, 0x20)), t)
+    }
+  }
+
+}
+
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
@@ -801,176 +971,6 @@ library LibOptim {
   function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
     assembly {
       r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
-
-/// @notice Library to encode strings in Base64.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/Base64.sol)
-/// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/main/src/utils/Base64.sol)
-/// @author Modified from (https://github.com/Brechtpd/base64/blob/main/base64.sol) by Brecht Devos - <brecht@loopring.org>.
-library Base64 {
-
-  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
-  /// See: https://datatracker.ietf.org/doc/html/rfc4648
-  /// @param fileSafe  Whether to replace '+' with '-' and '/' with '_'.
-  /// @param noPadding Whether to strip away the padding.
-  function encode(bytes memory data, bool fileSafe, bool noPadding) internal pure returns (string memory result) {
-    /// @solidity memory-safe-assembly
-    assembly {
-      let dataLength := mload(data)
-
-      if dataLength {
-        // Multiply by 4/3 rounded up.
-        // The `shl(2, ...)` is equivalent to multiplying by 4.
-        let encodedLength := shl(2, div(add(dataLength, 2), 3))
-
-        // Set `result` to point to the start of the free memory.
-        result := mload(0x40)
-
-        // Store the table into the scratch space.
-        // Offsetted by -1 byte so that the `mload` will load the character.
-        // We will rewrite the free memory pointer at `0x40` later with
-        // the allocated size.
-        // The magic constant 0x0670 will turn "-_" into "+/".
-        mstore(0x1f, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef")
-        mstore(0x3f, xor("ghijklmnopqrstuvwxyz0123456789-_", mul(iszero(fileSafe), 0x0670)))
-
-        // Skip the first slot, which stores the length.
-        let ptr := add(result, 0x20)
-        let end := add(ptr, encodedLength)
-
-        let dataEnd := add(add(0x20, data), dataLength)
-        let dataEndValue := mload(dataEnd) // Cache the value at the `dataEnd` slot.
-        mstore(dataEnd, 0x00) // Zeroize the `dataEnd` slot to clear dirty bits.
-
-        // Run over the input, 3 bytes at a time.
-        for { } 1 { } {
-          data := add(data, 3) // Advance 3 bytes.
-          let input := mload(data)
-
-          // Write 4 bytes. Optimized for fewer stack operations.
-          mstore8(0, mload(and(shr(18, input), 0x3F)))
-          mstore8(1, mload(and(shr(12, input), 0x3F)))
-          mstore8(2, mload(and(shr(6, input), 0x3F)))
-          mstore8(3, mload(and(input, 0x3F)))
-          mstore(ptr, mload(0x00))
-
-          ptr := add(ptr, 4) // Advance 4 bytes.
-          if iszero(lt(ptr, end)) { break }
-        }
-        mstore(dataEnd, dataEndValue) // Restore the cached value at `dataEnd`.
-        mstore(0x40, add(end, 0x20)) // Allocate the memory.
-        // Equivalent to `o = [0, 2, 1][dataLength % 3]`.
-        let o := div(2, mod(dataLength, 3))
-        // Offset `ptr` and pad with '='. We can simply write over the end.
-        mstore(sub(ptr, o), shl(240, 0x3d3d))
-        // Set `o` to zero if there is padding.
-        o := mul(iszero(iszero(noPadding)), o)
-        mstore(sub(ptr, o), 0) // Zeroize the slot after the string.
-        mstore(result, sub(encodedLength, o)) // Store the length.
-      }
-    }
-  }
-
-  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
-  /// Equivalent to `encode(data, false, false)`.
-  function encode(
-    bytes memory data
-  ) internal pure returns (string memory result) {
-    result = encode(data, false, false);
-  }
-
-  /// @dev Encodes `data` using the base64 encoding described in RFC 4648.
-  /// Equivalent to `encode(data, fileSafe, false)`.
-  function encode(bytes memory data, bool fileSafe) internal pure returns (string memory result) {
-    result = encode(data, fileSafe, false);
-  }
-
-  /// @dev Decodes base64 encoded `data`.
-  ///
-  /// Supports:
-  /// - RFC 4648 (both standard and file-safe mode).
-  /// - RFC 3501 (63: ',').
-  ///
-  /// Does not support:
-  /// - Line breaks.
-  ///
-  /// Note: For performance reasons,
-  /// this function will NOT revert on invalid `data` inputs.
-  /// Outputs for invalid inputs will simply be undefined behaviour.
-  /// It is the user's responsibility to ensure that the `data`
-  /// is a valid base64 encoded string.
-  function decode(
-    string memory data
-  ) internal pure returns (bytes memory result) {
-    /// @solidity memory-safe-assembly
-    assembly {
-      let dataLength := mload(data)
-
-      if dataLength {
-        let decodedLength := mul(shr(2, dataLength), 3)
-
-        for { } 1 { } {
-          // If padded.
-          if iszero(and(dataLength, 3)) {
-            let t := xor(mload(add(data, dataLength)), 0x3d3d)
-            // forgefmt: disable-next-item
-            decodedLength := sub(
-                            decodedLength,
-                            add(iszero(byte(30, t)), iszero(byte(31, t)))
-                        )
-            break
-          }
-          // If non-padded.
-          decodedLength := add(decodedLength, sub(and(dataLength, 3), 1))
-          break
-        }
-        result := mload(0x40)
-
-        // Write the length of the bytes.
-        mstore(result, decodedLength)
-
-        // Skip the first slot, which stores the length.
-        let ptr := add(result, 0x20)
-        let end := add(ptr, decodedLength)
-
-        // Load the table into the scratch space.
-        // Constants are optimized for smaller bytecode with zero gas overhead.
-        // `m` also doubles as the mask of the upper 6 bits.
-        let m := 0xfc000000fc00686c7074787c8084888c9094989ca0a4a8acb0b4b8bcc0c4c8cc
-        mstore(0x5b, m)
-        mstore(0x3b, 0x04080c1014181c2024282c3034383c4044484c5054585c6064)
-        mstore(0x1a, 0xf8fcf800fcd0d4d8dce0e4e8ecf0f4)
-
-        for { } 1 { } {
-          // Read 4 bytes.
-          data := add(data, 4)
-          let input := mload(data)
-
-          // Write 3 bytes.
-          // forgefmt: disable-next-item
-          mstore(ptr, or(
-                        and(m, mload(byte(28, input))),
-                        shr(6, or(
-                            and(m, mload(byte(29, input))),
-                            shr(6, or(
-                                and(m, mload(byte(30, input))),
-                                shr(6, mload(byte(31, input)))
-                            ))
-                        ))
-                    ))
-          ptr := add(ptr, 3)
-          if iszero(lt(ptr, end)) { break }
-        }
-        mstore(0x40, add(end, 0x20)) // Allocate the memory.
-        mstore(end, 0) // Zeroize the slot after the bytes.
-        mstore(0x60, 0) // Restore the zero slot.
-      }
     }
   }
 
