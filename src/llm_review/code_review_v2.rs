@@ -1,6 +1,6 @@
 use super::{enums::AIAgent, phases};
 use crate::config::{
-    CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE,
+    CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE, OPENAI_MODEL,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
@@ -56,7 +56,7 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these failed
-    let custom_scoped_contracts = Some(vec!["Calls".to_string()]);
+    let custom_scoped_contracts = Some(vec!["BaseSig".to_string()]);
     // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     let (ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent) =
@@ -264,7 +264,7 @@ rigorous PoC tests that validate the findings.";
 
     // Create verification agent using OpenAI O3
     let verify_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.1")
+        .with_model(OPENAI_MODEL)
         .with_preamble(verify_preamble)
         .with_openai_reasoning_effort("medium")
         .with_file_picker(false); // Disabled to avoid rate limits
@@ -294,7 +294,7 @@ rigorous PoC tests that validate the findings.";
     //     .with_file_retrieval(false);
 
     let discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.1")
+        .with_model(OPENAI_MODEL)
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
         .with_openai_reasoning_effort("high")

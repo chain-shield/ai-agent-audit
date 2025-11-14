@@ -141,420 +141,121 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import { Payload } from "../../modules/Payload.sol";
-import { LibBytes } from "../../utils/LibBytes.sol";
-import { LibOptim } from "../../utils/LibOptim.sol";
-import { SessionErrors } from "./SessionErrors.sol";
-import { SessionPermissions } from "./explicit/IExplicitSessionManager.sol";
-import { LibPermission, Permission } from "./explicit/Permission.sol";
-import { Attestation, LibAttestation } from "./implicit/Attestation.sol";
+import { LibBytes } from "../../../utils/LibBytes.sol";
+import { ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX } from "./ISignalsImplicitMode.sol";
 
 using LibBytes for bytes;
-using LibAttestation for Attestation;
 
-/// @title SessionSig
-/// @author Michael Standen, Agustin Aguilar
-/// @notice Library for session signatures
-library SessionSig {
+/// @notice Attestation for a specific session
+/// @param approvedSigner Address of the approved signer
+/// @param identityType Identity type
+/// @param issuerHash Hash of the issuer
+/// @param audienceHash Hash of the audience
+/// @param applicationData Unspecified application data
+/// @param authData Auth data
+struct Attestation {
+  address approvedSigner;
+  bytes4 identityType;
+  bytes32 issuerHash;
+  bytes32 audienceHash;
+  bytes applicationData;
+  AuthData authData;
+}
 
-  uint256 internal constant FLAG_PERMISSIONS = 0;
-  uint256 internal constant FLAG_NODE = 1;
-  uint256 internal constant FLAG_BRANCH = 2;
-  uint256 internal constant FLAG_BLACKLIST = 3;
-  uint256 internal constant FLAG_IDENTITY_SIGNER = 4;
+/// @notice Auth data for an attestation
+/// @param redirectUrl Authorization redirect URL
+/// @param issuedAt Timestamp of the attestation issuance
+struct AuthData {
+  string redirectUrl;
+  uint64 issuedAt;
+}
 
-  uint256 internal constant MIN_ENCODED_PERMISSION_SIZE = 94;
+/// @title LibAttestation
+/// @author Michael Standen
+/// @notice Library for attestation management
+library LibAttestation {
 
-  /// @notice Call signature for a specific session
-  /// @param isImplicit If the call is implicit
-  /// @param sessionSigner Address of the session signer
-  /// @param sessionPermission Session permission for explicit calls
-  /// @param attestation Attestation for implicit calls
-  struct CallSignature {
-    bool isImplicit;
-    address sessionSigner;
-    uint8 sessionPermission;
-    Attestation attestation;
+  /// @notice Hashes an attestation
+  function toHash(
+    Attestation memory attestation
+  ) internal pure returns (bytes32) {
+    return keccak256(toPacked(attestation));
   }
 
-  /// @notice Decoded signature for a specific session
-  /// @param imageHash Derived configuration image hash
-  /// @param identitySigner Identity signer address
-  /// @param implicitBlacklist Implicit blacklist addresses
-  /// @param sessionPermissions Session permissions for each explicit signer
-  /// @param callSignatures Call signatures for each call in the payload
-  struct DecodedSignature {
-    bytes32 imageHash;
-    address identitySigner;
-    address[] implicitBlacklist;
-    SessionPermissions[] sessionPermissions;
-    CallSignature[] callSignatures;
-  }
-
-  /// @notice Recovers the decoded signature from the encodedSignature bytes.
-  /// @dev The encoded layout is conceptually separated into three parts:
-  ///  1) Session Configuration
-  ///  2) A reusable list of Attestations + their identity signatures (if any implicit calls exist)
-  ///  3) Call Signatures (one per call in the payload)
-  ///
-  /// High-level layout:
-  ///  - session_configuration: [uint24 size, <Session Configuration encoded>]
-  ///  - attestation_list: [uint8 attestationCount, (Attestation + identitySig) * attestationCount]
-  ///    (new section to allow reusing the same Attestation across multiple calls)
-  ///  - call_signatures: [<CallSignature encoded>] - Size is payload.calls.length
-  ///    - call_signature: [uint8 call_flags, <session_signature>]
-  ///      - call_flags: [bool is_implicit (MSB), 7 bits encoded]
-  ///      - if call_flags.is_implicit.MSB == 1:
-  ///         - attestation_index: [uint8 index into the attestation list (7 bits of the call_flags)]
-  ///         - session_signature: [r, s, v (compact)]
-  ///      - if call_flags.is_implicit.MSB == 0:
-  ///         - session_permission: [uint8 (7 bits of the call_flags)]
-  ///         - session_signature: [r, s, v (compact)]
-  function recoverSignature(
-    Payload.Decoded calldata payload,
-    bytes calldata encodedSignature
-  ) internal view returns (DecodedSignature memory sig) {
-    uint256 pointer = 0;
-    bool hasBlacklistInConfig;
-
-    // ----- Session Configuration -----
-    {
-      // First read the length of the session configuration bytes (uint24)
-      uint256 dataSize;
-      (dataSize, pointer) = encodedSignature.readUint24(pointer);
-
-      // Recover the session configuration
-      (sig, hasBlacklistInConfig) = recoverConfiguration(encodedSignature[pointer:pointer + dataSize]);
-      pointer += dataSize;
-
-      // Identity signer must be set
-      if (sig.identitySigner == address(0)) {
-        revert SessionErrors.InvalidIdentitySigner();
-      }
-    }
-
-    // ----- Attestations for implicit calls -----
-    Attestation[] memory attestationList;
-    {
-      uint8 attestationCount;
-      (attestationCount, pointer) = encodedSignature.readUint8(pointer);
-      attestationList = new Attestation[](attestationCount);
-      // Parse each attestation and its identity signature, store in memory
-      for (uint256 i = 0; i < attestationCount; i++) {
-        Attestation memory att;
-        (att, pointer) = LibAttestation.fromPacked(encodedSignature, pointer);
-
-        // Read the identity signature that approves this attestation
-        {
-          bytes32 r;
-          bytes32 s;
-          uint8 v;
-          (r, s, v, pointer) = encodedSignature.readRSVCompact(pointer);
-
-          // Recover the identity signer from the attestation identity signature
-          bytes32 attestationHash = att.toHash();
-          address recoveredIdentitySigner = ecrecover(attestationHash, v, r, s);
-          if (recoveredIdentitySigner != sig.identitySigner) {
-            revert SessionErrors.InvalidIdentitySigner();
-          }
-        }
-
-        attestationList[i] = att;
-      }
-
-      // If we have any implicit calls, we must have a blacklist in the configuration
-      if (attestationCount > 0 && !hasBlacklistInConfig) {
-        revert SessionErrors.InvalidBlacklist();
-      }
-    }
-
-    // ----- Call Signatures -----
-    {
-      uint256 callsCount = payload.calls.length;
-      sig.callSignatures = new CallSignature[](callsCount);
-
-      for (uint256 i = 0; i < callsCount; i++) {
-        CallSignature memory callSignature;
-
-        // Determine signature type
-        {
-          uint8 flag;
-          (flag, pointer) = encodedSignature.readUint8(pointer);
-          callSignature.isImplicit = (flag & 0x80) != 0;
-
-          if (callSignature.isImplicit) {
-            // Read attestation index from the call_flags
-            uint8 attestationIndex = uint8(flag & 0x7f);
-
-            // Check if the attestation index is out of range
-            if (attestationIndex >= attestationList.length) {
-              revert SessionErrors.InvalidAttestation();
-            }
-
-            // Set the attestation
-            callSignature.attestation = attestationList[attestationIndex];
-          } else {
-            // Session permission index is the entire byte, top bit is 0 => no conflict
-            callSignature.sessionPermission = flag;
-          }
-        }
-
-        // Read session signature and recover the signer
-        {
-          bytes32 r;
-          bytes32 s;
-          uint8 v;
-          (r, s, v, pointer) = encodedSignature.readRSVCompact(pointer);
-
-          bytes32 callHash = hashCallWithReplayProtection(payload, i);
-          callSignature.sessionSigner = ecrecover(callHash, v, r, s);
-          if (callSignature.sessionSigner == address(0)) {
-            revert SessionErrors.InvalidSessionSigner(address(0));
-          }
-        }
-
-        sig.callSignatures[i] = callSignature;
-      }
-    }
-
-    return sig;
-  }
-
-  /// @notice Recovers the session configuration from the encoded data.
-  /// The encoded layout is:
-  /// - permissions_count: [uint8]
-  /// - permissions_tree_element: [flag, <data>]
-  ///   - flag: [uint8]
-  ///   - data: [data]
-  ///     - if flag == FLAG_PERMISSIONS: [SessionPermissions encoded]
-  ///     - if flag == FLAG_NODE: [bytes32 node]
-  ///     - if flag == FLAG_BRANCH: [uint256 size, nested encoding...]
-  ///     - if flag == FLAG_BLACKLIST: [uint24 blacklist_count, blacklist_addresses...]
-  ///     - if flag == FLAG_IDENTITY_SIGNER: [address identity_signer]
-  /// @dev A valid configuration must have exactly one identity signer and at most one blacklist.
-  function recoverConfiguration(
-    bytes calldata encoded
-  ) internal pure returns (DecodedSignature memory sig, bool hasBlacklist) {
-    uint256 pointer;
-    uint256 permissionsCount;
-
-    // Guess maximum permissions size by bytes length
-    {
-      uint256 maxPermissionsSize = encoded.length / MIN_ENCODED_PERMISSION_SIZE;
-      sig.sessionPermissions = new SessionPermissions[](maxPermissionsSize);
-    }
-
-    while (pointer < encoded.length) {
-      // First byte is the flag (top 4 bits) and additional data (bottom 4 bits)
-      uint256 firstByte;
-      (firstByte, pointer) = encoded.readUint8(pointer);
-      // The top 4 bits are the flag
-      uint256 flag = (firstByte & 0xf0) >> 4;
-
-      // Permissions configuration (0x00)
-      if (flag == FLAG_PERMISSIONS) {
-        SessionPermissions memory nodePermissions;
-        uint256 pointerStart = pointer;
-
-        // Read signer
-        (nodePermissions.signer, pointer) = encoded.readAddress(pointer);
-
-        // Read chainId
-        (nodePermissions.chainId, pointer) = encoded.readUint256(pointer);
-
-        // Read value limit
-        (nodePermissions.valueLimit, pointer) = encoded.readUint256(pointer);
-
-        // Read deadline
-        (nodePermissions.deadline, pointer) = encoded.readUint64(pointer);
-
-        // Read permissions array
-        (nodePermissions.permissions, pointer) = _decodePermissions(encoded, pointer);
-
-        // Update root
-        {
-          bytes32 permissionHash = _leafHashForPermissions(encoded[pointerStart:pointer]);
-          sig.imageHash =
-            sig.imageHash != bytes32(0) ? LibOptim.fkeccak256(sig.imageHash, permissionHash) : permissionHash;
-        }
-
-        // Push node permissions to the permissions array
-        sig.sessionPermissions[permissionsCount++] = nodePermissions;
-        continue;
-      }
-
-      // Node (0x01)
-      if (flag == FLAG_NODE) {
-        // Read pre-hashed node
-        bytes32 node;
-        (node, pointer) = encoded.readBytes32(pointer);
-
-        // Update root
-        sig.imageHash = sig.imageHash != bytes32(0) ? LibOptim.fkeccak256(sig.imageHash, node) : node;
-
-        continue;
-      }
-
-      // Branch (0x02)
-      if (flag == FLAG_BRANCH) {
-        // Read branch size
-        uint256 size;
-        {
-          uint256 sizeSize = uint8(firstByte & 0x0f);
-          (size, pointer) = encoded.readUintX(pointer, sizeSize);
-        }
-        // Process branch
-        uint256 nrindex = pointer + size;
-        (DecodedSignature memory branchSig, bool branchHasBlacklist) = recoverConfiguration(encoded[pointer:nrindex]);
-        pointer = nrindex;
-
-        // Store the branch blacklist
-        if (branchHasBlacklist) {
-          if (hasBlacklist) {
-            // Blacklist already set
-            revert SessionErrors.InvalidBlacklist();
-          }
-          hasBlacklist = true;
-          sig.implicitBlacklist = branchSig.implicitBlacklist;
-        }
-
-        // Store the branch identity signer
-        if (branchSig.identitySigner != address(0)) {
-          if (sig.identitySigner != address(0)) {
-            // Identity signer already set
-            revert SessionErrors.InvalidIdentitySigner();
-          }
-          sig.identitySigner = branchSig.identitySigner;
-        }
-
-        // Push all branch permissions to the permissions array
-        for (uint256 i = 0; i < branchSig.sessionPermissions.length; i++) {
-          sig.sessionPermissions[permissionsCount++] = branchSig.sessionPermissions[i];
-        }
-
-        // Update root
-        sig.imageHash =
-          sig.imageHash != bytes32(0) ? LibOptim.fkeccak256(sig.imageHash, branchSig.imageHash) : branchSig.imageHash;
-
-        continue;
-      }
-
-      // Blacklist (0x03)
-      if (flag == FLAG_BLACKLIST) {
-        if (hasBlacklist) {
-          // Blacklist already set
-          revert SessionErrors.InvalidBlacklist();
-        }
-        hasBlacklist = true;
-
-        // Read the blacklist count from the first byte's lower 4 bits
-        uint256 blacklistCount = uint256(firstByte & 0x0f);
-        if (blacklistCount == 0x0f) {
-          // If it's max nibble, read the next 2 bytes for the actual size
-          (blacklistCount, pointer) = encoded.readUint16(pointer);
-        }
-        uint256 pointerStart = pointer;
-
-        // Read the blacklist addresses
-        sig.implicitBlacklist = new address[](blacklistCount);
-        address previousAddress;
-        for (uint256 i = 0; i < blacklistCount; i++) {
-          (sig.implicitBlacklist[i], pointer) = encoded.readAddress(pointer);
-          if (sig.implicitBlacklist[i] < previousAddress) {
-            revert SessionErrors.InvalidBlacklistUnsorted();
-          }
-          previousAddress = sig.implicitBlacklist[i];
-        }
-
-        // Update the root
-        bytes32 blacklistHash = _leafHashForBlacklist(encoded[pointerStart:pointer]);
-        sig.imageHash = sig.imageHash != bytes32(0) ? LibOptim.fkeccak256(sig.imageHash, blacklistHash) : blacklistHash;
-
-        continue;
-      }
-
-      // Identity signer (0x04)
-      if (flag == FLAG_IDENTITY_SIGNER) {
-        if (sig.identitySigner != address(0)) {
-          // Identity signer already set
-          revert SessionErrors.InvalidIdentitySigner();
-        }
-        (sig.identitySigner, pointer) = encoded.readAddress(pointer);
-
-        // Update the root
-        bytes32 identitySignerHash = _leafHashForIdentitySigner(sig.identitySigner);
-        sig.imageHash =
-          sig.imageHash != bytes32(0) ? LibOptim.fkeccak256(sig.imageHash, identitySignerHash) : identitySignerHash;
-
-        continue;
-      }
-
-      revert SessionErrors.InvalidNodeType(flag);
-    }
-
-    {
-      // Update the permissions array length to the actual count
-      SessionPermissions[] memory permissions = sig.sessionPermissions;
-      assembly {
-        mstore(permissions, permissionsCount)
-      }
-    }
-
-    return (sig, hasBlacklist);
-  }
-
-  /// @notice Decodes an array of Permission objects from the encoded data.
-  function _decodePermissions(
+  /// @notice Decodes an attestation from a packed bytes array
+  /// @param encoded The packed bytes array
+  /// @param pointer The pointer to the start of the attestation
+  /// @return attestation The decoded attestation
+  /// @return newPointer The new pointer to the end of the attestation
+  function fromPacked(
     bytes calldata encoded,
     uint256 pointer
-  ) internal pure returns (Permission[] memory permissions, uint256 newPointer) {
-    uint256 length;
-    (length, pointer) = encoded.readUint8(pointer);
-    permissions = new Permission[](length);
-    for (uint256 i = 0; i < length; i++) {
-      (permissions[i], pointer) = LibPermission.readPermission(encoded, pointer);
-    }
-    return (permissions, pointer);
+  ) internal pure returns (Attestation memory attestation, uint256 newPointer) {
+    newPointer = pointer;
+    (attestation.approvedSigner, newPointer) = encoded.readAddress(newPointer);
+    (attestation.identityType, newPointer) = encoded.readBytes4(newPointer);
+    (attestation.issuerHash, newPointer) = encoded.readBytes32(newPointer);
+    (attestation.audienceHash, newPointer) = encoded.readBytes32(newPointer);
+    // Application data (arbitrary bytes)
+    uint256 dataSize;
+    (dataSize, newPointer) = encoded.readUint24(newPointer);
+    attestation.applicationData = encoded[newPointer:newPointer + dataSize];
+    newPointer += dataSize;
+    // Auth data
+    (attestation.authData, newPointer) = fromPackedAuthData(encoded, newPointer);
+    return (attestation, newPointer);
   }
 
-  /// @notice Hashes the encoded session permissions into a leaf node.
-  function _leafHashForPermissions(
-    bytes calldata encodedPermissions
-  ) internal pure returns (bytes32) {
-    return keccak256(abi.encodePacked(uint8(FLAG_PERMISSIONS), encodedPermissions));
+  /// @notice Decodes the auth data from a packed bytes
+  /// @param encoded The packed bytes containing the auth data
+  /// @param pointer The pointer to the start of the auth data within the encoded data
+  /// @return authData The decoded auth data
+  /// @return newPointer The pointer to the end of the auth data within the encoded data
+  function fromPackedAuthData(
+    bytes calldata encoded,
+    uint256 pointer
+  ) internal pure returns (AuthData memory authData, uint256 newPointer) {
+    uint24 redirectUrlLength;
+    (redirectUrlLength, pointer) = encoded.readUint24(pointer);
+    authData.redirectUrl = string(encoded[pointer:pointer + redirectUrlLength]);
+    pointer += redirectUrlLength;
+    (authData.issuedAt, pointer) = encoded.readUint64(pointer);
+    return (authData, pointer);
   }
 
-  /// @notice Hashes the encoded blacklist into a leaf node.
-  function _leafHashForBlacklist(
-    bytes calldata encodedBlacklist
-  ) internal pure returns (bytes32) {
-    return keccak256(abi.encodePacked(uint8(FLAG_BLACKLIST), encodedBlacklist));
+  /// @notice Encodes an attestation into a packed bytes array
+  /// @param attestation The attestation to encode
+  /// @return encoded The packed bytes array
+  function toPacked(
+    Attestation memory attestation
+  ) internal pure returns (bytes memory encoded) {
+    return abi.encodePacked(
+      attestation.approvedSigner,
+      attestation.identityType,
+      attestation.issuerHash,
+      attestation.audienceHash,
+      uint24(attestation.applicationData.length),
+      attestation.applicationData,
+      toPackAuthData(attestation.authData)
+    );
   }
 
-  /// @notice Hashes the identity signer into a leaf node.
-  function _leafHashForIdentitySigner(
-    address identitySigner
-  ) internal pure returns (bytes32) {
-    return keccak256(abi.encodePacked(uint8(FLAG_IDENTITY_SIGNER), identitySigner));
+  /// @notice Encodes the auth data into a packed bytes array
+  /// @param authData The auth data to encode
+  /// @return encoded The packed bytes array
+  function toPackAuthData(
+    AuthData memory authData
+  ) internal pure returns (bytes memory encoded) {
+    return abi.encodePacked(uint24(bytes(authData.redirectUrl).length), bytes(authData.redirectUrl), authData.issuedAt);
   }
 
-  /// @notice Hashes a call with replay protection.
-  /// @dev The replay protection is based on the chainId, space, nonce and index in the payload.
-  /// @param payload The payload to hash
-  /// @param callIdx The index of the call to hash
-  /// @return callHash The hash of the call with replay protection
-  function hashCallWithReplayProtection(
-    Payload.Decoded calldata payload,
-    uint256 callIdx
-  ) public view returns (bytes32 callHash) {
+  /// @notice Generates the implicit request magic return value
+  /// @param attestation The attestation
+  /// @param wallet The wallet
+  /// @return magic The expected implicit request magic
+  function generateImplicitRequestMagic(Attestation memory attestation, address wallet) internal pure returns (bytes32) {
     return keccak256(
-      abi.encodePacked(
-        payload.noChainId ? 0 : block.chainid,
-        payload.space,
-        payload.nonce,
-        callIdx,
-        Payload.hashCall(payload.calls[callIdx])
-      )
+      abi.encodePacked(ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX, wallet, attestation.audienceHash, attestation.issuerHash)
     );
   }
 
@@ -776,129 +477,6 @@ abstract contract PermissionValidator {
     }
 
     return (true, newUsageLimits);
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { LibBytes } from "../../../utils/LibBytes.sol";
-import { ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX } from "./ISignalsImplicitMode.sol";
-
-using LibBytes for bytes;
-
-/// @notice Attestation for a specific session
-/// @param approvedSigner Address of the approved signer
-/// @param identityType Identity type
-/// @param issuerHash Hash of the issuer
-/// @param audienceHash Hash of the audience
-/// @param applicationData Unspecified application data
-/// @param authData Auth data
-struct Attestation {
-  address approvedSigner;
-  bytes4 identityType;
-  bytes32 issuerHash;
-  bytes32 audienceHash;
-  bytes applicationData;
-  AuthData authData;
-}
-
-/// @notice Auth data for an attestation
-/// @param redirectUrl Authorization redirect URL
-/// @param issuedAt Timestamp of the attestation issuance
-struct AuthData {
-  string redirectUrl;
-  uint64 issuedAt;
-}
-
-/// @title LibAttestation
-/// @author Michael Standen
-/// @notice Library for attestation management
-library LibAttestation {
-
-  /// @notice Hashes an attestation
-  function toHash(
-    Attestation memory attestation
-  ) internal pure returns (bytes32) {
-    return keccak256(toPacked(attestation));
-  }
-
-  /// @notice Decodes an attestation from a packed bytes array
-  /// @param encoded The packed bytes array
-  /// @param pointer The pointer to the start of the attestation
-  /// @return attestation The decoded attestation
-  /// @return newPointer The new pointer to the end of the attestation
-  function fromPacked(
-    bytes calldata encoded,
-    uint256 pointer
-  ) internal pure returns (Attestation memory attestation, uint256 newPointer) {
-    newPointer = pointer;
-    (attestation.approvedSigner, newPointer) = encoded.readAddress(newPointer);
-    (attestation.identityType, newPointer) = encoded.readBytes4(newPointer);
-    (attestation.issuerHash, newPointer) = encoded.readBytes32(newPointer);
-    (attestation.audienceHash, newPointer) = encoded.readBytes32(newPointer);
-    // Application data (arbitrary bytes)
-    uint256 dataSize;
-    (dataSize, newPointer) = encoded.readUint24(newPointer);
-    attestation.applicationData = encoded[newPointer:newPointer + dataSize];
-    newPointer += dataSize;
-    // Auth data
-    (attestation.authData, newPointer) = fromPackedAuthData(encoded, newPointer);
-    return (attestation, newPointer);
-  }
-
-  /// @notice Decodes the auth data from a packed bytes
-  /// @param encoded The packed bytes containing the auth data
-  /// @param pointer The pointer to the start of the auth data within the encoded data
-  /// @return authData The decoded auth data
-  /// @return newPointer The pointer to the end of the auth data within the encoded data
-  function fromPackedAuthData(
-    bytes calldata encoded,
-    uint256 pointer
-  ) internal pure returns (AuthData memory authData, uint256 newPointer) {
-    uint24 redirectUrlLength;
-    (redirectUrlLength, pointer) = encoded.readUint24(pointer);
-    authData.redirectUrl = string(encoded[pointer:pointer + redirectUrlLength]);
-    pointer += redirectUrlLength;
-    (authData.issuedAt, pointer) = encoded.readUint64(pointer);
-    return (authData, pointer);
-  }
-
-  /// @notice Encodes an attestation into a packed bytes array
-  /// @param attestation The attestation to encode
-  /// @return encoded The packed bytes array
-  function toPacked(
-    Attestation memory attestation
-  ) internal pure returns (bytes memory encoded) {
-    return abi.encodePacked(
-      attestation.approvedSigner,
-      attestation.identityType,
-      attestation.issuerHash,
-      attestation.audienceHash,
-      uint24(attestation.applicationData.length),
-      attestation.applicationData,
-      toPackAuthData(attestation.authData)
-    );
-  }
-
-  /// @notice Encodes the auth data into a packed bytes array
-  /// @param authData The auth data to encode
-  /// @return encoded The packed bytes array
-  function toPackAuthData(
-    AuthData memory authData
-  ) internal pure returns (bytes memory encoded) {
-    return abi.encodePacked(uint24(bytes(authData.redirectUrl).length), bytes(authData.redirectUrl), authData.issuedAt);
-  }
-
-  /// @notice Generates the implicit request magic return value
-  /// @param attestation The attestation
-  /// @param wallet The wallet
-  /// @return magic The expected implicit request magic
-  function generateImplicitRequestMagic(Attestation memory attestation, address wallet) internal pure returns (bytes32) {
-    return keccak256(
-      abi.encodePacked(ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX, wallet, attestation.audienceHash, attestation.issuerHash)
-    );
   }
 
 }
@@ -1357,75 +935,6 @@ abstract contract ExplicitSessionManager is IExplicitSessionManager, PermissionV
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
-/// @title LibOptim
-/// @author Agustin Aguilar
-/// @notice Library for optimized EVM operations
-library LibOptim {
-
-  /**
-   * @notice Computes the keccak256 hash of two 32-byte inputs.
-   * @dev It uses only scratch memory space.
-   * @param _a The first 32 bytes of the hash.
-   * @param _b The second 32 bytes of the hash.
-   * @return c The keccak256 hash of the two 32-byte inputs.
-   */
-  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
-    assembly {
-      mstore(0, _a)
-      mstore(32, _b)
-      c := keccak256(0, 64)
-    }
-  }
-
-  /**
-   * @notice Returns the return data from the last call.
-   * @return r The return data from the last call.
-   */
-  function returnData() internal pure returns (bytes memory r) {
-    assembly {
-      let size := returndatasize()
-      r := mload(0x40)
-      let start := add(r, 32)
-      mstore(0x40, add(start, size))
-      mstore(r, size)
-      returndatacopy(start, 0, size)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _val The value to send to the contract.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters, using delegatecall.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
 /// @title Library for reading data from bytes arrays
 /// @author Agustin Aguilar (aa@horizon.io), Michael Standen (mstan@horizon.io)
 /// @notice This library contains functions for reading data from bytes arrays.
@@ -1540,6 +1049,497 @@ library LibBytes {
     uint256 yParity = uint256(yParityAndS >> 255);
     s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
     v = uint8(yParity) + 27;
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title LibOptim
+/// @author Agustin Aguilar
+/// @notice Library for optimized EVM operations
+library LibOptim {
+
+  /**
+   * @notice Computes the keccak256 hash of two 32-byte inputs.
+   * @dev It uses only scratch memory space.
+   * @param _a The first 32 bytes of the hash.
+   * @param _b The second 32 bytes of the hash.
+   * @return c The keccak256 hash of the two 32-byte inputs.
+   */
+  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
+    assembly {
+      mstore(0, _a)
+      mstore(32, _b)
+      c := keccak256(0, 64)
+    }
+  }
+
+  /**
+   * @notice Returns the return data from the last call.
+   * @return r The return data from the last call.
+   */
+  function returnData() internal pure returns (bytes memory r) {
+    assembly {
+      let size := returndatasize()
+      r := mload(0x40)
+      let start := add(r, 32)
+      mstore(0x40, add(start, size))
+      mstore(r, size)
+      returndatacopy(start, 0, size)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _val The value to send to the contract.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters, using delegatecall.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Payload } from "../../modules/Payload.sol";
+import { LibBytes } from "../../utils/LibBytes.sol";
+import { LibOptim } from "../../utils/LibOptim.sol";
+import { SessionErrors } from "./SessionErrors.sol";
+import { SessionPermissions } from "./explicit/IExplicitSessionManager.sol";
+import { LibPermission, Permission } from "./explicit/Permission.sol";
+import { Attestation, LibAttestation } from "./implicit/Attestation.sol";
+
+using LibBytes for bytes;
+using LibAttestation for Attestation;
+
+/// @title SessionSig
+/// @author Michael Standen, Agustin Aguilar
+/// @notice Library for session signatures
+library SessionSig {
+
+  uint256 internal constant FLAG_PERMISSIONS = 0;
+  uint256 internal constant FLAG_NODE = 1;
+  uint256 internal constant FLAG_BRANCH = 2;
+  uint256 internal constant FLAG_BLACKLIST = 3;
+  uint256 internal constant FLAG_IDENTITY_SIGNER = 4;
+
+  uint256 internal constant MIN_ENCODED_PERMISSION_SIZE = 94;
+
+  /// @notice Call signature for a specific session
+  /// @param isImplicit If the call is implicit
+  /// @param sessionSigner Address of the session signer
+  /// @param sessionPermission Session permission for explicit calls
+  /// @param attestation Attestation for implicit calls
+  struct CallSignature {
+    bool isImplicit;
+    address sessionSigner;
+    uint8 sessionPermission;
+    Attestation attestation;
+  }
+
+  /// @notice Decoded signature for a specific session
+  /// @param imageHash Derived configuration image hash
+  /// @param identitySigner Identity signer address
+  /// @param implicitBlacklist Implicit blacklist addresses
+  /// @param sessionPermissions Session permissions for each explicit signer
+  /// @param callSignatures Call signatures for each call in the payload
+  struct DecodedSignature {
+    bytes32 imageHash;
+    address identitySigner;
+    address[] implicitBlacklist;
+    SessionPermissions[] sessionPermissions;
+    CallSignature[] callSignatures;
+  }
+
+  /// @notice Recovers the decoded signature from the encodedSignature bytes.
+  /// @dev The encoded layout is conceptually separated into three parts:
+  ///  1) Session Configuration
+  ///  2) A reusable list of Attestations + their identity signatures (if any implicit calls exist)
+  ///  3) Call Signatures (one per call in the payload)
+  ///
+  /// High-level layout:
+  ///  - session_configuration: [uint24 size, <Session Configuration encoded>]
+  ///  - attestation_list: [uint8 attestationCount, (Attestation + identitySig) * attestationCount]
+  ///    (new section to allow reusing the same Attestation across multiple calls)
+  ///  - call_signatures: [<CallSignature encoded>] - Size is payload.calls.length
+  ///    - call_signature: [uint8 call_flags, <session_signature>]
+  ///      - call_flags: [bool is_implicit (MSB), 7 bits encoded]
+  ///      - if call_flags.is_implicit.MSB == 1:
+  ///         - attestation_index: [uint8 index into the attestation list (7 bits of the call_flags)]
+  ///         - session_signature: [r, s, v (compact)]
+  ///      - if call_flags.is_implicit.MSB == 0:
+  ///         - session_permission: [uint8 (7 bits of the call_flags)]
+  ///         - session_signature: [r, s, v (compact)]
+  function recoverSignature(
+    Payload.Decoded calldata payload,
+    bytes calldata encodedSignature
+  ) internal view returns (DecodedSignature memory sig) {
+    uint256 pointer = 0;
+    bool hasBlacklistInConfig;
+
+    // ----- Session Configuration -----
+    {
+      // First read the length of the session configuration bytes (uint24)
+      uint256 dataSize;
+      (dataSize, pointer) = encodedSignature.readUint24(pointer);
+
+      // Recover the session configuration
+      (sig, hasBlacklistInConfig) = recoverConfiguration(encodedSignature[pointer:pointer + dataSize]);
+      pointer += dataSize;
+
+      // Identity signer must be set
+      if (sig.identitySigner == address(0)) {
+        revert SessionErrors.InvalidIdentitySigner();
+      }
+    }
+
+    // ----- Attestations for implicit calls -----
+    Attestation[] memory attestationList;
+    {
+      uint8 attestationCount;
+      (attestationCount, pointer) = encodedSignature.readUint8(pointer);
+      attestationList = new Attestation[](attestationCount);
+      // Parse each attestation and its identity signature, store in memory
+      for (uint256 i = 0; i < attestationCount; i++) {
+        Attestation memory att;
+        (att, pointer) = LibAttestation.fromPacked(encodedSignature, pointer);
+
+        // Read the identity signature that approves this attestation
+        {
+          bytes32 r;
+          bytes32 s;
+          uint8 v;
+          (r, s, v, pointer) = encodedSignature.readRSVCompact(pointer);
+
+          // Recover the identity signer from the attestation identity signature
+          bytes32 attestationHash = att.toHash();
+          address recoveredIdentitySigner = ecrecover(attestationHash, v, r, s);
+          if (recoveredIdentitySigner != sig.identitySigner) {
+            revert SessionErrors.InvalidIdentitySigner();
+          }
+        }
+
+        attestationList[i] = att;
+      }
+
+      // If we have any implicit calls, we must have a blacklist in the configuration
+      if (attestationCount > 0 && !hasBlacklistInConfig) {
+        revert SessionErrors.InvalidBlacklist();
+      }
+    }
+
+    // ----- Call Signatures -----
+    {
+      uint256 callsCount = payload.calls.length;
+      sig.callSignatures = new CallSignature[](callsCount);
+
+      for (uint256 i = 0; i < callsCount; i++) {
+        CallSignature memory callSignature;
+
+        // Determine signature type
+        {
+          uint8 flag;
+          (flag, pointer) = encodedSignature.readUint8(pointer);
+          callSignature.isImplicit = (flag & 0x80) != 0;
+
+          if (callSignature.isImplicit) {
+            // Read attestation index from the call_flags
+            uint8 attestationIndex = uint8(flag & 0x7f);
+
+            // Check if the attestation index is out of range
+            if (attestationIndex >= attestationList.length) {
+              revert SessionErrors.InvalidAttestation();
+            }
+
+            // Set the attestation
+            callSignature.attestation = attestationList[attestationIndex];
+          } else {
+            // Session permission index is the entire byte, top bit is 0 => no conflict
+            callSignature.sessionPermission = flag;
+          }
+        }
+
+        // Read session signature and recover the signer
+        {
+          bytes32 r;
+          bytes32 s;
+          uint8 v;
+          (r, s, v, pointer) = encodedSignature.readRSVCompact(pointer);
+
+          bytes32 callHash = hashCallWithReplayProtection(payload, i);
+          callSignature.sessionSigner = ecrecover(callHash, v, r, s);
+          if (callSignature.sessionSigner == address(0)) {
+            revert SessionErrors.InvalidSessionSigner(address(0));
+          }
+        }
+
+        sig.callSignatures[i] = callSignature;
+      }
+    }
+
+    return sig;
+  }
+
+  /// @notice Recovers the session configuration from the encoded data.
+  /// The encoded layout is:
+  /// - permissions_count: [uint8]
+  /// - permissions_tree_element: [flag, <data>]
+  ///   - flag: [uint8]
+  ///   - data: [data]
+  ///     - if flag == FLAG_PERMISSIONS: [SessionPermissions encoded]
+  ///     - if flag == FLAG_NODE: [bytes32 node]
+  ///     - if flag == FLAG_BRANCH: [uint256 size, nested encoding...]
+  ///     - if flag == FLAG_BLACKLIST: [uint24 blacklist_count, blacklist_addresses...]
+  ///     - if flag == FLAG_IDENTITY_SIGNER: [address identity_signer]
+  /// @dev A valid configuration must have exactly one identity signer and at most one blacklist.
+  function recoverConfiguration(
+    bytes calldata encoded
+  ) internal pure returns (DecodedSignature memory sig, bool hasBlacklist) {
+    uint256 pointer;
+    uint256 permissionsCount;
+
+    // Guess maximum permissions size by bytes length
+    {
+      uint256 maxPermissionsSize = encoded.length / MIN_ENCODED_PERMISSION_SIZE;
+      sig.sessionPermissions = new SessionPermissions[](maxPermissionsSize);
+    }
+
+    while (pointer < encoded.length) {
+      // First byte is the flag (top 4 bits) and additional data (bottom 4 bits)
+      uint256 firstByte;
+      (firstByte, pointer) = encoded.readUint8(pointer);
+      // The top 4 bits are the flag
+      uint256 flag = (firstByte & 0xf0) >> 4;
+
+      // Permissions configuration (0x00)
+      if (flag == FLAG_PERMISSIONS) {
+        SessionPermissions memory nodePermissions;
+        uint256 pointerStart = pointer;
+
+        // Read signer
+        (nodePermissions.signer, pointer) = encoded.readAddress(pointer);
+
+        // Read chainId
+        (nodePermissions.chainId, pointer) = encoded.readUint256(pointer);
+
+        // Read value limit
+        (nodePermissions.valueLimit, pointer) = encoded.readUint256(pointer);
+
+        // Read deadline
+        (nodePermissions.deadline, pointer) = encoded.readUint64(pointer);
+
+        // Read permissions array
+        (nodePermissions.permissions, pointer) = _decodePermissions(encoded, pointer);
+
+        // Update root
+        {
+          bytes32 permissionHash = _leafHashForPermissions(encoded[pointerStart:pointer]);
+          sig.imageHash =
+            sig.imageHash != bytes32(0) ? LibOptim.fkeccak256(sig.imageHash, permissionHash) : permissionHash;
+        }
+
+        // Push node permissions to the permissions array
+        sig.sessionPermissions[permissionsCount++] = nodePermissions;
+        continue;
+      }
+
+      // Node (0x01)
+      if (flag == FLAG_NODE) {
+        // Read pre-hashed node
+        bytes32 node;
+        (node, pointer) = encoded.readBytes32(pointer);
+
+        // Update root
+        sig.imageHash = sig.imageHash != bytes32(0) ? LibOptim.fkeccak256(sig.imageHash, node) : node;
+
+        continue;
+      }
+
+      // Branch (0x02)
+      if (flag == FLAG_BRANCH) {
+        // Read branch size
+        uint256 size;
+        {
+          uint256 sizeSize = uint8(firstByte & 0x0f);
+          (size, pointer) = encoded.readUintX(pointer, sizeSize);
+        }
+        // Process branch
+        uint256 nrindex = pointer + size;
+        (DecodedSignature memory branchSig, bool branchHasBlacklist) = recoverConfiguration(encoded[pointer:nrindex]);
+        pointer = nrindex;
+
+        // Store the branch blacklist
+        if (branchHasBlacklist) {
+          if (hasBlacklist) {
+            // Blacklist already set
+            revert SessionErrors.InvalidBlacklist();
+          }
+          hasBlacklist = true;
+          sig.implicitBlacklist = branchSig.implicitBlacklist;
+        }
+
+        // Store the branch identity signer
+        if (branchSig.identitySigner != address(0)) {
+          if (sig.identitySigner != address(0)) {
+            // Identity signer already set
+            revert SessionErrors.InvalidIdentitySigner();
+          }
+          sig.identitySigner = branchSig.identitySigner;
+        }
+
+        // Push all branch permissions to the permissions array
+        for (uint256 i = 0; i < branchSig.sessionPermissions.length; i++) {
+          sig.sessionPermissions[permissionsCount++] = branchSig.sessionPermissions[i];
+        }
+
+        // Update root
+        sig.imageHash =
+          sig.imageHash != bytes32(0) ? LibOptim.fkeccak256(sig.imageHash, branchSig.imageHash) : branchSig.imageHash;
+
+        continue;
+      }
+
+      // Blacklist (0x03)
+      if (flag == FLAG_BLACKLIST) {
+        if (hasBlacklist) {
+          // Blacklist already set
+          revert SessionErrors.InvalidBlacklist();
+        }
+        hasBlacklist = true;
+
+        // Read the blacklist count from the first byte's lower 4 bits
+        uint256 blacklistCount = uint256(firstByte & 0x0f);
+        if (blacklistCount == 0x0f) {
+          // If it's max nibble, read the next 2 bytes for the actual size
+          (blacklistCount, pointer) = encoded.readUint16(pointer);
+        }
+        uint256 pointerStart = pointer;
+
+        // Read the blacklist addresses
+        sig.implicitBlacklist = new address[](blacklistCount);
+        address previousAddress;
+        for (uint256 i = 0; i < blacklistCount; i++) {
+          (sig.implicitBlacklist[i], pointer) = encoded.readAddress(pointer);
+          if (sig.implicitBlacklist[i] < previousAddress) {
+            revert SessionErrors.InvalidBlacklistUnsorted();
+          }
+          previousAddress = sig.implicitBlacklist[i];
+        }
+
+        // Update the root
+        bytes32 blacklistHash = _leafHashForBlacklist(encoded[pointerStart:pointer]);
+        sig.imageHash = sig.imageHash != bytes32(0) ? LibOptim.fkeccak256(sig.imageHash, blacklistHash) : blacklistHash;
+
+        continue;
+      }
+
+      // Identity signer (0x04)
+      if (flag == FLAG_IDENTITY_SIGNER) {
+        if (sig.identitySigner != address(0)) {
+          // Identity signer already set
+          revert SessionErrors.InvalidIdentitySigner();
+        }
+        (sig.identitySigner, pointer) = encoded.readAddress(pointer);
+
+        // Update the root
+        bytes32 identitySignerHash = _leafHashForIdentitySigner(sig.identitySigner);
+        sig.imageHash =
+          sig.imageHash != bytes32(0) ? LibOptim.fkeccak256(sig.imageHash, identitySignerHash) : identitySignerHash;
+
+        continue;
+      }
+
+      revert SessionErrors.InvalidNodeType(flag);
+    }
+
+    {
+      // Update the permissions array length to the actual count
+      SessionPermissions[] memory permissions = sig.sessionPermissions;
+      assembly {
+        mstore(permissions, permissionsCount)
+      }
+    }
+
+    return (sig, hasBlacklist);
+  }
+
+  /// @notice Decodes an array of Permission objects from the encoded data.
+  function _decodePermissions(
+    bytes calldata encoded,
+    uint256 pointer
+  ) internal pure returns (Permission[] memory permissions, uint256 newPointer) {
+    uint256 length;
+    (length, pointer) = encoded.readUint8(pointer);
+    permissions = new Permission[](length);
+    for (uint256 i = 0; i < length; i++) {
+      (permissions[i], pointer) = LibPermission.readPermission(encoded, pointer);
+    }
+    return (permissions, pointer);
+  }
+
+  /// @notice Hashes the encoded session permissions into a leaf node.
+  function _leafHashForPermissions(
+    bytes calldata encodedPermissions
+  ) internal pure returns (bytes32) {
+    return keccak256(abi.encodePacked(uint8(FLAG_PERMISSIONS), encodedPermissions));
+  }
+
+  /// @notice Hashes the encoded blacklist into a leaf node.
+  function _leafHashForBlacklist(
+    bytes calldata encodedBlacklist
+  ) internal pure returns (bytes32) {
+    return keccak256(abi.encodePacked(uint8(FLAG_BLACKLIST), encodedBlacklist));
+  }
+
+  /// @notice Hashes the identity signer into a leaf node.
+  function _leafHashForIdentitySigner(
+    address identitySigner
+  ) internal pure returns (bytes32) {
+    return keccak256(abi.encodePacked(uint8(FLAG_IDENTITY_SIGNER), identitySigner));
+  }
+
+  /// @notice Hashes a call with replay protection.
+  /// @dev The replay protection is based on the chainId, space, nonce and index in the payload.
+  /// @param payload The payload to hash
+  /// @param callIdx The index of the call to hash
+  /// @return callHash The hash of the call with replay protection
+  function hashCallWithReplayProtection(
+    Payload.Decoded calldata payload,
+    uint256 callIdx
+  ) public view returns (bytes32 callHash) {
+    return keccak256(
+      abi.encodePacked(
+        payload.noChainId ? 0 : block.chainid,
+        payload.space,
+        payload.nonce,
+        callIdx,
+        Payload.hashCall(payload.calls[callIdx])
+      )
+    );
   }
 
 }
@@ -1827,373 +1827,119 @@ library SessionErrors {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import { ISapientCompact } from "../../modules/interfaces/ISapient.sol";
+import { Wallet } from "../../Wallet.sol";
+import { Implementation } from "../Implementation.sol";
+import { Storage } from "../Storage.sol";
+import { BaseAuth } from "./BaseAuth.sol";
 
-import { LibBytes } from "../../utils/LibBytes.sol";
-import { LibOptim } from "../../utils/LibOptim.sol";
-import { WebAuthn } from "../../utils/WebAuthn.sol";
+/// @title Stage2Auth
+/// @author Agustin Aguilar
+/// @notice Stage 2 auth contract
+contract Stage2Auth is BaseAuth, Implementation {
 
-/// @title Passkeys
-/// @author Agustin Aguilar, Michael Standen
-/// @notice A sapient signer for passkeys
-contract Passkeys is ISapientCompact {
+  /// @dev keccak256("org.arcadeum.module.auth.upgradable.image.hash")
+  bytes32 internal constant IMAGE_HASH_KEY = bytes32(0xea7157fa25e3aa17d0ae2d5280fa4e24d421c61842aa85e45194e1145aa72bf8);
 
-  /// @notice Error thrown when the passkey signature is invalid
-  error InvalidPasskeySignature(
-    WebAuthn.WebAuthnAuth _webAuthnAuth, bool _requireUserVerification, bytes32 _x, bytes32 _y
-  );
+  /// @notice Emitted when the image hash is updated
+  event ImageHashUpdated(bytes32 newImageHash);
 
-  function _rootForPasskey(
-    bool _requireUserVerification,
-    bytes32 _x,
-    bytes32 _y,
-    bytes32 _metadata
-  ) internal pure returns (bytes32) {
-    bytes32 a = LibOptim.fkeccak256(_x, _y);
+  /// @notice Error thrown when the image hash is zero
+  error ImageHashIsZero();
 
-    bytes32 ruv;
-    assembly {
-      ruv := _requireUserVerification
-    }
-
-    bytes32 b = LibOptim.fkeccak256(ruv, _metadata);
-    return LibOptim.fkeccak256(a, b);
+  /// @notice Get the image hash
+  /// @return imageHash The image hash
+  function imageHash() external view virtual returns (bytes32) {
+    return Storage.readBytes32(IMAGE_HASH_KEY);
   }
-
-  function _decodeSignature(
-    bytes calldata _signature
-  )
-    internal
-    pure
-    returns (
-      WebAuthn.WebAuthnAuth memory _webAuthnAuth,
-      bool _requireUserVerification,
-      bytes32 _x,
-      bytes32 _y,
-      bytes32 _metadata
-    )
-  {
-    unchecked {
-      // Global flag encoding:
-      // 0000 000X : requireUserVerification
-      // 0000 00X0 : 1 if 16 bits for authenticatorData size, 0 if 8 bits
-      // 0000 0X00 : 1 if 16 bits for clientDataJSON size, 0 if 8 bits
-      // 0000 X000 : 1 if 16 bits for challengeIndex, 0 if 8 bits
-      // 000X 0000 : 1 if 16 bits for typeIndex, 0 if 8 bits
-      // 00X0 0000 : 1 if fallback to abi decode data
-      // 0X00 0000 : 1 if signature has metadata node
-      // X000 0000 : unused
-
-      bytes1 flags = _signature[0];
-      if ((flags & 0x20) == 0) {
-        _requireUserVerification = (flags & 0x01) != 0;
-        uint256 bytesAuthDataSize = ((uint8(flags & 0x02)) >> 1) + 1;
-        uint256 bytesClientDataJSONSize = ((uint8(flags & 0x04)) >> 2) + 1;
-        uint256 bytesChallengeIndex = ((uint8(flags & 0x08)) >> 3) + 1;
-        uint256 bytesTypeIndex = ((uint8(flags & 0x10)) >> 4) + 1;
-
-        uint256 pointer = 1;
-
-        if ((flags & 0x40) != 0) {
-          (_metadata, pointer) = LibBytes.readBytes32(_signature, pointer);
-        }
-
-        {
-          uint256 authDataSize;
-          (authDataSize, pointer) = LibBytes.readUintX(_signature, pointer, bytesAuthDataSize);
-          uint256 nextPointer = pointer + authDataSize;
-          _webAuthnAuth.authenticatorData = _signature[pointer:nextPointer];
-          pointer = nextPointer;
-        }
-
-        {
-          uint256 clientDataJSONSize;
-          (clientDataJSONSize, pointer) = LibBytes.readUintX(_signature, pointer, bytesClientDataJSONSize);
-          uint256 nextPointer = pointer + clientDataJSONSize;
-          _webAuthnAuth.clientDataJSON = string(_signature[pointer:nextPointer]);
-          pointer = nextPointer;
-        }
-
-        (_webAuthnAuth.challengeIndex, pointer) = LibBytes.readUintX(_signature, pointer, bytesChallengeIndex);
-        (_webAuthnAuth.typeIndex, pointer) = LibBytes.readUintX(_signature, pointer, bytesTypeIndex);
-
-        (_webAuthnAuth.r, pointer) = LibBytes.readBytes32(_signature, pointer);
-        (_webAuthnAuth.s, pointer) = LibBytes.readBytes32(_signature, pointer);
-
-        (_x, pointer) = LibBytes.readBytes32(_signature, pointer);
-        (_y, pointer) = LibBytes.readBytes32(_signature, pointer);
-      } else {
-        (_webAuthnAuth, _requireUserVerification, _x, _y, _metadata) =
-          abi.decode(_signature[1:], (WebAuthn.WebAuthnAuth, bool, bytes32, bytes32, bytes32));
-      }
-    }
-  }
-
-  /// @inheritdoc ISapientCompact
-  function recoverSapientSignatureCompact(bytes32 _digest, bytes calldata _signature) external view returns (bytes32) {
-    (
-      WebAuthn.WebAuthnAuth memory _webAuthnAuth,
-      bool _requireUserVerification,
-      bytes32 _x,
-      bytes32 _y,
-      bytes32 _metadata
-    ) = _decodeSignature(_signature);
-
-    if (!WebAuthn.verify(abi.encodePacked(_digest), _requireUserVerification, _webAuthnAuth, _x, _y)) {
-      revert InvalidPasskeySignature(_webAuthnAuth, _requireUserVerification, _x, _y);
-    }
-
-    return _rootForPasskey(_requireUserVerification, _x, _y, _metadata);
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Stage2Module } from "./Stage2Module.sol";
-
-import { Payload } from "./modules/Payload.sol";
-import { IDelegatedExtension } from "./modules/interfaces/IDelegatedExtension.sol";
-import { LibOptim } from "./utils/LibOptim.sol";
-
-/// @title Simulator
-/// @author William Hua
-/// @notice Helper for simulating the execution of a payload
-contract Simulator is Stage2Module {
-
-  constructor(
-    address _entryPoint
-  ) Stage2Module(_entryPoint) { }
-
-  /// @notice Status of the call
-  enum Status {
-    Skipped,
-    Succeeded,
-    Failed,
-    Aborted,
-    Reverted,
-    NotEnoughGas
-  }
-
-  /// @notice Result of the call
-  struct Result {
-    Status status;
-    bytes result;
-    uint256 gasUsed;
-  }
-
-  /// @notice Simulate the execution of a payload
-  /// @param _calls The calls to simulate
-  /// @return results The results of the calls
-  function simulate(
-    Payload.Call[] calldata _calls
-  ) external returns (Result[] memory results) {
-    uint256 startingGas = gasleft();
-    bool errorFlag = false;
-
-    uint256 numCalls = _calls.length;
-    results = new Result[](numCalls);
-    for (uint256 i = 0; i < numCalls; i++) {
-      Payload.Call memory call = _calls[i];
-
-      // Skip onlyFallback calls if no error occurred
-      if (call.onlyFallback && !errorFlag) {
-        continue;
-      }
-
-      // Reset the error flag
-      // onlyFallback calls only apply when the immediately preceding transaction fails
-      errorFlag = false;
-
-      uint256 gasLimit = call.gasLimit;
-      if (gasLimit != 0 && gasleft() < gasLimit) {
-        results[i].status = Status.NotEnoughGas;
-        results[i].result = abi.encode(gasleft());
-        return results;
-      }
-
-      bool success;
-      if (call.delegateCall) {
-        uint256 initial = gasleft();
-        (success) = LibOptim.delegatecall(
-          call.to,
-          gasLimit == 0 ? gasleft() : gasLimit,
-          abi.encodeWithSelector(
-            IDelegatedExtension.handleSequenceDelegateCall.selector, 0, startingGas, i, numCalls, 0, call.data
-          )
-        );
-        results[i].gasUsed = initial - gasleft();
-      } else {
-        uint256 initial = gasleft();
-        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
-        results[i].gasUsed = initial - gasleft();
-      }
-
-      if (!success) {
-        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
-          errorFlag = true;
-          results[i].status = Status.Failed;
-          results[i].result = LibOptim.returnData();
-          continue;
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
-          results[i].status = Status.Reverted;
-          results[i].result = LibOptim.returnData();
-          return results;
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
-          results[i].status = Status.Aborted;
-          results[i].result = LibOptim.returnData();
-          break;
-        }
-      }
-
-      results[i].status = Status.Succeeded;
-      results[i].result = LibOptim.returnData();
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Stage2Module } from "./Stage2Module.sol";
-
-import { Payload } from "./modules/Payload.sol";
-import { IDelegatedExtension } from "./modules/interfaces/IDelegatedExtension.sol";
-import { LibOptim } from "./utils/LibOptim.sol";
-
-/// @title Estimator
-/// @author William Hua
-/// @notice Helper for estimating the gas used for payload validation and execution
-contract Estimator is Stage2Module {
-
-  constructor(
-    address _entryPoint
-  ) Stage2Module(_entryPoint) { }
 
   function _isValidImage(
     bytes32 _imageHash
   ) internal view virtual override returns (bool) {
-    super._isValidImage(_imageHash);
-    return true;
+    return _imageHash != bytes32(0) && _imageHash == Storage.readBytes32(IMAGE_HASH_KEY);
   }
 
-  /// @notice Estimate the gas used for payload validation and execution
-  /// @param _payload The payload to estimate the gas used for
-  /// @param _signature The signature to validate the payload with
-  /// @return gasUsed The gas used for payload validation and execution
-  function estimate(
-    bytes calldata _payload,
-    bytes calldata _signature
-  ) external payable virtual nonReentrant returns (uint256 gasUsed) {
-    uint256 startingGas = gasleft();
-    Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
-
-    _consumeNonce(decoded.space, readNonce(decoded.space));
-    (bool isValid, bytes32 opHash) = signatureValidation(decoded, _signature);
-
-    if (!isValid) {
-      revert InvalidSignature(decoded, _signature);
+  function _updateImageHash(
+    bytes32 _imageHash
+  ) internal virtual override {
+    if (_imageHash == bytes32(0)) {
+      revert ImageHashIsZero();
     }
-
-    _estimate(startingGas, opHash, decoded);
-
-    return startingGas - gasleft();
-  }
-
-  function _estimate(uint256 _startingGas, bytes32 _opHash, Payload.Decoded memory _decoded) private {
-    bool errorFlag = false;
-
-    uint256 numCalls = _decoded.calls.length;
-    for (uint256 i = 0; i < numCalls; i++) {
-      Payload.Call memory call = _decoded.calls[i];
-
-      // Skip onlyFallback calls if no error occurred
-      if (call.onlyFallback && !errorFlag) {
-        emit CallSkipped(_opHash, i);
-        continue;
-      }
-
-      // Reset the error flag
-      // onlyFallback calls only apply when the immediately preceding transaction fails
-      errorFlag = false;
-
-      uint256 gasLimit = call.gasLimit;
-      if (gasLimit != 0 && gasleft() < gasLimit) {
-        revert NotEnoughGas(_decoded, i, gasleft());
-      }
-
-      bool success;
-      if (call.delegateCall) {
-        (success) = LibOptim.delegatecall(
-          call.to,
-          gasLimit == 0 ? gasleft() : gasLimit,
-          abi.encodeWithSelector(
-            IDelegatedExtension.handleSequenceDelegateCall.selector,
-            _opHash,
-            _startingGas,
-            i,
-            numCalls,
-            _decoded.space,
-            call.data
-          )
-        );
-      } else {
-        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
-      }
-
-      if (!success) {
-        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
-          errorFlag = true;
-          emit CallFailed(_opHash, i, LibOptim.returnData());
-          continue;
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
-          revert Reverted(_decoded, i, LibOptim.returnData());
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
-          emit CallAborted(_opHash, i, LibOptim.returnData());
-          break;
-        }
-      }
-
-      emit CallSucceeded(_opHash, i);
-    }
+    Storage.writeBytes32(IMAGE_HASH_KEY, _imageHash);
+    emit ImageHashUpdated(_imageHash);
   }
 
 }
 
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
+pragma solidity ^0.8.18;
 
-import { Calls } from "./modules/Calls.sol";
+import { Calls } from "./Calls.sol";
 
-import { ERC4337v07 } from "./modules/ERC4337v07.sol";
-import { Hooks } from "./modules/Hooks.sol";
-import { Stage2Auth } from "./modules/auth/Stage2Auth.sol";
-import { IAuth } from "./modules/interfaces/IAuth.sol";
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
+import { IAccount, PackedUserOperation } from "./interfaces/IAccount.sol";
+import { IERC1271_MAGIC_VALUE_HASH } from "./interfaces/IERC1271.sol";
+import { IEntryPoint } from "./interfaces/IEntryPoint.sol";
 
-/// @title Stage2Module
-/// @author Agustin Aguilar
-/// @notice The second stage of the wallet
-contract Stage2Module is Calls, Stage2Auth, Hooks, ERC4337v07 {
+/// @title ERC4337v07
+/// @author Agustin Aguilar, Michael Standen
+/// @notice ERC4337 v7 support
+abstract contract ERC4337v07 is ReentrancyGuard, IAccount, Calls {
+
+  uint256 internal constant SIG_VALIDATION_FAILED = 1;
+
+  address public immutable entrypoint;
+
+  error InvalidEntryPoint(address _entrypoint);
+  error ERC4337Disabled();
 
   constructor(
-    address _entryPoint
-  ) ERC4337v07(_entryPoint) { }
+    address _entrypoint
+  ) {
+    entrypoint = _entrypoint;
+  }
 
-  /// @inheritdoc IAuth
-  function _isValidImage(
-    bytes32 _imageHash
-  ) internal view virtual override(IAuth, Stage2Auth) returns (bool) {
-    return super._isValidImage(_imageHash);
+  /// @inheritdoc IAccount
+  function validateUserOp(
+    PackedUserOperation calldata userOp,
+    bytes32 userOpHash,
+    uint256 missingAccountFunds
+  ) external returns (uint256 validationData) {
+    if (entrypoint == address(0)) {
+      revert ERC4337Disabled();
+    }
+
+    if (msg.sender != entrypoint) {
+      revert InvalidEntryPoint(msg.sender);
+    }
+
+    // userOp.nonce is validated by the entrypoint
+
+    if (missingAccountFunds != 0) {
+      IEntryPoint(entrypoint).depositTo{ value: missingAccountFunds }(address(this));
+    }
+
+    if (this.isValidSignature(userOpHash, userOp.signature) != IERC1271_MAGIC_VALUE_HASH) {
+      return SIG_VALIDATION_FAILED;
+    }
+
+    return 0;
+  }
+
+  /// @notice Execute a user operation
+  /// @param _payload The packed payload
+  /// @dev This is the execute function for the EntryPoint to call.
+  function executeUserOp(
+    bytes calldata _payload
+  ) external nonReentrant {
+    if (entrypoint == address(0)) {
+      revert ERC4337Disabled();
+    }
+
+    if (msg.sender != entrypoint) {
+      revert InvalidEntryPoint(msg.sender);
+    }
+
+    this.selfExecute(_payload);
   }
 
 }
@@ -2326,6 +2072,146 @@ abstract contract Calls is ReentrancyGuard, BaseAuth, Nonce {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
+import { Calls } from "./modules/Calls.sol";
+
+import { ERC4337v07 } from "./modules/ERC4337v07.sol";
+import { Hooks } from "./modules/Hooks.sol";
+import { Stage2Auth } from "./modules/auth/Stage2Auth.sol";
+import { IAuth } from "./modules/interfaces/IAuth.sol";
+
+/// @title Stage2Module
+/// @author Agustin Aguilar
+/// @notice The second stage of the wallet
+contract Stage2Module is Calls, Stage2Auth, Hooks, ERC4337v07 {
+
+  constructor(
+    address _entryPoint
+  ) ERC4337v07(_entryPoint) { }
+
+  /// @inheritdoc IAuth
+  function _isValidImage(
+    bytes32 _imageHash
+  ) internal view virtual override(IAuth, Stage2Auth) returns (bool) {
+    return super._isValidImage(_imageHash);
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Stage2Module } from "./Stage2Module.sol";
+
+import { Payload } from "./modules/Payload.sol";
+import { IDelegatedExtension } from "./modules/interfaces/IDelegatedExtension.sol";
+import { LibOptim } from "./utils/LibOptim.sol";
+
+/// @title Estimator
+/// @author William Hua
+/// @notice Helper for estimating the gas used for payload validation and execution
+contract Estimator is Stage2Module {
+
+  constructor(
+    address _entryPoint
+  ) Stage2Module(_entryPoint) { }
+
+  function _isValidImage(
+    bytes32 _imageHash
+  ) internal view virtual override returns (bool) {
+    super._isValidImage(_imageHash);
+    return true;
+  }
+
+  /// @notice Estimate the gas used for payload validation and execution
+  /// @param _payload The payload to estimate the gas used for
+  /// @param _signature The signature to validate the payload with
+  /// @return gasUsed The gas used for payload validation and execution
+  function estimate(
+    bytes calldata _payload,
+    bytes calldata _signature
+  ) external payable virtual nonReentrant returns (uint256 gasUsed) {
+    uint256 startingGas = gasleft();
+    Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
+
+    _consumeNonce(decoded.space, readNonce(decoded.space));
+    (bool isValid, bytes32 opHash) = signatureValidation(decoded, _signature);
+
+    if (!isValid) {
+      revert InvalidSignature(decoded, _signature);
+    }
+
+    _estimate(startingGas, opHash, decoded);
+
+    return startingGas - gasleft();
+  }
+
+  function _estimate(uint256 _startingGas, bytes32 _opHash, Payload.Decoded memory _decoded) private {
+    bool errorFlag = false;
+
+    uint256 numCalls = _decoded.calls.length;
+    for (uint256 i = 0; i < numCalls; i++) {
+      Payload.Call memory call = _decoded.calls[i];
+
+      // Skip onlyFallback calls if no error occurred
+      if (call.onlyFallback && !errorFlag) {
+        emit CallSkipped(_opHash, i);
+        continue;
+      }
+
+      // Reset the error flag
+      // onlyFallback calls only apply when the immediately preceding transaction fails
+      errorFlag = false;
+
+      uint256 gasLimit = call.gasLimit;
+      if (gasLimit != 0 && gasleft() < gasLimit) {
+        revert NotEnoughGas(_decoded, i, gasleft());
+      }
+
+      bool success;
+      if (call.delegateCall) {
+        (success) = LibOptim.delegatecall(
+          call.to,
+          gasLimit == 0 ? gasleft() : gasLimit,
+          abi.encodeWithSelector(
+            IDelegatedExtension.handleSequenceDelegateCall.selector,
+            _opHash,
+            _startingGas,
+            i,
+            numCalls,
+            _decoded.space,
+            call.data
+          )
+        );
+      } else {
+        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
+      }
+
+      if (!success) {
+        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
+          errorFlag = true;
+          emit CallFailed(_opHash, i, LibOptim.returnData());
+          continue;
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
+          revert Reverted(_decoded, i, LibOptim.returnData());
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
+          emit CallAborted(_opHash, i, LibOptim.returnData());
+          break;
+        }
+      }
+
+      emit CallSucceeded(_opHash, i);
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
 import { Stage2Module } from "./Stage2Module.sol";
 import { Calls } from "./modules/Calls.sol";
 
@@ -2349,6 +2235,368 @@ contract Stage1Module is Calls, Stage1Auth, Hooks, ERC4337v07 {
     bytes32 _imageHash
   ) internal view virtual override(IAuth, Stage1Auth) returns (bool) {
     return super._isValidImage(_imageHash);
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Payload } from "../Payload.sol";
+
+import { Storage } from "../Storage.sol";
+import { IAuth } from "../interfaces/IAuth.sol";
+import { IERC1271, IERC1271_MAGIC_VALUE_HASH } from "../interfaces/IERC1271.sol";
+
+import { IPartialAuth } from "../interfaces/IPartialAuth.sol";
+import { ISapient } from "../interfaces/ISapient.sol";
+import { BaseSig } from "./BaseSig.sol";
+
+import { SelfAuth } from "./SelfAuth.sol";
+
+using Payload for Payload.Decoded;
+
+/// @title BaseAuth
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Base contract for the auth module
+abstract contract BaseAuth is IAuth, IPartialAuth, ISapient, IERC1271, SelfAuth {
+
+  /// @dev keccak256("org.sequence.module.auth.static")
+  bytes32 private constant STATIC_SIGNATURE_KEY =
+    bytes32(0xc852adf5e97c2fc3b38f405671e91b7af1697ef0287577f227ef10494c2a8e86);
+
+  /// @notice Error thrown when the sapient signature is invalid
+  error InvalidSapientSignature(Payload.Decoded _payload, bytes _signature);
+  /// @notice Error thrown when the signature weight is invalid
+  error InvalidSignatureWeight(uint256 _threshold, uint256 _weight);
+  /// @notice Error thrown when the static signature has expired
+  error InvalidStaticSignatureExpired(bytes32 _opHash, uint256 _expires);
+  /// @notice Error thrown when the static signature has the wrong caller
+  error InvalidStaticSignatureWrongCaller(bytes32 _opHash, address _caller, address _expectedCaller);
+
+  /// @notice Event emitted when a static signature is set
+  event StaticSignatureSet(bytes32 _hash, address _address, uint96 _timestamp);
+
+  function _getStaticSignature(
+    bytes32 _hash
+  ) internal view returns (address, uint256) {
+    uint256 word = uint256(Storage.readBytes32Map(STATIC_SIGNATURE_KEY, _hash));
+    return (address(uint160(word >> 96)), uint256(uint96(word)));
+  }
+
+  function _setStaticSignature(bytes32 _hash, address _address, uint256 _timestamp) internal {
+    Storage.writeBytes32Map(
+      STATIC_SIGNATURE_KEY, _hash, bytes32(uint256(uint160(_address)) << 96 | (_timestamp & 0xffffffffffffffffffffffff))
+    );
+  }
+
+  /// @notice Get the static signature for a specific hash
+  /// @param _hash The hash to get the static signature for
+  /// @return address The address associated with the static signature
+  /// @return timestamp The timestamp of the static signature
+  function getStaticSignature(
+    bytes32 _hash
+  ) external view returns (address, uint256) {
+    return _getStaticSignature(_hash);
+  }
+
+  /// @notice Set the static signature for a specific hash
+  /// @param _hash The hash to set the static signature for
+  /// @param _address The address to associate with the static signature
+  /// @param _timestamp The timestamp of the static signature
+  /// @dev Only callable by the wallet itself
+  function setStaticSignature(bytes32 _hash, address _address, uint96 _timestamp) external onlySelf {
+    _setStaticSignature(_hash, _address, _timestamp);
+    emit StaticSignatureSet(_hash, _address, _timestamp);
+  }
+
+  /// @notice Update the image hash
+  /// @param _imageHash The new image hash
+  /// @dev Only callable by the wallet itself
+  function updateImageHash(
+    bytes32 _imageHash
+  ) external virtual onlySelf {
+    _updateImageHash(_imageHash);
+  }
+
+  function signatureValidation(
+    Payload.Decoded memory _payload,
+    bytes calldata _signature
+  ) internal view virtual returns (bool isValid, bytes32 opHash) {
+    // Read first bit to determine if static signature is used
+    bytes1 signatureFlag = _signature[0];
+
+    if (signatureFlag & 0x80 == 0x80) {
+      opHash = _payload.hash();
+
+      (address addr, uint256 timestamp) = _getStaticSignature(opHash);
+      if (timestamp <= block.timestamp) {
+        revert InvalidStaticSignatureExpired(opHash, timestamp);
+      }
+
+      if (addr != address(0) && addr != msg.sender) {
+        revert InvalidStaticSignatureWrongCaller(opHash, msg.sender, addr);
+      }
+
+      return (true, opHash);
+    }
+
+    // Static signature is not used, recover and validate imageHash
+
+    uint256 threshold;
+    uint256 weight;
+    bytes32 imageHash;
+
+    (threshold, weight, imageHash,, opHash) = BaseSig.recover(_payload, _signature, false, address(0));
+
+    // Validate the weight
+    if (weight < threshold) {
+      revert InvalidSignatureWeight(threshold, weight);
+    }
+
+    isValid = _isValidImage(imageHash);
+  }
+
+  /// @inheritdoc ISapient
+  function recoverSapientSignature(
+    Payload.Decoded memory _payload,
+    bytes calldata _signature
+  ) external view returns (bytes32) {
+    // Copy parent wallets + add caller at the end
+    address[] memory parentWallets = new address[](_payload.parentWallets.length + 1);
+
+    for (uint256 i = 0; i < _payload.parentWallets.length; i++) {
+      parentWallets[i] = _payload.parentWallets[i];
+    }
+
+    parentWallets[_payload.parentWallets.length] = msg.sender;
+    _payload.parentWallets = parentWallets;
+
+    (bool isValid,) = signatureValidation(_payload, _signature);
+    if (!isValid) {
+      revert InvalidSapientSignature(_payload, _signature);
+    }
+
+    return bytes32(uint256(1));
+  }
+
+  /// @inheritdoc IERC1271
+  function isValidSignature(bytes32 _hash, bytes calldata _signature) external view returns (bytes4) {
+    Payload.Decoded memory payload = Payload.fromDigest(_hash);
+
+    (bool isValid,) = signatureValidation(payload, _signature);
+    if (!isValid) {
+      return bytes4(0);
+    }
+
+    return IERC1271_MAGIC_VALUE_HASH;
+  }
+
+  /// @inheritdoc IPartialAuth
+  function recoverPartialSignature(
+    Payload.Decoded memory _payload,
+    bytes calldata _signature
+  )
+    external
+    view
+    returns (
+      uint256 threshold,
+      uint256 weight,
+      bool isValidImage,
+      bytes32 imageHash,
+      uint256 checkpoint,
+      bytes32 opHash
+    )
+  {
+    (threshold, weight, imageHash, checkpoint, opHash) = BaseSig.recover(_payload, _signature, false, address(0));
+    isValidImage = _isValidImage(imageHash);
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { ISapientCompact } from "../../modules/interfaces/ISapient.sol";
+
+import { LibBytes } from "../../utils/LibBytes.sol";
+import { LibOptim } from "../../utils/LibOptim.sol";
+import { WebAuthn } from "../../utils/WebAuthn.sol";
+
+/// @title Passkeys
+/// @author Agustin Aguilar, Michael Standen
+/// @notice A sapient signer for passkeys
+contract Passkeys is ISapientCompact {
+
+  /// @notice Error thrown when the passkey signature is invalid
+  error InvalidPasskeySignature(
+    WebAuthn.WebAuthnAuth _webAuthnAuth, bool _requireUserVerification, bytes32 _x, bytes32 _y
+  );
+
+  function _rootForPasskey(
+    bool _requireUserVerification,
+    bytes32 _x,
+    bytes32 _y,
+    bytes32 _metadata
+  ) internal pure returns (bytes32) {
+    bytes32 a = LibOptim.fkeccak256(_x, _y);
+
+    bytes32 ruv;
+    assembly {
+      ruv := _requireUserVerification
+    }
+
+    bytes32 b = LibOptim.fkeccak256(ruv, _metadata);
+    return LibOptim.fkeccak256(a, b);
+  }
+
+  function _decodeSignature(
+    bytes calldata _signature
+  )
+    internal
+    pure
+    returns (
+      WebAuthn.WebAuthnAuth memory _webAuthnAuth,
+      bool _requireUserVerification,
+      bytes32 _x,
+      bytes32 _y,
+      bytes32 _metadata
+    )
+  {
+    unchecked {
+      // Global flag encoding:
+      // 0000 000X : requireUserVerification
+      // 0000 00X0 : 1 if 16 bits for authenticatorData size, 0 if 8 bits
+      // 0000 0X00 : 1 if 16 bits for clientDataJSON size, 0 if 8 bits
+      // 0000 X000 : 1 if 16 bits for challengeIndex, 0 if 8 bits
+      // 000X 0000 : 1 if 16 bits for typeIndex, 0 if 8 bits
+      // 00X0 0000 : 1 if fallback to abi decode data
+      // 0X00 0000 : 1 if signature has metadata node
+      // X000 0000 : unused
+
+      bytes1 flags = _signature[0];
+      if ((flags & 0x20) == 0) {
+        _requireUserVerification = (flags & 0x01) != 0;
+        uint256 bytesAuthDataSize = ((uint8(flags & 0x02)) >> 1) + 1;
+        uint256 bytesClientDataJSONSize = ((uint8(flags & 0x04)) >> 2) + 1;
+        uint256 bytesChallengeIndex = ((uint8(flags & 0x08)) >> 3) + 1;
+        uint256 bytesTypeIndex = ((uint8(flags & 0x10)) >> 4) + 1;
+
+        uint256 pointer = 1;
+
+        if ((flags & 0x40) != 0) {
+          (_metadata, pointer) = LibBytes.readBytes32(_signature, pointer);
+        }
+
+        {
+          uint256 authDataSize;
+          (authDataSize, pointer) = LibBytes.readUintX(_signature, pointer, bytesAuthDataSize);
+          uint256 nextPointer = pointer + authDataSize;
+          _webAuthnAuth.authenticatorData = _signature[pointer:nextPointer];
+          pointer = nextPointer;
+        }
+
+        {
+          uint256 clientDataJSONSize;
+          (clientDataJSONSize, pointer) = LibBytes.readUintX(_signature, pointer, bytesClientDataJSONSize);
+          uint256 nextPointer = pointer + clientDataJSONSize;
+          _webAuthnAuth.clientDataJSON = string(_signature[pointer:nextPointer]);
+          pointer = nextPointer;
+        }
+
+        (_webAuthnAuth.challengeIndex, pointer) = LibBytes.readUintX(_signature, pointer, bytesChallengeIndex);
+        (_webAuthnAuth.typeIndex, pointer) = LibBytes.readUintX(_signature, pointer, bytesTypeIndex);
+
+        (_webAuthnAuth.r, pointer) = LibBytes.readBytes32(_signature, pointer);
+        (_webAuthnAuth.s, pointer) = LibBytes.readBytes32(_signature, pointer);
+
+        (_x, pointer) = LibBytes.readBytes32(_signature, pointer);
+        (_y, pointer) = LibBytes.readBytes32(_signature, pointer);
+      } else {
+        (_webAuthnAuth, _requireUserVerification, _x, _y, _metadata) =
+          abi.decode(_signature[1:], (WebAuthn.WebAuthnAuth, bool, bytes32, bytes32, bytes32));
+      }
+    }
+  }
+
+  /// @inheritdoc ISapientCompact
+  function recoverSapientSignatureCompact(bytes32 _digest, bytes calldata _signature) external view returns (bytes32) {
+    (
+      WebAuthn.WebAuthnAuth memory _webAuthnAuth,
+      bool _requireUserVerification,
+      bytes32 _x,
+      bytes32 _y,
+      bytes32 _metadata
+    ) = _decodeSignature(_signature);
+
+    if (!WebAuthn.verify(abi.encodePacked(_digest), _requireUserVerification, _webAuthnAuth, _x, _y)) {
+      revert InvalidPasskeySignature(_webAuthnAuth, _requireUserVerification, _x, _y);
+    }
+
+    return _rootForPasskey(_requireUserVerification, _x, _y, _metadata);
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Wallet } from "../../Wallet.sol";
+import { Implementation } from "../Implementation.sol";
+import { Storage } from "../Storage.sol";
+import { BaseAuth } from "./BaseAuth.sol";
+
+/// @title Stage1Auth
+/// @author Agustin Aguilar
+/// @notice Stage 1 auth contract
+contract Stage1Auth is BaseAuth, Implementation {
+
+  /// @notice Error thrown when the image hash is zero
+  error ImageHashIsZero();
+  /// @notice Error thrown when the signature type is invalid
+  error InvalidSignatureType(bytes1 _type);
+
+  /// @notice Initialization code hash
+  bytes32 public immutable INIT_CODE_HASH;
+  /// @notice Factory address
+  address public immutable FACTORY;
+  /// @notice Stage 2 implementation address
+  address public immutable STAGE_2_IMPLEMENTATION;
+
+  /// @dev keccak256("org.arcadeum.module.auth.upgradable.image.hash")
+  bytes32 internal constant IMAGE_HASH_KEY = bytes32(0xea7157fa25e3aa17d0ae2d5280fa4e24d421c61842aa85e45194e1145aa72bf8);
+
+  /// @notice Emitted when the image hash is updated
+  event ImageHashUpdated(bytes32 newImageHash);
+
+  constructor(address _factory, address _stage2) {
+    // Build init code hash of the deployed wallets using that module
+    bytes32 initCodeHash = keccak256(abi.encodePacked(Wallet.creationCode, uint256(uint160(address(this)))));
+
+    INIT_CODE_HASH = initCodeHash;
+    FACTORY = _factory;
+    STAGE_2_IMPLEMENTATION = _stage2;
+  }
+
+  function _updateImageHash(
+    bytes32 _imageHash
+  ) internal virtual override {
+    // Update imageHash in storage
+    if (_imageHash == bytes32(0)) {
+      revert ImageHashIsZero();
+    }
+    Storage.writeBytes32(IMAGE_HASH_KEY, _imageHash);
+    emit ImageHashUpdated(_imageHash);
+
+    // Update wallet implementation to stage2 version
+    _updateImplementation(STAGE_2_IMPLEMENTATION);
+  }
+
+  function _isValidImage(
+    bytes32 _imageHash
+  ) internal view virtual override returns (bool) {
+    return address(uint160(uint256(keccak256(abi.encodePacked(hex"ff", FACTORY, _imageHash, INIT_CODE_HASH)))))
+      == address(this);
   }
 
 }
@@ -2574,357 +2822,109 @@ contract Recovery is ISapientCompact {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import { Wallet } from "../../Wallet.sol";
-import { Implementation } from "../Implementation.sol";
-import { Storage } from "../Storage.sol";
-import { BaseAuth } from "./BaseAuth.sol";
+import { Stage2Module } from "./Stage2Module.sol";
 
-/// @title Stage2Auth
-/// @author Agustin Aguilar
-/// @notice Stage 2 auth contract
-contract Stage2Auth is BaseAuth, Implementation {
+import { Payload } from "./modules/Payload.sol";
+import { IDelegatedExtension } from "./modules/interfaces/IDelegatedExtension.sol";
+import { LibOptim } from "./utils/LibOptim.sol";
 
-  /// @dev keccak256("org.arcadeum.module.auth.upgradable.image.hash")
-  bytes32 internal constant IMAGE_HASH_KEY = bytes32(0xea7157fa25e3aa17d0ae2d5280fa4e24d421c61842aa85e45194e1145aa72bf8);
-
-  /// @notice Emitted when the image hash is updated
-  event ImageHashUpdated(bytes32 newImageHash);
-
-  /// @notice Error thrown when the image hash is zero
-  error ImageHashIsZero();
-
-  /// @notice Get the image hash
-  /// @return imageHash The image hash
-  function imageHash() external view virtual returns (bytes32) {
-    return Storage.readBytes32(IMAGE_HASH_KEY);
-  }
-
-  function _isValidImage(
-    bytes32 _imageHash
-  ) internal view virtual override returns (bool) {
-    return _imageHash != bytes32(0) && _imageHash == Storage.readBytes32(IMAGE_HASH_KEY);
-  }
-
-  function _updateImageHash(
-    bytes32 _imageHash
-  ) internal virtual override {
-    if (_imageHash == bytes32(0)) {
-      revert ImageHashIsZero();
-    }
-    Storage.writeBytes32(IMAGE_HASH_KEY, _imageHash);
-    emit ImageHashUpdated(_imageHash);
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-import { Calls } from "./Calls.sol";
-
-import { ReentrancyGuard } from "./ReentrancyGuard.sol";
-import { IAccount, PackedUserOperation } from "./interfaces/IAccount.sol";
-import { IERC1271_MAGIC_VALUE_HASH } from "./interfaces/IERC1271.sol";
-import { IEntryPoint } from "./interfaces/IEntryPoint.sol";
-
-/// @title ERC4337v07
-/// @author Agustin Aguilar, Michael Standen
-/// @notice ERC4337 v7 support
-abstract contract ERC4337v07 is ReentrancyGuard, IAccount, Calls {
-
-  uint256 internal constant SIG_VALIDATION_FAILED = 1;
-
-  address public immutable entrypoint;
-
-  error InvalidEntryPoint(address _entrypoint);
-  error ERC4337Disabled();
+/// @title Simulator
+/// @author William Hua
+/// @notice Helper for simulating the execution of a payload
+contract Simulator is Stage2Module {
 
   constructor(
-    address _entrypoint
-  ) {
-    entrypoint = _entrypoint;
+    address _entryPoint
+  ) Stage2Module(_entryPoint) { }
+
+  /// @notice Status of the call
+  enum Status {
+    Skipped,
+    Succeeded,
+    Failed,
+    Aborted,
+    Reverted,
+    NotEnoughGas
   }
 
-  /// @inheritdoc IAccount
-  function validateUserOp(
-    PackedUserOperation calldata userOp,
-    bytes32 userOpHash,
-    uint256 missingAccountFunds
-  ) external returns (uint256 validationData) {
-    if (entrypoint == address(0)) {
-      revert ERC4337Disabled();
-    }
-
-    if (msg.sender != entrypoint) {
-      revert InvalidEntryPoint(msg.sender);
-    }
-
-    // userOp.nonce is validated by the entrypoint
-
-    if (missingAccountFunds != 0) {
-      IEntryPoint(entrypoint).depositTo{ value: missingAccountFunds }(address(this));
-    }
-
-    if (this.isValidSignature(userOpHash, userOp.signature) != IERC1271_MAGIC_VALUE_HASH) {
-      return SIG_VALIDATION_FAILED;
-    }
-
-    return 0;
+  /// @notice Result of the call
+  struct Result {
+    Status status;
+    bytes result;
+    uint256 gasUsed;
   }
 
-  /// @notice Execute a user operation
-  /// @param _payload The packed payload
-  /// @dev This is the execute function for the EntryPoint to call.
-  function executeUserOp(
-    bytes calldata _payload
-  ) external nonReentrant {
-    if (entrypoint == address(0)) {
-      revert ERC4337Disabled();
-    }
+  /// @notice Simulate the execution of a payload
+  /// @param _calls The calls to simulate
+  /// @return results The results of the calls
+  function simulate(
+    Payload.Call[] calldata _calls
+  ) external returns (Result[] memory results) {
+    uint256 startingGas = gasleft();
+    bool errorFlag = false;
 
-    if (msg.sender != entrypoint) {
-      revert InvalidEntryPoint(msg.sender);
-    }
+    uint256 numCalls = _calls.length;
+    results = new Result[](numCalls);
+    for (uint256 i = 0; i < numCalls; i++) {
+      Payload.Call memory call = _calls[i];
 
-    this.selfExecute(_payload);
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Wallet } from "../../Wallet.sol";
-import { Implementation } from "../Implementation.sol";
-import { Storage } from "../Storage.sol";
-import { BaseAuth } from "./BaseAuth.sol";
-
-/// @title Stage1Auth
-/// @author Agustin Aguilar
-/// @notice Stage 1 auth contract
-contract Stage1Auth is BaseAuth, Implementation {
-
-  /// @notice Error thrown when the image hash is zero
-  error ImageHashIsZero();
-  /// @notice Error thrown when the signature type is invalid
-  error InvalidSignatureType(bytes1 _type);
-
-  /// @notice Initialization code hash
-  bytes32 public immutable INIT_CODE_HASH;
-  /// @notice Factory address
-  address public immutable FACTORY;
-  /// @notice Stage 2 implementation address
-  address public immutable STAGE_2_IMPLEMENTATION;
-
-  /// @dev keccak256("org.arcadeum.module.auth.upgradable.image.hash")
-  bytes32 internal constant IMAGE_HASH_KEY = bytes32(0xea7157fa25e3aa17d0ae2d5280fa4e24d421c61842aa85e45194e1145aa72bf8);
-
-  /// @notice Emitted when the image hash is updated
-  event ImageHashUpdated(bytes32 newImageHash);
-
-  constructor(address _factory, address _stage2) {
-    // Build init code hash of the deployed wallets using that module
-    bytes32 initCodeHash = keccak256(abi.encodePacked(Wallet.creationCode, uint256(uint160(address(this)))));
-
-    INIT_CODE_HASH = initCodeHash;
-    FACTORY = _factory;
-    STAGE_2_IMPLEMENTATION = _stage2;
-  }
-
-  function _updateImageHash(
-    bytes32 _imageHash
-  ) internal virtual override {
-    // Update imageHash in storage
-    if (_imageHash == bytes32(0)) {
-      revert ImageHashIsZero();
-    }
-    Storage.writeBytes32(IMAGE_HASH_KEY, _imageHash);
-    emit ImageHashUpdated(_imageHash);
-
-    // Update wallet implementation to stage2 version
-    _updateImplementation(STAGE_2_IMPLEMENTATION);
-  }
-
-  function _isValidImage(
-    bytes32 _imageHash
-  ) internal view virtual override returns (bool) {
-    return address(uint160(uint256(keccak256(abi.encodePacked(hex"ff", FACTORY, _imageHash, INIT_CODE_HASH)))))
-      == address(this);
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../Payload.sol";
-
-import { Storage } from "../Storage.sol";
-import { IAuth } from "../interfaces/IAuth.sol";
-import { IERC1271, IERC1271_MAGIC_VALUE_HASH } from "../interfaces/IERC1271.sol";
-
-import { IPartialAuth } from "../interfaces/IPartialAuth.sol";
-import { ISapient } from "../interfaces/ISapient.sol";
-import { BaseSig } from "./BaseSig.sol";
-
-import { SelfAuth } from "./SelfAuth.sol";
-
-using Payload for Payload.Decoded;
-
-/// @title BaseAuth
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Base contract for the auth module
-abstract contract BaseAuth is IAuth, IPartialAuth, ISapient, IERC1271, SelfAuth {
-
-  /// @dev keccak256("org.sequence.module.auth.static")
-  bytes32 private constant STATIC_SIGNATURE_KEY =
-    bytes32(0xc852adf5e97c2fc3b38f405671e91b7af1697ef0287577f227ef10494c2a8e86);
-
-  /// @notice Error thrown when the sapient signature is invalid
-  error InvalidSapientSignature(Payload.Decoded _payload, bytes _signature);
-  /// @notice Error thrown when the signature weight is invalid
-  error InvalidSignatureWeight(uint256 _threshold, uint256 _weight);
-  /// @notice Error thrown when the static signature has expired
-  error InvalidStaticSignatureExpired(bytes32 _opHash, uint256 _expires);
-  /// @notice Error thrown when the static signature has the wrong caller
-  error InvalidStaticSignatureWrongCaller(bytes32 _opHash, address _caller, address _expectedCaller);
-
-  /// @notice Event emitted when a static signature is set
-  event StaticSignatureSet(bytes32 _hash, address _address, uint96 _timestamp);
-
-  function _getStaticSignature(
-    bytes32 _hash
-  ) internal view returns (address, uint256) {
-    uint256 word = uint256(Storage.readBytes32Map(STATIC_SIGNATURE_KEY, _hash));
-    return (address(uint160(word >> 96)), uint256(uint96(word)));
-  }
-
-  function _setStaticSignature(bytes32 _hash, address _address, uint256 _timestamp) internal {
-    Storage.writeBytes32Map(
-      STATIC_SIGNATURE_KEY, _hash, bytes32(uint256(uint160(_address)) << 96 | (_timestamp & 0xffffffffffffffffffffffff))
-    );
-  }
-
-  /// @notice Get the static signature for a specific hash
-  /// @param _hash The hash to get the static signature for
-  /// @return address The address associated with the static signature
-  /// @return timestamp The timestamp of the static signature
-  function getStaticSignature(
-    bytes32 _hash
-  ) external view returns (address, uint256) {
-    return _getStaticSignature(_hash);
-  }
-
-  /// @notice Set the static signature for a specific hash
-  /// @param _hash The hash to set the static signature for
-  /// @param _address The address to associate with the static signature
-  /// @param _timestamp The timestamp of the static signature
-  /// @dev Only callable by the wallet itself
-  function setStaticSignature(bytes32 _hash, address _address, uint96 _timestamp) external onlySelf {
-    _setStaticSignature(_hash, _address, _timestamp);
-    emit StaticSignatureSet(_hash, _address, _timestamp);
-  }
-
-  /// @notice Update the image hash
-  /// @param _imageHash The new image hash
-  /// @dev Only callable by the wallet itself
-  function updateImageHash(
-    bytes32 _imageHash
-  ) external virtual onlySelf {
-    _updateImageHash(_imageHash);
-  }
-
-  function signatureValidation(
-    Payload.Decoded memory _payload,
-    bytes calldata _signature
-  ) internal view virtual returns (bool isValid, bytes32 opHash) {
-    // Read first bit to determine if static signature is used
-    bytes1 signatureFlag = _signature[0];
-
-    if (signatureFlag & 0x80 == 0x80) {
-      opHash = _payload.hash();
-
-      (address addr, uint256 timestamp) = _getStaticSignature(opHash);
-      if (timestamp <= block.timestamp) {
-        revert InvalidStaticSignatureExpired(opHash, timestamp);
+      // Skip onlyFallback calls if no error occurred
+      if (call.onlyFallback && !errorFlag) {
+        continue;
       }
 
-      if (addr != address(0) && addr != msg.sender) {
-        revert InvalidStaticSignatureWrongCaller(opHash, msg.sender, addr);
+      // Reset the error flag
+      // onlyFallback calls only apply when the immediately preceding transaction fails
+      errorFlag = false;
+
+      uint256 gasLimit = call.gasLimit;
+      if (gasLimit != 0 && gasleft() < gasLimit) {
+        results[i].status = Status.NotEnoughGas;
+        results[i].result = abi.encode(gasleft());
+        return results;
       }
 
-      return (true, opHash);
+      bool success;
+      if (call.delegateCall) {
+        uint256 initial = gasleft();
+        (success) = LibOptim.delegatecall(
+          call.to,
+          gasLimit == 0 ? gasleft() : gasLimit,
+          abi.encodeWithSelector(
+            IDelegatedExtension.handleSequenceDelegateCall.selector, 0, startingGas, i, numCalls, 0, call.data
+          )
+        );
+        results[i].gasUsed = initial - gasleft();
+      } else {
+        uint256 initial = gasleft();
+        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
+        results[i].gasUsed = initial - gasleft();
+      }
+
+      if (!success) {
+        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
+          errorFlag = true;
+          results[i].status = Status.Failed;
+          results[i].result = LibOptim.returnData();
+          continue;
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
+          results[i].status = Status.Reverted;
+          results[i].result = LibOptim.returnData();
+          return results;
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
+          results[i].status = Status.Aborted;
+          results[i].result = LibOptim.returnData();
+          break;
+        }
+      }
+
+      results[i].status = Status.Succeeded;
+      results[i].result = LibOptim.returnData();
     }
-
-    // Static signature is not used, recover and validate imageHash
-
-    uint256 threshold;
-    uint256 weight;
-    bytes32 imageHash;
-
-    (threshold, weight, imageHash,, opHash) = BaseSig.recover(_payload, _signature, false, address(0));
-
-    // Validate the weight
-    if (weight < threshold) {
-      revert InvalidSignatureWeight(threshold, weight);
-    }
-
-    isValid = _isValidImage(imageHash);
-  }
-
-  /// @inheritdoc ISapient
-  function recoverSapientSignature(
-    Payload.Decoded memory _payload,
-    bytes calldata _signature
-  ) external view returns (bytes32) {
-    // Copy parent wallets + add caller at the end
-    address[] memory parentWallets = new address[](_payload.parentWallets.length + 1);
-
-    for (uint256 i = 0; i < _payload.parentWallets.length; i++) {
-      parentWallets[i] = _payload.parentWallets[i];
-    }
-
-    parentWallets[_payload.parentWallets.length] = msg.sender;
-    _payload.parentWallets = parentWallets;
-
-    (bool isValid,) = signatureValidation(_payload, _signature);
-    if (!isValid) {
-      revert InvalidSapientSignature(_payload, _signature);
-    }
-
-    return bytes32(uint256(1));
-  }
-
-  /// @inheritdoc IERC1271
-  function isValidSignature(bytes32 _hash, bytes calldata _signature) external view returns (bytes4) {
-    Payload.Decoded memory payload = Payload.fromDigest(_hash);
-
-    (bool isValid,) = signatureValidation(payload, _signature);
-    if (!isValid) {
-      return bytes4(0);
-    }
-
-    return IERC1271_MAGIC_VALUE_HASH;
-  }
-
-  /// @inheritdoc IPartialAuth
-  function recoverPartialSignature(
-    Payload.Decoded memory _payload,
-    bytes calldata _signature
-  )
-    external
-    view
-    returns (
-      uint256 threshold,
-      uint256 weight,
-      bool isValidImage,
-      bytes32 imageHash,
-      uint256 checkpoint,
-      bytes32 opHash
-    )
-  {
-    (threshold, weight, imageHash, checkpoint, opHash) = BaseSig.recover(_payload, _signature, false, address(0));
-    isValidImage = _isValidImage(imageHash);
   }
 
 }
