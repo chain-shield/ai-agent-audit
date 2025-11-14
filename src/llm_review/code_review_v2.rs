@@ -56,8 +56,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these failed
-    // let custom_scoped_contracts = Some(vec!["Calls".to_string()]);
-    let custom_scoped_contracts: Option<Vec<_>> = None;
+    let custom_scoped_contracts = Some(vec!["Calls".to_string()]);
+    // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     let (ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent) =
         generate_ai_agents(repo).await?;
