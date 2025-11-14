@@ -56,6 +56,7 @@ pub trait IssueStructTrait: Send + Sync + Sized + 'static {
     fn issue_title(&self) -> String;
 }
 
+// TODO: ADD pattterns_to_findings_prompt that will list out all patterns in prompt
 #[async_trait]
 pub trait IssueTrait: Send + Sync {
     fn hash(&self) -> String;

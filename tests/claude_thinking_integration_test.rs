@@ -11,13 +11,23 @@
 /// - `max_tokens` MUST be GREATER than `thinking.budget_tokens`
 /// - Example: If thinking budget is 10,000, max_tokens should be at least 15,000+
 /// - Claude models support 200K+ input tokens by default
-use ai_agent_audit::config::init_config;
+use ai_agent_audit::config::{init_config, try_audit_config};
 use ai_agent_audit::llm_review::agent_factory::{AgentConfig, AgentFactory, init_llm_clients};
 use ai_agent_audit::llm_review::findings::CLAUDE_4_5_SONNET;
 use dotenvy::dotenv;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::env;
+
+/// Initialize dotenv, logger, config and LLM clients idempotently for tests
+fn ensure_runtime_initialized() {
+    dotenv().ok();
+    let _ = env_logger::try_init();
+    if try_audit_config().is_none() {
+        let _ = init_config();
+    }
+    let _ = init_llm_clients();
+}
 
 /// Test struct for JSON extraction
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -2,9 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-use ai_agent_audit::prepare_code::git_clone::RepoPaths;
-use ai_agent_audit::reporting::audit_type::AuditType;
-use ai_agent_audit::reporting::poc_config::PocConfig;
+use ai_agent_audit::config::AuditType;
+use ai_agent_audit::prepare_code::git_clone::{PocConfig, RepoPaths};
 use ai_agent_audit::utils::check_folder_name::is_library_file;
 
 /// Helper to create a minimal RepoPaths for testing
@@ -103,17 +102,20 @@ fn test_library_file_detection() {
     println!("   Result: {} (expected: false)\n", result5);
     assert!(!result5, "Should NOT detect file in src folder as library");
 
-    // Test case 6: File in node_modules/lib - SHOULD BE ACCEPTED
+    // Test case 6: File in node_modules/lib - SHOULD BE REJECTED (2 library segments)
     let node_modules_lib = root.join("node_modules").join("lib");
     fs::create_dir_all(&node_modules_lib).unwrap();
     let node_modules_file = node_modules_lib.join("External.sol");
     fs::write(&node_modules_file, "contract External {}").unwrap();
 
-    println!("6. node_modules/lib folder:");
+    println!("6. node_modules/lib folder (2 library segments):");
     println!("   Path: {}", node_modules_file.display());
     let result6 = is_library_file(&node_modules_file, &repo);
-    println!("   Result: {} (expected: true)\n", result6);
-    assert!(result6, "Should detect file in node_modules/lib folder");
+    println!("   Result: {} (expected: false)\n", result6);
+    assert!(
+        !result6,
+        "Should REJECT file in node_modules/lib folder (2 library segments)"
+    );
 
     // Test case 7: File in lib/utils subdirectory - SHOULD BE ACCEPTED
     let lib_utils = root.join("lib").join("utils");
