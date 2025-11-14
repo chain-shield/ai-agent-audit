@@ -42,8 +42,8 @@ audit_type: "Code4rena"
 #   - "script"
 
 # Optional: PoC configuration
-poc_instructions: "puppy-test.md"
-# poc_template: "poc-template.sol"
+poc_instructions: "audit-docs/sequence-test.md"
+poc_template: "audit-docs/covenant-poc-template.t.sol"
 # test_folder: "test"
 
 # Optional: Foundry via-ir flag

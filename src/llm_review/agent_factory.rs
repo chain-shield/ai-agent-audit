@@ -27,7 +27,7 @@ use std::sync::OnceLock;
 const VALID_THINKING_SETTING: &[&str] = &["enabled", "disabled"];
 
 /// Default OpenAI model for agents
-const DEFAULT_OPENAI_MODEL: &str = "gpt-5";
+const DEFAULT_OPENAI_MODEL: &str = "gpt-5.1";
 
 /// Valid OpenAI service tiers (for most accounts)
 /// - "auto": Let OpenAI choose automatically
@@ -38,7 +38,7 @@ const DEFAULT_OPENAI_MODEL: &str = "gpt-5";
 const VALID_SERVICE_TIERS: &[&str] = &["auto", "default", "flex"];
 
 /// Valid OpenAI reasoning effort levels
-const VALID_REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
+const VALID_REASONING_EFFORTS: &[&str] = &["none", "low", "medium", "high"];
 
 /// Supported LLM providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
