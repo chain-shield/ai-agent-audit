@@ -139,6 +139,7 @@ pub enum VulnerabilityPattern {
     strum_macros::Display,
     strum_macros::EnumString,
 )]
+#[serde(rename_all = "PascalCase")]
 pub enum ImpactHint {
     High,
     HighMedium, // between High and Medium
