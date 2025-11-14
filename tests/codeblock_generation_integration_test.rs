@@ -10,13 +10,11 @@
 /// Uses the Sequence repository (2025-10-sequence) for testing.
 use ai_agent_audit::{
     build_brain::{
-        enrichment, summarize::summarize_src_files_with_model, summarize_db::get_file_summary_from_db,
+        enrichment, summarize::summarize_src_files_with_model,
+        summarize_db::get_file_summary_from_db,
     },
     config::AuditType,
-    enumerator::{
-        codeblock_db::CodeBlocksDb,
-        codeblocks::generate_codeblock_from_codebase,
-    },
+    enumerator::{codeblock_db::CodeBlocksDb, codeblocks::generate_codeblock_from_codebase},
     llm_review::contract_category::ContractCategory,
     prepare_code::git_clone::{PocConfig, RepoPaths},
     utils::remapping::parse_and_store_remappings,
@@ -39,9 +37,18 @@ fn get_expected_categories() -> Vec<(&'static str, ContractCategory)> {
         ("Storage", ContractCategory::StorageHelperLibrary),
         ("ReentrancyGuard", ContractCategory::ReentrancyGuardLibrary),
         ("SelfAuth", ContractCategory::AccessControlModifier),
-        ("ExplicitSessionManager", ContractCategory::AccessControlModifier),
-        ("ImplicitSessionManager", ContractCategory::AccessControlModifier),
-        ("PermissionValidator", ContractCategory::AccessControlModifier),
+        (
+            "ExplicitSessionManager",
+            ContractCategory::AccessControlModifier,
+        ),
+        (
+            "ImplicitSessionManager",
+            ContractCategory::AccessControlModifier,
+        ),
+        (
+            "PermissionValidator",
+            ContractCategory::AccessControlModifier,
+        ),
         ("Permission", ContractCategory::EncodingDecodingLibrary),
         ("Attestation", ContractCategory::EncodingDecodingLibrary),
     ]
@@ -118,17 +125,30 @@ async fn test_codeblock_generation_with_contract_category() {
     };
 
     // ────────────────────────────────────────────────────────────────────────────
-    // STEP 1: Generate file summaries with ContractCategory
+    // STEP 1: Build semantic database
     // ────────────────────────────────────────────────────────────────────────────
-    println!("\n📝 Step 1: Generating file summaries with ContractCategory...");
+    println!("\n🔨 Step 1: Building semantic database...");
+
+    let semantics_path = enrichment::build_semantics_db_from_call_graph(repo.clone())
+        .await
+        .expect("Failed to build semantic database");
+
+    println!("✅ Semantic database built at: {:?}", semantics_path);
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // STEP 2: Generate file summaries with ContractCategory
+    // ────────────────────────────────────────────────────────────────────────────
+    println!("\n📝 Step 2: Generating file summaries with ContractCategory...");
 
     // Parse remappings first
-    parse_and_store_remappings(&repo)
-        .await
-        .expect("Failed to parse remappings");
+    let remapping_file = protocol_root.join("remappings.txt");
+    if remapping_file.exists() {
+        parse_and_store_remappings(&remapping_file, &repo.project_id)
+            .expect("Failed to parse remappings");
+    }
 
     // Generate summaries using LLM
-    summarize_src_files_with_model(&repo)
+    summarize_src_files_with_model(&repo, &semantics_path, "gpt-5-mini")
         .await
         .expect("Failed to generate file summaries");
 
@@ -152,23 +172,12 @@ async fn test_codeblock_generation_with_contract_category() {
     );
 
     // ────────────────────────────────────────────────────────────────────────────
-    // STEP 2: Build semantic database
-    // ────────────────────────────────────────────────────────────────────────────
-    println!("\n🔨 Step 2: Building semantic database...");
-
-    let db_path = enrichment::build_semantics_db_from_call_graph(repo.clone())
-        .await
-        .expect("Failed to build semantic database");
-
-    println!("✅ Semantic database built at: {:?}", db_path);
-
-    // ────────────────────────────────────────────────────────────────────────────
     // STEP 3: Generate codeblocks with ContractCategory extraction
     // ────────────────────────────────────────────────────────────────────────────
     println!("\n🔍 Step 3: Generating codeblocks with ContractCategory extraction...");
 
     // Open semantic database
-    let semantic_db = Connection::open(&db_path).expect("Failed to open semantic database");
+    let semantic_db = Connection::open(&semantics_path).expect("Failed to open semantic database");
 
     // Create codeblocks database
     let codeblocks_db_path = repo_root.join(format!("{}-codeblocks-test.db", project_id));
@@ -194,11 +203,14 @@ async fn test_codeblock_generation_with_contract_category() {
         .get_all_contracts(&repo)
         .expect("Failed to get all contracts");
 
-    println!("📊 Total contracts in codeblock database: {}", all_contracts.len());
+    println!(
+        "📊 Total contracts in codeblock database: {}",
+        all_contracts.len()
+    );
 
     // Count contracts by category
     let mut category_counts = std::collections::HashMap::new();
-    for (contract, (_, category)) in &all_contracts {
+    for (_contract, (_, category)) in &all_contracts {
         *category_counts.entry(category.clone()).or_insert(0) += 1;
     }
 
@@ -245,7 +257,10 @@ async fn test_codeblock_generation_with_contract_category() {
     if !mismatches.is_empty() {
         println!("\n⚠️  Mismatches found:");
         for (contract, expected, actual) in &mismatches {
-            println!("  - {}: expected {:?}, got {:?}", contract, expected, actual);
+            println!(
+                "  - {}: expected {:?}, got {:?}",
+                contract, expected, actual
+            );
         }
     }
 
@@ -256,14 +271,17 @@ async fn test_codeblock_generation_with_contract_category() {
 
     let unknown_contracts: Vec<_> = all_contracts
         .iter()
-        .filter(|(_, (_, category))| *category == &ContractCategory::Unknown)
+        .filter(|(_, (_, category))| *category == ContractCategory::Unknown)
         .map(|(name, _)| name.as_str())
         .collect();
 
     if unknown_contracts.is_empty() {
         println!("  ✅ No contracts with Unknown category");
     } else {
-        println!("  ⚠️  {} contracts with Unknown category:", unknown_contracts.len());
+        println!(
+            "  ⚠️  {} contracts with Unknown category:",
+            unknown_contracts.len()
+        );
         for contract in &unknown_contracts {
             println!("    - {}", contract);
         }
@@ -278,14 +296,17 @@ async fn test_codeblock_generation_with_contract_category() {
     println!("📊 Summary:");
     println!("  - Total contracts: {}", all_contracts.len());
     println!("  - Unique categories: {}", category_counts.len());
-    println!("  - Expected category matches: {}/{}", matches, expected_categories.len());
+    println!(
+        "  - Expected category matches: {}/{}",
+        matches,
+        expected_categories.len()
+    );
     println!("  - Unknown contracts: {}", unknown_contracts.len());
 
     // Cleanup
     println!("\n🧹 Cleaning up test databases...");
     fs::remove_file(&codeblocks_db_path).ok();
-    fs::remove_file(&db_path).ok();
+    fs::remove_file(&semantics_path).ok();
 
     println!("✅ Test complete!");
 }
-
