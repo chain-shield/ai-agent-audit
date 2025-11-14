@@ -76,6 +76,8 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // OpenAI models
             "gpt-4o" => 2.50,
             "gpt-5" => 1.25,
+            "gpt-5-mini" => 0.25,
+            "gpt-5.1" => 1.25,
             "o3" => 2.00,
 
             // Anthropic models
@@ -106,6 +108,8 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // OpenAI models
             "gpt-4o" => 10.00,
             "gpt-5" => 25.00, // set to 2.5X actual value to account for reasoning tokens
+            "gpt-5-mini" => 2.00,
+            "gpt-5.1" => 25.00,
             "o3" => 8.00,
 
             // Anthropic models
@@ -303,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn test_cost_calculation_vs_openai_api() {
         use reqwest::Client;
-        use serde_json::{Value, json};
+        use serde_json::{json, Value};
 
         // Skip test if no API key
         let api_key = match std::env::var("OPENAI_API_KEY") {

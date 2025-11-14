@@ -5,13 +5,20 @@ use crate::{
     llm_review::{
         agent_factory::{AgentConfig, AgentFactory},
         dynamic_prompts::{
-            findings_template::get_findings_json_requirement,
-            inv_findings::generate_invariant_to_findings,
+            findings_template::{
+                get_findings_json_requirement, get_json_requirement_for_multipattern,
+            },
+            inv_findings::{
+                generate_invariant_to_findings, generate_multi_invariant_to_findings_prompt,
+            },
             invariants::generate_invariant_verify_prompt,
-            pattern_findings::generate_pattern_to_findings_prompt,
+            pattern_findings::{
+                generate_multipattern_to_findings_prompt, generate_pattern_to_findings_prompt,
+            },
             patterns::generate_pattern_verify_prompt,
         },
         enums::AIAgent,
+        patterns::VulnerabilityPattern,
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
         utils::prompt_context::{generate_formatted_invariant_finding, generate_formatted_pattern},
     },
@@ -43,6 +50,8 @@ pub trait IssueStructTrait: Send + Sync + Sized + 'static {
     fn issues(&self) -> &[Self::Spec];
     fn issues_mut(&mut self) -> &mut Vec<Self::Spec>;
     fn new(issues: Vec<Self::Spec>) -> Self;
+    fn multi_issue_to_findings_prompt(&self, repo: &RepoPaths) -> String;
+    fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String;
     async fn dedup(self) -> anyhow::Result<Self>;
     fn issue_title(&self) -> String;
 }
@@ -156,6 +165,13 @@ impl IssueStructTrait for ContractInvariants {
     fn issue_title(&self) -> String {
         "invariant".to_string()
     }
+    fn multi_issue_to_findings_prompt(&self, repo: &RepoPaths) -> String {
+        generate_multi_invariant_to_findings_prompt(&self, repo)
+    }
+    fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
+        let invariants: Vec<InvariantType> = self.issues().iter().map(|p| p.inv_type).collect();
+        get_json_requirement_for_multipattern(&invariants, "Invariant", repo)
+    }
 }
 
 #[async_trait]
@@ -176,6 +192,19 @@ impl IssueStructTrait for Patterns {
     fn issue_title(&self) -> String {
         "pattern".to_string()
     }
+    fn multi_issue_to_findings_prompt(&self, repo: &RepoPaths) -> String {
+        generate_multipattern_to_findings_prompt(&self, repo)
+    }
+    fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
+        let vulnerability_patterns: Vec<VulnerabilityPattern> =
+            self.issues().iter().map(|p| p.issue_type).collect();
+
+        get_json_requirement_for_multipattern(
+            &vulnerability_patterns,
+            "Security vulnerability Pattern",
+            repo,
+        )
+    }
 }
 
 pub async fn dedup_pattern<T>(patterns: T) -> anyhow::Result<T>
@@ -189,7 +218,7 @@ where
     // // Build a lightweight OpenAI agent just for deduping comparisons
     // let openai_client = openai::Client::from_env();
     // let openai_agent = Arc::new(openai_client.agent("gpt-5").build());
-    let openai_config = AgentConfig::new(None).with_model("gpt-5");
+    let openai_config = AgentConfig::new(None).with_model("gpt-5-mini");
 
     let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 

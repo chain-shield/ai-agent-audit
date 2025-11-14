@@ -25,8 +25,7 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
         - **Include** vulnerabilities where the admin or privileged function operates **exactly according to the specification**, but the implementation itself introduces a vulnerability.
 
         ## Rules
-        - **ONLY LOOK FOR {title_all_caps} VULNERABILITY** - disregard everything else
-        - **Scope** - if scope is provided below, then only report vulnerability that are in scope
+        - **ONLY LOOK FOR {title_all_caps} VULNERABILITY PATTERNS listed above** - disregard everything else
     "#,
         title = category_spec.title,
         title_all_caps = category_spec.title.to_uppercase(),

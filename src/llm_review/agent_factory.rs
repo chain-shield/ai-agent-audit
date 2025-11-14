@@ -6,11 +6,12 @@ use crate::ai_bot::file_picker::FilePickerTool;
 /// LLM providers (OpenAI, Anthropic, Gemini, DeepSeek) with consistent configuration
 /// and error handling.
 use crate::ai_bot::file_retrival::FileRetrievalTool;
-use crate::config::audit_config;
+use crate::config::{audit_config, OPENAI_MODEL};
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use rig::{
-    client::{CompletionClient, ProviderClient},
+    agent::AgentBuilderSimple,
+    client::CompletionClient,
     providers::{
         anthropic::{self, CLAUDE_3_7_SONNET},
         deepseek::{self, DEEPSEEK_CHAT},
@@ -27,7 +28,7 @@ use std::sync::OnceLock;
 const VALID_THINKING_SETTING: &[&str] = &["enabled", "disabled"];
 
 /// Default OpenAI model for agents
-const DEFAULT_OPENAI_MODEL: &str = "gpt-5";
+const DEFAULT_OPENAI_MODEL: &str = OPENAI_MODEL;
 
 /// Valid OpenAI service tiers (for most accounts)
 /// - "auto": Let OpenAI choose automatically
@@ -38,7 +39,10 @@ const DEFAULT_OPENAI_MODEL: &str = "gpt-5";
 const VALID_SERVICE_TIERS: &[&str] = &["auto", "default", "flex"];
 
 /// Valid OpenAI reasoning effort levels
-const VALID_REASONING_EFFORTS: &[&str] = &["low", "medium", "high"];
+/// OpenAI docs for reasoning models use "none", "low", "medium", "high".
+/// Internally we treat "none" as a request for the lowest non-zero effort and
+/// map it to "low" when calling the API.
+const VALID_REASONING_EFFORTS: &[&str] = &["none", "low", "medium", "high"];
 
 /// Supported LLM providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +139,7 @@ impl AnthropicConfig {
 pub struct OpenAIConfig {
     /// Service tier for OpenAI API calls ("default", "flex", "priority")
     pub service_tier: Option<String>,
-    /// Reasoning effort for OpenAI models ("minimal", "low", "medium", "high")
+    /// Reasoning effort for OpenAI models ("none", "minimal", "low", "medium", "high")
     pub reasoning_effort: Option<String>,
 }
 
@@ -294,7 +298,7 @@ impl AgentConfig {
         self
     }
 
-    /// Sets the OpenAI reasoning effort ("minimal", "low", "medium", "high").
+    /// Sets the OpenAI reasoning effort ("none", "minimal", "low", "medium", "high").
     /// Validates the input and panics on invalid values during development.
     pub fn with_openai_reasoning_effort(mut self, reasoning_effort: impl Into<String>) -> Self {
         let effort = reasoning_effort.into();
@@ -478,8 +482,7 @@ impl AgentFactory {
             OpenAIConfig::validate_reasoning_effort(effort)?;
         }
 
-        let mut builder = client
-            .agent(model)
+        let mut builder = AgentBuilderSimple::new(client.completion_model(model))
             .preamble(&config.preamble)
             .temperature(config.temperature);
 
@@ -498,9 +501,17 @@ impl AgentFactory {
             // Only send if not default (medium)
             if reasoning_effort != "medium" {
                 // OpenAI expects nested structure: { "reasoning": { "effort": "low" } }
+                // Docs expose: "none" | "low" | "medium" | "high". To keep behavior simple
+                // across the app, we treat "none" as an alias for the lowest non-zero setting
+                // and send "low" on the wire.
+                let effective_effort = if reasoning_effort == "none" {
+                    "low"
+                } else {
+                    reasoning_effort.as_str()
+                };
                 additional_params.insert(
                     "reasoning".to_string(),
-                    json!({ "effort": reasoning_effort }),
+                    json!({ "effort": effective_effort }),
                 );
             }
         }
@@ -562,8 +573,7 @@ impl AgentFactory {
             &config.model
         };
 
-        let mut builder = client
-            .agent(model)
+        let mut builder = AgentBuilderSimple::new(client.completion_model(model))
             .preamble(&config.preamble)
             .temperature(config.temperature);
 
@@ -638,8 +648,7 @@ impl AgentFactory {
             &config.model
         };
 
-        let mut builder = client
-            .agent(model)
+        let mut builder = AgentBuilderSimple::new(client.completion_model(model))
             .preamble(&config.preamble)
             .temperature(config.temperature);
 
@@ -696,8 +705,7 @@ impl AgentFactory {
             &config.model
         };
 
-        let mut builder = client
-            .agent(model)
+        let mut builder = AgentBuilderSimple::new(client.completion_model(model))
             .preamble(&config.preamble)
             .temperature(config.temperature);
 

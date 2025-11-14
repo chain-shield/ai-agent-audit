@@ -1,7 +1,7 @@
 use crate::llm_review::{
     findings::Finding,
     invariants::InvariantFinding,
-    patterns::{ImpactHint, Pattern},
+    patterns::Pattern,
     phases::verify_findings::{FindingConfidence, FindingStatus},
 };
 
@@ -43,6 +43,9 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
         invariant.contract, invariant.function
     ));
 
+    invariant_finding.push_str("\n ### Predicate\n");
+    invariant_finding.push_str(&invariant.predicate);
+
     invariant_finding.push_str("\n ### Description/Code Snippet\n");
     invariant_finding.push_str(&invariant.desc.to_string());
 
@@ -60,8 +63,22 @@ pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> Str
     invariant_finding.push_str("\n ### Post-State\n");
     invariant_finding.push_str(&invariant.post_state.clone().unwrap_or_default());
 
-    invariant_finding.push_str("\n ### Impact\n");
-    invariant_finding.push_str(&invariant.impact.clone().unwrap_or_default());
+    // invariant_finding.push_str("\n ### Impact\n");
+    // invariant_finding.push_str(&invariant.impact.clone().unwrap_or_default());
+
+    invariant_finding
+}
+
+pub fn generate_formatted_multiple_invariant_findings(invariants: &[InvariantFinding]) -> String {
+    let mut invariant_finding = String::new();
+
+    for invariant in invariants {
+        let invariant_details = generate_formatted_invariant_finding(invariant);
+
+        invariant_finding.push_str("\n");
+        invariant_finding.push_str(&invariant_details);
+        invariant_finding.push_str("\n");
+    }
 
     invariant_finding
 }
@@ -80,7 +97,7 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
     ));
 
     pattern_list.push_str("\n ### Title\n");
-    pattern_list.push_str(&pattern.description.to_string());
+    pattern_list.push_str(&pattern.title.to_string());
 
     pattern_list.push_str("\n ### Description/Code Snippet\n");
     pattern_list.push_str(&pattern.description.to_string());
@@ -96,10 +113,48 @@ pub fn generate_formatted_pattern(pattern: &Pattern) -> String {
         &pattern.privilege.to_string()
     ));
 
-    pattern_list.push_str(&format!(
-        "\n ### Impact: {}\n",
-        &pattern.impact.unwrap_or(ImpactHint::Low).to_string()
-    ));
+    // pattern_list.push_str(&format!(
+    //     "\n ### Impact: {}\n",
+    //     &pattern.impact.unwrap_or(ImpactHint::Low).to_string()
+    // ));
+
+    pattern_list
+}
+
+pub fn generate_formatted_abbreviated_patterns(patterns: &[Pattern]) -> String {
+    let mut pattern_list = String::new();
+
+    for pattern in patterns {
+        pattern_list.push_str(&format!(
+            "\n\n ### Issue Type: {}\n",
+            &pattern.issue_type.to_string()
+        ));
+
+        pattern_list.push_str(&format!(
+            "\n ### Relevant Function/Location: {}.{}\n",
+            pattern.contract, pattern.function
+        ));
+
+        pattern_list.push_str("\n ### Title\n");
+        pattern_list.push_str(&pattern.description.to_string());
+
+        pattern_list.push_str("\n ### Description/Code Snippet\n");
+        pattern_list.push_str(&pattern.description.to_string());
+    }
+
+    pattern_list
+}
+
+pub fn generate_formatted_multiple_patterns(patterns: &[Pattern]) -> String {
+    let mut pattern_list = String::new();
+
+    for pattern in patterns {
+        let pattern_details = generate_formatted_pattern(pattern);
+
+        pattern_list.push_str("\n");
+        pattern_list.push_str(&pattern_details);
+        pattern_list.push_str("\n");
+    }
 
     pattern_list
 }
