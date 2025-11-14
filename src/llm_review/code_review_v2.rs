@@ -1,5 +1,7 @@
 use super::{enums::AIAgent, phases};
-use crate::config::{CREATE_TESTS, NICHE_PATTERN_ANALYSIS};
+use crate::config::{
+    CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE, OPENAI_MODEL,
+};
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
 use crate::llm_review::contract_category::{get_contract_spec_from_category, ContractCategory};
@@ -7,6 +9,7 @@ use crate::llm_review::contract_file_map::ContractType;
 use crate::llm_review::findings::CLAUDE_4_5_SONNET;
 use crate::llm_review::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
+use crate::llm_review::utils::prompt_context::generate_formatted_abbreviated_patterns;
 use crate::llm_review::{
     agent_factory::{AgentConfig, AgentFactory},
     analysis_db::FindingsDb,
@@ -53,7 +56,7 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these failed
-    let custom_scoped_contracts = Some(vec!["Calls".to_string()]);
+    let custom_scoped_contracts = Some(vec!["BaseSig".to_string()]);
     // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     let (ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent) =
@@ -261,8 +264,9 @@ rigorous PoC tests that validate the findings.";
 
     // Create verification agent using OpenAI O3
     let verify_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5")
+        .with_model(OPENAI_MODEL)
         .with_preamble(verify_preamble)
+        .with_openai_reasoning_effort("medium")
         .with_file_picker(false); // Disabled to avoid rate limits
 
     let finding_verify_config = AgentConfig::new(Some(repo.clone()))
@@ -290,7 +294,7 @@ rigorous PoC tests that validate the findings.";
     //     .with_file_retrieval(false);
 
     let discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5")
+        .with_model(OPENAI_MODEL)
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
         .with_openai_reasoning_effort("high")
@@ -320,7 +324,7 @@ fn get_pattern_category_from_contract_category(
     ];
 
     // if NICHE_PATTERN_ANALYSIS is false than always return default_pattern_categories
-    if contract_category == ContractCategory::Unknown || !NICHE_PATTERN_ANALYSIS {
+    if contract_category == ContractCategory::Unknown || !NICHE_PATTERN_ANALYSIS_MODE {
         return default_pattern_categories;
     }
 
@@ -368,16 +372,31 @@ async fn process_patterns(
         Patterns::default()
     };
 
+    let list_of_validated_patterns =
+        generate_formatted_abbreviated_patterns(&verified_patterns.patterns);
+
+    println!("{}", list_of_validated_patterns);
+
     info!("PHASE 3: GENERATE FINDINGS FROM PATTERNS");
 
     if !verified_patterns.issues().is_empty() {
-        let findings_from_patterns = pattern_phases::pattern_to_findings::execute(
-            verified_patterns,
-            codeblock,
-            ai_discovery_agent,
-            repo,
-        )
-        .await?;
+        let findings_from_patterns = if MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE {
+            pattern_phases::multipattern_to_findings::execute(
+                verified_patterns,
+                codeblock,
+                ai_discovery_agent,
+                repo,
+            )
+            .await?
+        } else {
+            pattern_phases::pattern_to_findings::execute(
+                verified_patterns,
+                codeblock,
+                ai_discovery_agent,
+                repo,
+            )
+            .await?
+        };
 
         Ok(findings_from_patterns)
     } else {
@@ -443,13 +462,23 @@ async fn process_invariants(
     info!("PHASE 3: GENERATE FINDINGS FROM INVARIANTS");
 
     if !verified_invariants.issues().is_empty() {
-        let findings_from_invariants = pattern_phases::pattern_to_findings::execute(
-            verified_invariants,
-            codeblock,
-            ai_discovery_agent,
-            repo,
-        )
-        .await?;
+        let findings_from_invariants = if MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE {
+            pattern_phases::multipattern_to_findings::execute(
+                verified_invariants,
+                codeblock,
+                ai_discovery_agent,
+                repo,
+            )
+            .await?
+        } else {
+            pattern_phases::pattern_to_findings::execute(
+                verified_invariants,
+                codeblock,
+                ai_discovery_agent,
+                repo,
+            )
+            .await?
+        };
 
         Ok(findings_from_invariants)
     } else {

@@ -7,7 +7,7 @@ use anyhow::Result;
 use log::info;
 use rig::{
     Embed,
-    client::{EmbeddingsClient, ProviderClient},
+    client::EmbeddingsClient,
     embeddings::EmbeddingsBuilder,
     providers::openai::{self, Client},
 };

@@ -1,13 +1,12 @@
+use crate::cost::cost_data::TokenType;
 /// LLM extraction with retry logic and cost tracking.
 ///
 /// This module provides robust LLM interaction utilities with automatic retry
 /// mechanisms for handling rate limits, network issues, and parsing errors,
 /// while tracking inference costs across different providers.
 use crate::cost::cost_data::add_to_inference_cost_by_type;
-use crate::cost::cost_data::TokenType;
 use crate::llm_review::enums::AgentMetadata;
 use crate::llm_review::findings::FromLLMJson;
-use reqwest::StatusCode;
 use rig::agent::Agent;
 use rig::completion::CompletionError;
 use rig::completion::CompletionModel;
@@ -15,10 +14,11 @@ use rig::completion::Prompt;
 use rig::completion::PromptError;
 use rig::extractor::ExtractionError;
 use rig::extractor::Extractor;
+use rig::http_client;
 use schemars::JsonSchema;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde::de::Error as _; // <- bring the trait’s methods into scope
-use serde::Deserialize;
 use serde_json::Error as JsonError;
 use std::{thread, time::Duration};
 
@@ -151,28 +151,23 @@ fn should_retry_based_on_error(e: &str) -> bool {
 /// `false` → give up / bubble the error
 fn should_retry_prompt_err(e: &PromptError) -> bool {
     match e {
-        // Unpack the CompletionError variant  ──────────────────────────
+        // Unpack the CompletionError variant
         PromptError::CompletionError(inner) => match inner {
             /* 1) HTTP transport layer issues -------------------------- */
-            CompletionError::HttpError(http_err) => {
-                // 1a) Too-Many-Requests (OpenAI & friends)
-                if http_err.status() == Some(StatusCode::TOO_MANY_REQUESTS) {
-                    return true;
+            CompletionError::HttpError(http_err) => match http_err {
+                // Status code–based retry logic
+                http_client::Error::InvalidStatusCode(code)
+                | http_client::Error::InvalidStatusCodeWithMessage(code, _) => {
+                    let code = code.as_u16();
+                    // 429 Too-Many-Requests or any 5xx server error
+                    code == 429 || (500..=599).contains(&code)
                 }
-                // 1b) Any 5xx server error
-                if let Some(status) = http_err.status() {
-                    if status.is_server_error() {
-                        return true;
-                    }
-                }
-                // 1c) Network time-outs
-                if http_err.is_timeout() {
-                    return true;
-                }
-                false
-            }
+                // Network/transport errors from the underlying HTTP client
+                http_client::Error::Instance(_) => true,
+                _ => false,
+            },
 
-            /* 2) Provider said “I’m busy / overloaded / rate-limited”  */
+            /* 2) Provider said "I'm busy / overloaded / rate-limited"  */
             CompletionError::ProviderError(msg) | CompletionError::ResponseError(msg) => {
                 let m = msg.to_lowercase();
                 // Transient provider-side issues we should retry

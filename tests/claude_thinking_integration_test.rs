@@ -11,13 +11,23 @@
 /// - `max_tokens` MUST be GREATER than `thinking.budget_tokens`
 /// - Example: If thinking budget is 10,000, max_tokens should be at least 15,000+
 /// - Claude models support 200K+ input tokens by default
-use ai_agent_audit::config::init_config;
+use ai_agent_audit::config::{init_config, try_audit_config};
 use ai_agent_audit::llm_review::agent_factory::{AgentConfig, AgentFactory, init_llm_clients};
 use ai_agent_audit::llm_review::findings::CLAUDE_4_5_SONNET;
 use dotenvy::dotenv;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::env;
+
+/// Initialize dotenv, logger, config and LLM clients idempotently for tests
+fn ensure_runtime_initialized() {
+    dotenv().ok();
+    let _ = env_logger::try_init();
+    if try_audit_config().is_none() {
+        let _ = init_config();
+    }
+    let _ = init_llm_clients();
+}
 
 /// Test struct for JSON extraction
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -37,26 +47,14 @@ fn anthropic_key_present() -> bool {
 
 #[tokio::test]
 async fn test_claude_4_5_with_thinking_enabled() {
-    // Load environment variables
-    dotenv().ok();
-
     // Skip if no Anthropic API key present
     if !anthropic_key_present() {
         eprintln!("⚠️ Skipping test_claude_4_5_with_thinking_enabled - no ANTHROPIC_API_KEY found");
         return;
     }
 
-    // Initialize logger (avoid panic if another test already set the logger)
-    let _ = env_logger::try_init();
-
-    // Initialize configuration from environment
-    init_config().expect("init_config() should succeed when Anthropic API key is present");
-
-    // Initialize LLM clients (use a static flag to avoid double-init errors in test suite)
-    static INIT_ONCE: std::sync::Once = std::sync::Once::new();
-    INIT_ONCE.call_once(|| {
-        init_llm_clients().expect("init_llm_clients() should succeed");
-    });
+    // Initialize runtime (dotenv, logger, config, clients) idempotently
+    ensure_runtime_initialized();
 
     println!("\n🧪 Testing Claude 4.5 Sonnet with extended thinking enabled...\n");
 
@@ -234,26 +232,14 @@ Return your response in this JSON format:
 
 #[tokio::test]
 async fn test_claude_thinking_vs_disabled() {
-    // Load environment variables
-    dotenv().ok();
-
     // Skip if no Anthropic API key present
     if !anthropic_key_present() {
         eprintln!("⚠️ Skipping test_claude_thinking_vs_disabled - no ANTHROPIC_API_KEY found");
         return;
     }
 
-    // Initialize logger
-    let _ = env_logger::try_init();
-
-    // Initialize configuration
-    init_config().expect("init_config() should succeed");
-
-    // Initialize LLM clients
-    static INIT_ONCE: std::sync::Once = std::sync::Once::new();
-    INIT_ONCE.call_once(|| {
-        init_llm_clients().expect("init_llm_clients() should succeed");
-    });
+    // Initialize runtime (dotenv, logger, config, clients) idempotently
+    ensure_runtime_initialized();
 
     println!("\n🧪 Comparing Claude 4.5 with thinking enabled vs disabled...\n");
 

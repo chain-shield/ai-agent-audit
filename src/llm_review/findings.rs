@@ -208,8 +208,6 @@ impl Default for PrivilegeLevel {
     }
 }
 
-// No longer needed! strum's Display trait provides to_string() for free
-
 impl Findings {
     pub async fn dedup(self) -> anyhow::Result<Findings> {
         if self.findings.is_empty() {
@@ -218,7 +216,7 @@ impl Findings {
             });
         }
 
-        let openai_config = AgentConfig::new(None).with_model("gpt-5");
+        let openai_config = AgentConfig::new(None).with_model("gpt-5-mini");
 
         let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 
