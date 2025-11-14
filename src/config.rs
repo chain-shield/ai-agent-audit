@@ -25,18 +25,20 @@ pub const MAX_DEPTH: usize = 3;
 /// Maximum token budget per codeblock + context to stay within LLM context limits
 pub const TOKEN_BUDGET: usize = 200_000;
 pub const CREATE_TESTS: bool = false;
-pub const NICHE_PATTERN_ANALYSIS: bool = true;
+pub const NICHE_PATTERN_ANALYSIS_MODE: bool = true;
+// if true set DISCOVERY_RUNS accordingly
+pub const MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE: bool = true;
 
 /// Number of discovery rounds per contract during analysis
-pub const DISCOVERY_RUNS: usize = 1;
-pub const INVARIANT_RUNS: usize = 3;
-pub const MAX_PATTERN_RUN_TOP: usize = 5;
-pub const MAX_PATTERN_RUN_RARE: usize = 5;
-pub const MAX_PATTERN_RUN_MOST: usize = 5;
-pub const MAX_PATTERN_RUN_FREQUENT: usize = 5;
-pub const MAX_PATTERN_LIBRARY: usize = 4;
-pub const MAX_PATTERN_NICHE: usize = 10;
-pub const MAX_PATTERN_GENERAL: usize = 10;
+pub const DISCOVERY_RUNS: usize = 5;
+pub const INVARIANT_RUNS: usize = 0;
+pub const MAX_PATTERN_RUN_TOP: usize = 0;
+pub const MAX_PATTERN_RUN_RARE: usize = 0;
+pub const MAX_PATTERN_RUN_MOST: usize = 0;
+pub const MAX_PATTERN_RUN_FREQUENT: usize = 1;
+pub const MAX_PATTERN_LIBRARY: usize = 1;
+pub const MAX_PATTERN_NICHE: usize = 1;
+pub const MAX_PATTERN_GENERAL: usize = 1;
 
 pub const MAX_FILE_RUNS: usize = 1;
 
