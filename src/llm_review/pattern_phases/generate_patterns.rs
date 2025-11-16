@@ -6,7 +6,7 @@ use crate::{
     config::INVARIANT_RUNS,
     error::Result,
     llm_review::{
-        context_state::get_metadata_context,
+        context_state::{generate_audit_scope, get_metadata_context},
         dynamic_prompts::{
             self,
             invariants::{generate_invariant_prompt, get_invariant_json},
@@ -51,9 +51,17 @@ where
         .await
         .expect("could not extract context");
 
+    let audit_scope = generate_audit_scope(repo).await?;
+
+    let combined_context = if audit_scope.is_empty() {
+        context
+    } else {
+        format!("{context}\n\n## AUDIT SCOPE AND KEY INVARIANTS\n\n{audit_scope}")
+    };
+
     let codeblock = Arc::new(code.to_string());
 
-    let added_content_from_brain = Arc::new(context.to_string());
+    let added_content_from_brain = Arc::new(combined_context);
     let code_plus_context =
         generate_content_plus_context_block(&codeblock, &added_content_from_brain);
 

@@ -15,14 +15,18 @@ pub fn generate_pattern_category_prompt(category: &PatternCategory) -> String {
     format!(
         r#"
 You are a top Code4rena Security Warden. In this phase, your job is to identify **potential {title} vulnerability PATTERNS** in the target contract.
-You are NOT deciding final severity or scope yet. You are building a rich map of plausible weak spots that later stages will triage.
+You are NOT deciding final severity or scope yet. You are building a rich map of plausible weak spots that later stages will triage into concrete findings.
 
-You must be systematic and persistent:
+Your primary objective is **high recall of realistically exploitable patterns**, while still allowing later phases to discard false positives.
+
+You must be systematic and persistent in your internal reasoning:
+
 - Do **not** stop early just because the first few patterns look clean.
-- For **every** pattern in the list below, you must either:
+- Mentally iterate through **every** pattern in the list below.
+- For each pattern, either:
   - find at least one plausible code location where it might apply, **or**
-  - clearly explain why this pattern is unlikely to appear in this contract.
-- If information seems missing or ambiguous, state your assumptions and continue with your best effort rather than giving up.
+  - conclude (in your own reasoning) that it is unlikely to appear in this contract and why.
+- Even if some patterns ultimately do **not** appear in the JSON output, you must still check them carefully in your internal analysis.
 
 Please analyse the main target contract below for
 *each* {title} security vulnerability pattern listed below:
@@ -32,96 +36,119 @@ Please analyse the main target contract below for
 
 ---
 
-## Systems-Level Mindset (internal plan – do NOT echo this section)
+## Systems-Level Mindset (internal plan - do NOT echo this section)
 
 When reasoning, silently follow this plan:
 
 1. **Build a mental model of the contract (system view)**
-   - Identify the contract's role (vault, router, token, oracle adapter, governance, proxy, bridge, etc.).
+   - Identify the contract's role (vault, router, token, oracle adapter, governance, proxy, bridge, signature validator, etc.).
    - Identify critical state:
-     - balances, shares, debts, limits, indices, epochs, flags, roles, configuration parameters.
+     - balances, shares, debts, limits, indices, epochs, flags, roles, configuration parameters, checkpoints, nonces.
    - Identify external dependencies:
-     - tokens, routers, factories, oracles, multicall, proxies, libraries, bridges, external configs.
+     - tokens, routers, factories, oracles, multicall, proxies, libraries, bridges, external configs, middleware modules.
    - Sketch the lifecycle:
-     - how assets and permissions flow through this contract over time (deposit → accrue → withdraw; open → modify → close; submit → execute → settle).
+     - how assets, permissions, and configuration flow through this contract over time
+       (for example: deposit -> accrue -> withdraw; open -> modify -> close; submit -> execute -> settle; sign -> validate -> execute).
 
-2. **Derive key invariants and assumptions**
-   - Safety invariants (what must always hold):
-     - accounting relationships (e.g. total assets vs. shares, debt, or reserves),
+2. **Derive key invariants and assumptions (including from docs/metadata)**
+   Treat comments, metadata files, and protocol documentation as the **intended specification**:
+
+   - Safety invariants (what must always hold), for example:
+     - accounting relationships (total assets vs. shares/debt/reserves),
      - role and permission boundaries,
-     - monotonic or one-way state transitions (indices, epochs, nonces, initialization),
+     - monotonic or one-way state transitions (indices, epochs, nonces, checkpoints, initialization),
      - upgrade / delegatecall / storage-layout assumptions.
    - Integration assumptions:
-     - decimals, rounding behavior, return types, expected behavior of external libraries and tokens,
-     - assumptions about oracles, multicall, and cross-chain behavior.
+     - decimals, rounding behavior, return types, expected behavior of external tokens/libraries/oracles,
+     - assumptions about multicall, bridges, cross-chain behavior, middlewares/checkpointers.
+   - **Spec vs implementation mismatches:**
+     For each invariant or assumption stated in docs/metadata/comments
+     (for example: signatures must always enforce a particular condition, checkpoints must not be bypassed,
+     or once a signer is evicted they must never be able to act under the old configuration),
+     check whether the implementation can violate it through any realistic sequence of calls or flag/parameter choices.
+     Any such mismatch that enables a realistic exploit is a valid security vulnerability pattern.
 
-3. **For EACH vulnerability pattern**
+3. **For EACH vulnerability pattern (internal checklist)**
+   For each pattern in the list above:
+
    - Locate all functions and code regions that could realistically exhibit that pattern.
    - For each candidate location:
      - trace preconditions (modifiers, `require` checks),
-     - trace storage reads and writes (how state evolves),
-     - trace external calls (including delegatecall, multicall, token transfers, oracle reads),
+     - trace storage reads and writes (how state evolves across calls and over time),
+     - trace external calls (including `call`, `delegatecall`, multicall, token transfers, oracle reads, middlewares),
      - connect this to the invariants and assumptions from step 2.
    - Consider:
      - single-call behavior,
      - multi-step / multi-transaction sequences (call A then B then C, possibly across different users or roles),
-     - cross-contract and cross-library interactions (router ↔ vault, adapter ↔ external AMM, math lib ↔ accounting logic).
+     - cross-contract and cross-library interactions (for example: router <-> vault, adapter <-> AMM, signature library <-> auth module).
+
+   Pay special attention to:
+   - **Flags / mode bits / "ignore" booleans / optional middlewares** that can disable checks
+     (for example: checkpoint/nonce usage flags, toggles that skip validation, optional modules).
+     Ask whether an attacker or evicted signer can choose a mode that bypasses intended validation,
+     reuses stale configuration, or skips a checkpoint/nonce/snapshot.
+   - **Chained or nested flows** (for example: chained signatures, batched operations, multicalls)
+     where each step looks safe in isolation but the composition breaks an invariant.
 
 4. **Scenario-based reasoning (edges of the state space)**
-   - For each relevant pattern, imagine at least one **realistic scenario** (2–4 calls over time) where:
-     - boundary conditions are hit (first/last depositor, zero/non-zero balances, max/min values),
-     - donations, fee changes, rebases, or emergency functions are involved,
-     - ordering is non-trivial (withdraw before claim, emergency mode between operations, admin config change between user calls).
-   - Ask: does this scenario plausibly break an invariant or assumption identified earlier?
+   For each relevant pattern, imagine at least one **realistic scenario** (2-4 calls over time) where:
+   - boundary conditions are hit (first/last depositor, zero/non-zero balances, max/min values),
+   - donations, fee changes, rebases, or emergency functions are involved,
+   - ordering is non-trivial (withdraw before claim, emergency mode between operations, admin config change between user calls),
+   - for signatures/auth: various combinations of flags, nonces, checkpoints, and signer revocations.
+
+   Ask whether this scenario plausibly breaks an invariant or assumption identified earlier,
+   or creates a clear profit or state-corruption opportunity for some actor.
 
 5. **Cross-module / cross-library composition**
-   - Pay close attention to how **different pieces combine**:
-     - this contract’s logic + math/token libraries,
-     - this contract + external routers/oracles/multicall,
-     - storage / delegatecall interactions between this contract and its caller.
-   - Look for “safe + safe = unsafe” patterns:
-     - rounding in one module + truncation in another,
-     - one module assuming 18 decimals while another returns 6,
-     - a generic multicall/delegatecall primitive used with a wrong or unverified address.
+   Pay close attention to how **different pieces combine**:
+
+   - This contract's logic plus math/token/signature libraries,
+   - This contract plus external routers/oracles/multicall/middleware,
+   - Storage and delegatecall interactions between this contract and its caller or proxy.
+
+   Look for "safe + safe = unsafe" patterns, for example:
+   - rounding in one module plus truncation in another,
+   - different decimal assumptions between modules,
+   - a generic multicall/delegatecall primitive used with a wrong or weakly-controlled address,
+   - optional middleware (for example: checkpointing, rate limits) that can be switched off by the attacker's choice of parameters or flags.
 
 6. **Record pattern candidates (do not over-filter)**
    - For each pattern:
-     - if you see plausible matching code, record it and explain **why** it matches or nearly matches,
-     - if you believe the pattern does **not** apply, briefly justify why (e.g. “no external calls of this form”, “no privileged state mutation”, “no oracle usage”).
-   - It is acceptable to include potential false positives, as long as your reasoning is explicit. Later phases will confirm or reject them.
+     - if you see plausible matching code, treat it as a candidate and be explicit in your reasoning (internally) about why it matches or nearly matches,
+     - if you believe the pattern does **not** apply, be clear in your own reasoning why (for example: no external calls of this form, no mutable privileged state of this kind, no signature/nonce/checkpoint usage here).
+   - It is acceptable to surface potential false positives in the JSON, as long as your reasoning is explicit and the scenario is realistic. Later phases will confirm or reject them.
 
 ---
 
-## Generic Solo / Low-Duplicate Guidance (for pattern discovery)
+## Guidance for finding Hard to Detect Patterns
 
-- Prefer **less obvious, protocol-specific** manifestations of these patterns over trivial textbook ones, as long as they are still **realistically satisfiable** for this contract (current configuration space, normal user/admin flows).
-- Look for **context-dependent** breakages where the pattern only becomes dangerous because of how THIS contract implements its state, math, integrations, or lifecycle.
-- Check **multi-step / multi-transaction / cross-contract** flows, not just single-function bodies.
-- Examine **interactions with imported libraries and external contracts** (math/token helpers, routers, oracles, multicall, proxies, factories): two individually safe components can combine into a dangerous pattern.
-- Consider **HIGH-impact edge cases** that are rare but clearly realistic and impactful (e.g. first/last depositor, donation before withdrawal, extreme but valid parameter values) while still consistent with how integrators and users are expected to use the contract.
-- Please still note obvious instances, but give extra attention and detail to subtle, protocol-specific, and compositional ones.
+- Prefer **contract-specific, security-relevant** manifestations of these patterns over purely textbook or cosmetic issues, as long as they are still **realistically satisfiable** for this contract (under normal configurations and expected user/admin flows).
+- Look for **context-dependent** breakages where the pattern only becomes dangerous because of how THIS contract implements its state, math, integrations, signature modes, or lifecycle.
+- Check **multi-step / multi-transaction / cross-contract** flows, not just single function bodies.
+- Examine **interactions with imported libraries and external contracts** (for example: math or token helpers, signature/auth libraries, routers, oracles, multicall, proxies, factories). Two individually safe components can still combine into a dangerous pattern.
+- Still note obvious instances,  but give extra attention and detail to subtle, protocol-specific, and compositional ones.
 
 ---
 
+## Governance / Admin Assumptions 
 
-## Governance / Admin Assumptions
-
-- **Exclude** vulnerabilities that rely on an admin behaving maliciously, making configuration mistakes, or neglecting duties — these are governance risks and out of scope.
-- **Include** vulnerabilities where the admin or privileged function operates **exactly according to the specification**, but the implementation itself introduces a vulnerability.
+- Assume admin / owner / multisig / governance is **trusted by default**, however:
+  - If a security vulnerability pattern manifests when an admin or privileged function operates **exactly according to the intended specification**, tag it as a spec-aligned admin logic flaw (implementation-level).
+  - On the other hand, if a pattern only manifests when an admin behaves maliciously or recklessly, please exclude this pattern as it falls under governance risk, and it not a true security vulnerability.
 
 ---
 
 ## Rules
 
-- **ONLY LOOK FOR {title_all_caps} VULNERABILITY PATTERNS** — ignore unrelated categories.
+- **ONLY LOOK FOR {title_all_caps} VULNERABILITY PATTERNS** - ignore unrelated categories.
 - This is a **pattern discovery** phase, not final exploit or severity evaluation.
-- It is acceptable to include candidates that may later be triaged out, but you must:
-  - Avoid purely stylistic / QA-only observations.
+- It is acceptable to include candidates that may later be triaged out, and you must:
+  - Avoid purely stylistic or QA-only observations.
   - Provide clear reasoning for why each candidate matches (or nearly matches) one of the listed patterns.
-- For **every pattern** in the list above:
-  - either identify at least one plausible matching location and explain why,
-  - or explicitly explain why that pattern is unlikely to appear in this contract.
-  - output all plausible vulnerability patterns, that appear in the cotract, in json format provided below 
+- In your final response:
+  - Output only the patterns you believe are plausible vulnerability patterns in the exact JSON structure described in the OUTPUT REQUIREMENTS section that follows.
+  - If you find no plausible vulnerability patterns, return an empty patterns list as specified in the OUTPUT REQUIREMENTS section.
 "#,
         title = category_spec.title,
         title_all_caps = category_spec.title.to_uppercase(),

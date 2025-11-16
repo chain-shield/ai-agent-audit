@@ -3,6 +3,10 @@
 
 ##Findings by Pattern
 
+USING MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE = false; and gpt-5
+3 Valid UNIQUES
+
+NICHE_PATTERN_ANALYSIS_MODE = true;
 
  **Derived From** : Sticky ERC20 allowances let called target drain user/router funds after call
 

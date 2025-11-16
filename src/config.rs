@@ -28,9 +28,11 @@ pub const CREATE_TESTS: bool = false;
 pub const NICHE_PATTERN_ANALYSIS_MODE: bool = false;
 // if true set DISCOVERY_RUNS accordingly
 pub const MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE: bool = true;
+pub const DISCOVERY_RUNS: usize = 10;
+
+pub const OPENAI_MODEL: &str = "gpt-5.1";
 
 /// Number of discovery rounds per contract during analysis
-pub const DISCOVERY_RUNS: usize = 5;
 pub const INVARIANT_RUNS: usize = 0;
 pub const MAX_PATTERN_RUN_TOP: usize = 5;
 pub const MAX_PATTERN_RUN_RARE: usize = 5;
@@ -39,8 +41,6 @@ pub const MAX_PATTERN_RUN_FREQUENT: usize = 5;
 pub const MAX_PATTERN_LIBRARY: usize = 1;
 pub const MAX_PATTERN_NICHE: usize = 10;
 pub const MAX_PATTERN_GENERAL: usize = 1;
-
-pub const OPENAI_MODEL: &str = "gpt-5";
 
 pub const MAX_FILE_RUNS: usize = 1;
 
