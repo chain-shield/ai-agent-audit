@@ -170,64 +170,13 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
     };
 
     format!(
-        r#"Your job is to take the set of previously discovered **{pattern_type}** and mine **all concrete, in-scope High/Medium severity findings** across them.
+        r#"Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
 
-You are **not** searching for new categories of issues now. Instead, you must:
-
-- Use the patterns/invariants listed in "{title_all_caps} TO ANALYZE" as your starting point, and
-- For each real vulnerability you find, produce a finding with clear impact, exploit path, and mitigation.
-
----
-
-## Your goals
-
-1. Use the {pattern_type} descriptions and the **common exploit modes** below as your primary lens.
-2. Only emit findings that:
-   - Are **within the security audit scope** (contracts, features, roles, chains) provided elsewhere in this prompt.
-   - Are **realistically exploitable** (not purely theoretical or contrived).
-   - Justify a **High or Medium severity** under the severity rubric provided below.
-3. If no such findings exist, return exactly:
-   - `{{"findings":[]}}`
-
----
-
-## How to think (internal plan – do NOT echo this section)
-
-1. **Re-read the context**
-   - Study the **severity rubric** provided below.
-   - Review the **{pattern_type} overview** and the shared **Common Exploits** list.
-   - Carefully read the "{title_all_caps} TO ANALYZE" section, which aggregates multiple candidate patterns or invariants (contracts, functions, descriptions).
-
-2. **For each candidate block in "{title_all_caps} TO ANALYZE"**:
-   - Identify which pattern(s) or invariant(s) it represents.
-   - Locate the referenced **contract** and **function(s)** in the code.
-   - Trace the **full execution path**, including:
-     - Modifiers and preconditions (`require` checks, role gating, pause switches),
-     - Storage reads/writes and how state evolves across calls and over time,
-     - External calls (`call`, `delegatecall`, token transfers, routers, middlewares, oracles),
-     - Cross-transaction or cross-chain interactions if relevant.
-   - Consider different attacker roles and identify the **least privilege** that can realistically trigger the exploit (permissionless user, specific role, admin, etc.).
-
-3. **Attempt to construct concrete exploits**
-   - For each promising candidate, define clear **initial state assumptions**:
-     - balances, configuration flags, checkpoints, nonces, thresholds, signer sets, etc.
-   - Define one or more **transactions/operations** the attacker executes, in order.
-   - Derive the **post-state** and explain why it:
-     - Violates an important invariant, or
-     - Causes clear monetary or functional loss.
-
-   - If, after careful search, you cannot find a **credible, realistic exploit**, or the impact is only Low/Informational, treat that candidate as **"no finding"**.
-
-4. **Persist until all patterns are considered**
+## **Persist until all patterns are considered**
    - Do **not** stop at the first interesting exploit.
-   - Your goal is **maximum H/M coverage** – find every valid High/Medium finding.
+   - Your goal is **maximum coverage** – find every valid finding.
    - Systematically go through **every** candidate block in "{title_all_caps} TO ANALYZE" and decide:
-     - "Real in-scope H/M vulnerability keep as a finding", or
-     - "No credible in-scope exploit or only Low/Info impact ignore".
-
-Your actual response must follow the **exact JSON output instructions** that will be provided after this section.
-
----
+     - "Real in-scope vulnerability keep as a finding"
 
 ## Rules
 
@@ -238,16 +187,13 @@ Your actual response must follow the **exact JSON output instructions** that wil
 - A valid finding must be:
   - In-scope,
   - Backed by a credible exploit path,
-  - And clearly **High** or **Medium** severity according to the rubric.
+  - And clearly severity according to the rubric.
 - If nothing meets these criteria, return `{{"findings":[]}}`.
-
----
 
 ## Severity rubric
 
 {rubric}
 
----
 
 ## Exploit guidelines
 
