@@ -81,131 +81,6 @@ contract Stage2Auth is BaseAuth, Implementation {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import { LibOptim } from "../utils/LibOptim.sol";
-import { Nonce } from "./Nonce.sol";
-import { Payload } from "./Payload.sol";
-
-import { ReentrancyGuard } from "./ReentrancyGuard.sol";
-import { BaseAuth } from "./auth/BaseAuth.sol";
-import { IDelegatedExtension } from "./interfaces/IDelegatedExtension.sol";
-
-/// @title Calls
-/// @author Agustin Aguilar, Michael Standen, William Hua
-/// @notice Contract for executing calls
-abstract contract Calls is ReentrancyGuard, BaseAuth, Nonce {
-
-  /// @notice Emitted when a call succeeds
-  event CallSucceeded(bytes32 _opHash, uint256 _index);
-  /// @notice Emitted when a call fails
-  event CallFailed(bytes32 _opHash, uint256 _index, bytes _returnData);
-  /// @notice Emitted when a call is aborted
-  event CallAborted(bytes32 _opHash, uint256 _index, bytes _returnData);
-  /// @notice Emitted when a call is skipped
-  event CallSkipped(bytes32 _opHash, uint256 _index);
-
-  /// @notice Error thrown when a call reverts
-  error Reverted(Payload.Decoded _payload, uint256 _index, bytes _returnData);
-  /// @notice Error thrown when a signature is invalid
-  error InvalidSignature(Payload.Decoded _payload, bytes _signature);
-  /// @notice Error thrown when there is not enough gas
-  error NotEnoughGas(Payload.Decoded _payload, uint256 _index, uint256 _gasLeft);
-
-  /// @notice Execute a call
-  /// @param _payload The payload
-  /// @param _signature The signature
-  function execute(bytes calldata _payload, bytes calldata _signature) external payable virtual nonReentrant {
-    uint256 startingGas = gasleft();
-    Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
-
-    _consumeNonce(decoded.space, decoded.nonce);
-    (bool isValid, bytes32 opHash) = signatureValidation(decoded, _signature);
-
-    if (!isValid) {
-      revert InvalidSignature(decoded, _signature);
-    }
-
-    _execute(startingGas, opHash, decoded);
-  }
-
-  /// @notice Execute a call
-  /// @dev Callable only by the contract itself
-  /// @param _payload The payload
-  function selfExecute(
-    bytes calldata _payload
-  ) external payable virtual onlySelf {
-    uint256 startingGas = gasleft();
-    Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
-    bytes32 opHash = Payload.hash(decoded);
-    _execute(startingGas, opHash, decoded);
-  }
-
-  function _execute(uint256 _startingGas, bytes32 _opHash, Payload.Decoded memory _decoded) private {
-    bool errorFlag = false;
-
-    uint256 numCalls = _decoded.calls.length;
-    for (uint256 i = 0; i < numCalls; i++) {
-      Payload.Call memory call = _decoded.calls[i];
-
-      // Skip onlyFallback calls if no error occurred
-      if (call.onlyFallback && !errorFlag) {
-        emit CallSkipped(_opHash, i);
-        continue;
-      }
-
-      // Reset the error flag
-      // onlyFallback calls only apply when the immediately preceding transaction fails
-      errorFlag = false;
-
-      uint256 gasLimit = call.gasLimit;
-      if (gasLimit != 0 && gasleft() < gasLimit) {
-        revert NotEnoughGas(_decoded, i, gasleft());
-      }
-
-      bool success;
-      if (call.delegateCall) {
-        (success) = LibOptim.delegatecall(
-          call.to,
-          gasLimit == 0 ? gasleft() : gasLimit,
-          abi.encodeWithSelector(
-            IDelegatedExtension.handleSequenceDelegateCall.selector,
-            _opHash,
-            _startingGas,
-            i,
-            numCalls,
-            _decoded.space,
-            call.data
-          )
-        );
-      } else {
-        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
-      }
-
-      if (!success) {
-        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
-          errorFlag = true;
-          emit CallFailed(_opHash, i, LibOptim.returnData());
-          continue;
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
-          revert Reverted(_decoded, i, LibOptim.returnData());
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
-          emit CallAborted(_opHash, i, LibOptim.returnData());
-          break;
-        }
-      }
-
-      emit CallSucceeded(_opHash, i);
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
 import { Storage } from "./Storage.sol";
 import { SelfAuth } from "./auth/SelfAuth.sol";
 import { IERC1155Receiver } from "./interfaces/IERC1155Receiver.sol";
@@ -329,151 +204,211 @@ contract Hooks is SelfAuth, IERC1155Receiver, IERC777Receiver, IERC721Receiver, 
 }
 
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
+pragma solidity ^0.8.27;
 
-/// @title LibOptim
-/// @author Agustin Aguilar
-/// @notice Library for optimized EVM operations
-library LibOptim {
+import { LibOptim } from "../utils/LibOptim.sol";
+import { Nonce } from "./Nonce.sol";
+import { Payload } from "./Payload.sol";
 
-  /**
-   * @notice Computes the keccak256 hash of two 32-byte inputs.
-   * @dev It uses only scratch memory space.
-   * @param _a The first 32 bytes of the hash.
-   * @param _b The second 32 bytes of the hash.
-   * @return c The keccak256 hash of the two 32-byte inputs.
-   */
-  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
-    assembly {
-      mstore(0, _a)
-      mstore(32, _b)
-      c := keccak256(0, 64)
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
+import { BaseAuth } from "./auth/BaseAuth.sol";
+import { IDelegatedExtension } from "./interfaces/IDelegatedExtension.sol";
+
+/// @title Calls
+/// @author Agustin Aguilar, Michael Standen, William Hua
+/// @notice Contract for executing calls
+abstract contract Calls is ReentrancyGuard, BaseAuth, Nonce {
+
+  /// @notice Emitted when a call succeeds
+  event CallSucceeded(bytes32 _opHash, uint256 _index);
+  /// @notice Emitted when a call fails
+  event CallFailed(bytes32 _opHash, uint256 _index, bytes _returnData);
+  /// @notice Emitted when a call is aborted
+  event CallAborted(bytes32 _opHash, uint256 _index, bytes _returnData);
+  /// @notice Emitted when a call is skipped
+  event CallSkipped(bytes32 _opHash, uint256 _index);
+
+  /// @notice Error thrown when a call reverts
+  error Reverted(Payload.Decoded _payload, uint256 _index, bytes _returnData);
+  /// @notice Error thrown when a signature is invalid
+  error InvalidSignature(Payload.Decoded _payload, bytes _signature);
+  /// @notice Error thrown when there is not enough gas
+  error NotEnoughGas(Payload.Decoded _payload, uint256 _index, uint256 _gasLeft);
+
+  /// @notice Execute a call
+  /// @param _payload The payload
+  /// @param _signature The signature
+  function execute(bytes calldata _payload, bytes calldata _signature) external payable virtual nonReentrant {
+    uint256 startingGas = gasleft();
+    Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
+
+    _consumeNonce(decoded.space, decoded.nonce);
+    (bool isValid, bytes32 opHash) = signatureValidation(decoded, _signature);
+
+    if (!isValid) {
+      revert InvalidSignature(decoded, _signature);
+    }
+
+    _execute(startingGas, opHash, decoded);
+  }
+
+  /// @notice Execute a call
+  /// @dev Callable only by the contract itself
+  /// @param _payload The payload
+  function selfExecute(
+    bytes calldata _payload
+  ) external payable virtual onlySelf {
+    uint256 startingGas = gasleft();
+    Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
+    bytes32 opHash = Payload.hash(decoded);
+    _execute(startingGas, opHash, decoded);
+  }
+
+  function _execute(uint256 _startingGas, bytes32 _opHash, Payload.Decoded memory _decoded) private {
+    bool errorFlag = false;
+
+    uint256 numCalls = _decoded.calls.length;
+    for (uint256 i = 0; i < numCalls; i++) {
+      Payload.Call memory call = _decoded.calls[i];
+
+      // Skip onlyFallback calls if no error occurred
+      if (call.onlyFallback && !errorFlag) {
+        emit CallSkipped(_opHash, i);
+        continue;
+      }
+
+      // Reset the error flag
+      // onlyFallback calls only apply when the immediately preceding transaction fails
+      errorFlag = false;
+
+      uint256 gasLimit = call.gasLimit;
+      if (gasLimit != 0 && gasleft() < gasLimit) {
+        revert NotEnoughGas(_decoded, i, gasleft());
+      }
+
+      bool success;
+      if (call.delegateCall) {
+        (success) = LibOptim.delegatecall(
+          call.to,
+          gasLimit == 0 ? gasleft() : gasLimit,
+          abi.encodeWithSelector(
+            IDelegatedExtension.handleSequenceDelegateCall.selector,
+            _opHash,
+            _startingGas,
+            i,
+            numCalls,
+            _decoded.space,
+            call.data
+          )
+        );
+      } else {
+        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
+      }
+
+      if (!success) {
+        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
+          errorFlag = true;
+          emit CallFailed(_opHash, i, LibOptim.returnData());
+          continue;
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
+          revert Reverted(_decoded, i, LibOptim.returnData());
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
+          emit CallAborted(_opHash, i, LibOptim.returnData());
+          break;
+        }
+      }
+
+      emit CallSucceeded(_opHash, i);
     }
   }
 
-  /**
-   * @notice Returns the return data from the last call.
-   * @return r The return data from the last call.
-   */
-  function returnData() internal pure returns (bytes memory r) {
-    assembly {
-      let size := returndatasize()
-      r := mload(0x40)
-      let start := add(r, 32)
-      mstore(0x40, add(start, size))
-      mstore(r, size)
-      returndatacopy(start, 0, size)
-    }
-  }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+/**
+ * User Operation struct
+ * @param sender                - The sender account of this request.
+ * @param nonce                 - Unique value the sender uses to verify it is not a replay.
+ * @param initCode              - If set, the account contract will be created by this constructor
+ * @param callData              - The method call to execute on this account.
+ * @param accountGasLimits      - Packed gas limits for validateUserOp and gas limit passed to the callData method call.
+ * @param preVerificationGas    - Gas not calculated by the handleOps method, but added to the gas paid.
+ *                                Covers batch overhead.
+ * @param gasFees               - packed gas fields maxPriorityFeePerGas and maxFeePerGas - Same as EIP-1559 gas parameters.
+ * @param paymasterAndData      - If set, this field holds the paymaster address, verification gas limit, postOp gas limit and paymaster-specific extra data
+ *                                The paymaster will pay for the transaction instead of the sender.
+ * @param signature             - Sender-verified signature over the entire request, the EntryPoint address and the chain ID.
+ */
+struct PackedUserOperation {
+  address sender;
+  uint256 nonce;
+  bytes initCode;
+  bytes callData;
+  bytes32 accountGasLimits;
+  uint256 preVerificationGas;
+  bytes32 gasFees;
+  bytes paymasterAndData;
+  bytes signature;
+}
+
+interface IAccount {
 
   /**
-   * @notice Calls another contract with the given parameters.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _val The value to send to the contract.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
+   * Validate user's signature and nonce
+   * the entryPoint will make the call to the recipient only if this validation call returns successfully.
+   * signature failure should be reported by returning SIG_VALIDATION_FAILED (1).
+   * This allows making a "simulation call" without a valid signature
+   * Other failures (e.g. nonce mismatch, or invalid signature format) should still revert to signal failure.
+   *
+   * @dev Must validate caller is the entryPoint.
+   *      Must validate the signature and nonce
+   * @param userOp              - The operation that is about to be executed.
+   * @param userOpHash          - Hash of the user's request data. can be used as the basis for signature.
+   * @param missingAccountFunds - Missing funds on the account's deposit in the entrypoint.
+   *                              This is the minimum amount to transfer to the sender(entryPoint) to be
+   *                              able to make the call. The excess is left as a deposit in the entrypoint
+   *                              for future calls. Can be withdrawn anytime using "entryPoint.withdrawTo()".
+   *                              In case there is a paymaster in the request (or the current deposit is high
+   *                              enough), this value will be zero.
+   * @return validationData       - Packaged ValidationData structure. use `_packValidationData` and
+   *                              `_unpackValidationData` to encode and decode.
+   *                              <20-byte> aggregatorOrSigFail - 0 for valid signature, 1 to mark signature failure,
+   *                                 otherwise, an address of an "aggregator" contract.
+   *                              <6-byte> validUntil - Last timestamp this operation is valid at, or 0 for "indefinitely"
+   *                              <6-byte> validAfter - First timestamp this operation is valid
+   *                                                    If an account doesn't use time-range, it is enough to
+   *                                                    return SIG_VALIDATION_FAILED value (1) for signature failure.
+   *                              Note that the validation code cannot use block.timestamp (or block.number) directly.
    */
-  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters, using delegatecall.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
+  function validateUserOp(
+    PackedUserOperation calldata userOp,
+    bytes32 userOpHash,
+    uint256 missingAccountFunds
+  ) external returns (uint256 validationData);
 
 }
 
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-/// @title IDelegatedExtension
-/// @author Agustin Aguilar
-/// @notice Interface for the delegated extension module
-interface IDelegatedExtension {
+/// @title IAuth
+/// @author Agustin Aguilar, Michael Standen, William Hua
+/// @notice Internal interface for the auth modules
+abstract contract IAuth {
 
-  /// @notice Handle a sequence delegate call
-  /// @param _opHash The operation hash
-  /// @param _startingGas The starting gas
-  /// @param _index The index
-  /// @param _numCalls The number of calls
-  /// @param _space The space
-  /// @param _data The data
-  function handleSequenceDelegateCall(
-    bytes32 _opHash,
-    uint256 _startingGas,
-    uint256 _index,
-    uint256 _numCalls,
-    uint256 _space,
-    bytes calldata _data
-  ) external;
+  function _isValidImage(
+    bytes32 imageHash
+  ) internal view virtual returns (bool isValid);
 
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title IERC223Receiver
-/// @notice Interface for the ERC223 receiver module
-interface IERC223Receiver {
-
-  /// @notice Called when ERC223 tokens are received by this contract
-  /// @param from The address which previously owned the tokens
-  /// @param value The amount of tokens being transferred
-  /// @param data Transaction metadata
-  /// @return signature The signature of the function to be called
-  function tokenReceived(address from, uint256 value, bytes calldata data) external returns (bytes4 signature);
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-/// @title Storage
-/// @author Agustin Aguilar
-/// @notice Library for storing data at certain storage slots
-library Storage {
-
-  function writeBytes32(bytes32 _key, bytes32 _val) internal {
-    assembly {
-      sstore(_key, _val)
-    }
-  }
-
-  function readBytes32(
-    bytes32 _key
-  ) internal view returns (bytes32 val) {
-    assembly {
-      val := sload(_key)
-    }
-  }
-
-  function writeBytes32Map(bytes32 _key, bytes32 _subKey, bytes32 _val) internal {
-    bytes32 key = keccak256(abi.encode(_key, _subKey));
-    assembly {
-      sstore(key, _val)
-    }
-  }
-
-  function readBytes32Map(bytes32 _key, bytes32 _subKey) internal view returns (bytes32 val) {
-    bytes32 key = keccak256(abi.encode(_key, _subKey));
-    assembly {
-      val := sload(key)
-    }
-  }
+  function _updateImageHash(
+    bytes32 imageHash
+  ) internal virtual;
 
 }
 
@@ -655,22 +590,25 @@ abstract contract BaseAuth is IAuth, IPartialAuth, ISapient, IERC1271, SelfAuth 
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
-/// @title IERC721Receiver
-/// @notice Interface for the ERC721 receiver module
-interface IERC721Receiver {
+/// @title IERC777Receiver
+/// @notice Interface for the ERC777 receiver module
+interface IERC777Receiver {
 
-  /// @notice Called when a single ERC721 token is transferred to this contract
+  /// @notice Called when tokens are received by this contract
   /// @param operator The address which initiated the transfer
-  /// @param from The address which previously owned the token
-  /// @param tokenId The ID of the token being transferred
+  /// @param from The address which previously owned the tokens
+  /// @param to The address which is receiving the tokens
+  /// @param amount The amount of tokens being transferred
   /// @param data Additional data with no specified format
-  /// @return magicValue On a success, the selector of the function that was called
-  function onERC721Received(
+  /// @param operatorData Additional data with no specified format
+  function tokensReceived(
     address operator,
     address from,
-    uint256 tokenId,
-    bytes calldata data
-  ) external returns (bytes4 magicValue);
+    address to,
+    uint256 amount,
+    bytes calldata data,
+    bytes calldata operatorData
+  ) external;
 
 }
 
@@ -714,171 +652,136 @@ abstract contract ReentrancyGuard {
 }
 
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
-
-/*
-// Delegate Proxy in Huff
-// @title Delegate Proxy
-// @notice Implements a proxy using the contract's own address to store the delegate target.
-//         Calls with calldata (with or without ETH value) are forwarded to the stored target.
-//         Calls sending only ETH without calldata do nothing and return immediately without forwarding.
-// @author Agusx1211
-#define macro CONSTRUCTOR() = takes (0) returns (0) {
-  0x41                   // [code + arg size] (code_size + 32)
-  __codeoffset(MAIN)     // [code_start, code + arg size]
-  returndatasize         // [0, code_start, code + arg size]
-  codecopy               // []
-
-  __codesize(MAIN)       // [code_size]
-  dup1                   // [code_size, code_size]
-  mload                  // [arg1, code_size]
-  address                // [address, arg1, code_size]
-  sstore                 // [code_size]
-
-  returndatasize         // [0, code_size]
-  return
-}
-
-#define macro MAIN() = takes(0) returns(0) {
-  returndatasize     // [0]
-  returndatasize     // [0, 0]
-  calldatasize       // [cs, 0, 0]
-  iszero             // [cs == 0, 0, 0]
-  callvalue          // [cv, cs == 0, 0, 0]
-  mul                // [cv * cs == 0, 0, 0]
-  success            // [nr, cv * cs == 0, 0, 0]
-  jumpi
-    calldatasize     // [cds, 0, 0]
-    returndatasize   // [0, cds, 0, 0]
-    returndatasize   // [0, 0, cds, 0, 0]
-    calldatacopy     // [0, 0]
-    returndatasize   // [0, 0, 0]
-    calldatasize     // [cds, 0, 0, 0]
-    returndatasize   // [0, cds, 0, 0, 0]
-    address          // [addr, 0, cds, 0, 0, 0]
-    sload            // [imp, 0, cds, 0, 0, 0]
-    gas              // [gas, imp, 0, cds, 0, 0, 0]
-    delegatecall     // [suc, 0]
-    returndatasize   // [rds, suc, 0]
-    dup3             // [0, rds, suc, 0]
-    dup1             // [0, 0, rds, suc, 0]
-    returndatacopy   // [suc, 0]
-    swap1            // [0, suc]
-    returndatasize   // [rds, 0, suc]
-    swap2            // [suc, 0, rds]
-    success          // [nr, suc, 0, rds]
-    jumpi
-      revert
-  success:
-    return
-}
-*/
-
-library Wallet {
-
-  bytes internal constant creationCode =
-    hex"6041600e3d396021805130553df33d3d36153402601f57363d3d373d363d30545af43d82803e903d91601f57fd5bf3";
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-/// @title IAuth
-/// @author Agustin Aguilar, Michael Standen, William Hua
-/// @notice Internal interface for the auth modules
-abstract contract IAuth {
-
-  function _isValidImage(
-    bytes32 imageHash
-  ) internal view virtual returns (bool isValid);
-
-  function _updateImageHash(
-    bytes32 imageHash
-  ) internal virtual;
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
-bytes4 constant IERC1271_MAGIC_VALUE_HASH = 0x1626ba7e;
-bytes4 constant IERC1271_MAGIC_VALUE_BYTES = 0x20c13b0b;
+import { Calls } from "./Calls.sol";
 
-/// @title IERC1271
-/// @notice Interface for ERC1271
-interface IERC1271 {
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
+import { IAccount, PackedUserOperation } from "./interfaces/IAccount.sol";
+import { IERC1271_MAGIC_VALUE_HASH } from "./interfaces/IERC1271.sol";
+import { IEntryPoint } from "./interfaces/IEntryPoint.sol";
 
-  /// @notice Verifies whether the provided signature is valid with respect to the provided hash
-  /// @dev MUST return the correct magic value if the signature provided is valid for the provided hash
-  ///   > The bytes4 magic value to return when signature is valid is 0x1626ba7e : bytes4(keccak256("isValidSignature(bytes32,bytes)")
-  ///   > This function MAY modify Ethereum's state
-  /// @param _hash keccak256 hash that was signed
-  /// @param _signature Signature byte array associated with _data
-  /// @return magicValue Magic value 0x1626ba7e if the signature is valid and 0x0 otherwise
-  function isValidSignature(bytes32 _hash, bytes calldata _signature) external view returns (bytes4 magicValue);
+/// @title ERC4337v07
+/// @author Agustin Aguilar, Michael Standen
+/// @notice ERC4337 v7 support
+abstract contract ERC4337v07 is ReentrancyGuard, IAccount, Calls {
+
+  uint256 internal constant SIG_VALIDATION_FAILED = 1;
+
+  address public immutable entrypoint;
+
+  error InvalidEntryPoint(address _entrypoint);
+  error ERC4337Disabled();
+
+  constructor(
+    address _entrypoint
+  ) {
+    entrypoint = _entrypoint;
+  }
+
+  /// @inheritdoc IAccount
+  function validateUserOp(
+    PackedUserOperation calldata userOp,
+    bytes32 userOpHash,
+    uint256 missingAccountFunds
+  ) external returns (uint256 validationData) {
+    if (entrypoint == address(0)) {
+      revert ERC4337Disabled();
+    }
+
+    if (msg.sender != entrypoint) {
+      revert InvalidEntryPoint(msg.sender);
+    }
+
+    // userOp.nonce is validated by the entrypoint
+
+    if (missingAccountFunds != 0) {
+      IEntryPoint(entrypoint).depositTo{ value: missingAccountFunds }(address(this));
+    }
+
+    if (this.isValidSignature(userOpHash, userOp.signature) != IERC1271_MAGIC_VALUE_HASH) {
+      return SIG_VALIDATION_FAILED;
+    }
+
+    return 0;
+  }
+
+  /// @notice Execute a user operation
+  /// @param _payload The packed payload
+  /// @dev This is the execute function for the EntryPoint to call.
+  function executeUserOp(
+    bytes calldata _payload
+  ) external nonReentrant {
+    if (entrypoint == address(0)) {
+      revert ERC4337Disabled();
+    }
+
+    if (msg.sender != entrypoint) {
+      revert InvalidEntryPoint(msg.sender);
+    }
+
+    this.selfExecute(_payload);
+  }
 
 }
 
-/// @title IERC1271Data
-/// @notice Deprecated interface for ERC1271 using bytes instead of bytes32
-interface IERC1271Data {
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
 
-  /// @notice Verifies whether the provided signature is valid with respect to the provided hash
-  /// @dev MUST return the correct magic value if the signature provided is valid for the provided hash
-  ///   > The bytes4 magic value to return when signature is valid is 0x20c13b0b : bytes4(keccak256("isValidSignature(bytes,bytes)")
-  ///   > This function MAY modify Ethereum's state
-  /// @param _data Data that was signed
-  /// @param _signature Signature byte array associated with _data
-  /// @return magicValue Magic value 0x20c13b0b if the signature is valid and 0x0 otherwise
-  function isValidSignature(bytes calldata _data, bytes calldata _signature) external view returns (bytes4 magicValue);
+interface IEntryPoint {
+
+  function depositTo(
+    address account
+  ) external payable;
 
 }
 
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import { Storage } from "./Storage.sol";
+import { SelfAuth } from "./auth/SelfAuth.sol";
 
-/// @title Nonce
+/// @title Implementation
 /// @author Agustin Aguilar
-/// @notice Manages the nonce of the wallet
-contract Nonce {
+/// @notice Manages the implementation address of the proxy contract
+contract Implementation is SelfAuth {
 
-  /// @notice Emitted when the nonce is changed
-  event NonceChange(uint256 _space, uint256 _newNonce);
+  /// @notice Emitted when the implementation is updated
+  event ImplementationUpdated(address newImplementation);
 
-  /// @notice Error thrown when the nonce is bad
-  error BadNonce(uint256 _space, uint256 _provided, uint256 _current);
-
-  /// @dev keccak256("org.arcadeum.module.calls.nonce")
-  bytes32 private constant NONCE_KEY = bytes32(0x8d0bf1fd623d628c741362c1289948e57b3e2905218c676d3e69abee36d6ae2e);
-
-  /// @notice Read the nonce
-  /// @param _space The space
-  /// @return nonce The nonce
-  function readNonce(
-    uint256 _space
-  ) public view virtual returns (uint256) {
-    return uint256(Storage.readBytes32Map(NONCE_KEY, bytes32(_space)));
+  /// @notice Update the implementation
+  /// @param _implementation The new implementation
+  /// @dev Callable only by the contract itself
+  function updateImplementation(
+    address _implementation
+  ) external payable virtual onlySelf {
+    _updateImplementation(_implementation);
   }
 
-  function _writeNonce(uint256 _space, uint256 _nonce) internal {
-    Storage.writeBytes32Map(NONCE_KEY, bytes32(_space), bytes32(_nonce));
+  /// @notice Get the implementation
+  /// @return implementation The implementation
+  function getImplementation() external view virtual returns (address) {
+    return _getImplementation();
   }
 
-  function _consumeNonce(uint256 _space, uint256 _nonce) internal {
-    uint256 currentNonce = readNonce(_space);
-    if (currentNonce != _nonce) {
-      revert BadNonce(_space, _nonce, currentNonce);
+  function _updateImplementation(
+    address _implementation
+  ) internal virtual {
+    _setImplementation(_implementation);
+    emit ImplementationUpdated(_implementation);
+  }
+
+  function _setImplementation(
+    address _imp
+  ) internal {
+    assembly {
+      sstore(address(), _imp)
     }
+  }
 
-    unchecked {
-      uint256 newNonce = _nonce + 1;
-
-      _writeNonce(_space, newNonce);
-      emit NonceChange(_space, newNonce);
-      return;
+  function _getImplementation() internal view returns (address _imp) {
+    assembly {
+      _imp := sload(address())
     }
   }
 
@@ -900,6 +803,75 @@ abstract contract SelfAuth {
       revert OnlySelf(msg.sender);
     }
     _;
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title LibOptim
+/// @author Agustin Aguilar
+/// @notice Library for optimized EVM operations
+library LibOptim {
+
+  /**
+   * @notice Computes the keccak256 hash of two 32-byte inputs.
+   * @dev It uses only scratch memory space.
+   * @param _a The first 32 bytes of the hash.
+   * @param _b The second 32 bytes of the hash.
+   * @return c The keccak256 hash of the two 32-byte inputs.
+   */
+  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
+    assembly {
+      mstore(0, _a)
+      mstore(32, _b)
+      c := keccak256(0, 64)
+    }
+  }
+
+  /**
+   * @notice Returns the return data from the last call.
+   * @return r The return data from the last call.
+   */
+  function returnData() internal pure returns (bytes memory r) {
+    assembly {
+      let size := returndatasize()
+      r := mload(0x40)
+      let start := add(r, 32)
+      mstore(0x40, add(start, size))
+      mstore(r, size)
+      returndatacopy(start, 0, size)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _val The value to send to the contract.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters, using delegatecall.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
+    }
   }
 
 }
@@ -1184,76 +1156,231 @@ library Payload {
 }
 
 // SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+/// @title Storage
+/// @author Agustin Aguilar
+/// @notice Library for storing data at certain storage slots
+library Storage {
+
+  function writeBytes32(bytes32 _key, bytes32 _val) internal {
+    assembly {
+      sstore(_key, _val)
+    }
+  }
+
+  function readBytes32(
+    bytes32 _key
+  ) internal view returns (bytes32 val) {
+    assembly {
+      val := sload(_key)
+    }
+  }
+
+  function writeBytes32Map(bytes32 _key, bytes32 _subKey, bytes32 _val) internal {
+    bytes32 key = keccak256(abi.encode(_key, _subKey));
+    assembly {
+      sstore(key, _val)
+    }
+  }
+
+  function readBytes32Map(bytes32 _key, bytes32 _subKey) internal view returns (bytes32 val) {
+    bytes32 key = keccak256(abi.encode(_key, _subKey));
+    assembly {
+      val := sload(key)
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
-import { Calls } from "./Calls.sol";
+/// @title IERC721Receiver
+/// @notice Interface for the ERC721 receiver module
+interface IERC721Receiver {
 
-import { ReentrancyGuard } from "./ReentrancyGuard.sol";
-import { IAccount, PackedUserOperation } from "./interfaces/IAccount.sol";
-import { IERC1271_MAGIC_VALUE_HASH } from "./interfaces/IERC1271.sol";
-import { IEntryPoint } from "./interfaces/IEntryPoint.sol";
+  /// @notice Called when a single ERC721 token is transferred to this contract
+  /// @param operator The address which initiated the transfer
+  /// @param from The address which previously owned the token
+  /// @param tokenId The ID of the token being transferred
+  /// @param data Additional data with no specified format
+  /// @return magicValue On a success, the selector of the function that was called
+  function onERC721Received(
+    address operator,
+    address from,
+    uint256 tokenId,
+    bytes calldata data
+  ) external returns (bytes4 magicValue);
 
-/// @title ERC4337v07
-/// @author Agustin Aguilar, Michael Standen
-/// @notice ERC4337 v7 support
-abstract contract ERC4337v07 is ReentrancyGuard, IAccount, Calls {
+}
 
-  uint256 internal constant SIG_VALIDATION_FAILED = 1;
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
 
-  address public immutable entrypoint;
+/// @title IERC223Receiver
+/// @notice Interface for the ERC223 receiver module
+interface IERC223Receiver {
 
-  error InvalidEntryPoint(address _entrypoint);
-  error ERC4337Disabled();
+  /// @notice Called when ERC223 tokens are received by this contract
+  /// @param from The address which previously owned the tokens
+  /// @param value The amount of tokens being transferred
+  /// @param data Transaction metadata
+  /// @return signature The signature of the function to be called
+  function tokenReceived(address from, uint256 value, bytes calldata data) external returns (bytes4 signature);
 
-  constructor(
-    address _entrypoint
-  ) {
-    entrypoint = _entrypoint;
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+bytes4 constant IERC1271_MAGIC_VALUE_HASH = 0x1626ba7e;
+bytes4 constant IERC1271_MAGIC_VALUE_BYTES = 0x20c13b0b;
+
+/// @title IERC1271
+/// @notice Interface for ERC1271
+interface IERC1271 {
+
+  /// @notice Verifies whether the provided signature is valid with respect to the provided hash
+  /// @dev MUST return the correct magic value if the signature provided is valid for the provided hash
+  ///   > The bytes4 magic value to return when signature is valid is 0x1626ba7e : bytes4(keccak256("isValidSignature(bytes32,bytes)")
+  ///   > This function MAY modify Ethereum's state
+  /// @param _hash keccak256 hash that was signed
+  /// @param _signature Signature byte array associated with _data
+  /// @return magicValue Magic value 0x1626ba7e if the signature is valid and 0x0 otherwise
+  function isValidSignature(bytes32 _hash, bytes calldata _signature) external view returns (bytes4 magicValue);
+
+}
+
+/// @title IERC1271Data
+/// @notice Deprecated interface for ERC1271 using bytes instead of bytes32
+interface IERC1271Data {
+
+  /// @notice Verifies whether the provided signature is valid with respect to the provided hash
+  /// @dev MUST return the correct magic value if the signature provided is valid for the provided hash
+  ///   > The bytes4 magic value to return when signature is valid is 0x20c13b0b : bytes4(keccak256("isValidSignature(bytes,bytes)")
+  ///   > This function MAY modify Ethereum's state
+  /// @param _data Data that was signed
+  /// @param _signature Signature byte array associated with _data
+  /// @return magicValue Magic value 0x20c13b0b if the signature is valid and 0x0 otherwise
+  function isValidSignature(bytes calldata _data, bytes calldata _signature) external view returns (bytes4 magicValue);
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Storage } from "./Storage.sol";
+
+/// @title Nonce
+/// @author Agustin Aguilar
+/// @notice Manages the nonce of the wallet
+contract Nonce {
+
+  /// @notice Emitted when the nonce is changed
+  event NonceChange(uint256 _space, uint256 _newNonce);
+
+  /// @notice Error thrown when the nonce is bad
+  error BadNonce(uint256 _space, uint256 _provided, uint256 _current);
+
+  /// @dev keccak256("org.arcadeum.module.calls.nonce")
+  bytes32 private constant NONCE_KEY = bytes32(0x8d0bf1fd623d628c741362c1289948e57b3e2905218c676d3e69abee36d6ae2e);
+
+  /// @notice Read the nonce
+  /// @param _space The space
+  /// @return nonce The nonce
+  function readNonce(
+    uint256 _space
+  ) public view virtual returns (uint256) {
+    return uint256(Storage.readBytes32Map(NONCE_KEY, bytes32(_space)));
   }
 
-  /// @inheritdoc IAccount
-  function validateUserOp(
-    PackedUserOperation calldata userOp,
-    bytes32 userOpHash,
-    uint256 missingAccountFunds
-  ) external returns (uint256 validationData) {
-    if (entrypoint == address(0)) {
-      revert ERC4337Disabled();
-    }
-
-    if (msg.sender != entrypoint) {
-      revert InvalidEntryPoint(msg.sender);
-    }
-
-    // userOp.nonce is validated by the entrypoint
-
-    if (missingAccountFunds != 0) {
-      IEntryPoint(entrypoint).depositTo{ value: missingAccountFunds }(address(this));
-    }
-
-    if (this.isValidSignature(userOpHash, userOp.signature) != IERC1271_MAGIC_VALUE_HASH) {
-      return SIG_VALIDATION_FAILED;
-    }
-
-    return 0;
+  function _writeNonce(uint256 _space, uint256 _nonce) internal {
+    Storage.writeBytes32Map(NONCE_KEY, bytes32(_space), bytes32(_nonce));
   }
 
-  /// @notice Execute a user operation
-  /// @param _payload The packed payload
-  /// @dev This is the execute function for the EntryPoint to call.
-  function executeUserOp(
-    bytes calldata _payload
-  ) external nonReentrant {
-    if (entrypoint == address(0)) {
-      revert ERC4337Disabled();
+  function _consumeNonce(uint256 _space, uint256 _nonce) internal {
+    uint256 currentNonce = readNonce(_space);
+    if (currentNonce != _nonce) {
+      revert BadNonce(_space, _nonce, currentNonce);
     }
 
-    if (msg.sender != entrypoint) {
-      revert InvalidEntryPoint(msg.sender);
-    }
+    unchecked {
+      uint256 newNonce = _nonce + 1;
 
-    this.selfExecute(_payload);
+      _writeNonce(_space, newNonce);
+      emit NonceChange(_space, newNonce);
+      return;
+    }
   }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.0;
+
+/*
+// Delegate Proxy in Huff
+// @title Delegate Proxy
+// @notice Implements a proxy using the contract's own address to store the delegate target.
+//         Calls with calldata (with or without ETH value) are forwarded to the stored target.
+//         Calls sending only ETH without calldata do nothing and return immediately without forwarding.
+// @author Agusx1211
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+  0x41                   // [code + arg size] (code_size + 32)
+  __codeoffset(MAIN)     // [code_start, code + arg size]
+  returndatasize         // [0, code_start, code + arg size]
+  codecopy               // []
+
+  __codesize(MAIN)       // [code_size]
+  dup1                   // [code_size, code_size]
+  mload                  // [arg1, code_size]
+  address                // [address, arg1, code_size]
+  sstore                 // [code_size]
+
+  returndatasize         // [0, code_size]
+  return
+}
+
+#define macro MAIN() = takes(0) returns(0) {
+  returndatasize     // [0]
+  returndatasize     // [0, 0]
+  calldatasize       // [cs, 0, 0]
+  iszero             // [cs == 0, 0, 0]
+  callvalue          // [cv, cs == 0, 0, 0]
+  mul                // [cv * cs == 0, 0, 0]
+  success            // [nr, cv * cs == 0, 0, 0]
+  jumpi
+    calldatasize     // [cds, 0, 0]
+    returndatasize   // [0, cds, 0, 0]
+    returndatasize   // [0, 0, cds, 0, 0]
+    calldatacopy     // [0, 0]
+    returndatasize   // [0, 0, 0]
+    calldatasize     // [cds, 0, 0, 0]
+    returndatasize   // [0, cds, 0, 0, 0]
+    address          // [addr, 0, cds, 0, 0, 0]
+    sload            // [imp, 0, cds, 0, 0, 0]
+    gas              // [gas, imp, 0, cds, 0, 0, 0]
+    delegatecall     // [suc, 0]
+    returndatasize   // [rds, suc, 0]
+    dup3             // [0, rds, suc, 0]
+    dup1             // [0, 0, rds, suc, 0]
+    returndatacopy   // [suc, 0]
+    swap1            // [0, suc]
+    returndatasize   // [rds, 0, suc]
+    swap2            // [suc, 0, rds]
+    success          // [nr, suc, 0, rds]
+    jumpi
+      revert
+  success:
+    return
+}
+*/
+
+library Wallet {
+
+  bytes internal constant creationCode =
+    hex"6041600e3d396021805130553df33d3d36153402601f57363d3d373d363d30545af43d82803e903d91601f57fd5bf3";
 
 }
 
@@ -1299,152 +1426,25 @@ interface IERC1155Receiver {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import { SelfAuth } from "./auth/SelfAuth.sol";
-
-/// @title Implementation
+/// @title IDelegatedExtension
 /// @author Agustin Aguilar
-/// @notice Manages the implementation address of the proxy contract
-contract Implementation is SelfAuth {
+/// @notice Interface for the delegated extension module
+interface IDelegatedExtension {
 
-  /// @notice Emitted when the implementation is updated
-  event ImplementationUpdated(address newImplementation);
-
-  /// @notice Update the implementation
-  /// @param _implementation The new implementation
-  /// @dev Callable only by the contract itself
-  function updateImplementation(
-    address _implementation
-  ) external payable virtual onlySelf {
-    _updateImplementation(_implementation);
-  }
-
-  /// @notice Get the implementation
-  /// @return implementation The implementation
-  function getImplementation() external view virtual returns (address) {
-    return _getImplementation();
-  }
-
-  function _updateImplementation(
-    address _implementation
-  ) internal virtual {
-    _setImplementation(_implementation);
-    emit ImplementationUpdated(_implementation);
-  }
-
-  function _setImplementation(
-    address _imp
-  ) internal {
-    assembly {
-      sstore(address(), _imp)
-    }
-  }
-
-  function _getImplementation() internal view returns (address _imp) {
-    assembly {
-      _imp := sload(address())
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
-
-interface IEntryPoint {
-
-  function depositTo(
-    address account
-  ) external payable;
-
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
-
-/**
- * User Operation struct
- * @param sender                - The sender account of this request.
- * @param nonce                 - Unique value the sender uses to verify it is not a replay.
- * @param initCode              - If set, the account contract will be created by this constructor
- * @param callData              - The method call to execute on this account.
- * @param accountGasLimits      - Packed gas limits for validateUserOp and gas limit passed to the callData method call.
- * @param preVerificationGas    - Gas not calculated by the handleOps method, but added to the gas paid.
- *                                Covers batch overhead.
- * @param gasFees               - packed gas fields maxPriorityFeePerGas and maxFeePerGas - Same as EIP-1559 gas parameters.
- * @param paymasterAndData      - If set, this field holds the paymaster address, verification gas limit, postOp gas limit and paymaster-specific extra data
- *                                The paymaster will pay for the transaction instead of the sender.
- * @param signature             - Sender-verified signature over the entire request, the EntryPoint address and the chain ID.
- */
-struct PackedUserOperation {
-  address sender;
-  uint256 nonce;
-  bytes initCode;
-  bytes callData;
-  bytes32 accountGasLimits;
-  uint256 preVerificationGas;
-  bytes32 gasFees;
-  bytes paymasterAndData;
-  bytes signature;
-}
-
-interface IAccount {
-
-  /**
-   * Validate user's signature and nonce
-   * the entryPoint will make the call to the recipient only if this validation call returns successfully.
-   * signature failure should be reported by returning SIG_VALIDATION_FAILED (1).
-   * This allows making a "simulation call" without a valid signature
-   * Other failures (e.g. nonce mismatch, or invalid signature format) should still revert to signal failure.
-   *
-   * @dev Must validate caller is the entryPoint.
-   *      Must validate the signature and nonce
-   * @param userOp              - The operation that is about to be executed.
-   * @param userOpHash          - Hash of the user's request data. can be used as the basis for signature.
-   * @param missingAccountFunds - Missing funds on the account's deposit in the entrypoint.
-   *                              This is the minimum amount to transfer to the sender(entryPoint) to be
-   *                              able to make the call. The excess is left as a deposit in the entrypoint
-   *                              for future calls. Can be withdrawn anytime using "entryPoint.withdrawTo()".
-   *                              In case there is a paymaster in the request (or the current deposit is high
-   *                              enough), this value will be zero.
-   * @return validationData       - Packaged ValidationData structure. use `_packValidationData` and
-   *                              `_unpackValidationData` to encode and decode.
-   *                              <20-byte> aggregatorOrSigFail - 0 for valid signature, 1 to mark signature failure,
-   *                                 otherwise, an address of an "aggregator" contract.
-   *                              <6-byte> validUntil - Last timestamp this operation is valid at, or 0 for "indefinitely"
-   *                              <6-byte> validAfter - First timestamp this operation is valid
-   *                                                    If an account doesn't use time-range, it is enough to
-   *                                                    return SIG_VALIDATION_FAILED value (1) for signature failure.
-   *                              Note that the validation code cannot use block.timestamp (or block.number) directly.
-   */
-  function validateUserOp(
-    PackedUserOperation calldata userOp,
-    bytes32 userOpHash,
-    uint256 missingAccountFunds
-  ) external returns (uint256 validationData);
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title IERC777Receiver
-/// @notice Interface for the ERC777 receiver module
-interface IERC777Receiver {
-
-  /// @notice Called when tokens are received by this contract
-  /// @param operator The address which initiated the transfer
-  /// @param from The address which previously owned the tokens
-  /// @param to The address which is receiving the tokens
-  /// @param amount The amount of tokens being transferred
-  /// @param data Additional data with no specified format
-  /// @param operatorData Additional data with no specified format
-  function tokensReceived(
-    address operator,
-    address from,
-    address to,
-    uint256 amount,
-    bytes calldata data,
-    bytes calldata operatorData
+  /// @notice Handle a sequence delegate call
+  /// @param _opHash The operation hash
+  /// @param _startingGas The starting gas
+  /// @param _index The index
+  /// @param _numCalls The number of calls
+  /// @param _space The space
+  /// @param _data The data
+  function handleSequenceDelegateCall(
+    bytes32 _opHash,
+    uint256 _startingGas,
+    uint256 _index,
+    uint256 _numCalls,
+    uint256 _space,
+    bytes calldata _data
   ) external;
 
 }

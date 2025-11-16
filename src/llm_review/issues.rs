@@ -218,7 +218,7 @@ where
     // // Build a lightweight OpenAI agent just for deduping comparisons
     // let openai_client = openai::Client::from_env();
     // let openai_agent = Arc::new(openai_client.agent("gpt-5").build());
-    let openai_config = AgentConfig::new(None).with_model("gpt-5-mini");
+    let openai_config = AgentConfig::new(None).with_model("gpt-5.1");
 
     let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 

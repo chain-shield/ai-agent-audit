@@ -91,33 +91,6 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import { Payload } from "../../../modules/Payload.sol";
-import { Attestation } from "./Attestation.sol";
-
-/// @dev Magic prefix for the implicit request
-bytes32 constant ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX = keccak256(abi.encodePacked("acceptImplicitRequest"));
-
-/// @title ISignalsImplicitMode
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Interface for the contracts that support implicit mode validation
-interface ISignalsImplicitMode {
-
-  /// @notice Determines if an implicit request is valid
-  /// @param wallet The wallet's address
-  /// @param attestation The attestation data
-  /// @param call The call to validate
-  /// @return magic The hash of the implicit request if valid
-  function acceptImplicitRequest(
-    address wallet,
-    Attestation calldata attestation,
-    Payload.Call calldata call
-  ) external view returns (bytes32 magic);
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
 import { LibBytes } from "../../../utils/LibBytes.sol";
 import { ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX } from "./ISignalsImplicitMode.sol";
 
@@ -241,57 +214,27 @@ library LibAttestation {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-/// @title SessionErrors
-/// @author Michael Standen
-/// @notice Errors for the session manager
-library SessionErrors {
+import { Payload } from "../../../modules/Payload.sol";
+import { Attestation } from "./Attestation.sol";
 
-  /// @notice Invalid session signer
-  error InvalidSessionSigner(address invalidSigner);
-  /// @notice Invalid chainId
-  error InvalidChainId(uint256 invalidChainId);
-  /// @notice Invalid self call
-  error InvalidSelfCall();
-  /// @notice Invalid delegate call
-  error InvalidDelegateCall();
-  /// @notice Invalid call behavior
-  error InvalidBehavior();
-  /// @notice Invalid value
-  error InvalidValue();
-  /// @notice Invalid node type in session configuration
-  error InvalidNodeType(uint256 flag);
-  /// @notice Error thrown when the payload kind is invalid
-  error InvalidPayloadKind();
-  /// @notice Error thrown when the calls length is invalid
-  error InvalidCallsLength();
-  /// @notice Error thrown when the payload space is invalid
-  error InvalidSpace(uint256 space);
+/// @dev Magic prefix for the implicit request
+bytes32 constant ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX = keccak256(abi.encodePacked("acceptImplicitRequest"));
 
-  // ---- Explicit session errors ----
+/// @title ISignalsImplicitMode
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Interface for the contracts that support implicit mode validation
+interface ISignalsImplicitMode {
 
-  /// @notice Missing permission for explicit session
-  error MissingPermission();
-  /// @notice Invalid permission for explicit session
-  error InvalidPermission();
-  /// @notice Session expired
-  error SessionExpired(uint256 deadline);
-  /// @notice Invalid limit usage increment
-  error InvalidLimitUsageIncrement();
-
-  // ---- Implicit session errors ----
-
-  /// @notice Blacklisted address
-  error BlacklistedAddress(address target);
-  /// @notice Invalid implicit result
-  error InvalidImplicitResult();
-  /// @notice Invalid identity signer
-  error InvalidIdentitySigner();
-  /// @notice Invalid blacklist
-  error InvalidBlacklist();
-  /// @notice Invalid attestation
-  error InvalidAttestation();
-  /// @notice The blacklist was not sorted
-  error InvalidBlacklistUnsorted();
+  /// @notice Determines if an implicit request is valid
+  /// @param wallet The wallet's address
+  /// @param attestation The attestation data
+  /// @param call The call to validate
+  /// @return magic The hash of the implicit request if valid
+  function acceptImplicitRequest(
+    address wallet,
+    Attestation calldata attestation,
+    Payload.Call calldata call
+  ) external view returns (bytes32 magic);
 
 }
 
@@ -413,6 +356,63 @@ library LibBytes {
     s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
     v = uint8(yParity) + 27;
   }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+/// @title SessionErrors
+/// @author Michael Standen
+/// @notice Errors for the session manager
+library SessionErrors {
+
+  /// @notice Invalid session signer
+  error InvalidSessionSigner(address invalidSigner);
+  /// @notice Invalid chainId
+  error InvalidChainId(uint256 invalidChainId);
+  /// @notice Invalid self call
+  error InvalidSelfCall();
+  /// @notice Invalid delegate call
+  error InvalidDelegateCall();
+  /// @notice Invalid call behavior
+  error InvalidBehavior();
+  /// @notice Invalid value
+  error InvalidValue();
+  /// @notice Invalid node type in session configuration
+  error InvalidNodeType(uint256 flag);
+  /// @notice Error thrown when the payload kind is invalid
+  error InvalidPayloadKind();
+  /// @notice Error thrown when the calls length is invalid
+  error InvalidCallsLength();
+  /// @notice Error thrown when the payload space is invalid
+  error InvalidSpace(uint256 space);
+
+  // ---- Explicit session errors ----
+
+  /// @notice Missing permission for explicit session
+  error MissingPermission();
+  /// @notice Invalid permission for explicit session
+  error InvalidPermission();
+  /// @notice Session expired
+  error SessionExpired(uint256 deadline);
+  /// @notice Invalid limit usage increment
+  error InvalidLimitUsageIncrement();
+
+  // ---- Implicit session errors ----
+
+  /// @notice Blacklisted address
+  error BlacklistedAddress(address target);
+  /// @notice Invalid implicit result
+  error InvalidImplicitResult();
+  /// @notice Invalid identity signer
+  error InvalidIdentitySigner();
+  /// @notice Invalid blacklist
+  error InvalidBlacklist();
+  /// @notice Invalid attestation
+  error InvalidAttestation();
+  /// @notice The blacklist was not sorted
+  error InvalidBlacklistUnsorted();
 
 }
 

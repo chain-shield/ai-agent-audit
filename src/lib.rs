@@ -51,6 +51,7 @@ pub mod reporting {
     pub mod competition_reports;
     /// Contract data export utilities
     pub mod contract_data;
+    pub mod patterns;
     /// File saving and formatting
     pub mod save_file;
 }

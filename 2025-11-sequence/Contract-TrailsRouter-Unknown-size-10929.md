@@ -438,45 +438,6 @@ library TrailsSentinelLib {
     }
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/// @notice Abstract contract providing a reusable delegatecall-only guard.
-abstract contract DelegatecallGuard {
-    // -------------------------------------------------------------------------
-    // Errors
-    // -------------------------------------------------------------------------
-
-    /// @dev Error thrown when a function expected to be delegatecalled is invoked directly
-    error NotDelegateCall();
-
-    // -------------------------------------------------------------------------
-    // Immutable Variables
-    // -------------------------------------------------------------------------
-
-    /// @dev Cached address of this contract to detect delegatecall context
-    address internal immutable _SELF = address(this);
-
-    // -------------------------------------------------------------------------
-    // Modifiers
-    // -------------------------------------------------------------------------
-
-    /// @dev Modifier restricting functions to only be executed via delegatecall
-    modifier onlyDelegatecall() {
-        _onlyDelegatecall();
-        _;
-    }
-
-    // -------------------------------------------------------------------------
-    // Internal Functions
-    // -------------------------------------------------------------------------
-
-    /// @dev Internal check enforcing delegatecall context
-    function _onlyDelegatecall() internal view {
-        if (address(this) == _SELF) revert NotDelegateCall();
-    }
-}
-
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
@@ -501,147 +462,6 @@ interface IDelegatedExtension {
     bytes calldata _data
   ) external;
 
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {IDelegatedExtension} from "wallet-contracts-v3/modules/interfaces/IDelegatedExtension.sol";
-import {IMulticall3} from "./IMulticall3.sol";
-
-/// @title ITrailsRouter
-/// @notice Interface describing the delegate-call router utilities exposed to Sequence wallets.
-interface ITrailsRouter is IDelegatedExtension {
-    // ---------------------------------------------------------------------
-    // Events
-    // ---------------------------------------------------------------------
-
-    event BalanceInjectorCall(
-        address indexed token,
-        address indexed target,
-        bytes32 placeholder,
-        uint256 amountReplaced,
-        uint256 amountOffset,
-        bool success,
-        bytes result
-    );
-    event Refund(address indexed token, address indexed recipient, uint256 amount);
-    event Sweep(address indexed token, address indexed recipient, uint256 amount);
-    event RefundAndSweep(
-        address indexed token,
-        address indexed refundRecipient,
-        uint256 refundAmount,
-        address indexed sweepRecipient,
-        uint256 actualRefund,
-        uint256 remaining
-    );
-    event ActualRefund(address indexed token, address indexed recipient, uint256 expected, uint256 actual);
-
-    // ---------------------------------------------------------------------
-    // Multicall Operations
-    // ---------------------------------------------------------------------
-
-    /// @notice Delegates to Multicall3 to preserve msg.sender context.
-    /// @dev Delegates to Multicall3 to preserve msg.sender context.
-    /// @param data The data to execute.
-    /// @return returnResults The result of the execution.
-    function execute(bytes calldata data) external payable returns (IMulticall3.Result[] memory returnResults);
-
-    /// @notice Pull ERC20 from msg.sender, then delegatecall into Multicall3.
-    /// @dev Requires prior approval to this router.
-    /// @param token The ERC20 token to pull, or address(0) for ETH.
-    /// @param data The calldata for Multicall3.
-    /// @return returnResults The result of the execution.
-    function pullAndExecute(address token, bytes calldata data)
-        external
-        payable
-        returns (IMulticall3.Result[] memory returnResults);
-
-    /// @notice Pull specific amount of ERC20 from msg.sender, then delegatecall into Multicall3.
-    /// @dev Requires prior approval to this router.
-    /// @param token The ERC20 token to pull, or address(0) for ETH.
-    /// @param amount The amount to pull.
-    /// @param data The calldata for Multicall3.
-    /// @return returnResults The result of the execution.
-    function pullAmountAndExecute(address token, uint256 amount, bytes calldata data)
-        external
-        payable
-        returns (IMulticall3.Result[] memory returnResults);
-
-    // ---------------------------------------------------------------------
-    // Balance Injection
-    // ---------------------------------------------------------------------
-
-    /// @notice Sweeps tokens from msg.sender and calls target with modified calldata.
-    /// @dev For regular calls (not delegatecall). Transfers tokens from msg.sender to this contract first.
-    /// @param token The ERC-20 token to sweep, or address(0) for ETH.
-    /// @param target The address to call with modified calldata.
-    /// @param callData The original calldata (must include a 32-byte placeholder).
-    /// @param amountOffset The byte offset in calldata where the placeholder is located.
-    /// @param placeholder The 32-byte placeholder that will be replaced with balance.
-    function injectSweepAndCall(
-        address token,
-        address target,
-        bytes calldata callData,
-        uint256 amountOffset,
-        bytes32 placeholder
-    ) external payable;
-
-    /// @notice Injects balance and calls target (for delegatecall context).
-    /// @dev For delegatecalls from Sequence wallets. Reads balance from address(this).
-    /// @param token The ERC-20 token to sweep, or address(0) for ETH.
-    /// @param target The address to call with modified calldata.
-    /// @param callData The original calldata (must include a 32-byte placeholder).
-    /// @param amountOffset The byte offset in calldata where the placeholder is located.
-    /// @param placeholder The 32-byte placeholder that will be replaced with balance.
-    function injectAndCall(
-        address token,
-        address target,
-        bytes calldata callData,
-        uint256 amountOffset,
-        bytes32 placeholder
-    ) external payable;
-
-    /// @notice Validates that the success sentinel for an opHash is set, then sweeps tokens.
-    /// @dev For delegatecall context. Used to ensure prior operation succeeded.
-    /// @param opHash The operation hash to validate.
-    /// @param token The token to sweep.
-    /// @param recipient The recipient of the sweep.
-    function validateOpHashAndSweep(bytes32 opHash, address token, address recipient) external payable;
-
-    // ---------------------------------------------------------------------
-    // Sweeper
-    // ---------------------------------------------------------------------
-
-    /// @notice Approves the sweeper if ERC20, then sweeps the entire balance to recipient.
-    /// @dev For delegatecall context. Approval is set for `SELF` on the wallet.
-    /// @param token The address of the token to sweep. Use address(0) for the native token.
-    /// @param recipient The address to send the swept tokens to.
-    function sweep(address token, address recipient) external payable;
-
-    /// @notice Refunds up to `_refundAmount` to `_refundRecipient`, then sweeps any remaining balance to `_sweepRecipient`.
-    /// @dev For delegatecall context.
-    /// @param token The token address to operate on. Use address(0) for native.
-    /// @param refundRecipient Address receiving the refund portion.
-    /// @param refundAmount Maximum amount to refund.
-    /// @param sweepRecipient Address receiving the remaining balance.
-    function refundAndSweep(address token, address refundRecipient, uint256 refundAmount, address sweepRecipient)
-        external
-        payable;
-
-    // ---------------------------------------------------------------------
-    // Delegate Entry
-    // ---------------------------------------------------------------------
-
-    /// @inheritdoc IDelegatedExtension
-    function handleSequenceDelegateCall(
-        bytes32 opHash,
-        uint256 startingGas,
-        uint256 index,
-        uint256 numCalls,
-        uint256 space,
-        bytes calldata data
-    ) external;
 }
 
 // SPDX-License-Identifier: MIT
@@ -899,6 +719,186 @@ contract Tstorish {
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {IDelegatedExtension} from "wallet-contracts-v3/modules/interfaces/IDelegatedExtension.sol";
+import {IMulticall3} from "./IMulticall3.sol";
+
+/// @title ITrailsRouter
+/// @notice Interface describing the delegate-call router utilities exposed to Sequence wallets.
+interface ITrailsRouter is IDelegatedExtension {
+    // ---------------------------------------------------------------------
+    // Events
+    // ---------------------------------------------------------------------
+
+    event BalanceInjectorCall(
+        address indexed token,
+        address indexed target,
+        bytes32 placeholder,
+        uint256 amountReplaced,
+        uint256 amountOffset,
+        bool success,
+        bytes result
+    );
+    event Refund(address indexed token, address indexed recipient, uint256 amount);
+    event Sweep(address indexed token, address indexed recipient, uint256 amount);
+    event RefundAndSweep(
+        address indexed token,
+        address indexed refundRecipient,
+        uint256 refundAmount,
+        address indexed sweepRecipient,
+        uint256 actualRefund,
+        uint256 remaining
+    );
+    event ActualRefund(address indexed token, address indexed recipient, uint256 expected, uint256 actual);
+
+    // ---------------------------------------------------------------------
+    // Multicall Operations
+    // ---------------------------------------------------------------------
+
+    /// @notice Delegates to Multicall3 to preserve msg.sender context.
+    /// @dev Delegates to Multicall3 to preserve msg.sender context.
+    /// @param data The data to execute.
+    /// @return returnResults The result of the execution.
+    function execute(bytes calldata data) external payable returns (IMulticall3.Result[] memory returnResults);
+
+    /// @notice Pull ERC20 from msg.sender, then delegatecall into Multicall3.
+    /// @dev Requires prior approval to this router.
+    /// @param token The ERC20 token to pull, or address(0) for ETH.
+    /// @param data The calldata for Multicall3.
+    /// @return returnResults The result of the execution.
+    function pullAndExecute(address token, bytes calldata data)
+        external
+        payable
+        returns (IMulticall3.Result[] memory returnResults);
+
+    /// @notice Pull specific amount of ERC20 from msg.sender, then delegatecall into Multicall3.
+    /// @dev Requires prior approval to this router.
+    /// @param token The ERC20 token to pull, or address(0) for ETH.
+    /// @param amount The amount to pull.
+    /// @param data The calldata for Multicall3.
+    /// @return returnResults The result of the execution.
+    function pullAmountAndExecute(address token, uint256 amount, bytes calldata data)
+        external
+        payable
+        returns (IMulticall3.Result[] memory returnResults);
+
+    // ---------------------------------------------------------------------
+    // Balance Injection
+    // ---------------------------------------------------------------------
+
+    /// @notice Sweeps tokens from msg.sender and calls target with modified calldata.
+    /// @dev For regular calls (not delegatecall). Transfers tokens from msg.sender to this contract first.
+    /// @param token The ERC-20 token to sweep, or address(0) for ETH.
+    /// @param target The address to call with modified calldata.
+    /// @param callData The original calldata (must include a 32-byte placeholder).
+    /// @param amountOffset The byte offset in calldata where the placeholder is located.
+    /// @param placeholder The 32-byte placeholder that will be replaced with balance.
+    function injectSweepAndCall(
+        address token,
+        address target,
+        bytes calldata callData,
+        uint256 amountOffset,
+        bytes32 placeholder
+    ) external payable;
+
+    /// @notice Injects balance and calls target (for delegatecall context).
+    /// @dev For delegatecalls from Sequence wallets. Reads balance from address(this).
+    /// @param token The ERC-20 token to sweep, or address(0) for ETH.
+    /// @param target The address to call with modified calldata.
+    /// @param callData The original calldata (must include a 32-byte placeholder).
+    /// @param amountOffset The byte offset in calldata where the placeholder is located.
+    /// @param placeholder The 32-byte placeholder that will be replaced with balance.
+    function injectAndCall(
+        address token,
+        address target,
+        bytes calldata callData,
+        uint256 amountOffset,
+        bytes32 placeholder
+    ) external payable;
+
+    /// @notice Validates that the success sentinel for an opHash is set, then sweeps tokens.
+    /// @dev For delegatecall context. Used to ensure prior operation succeeded.
+    /// @param opHash The operation hash to validate.
+    /// @param token The token to sweep.
+    /// @param recipient The recipient of the sweep.
+    function validateOpHashAndSweep(bytes32 opHash, address token, address recipient) external payable;
+
+    // ---------------------------------------------------------------------
+    // Sweeper
+    // ---------------------------------------------------------------------
+
+    /// @notice Approves the sweeper if ERC20, then sweeps the entire balance to recipient.
+    /// @dev For delegatecall context. Approval is set for `SELF` on the wallet.
+    /// @param token The address of the token to sweep. Use address(0) for the native token.
+    /// @param recipient The address to send the swept tokens to.
+    function sweep(address token, address recipient) external payable;
+
+    /// @notice Refunds up to `_refundAmount` to `_refundRecipient`, then sweeps any remaining balance to `_sweepRecipient`.
+    /// @dev For delegatecall context.
+    /// @param token The token address to operate on. Use address(0) for native.
+    /// @param refundRecipient Address receiving the refund portion.
+    /// @param refundAmount Maximum amount to refund.
+    /// @param sweepRecipient Address receiving the remaining balance.
+    function refundAndSweep(address token, address refundRecipient, uint256 refundAmount, address sweepRecipient)
+        external
+        payable;
+
+    // ---------------------------------------------------------------------
+    // Delegate Entry
+    // ---------------------------------------------------------------------
+
+    /// @inheritdoc IDelegatedExtension
+    function handleSequenceDelegateCall(
+        bytes32 opHash,
+        uint256 startingGas,
+        uint256 index,
+        uint256 numCalls,
+        uint256 space,
+        bytes calldata data
+    ) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/// @notice Abstract contract providing a reusable delegatecall-only guard.
+abstract contract DelegatecallGuard {
+    // -------------------------------------------------------------------------
+    // Errors
+    // -------------------------------------------------------------------------
+
+    /// @dev Error thrown when a function expected to be delegatecalled is invoked directly
+    error NotDelegateCall();
+
+    // -------------------------------------------------------------------------
+    // Immutable Variables
+    // -------------------------------------------------------------------------
+
+    /// @dev Cached address of this contract to detect delegatecall context
+    address internal immutable _SELF = address(this);
+
+    // -------------------------------------------------------------------------
+    // Modifiers
+    // -------------------------------------------------------------------------
+
+    /// @dev Modifier restricting functions to only be executed via delegatecall
+    modifier onlyDelegatecall() {
+        _onlyDelegatecall();
+        _;
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal Functions
+    // -------------------------------------------------------------------------
+
+    /// @dev Internal check enforcing delegatecall context
+    function _onlyDelegatecall() internal view {
+        if (address(this) == _SELF) revert NotDelegateCall();
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
 /// @title IMulticall3
 /// @notice Minimal subset of Multicall3 used by Trails router.
 /// @dev Matches the canonical implementation deployed at `0xcA11bde05977b3631167028862bE2a173976CA11`.
@@ -1056,6 +1056,41 @@ END OF SUPPORTING CONTRACTS AND INTERFACES
 
 
 DEPLOYMENT SCRIPTS
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {SingletonDeployer, console} from "erc2470-libs/script/SingletonDeployer.s.sol";
+import {TrailsRouter} from "../src/TrailsRouter.sol";
+
+contract Deploy is SingletonDeployer {
+    // -------------------------------------------------------------------------
+    // Run
+    // -------------------------------------------------------------------------
+
+    function run() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        address deployerAddress = vm.addr(pk);
+        console.log("Deployer Address:", deployerAddress);
+
+        address router = deployRouter(pk);
+        console.log("TrailsRouter deployed at:", router);
+    }
+
+    // -------------------------------------------------------------------------
+    // Deploy Router
+    // -------------------------------------------------------------------------
+
+    function deployRouter(uint256 pk) public returns (address) {
+        bytes32 salt = bytes32(0);
+
+        // Deploy TrailsRouter
+        bytes memory initCode = type(TrailsRouter).creationCode;
+        address router = _deployIfNotAlready("TrailsRouter", initCode, salt, pk);
+
+        return router;
+    }
+}
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
@@ -1287,41 +1322,6 @@ contract TrailsRouterDeploymentTest is Test {
         // This is a smoke test to ensure the contract is properly deployed
         (bool success,) = address(router).call("");
         assertEq(success, true, "Router should accept basic calls");
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {SingletonDeployer, console} from "erc2470-libs/script/SingletonDeployer.s.sol";
-import {TrailsRouter} from "../src/TrailsRouter.sol";
-
-contract Deploy is SingletonDeployer {
-    // -------------------------------------------------------------------------
-    // Run
-    // -------------------------------------------------------------------------
-
-    function run() external {
-        uint256 pk = vm.envUint("PRIVATE_KEY");
-        address deployerAddress = vm.addr(pk);
-        console.log("Deployer Address:", deployerAddress);
-
-        address router = deployRouter(pk);
-        console.log("TrailsRouter deployed at:", router);
-    }
-
-    // -------------------------------------------------------------------------
-    // Deploy Router
-    // -------------------------------------------------------------------------
-
-    function deployRouter(uint256 pk) public returns (address) {
-        bytes32 salt = bytes32(0);
-
-        // Deploy TrailsRouter
-        bytes memory initCode = type(TrailsRouter).creationCode;
-        address router = _deployIfNotAlready("TrailsRouter", initCode, salt, pk);
-
-        return router;
     }
 }
 
