@@ -114,68 +114,6 @@ library TrailsSentinelLib {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/// @notice Abstract contract providing a reusable delegatecall-only guard.
-abstract contract DelegatecallGuard {
-    // -------------------------------------------------------------------------
-    // Errors
-    // -------------------------------------------------------------------------
-
-    /// @dev Error thrown when a function expected to be delegatecalled is invoked directly
-    error NotDelegateCall();
-
-    // -------------------------------------------------------------------------
-    // Immutable Variables
-    // -------------------------------------------------------------------------
-
-    /// @dev Cached address of this contract to detect delegatecall context
-    address internal immutable _SELF = address(this);
-
-    // -------------------------------------------------------------------------
-    // Modifiers
-    // -------------------------------------------------------------------------
-
-    /// @dev Modifier restricting functions to only be executed via delegatecall
-    modifier onlyDelegatecall() {
-        _onlyDelegatecall();
-        _;
-    }
-
-    // -------------------------------------------------------------------------
-    // Internal Functions
-    // -------------------------------------------------------------------------
-
-    /// @dev Internal check enforcing delegatecall context
-    function _onlyDelegatecall() internal view {
-        if (address(this) == _SELF) revert NotDelegateCall();
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {IDelegatedExtension} from "wallet-contracts-v3/modules/interfaces/IDelegatedExtension.sol";
-
-/// @title ITrailsRouterShim
-/// @notice Interface for the router shim that bridges Sequence wallets to the Trails router.
-interface ITrailsRouterShim is IDelegatedExtension {
-    // -------------------------------------------------------------------------
-    // Functions
-    // -------------------------------------------------------------------------
-
-    /// @inheritdoc IDelegatedExtension
-    function handleSequenceDelegateCall(
-        bytes32 opHash,
-        uint256 startingGas,
-        uint256 index,
-        uint256 numCalls,
-        uint256 space,
-        bytes calldata data
-    ) external;
-}
-
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
 contract Tstorish {
@@ -427,6 +365,68 @@ contract Tstorish {
     }
 }
 
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {IDelegatedExtension} from "wallet-contracts-v3/modules/interfaces/IDelegatedExtension.sol";
+
+/// @title ITrailsRouterShim
+/// @notice Interface for the router shim that bridges Sequence wallets to the Trails router.
+interface ITrailsRouterShim is IDelegatedExtension {
+    // -------------------------------------------------------------------------
+    // Functions
+    // -------------------------------------------------------------------------
+
+    /// @inheritdoc IDelegatedExtension
+    function handleSequenceDelegateCall(
+        bytes32 opHash,
+        uint256 startingGas,
+        uint256 index,
+        uint256 numCalls,
+        uint256 space,
+        bytes calldata data
+    ) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/// @notice Abstract contract providing a reusable delegatecall-only guard.
+abstract contract DelegatecallGuard {
+    // -------------------------------------------------------------------------
+    // Errors
+    // -------------------------------------------------------------------------
+
+    /// @dev Error thrown when a function expected to be delegatecalled is invoked directly
+    error NotDelegateCall();
+
+    // -------------------------------------------------------------------------
+    // Immutable Variables
+    // -------------------------------------------------------------------------
+
+    /// @dev Cached address of this contract to detect delegatecall context
+    address internal immutable _SELF = address(this);
+
+    // -------------------------------------------------------------------------
+    // Modifiers
+    // -------------------------------------------------------------------------
+
+    /// @dev Modifier restricting functions to only be executed via delegatecall
+    modifier onlyDelegatecall() {
+        _onlyDelegatecall();
+        _;
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal Functions
+    // -------------------------------------------------------------------------
+
+    /// @dev Internal check enforcing delegatecall context
+    function _onlyDelegatecall() internal view {
+        if (address(this) == _SELF) revert NotDelegateCall();
+    }
+}
+
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
 
@@ -436,6 +436,47 @@ END OF SUPPORTING CONTRACTS AND INTERFACES
 
 
 DEPLOYMENT SCRIPTS
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {SingletonDeployer, console} from "erc2470-libs/script/SingletonDeployer.s.sol";
+import {TrailsRouterShim} from "../src/TrailsRouterShim.sol";
+import {Deploy as TrailsRouterDeploy} from "./TrailsRouter.s.sol";
+
+contract Deploy is SingletonDeployer {
+    // -------------------------------------------------------------------------
+    // State Variables
+    // -------------------------------------------------------------------------
+
+    address public routerAddress;
+
+    // -------------------------------------------------------------------------
+    // Run
+    // -------------------------------------------------------------------------
+
+    function run() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        address deployerAddress = vm.addr(pk);
+        console.log("Deployer Address:", deployerAddress);
+
+        bytes32 salt = bytes32(0);
+
+        // Deploy TrailsRouter using the TrailsRouter deployment script
+        TrailsRouterDeploy routerDeploy = new TrailsRouterDeploy();
+        routerDeploy.run();
+
+        // Get the deployed router address from the deployment script
+        routerAddress = routerDeploy.deployRouter(pk);
+        console.log("TrailsRouter deployed at:", routerAddress);
+
+        // Deploy TrailsRouterShim with the router address
+        bytes memory initCode = abi.encodePacked(type(TrailsRouterShim).creationCode, abi.encode(routerAddress));
+        address wrapper = _deployIfNotAlready("TrailsRouterShim", initCode, salt, pk);
+
+        console.log("TrailsRouterShim deployed at:", wrapper);
+    }
+}
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
@@ -563,47 +604,6 @@ contract TrailsRouterShimDeploymentTest is Test {
         // This tests that the immutable is correctly set and accessible
         address routerFromShim = address(shim.ROUTER());
         assertEq(routerFromShim, deployedRouterAddr, "Shim should be able to access its router address");
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {SingletonDeployer, console} from "erc2470-libs/script/SingletonDeployer.s.sol";
-import {TrailsRouterShim} from "../src/TrailsRouterShim.sol";
-import {Deploy as TrailsRouterDeploy} from "./TrailsRouter.s.sol";
-
-contract Deploy is SingletonDeployer {
-    // -------------------------------------------------------------------------
-    // State Variables
-    // -------------------------------------------------------------------------
-
-    address public routerAddress;
-
-    // -------------------------------------------------------------------------
-    // Run
-    // -------------------------------------------------------------------------
-
-    function run() external {
-        uint256 pk = vm.envUint("PRIVATE_KEY");
-        address deployerAddress = vm.addr(pk);
-        console.log("Deployer Address:", deployerAddress);
-
-        bytes32 salt = bytes32(0);
-
-        // Deploy TrailsRouter using the TrailsRouter deployment script
-        TrailsRouterDeploy routerDeploy = new TrailsRouterDeploy();
-        routerDeploy.run();
-
-        // Get the deployed router address from the deployment script
-        routerAddress = routerDeploy.deployRouter(pk);
-        console.log("TrailsRouter deployed at:", routerAddress);
-
-        // Deploy TrailsRouterShim with the router address
-        bytes memory initCode = abi.encodePacked(type(TrailsRouterShim).creationCode, abi.encode(routerAddress));
-        address wrapper = _deployIfNotAlready("TrailsRouterShim", initCode, salt, pk);
-
-        console.log("TrailsRouterShim deployed at:", wrapper);
     }
 }
 
