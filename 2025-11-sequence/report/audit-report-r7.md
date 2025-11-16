@@ -3,6 +3,9 @@
 
 ##Findings by Pattern
 
+USING MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE = true; and gpt-5.1
+NICHE_PATTERN_ANALYSIS_MODE = false;
+Update prompt
 
  **Derived From** : Unrestricted injectAndCall lets anyone sweep router-held ETH and ERC20 balances
 

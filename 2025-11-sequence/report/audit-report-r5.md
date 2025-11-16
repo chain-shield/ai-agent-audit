@@ -5,6 +5,7 @@
 
 USING MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE = true; and gpt-5.1
 NICHE_PATTERN_ANALYSIS_MODE = false;
+3 UNIQUES
 
  **Derived From** : Hardcoded delegatecall to external MULTICALL3 without codehash check can execute arbitrary logic
 
