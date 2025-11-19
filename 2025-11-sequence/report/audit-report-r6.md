@@ -5,7 +5,6 @@
 
 USING MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE = false; and gpt-5.1
 NICHE_PATTERN_ANALYSIS_MODE = false;
-3 UNIQUES or 4 ?
 
 
  **Derived From** : Delegatecall to external Multicall3 at fixed address without code validation

@@ -50,9 +50,15 @@ where
     let arc_code_context = Arc::new(code_and_context);
     let audit_scope = Arc::new(generate_audit_scope(repo).await?);
     let arc_repo = Arc::new(repo.clone());
-
     let arc_patterns = Arc::new(patterns.clone());
-    for i in 0..DISCOVERY_RUNS {
+
+    let runs = if issue_title == "invariant" {
+        5
+    } else {
+        DISCOVERY_RUNS
+    };
+
+    for i in 0..runs {
         let codeblock_plus_context = Arc::clone(&arc_code_context);
         let arc_agent = Arc::clone(&agent);
         let patterns_clone = Arc::clone(&arc_patterns);

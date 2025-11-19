@@ -4,7 +4,7 @@
 ##Findings by Pattern
 USING MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE = true; and gpt-5.1
 NICHE_PATTERN_ANALYSIS_MODE = false;
-Update finding prompt
+Update finding prompt (long version)
 
 
  **Derived From** : ERC20 target receives full-balance allowance that is never revoked

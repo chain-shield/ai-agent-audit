@@ -216,7 +216,7 @@ impl Findings {
             });
         }
 
-        let openai_config = AgentConfig::new(None).with_model("gpt-5.1");
+        let openai_config = AgentConfig::new(None).with_model("gpt-5-mini");
 
         let openai_agent = Arc::new(AgentFactory::create_openai_agent(&openai_config)?);
 
