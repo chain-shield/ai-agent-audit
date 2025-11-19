@@ -1,6 +1,7 @@
 use super::{enums::AIAgent, phases};
 use crate::config::{
-    CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE, OPENAI_MODEL,
+    CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE,
+    SKIP_LIBRARIES,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
@@ -57,13 +58,17 @@ pub async fn review_codebase_for_security_issues_v2(
 
     // ONLY audit these failed
     let custom_scoped_contracts = Some(vec![
-        "TrailsRouter".to_string(),
-        "TrailsIntentEntrypoint".to_string(),
+        "GTELaunchpadV2Pair".to_string(),
+        "Distributor".to_string(),
     ]);
     // let custom_scoped_contracts: Option<Vec<_>> = None;
 
-    let (ai_verify_agent, ai_discovery_agent, finding_ai_verify_agent) =
-        generate_ai_agents(repo).await?;
+    let (
+        ai_verify_agent,
+        pattern_discovery_agent,
+        finding_ai_verify_agent,
+        finding_discovery_agent,
+    ) = generate_ai_agents(repo).await?;
 
     let findings_db = Arc::new(Mutex::new(FindingsDb::open()?));
 
@@ -90,12 +95,17 @@ pub async fn review_codebase_for_security_issues_v2(
             continue;
         }
 
+        if SKIP_LIBRARIES && contract_type == ContractType::Library {
+            continue;
+        }
+
         info!("{} {} is in scope", contract_type.to_string(), contract);
 
         // Clone shared state for the spawned task
         let verify_agent = Arc::clone(&ai_verify_agent);
         let finding_verify_agent = Arc::clone(&finding_ai_verify_agent);
-        let discovery_agent = Arc::clone(&ai_discovery_agent);
+        let pattern_discovery_agent = Arc::clone(&pattern_discovery_agent);
+        let finding_discovery_agent = Arc::clone(&finding_discovery_agent);
         let results_db = Arc::clone(&findings_db);
         let all_issues = Arc::clone(&all_security_issues);
         let repo_clone = repo.clone();
@@ -114,13 +124,15 @@ pub async fn review_codebase_for_security_issues_v2(
                         process_patterns(
                             &codeblock,
                             pattern_categories,
-                            &discovery_agent,
+                            &pattern_discovery_agent,
+                            &finding_discovery_agent,
                             &verify_agent,
                             &repo_clone
                         ),
                         process_invariants(
                             &codeblock,
-                            &discovery_agent,
+                            &pattern_discovery_agent,
+                            &finding_discovery_agent,
                             &verify_agent,
                             &repo_clone
                         )
@@ -255,7 +267,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
 pub async fn generate_ai_agents(
     repo: &RepoPaths,
-) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Arc<AIAgent>)> {
+) -> Result<(Arc<AIAgent>, Arc<AIAgent>, Arc<AIAgent>, Arc<AIAgent>)> {
     info!("setting up AI agents...");
 
     // Enhanced preamble for verification agent
@@ -267,9 +279,8 @@ rigorous PoC tests that validate the findings.";
 
     // Create verification agent using OpenAI O3
     let verify_config = AgentConfig::new(Some(repo.clone()))
-        .with_model(OPENAI_MODEL)
+        .with_model("gpt-5")
         .with_preamble(verify_preamble)
-        .with_openai_reasoning_effort("medium")
         .with_file_picker(false); // Disabled to avoid rate limits
 
     let finding_verify_config = AgentConfig::new(Some(repo.clone()))
@@ -296,16 +307,26 @@ rigorous PoC tests that validate the findings.";
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_file_retrieval(false);
 
-    let discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model(OPENAI_MODEL)
+    let pattern_discovery_config = AgentConfig::new(Some(repo.clone()))
+        .with_model("gpt-5.1")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
         .with_openai_reasoning_effort("high")
         .with_file_picker(false);
-    //     .with_file_picker(false) // Disabled to avoid rate limits
-    //     .with_dynamic_context(false);
 
-    let ai_discovery_agent = Arc::new(AgentFactory::create_openai_agent(&discovery_config)?);
+    let finding_discovery_config = AgentConfig::new(Some(repo.clone()))
+        .with_model("gpt-5.1")
+        .with_preamble(solidity_auditor_preamble)
+        .with_file_retrieval(false)
+        .with_openai_reasoning_effort("high")
+        .with_file_picker(false);
+
+    let pattern_discovery_agent = Arc::new(AgentFactory::create_openai_agent(
+        &pattern_discovery_config,
+    )?);
+    let finding_discovery_agent = Arc::new(AgentFactory::create_openai_agent(
+        &finding_discovery_config,
+    )?);
     // let ai_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(
     //     &discovery_config_claude,
     // )?);
@@ -313,7 +334,12 @@ rigorous PoC tests that validate the findings.";
     // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
     // info!("Created {} discovery agents", ai_discovery_agents.len());
 
-    Ok((ai_verify_agent.clone(), ai_discovery_agent, ai_verify_agent))
+    Ok((
+        ai_verify_agent.clone(),
+        pattern_discovery_agent,
+        ai_verify_agent,
+        finding_discovery_agent,
+    ))
 }
 
 fn get_pattern_category_from_contract_category(
@@ -323,6 +349,8 @@ fn get_pattern_category_from_contract_category(
         PatternCategory::Top,
         PatternCategory::MostObserved,
         PatternCategory::Rare,
+        PatternCategory::Frequent,
+        PatternCategory::Top,
         PatternCategory::Frequent,
     ];
 
@@ -335,6 +363,10 @@ fn get_pattern_category_from_contract_category(
         vec![
             contract_spec.pattern_category.clone(),
             PatternCategory::General,
+            PatternCategory::Top,
+            PatternCategory::MostObserved,
+            PatternCategory::Rare,
+            PatternCategory::Frequent,
         ]
     } else {
         default_pattern_categories
@@ -345,7 +377,8 @@ fn get_pattern_category_from_contract_category(
 async fn process_patterns(
     codeblock: &str,
     pattern_categories: Vec<PatternCategory>,
-    ai_discovery_agent: &Arc<AIAgent>,
+    pattern_discovery_agent: &Arc<AIAgent>,
+    finding_discovery_agent: &Arc<AIAgent>,
     ai_verify_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
@@ -356,7 +389,7 @@ async fn process_patterns(
     let raw_patterns: Patterns = pattern_phases::generate_patterns::execute(
         pattern_prompt,
         codeblock,
-        ai_discovery_agent,
+        pattern_discovery_agent,
         repo,
     )
     .await?;
@@ -384,7 +417,7 @@ async fn process_patterns(
             pattern_phases::multipattern_to_findings::execute(
                 verified_patterns,
                 codeblock,
-                ai_discovery_agent,
+                finding_discovery_agent,
                 repo,
             )
             .await?
@@ -392,7 +425,7 @@ async fn process_patterns(
             pattern_phases::pattern_to_findings::execute(
                 verified_patterns,
                 codeblock,
-                ai_discovery_agent,
+                finding_discovery_agent,
                 repo,
             )
             .await?
@@ -407,7 +440,8 @@ async fn process_patterns(
 /// Process invariant analysis: generate, verify, and convert to findings
 async fn process_invariants(
     codeblock: &str,
-    ai_discovery_agent: &Arc<AIAgent>,
+    invariant_discovery_agent: &Arc<AIAgent>,
+    finding_discovery_agent: &Arc<AIAgent>,
     ai_verify_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
@@ -418,7 +452,7 @@ async fn process_invariants(
     let mut raw_invariants: ContractInvariants = pattern_phases::generate_patterns::execute(
         invariant_prompt,
         codeblock,
-        ai_discovery_agent,
+        invariant_discovery_agent,
         repo,
     )
     .await?;
@@ -466,7 +500,7 @@ async fn process_invariants(
             pattern_phases::multipattern_to_findings::execute(
                 verified_invariants,
                 codeblock,
-                ai_discovery_agent,
+                finding_discovery_agent,
                 repo,
             )
             .await?
@@ -474,7 +508,7 @@ async fn process_invariants(
             pattern_phases::pattern_to_findings::execute(
                 verified_invariants,
                 codeblock,
-                ai_discovery_agent,
+                finding_discovery_agent,
                 repo,
             )
             .await?
