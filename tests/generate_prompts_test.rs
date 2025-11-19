@@ -3,15 +3,17 @@
 use ai_agent_audit::{
     config::AuditType,
     llm_review::{
+        agent::agent_enums::EnumData,
         dynamic_prompts::{
             findings_template as ft, inv_findings as inv_to_find, invariants as inv_prompts,
             pattern_findings as pat_to_find, patterns as pat_prompts,
         },
-        enums::EnumData,
-        findings::PrivilegeLevel,
-        invariants::{InvariantFinding, InvariantStatus, InvariantType},
-        pattern_category::PatternCategory,
-        patterns::{Pattern, VulnerabilityPattern},
+        findings::findings::PrivilegeLevel,
+        threat_models::{
+            invariants::{InvariantFinding, InvariantStatus, InvariantType},
+            pattern_category::PatternCategory,
+            patterns::{Pattern, VulnerabilityPattern},
+        },
     },
     prepare_code::git_clone::{PocConfig, RepoPaths},
 };

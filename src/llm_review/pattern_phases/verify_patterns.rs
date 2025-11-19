@@ -5,12 +5,13 @@
 use crate::{
     error::Result,
     llm_review::{
-        context_state::get_metadata_context,
-        enums::AIAgent,
-        invariants::ContractInvariants,
-        issues::{IssueStructTrait, IssueTrait},
-        patterns::Patterns,
-        semaphore::GENERAL_SEM,
+        agent::agent_enums::AIAgent,
+        analysis::{context_state::get_metadata_context, semaphore::GENERAL_SEM},
+        threat_models::{
+            invariants::ContractInvariants,
+            issues::{IssueStructTrait, IssueTrait},
+            patterns::Patterns,
+        },
     },
     prepare_code::git_clone::RepoPaths,
 };

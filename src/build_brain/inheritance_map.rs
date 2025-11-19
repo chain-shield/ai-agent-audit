@@ -179,7 +179,7 @@ pub async fn resolve_contract_file(
     file_type: SolFileType,
     repo: &RepoPaths,
 ) -> Result<Option<PathBuf>> {
-    use crate::llm_review::contract_file_map::{
+    use crate::llm_review::contract::contract_file_map::{
         get_file_from_contract, get_file_from_lib_contract,
     };
 

@@ -1,5 +1,5 @@
 use ai_agent_audit::config::init_config;
-use ai_agent_audit::llm_review::agent_factory::init_llm_clients;
+use ai_agent_audit::llm_review::agent::agent_factory::init_llm_clients;
 use dotenvy::dotenv;
 use std::env;
 

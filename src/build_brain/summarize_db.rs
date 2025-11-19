@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::{
     build_brain::summarize::{FileSummaryType, SrcFileSummary},
     config::{CHAINSHIELD_DB_FOLDER, SUMMARY_DB},
-    llm_review::contract_category::ContractCategory,
+    llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::RepoPaths,
 };
 

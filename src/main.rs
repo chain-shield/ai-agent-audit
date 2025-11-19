@@ -7,9 +7,8 @@ use ai_agent_audit::{
     enumerator::{self, codeblock_maker},
     error::Result,
     llm_review::{
-        agent_factory::init_llm_clients,
-        code_review_v2,
-        context_state::{self},
+        agent::agent_factory::init_llm_clients,
+        analysis::{code_review_v2, context_state},
     },
     prepare_code::{self},
     reporting::{

@@ -5,10 +5,9 @@
 use crate::{
     error::Result,
     llm_review::{
-        context_state::get_metadata_context,
-        enums::AIAgent,
-        findings::{Finding, Findings},
-        semaphore::GENERAL_SEM,
+        agent::agent_enums::AIAgent,
+        analysis::{context_state::get_metadata_context, semaphore::GENERAL_SEM},
+        findings::findings::{Finding, Findings},
         utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
     },
     prepare_code::git_clone::RepoPaths,

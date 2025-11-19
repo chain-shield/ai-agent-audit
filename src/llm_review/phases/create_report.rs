@@ -5,12 +5,11 @@
 use crate::{
     error::Result,
     llm_review::{
-        context_state::get_metadata_context,
-        enums::AIAgent,
-        findings::{Finding, Findings},
+        agent::agent_enums::AIAgent,
+        analysis::{context_state::get_metadata_context, semaphore::VERIFY_SEM},
+        findings::findings::{Finding, Findings},
         phases::{add_poc_findings::PocStatus, verify_findings::FindingStatus},
         prompt_support::create_report_prompt::generate_create_report_prompt,
-        semaphore::VERIFY_SEM,
     },
     prepare_code::git_clone::RepoPaths,
 };

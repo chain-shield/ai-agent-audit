@@ -5,12 +5,17 @@
 use crate::{
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context},
-        enums::{AIAgent, Severity},
-        findings::{Finding, Findings},
+        agent::agent_enums::AIAgent,
+        analysis::{
+            context_state::{generate_audit_scope, get_metadata_context},
+            semaphore::VERIFY_SEM,
+        },
+        findings::{
+            finding_enums::Severity,
+            findings::{Finding, Findings},
+        },
         prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
-        semaphore::VERIFY_SEM,
-        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
+        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -19,7 +24,7 @@ use log::info;
 use crate::{
     config::AuditType,
     llm_review::{
-        enums::{all_enum_variants, generate_enum_list},
+        agent::agent_enums::{all_enum_variants, generate_enum_list},
         prompt_support::severity_rubics::{CANTINA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC},
     },
 };

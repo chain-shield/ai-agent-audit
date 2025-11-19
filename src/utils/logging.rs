@@ -1,7 +1,7 @@
 use log::info;
 use schemars::schema_for;
 
-use crate::llm_review::findings::Findings;
+use crate::llm_review::findings::findings::Findings;
 
 pub fn print_first_four_lines(text: &str) {
     let lines: Vec<&str> = text.lines().collect();

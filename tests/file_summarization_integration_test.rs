@@ -15,7 +15,7 @@ use ai_agent_audit::{
         summarize_db::{get_file_summary_from_db, get_summaries_from_db},
     },
     config::AuditType,
-    llm_review::contract_category::ContractCategory,
+    llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::{PocConfig, RepoPaths},
     utils::remapping::parse_and_store_remappings,
 };

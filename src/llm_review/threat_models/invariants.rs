@@ -1,5 +1,5 @@
-use super::enums::VulnerabilityType;
-use crate::llm_review::{enums::EnumData, pattern_category::PatternTier, patterns::ImpactHint};
+use super::{pattern_category::PatternTier, patterns::ImpactHint};
+use crate::llm_review::{agent::agent_enums::EnumData, findings::finding_enums::VulnerabilityType};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;

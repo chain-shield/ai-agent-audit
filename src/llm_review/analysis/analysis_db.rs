@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::{
     config::{CHAINSHIELD_DB_FOLDER, FINDINGS_DB},
-    llm_review::findings::{Finding, Findings},
+    llm_review::findings::findings::{Finding, Findings},
     prepare_code::git_clone::RepoPaths,
 };
 

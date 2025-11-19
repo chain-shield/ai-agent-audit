@@ -10,7 +10,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{llm_review::contract_category::ContractCategory, prepare_code::git_clone::RepoPaths};
+use crate::{
+    llm_review::contract::contract_category::ContractCategory, prepare_code::git_clone::RepoPaths,
+};
 
 /// Represents a contextual markdown code block for AI analysis.
 ///

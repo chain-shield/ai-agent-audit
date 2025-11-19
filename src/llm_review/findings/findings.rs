@@ -1,10 +1,10 @@
-use super::{
-    agent_factory::{AgentConfig, AgentFactory},
-    enums::{Severity, VulnerabilityType},
+use crate::llm_review::{
+    agent::agent_factory::{AgentConfig, AgentFactory},
+    findings::finding_enums::{Severity, VulnerabilityType},
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::phases::{
         add_poc_findings::PocStatus,
         create_report::CompetitionReport,
@@ -159,7 +159,7 @@ impl Finding {
     pub async fn is_duplicate_issue(
         &self,
         issue: &Finding,
-        ai_agent: &crate::llm_review::enums::AIAgent,
+        ai_agent: &crate::llm_review::agent::agent_enums::AIAgent,
     ) -> anyhow::Result<bool> {
         let title_similiarity_score = semantic_compare::similarity_score(&self.title, &issue.title);
         let desc_similiarity_score = semantic_compare::similarity_score(
@@ -298,7 +298,7 @@ impl Findings {
 
 async fn get_deduped_finding_vec(
     findings: &Arc<Vec<Finding>>,
-    agent: &Arc<crate::llm_review::enums::AIAgent>,
+    agent: &Arc<crate::llm_review::agent::agent_enums::AIAgent>,
 ) -> anyhow::Result<Vec<Finding>> {
     // assigns bool to each finding index, is dup or not? assume not for initializing
     let size = findings.len();

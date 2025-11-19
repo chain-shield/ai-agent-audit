@@ -77,24 +77,38 @@ pub mod enumerator {
 
 /// AI-powered security analysis and LLM integration
 pub mod llm_review {
-    /// AI agent factory for centralized agent creation
-    pub mod agent_factory;
-    /// Analysis results database
-    pub mod analysis_db;
-    pub mod code_review_v2;
-    /// Global context management
-    pub mod context_state;
-    pub mod contract_category;
-    pub mod contract_file_map;
-    /// AI agent and vulnerability type enums
-    pub mod enums;
-    /// LLM configuration and models
-    pub mod findings;
-    pub mod invariants;
-    pub mod issues;
-    pub mod pattern_category;
-    pub mod patterns;
-    pub mod semaphore;
+    pub mod findings {
+        pub mod finding_enums;
+        /// LLM configuration and models
+        pub mod findings;
+    }
+    pub mod contract {
+
+        pub mod contract_category;
+        pub mod contract_file_map;
+    }
+    pub mod agent {
+
+        /// AI agent and vulnerability type enums
+        pub mod agent_enums;
+        /// AI agent factory for centralized agent creation
+        pub mod agent_factory;
+    }
+    pub mod analysis {
+
+        /// Analysis results database
+        pub mod analysis_db;
+        pub mod code_review_v2;
+        /// Global context management
+        pub mod context_state;
+        pub mod semaphore;
+    }
+    pub mod threat_models {
+        pub mod invariants;
+        pub mod issues;
+        pub mod pattern_category;
+        pub mod patterns;
+    }
     /// Security audit phases
     pub mod dynamic_prompts {
         pub mod findings_template;
@@ -105,8 +119,6 @@ pub mod llm_review {
     }
     pub mod phases {
         pub mod add_poc_findings;
-        /// Phase 1: AI-driven file selection and context prefetching
-        pub mod prefetch_context;
         /// Phase 5: Quality assurance and final finding refinement
         pub mod quality_check;
         /// Phase 3: Deduplication and verification of discovered security findings
@@ -136,13 +148,8 @@ pub mod llm_review {
         pub mod create_report_prompt;
         /// Deduplication prompts
         pub mod dedup;
-        pub mod extractor_prompt;
         pub mod make_poc_prompt;
-        pub mod planner_prompt;
-        pub mod post_file_select_prompt;
         pub mod post_poc;
-        /// Verification prompts
-        pub mod pre_file_select_prompt;
         pub mod pre_poc;
         pub mod report_templates;
         pub mod severity_rubics;
@@ -159,45 +166,6 @@ pub mod cli_args {
 pub mod cost {
     /// Cost calculation and tracking across providers
     pub mod cost_data;
-}
-
-/// AI agent implementations with vector search
-pub mod ai_bot {
-    pub mod file_picker;
-    pub mod file_retrival;
-    /// Context retrieval for AI analysis
-    pub mod retrieve_slice;
-}
-
-/// Master security analysis prompts
-pub mod master_prompts {
-    /// Security analysis prompt variants
-    pub mod code4rena;
-    /// Base master security prompt
-    pub mod master_prompt;
-    pub mod prompt_2x_a;
-    pub mod prompt_2x_aa;
-    pub mod prompt_2x_b;
-    pub mod prompt_2x_bb;
-    pub mod prompt_3x_a;
-    pub mod prompt_3x_b;
-    pub mod prompt_3x_c;
-}
-
-/// Protocol invariant analysis prompts
-pub mod invariant_prompts {
-    /// Arithmetic invariants
-    pub mod arithmetic;
-    /// Balance invariants
-    pub mod balance;
-    /// Permission invariants
-    pub mod permission;
-    /// Referential integrity invariants
-    pub mod referential;
-    /// State machine invariants
-    pub mod state_machine;
-    /// Temporal invariants
-    pub mod temporal;
 }
 
 #[cfg(test)]

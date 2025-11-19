@@ -1,7 +1,10 @@
 use std::{collections::HashSet, path::Path};
 
 use crate::{
-    llm_review::{patterns::Pattern, utils::prompt_context::generate_formatted_multiple_patterns},
+    llm_review::{
+        threat_models::patterns::Pattern,
+        utils::prompt_context::generate_formatted_multiple_patterns,
+    },
     prepare_code::git_clone::RepoPaths,
     reporting::save_file::save_file_locally,
 };

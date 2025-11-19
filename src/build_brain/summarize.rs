@@ -22,15 +22,17 @@ use crate::{
         get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
         insert_file_summary_to_db,
     },
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::{
-        contract_category::{generate_formated_list_of_contract_categories, ContractCategory},
-        enums::{all_enum_variants, generate_enum_list, AgentMetadata},
+        agent::agent_enums::{AgentMetadata, all_enum_variants, generate_enum_list},
+        contract::contract_category::{
+            ContractCategory, generate_formated_list_of_contract_categories,
+        },
     },
     prepare_code::git_clone::RepoPaths,
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
-use crate::{llm_review::context_state, utils::check_folder_name::is_script_file};
+use crate::{llm_review::analysis::context_state, utils::check_folder_name::is_script_file};
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumString, strum_macros::Display)]
 pub enum FileSummaryType {

@@ -3,11 +3,13 @@ use std::collections::HashSet;
 use crate::{
     config::AuditType,
     llm_review::{
-        enums::{
-            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData, Severity,
-            VulnerabilityType,
+        agent::agent_enums::{
+            EnumData, all_enum_variants, generate_enum_bulleted_list, generate_enum_list,
         },
-        findings::PrivilegeLevel,
+        findings::{
+            finding_enums::{Severity, VulnerabilityType},
+            findings::PrivilegeLevel,
+        },
         prompt_support::severity_rubics::{
             CANTINA_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
         },

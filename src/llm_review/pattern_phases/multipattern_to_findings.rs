@@ -6,12 +6,14 @@ use crate::{
     config::DISCOVERY_RUNS,
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context},
-        enums::AIAgent,
-        findings::Findings,
-        issues::{IssueStructTrait, IssueTrait},
+        agent::agent_enums::AIAgent,
+        analysis::{
+            context_state::{generate_audit_scope, get_metadata_context},
+            semaphore::GENERAL_SEM,
+        },
+        findings::findings::Findings,
         pattern_phases::pattern_to_findings::generate_content_plus_context_block,
-        semaphore::GENERAL_SEM,
+        threat_models::issues::{IssueStructTrait, IssueTrait},
     },
     prepare_code::git_clone::RepoPaths,
 };
