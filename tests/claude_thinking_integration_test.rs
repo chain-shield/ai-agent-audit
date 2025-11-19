@@ -12,8 +12,10 @@
 /// - Example: If thinking budget is 10,000, max_tokens should be at least 15,000+
 /// - Claude models support 200K+ input tokens by default
 use ai_agent_audit::config::{init_config, try_audit_config};
-use ai_agent_audit::llm_review::agent_factory::{AgentConfig, AgentFactory, init_llm_clients};
-use ai_agent_audit::llm_review::findings::CLAUDE_4_5_SONNET;
+use ai_agent_audit::llm_review::agent::agent_factory::{
+    AgentConfig, AgentFactory, init_llm_clients,
+};
+use ai_agent_audit::llm_review::findings::findings::CLAUDE_4_5_SONNET;
 use dotenvy::dotenv;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

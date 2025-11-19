@@ -1,6 +1,6 @@
 use crate::llm_review::{
-    enums::{EnumData, VulnerabilityType},
-    findings::PrivilegeLevel,
+    agent::agent_enums::EnumData,
+    findings::{finding_enums::VulnerabilityType, findings::PrivilegeLevel},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

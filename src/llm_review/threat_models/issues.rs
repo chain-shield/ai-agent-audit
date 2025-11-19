@@ -1,9 +1,10 @@
 // represents abstraction of Findings and ContractInvariants
 
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::{
-        agent_factory::{AgentConfig, AgentFactory},
+        agent::agent_enums::AIAgent,
+        agent::agent_factory::{AgentConfig, AgentFactory},
         dynamic_prompts::{
             findings_template::{
                 get_findings_json_requirement, get_json_requirement_for_multipattern,
@@ -17,9 +18,8 @@ use crate::{
             },
             patterns::generate_pattern_verify_prompt,
         },
-        enums::AIAgent,
-        patterns::VulnerabilityPattern,
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
+        threat_models::patterns::VulnerabilityPattern,
         utils::prompt_context::{generate_formatted_invariant_finding, generate_formatted_pattern},
     },
     prepare_code::git_clone::RepoPaths,
@@ -33,7 +33,7 @@ use tokio::sync::Mutex;
 
 use async_trait::async_trait;
 
-use crate::llm_review::{
+use crate::llm_review::threat_models::{
     invariants::{ContractInvariants, InvariantFinding, InvariantType},
     pattern_category::PatternCategory,
     patterns::{Pattern, Patterns},
@@ -314,7 +314,7 @@ where
 async fn is_duplicate_pattern<T>(
     pattern: &T,
     issue: &T,
-    ai_agent: &crate::llm_review::enums::AIAgent,
+    ai_agent: &crate::llm_review::agent::agent_enums::AIAgent,
 ) -> anyhow::Result<bool>
 where
     T: IssueTrait,

@@ -1,11 +1,9 @@
-use super::enums::{AIAgent, AgentMetadata};
-use crate::ai_bot::file_picker::FilePickerTool;
+use super::agent_enums::{AIAgent, AgentMetadata};
 /// AI Agent Factory for centralized agent creation across LLM providers.
 ///
 /// This module provides a unified interface for creating AI agents from different
 /// LLM providers (OpenAI, Anthropic, Gemini, DeepSeek) with consistent configuration
 /// and error handling.
-use crate::ai_bot::file_retrival::FileRetrievalTool;
 use crate::config::{audit_config, OPENAI_MODEL};
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
@@ -434,30 +432,6 @@ fn deepseek_client() -> Result<&'static deepseek::Client> {
     })
 }
 
-/// Helper function to create file retrieval tool
-fn create_file_retrieval_tool(repo: &RepoPaths) -> Result<FileRetrievalTool> {
-    let qdrant_url = std::env::var("QDRANT_URL").map_err(|_| {
-        AuditError::configuration("qdrant_url", "QDRANT_URL environment variable not set")
-    })?;
-    let openai_api_key = std::env::var("OPENAI_API_KEY").map_err(|_| {
-        AuditError::configuration(
-            "openai_api_key",
-            "OPENAI_API_KEY environment variable not set",
-        )
-    })?;
-
-    Ok(FileRetrievalTool::new(
-        qdrant_url,
-        openai_api_key,
-        repo.clone(),
-    ))
-}
-
-/// Helper function to create file picker tool
-fn create_file_picker_tool(repo: &RepoPaths) -> FilePickerTool {
-    FilePickerTool::new(repo.clone())
-}
-
 /// Factory for creating AI agents across different providers.
 pub struct AgentFactory;
 
@@ -531,22 +505,6 @@ impl AgentFactory {
         //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
         // }
 
-        // Add file retrieval tool if enabled
-        if config.enable_file_retrieval {
-            if let Some(repo_paths) = &config.repo_paths {
-                let file_tool = create_file_retrieval_tool(repo_paths)?;
-                builder = builder.tool(file_tool);
-            }
-        }
-
-        // Add file picker tool if enabled
-        if config.enable_file_picker {
-            if let Some(repo_paths) = &config.repo_paths {
-                let file_picker = create_file_picker_tool(repo_paths);
-                builder = builder.tool(file_picker);
-            }
-        }
-
         // Create metadata for pricing calculations
         let metadata = AgentMetadata {
             model: config.model.clone(),
@@ -606,22 +564,6 @@ impl AgentFactory {
             builder = builder.additional_params(serde_json::Value::Object(additional_params));
         }
 
-        // Add file retrieval tool if enabled
-        if config.enable_file_retrieval {
-            if let Some(repo_paths) = &config.repo_paths {
-                let file_tool = create_file_retrieval_tool(repo_paths)?;
-                builder = builder.tool(file_tool);
-            }
-        }
-
-        // Add file picker tool if enabled
-        if config.enable_file_picker {
-            if let Some(repo_paths) = &config.repo_paths {
-                let file_picker = create_file_picker_tool(repo_paths);
-                builder = builder.tool(file_picker);
-            }
-        }
-
         // Create metadata for pricing calculations
         let metadata = AgentMetadata {
             model: config.model.clone(),
@@ -663,22 +605,6 @@ impl AgentFactory {
         //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
         // }
 
-        // Add file retrieval tool if enabled
-        if config.enable_file_retrieval {
-            if let Some(repo_paths) = &config.repo_paths {
-                let file_tool = create_file_retrieval_tool(repo_paths)?;
-                builder = builder.tool(file_tool);
-            }
-        }
-
-        // Add file picker tool if enabled
-        if config.enable_file_picker {
-            if let Some(repo_paths) = &config.repo_paths {
-                let file_picker = create_file_picker_tool(repo_paths);
-                builder = builder.tool(file_picker);
-            }
-        }
-
         // Create metadata for pricing calculations
         let metadata = AgentMetadata {
             model: config.model.clone(),
@@ -719,22 +645,6 @@ impl AgentFactory {
         //     let vector_store = create_vector_store(&config.repo_paths)?;
         //     builder = builder.dynamic_context(config.dynamic_context_chunks, vector_store);
         // }
-
-        // Add file retrieval tool if enabled
-        if config.enable_file_retrieval {
-            if let Some(repo_paths) = &config.repo_paths {
-                let file_tool = create_file_retrieval_tool(repo_paths)?;
-                builder = builder.tool(file_tool);
-            }
-        }
-
-        // Add file picker tool if enabled
-        if config.enable_file_picker {
-            if let Some(repo_paths) = &config.repo_paths {
-                let file_picker = create_file_picker_tool(repo_paths);
-                builder = builder.tool(file_picker);
-            }
-        }
 
         // Create metadata for pricing calculations
         let metadata = AgentMetadata {

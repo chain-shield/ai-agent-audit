@@ -1,11 +1,11 @@
 use crate::enumerator::interface_implementations::find_implementations_for_interfaces;
 use crate::enumerator::utils::SolFileType;
-use crate::llm_review::contract_file_map::ContractType;
+use crate::llm_review::contract::contract_file_map::ContractType;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::check_folder_name::is_library_file;
 use crate::utils::remapping::resolve_import_path;
 use crate::{
-    llm_review::contract_file_map::{get_file_from_contract, get_file_from_lib_contract},
+    llm_review::contract::contract_file_map::{get_file_from_contract, get_file_from_lib_contract},
     utils::contract_name_check::contains_contract_reference,
 };
 use once_cell::sync::Lazy;

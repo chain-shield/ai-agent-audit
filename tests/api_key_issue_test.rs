@@ -1,11 +1,11 @@
 use ai_agent_audit::{
     config::{audit_config, init_config},
-    llm_review::agent_factory::{AgentConfig, AgentFactory, init_llm_clients},
+    llm_review::agent::agent_factory::{AgentConfig, AgentFactory, init_llm_clients},
 };
 use dotenvy::dotenv;
 use std::env;
 // Needed to enable Client::from_env() in tests
-use rig::client::{CompletionClient, ProviderClient};
+use rig::client::CompletionClient;
 use rig::completion::Prompt;
 
 /// Test to reproduce the "your-key*here" API key issue

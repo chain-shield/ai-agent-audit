@@ -10,7 +10,7 @@
 use ai_agent_audit::{
     config::AuditType,
     enumerator::codeblock_db::{CodeBlocksDb, MarkdownCodeblock},
-    llm_review::contract_category::ContractCategory,
+    llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::{PocConfig, RepoPaths},
 };
 use std::path::PathBuf;
@@ -305,4 +305,3 @@ fn test_codeblock_update_on_conflict() {
     // Cleanup
     std::fs::remove_file(db_path).ok();
 }
-

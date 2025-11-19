@@ -3,7 +3,7 @@ use crate::{
         MAX_PATTERN_GENERAL, MAX_PATTERN_LIBRARY, MAX_PATTERN_NICHE, MAX_PATTERN_RUN_FREQUENT,
         MAX_PATTERN_RUN_MOST, MAX_PATTERN_RUN_RARE, MAX_PATTERN_RUN_TOP,
     },
-    llm_review::patterns::VulnerabilityPattern,
+    llm_review::threat_models::patterns::VulnerabilityPattern,
 };
 use std::{collections::HashMap, sync::OnceLock};
 /// Configuration management for the AI Agent Audit application.

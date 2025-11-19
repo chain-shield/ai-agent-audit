@@ -1,7 +1,7 @@
 use crate::llm_review::{
-    enums::{all_enum_variants, generate_enum_list},
-    invariants::{
-        InvariantFinding, InvariantSpec, InvariantStatus, InvariantType, INVARIANT_LIBRARY,
+    agent::agent_enums::{all_enum_variants, generate_enum_list},
+    threat_models::invariants::{
+        INVARIANT_LIBRARY, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
     },
     utils::prompt_context::generate_formatted_invariant_finding,
 };

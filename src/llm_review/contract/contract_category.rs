@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
-use crate::llm_review::pattern_category::PatternCategory;
+use crate::llm_review::threat_models::pattern_category::PatternCategory;
 
 #[derive(
     Debug,

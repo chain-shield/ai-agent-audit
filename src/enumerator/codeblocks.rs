@@ -11,15 +11,16 @@ use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cac
 use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::extract_ir::robust_extract_fn_metadata_from_func_id;
 use crate::enumerator::parse_solidity::{
-    detect_scripts_connected_to_contract, detect_source_code_dependencies,
+    ImportDependencies, detect_scripts_connected_to_contract, detect_source_code_dependencies,
     is_standard_interface_name, is_standard_library_contract_name, should_exclude_this_library,
-    ImportDependencies,
 };
 use crate::enumerator::utils::{
-    get_hashmap_of_contract_to_functions, get_token_count_of_function_ir, SolFileType,
+    SolFileType, get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
 };
-use crate::llm_review::contract_category::ContractCategory;
-use crate::llm_review::contract_file_map::{get_file_from_contract, get_file_from_lib_contract};
+use crate::llm_review::contract::contract_category::ContractCategory;
+use crate::llm_review::contract::contract_file_map::{
+    get_file_from_contract, get_file_from_lib_contract,
+};
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::display_file::display_file;

@@ -6,14 +6,16 @@ use crate::{
     config::INVARIANT_RUNS,
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context},
+        agent::agent_enums::AIAgent,
+        analysis::context_state::{generate_audit_scope, get_metadata_context},
         dynamic_prompts::{
             self,
             invariants::{generate_invariant_prompt, get_invariant_json},
         },
-        enums::AIAgent,
-        issues::{IssuePrompt, IssueStructTrait},
-        pattern_category::get_category_library_spec,
+        threat_models::{
+            issues::{IssuePrompt, IssueStructTrait},
+            pattern_category::get_category_library_spec,
+        },
     },
     prepare_code::git_clone::RepoPaths,
 };

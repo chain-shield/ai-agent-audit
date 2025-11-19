@@ -1,9 +1,11 @@
 use crate::llm_review::{
-    enums::{all_enum_variants, generate_enum_list},
-    findings::PrivilegeLevel,
-    pattern_category::{get_category_library_spec, PatternCategory},
-    patterns::{
-        Pattern, VulnerabilityPattern, VulnerabilityPatternSpec, VULNERABILITY_PATTERN_LIBRARY,
+    agent::agent_enums::{all_enum_variants, generate_enum_list},
+    findings::findings::PrivilegeLevel,
+    threat_models::{
+        pattern_category::{PatternCategory, get_category_library_spec},
+        patterns::{
+            Pattern, VULNERABILITY_PATTERN_LIBRARY, VulnerabilityPattern, VulnerabilityPatternSpec,
+        },
     },
     utils::prompt_context::generate_formatted_pattern,
 };

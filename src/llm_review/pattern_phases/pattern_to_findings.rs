@@ -6,17 +6,19 @@ use crate::{
     config::DISCOVERY_RUNS,
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context},
-        enums::AIAgent,
-        findings::Findings,
-        issues::{IssueStructTrait, IssueTrait},
-        semaphore::GENERAL_SEM,
+        agent::agent_enums::AIAgent,
+        analysis::{
+            context_state::{generate_audit_scope, get_metadata_context},
+            semaphore::GENERAL_SEM,
+        },
+        findings::findings::Findings,
+        threat_models::issues::{IssueStructTrait, IssueTrait},
     },
     prepare_code::git_clone::RepoPaths,
 };
 use log::info;
 
-use serde::{de::DeserializeOwned, Deserializer};
+use serde::{Deserializer, de::DeserializeOwned};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

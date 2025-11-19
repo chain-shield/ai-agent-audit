@@ -1,8 +1,7 @@
 use crate::llm_review::{
-    findings::Finding,
-    invariants::InvariantFinding,
-    patterns::Pattern,
+    findings::findings::Finding,
     phases::verify_findings::{FindingConfidence, FindingStatus},
+    threat_models::{invariants::InvariantFinding, patterns::Pattern},
 };
 
 pub fn generate_prompt_for_issue_check(

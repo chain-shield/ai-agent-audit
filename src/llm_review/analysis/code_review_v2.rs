@@ -1,24 +1,28 @@
-use super::{enums::AIAgent, phases};
 use crate::config::{
     CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE,
     SKIP_LIBRARIES,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
-use crate::llm_review::contract_category::{get_contract_spec_from_category, ContractCategory};
-use crate::llm_review::contract_file_map::ContractType;
-use crate::llm_review::findings::CLAUDE_4_5_SONNET;
-use crate::llm_review::semaphore::CONTRACT_REVEW_SEM;
+use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
+use crate::llm_review::contract::contract_category::{
+    ContractCategory, get_contract_spec_from_category,
+};
+use crate::llm_review::contract::contract_file_map::ContractType;
+use crate::llm_review::findings::findings::CLAUDE_4_5_SONNET;
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
+use crate::llm_review::{agent::agent_enums::AIAgent, phases};
 use crate::llm_review::{
-    agent_factory::{AgentConfig, AgentFactory},
-    analysis_db::FindingsDb,
-    findings::Findings,
-    invariants::{ContractInvariants, InvariantFinding, InvariantStatus, InvariantType},
-    issues::{IssuePrompt, IssueStructTrait},
-    pattern_category::PatternCategory,
+    agent::agent_factory::{AgentConfig, AgentFactory},
+    analysis::analysis_db::FindingsDb,
+    findings::findings::Findings,
     pattern_phases,
-    patterns::Patterns,
+    threat_models::{
+        invariants::{ContractInvariants, InvariantFinding, InvariantStatus, InvariantType},
+        issues::{IssuePrompt, IssueStructTrait},
+        pattern_category::PatternCategory,
+        patterns::Patterns,
+    },
 };
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::reporting::patterns::save_patterns;
@@ -186,7 +190,7 @@ pub async fn review_codebase_for_security_issues_v2(
                         // Phase 6: Write PoC for each Critical, High, and Medium Finding
                         // Acquire POC_SEM at contract level to prevent multiple contracts
                         // from creating PoC tests concurrently in the same test folder
-                        use crate::llm_review::semaphore::POC_SEM;
+                        use crate::llm_review::analysis::semaphore::POC_SEM;
                         let poc_sem = Arc::clone(&POC_SEM);
                         let _poc_permit =
                             poc_sem.acquire_owned().await.expect("POC semaphore closed");

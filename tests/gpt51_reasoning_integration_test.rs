@@ -13,7 +13,9 @@
 /// - The API may return reasoning.effort = "none" in responses
 /// - Our patched rig-core handles this correctly
 use ai_agent_audit::config::init_config;
-use ai_agent_audit::llm_review::agent_factory::{AgentConfig, AgentFactory, init_llm_clients};
+use ai_agent_audit::llm_review::agent::agent_factory::{
+    AgentConfig, AgentFactory, init_llm_clients,
+};
 use dotenvy::dotenv;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

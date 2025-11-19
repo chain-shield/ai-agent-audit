@@ -2,7 +2,7 @@ use crate::{
     cost::cost_data::get_token_count,
     enumerator::codeblock_db::CodeBlocksDb,
     llm_review::{
-        context_state::get_metadata_context, contract_file_map::ContractType,
+        analysis::context_state::get_metadata_context, contract::contract_file_map::ContractType,
         utils::contract_in_scope::contract_scope_and_type,
     },
     prepare_code::git_clone::RepoPaths,

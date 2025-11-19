@@ -2,11 +2,13 @@ use std::collections::HashSet;
 
 use crate::{
     llm_review::{
+        agent::agent_enums::EnumData,
         dynamic_prompts::findings_template::{
             generate_findings_prompt, generate_findings_prompt_for_multiple_patterns,
         },
-        enums::EnumData,
-        patterns::{Pattern, Patterns, VulnerabilityPattern, VulnerabilityPatternSpec},
+        threat_models::patterns::{
+            Pattern, Patterns, VulnerabilityPattern, VulnerabilityPatternSpec,
+        },
         utils::prompt_context::{generate_formatted_multiple_patterns, generate_formatted_pattern},
     },
     prepare_code::git_clone::RepoPaths,
