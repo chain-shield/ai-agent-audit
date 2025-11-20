@@ -4,7 +4,7 @@ use super::agent_enums::{AIAgent, AgentMetadata};
 /// This module provides a unified interface for creating AI agents from different
 /// LLM providers (OpenAI, Anthropic, Gemini, DeepSeek) with consistent configuration
 /// and error handling.
-use crate::config::{audit_config, OPENAI_MODEL};
+use crate::config::{OPENAI_MODEL, audit_config};
 use crate::error::{AuditError, Result};
 use crate::prepare_code::git_clone::RepoPaths;
 use rig::{
@@ -356,7 +356,7 @@ static DEEPSEEK_CLIENT: OnceLock<deepseek::Client> = OnceLock::new();
 /// all available LLM clients. Clients are only created if their API keys are available.
 pub fn init_llm_clients() -> Result<()> {
     // Initialize OpenAI client if API key is available
-    if audit_config().has_openai_key() {
+    if audit_config().has_openai_key() && OPENAI_CLIENT.get().is_none() {
         log::info!("Initializing OpenAI client...");
         let client = openai::Client::from_env();
         OPENAI_CLIENT.set(client).map_err(|_| {
@@ -366,7 +366,7 @@ pub fn init_llm_clients() -> Result<()> {
     }
 
     // Initialize Anthropic client if API key is available
-    if audit_config().has_anthropic_key() {
+    if audit_config().has_anthropic_key() && ANTHROPIC_CLIENT.get().is_none() {
         let client = anthropic::Client::from_env();
         ANTHROPIC_CLIENT.set(client).map_err(|_| {
             AuditError::configuration("anthropic_client", "Anthropic client already initialized")
@@ -374,15 +374,17 @@ pub fn init_llm_clients() -> Result<()> {
     }
 
     // Initialize Gemini client if API key is available
-    if audit_config().has_google_ai_key() {
+    if audit_config().has_google_ai_key() && GEMINI_CLIENT.get().is_none() {
+        log::info!("Initializing Gemini client...");
         let client = gemini::Client::from_env();
         GEMINI_CLIENT.set(client).map_err(|_| {
             AuditError::configuration("gemini_client", "Gemini client already initialized")
         })?;
+        log::info!("Gemini client initialized successfully");
     }
 
     // Initialize DeepSeek client if API key is available
-    if audit_config().has_deepseek_key() {
+    if audit_config().has_deepseek_key() && DEEPSEEK_CLIENT.get().is_none() {
         let client = deepseek::Client::from_env();
         DEEPSEEK_CLIENT.set(client).map_err(|_| {
             AuditError::configuration("deepseek_client", "DeepSeek client already initialized")
@@ -412,8 +414,16 @@ fn anthropic_client() -> Result<&'static anthropic::Client> {
     })
 }
 
-/// Returns the Gemini client instance.
+/// Returns the Gemini client instance, initializing it if necessary.
 fn gemini_client() -> Result<&'static gemini::Client> {
+    GEMINI_CLIENT.get_or_init(|| {
+        if !audit_config().has_google_ai_key() {
+            panic!("Gemini API key not configured");
+        }
+        log::info!("Lazy-initializing Gemini client...");
+        gemini::Client::from_env()
+    });
+
     GEMINI_CLIENT.get().ok_or_else(|| {
         AuditError::configuration(
             "gemini_client",
@@ -583,6 +593,10 @@ impl AgentFactory {
 
     /// Creates a Gemini agent with the specified configuration.
     pub fn create_gemini_agent(config: &AgentConfig) -> Result<AIAgent> {
+        use rig::providers::gemini::completion::gemini_api_types::{
+            AdditionalParameters, GenerationConfig, HarmBlockThreshold, HarmCategory, SafetySetting,
+        };
+
         let client = gemini_client()?;
         let model = if config.model == "default" {
             "gemini-2.5-pro"
@@ -590,9 +604,42 @@ impl AgentFactory {
             &config.model
         };
 
+        // Disable safety filters for security research (analyzing vulnerabilities)
+        let safety_settings = vec![
+            SafetySetting {
+                category: HarmCategory::HarmCategoryDangerousContent,
+                threshold: HarmBlockThreshold::BlockNone,
+            },
+            SafetySetting {
+                category: HarmCategory::HarmCategoryHarassment,
+                threshold: HarmBlockThreshold::BlockNone,
+            },
+            SafetySetting {
+                category: HarmCategory::HarmCategoryHateSpeech,
+                threshold: HarmBlockThreshold::BlockNone,
+            },
+            SafetySetting {
+                category: HarmCategory::HarmCategorySexuallyExplicit,
+                threshold: HarmBlockThreshold::BlockNone,
+            },
+        ];
+
+        // Set max output tokens to prevent truncation
+        // Gemini 3 Pro supports up to 65,536 output tokens
+        let generation_config = GenerationConfig {
+            max_output_tokens: Some(64_000),
+            temperature: Some(config.temperature),
+            ..Default::default()
+        };
+
+        let additional_params = AdditionalParameters::default()
+            .with_safety_settings(safety_settings)
+            .with_config(generation_config);
+
         let mut builder = AgentBuilderSimple::new(client.completion_model(model))
             .preamble(&config.preamble)
-            .temperature(config.temperature);
+            .temperature(config.temperature)
+            .additional_params(serde_json::to_value(additional_params)?);
 
         if let Some(context) = &config.context {
             builder = builder.context(context);

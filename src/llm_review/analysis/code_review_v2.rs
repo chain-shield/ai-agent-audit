@@ -6,7 +6,7 @@ use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
 use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::contract::contract_category::{
-    ContractCategory, get_contract_spec_from_category,
+    get_contract_spec_from_category, ContractCategory,
 };
 use crate::llm_review::contract::contract_file_map::ContractType;
 use crate::llm_review::findings::findings::CLAUDE_4_5_SONNET;
@@ -61,11 +61,11 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these failed
-    let custom_scoped_contracts = Some(vec![
-        "GTELaunchpadV2Pair".to_string(),
-        "Distributor".to_string(),
-    ]);
-    // let custom_scoped_contracts: Option<Vec<_>> = None;
+    // let custom_scoped_contracts = Some(vec![
+    //     "GTELaunchpadV2Pair".to_string(),
+    //     "Distributor".to_string(),
+    // ]);
+    let custom_scoped_contracts: Option<Vec<_>> = None;
 
     let (
         ai_verify_agent,
@@ -311,38 +311,37 @@ rigorous PoC tests that validate the findings.";
     //     .with_file_picker(false) // Disabled to avoid rate limits
     //     .with_file_retrieval(false);
 
-    let pattern_discovery_config = AgentConfig::new(Some(repo.clone()))
+    let pattern_discovery_config_gemini = AgentConfig::new(Some(repo.clone()))
+        .with_temperature(1.0)
+        .with_model("gemini-3-pro-preview")
+        .with_preamble(solidity_auditor_preamble);
+
+    let _pattern_discovery_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5.1")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
         .with_openai_reasoning_effort("high")
         .with_file_picker(false);
 
-    let finding_discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.1")
-        .with_preamble(solidity_auditor_preamble)
-        .with_file_retrieval(false)
-        .with_openai_reasoning_effort("high")
-        .with_file_picker(false);
+    // let pattern_discovery_agent = Arc::new(AgentFactory::create_openai_agent(
+    //     &pattern_discovery_config,
+    // )?);
+    // let finding_discovery_agent = Arc::new(AgentFactory::create_openai_agent(
+    //     &pattern_discovery_config,
+    // )?);
 
-    let pattern_discovery_agent = Arc::new(AgentFactory::create_openai_agent(
-        &pattern_discovery_config,
-    )?);
-    let finding_discovery_agent = Arc::new(AgentFactory::create_openai_agent(
-        &finding_discovery_config,
+    let pattern_discovery_gemini_agent = Arc::new(AgentFactory::create_gemini_agent(
+        &pattern_discovery_config_gemini,
     )?);
     // let ai_discovery_agent = Arc::new(AgentFactory::create_anthropic_agent(
     //     &discovery_config_claude,
     // )?);
 
-    // let ai_planning_agent = Arc::new(AgentFactory::create_gemini_agent(&gemini_config)?);
-    // info!("Created {} discovery agents", ai_discovery_agents.len());
-
     Ok((
         ai_verify_agent.clone(),
-        pattern_discovery_agent,
+        pattern_discovery_gemini_agent.clone(),
         ai_verify_agent,
-        finding_discovery_agent,
+        pattern_discovery_gemini_agent,
     ))
 }
 

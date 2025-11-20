@@ -3,7 +3,7 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    config::DISCOVERY_RUNS,
+    config::{ACTOR_DISCOVERY_RUNS, INVARIANT_DISCOVERY_RUNS, PATTERN_DISCOVERY_RUNS},
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -55,9 +55,11 @@ where
     let arc_patterns = Arc::new(patterns.clone());
 
     let runs = if issue_title == "invariant" {
-        5
+        INVARIANT_DISCOVERY_RUNS
+    } else if issue_title == "actor" {
+        ACTOR_DISCOVERY_RUNS
     } else {
-        DISCOVERY_RUNS
+        PATTERN_DISCOVERY_RUNS
     };
 
     for i in 0..runs {

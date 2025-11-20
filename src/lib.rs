@@ -104,6 +104,7 @@ pub mod llm_review {
         pub mod semaphore;
     }
     pub mod threat_models {
+        pub mod actors;
         pub mod invariants;
         pub mod issues;
         pub mod pattern_category;
