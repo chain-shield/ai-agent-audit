@@ -132,6 +132,9 @@ pub enum VulnerabilityType {
 
     // Accounting
     ForcedAssetVsStrictEquality,
+
+    //added 11/20/2025
+    AuthorityOrGovernance, // rational actor escalates privileges within rules
 }
 
 impl Default for VulnerabilityType {
@@ -202,6 +205,7 @@ impl VulnerabilityType {
             VulnerabilityType::OracleHeartbeatFreshness => "Oracle Heartbeat Freshness",
             VulnerabilityType::TWAPWindowPinning => "TWAP Window Pinning",
             VulnerabilityType::ForcedAssetVsStrictEquality => "Forced Asset Vs Strict Equality",
+            VulnerabilityType::AuthorityOrGovernance => "Authority Or Governance",
         }
     }
 }

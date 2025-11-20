@@ -90,6 +90,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // Gemini models
             "gemini-2.5-pro" | "gemini-2-5-pro" => 1.25,
             "gemini-pro" => 1.25,
+            "gemini-3-pro-preview" => 2.00,
 
             // DeepSeek models
             "deepseek-chat" => 0.07,
@@ -122,6 +123,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // Gemini models
             "gemini-2.5-pro" | "gemini-2-5-pro" => 10.00,
             "gemini-pro" => 10.00,
+            "gemini-3-pro-preview" => 12.00,
 
             // DeepSeek models
             "deepseek-chat" => 1.10,
@@ -307,7 +309,7 @@ mod tests {
     #[tokio::test]
     async fn test_cost_calculation_vs_openai_api() {
         use reqwest::Client;
-        use serde_json::{Value, json};
+        use serde_json::{json, Value};
 
         // Skip test if no API key
         let api_key = match std::env::var("OPENAI_API_KEY") {

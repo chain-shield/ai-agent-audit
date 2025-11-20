@@ -3,7 +3,7 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    config::DISCOVERY_RUNS,
+    config::PATTERN_DISCOVERY_RUNS,
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -18,7 +18,7 @@ use crate::{
 };
 use log::info;
 
-use serde::{Deserializer, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserializer};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -55,7 +55,7 @@ where
 
     for j in 0..pattern_count {
         let arc_pattern = Arc::new(patterns.issues()[j].clone());
-        for i in 0..DISCOVERY_RUNS {
+        for i in 0..PATTERN_DISCOVERY_RUNS {
             let codeblock_plus_context = Arc::clone(&arc_code_context);
             let arc_agent = Arc::clone(&agent);
             let pattern_clone = Arc::clone(&arc_pattern);
