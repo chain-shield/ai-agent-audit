@@ -1,6 +1,7 @@
 use crate::build_brain::graph_db::SmartContractFunction;
 use crate::build_brain::inheritance_map::{self, resolve_contract_file};
 use crate::build_brain::summarize_db::get_file_summary_from_db;
+use crate::config::{CHAINSHIELD_DB_FOLDER, CODEBLOCK_DB};
 use crate::cost::cost_data::get_token_count;
 /// Intelligent code slicing for focused AI analysis.
 ///
@@ -11,12 +12,11 @@ use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cac
 use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::extract_ir::robust_extract_fn_metadata_from_func_id;
 use crate::enumerator::parse_solidity::{
-    detect_scripts_connected_to_contract, detect_source_code_dependencies,
+    ImportDependencies, detect_scripts_connected_to_contract, detect_source_code_dependencies,
     is_standard_interface_name, is_standard_library_contract_name, should_exclude_this_library,
-    ImportDependencies,
 };
 use crate::enumerator::utils::{
-    get_hashmap_of_contract_to_functions, get_token_count_of_function_ir, SolFileType,
+    SolFileType, get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
 };
 use crate::llm_review::contract::contract_category::ContractCategory;
 use crate::llm_review::contract::contract_file_map::{
@@ -31,10 +31,79 @@ use anyhow::Result;
 use log::{info, warn};
 use rusqlite::Connection;
 use std::collections::{HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use super::codeblock_db::CodeBlocksDb;
+
+/// Generates and saves contextual code blocks for all contracts in a repository.
+///
+/// This function orchestrates the code block generation process by:
+/// 1. Deleting old codeblock database from previous run
+/// 2. Opening semantic and codeblock databases
+/// 3. Generating focused code slices for each contract using call graph traversal
+///
+/// # Arguments
+/// * `repo` - Repository paths and metadata
+/// * `semantics_db` - Path to semantic analysis database
+/// * `max_depth` - Maximum call graph traversal depth
+/// * `token_budget` - Maximum tokens per code block
+///
+/// # Returns
+/// * `PathBuf` - Path to the generated codeblock database
+pub async fn generate_and_save_codeblocks_for_each_contract(
+    repo: &RepoPaths,
+    semantics_db: &Path,
+    max_depth: usize,
+    token_budget: usize,
+) -> Result<PathBuf> {
+    log::info!("connecting to databases..");
+
+    // Open semantic database
+    let semantic_conn = Connection::open(semantics_db)?;
+
+    // Create codeblock database path
+    let codeblock_path =
+        Path::new(&format!("{}/{}", CHAINSHIELD_DB_FOLDER, CODEBLOCK_DB)).to_path_buf();
+
+    // Delete the codeblock database from previous run to ensure fresh data
+    if codeblock_path.exists() {
+        log::info!("Deleting old codeblock database from previous run");
+        std::fs::remove_file(&codeblock_path)?;
+    }
+
+    // Open codeblock database
+    let codeblock_db = CodeBlocksDb::open(&codeblock_path)?;
+
+    // Generate codeblocks
+    generate_codeblock_from_codebase(repo, &semantic_conn, &codeblock_db, max_depth, token_budget)
+        .await?;
+
+    Ok(codeblock_path)
+}
+
+/// Check if Slither analysis data is available for codeblock generation.
+///
+/// This function checks if the contract-to-function map is populated, which indicates
+/// that Slither successfully analyzed the codebase and populated the semantic database.
+/// If empty, falls back to import-only traversal mode.
+///
+/// # Arguments
+/// * `contract_to_func_map` - HashMap of contracts to their functions from semantic DB
+///
+/// # Returns
+/// * `bool` - True if Slither data is available, false otherwise
+fn check_slither_data_available(
+    contract_to_func_map: &std::collections::HashMap<String, Vec<SmartContractFunction>>,
+) -> bool {
+    let slither_available = !contract_to_func_map.is_empty();
+
+    if !slither_available {
+        log::warn!("⚠️  Slither call graph unavailable. Falling back to import-only traversal.");
+    }
+
+    slither_available
+}
 
 /// Generates contextual code blocks for each contract using call graph traversal.
 ///
@@ -64,12 +133,8 @@ pub async fn generate_codeblock_from_codebase(
     log::info!("getting contract to func mapping");
     let contract_to_func_map = get_hashmap_of_contract_to_functions(repo, semantic_db).await?;
 
-    // Check if Slither call graph is available
-    let slither_available = !contract_to_func_map.is_empty();
-
-    if !slither_available {
-        log::warn!("⚠️  Slither call graph unavailable. Falling back to import-only traversal.");
-    }
+    // Check if Slither data is available for BFS traversal
+    let slither_available = check_slither_data_available(&contract_to_func_map);
 
     // Determine which contracts to process
     let contracts_to_process: Vec<String> = if slither_available {
@@ -1080,21 +1145,9 @@ async fn generate_contracts_via_import_traversal(
                 }
             }
 
-            // Add interface implementations
-            for (impl_contract, _impl_file) in &import_deps.interface_implementations {
-                if is_standard_interface_name(impl_contract)
-                    || is_standard_library_contract_name(impl_contract)
-                {
-                    continue;
-                }
-
-                log::debug!(
-                    "Discovered interface implementation '{}' at depth {}",
-                    impl_contract,
-                    current_depth + 1
-                );
-                levels[current_depth + 1].insert(impl_contract.clone());
-            }
+            // Note: Interface implementations are NOT added here because they will be
+            // discovered later in the assembly phase (lines 325-336) when we call
+            // detect_source_code_dependencies() on all contracts in contracts_with_depth
         }
     }
 

@@ -4,7 +4,7 @@ use ai_agent_audit::{
     cli_args::parse,
     config::{audit_config, init_config},
     cost::cost_data::get_total_inference_cost,
-    enumerator::{self, codeblock_maker},
+    enumerator::{self, codeblocks},
     error::Result,
     llm_review::{
         agent::agent_factory::init_llm_clients,
@@ -113,7 +113,7 @@ async fn main() -> Result<()> {
     // ────────────────────────────────
     info!("generating codeblock for each contract in repo");
     // Create contextual code slices using call graph traversal
-    let codeblocks_db = codeblock_maker::generate_and_save_codeblocks_for_each_contract(
+    let codeblocks_db = codeblocks::generate_and_save_codeblocks_for_each_contract(
         &repo,
         &semantics_db,
         audit_config().max_depth,
