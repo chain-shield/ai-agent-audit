@@ -62,8 +62,7 @@ pub mod enumerator {
     pub mod codeblock_cache;
     /// Database for code block storage
     pub mod codeblock_db;
-    /// Code block generation logic
-    pub mod codeblock_maker;
+    /// Code block generation and slicing logic
     pub mod codeblocks;
     /// Core code slicing functionality
     pub mod extract_ir;

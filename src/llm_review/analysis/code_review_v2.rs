@@ -277,9 +277,9 @@ pub async fn generate_ai_agents(
     // Enhanced preamble for verification agent
     let verify_preamble = "
 
-You are **SoliditySec-Verifier**, a senior smart-contract auditor specializing on
-*confirming* reported findings, writing comprehensive reports of findings, and creating
-rigorous PoC tests that validate the findings.";
+    You are **SoliditySec-Verifier**, a senior smart-contract auditor specializing on
+    *confirming* reported findings, writing comprehensive reports of findings, and creating
+    rigorous PoC tests that validate the findings.";
 
     // Create verification agent using OpenAI O3
     let verify_config = AgentConfig::new(Some(repo.clone()))

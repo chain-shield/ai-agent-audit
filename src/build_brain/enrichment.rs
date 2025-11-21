@@ -56,6 +56,19 @@ pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathB
             e,
         )
     })?;
+
+    // Delete the semantic database from previous run to ensure fresh data
+    if db_path.exists() {
+        info!("Deleting old semantic database from previous run");
+        std::fs::remove_file(&db_path).map_err(|e| {
+            AuditError::file_system(
+                db_path.to_string_lossy().to_string(),
+                "Failed to delete old semantic database",
+                e,
+            )
+        })?;
+    }
+
     let db = Arc::new(Mutex::new(GraphDb::create(&db_path)?));
     let repo = Arc::new(repo);
 
