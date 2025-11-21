@@ -18,7 +18,23 @@ use ai_agent_audit::{
 };
 use dotenvy::dotenv;
 use enumerator::interface_implementations;
-use log::info;
+use log::{info, warn};
+use std::path::Path;
+
+/// Check if Slither analysis succeeded by querying the semantic database.
+///
+/// Returns `true` if Slither successfully populated function data, `false` otherwise.
+fn check_slither_succeeded(semantics_db: &Path, project_id: &str) -> Result<bool> {
+    use rusqlite::Connection;
+    let conn = Connection::open(semantics_db)?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM functions WHERE project_id = ?1",
+        [project_id],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
 /// The main entry point for the AI Agent Audit tool.
 ///
 /// This application performs comprehensive smart contract security audits by:
@@ -106,15 +122,24 @@ async fn main() -> Result<()> {
     .await?;
     info!("Slices at {}", codeblocks_db.display());
 
+    // Save codeblocks locally (always runs regardless of Slither status)
+    contract_data::save_codeblocks_locally(&codeblocks_db, &repo).await?;
+
     // ────────────────────────────────
     // 4. Vector Database Population
     // ────────────────────────────────
-    // Create embeddings and store in Qdrant for semantic search
-    vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
-        .await?;
+    // Check if Slither succeeded by checking if semantic DB has function data
+    let slither_succeeded = check_slither_succeeded(&semantics_db, &repo.project_id)?;
 
-    // save contract IR and metadata
-    contract_data::save_contract_and_fn_ir(&codeblocks_db, &repo).await?;
+    if slither_succeeded {
+        // Create embeddings and store in Qdrant for semantic search
+        // This also saves contract IR and metadata via save_code_metadata_and_analysis_to_txt_files
+        vector_db::generate_slither_chucks_and_save_all_metadata_to_vector_db(&repo, &semantics_db)
+            .await?;
+    } else {
+        warn!("⚠️  Slither analysis failed. Skipping vector database generation and IR metadata.");
+        warn!("The audit will continue using import-only traversal for code discovery.");
+    }
 
     // ────────────────────────────────
     // 5. AI Security Analysis

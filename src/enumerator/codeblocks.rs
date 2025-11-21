@@ -11,11 +11,12 @@ use crate::enumerator::codeblock_cache::{get_cached_codeblock, set_codeblock_cac
 use crate::enumerator::codeblock_db::MarkdownCodeblock;
 use crate::enumerator::extract_ir::robust_extract_fn_metadata_from_func_id;
 use crate::enumerator::parse_solidity::{
-    ImportDependencies, detect_scripts_connected_to_contract, detect_source_code_dependencies,
+    detect_scripts_connected_to_contract, detect_source_code_dependencies,
     is_standard_interface_name, is_standard_library_contract_name, should_exclude_this_library,
+    ImportDependencies,
 };
 use crate::enumerator::utils::{
-    SolFileType, get_hashmap_of_contract_to_functions, get_token_count_of_function_ir,
+    get_hashmap_of_contract_to_functions, get_token_count_of_function_ir, SolFileType,
 };
 use crate::llm_review::contract::contract_category::ContractCategory;
 use crate::llm_review::contract::contract_file_map::{
@@ -63,7 +64,23 @@ pub async fn generate_codeblock_from_codebase(
     log::info!("getting contract to func mapping");
     let contract_to_func_map = get_hashmap_of_contract_to_functions(repo, semantic_db).await?;
 
-    for (main_contract, functions_of_contract) in contract_to_func_map {
+    // Check if Slither call graph is available
+    let slither_available = !contract_to_func_map.is_empty();
+
+    if !slither_available {
+        log::warn!("⚠️  Slither call graph unavailable. Falling back to import-only traversal.");
+    }
+
+    // Determine which contracts to process
+    let contracts_to_process: Vec<String> = if slither_available {
+        contract_to_func_map.keys().cloned().collect()
+    } else {
+        // Fallback: get all in-scope contracts
+        use crate::enumerator::utils::contracts_in_source_folder;
+        contracts_in_source_folder(repo).await?
+    };
+
+    for main_contract in contracts_to_process {
         // check contract in inscope!
         let (is_contract_in_scope, _) = contract_scope_and_type(&main_contract, repo).await?;
 
@@ -77,67 +94,84 @@ pub async fn generate_codeblock_from_codebase(
 
         // Check if codeblock already generated
         log::info!("contract => {:#?}", main_contract);
-        log::info!("fn count of contract => {:#?}", functions_of_contract.len());
         if let Some(_) = get_cached_codeblock(&main_contract).await {
             // Save seed-to-codeblock mapping in the database
             continue;
         };
-        // 2. BFS until depth / token budget
-        let mut frontier: VecDeque<(SmartContractFunction, usize)> = VecDeque::new();
-        for func in functions_of_contract {
-            frontier.push_back((func, 0_usize))
-        }
-        let mut visited = HashSet::new();
-        let mut contracts = HashSet::new();
-        let mut contracts_with_depth = HashSet::new();
-        let mut token_count = 0_usize;
 
-        while let Some((func, depth)) = frontier.pop_front() {
-            if !visited.insert(func.id.clone()) {
-                continue;
+        // 2. Discover contracts via BFS (Slither) or import traversal (fallback)
+        let (contracts, contracts_with_depth, _token_count) = if slither_available {
+            // BFS traversal using Slither call graph
+            let functions_of_contract = contract_to_func_map.get(&main_contract).unwrap();
+            log::info!("fn count of contract => {:#?}", functions_of_contract.len());
+
+            let mut frontier: VecDeque<(SmartContractFunction, usize)> = VecDeque::new();
+            for func in functions_of_contract {
+                frontier.push_back((func.clone(), 0_usize))
             }
+            let mut visited = HashSet::new();
+            let mut contracts = HashSet::new();
+            let mut contracts_with_depth = HashSet::new();
+            let mut token_count = 0_usize;
 
-            //keep track of unique contract traversed in BPS
-            if !is_standard_interface_name(&func.contract)
-                && !is_standard_library_contract_name(&func.contract)
-            {
-                contracts.insert(func.contract.clone());
-                if depth > 0 && depth <= 2 {
-                    contracts_with_depth.insert(func.contract.clone());
+            while let Some((func, depth)) = frontier.pop_front() {
+                if !visited.insert(func.id.clone()) {
+                    continue;
                 }
-            }
 
-            // get token count of new fn + IR + storage
-            let token_count_fn_ir_storage = get_token_count_of_function_ir(&func, repo).await?;
-            // info!("token_count_fn_ir_storage => {}", token_count_fn_ir_storage);
+                //keep track of unique contract traversed in BPS
+                if !is_standard_interface_name(&func.contract)
+                    && !is_standard_library_contract_name(&func.contract)
+                {
+                    contracts.insert(func.contract.clone());
+                    if depth > 0 && depth <= 2 {
+                        contracts_with_depth.insert(func.contract.clone());
+                    }
+                }
 
-            // check budget, make sure not exceeding token context window
-            if token_count + token_count_fn_ir_storage > token_budget {
-                break; // budget exhausted
-            }
+                // get token count of new fn + IR + storage
+                let token_count_fn_ir_storage = get_token_count_of_function_ir(&func, repo).await?;
+                // info!("token_count_fn_ir_storage => {}", token_count_fn_ir_storage);
 
-            // update token count
-            token_count += token_count_fn_ir_storage;
+                // check budget, make sure not exceeding token context window
+                if token_count + token_count_fn_ir_storage > token_budget {
+                    break; // budget exhausted
+                }
 
-            // info!("token_count => {}", token_count);
-            if depth < max_depth {
-                let mut statement = semantic_db
-                    .prepare("SELECT callee FROM edges WHERE caller = ?1 AND project_id = ?2;")?;
-                let rows =
-                    statement.query_map([&func.id, &repo.project_id], |r| r.get::<_, String>(0))?;
-                for callee in rows.flatten() {
-                    if let Some(callee_fn) = robust_extract_fn_metadata_from_func_id(
-                        &callee,
-                        &func,
-                        &main_contract,
-                        semantic_db,
-                        repo,
-                    )? {
-                        frontier.push_back((callee_fn, depth + 1));
+                // update token count
+                token_count += token_count_fn_ir_storage;
+
+                // info!("token_count => {}", token_count);
+                if depth < max_depth {
+                    let mut statement = semantic_db.prepare(
+                        "SELECT callee FROM edges WHERE caller = ?1 AND project_id = ?2;",
+                    )?;
+                    let rows = statement
+                        .query_map([&func.id, &repo.project_id], |r| r.get::<_, String>(0))?;
+                    for callee in rows.flatten() {
+                        if let Some(callee_fn) = robust_extract_fn_metadata_from_func_id(
+                            &callee,
+                            &func,
+                            &main_contract,
+                            semantic_db,
+                            repo,
+                        )? {
+                            frontier.push_back((callee_fn, depth + 1));
+                        }
                     }
                 }
             }
-        }
+
+            (contracts, contracts_with_depth, token_count)
+        } else {
+            // Import-only fallback (use max_depth - 1 to reduce codeblock size)
+            log::warn!(
+                "Using import-only traversal for contract '{}'",
+                main_contract
+            );
+            generate_contracts_via_import_traversal(&main_contract, repo, max_depth, token_budget)
+                .await?
+        };
 
         // -- 2. get collection of all inherited and called contracts
         let mut contracts_with_parents = HashSet::new();
@@ -799,4 +833,283 @@ pub async fn get_contract_file_content(
     }
     let file_content = fs::read_to_string(&file_path).await?;
     Ok((file_content, file_path))
+}
+
+/// Extract all contract names from a Solidity file.
+///
+/// This function parses a Solidity file and extracts contract names based on the following rules:
+///
+/// **Includes:**
+/// - Concrete contracts
+/// - Abstract contracts
+/// - Libraries in source code folders (e.g., /src/libraries/) - matches BFS behavior
+///
+/// **Excludes:**
+/// - Interfaces (contract_type == Interface)
+/// - Libraries in lib/ folders (standard libraries like OpenZeppelin, forge-std)
+/// - Standard library contracts (checked via `is_standard_library_contract_name()`)
+/// - Mock/test contracts (path contains "/mocks/" or "/test/", or name contains "mock")
+///
+/// # Arguments
+/// * `file` - Path to Solidity file
+/// * `repo` - Repository paths
+///
+/// # Returns
+/// * `Vec<String>` - List of contract names found in the file
+///
+/// # Errors
+/// Returns an error if the file cannot be read
+async fn extract_contracts_from_file(file: &PathBuf, repo: &RepoPaths) -> Result<Vec<String>> {
+    use crate::enumerator::utils::SOLIDITY_REGEXES;
+
+    // Read file content
+    let content = match fs::read_to_string(file).await {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("Failed to read file {:?}: {}", file, e);
+            return Ok(Vec::new());
+        }
+    };
+
+    // Check if file is in source code folder
+    let is_source_file = repo
+        .source_code_folders
+        .iter()
+        .any(|src| file.starts_with(src));
+
+    // Check if file is in mock/test directory
+    let file_str = file.to_string_lossy();
+    let is_mock_or_test =
+        file_str.contains("/mocks/") || file_str.contains("/test/") || file_str.contains("/tests/");
+
+    if is_mock_or_test {
+        log::debug!("Skipping mock/test file: {:?}", file);
+        return Ok(Vec::new());
+    }
+
+    let mut contracts = Vec::new();
+
+    // Extract all contract declarations using regex
+    for cap in SOLIDITY_REGEXES.contract_decl.captures_iter(&content) {
+        let declaration_type = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        let contract_name = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+
+        if contract_name.is_empty() {
+            continue;
+        }
+
+        // Skip if contract name contains "mock" (case-insensitive)
+        if contract_name.to_lowercase().contains("mock") {
+            log::debug!("Skipping mock contract: {}", contract_name);
+            continue;
+        }
+
+        // Skip standard library contracts
+        if is_standard_library_contract_name(contract_name) {
+            log::debug!("Skipping standard library contract: {}", contract_name);
+            continue;
+        }
+
+        // Determine if this is an interface or library
+        let is_interface = declaration_type.contains("interface");
+        let is_library = declaration_type.contains("library");
+
+        // Skip interfaces
+        if is_interface {
+            log::debug!("Skipping interface: {}", contract_name);
+            continue;
+        }
+
+        // Skip libraries UNLESS they are in source code folders
+        if is_library && !is_source_file {
+            log::debug!("Skipping library in lib/ folder: {}", contract_name);
+            continue;
+        }
+
+        // Include this contract
+        log::debug!(
+            "Including contract '{}' from {:?} (type: {}, is_source: {})",
+            contract_name,
+            file,
+            declaration_type,
+            is_source_file
+        );
+        contracts.push(contract_name.to_string());
+    }
+
+    Ok(contracts)
+}
+
+/// Generate contract sets using import-only traversal (fallback when Slither fails).
+///
+/// This function replaces the BFS call graph traversal (lines 85-140 in generate_codeblock_from_codebase)
+/// when Slither is unavailable or fails. It discovers contracts by traversing import
+/// dependencies up to `max_depth` levels deep.
+///
+/// # Algorithm
+/// 1. Level 0: Start with main_contract
+/// 2. For each level from 1 to max_depth:
+///    - Analyze imports of contracts from previous level
+///    - Discover contracts at current level
+/// 3. Respect token budget at each level (currently deferred to assembly phase)
+/// 4. Track visited files to avoid cycles
+///
+/// # Arguments
+/// * `main_contract` - The contract to analyze
+/// * `repo` - Repository paths
+/// * `max_depth` - Maximum import traversal depth (default 3, configurable)
+/// * `token_budget` - Maximum tokens per code block (currently unused, handled in assembly)
+///
+/// # Returns
+/// * `(contracts, contracts_with_depth, token_count)` where:
+///   - `contracts`: All unique contracts discovered (excluding libs/interfaces)
+///   - `contracts_with_depth`: Contracts at depth 1-2 (for compatibility with BFS)
+///   - `token_count`: 0 (placeholder, calculated later in assembly phase)
+///
+/// # Errors
+/// Returns an error if the main contract file cannot be found
+async fn generate_contracts_via_import_traversal(
+    main_contract: &str,
+    repo: &RepoPaths,
+    max_depth: usize,
+    _token_budget: usize, // Currently unused, token budget enforced in assembly phase
+) -> Result<(HashSet<String>, HashSet<String>, usize)> {
+    log::info!(
+        "🔄 Import-only traversal for '{}' (max_depth: {})",
+        main_contract,
+        max_depth
+    );
+
+    // Initialize levels: level[0] = main contract, level[1..max_depth] = discovered contracts
+    let mut levels: Vec<HashSet<String>> = vec![HashSet::new(); max_depth + 1];
+    levels[0].insert(main_contract.to_string());
+
+    let mut visited_files = HashSet::new();
+
+    // Traverse each level
+    for current_depth in 0..max_depth {
+        let contracts_at_current_level = levels[current_depth].clone();
+
+        if contracts_at_current_level.is_empty() {
+            log::debug!(
+                "No contracts at depth {}, stopping traversal",
+                current_depth
+            );
+            break;
+        }
+
+        log::debug!(
+            "Processing {} contracts at depth {}",
+            contracts_at_current_level.len(),
+            current_depth
+        );
+
+        for contract in &contracts_at_current_level {
+            // Get file for contract (try source first, then lib)
+            let file_opt = match get_file_from_contract(contract, repo).await {
+                Some(f) => Some(f),
+                None => get_file_from_lib_contract(contract, repo).await,
+            };
+
+            let (file, _contract_type) = match file_opt {
+                Some(f) => f,
+                None => {
+                    log::warn!(
+                        "Could not find file for contract '{}' at depth {}",
+                        contract,
+                        current_depth
+                    );
+                    continue;
+                }
+            };
+
+            // Skip if already visited (cycle detection)
+            if visited_files.contains(&file) {
+                log::debug!(
+                    "Skipping already visited file {:?} for contract '{}'",
+                    file,
+                    contract
+                );
+                continue;
+            }
+
+            visited_files.insert(file.clone());
+
+            // Get import dependencies for this contract
+            let import_deps = match detect_source_code_dependencies(contract, repo).await {
+                Ok(deps) => deps,
+                Err(e) => {
+                    log::warn!(
+                        "Failed to detect dependencies for contract '{}': {}",
+                        contract,
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            // Extract contracts from source files
+            for source_file in &import_deps.source_files {
+                if visited_files.contains(source_file) {
+                    continue;
+                }
+
+                let contracts_in_file = match extract_contracts_from_file(source_file, repo).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log::warn!("Failed to extract contracts from {:?}: {}", source_file, e);
+                        continue;
+                    }
+                };
+
+                for discovered_contract in contracts_in_file {
+                    // Skip standard interfaces and libraries
+                    if is_standard_interface_name(&discovered_contract)
+                        || is_standard_library_contract_name(&discovered_contract)
+                    {
+                        continue;
+                    }
+
+                    log::debug!(
+                        "Discovered contract '{}' at depth {} from {:?}",
+                        discovered_contract,
+                        current_depth + 1,
+                        source_file
+                    );
+                    levels[current_depth + 1].insert(discovered_contract);
+                }
+            }
+
+            // Add interface implementations
+            for (impl_contract, _impl_file) in &import_deps.interface_implementations {
+                if is_standard_interface_name(impl_contract)
+                    || is_standard_library_contract_name(impl_contract)
+                {
+                    continue;
+                }
+
+                log::debug!(
+                    "Discovered interface implementation '{}' at depth {}",
+                    impl_contract,
+                    current_depth + 1
+                );
+                levels[current_depth + 1].insert(impl_contract.clone());
+            }
+        }
+    }
+
+    // Assemble results
+    let contracts: HashSet<String> = levels.iter().flatten().cloned().collect();
+
+    // contracts_with_depth = depth 1-2 (matches BFS behavior at lines 105-107)
+    let contracts_with_depth: HashSet<String> = levels[1].union(&levels[2]).cloned().collect();
+
+    log::info!(
+        "✅ Import-only traversal complete: {} total contracts, {} at depth 1-2",
+        contracts.len(),
+        contracts_with_depth.len()
+    );
+
+    // Token count is 0 (placeholder) - will be calculated during assembly phase
+    Ok((contracts, contracts_with_depth, 0))
 }

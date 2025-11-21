@@ -740,6 +740,52 @@ library SafeCastLib {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
+enum Side {
+    BUY,
+    SELL
+}
+
+enum TiF {
+    // MAKER
+    GTC, // good-till-cancelled
+    MOC, // maker-or-cancel (post-only)
+    // TAKER
+    FOK, // fill-or-kill
+    IOC // immediate-or-cancel
+
+}
+
+enum Status {
+    NULL,
+    INACTIVE,
+    ACTIVE,
+    DELISTED
+}
+
+enum FeeTier {
+    ZERO,
+    ONE,
+    TWO
+}
+
+enum BookType {
+    STANDARD,
+    BACKSTOP
+}
+
+enum TradeType {
+    TAKER,
+    MAKER,
+    LIQUIDATOR,
+    LIQUIDATEE,
+    DELEVERAGE_MAKER,
+    DELEVERAGE_TAKER,
+    DELIST
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
 import {Side, TiF, Status, TradeType, BookType} from "./Enums.sol";
 import {Position} from "./Position.sol";
 
@@ -935,52 +981,6 @@ struct DeleveragePair {
 struct OIDelta {
     int256 long;
     int256 short;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-enum Side {
-    BUY,
-    SELL
-}
-
-enum TiF {
-    // MAKER
-    GTC, // good-till-cancelled
-    MOC, // maker-or-cancel (post-only)
-    // TAKER
-    FOK, // fill-or-kill
-    IOC // immediate-or-cancel
-
-}
-
-enum Status {
-    NULL,
-    INACTIVE,
-    ACTIVE,
-    DELISTED
-}
-
-enum FeeTier {
-    ZERO,
-    ONE,
-    TWO
-}
-
-enum BookType {
-    STANDARD,
-    BACKSTOP
-}
-
-enum TradeType {
-    TAKER,
-    MAKER,
-    LIQUIDATOR,
-    LIQUIDATEE,
-    DELEVERAGE_MAKER,
-    DELEVERAGE_TAKER,
-    DELIST
 }
 
 

@@ -61,11 +61,11 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these failed
-    // let custom_scoped_contracts = Some(vec![
-    //     "GTELaunchpadV2Pair".to_string(),
-    //     "Distributor".to_string(),
-    // ]);
-    let custom_scoped_contracts: Option<Vec<_>> = None;
+    let custom_scoped_contracts = Some(vec![
+        "GTELaunchpadV2Pair".to_string(),
+        "Distributor".to_string(),
+    ]);
+    // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     let (
         ai_verify_agent,
@@ -287,7 +287,12 @@ rigorous PoC tests that validate the findings.";
         .with_preamble(verify_preamble)
         .with_file_picker(false); // Disabled to avoid rate limits
 
-    let finding_verify_config = AgentConfig::new(Some(repo.clone()))
+    let verify_config_gemini = AgentConfig::new(Some(repo.clone()))
+        .with_temperature(1.0)
+        .with_model("gemini-3-pro-preview")
+        .with_preamble(verify_preamble);
+
+    let _finding_verify_config = AgentConfig::new(Some(repo.clone()))
         .with_temperature(0.2)
         .with_model(CLAUDE_4_5_SONNET)
         .with_max_tokens(64_000)
@@ -295,10 +300,12 @@ rigorous PoC tests that validate the findings.";
         .with_file_picker(false) // Disabled to avoid rate limits
         .with_file_retrieval(false);
 
-    let ai_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
-    let _finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
-        &finding_verify_config,
-    )?);
+    let ai_finding_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
+    let ai_pattern_verify_agent =
+        Arc::new(AgentFactory::create_gemini_agent(&verify_config_gemini)?);
+    // let _finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
+    //     &finding_verify_config,
+    // )?);
 
     // Enhanced preamble for discovery agents
     let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases. You consistently land valid solo High and Medium findings in competitive audit contests.";
@@ -338,9 +345,9 @@ rigorous PoC tests that validate the findings.";
     // )?);
 
     Ok((
-        ai_verify_agent.clone(),
+        ai_pattern_verify_agent,
         pattern_discovery_gemini_agent.clone(),
-        ai_verify_agent,
+        ai_finding_verify_agent,
         pattern_discovery_gemini_agent,
     ))
 }
@@ -440,7 +447,7 @@ async fn process_patterns(
     }
 }
 
-/// Process invariant analysis: generate, verify, and convert to findings
+/// Process ipattern_discovery_config_gemininvariant analysis: generate, verify, and convert to findings
 async fn process_invariants(
     codeblock: &str,
     invariant_discovery_agent: &Arc<AIAgent>,

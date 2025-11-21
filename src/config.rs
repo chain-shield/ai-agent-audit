@@ -29,23 +29,23 @@ pub const NICHE_PATTERN_ANALYSIS_MODE: bool = true;
 
 // if true set DISCOVERY_RUNS accordingly
 pub const MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE: bool = true;
-pub const PATTERN_DISCOVERY_RUNS: usize = 5;
-pub const INVARIANT_DISCOVERY_RUNS: usize = 3;
-pub const ACTOR_DISCOVERY_RUNS: usize = 5;
+pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
+pub const INVARIANT_DISCOVERY_RUNS: usize = 3; // old value 5
+pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 
 pub const OPENAI_MODEL: &str = "gpt-5.1";
 pub const SKIP_LIBRARIES: bool = true;
 
 // NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis
-pub const INVARIANT_RUNS: usize = 3; // 0 for large protocols; default: 3
-pub const MAX_PATTERN_RUN_TOP: usize = 2; // 2 for large protocol, default: 3
-pub const MAX_PATTERN_RUN_RARE: usize = 2; // 2 for large protocol, default: 3
-pub const MAX_PATTERN_RUN_MOST: usize = 0; // 0 for large protocol, default: 3
-pub const MAX_PATTERN_RUN_FREQUENT: usize = 2; // 2 for large protocol, default: 3
+pub const INVARIANT_RUNS: usize = 0; // 0 for large protocols; default: 3
+pub const MAX_PATTERN_RUN_TOP: usize = 3; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_RARE: usize = 3; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_MOST: usize = 3; // 0 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_FREQUENT: usize = 3; // 2 for large protocol, default: 3
 pub const MAX_PATTERN_LIBRARY: usize = 1;
-pub const MAX_PATTERN_NICHE: usize = 3; // 3 for large protocol, default: 4
-pub const MAX_PATTERN_GENERAL: usize = 0; // 0 for large protocol, default: 4
+pub const MAX_PATTERN_NICHE: usize = 4; // 3 for large protocol, default: 4
+pub const MAX_PATTERN_GENERAL: usize = 4; // 0 for large protocol, default: 4
 
 pub const MAX_FILE_RUNS: usize = 1;
 

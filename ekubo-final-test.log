@@ -1,0 +1,56 @@
+   Compiling ai-agent-audit v0.1.0 (/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit)
+warning: unused import: `std::io::Write`
+  --> src/build_brain/slither_ffi.rs:12:5
+   |
+12 | use std::io::Write;
+   |     ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused variable: `foundry_backup`
+  --> src/build_brain/enrichment.rs:45:9
+   |
+45 |     let foundry_backup = if foundry_toml_path.exists() {
+   |         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_foundry_backup`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: function `patch_foundry_toml` is never used
+   --> src/build_brain/slither_ffi.rs:219:4
+    |
+219 | fn patch_foundry_toml(repo_path: &Path) -> Result<Option<(PathBuf, String)>> {
+    |    ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: function `restore_foundry_toml` is never used
+   --> src/build_brain/slither_ffi.rs:250:4
+    |
+250 | fn restore_foundry_toml(backup: Option<(PathBuf, String)>) -> Result<()> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: `ai-agent-audit` (lib) generated 4 warnings (run `cargo fix --lib -p ai-agent-audit` to apply 1 suggestion)
+warning: unreachable statement
+   --> src/main.rs:124:5
+    |
+119 |       return Ok(());
+    |       ------------- any code following this expression is unreachable
+...
+124 | /     let security_findings =
+125 | |         code_review_v2::review_codebase_for_security_issues_v2(&codeblocks_db, &repo).await?;
+    | |_____________________________________________________________________________________________^ unreachable statement
+    |
+    = note: `#[warn(unreachable_code)]` on by default
+
+warning: `ai-agent-audit` (bin "ai-agent-audit") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 1m 22s
+     Running `target/release/ai-agent-audit --config audit-docs/ekubo.yaml`
+[2025-11-21T00:14:11Z INFO  ai_agent_audit::llm_review::agent::agent_factory] Initializing OpenAI client...
+[2025-11-21T00:14:11Z INFO  ai_agent_audit::llm_review::agent::agent_factory] OpenAI client initialized successfully
+[2025-11-21T00:14:11Z INFO  ai_agent_audit::llm_review::agent::agent_factory] Initializing Gemini client...
+[2025-11-21T00:14:11Z INFO  ai_agent_audit::llm_review::agent::agent_factory] Gemini client initialized successfully
+[2025-11-21T00:14:11Z INFO  ai_agent_audit::prepare_code::git_clone] repo_name ==> 2025-11-ekubo
+[2025-11-21T00:14:11Z WARN  ai_agent_audit::prepare_code::git_clone] 🔄 Rebuilding workspace at /tmp/audit-analysis/2025-11-ekubo-8f2fd8 (reason: build artifacts (out/artifacts/build) not found)
+[2025-11-21T00:14:11Z INFO  ai_agent_audit::prepare_code::git_clone] git cloning repo...
+fatal: could not create work tree dir '2025-11-ekubo': No such file or directory
+Error: AsyncTask { task: "legacy_anyhow", message: "Clone and Build failed in Docker", source: Some(Clone and Build failed in Docker) }

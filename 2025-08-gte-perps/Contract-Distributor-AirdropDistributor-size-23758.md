@@ -204,6 +204,107 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
+
+pragma solidity ^0.8.20;
+
+import {Context} from "../utils/Context.sol";
+
+/**
+ * @dev Contract module which provides a basic access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * The initial owner is set to the address provided by the deployer. This can
+ * later be changed with {transferOwnership}.
+ *
+ * This module is used through inheritance. It will make available the modifier
+ * `onlyOwner`, which can be applied to your functions to restrict their use to
+ * the owner.
+ */
+abstract contract Ownable is Context {
+    address private _owner;
+
+    /**
+     * @dev The caller account is not authorized to perform an operation.
+     */
+    error OwnableUnauthorizedAccount(address account);
+
+    /**
+     * @dev The owner is not a valid owner account. (eg. `address(0)`)
+     */
+    error OwnableInvalidOwner(address owner);
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Initializes the contract setting the address provided by the deployer as the initial owner.
+     */
+    constructor(address initialOwner) {
+        if (initialOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(initialOwner);
+    }
+
+    /**
+     * @dev Throws if called by any account other than the owner.
+     */
+    modifier onlyOwner() {
+        _checkOwner();
+        _;
+    }
+
+    /**
+     * @dev Returns the address of the current owner.
+     */
+    function owner() public view virtual returns (address) {
+        return _owner;
+    }
+
+    /**
+     * @dev Throws if the sender is not the owner.
+     */
+    function _checkOwner() internal view virtual {
+        if (owner() != _msgSender()) {
+            revert OwnableUnauthorizedAccount(_msgSender());
+        }
+    }
+
+    /**
+     * @dev Leaves the contract without owner. It will not be possible to call
+     * `onlyOwner` functions. Can only be called by the current owner.
+     *
+     * NOTE: Renouncing ownership will leave the contract without an owner,
+     * thereby disabling any functionality that is only available to the owner.
+     */
+    function renounceOwnership() public virtual onlyOwner {
+        _transferOwnership(address(0));
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`).
+     * Can only be called by the current owner.
+     */
+    function transferOwnership(address newOwner) public virtual onlyOwner {
+        if (newOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`).
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual {
+        address oldOwner = _owner;
+        _owner = newOwner;
+        emit OwnershipTransferred(oldOwner, newOwner);
+    }
+}
+
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
 import "@gte-univ2-core/interfaces/IUniswapV2Pair.sol";
@@ -530,107 +631,6 @@ contract GTELaunchpadV2Pair is IUniswapV2Pair, IGTELaunchpadV2Pair, UniswapV2ERC
 }
 
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
-
-pragma solidity ^0.8.20;
-
-import {Context} from "../utils/Context.sol";
-
-/**
- * @dev Contract module which provides a basic access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * The initial owner is set to the address provided by the deployer. This can
- * later be changed with {transferOwnership}.
- *
- * This module is used through inheritance. It will make available the modifier
- * `onlyOwner`, which can be applied to your functions to restrict their use to
- * the owner.
- */
-abstract contract Ownable is Context {
-    address private _owner;
-
-    /**
-     * @dev The caller account is not authorized to perform an operation.
-     */
-    error OwnableUnauthorizedAccount(address account);
-
-    /**
-     * @dev The owner is not a valid owner account. (eg. `address(0)`)
-     */
-    error OwnableInvalidOwner(address owner);
-
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Initializes the contract setting the address provided by the deployer as the initial owner.
-     */
-    constructor(address initialOwner) {
-        if (initialOwner == address(0)) {
-            revert OwnableInvalidOwner(address(0));
-        }
-        _transferOwnership(initialOwner);
-    }
-
-    /**
-     * @dev Throws if called by any account other than the owner.
-     */
-    modifier onlyOwner() {
-        _checkOwner();
-        _;
-    }
-
-    /**
-     * @dev Returns the address of the current owner.
-     */
-    function owner() public view virtual returns (address) {
-        return _owner;
-    }
-
-    /**
-     * @dev Throws if the sender is not the owner.
-     */
-    function _checkOwner() internal view virtual {
-        if (owner() != _msgSender()) {
-            revert OwnableUnauthorizedAccount(_msgSender());
-        }
-    }
-
-    /**
-     * @dev Leaves the contract without owner. It will not be possible to call
-     * `onlyOwner` functions. Can only be called by the current owner.
-     *
-     * NOTE: Renouncing ownership will leave the contract without an owner,
-     * thereby disabling any functionality that is only available to the owner.
-     */
-    function renounceOwnership() public virtual onlyOwner {
-        _transferOwnership(address(0));
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Can only be called by the current owner.
-     */
-    function transferOwnership(address newOwner) public virtual onlyOwner {
-        if (newOwner == address(0)) {
-            revert OwnableInvalidOwner(address(0));
-        }
-        _transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual {
-        address oldOwner = _owner;
-        _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
-    }
-}
-
-// SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
 struct UserRewardData {
@@ -876,6 +876,147 @@ library RewardsTrackerStorage {
         assembly {
             p.slot := slot
         }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+interface IGTELaunchpadV2Pair {
+    function rewardsPoolActive() external view returns (uint256);
+    function accruedLaunchpadFee0() external view returns (uint112);
+    function accruedLaunchpadFee1() external view returns (uint112);
+    function launchpadLp() external view returns (address);
+    function launchpadFeeDistributor() external view returns (address);
+    function REWARDS_FEE_SHARE() external view returns (uint256);
+
+    function endRewardsAccrual() external;
+}
+
+pragma solidity 0.8.27;
+
+interface IUniswapV2Pair {
+    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
+    event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
+    event Swap(
+        address indexed sender,
+        uint256 amount0In,
+        uint256 amount1In,
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address indexed to
+    );
+    event Sync(uint112 reserve0, uint112 reserve1);
+
+    function MINIMUM_LIQUIDITY() external pure returns (uint256);
+    function factory() external view returns (address);
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function price0CumulativeLast() external view returns (uint256);
+    function price1CumulativeLast() external view returns (uint256);
+    function kLast() external view returns (uint256);
+
+    function mint(address to) external returns (uint256 liquidity);
+    function burn(address to) external returns (uint256 amount0, uint256 amount1);
+    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
+    function skim(address to) external;
+    function sync() external;
+
+    function initialize(address, address, address, address) external;
+}
+
+pragma solidity 0.8.27;
+
+import "./interfaces/IUniswapV2ERC20.sol";
+import "./libraries/SafeMath.sol";
+
+contract UniswapV2ERC20 is IUniswapV2ERC20 {
+    using SafeMath for uint256;
+
+    string public constant name = "Uniswap V2";
+    string public constant symbol = "UNI-V2";
+    uint8 public constant decimals = 18;
+    uint256 public totalSupply;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    bytes32 public DOMAIN_SEPARATOR;
+    // keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+    bytes32 public constant PERMIT_TYPEHASH = 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
+    mapping(address => uint256) public nonces;
+
+    constructor() {
+        uint256 chainId;
+        assembly {
+            chainId := chainid()
+        }
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes(name)),
+                keccak256(bytes("1")),
+                chainId,
+                address(this)
+            )
+        );
+    }
+
+    function _mint(address to, uint256 value) internal {
+        totalSupply = totalSupply.add(value);
+        balanceOf[to] = balanceOf[to].add(value);
+        emit Transfer(address(0), to, value);
+    }
+
+    function _burn(address from, uint256 value) internal {
+        balanceOf[from] = balanceOf[from].sub(value);
+        totalSupply = totalSupply.sub(value);
+        emit Transfer(from, address(0), value);
+    }
+
+    function _approve(address owner, address spender, uint256 value) private {
+        allowance[owner][spender] = value;
+        emit Approval(owner, spender, value);
+    }
+
+    function _transfer(address from, address to, uint256 value) private {
+        balanceOf[from] = balanceOf[from].sub(value);
+        balanceOf[to] = balanceOf[to].add(value);
+        emit Transfer(from, to, value);
+    }
+
+    function approve(address spender, uint256 value) external returns (bool) {
+        _approve(msg.sender, spender, value);
+        return true;
+    }
+
+    function transfer(address to, uint256 value) external returns (bool) {
+        _transfer(msg.sender, to, value);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 value) external returns (bool) {
+        if (allowance[from][msg.sender] != type(uint256).max) {
+            allowance[from][msg.sender] = allowance[from][msg.sender].sub(value);
+        }
+        _transfer(from, to, value);
+        return true;
+    }
+
+    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external
+    {
+        require(deadline >= block.timestamp, "UniswapV2: EXPIRED");
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                DOMAIN_SEPARATOR,
+                keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonces[owner]++, deadline))
+            )
+        );
+        address recoveredAddress = ecrecover(digest, v, r, s);
+        require(recoveredAddress != address(0) && recoveredAddress == owner, "UniswapV2: INVALID_SIGNATURE");
+        _approve(owner, spender, value);
     }
 }
 
@@ -1417,142 +1558,275 @@ abstract contract OwnableRoles is Ownable {
 
 pragma solidity 0.8.27;
 
-interface IUniswapV2Pair {
-    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
-    event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
-    event Swap(
-        address indexed sender,
-        uint256 amount0In,
-        uint256 amount1In,
-        uint256 amount0Out,
-        uint256 amount1Out,
-        address indexed to
-    );
-    event Sync(uint112 reserve0, uint112 reserve1);
+import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
 
-    function MINIMUM_LIQUIDITY() external pure returns (uint256);
-    function factory() external view returns (address);
-    function token0() external view returns (address);
-    function token1() external view returns (address);
-    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
-    function price0CumulativeLast() external view returns (uint256);
-    function price1CumulativeLast() external view returns (uint256);
-    function kLast() external view returns (uint256);
+import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
 
-    function mint(address to) external returns (uint256 liquidity);
-    function burn(address to) external returns (uint256 amount0, uint256 amount1);
-    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
-    function skim(address to) external;
-    function sync() external;
+interface IDistributor {
+    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
+    function getUserDataForTokens(address[] calldata launchAssets, address account)
+        external
+        view
+        returns (UserRewardData[] memory);
+    function increaseStake(address launchAsset, address account, uint96 shares)
+        external
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function decreaseStake(address launchAsset, address account, uint96 shares)
+        external
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
+    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
+    function createRewardsPair(address launchAsset, address quoteToken) external;
 
-    function initialize(address, address, address, address) external;
+    function endRewards(IGTELaunchpadV2Pair pair) external;
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-interface IGTELaunchpadV2Pair {
-    function rewardsPoolActive() external view returns (uint256);
-    function accruedLaunchpadFee0() external view returns (uint112);
-    function accruedLaunchpadFee1() external view returns (uint112);
-    function launchpadLp() external view returns (address);
-    function launchpadFeeDistributor() external view returns (address);
-    function REWARDS_FEE_SHARE() external view returns (uint256);
-
-    function endRewardsAccrual() external;
+struct UserRewardData {
+    uint96 shares; // User's current share count (up to ~7.9e28)
+    uint96 baseRewardDebt; // Used to calculate base token rewards owed
+    uint96 quoteRewardDebt; // Used to calculate quote token rewards owed
 }
 
-pragma solidity 0.8.27;
+struct RewardPoolData {
+    // SLOT 0 //
+    uint96 totalShares; // Sum of all user shares
+    address quoteAsset; // Secondary reward token
+    // SLOT 1 //
+    uint128 pendingBaseRewards;
+    uint128 pendingQuoteRewards;
+    // SLOT 2 //
+    uint256 accBaseRewardPerShare; // Accumulated base rewards per share, scaled by 1e12
+    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
+    // SLOT 3 //
+    mapping(address => UserRewardData) userRewards; // User-specific reward data
+}
 
-import "./interfaces/IUniswapV2ERC20.sol";
-import "./libraries/SafeMath.sol";
+struct RewardPoolDataMemory {
+    uint96 totalShares; // Sum of all user shares
+    address quoteAsset; // Secondary reward token
+    uint128 pendingBaseRewards;
+    uint128 pendingQuoteRewards; //
+    uint256 accBaseRewardPerShare;
+    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
+}
 
-contract UniswapV2ERC20 is IUniswapV2ERC20 {
-    using SafeMath for uint256;
+using RewardsTrackerLib for RewardPoolData global;
+/**
+ * @title RewardsLibrary
+ * @dev Library with internal functions for pro rata reward distribution
+ */
 
-    string public constant name = "Uniswap V2";
-    string public constant symbol = "UNI-V2";
-    uint8 public constant decimals = 18;
-    uint256 public totalSupply;
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
+library RewardsTrackerLib {
+    /// @dev sig: 0x9511e79574c9aa195c27c3455b60ba70c9a6efbcfc431ae68b8a3cb4d3764f6c
+    event PairRewardsInitialized(address indexed baseAsset, address indexed quoteAsset);
+    /// @dev sig: 0x2cbe0649bcb43ba4ace580eeeb0c95a516dec93862fe4cc4e7e60528575cec67
+    event BaseRewardsAdded(address indexed baseAsset, uint256 amount);
+    /// @dev sig: 0x28590542f9792ca8533cd1beac50e724892009d1f19ed17351f264be124d3293
+    event QuoteRewardsAdded(address indexed baseAsset, address indexed quoteAsset, uint256 amount);
 
-    bytes32 public DOMAIN_SEPARATOR;
-    // keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
-    bytes32 public constant PERMIT_TYPEHASH = 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
-    mapping(address => uint256) public nonces;
+    /// @dev sig: 0xe3e46b04
+    error ZeroShareStake();
+    /// @dev sig: 0xe331bd04
+    error ZeroShareClaim();
+    /// @dev sig: 0x39996567
+    error InsufficientShares();
 
-    constructor() {
-        uint256 chainId;
-        assembly {
-            chainId := chainid()
-        }
-        DOMAIN_SEPARATOR = keccak256(
-            abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256(bytes(name)),
-                keccak256(bytes("1")),
-                chainId,
-                address(this)
-            )
-        );
+    // Scale factor used for fixed-point math
+    uint128 public constant PRECISION_FACTOR = 1e12;
+
+    function getQuoteAsset(RewardPoolData storage self) internal view returns (address) {
+        return self.quoteAsset;
     }
 
-    function _mint(address to, uint256 value) internal {
-        totalSupply = totalSupply.add(value);
-        balanceOf[to] = balanceOf[to].add(value);
-        emit Transfer(address(0), to, value);
+    function getUserData(RewardPoolData storage self, address account) internal view returns (UserRewardData memory) {
+        return self.userRewards[account];
     }
 
-    function _burn(address from, uint256 value) internal {
-        balanceOf[from] = balanceOf[from].sub(value);
-        totalSupply = totalSupply.sub(value);
-        emit Transfer(from, address(0), value);
+    function getRewardsPoolData(RewardPoolData storage self) internal view returns (RewardPoolDataMemory memory pm) {
+        pm = RewardPoolDataMemory({
+            quoteAsset: self.quoteAsset,
+            totalShares: self.totalShares,
+            pendingBaseRewards: self.pendingBaseRewards,
+            pendingQuoteRewards: self.pendingQuoteRewards,
+            accBaseRewardPerShare: self.accBaseRewardPerShare,
+            accQuoteRewardPerShare: self.accQuoteRewardPerShare
+        });
     }
 
-    function _approve(address owner, address spender, uint256 value) private {
-        allowance[owner][spender] = value;
-        emit Approval(owner, spender, value);
+    function initializePair(RewardPoolData storage self, address baseAsset, address quoteAsset) internal {
+        self.quoteAsset = quoteAsset;
+        emit PairRewardsInitialized(baseAsset, quoteAsset);
     }
 
-    function _transfer(address from, address to, uint256 value) private {
-        balanceOf[from] = balanceOf[from].sub(value);
-        balanceOf[to] = balanceOf[to].add(value);
-        emit Transfer(from, to, value);
+    function addBaseRewards(RewardPoolData storage self, address baseAsset, uint128 amount) internal {
+        self.pendingBaseRewards += amount;
+        emit BaseRewardsAdded(baseAsset, amount);
     }
 
-    function approve(address spender, uint256 value) external returns (bool) {
-        _approve(msg.sender, spender, value);
-        return true;
-    }
-
-    function transfer(address to, uint256 value) external returns (bool) {
-        _transfer(msg.sender, to, value);
-        return true;
-    }
-
-    function transferFrom(address from, address to, uint256 value) external returns (bool) {
-        if (allowance[from][msg.sender] != type(uint256).max) {
-            allowance[from][msg.sender] = allowance[from][msg.sender].sub(value);
-        }
-        _transfer(from, to, value);
-        return true;
-    }
-
-    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external
+    function addQuoteRewards(RewardPoolData storage self, address baseAsset, address quoteAsset, uint128 amount)
+        internal
     {
-        require(deadline >= block.timestamp, "UniswapV2: EXPIRED");
-        bytes32 digest = keccak256(
-            abi.encodePacked(
-                "\x19\x01",
-                DOMAIN_SEPARATOR,
-                keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonces[owner]++, deadline))
-            )
-        );
-        address recoveredAddress = ecrecover(digest, v, r, s);
-        require(recoveredAddress != address(0) && recoveredAddress == owner, "UniswapV2: INVALID_SIGNATURE");
-        _approve(owner, spender, value);
+        self.pendingQuoteRewards += amount;
+        emit QuoteRewardsAdded(baseAsset, quoteAsset, amount);
+    }
+
+    function stake(RewardPoolData storage self, address user, uint96 newShares)
+        internal
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        if (newShares == 0) revert ZeroShareStake();
+
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
+
+        UserRewardData storage userData = self.userRewards[user];
+
+        uint256 existingShares = uint96(userData.shares);
+
+        // Calculate pending rewards before updating shares
+        if (existingShares > 0) {
+            baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
+            quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
+        }
+
+        // Update user shares
+        userData.shares += newShares;
+        self.totalShares += newShares;
+
+        // Update reward debts
+        userData.baseRewardDebt = uint96(totalAccRewards(existingShares + newShares, accBaseRewardsPerShare));
+        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares + newShares, accQuoteRewardsPerShare));
+    }
+
+    function unstake(RewardPoolData storage self, address user, uint96 removeShares)
+        internal
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
+
+        UserRewardData storage userData = self.userRewards[user];
+
+        if (removeShares == 0) revert ZeroShareStake();
+
+        uint256 existingShares = uint256(userData.shares);
+        if (existingShares < removeShares) revert InsufficientShares();
+
+        // Calculate pending rewards before updating shares
+        baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
+        quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
+
+        // Update user shares
+        userData.shares -= removeShares;
+        self.totalShares -= removeShares;
+
+        // Update reward debts
+        userData.baseRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accBaseRewardsPerShare));
+        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accQuoteRewardsPerShare));
+    }
+
+    function claim(RewardPoolData storage self, address user)
+        internal
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        UserRewardData storage userData = self.userRewards[user];
+        uint256 shares = uint256(userData.shares);
+
+        if (shares == 0) revert ZeroShareClaim();
+
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
+
+        // Calculate pending rewards
+        uint256 totalAccBaseRewards = totalAccRewards(shares, accBaseRewardsPerShare);
+        uint256 totalAccQuoteRewards = totalAccRewards(shares, accQuoteRewardsPerShare);
+
+        baseAmount = totalAccBaseRewards - uint128(userData.baseRewardDebt);
+        quoteAmount = totalAccQuoteRewards - uint128(userData.quoteRewardDebt);
+
+        // Update reward debts
+        userData.baseRewardDebt = uint96(totalAccBaseRewards);
+        userData.quoteRewardDebt = uint96(totalAccQuoteRewards);
+    }
+
+    function getPendingRewards(RewardPoolData storage self, address user)
+        internal
+        view
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = getAccRewardsPerShare(self);
+
+        UserRewardData storage userData = self.userRewards[user];
+        uint256 shares = uint256(userData.shares);
+
+        // Unstaking claims pending rewards, so if no shares, then no pending
+        if (shares == 0) return (0, 0);
+
+        baseAmount = totalAccRewards(shares, accBaseRewardsPerShare) - uint128(userData.baseRewardDebt);
+        quoteAmount = totalAccRewards(shares, accQuoteRewardsPerShare) - uint128(userData.quoteRewardDebt);
+    }
+
+    function totalAccRewards(uint256 shares, uint256 accRewardsPerShare) internal pure returns (uint256) {
+        return (shares * accRewardsPerShare) / PRECISION_FACTOR;
+    }
+
+    /// @dev Applies the new accrued rewards per share to the rewards state
+    function update(RewardPoolData storage self)
+        internal
+        returns (uint256 newAccBaseRewardsPerShare, uint256 newAccQuoteRewardsPerShare)
+    {
+        (newAccBaseRewardsPerShare, newAccQuoteRewardsPerShare) = getAccRewardsPerShare(self);
+
+        if (self.pendingBaseRewards > 0) {
+            self.accBaseRewardPerShare = newAccBaseRewardsPerShare;
+            delete self.pendingBaseRewards;
+        }
+
+        if (self.pendingQuoteRewards > 0) {
+            self.accQuoteRewardPerShare = newAccQuoteRewardsPerShare;
+            delete self.pendingQuoteRewards;
+        }
+    }
+
+    /// @dev Gets the new accrued rewards per share without updating rewards state
+    function getAccRewardsPerShare(RewardPoolData storage self)
+        internal
+        view
+        returns (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare)
+    {
+        uint96 totalShares = self.totalShares;
+        if (totalShares == 0) return (self.accBaseRewardPerShare, self.accQuoteRewardPerShare);
+
+        accBaseRewardsPerShare = self.accBaseRewardPerShare;
+        accQuoteRewardsPerShare = self.accQuoteRewardPerShare;
+
+        if (self.pendingBaseRewards > 0) {
+            accBaseRewardsPerShare += ((self.pendingBaseRewards * PRECISION_FACTOR) / uint128(totalShares));
+        }
+
+        if (self.pendingQuoteRewards > 0) {
+            accQuoteRewardsPerShare += ((self.pendingQuoteRewards * PRECISION_FACTOR) / uint128(totalShares));
+        }
+    }
+}
+
+/**
+ * @title RewardsStorage
+ * @dev Storage library for rewards distribution using EIP-1967 pattern
+ */
+library RewardsTrackerStorage {
+    bytes32 internal constant LAUNCH_ASSET_TO_REWARDS_SLOT =
+        keccak256(abi.encode(uint256(keccak256("rewardsTrackerPool.self.slot")) - 1)) & ~bytes32(uint256(0xff));
+
+    function rewardPoolSlot(address baseAsset) private pure returns (bytes32) {
+        return keccak256(abi.encodePacked(baseAsset, LAUNCH_ASSET_TO_REWARDS_SLOT));
+    }
+
+    function getRewardPool(address baseAsset) internal pure returns (RewardPoolData storage p) {
+        bytes32 slot = rewardPoolSlot(baseAsset);
+        assembly {
+            p.slot := slot
+        }
     }
 }
 
@@ -1828,310 +2102,12 @@ library RewardsTrackerStorage {
             p.slot := slot
         }
     }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-struct UserRewardData {
-    uint96 shares; // User's current share count (up to ~7.9e28)
-    uint96 baseRewardDebt; // Used to calculate base token rewards owed
-    uint96 quoteRewardDebt; // Used to calculate quote token rewards owed
-}
-
-struct RewardPoolData {
-    // SLOT 0 //
-    uint96 totalShares; // Sum of all user shares
-    address quoteAsset; // Secondary reward token
-    // SLOT 1 //
-    uint128 pendingBaseRewards;
-    uint128 pendingQuoteRewards;
-    // SLOT 2 //
-    uint256 accBaseRewardPerShare; // Accumulated base rewards per share, scaled by 1e12
-    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
-    // SLOT 3 //
-    mapping(address => UserRewardData) userRewards; // User-specific reward data
-}
-
-struct RewardPoolDataMemory {
-    uint96 totalShares; // Sum of all user shares
-    address quoteAsset; // Secondary reward token
-    uint128 pendingBaseRewards;
-    uint128 pendingQuoteRewards; //
-    uint256 accBaseRewardPerShare;
-    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
-}
-
-using RewardsTrackerLib for RewardPoolData global;
-/**
- * @title RewardsLibrary
- * @dev Library with internal functions for pro rata reward distribution
- */
-
-library RewardsTrackerLib {
-    /// @dev sig: 0x9511e79574c9aa195c27c3455b60ba70c9a6efbcfc431ae68b8a3cb4d3764f6c
-    event PairRewardsInitialized(address indexed baseAsset, address indexed quoteAsset);
-    /// @dev sig: 0x2cbe0649bcb43ba4ace580eeeb0c95a516dec93862fe4cc4e7e60528575cec67
-    event BaseRewardsAdded(address indexed baseAsset, uint256 amount);
-    /// @dev sig: 0x28590542f9792ca8533cd1beac50e724892009d1f19ed17351f264be124d3293
-    event QuoteRewardsAdded(address indexed baseAsset, address indexed quoteAsset, uint256 amount);
-
-    /// @dev sig: 0xe3e46b04
-    error ZeroShareStake();
-    /// @dev sig: 0xe331bd04
-    error ZeroShareClaim();
-    /// @dev sig: 0x39996567
-    error InsufficientShares();
-
-    // Scale factor used for fixed-point math
-    uint128 public constant PRECISION_FACTOR = 1e12;
-
-    function getQuoteAsset(RewardPoolData storage self) internal view returns (address) {
-        return self.quoteAsset;
-    }
-
-    function getUserData(RewardPoolData storage self, address account) internal view returns (UserRewardData memory) {
-        return self.userRewards[account];
-    }
-
-    function getRewardsPoolData(RewardPoolData storage self) internal view returns (RewardPoolDataMemory memory pm) {
-        pm = RewardPoolDataMemory({
-            quoteAsset: self.quoteAsset,
-            totalShares: self.totalShares,
-            pendingBaseRewards: self.pendingBaseRewards,
-            pendingQuoteRewards: self.pendingQuoteRewards,
-            accBaseRewardPerShare: self.accBaseRewardPerShare,
-            accQuoteRewardPerShare: self.accQuoteRewardPerShare
-        });
-    }
-
-    function initializePair(RewardPoolData storage self, address baseAsset, address quoteAsset) internal {
-        self.quoteAsset = quoteAsset;
-        emit PairRewardsInitialized(baseAsset, quoteAsset);
-    }
-
-    function addBaseRewards(RewardPoolData storage self, address baseAsset, uint128 amount) internal {
-        self.pendingBaseRewards += amount;
-        emit BaseRewardsAdded(baseAsset, amount);
-    }
-
-    function addQuoteRewards(RewardPoolData storage self, address baseAsset, address quoteAsset, uint128 amount)
-        internal
-    {
-        self.pendingQuoteRewards += amount;
-        emit QuoteRewardsAdded(baseAsset, quoteAsset, amount);
-    }
-
-    function stake(RewardPoolData storage self, address user, uint96 newShares)
-        internal
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        if (newShares == 0) revert ZeroShareStake();
-
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
-
-        UserRewardData storage userData = self.userRewards[user];
-
-        uint256 existingShares = uint96(userData.shares);
-
-        // Calculate pending rewards before updating shares
-        if (existingShares > 0) {
-            baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
-            quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
-        }
-
-        // Update user shares
-        userData.shares += newShares;
-        self.totalShares += newShares;
-
-        // Update reward debts
-        userData.baseRewardDebt = uint96(totalAccRewards(existingShares + newShares, accBaseRewardsPerShare));
-        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares + newShares, accQuoteRewardsPerShare));
-    }
-
-    function unstake(RewardPoolData storage self, address user, uint96 removeShares)
-        internal
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
-
-        UserRewardData storage userData = self.userRewards[user];
-
-        if (removeShares == 0) revert ZeroShareStake();
-
-        uint256 existingShares = uint256(userData.shares);
-        if (existingShares < removeShares) revert InsufficientShares();
-
-        // Calculate pending rewards before updating shares
-        baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
-        quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
-
-        // Update user shares
-        userData.shares -= removeShares;
-        self.totalShares -= removeShares;
-
-        // Update reward debts
-        userData.baseRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accBaseRewardsPerShare));
-        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accQuoteRewardsPerShare));
-    }
-
-    function claim(RewardPoolData storage self, address user)
-        internal
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        UserRewardData storage userData = self.userRewards[user];
-        uint256 shares = uint256(userData.shares);
-
-        if (shares == 0) revert ZeroShareClaim();
-
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
-
-        // Calculate pending rewards
-        uint256 totalAccBaseRewards = totalAccRewards(shares, accBaseRewardsPerShare);
-        uint256 totalAccQuoteRewards = totalAccRewards(shares, accQuoteRewardsPerShare);
-
-        baseAmount = totalAccBaseRewards - uint128(userData.baseRewardDebt);
-        quoteAmount = totalAccQuoteRewards - uint128(userData.quoteRewardDebt);
-
-        // Update reward debts
-        userData.baseRewardDebt = uint96(totalAccBaseRewards);
-        userData.quoteRewardDebt = uint96(totalAccQuoteRewards);
-    }
-
-    function getPendingRewards(RewardPoolData storage self, address user)
-        internal
-        view
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = getAccRewardsPerShare(self);
-
-        UserRewardData storage userData = self.userRewards[user];
-        uint256 shares = uint256(userData.shares);
-
-        // Unstaking claims pending rewards, so if no shares, then no pending
-        if (shares == 0) return (0, 0);
-
-        baseAmount = totalAccRewards(shares, accBaseRewardsPerShare) - uint128(userData.baseRewardDebt);
-        quoteAmount = totalAccRewards(shares, accQuoteRewardsPerShare) - uint128(userData.quoteRewardDebt);
-    }
-
-    function totalAccRewards(uint256 shares, uint256 accRewardsPerShare) internal pure returns (uint256) {
-        return (shares * accRewardsPerShare) / PRECISION_FACTOR;
-    }
-
-    /// @dev Applies the new accrued rewards per share to the rewards state
-    function update(RewardPoolData storage self)
-        internal
-        returns (uint256 newAccBaseRewardsPerShare, uint256 newAccQuoteRewardsPerShare)
-    {
-        (newAccBaseRewardsPerShare, newAccQuoteRewardsPerShare) = getAccRewardsPerShare(self);
-
-        if (self.pendingBaseRewards > 0) {
-            self.accBaseRewardPerShare = newAccBaseRewardsPerShare;
-            delete self.pendingBaseRewards;
-        }
-
-        if (self.pendingQuoteRewards > 0) {
-            self.accQuoteRewardPerShare = newAccQuoteRewardsPerShare;
-            delete self.pendingQuoteRewards;
-        }
-    }
-
-    /// @dev Gets the new accrued rewards per share without updating rewards state
-    function getAccRewardsPerShare(RewardPoolData storage self)
-        internal
-        view
-        returns (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare)
-    {
-        uint96 totalShares = self.totalShares;
-        if (totalShares == 0) return (self.accBaseRewardPerShare, self.accQuoteRewardPerShare);
-
-        accBaseRewardsPerShare = self.accBaseRewardPerShare;
-        accQuoteRewardsPerShare = self.accQuoteRewardPerShare;
-
-        if (self.pendingBaseRewards > 0) {
-            accBaseRewardsPerShare += ((self.pendingBaseRewards * PRECISION_FACTOR) / uint128(totalShares));
-        }
-
-        if (self.pendingQuoteRewards > 0) {
-            accQuoteRewardsPerShare += ((self.pendingQuoteRewards * PRECISION_FACTOR) / uint128(totalShares));
-        }
-    }
-}
-
-/**
- * @title RewardsStorage
- * @dev Storage library for rewards distribution using EIP-1967 pattern
- */
-library RewardsTrackerStorage {
-    bytes32 internal constant LAUNCH_ASSET_TO_REWARDS_SLOT =
-        keccak256(abi.encode(uint256(keccak256("rewardsTrackerPool.self.slot")) - 1)) & ~bytes32(uint256(0xff));
-
-    function rewardPoolSlot(address baseAsset) private pure returns (bytes32) {
-        return keccak256(abi.encodePacked(baseAsset, LAUNCH_ASSET_TO_REWARDS_SLOT));
-    }
-
-    function getRewardPool(address baseAsset) internal pure returns (RewardPoolData storage p) {
-        bytes32 slot = rewardPoolSlot(baseAsset);
-        assembly {
-            p.slot := slot
-        }
-    }
-}
-
-pragma solidity 0.8.27;
-
-import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
-
-import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
-
-interface IDistributor {
-    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
-    function getUserDataForTokens(address[] calldata launchAssets, address account)
-        external
-        view
-        returns (UserRewardData[] memory);
-    function increaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function decreaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
-    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
-    function createRewardsPair(address launchAsset, address quoteToken) external;
-
-    function endRewards(IGTELaunchpadV2Pair pair) external;
 }
 
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
 
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
-pragma solidity 0.8.27;
-
-interface IUniswapV2Callee {
-    function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
-}
-
-pragma solidity 0.8.27;
-
-interface IERC20 {
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    event Transfer(address indexed from, address indexed to, uint256 value);
-
-    function name() external view returns (string memory);
-    function symbol() external view returns (string memory);
-    function decimals() external view returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address owner) external view returns (uint256);
-    function allowance(address owner, address spender) external view returns (uint256);
-
-    function approve(address spender, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-}
-
 pragma solidity 0.8.27;
 
 // a library for handling binary fixed point numbers (https://en.wikipedia.org/wiki/Q_(number_format))
@@ -2179,6 +2155,12 @@ library Math {
 
 pragma solidity 0.8.27;
 
+interface IUniswapV2Callee {
+    function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
+}
+
+pragma solidity 0.8.27;
+
 interface IUniswapV2Factory {
     event PairCreated(address indexed token0, address indexed token1, address pair, uint256);
 
@@ -2193,6 +2175,24 @@ interface IUniswapV2Factory {
 
     function setFeeTo(address) external;
     function setFeeToSetter(address) external;
+}
+
+pragma solidity 0.8.27;
+
+interface IERC20 {
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+    function decimals() external view returns (uint8);
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address owner) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
+
+    function approve(address spender, uint256 value) external returns (bool);
+    function transfer(address to, uint256 value) external returns (bool);
+    function transferFrom(address from, address to, uint256 value) external returns (bool);
 }
 
 

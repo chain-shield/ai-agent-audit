@@ -1,0 +1,250 @@
+   Compiling ai-agent-audit v0.1.0 (/Users/apmfree/Desktop/CHAIN SHIELD/ai-agent-audit)
+warning: unreachable statement
+   --> src/main.rs:124:5
+    |
+119 |       return Ok(());
+    |       ------------- any code following this expression is unreachable
+...
+124 | /     let security_findings =
+125 | |         code_review_v2::review_codebase_for_security_issues_v2(&codeblocks_db, &repo).await?;
+    | |_____________________________________________________________________________________________^ unreachable statement
+    |
+    = note: `#[warn(unreachable_code)]` on by default
+
+warning: `ai-agent-audit` (bin "ai-agent-audit") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 1m 25s
+     Running `target/release/ai-agent-audit --config audit-docs/ekubo.yaml --force-rebuild`
+[2025-11-20T23:43:59Z INFO  ai_agent_audit::llm_review::agent::agent_factory] Initializing OpenAI client...
+[2025-11-20T23:43:59Z INFO  ai_agent_audit::llm_review::agent::agent_factory] OpenAI client initialized successfully
+[2025-11-20T23:43:59Z INFO  ai_agent_audit::llm_review::agent::agent_factory] Initializing Gemini client...
+[2025-11-20T23:43:59Z INFO  ai_agent_audit::llm_review::agent::agent_factory] Gemini client initialized successfully
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::prepare_code::git_clone] repo_name ==> 2025-11-ekubo
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::prepare_code::git_clone] ✅ Reusing existing workspace (build artifacts found): /tmp/audit-analysis/2025-11-ekubo-8f2fd8
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::prepare_code::git_clone] search_root => /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::prepare_code::git_clone] source_code_folders => ["/tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src"]
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::prepare_code::git_clone] Found remapping file: /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/remappings.txt
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::utils::remapping] Parsed remapping: forge-std/ -> lib/forge-std/src/ (project: 2025-11-ekubo-8f2fd8)
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::utils::remapping] Parsed remapping: solady/ -> lib/solady/src/ (project: 2025-11-ekubo-8f2fd8)
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::utils::remapping] Stored 2 remappings for project 2025-11-ekubo-8f2fd8 from /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/remappings.txt
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::prepare_code::git_clone] Successfully parsed 2 remappings from /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/remappings.txt
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::prepare_code::git_clone] PoC instructions size: 680
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::prepare_code::git_clone] PoC template size: 5899
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo root => "/tmp/audit-analysis/2025-11-ekubo-8f2fd8"
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo name => "2025-11-ekubo"
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] github url => "https://github.com/code-423n4/2025-11-ekubo/blob/8f2fd88435c161cfd4d58dce48f6c8e8c086bf36"
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo source folder => ["/tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src"]
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo scoped_files => Some("audit-docs/ekubo-scope.txt")
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo audit scope => Some("audit-docs/ekubo-scope.md")
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo test files count => 215
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo scripts count => 0
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo scripts files => []
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo lib config files  => [
+        "/tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/lib/forge-std/package.json",
+        "/tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/lib/solady/package.json",
+    ]
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo config files => [
+        "/tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/foundry.toml",
+        "/tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/remappings.txt",
+    ]
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] repo docs => ["audit-docs/ekubo-docs.md"]
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] excluded folders => None
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] test folder => "/tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/test"
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] test folder exist? => true
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::build_brain::enrichment] waiting for meta data analysis to complete...
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::build_brain::enrichment] extracting DOT blobs
+[2025-11-20T23:44:00Z ERROR ai_agent_audit::build_brain::slither_ffi] Slither call-graph failed with exit code: Some(1)
+[2025-11-20T23:44:00Z ERROR ai_agent_audit::build_brain::slither_ffi] Stdout: 
+[2025-11-20T23:44:00Z ERROR ai_agent_audit::build_brain::slither_ffi] Stderr: 
+[2025-11-20T23:44:00Z ERROR ai_agent_audit::build_brain::enrichment] Error processing call graph data: Async task failed: legacy_anyhow - slither call-graph failed with exit code Some(1)
+    Stdout: 
+    Stderr: 
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] Call-graph DB at /Users/apmfree/chainshield_db/semantic.db
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] generating metadata context...
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::llm_review::analysis::context_state] generate slither metadata
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::llm_review::analysis::context_state] get contract summary and source files
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::llm_review::analysis::context_state] src file list => src/Core.sol
+    src/Incentives.sol
+    src/MEVCaptureRouter.sol
+    src/Orders.sol
+    src/Positions.sol
+    src/PositionsOwner.sol
+    src/RevenueBuybacks.sol
+    src/Router.sol
+    src/TokenWrapper.sol
+    src/TokenWrapperFactory.sol
+    src/base/BaseExtension.sol
+    src/base/BaseForwardee.sol
+    src/base/BaseLocker.sol
+    src/base/BaseNonfungibleToken.sol
+    src/base/BasePositions.sol
+    src/base/ExposedStorage.sol
+    src/base/FlashAccountant.sol
+    src/base/PayableMulticallable.sol
+    src/base/UsesCore.sol
+    src/extensions/MEVCapture.sol
+    src/extensions/Oracle.sol
+    src/extensions/TWAMM.sol
+    src/interfaces/IBaseNonfungibleToken.sol
+    src/interfaces/ICore.sol
+    src/interfaces/IExposedStorage.sol
+    src/interfaces/IFlashAccountant.sol
+    src/interfaces/IIncentives.sol
+    src/interfaces/IOrders.sol
+    src/interfaces/IPositions.sol
+    src/interfaces/IRevenueBuybacks.sol
+    src/interfaces/extensions/IMEVCapture.sol
+    src/interfaces/extensions/IOracle.sol
+    src/interfaces/extensions/ITWAMM.sol
+    src/lens/CoreDataFetcher.sol
+    src/lens/ERC7726.sol
+    src/lens/IncentivesDataFetcher.sol
+    src/lens/PriceFetcher.sol
+    src/lens/QuoteDataFetcher.sol
+    src/lens/TWAMMDataFetcher.sol
+    src/lens/TokenDataFetcher.sol
+    src/libraries/CoreLib.sol
+    src/libraries/CoreStorageLayout.sol
+    src/libraries/ExposedStorageLib.sol
+    src/libraries/ExtensionCallPointsLib.sol
+    src/libraries/FlashAccountantLib.sol
+    src/libraries/IncentivesLib.sol
+    src/libraries/OracleLib.sol
+    src/libraries/RevenueBuybacksLib.sol
+    src/libraries/TWAMMLib.sol
+    src/libraries/TWAMMStorageLayout.sol
+    src/libraries/TimeDescriptor.sol
+    src/math/constants.sol
+    src/math/delta.sol
+    src/math/exp2.sol
+    src/math/fee.sol
+    src/math/isPriceIncreasing.sol
+    src/math/liquidity.sol
+    src/math/sqrtRatio.sol
+    src/math/tickBitmap.sol
+    src/math/ticks.sol
+    src/math/time.sol
+    src/math/timeBitmap.sol
+    src/math/twamm.sol
+    src/types/bitmap.sol
+    src/types/buybacksState.sol
+    src/types/callPoints.sol
+    src/types/claimKey.sol
+    src/types/counts.sol
+    src/types/dropKey.sol
+    src/types/dropState.sol
+    src/types/feesPerLiquidity.sol
+    src/types/locker.sol
+    src/types/mevCapturePoolState.sol
+    src/types/observation.sol
+    src/types/orderConfig.sol
+    src/types/orderId.sol
+    src/types/orderKey.sol
+    src/types/orderState.sol
+    src/types/poolBalanceUpdate.sol
+    src/types/poolConfig.sol
+    src/types/poolId.sol
+    src/types/poolKey.sol
+    src/types/poolState.sol
+    src/types/position.sol
+    src/types/positionId.sol
+    src/types/snapshot.sol
+    src/types/sqrtRatio.sol
+    src/types/storageSlot.sol
+    src/types/swapParameters.sol
+    src/types/tickInfo.sol
+    src/types/timeInfo.sol
+    src/types/twammPoolState.sol
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::llm_review::analysis::context_state] file list context token count ==> 690
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::llm_review::analysis::context_state] generate summary of all files
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::llm_review::analysis::context_state] documentation full token count => 668
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::llm_review::analysis::context_state] prompt context token count => 1928
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::build_brain::summarize] retrived summaries from db
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::build_brain::summarize] retriving protocol from db
+[2025-11-20T23:44:00Z INFO  ai_agent_audit] building inheritance map from Solidity source...
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::enumerator::utils] 📂 Processing 467 .sol files to build inheritance map...
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::enumerator::utils]    Source code folders: ["/tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src"]
+[2025-11-20T23:44:00Z INFO  ai_agent_audit::enumerator::utils] 🔍 Building inheritance map for 467 Solidity files. Source folders: ["/tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src"]
+[2025-11-20T23:44:01Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: TokenWrapper (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/TokenWrapper.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: TokenWrapperFactory (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/TokenWrapperFactory.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: Positions (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/Positions.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: MEVCaptureRouter (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/MEVCaptureRouter.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: OracleLib (Library) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/libraries/OracleLib.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: CoreStorageLayout (Library) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/libraries/CoreStorageLayout.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: IncentivesLib (Library) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/libraries/IncentivesLib.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: CoreLib (Library) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/libraries/CoreLib.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: TWAMMLib (Library) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/libraries/TWAMMLib.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: TWAMMStorageLayout (Library) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/libraries/TWAMMStorageLayout.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: RevenueBuybacksLib (Library) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/libraries/RevenueBuybacksLib.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: ExtensionCallPointsLib (Library) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/libraries/ExtensionCallPointsLib.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: ExposedStorageLib (Library) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/libraries/ExposedStorageLib.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: FlashAccountantLib (Library) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/libraries/FlashAccountantLib.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: TWAMM (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/extensions/TWAMM.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: MEVCapture (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/extensions/MEVCapture.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: Oracle (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/extensions/Oracle.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: RevenueBuybacks (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/RevenueBuybacks.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: ERC7726 (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/lens/ERC7726.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: QuoteDataFetcher (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/lens/QuoteDataFetcher.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: PriceFetcher (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/lens/PriceFetcher.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: IncentivesDataFetcher (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/lens/IncentivesDataFetcher.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: CoreDataFetcher (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/lens/CoreDataFetcher.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: TokenDataFetcher (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/lens/TokenDataFetcher.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: TWAMMDataFetcher (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/lens/TWAMMDataFetcher.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: Router (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/Router.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: PositionsOwner (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/PositionsOwner.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: Core (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/Core.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: Orders (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/Orders.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: Incentives (Contract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/Incentives.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: BaseNonfungibleToken (AbstractContract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/base/BaseNonfungibleToken.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: BaseExtension (AbstractContract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/base/BaseExtension.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: ExposedStorage (AbstractContract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/base/ExposedStorage.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: BaseLocker (AbstractContract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/base/BaseLocker.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: PayableMulticallable (AbstractContract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/base/PayableMulticallable.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: UsesCore (AbstractContract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/base/UsesCore.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: FlashAccountant (AbstractContract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/base/FlashAccountant.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: BaseForwardee (AbstractContract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/base/BaseForwardee.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Found source contract: BasePositions (AbstractContract) in /tmp/audit-analysis/2025-11-ekubo-8f2fd8/2025-11-ekubo/src/base/BasePositions.sol
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] ✅ Inheritance map building complete: 403 files processed, 64 skipped, 39 contracts found
+[2025-11-20T23:44:02Z INFO  ai_agent_audit] inheritance map built successfully
+[2025-11-20T23:44:02Z INFO  ai_agent_audit] building interface implementation index...
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::interface_implementations] 🔍 Building interface implementation index with recursive traversal...
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::interface_implementations]    Total .sol files in repo: 467
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::interface_implementations] 📊 Interface implementation index built: 92 contracts scanned, 375 skipped, 85 implementations found across 13 unique interfaces
+[2025-11-20T23:44:02Z INFO  ai_agent_audit] generating codeblock for each contract in repo
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::codeblock_maker] connecting to databases..
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::codeblocks] getting contract to func mapping
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::enumerator::utils] grabbing all contracts...
+[2025-11-20T23:44:02Z INFO  ai_agent_audit] Slices at /Users/apmfree/chainshield_db/codeblock.db
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::build_brain::vector_db] connect to qdrant db
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::build_brain::vector_db] generating slither ssa into txt files that contain function or storage var
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::build_brain::slither_ffi] get ir and storage chunks
+[2025-11-20T23:44:02Z INFO  ai_agent_audit::build_brain::slither_ffi] Running Slither printer: slithir-ssa
+Error: AsyncTask { task: "legacy_anyhow", message: "Slither slithir-ssa failed with exit code Some(1).\nStdout: \nStderr: 'forge clean' running (wd: /workspace/2025-11-ekubo)\n'forge' returned non-zero exit code 1\nError: `solc` ./bin/solc-macos does not exist\n'forge config --json' running\n'forge build --build-info --skip */test/** */script/** --force' running (wd: /workspace/2025-11-ekubo)\n'forge' returned non-zero exit code 1\nError: `solc` ./bin/solc-macos does not exist\nTraceback (most recent call last):\n  File \"/home/ethsec/.local/bin/slither\", line 8, in <module>\n    sys.exit(main())\n  File \"/home/ethsec/.local/lib/python3.10/site-packages/slither/__main__.py\", line 776, in main\n    main_impl(all_detector_classes=detectors, all_printer_classes=printers)\n  File \"/home/ethsec/.local/lib/python3.10/site-packages/slither/__main__.py\", line 882, in main_impl\n    ) = process_all(filename, args, detector_classes, printer_classes)\n  File \"/home/ethsec/.local/lib/python3.10/site-packages/slither/__main__.py\", line 96, in process_all\n    compilations = compile_all(target, **vars(args))\n  File \"/home/ethsec/.local/lib/python3.10/site-packages/crytic_compile/crytic_compile.py\", line 722, in compile_all\n    compilations.append(CryticCompile(target, **kwargs))\n  File \"/home/ethsec/.local/lib/python3.10/site-packages/crytic_compile/crytic_compile.py\", line 211, in __init__\n    self._compile(**kwargs)\n  File \"/home/ethsec/.local/lib/python3.10/site-packages/crytic_compile/crytic_compile.py\", line 633, in _compile\n    self._platform.compile(self, **kwargs)\n  File \"/home/ethsec/.local/lib/python3.10/site-packages/crytic_compile/platform/foundry.py\", line 86, in compile\n    hardhat_like_parsing(crytic_compile, self._target, build_directory, self._target)\n  File \"/home/ethsec/.local/lib/python3.10/site-packages/crytic_compile/platform/hardhat.py\", line 72, in hardhat_like_parsing\n    targets_json = loaded_json[\"output\"]\nKeyError: 'output'\n", source: Some(Slither slithir-ssa failed with exit code Some(1).
+Stdout: 
+Stderr: 'forge clean' running (wd: /workspace/2025-11-ekubo)
+'forge' returned non-zero exit code 1
+Error: `solc` ./bin/solc-macos does not exist
+'forge config --json' running
+'forge build --build-info --skip */test/** */script/** --force' running (wd: /workspace/2025-11-ekubo)
+'forge' returned non-zero exit code 1
+Error: `solc` ./bin/solc-macos does not exist
+Traceback (most recent call last):
+  File "/home/ethsec/.local/bin/slither", line 8, in <module>
+    sys.exit(main())
+  File "/home/ethsec/.local/lib/python3.10/site-packages/slither/__main__.py", line 776, in main
+    main_impl(all_detector_classes=detectors, all_printer_classes=printers)
+  File "/home/ethsec/.local/lib/python3.10/site-packages/slither/__main__.py", line 882, in main_impl
+    ) = process_all(filename, args, detector_classes, printer_classes)
+  File "/home/ethsec/.local/lib/python3.10/site-packages/slither/__main__.py", line 96, in process_all
+    compilations = compile_all(target, **vars(args))
+  File "/home/ethsec/.local/lib/python3.10/site-packages/crytic_compile/crytic_compile.py", line 722, in compile_all
+    compilations.append(CryticCompile(target, **kwargs))
+  File "/home/ethsec/.local/lib/python3.10/site-packages/crytic_compile/crytic_compile.py", line 211, in __init__
+    self._compile(**kwargs)
+  File "/home/ethsec/.local/lib/python3.10/site-packages/crytic_compile/crytic_compile.py", line 633, in _compile
+    self._platform.compile(self, **kwargs)
+  File "/home/ethsec/.local/lib/python3.10/site-packages/crytic_compile/platform/foundry.py", line 86, in compile
+    hardhat_like_parsing(crytic_compile, self._target, build_directory, self._target)
+  File "/home/ethsec/.local/lib/python3.10/site-packages/crytic_compile/platform/hardhat.py", line 72, in hardhat_like_parsing
+    targets_json = loaded_json["output"]
+KeyError: 'output'
+) }

@@ -4,7 +4,7 @@ use crate::{
     config::AuditType,
     llm_review::{
         agent::agent_enums::{
-            EnumData, all_enum_variants, generate_enum_bulleted_list, generate_enum_list,
+            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
         },
         findings::{
             finding_enums::{Severity, VulnerabilityType},
@@ -411,6 +411,7 @@ where
 
         - Keep "derived_from" exactly as shown
         - *privilege* -> least privilege to trigger vulnerability
+        - for "exploit_type" please select from one of the listed types: {issue_list}
         - If no vulnerabilities are found, return: 
 
         {{
