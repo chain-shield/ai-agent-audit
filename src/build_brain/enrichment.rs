@@ -39,6 +39,7 @@ pub struct Enriched {
 /// # Returns
 /// * `PathBuf` - Path to the created semantic database
 pub async fn build_semantics_db_from_call_graph(repo: RepoPaths) -> Result<PathBuf> {
+    // Patch foundry.toml to remove custom solc paths before running Slither
     // Create database file in cache directory
     let db_path = Path::new(&format!("{}/{}", CHAINSHIELD_DB_FOLDER, SEMANTIC_DB)).to_path_buf();
     let cache_dir = db_path.parent().ok_or_else(|| {

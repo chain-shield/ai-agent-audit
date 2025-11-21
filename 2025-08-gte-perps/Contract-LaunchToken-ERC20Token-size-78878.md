@@ -171,205 +171,6 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-// import {Initializable} from "@solady/utils/Initializable.sol";
-import {OwnableRoles} from "@solady/auth/OwnableRoles.sol";
-import {SafeCastLib} from "@solady/utils/SafeCastLib.sol";
-import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
-
-import {IDistributor, IGTELaunchpadV2Pair} from "./interfaces/IDistributor.sol";
-import "./libraries/RewardsTracker.sol";
-
-/// @notice This contract receives tokens from
-contract Distributor is OwnableRoles, IDistributor {
-    using SafeTransferLib for address;
-
-    event TotalPendingRewardsIncreased(address indexed asset, uint256 amount);
-    event TotalPendingRewardsDecreased(address indexed asset, uint256 amount);
-
-    error Initialized();
-    error RewardsExist();
-    error RewardsDoNotExist();
-    error ClaimAmountExceedsTotalPendingRewards();
-    error NoSharesToIncentivize();
-    error SkimOverflow();
-
-    uint256 public constant ADMIN_ROLE = _ROLE_0;
-
-    bool private initialized;
-    address public launchpad;
-
-    /// @dev metadata to recover donations while preserving pending rewards
-    mapping(address => uint256) public totalPendingRewards;
-
-    constructor() {
-        _initializeOwner(msg.sender);
-    }
-
-    /// @dev There is no init check anywhere else because this contract can't be used until the launchpad address is set
-    function initialize(address _launchpad) public onlyOwner {
-        if (initialized) revert Initialized();
-        launchpad = _launchpad;
-        initialized = true;
-    }
-
-    modifier onlyLaunchpad() {
-        if (msg.sender != launchpad) revert Unauthorized();
-        _;
-    }
-
-    function skimExcessRewards(address asset, uint256 amount) external onlyOwnerOrRoles(ADMIN_ROLE) {
-        if (amount > asset.balanceOf(address(this)) - totalPendingRewards[asset]) revert SkimOverflow();
-
-        asset.safeTransfer(msg.sender, amount);
-    }
-
-    function getRewardsPoolData(address launchAsset) external view returns (RewardPoolDataMemory memory) {
-        return RewardsTrackerStorage.getRewardPool(launchAsset).getRewardsPoolData();
-    }
-
-    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory) {
-        return RewardsTrackerStorage.getRewardPool(launchAsset).getUserData(account);
-    }
-
-    function getUserDataForTokens(address[] calldata launchAssets, address account)
-        external
-        view
-        returns (UserRewardData[] memory)
-    {
-        UserRewardData[] memory data = new UserRewardData[](launchAssets.length);
-
-        for (uint256 i = 0; i < launchAssets.length; i++) {
-            data[i] = RewardsTrackerStorage.getRewardPool(launchAssets[i]).getUserData(account);
-        }
-        return data;
-    }
-
-    function getPendingRewards(address launchAsset, address account)
-        external
-        view
-        returns (uint256 pendingBase, uint256 pendingQuote)
-    {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        return rs.getPendingRewards(account);
-    }
-
-    function endRewards(IGTELaunchpadV2Pair pair) external onlyLaunchpad {
-        pair.endRewardsAccrual();
-    }
-
-    /// @notice Initializes the rewards pair from the launchpad
-    /// @dev Neither the launchAsset, nor the quoteAsset can be the baseAsset of an existing reward pool
-    function createRewardsPair(address launchAsset, address quoteAsset) external onlyLaunchpad {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-        RewardPoolData storage rsq = RewardsTrackerStorage.getRewardPool(quoteAsset);
-
-        // Sanity check in case the admin makes the quote asset of launchpad an existing asset
-        if (rs.quoteAsset != address(0) || rsq.quoteAsset != address(0)) revert RewardsExist();
-
-        rs.initializePair(launchAsset, quoteAsset);
-    }
-
-    /// @notice Allows rewards to be added to a pool regardless of token order
-    /// @dev Pools can only be created once per asset combo, regardless of the order of the assets
-    /// Additionally, anyone can add rewards as incentive, even while a pair is still bonding
-    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external {
-        (address launchAsset, address quoteAsset, uint128 launchAssetAmount, uint128 quoteAssetAmount) =
-            (token0, token1, amount0, amount1);
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(token0);
-
-        if (rs.quoteAsset == address(0)) {
-            rs = RewardsTrackerStorage.getRewardPool(token1);
-
-            if (rs.quoteAsset == address(0)) revert RewardsDoNotExist();
-
-            (launchAsset, quoteAsset, launchAssetAmount, quoteAssetAmount) = (token1, token0, amount1, amount0);
-        }
-
-        if (rs.totalShares == 0) revert NoSharesToIncentivize();
-
-        if (launchAssetAmount > 0) {
-            rs.addBaseRewards(launchAsset, launchAssetAmount);
-            _increaseTotalPending(launchAsset, launchAssetAmount);
-            launchAsset.safeTransferFrom(msg.sender, address(this), uint256(launchAssetAmount));
-        }
-
-        if (quoteAssetAmount > 0) {
-            rs.addQuoteRewards(launchAsset, quoteAsset, quoteAssetAmount);
-            _increaseTotalPending(quoteAsset, quoteAssetAmount);
-            quoteAsset.safeTransferFrom(msg.sender, address(this), uint256(quoteAssetAmount));
-        }
-    }
-
-    /// @dev This can only be called while `launchAsset` is bonding, so we dont need to check if the pool exists or is still active
-    function increaseStake(address launchAsset, address account, uint96 shares)
-        external
-        onlyLaunchpad
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        (baseAmount, quoteAmount) = rs.stake(account, uint96(shares));
-        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
-    }
-
-    /// @dev This can only be called while `launchAsset` still shares to remove from bonders, so it cannot be called after the pool has been deactivated
-    function decreaseStake(address launchAsset, address account, uint96 shares)
-        external
-        onlyLaunchpad
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        (baseAmount, quoteAmount) = rs.unstake(account, uint96(shares));
-        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
-    }
-
-    /// @dev This can be called even after a pool has been deactivated, as accounts may still have pending rewards
-    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount) {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        (baseAmount, quoteAmount) = rs.claim(msg.sender);
-
-        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
-    }
-
-    function _distributeAssets(address base, uint256 baseAmount, address quote, uint256 quoteAmount) internal {
-        if (baseAmount > 0) {
-            _decreaseTotalPending(base, baseAmount);
-            base.safeTransfer(msg.sender, baseAmount);
-        }
-
-        if (quoteAmount > 0) {
-            _decreaseTotalPending(quote, quoteAmount);
-            quote.safeTransfer(msg.sender, quoteAmount);
-        }
-    }
-
-    function _increaseTotalPending(address asset, uint256 amount) internal {
-        unchecked {
-            totalPendingRewards[asset] += amount;
-        }
-
-        emit TotalPendingRewardsIncreased(asset, amount);
-    }
-
-    function _decreaseTotalPending(address asset, uint256 amount) internal {
-        uint256 currTotal = totalPendingRewards[asset];
-
-        if (currTotal < amount) revert ClaimAmountExceedsTotalPendingRewards();
-
-        unchecked {
-            totalPendingRewards[asset] -= amount;
-        }
-
-        emit TotalPendingRewardsDecreased(asset, amount);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
 struct UserRewardData {
     uint96 shares; // User's current share count (up to ~7.9e28)
     uint96 baseRewardDebt; // Used to calculate base token rewards owed
@@ -1561,291 +1362,201 @@ contract GTELaunchpadV2Pair is IUniswapV2Pair, IGTELaunchpadV2Pair, UniswapV2ERC
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
-
-/// @notice Reentrancy guard mixin.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/ReentrancyGuard.sol)
-abstract contract ReentrancyGuard {
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                       CUSTOM ERRORS                        */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Unauthorized reentrant call.
-    error Reentrancy();
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                          STORAGE                           */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Equivalent to: `uint72(bytes9(keccak256("_REENTRANCY_GUARD_SLOT")))`.
-    /// 9 bytes is large enough to avoid collisions with lower slots,
-    /// but not too large to result in excessive bytecode bloat.
-    uint256 private constant _REENTRANCY_GUARD_SLOT = 0x929eee149b4bd21268;
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                      REENTRANCY GUARD                      */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Guards a function from reentrancy.
-    modifier nonReentrant() virtual {
-        /// @solidity memory-safe-assembly
-        assembly {
-            if eq(sload(_REENTRANCY_GUARD_SLOT), address()) {
-                mstore(0x00, 0xab143c06) // `Reentrancy()`.
-                revert(0x1c, 0x04)
-            }
-            sstore(_REENTRANCY_GUARD_SLOT, address())
-        }
-        _;
-        /// @solidity memory-safe-assembly
-        assembly {
-            sstore(_REENTRANCY_GUARD_SLOT, codesize())
-        }
-    }
-
-    /// @dev Guards a view function from read-only reentrancy.
-    modifier nonReadReentrant() virtual {
-        /// @solidity memory-safe-assembly
-        assembly {
-            if eq(sload(_REENTRANCY_GUARD_SLOT), address()) {
-                mstore(0x00, 0xab143c06) // `Reentrancy()`.
-                revert(0x1c, 0x04)
-            }
-        }
-        _;
-    }
-}
-
 pragma solidity 0.8.27;
 
-interface IUniswapV2Pair {
-    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
-    event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
-    event Swap(
-        address indexed sender,
-        uint256 amount0In,
-        uint256 amount1In,
-        uint256 amount0Out,
-        uint256 amount1Out,
-        address indexed to
-    );
-    event Sync(uint112 reserve0, uint112 reserve1);
+// import {Initializable} from "@solady/utils/Initializable.sol";
+import {OwnableRoles} from "@solady/auth/OwnableRoles.sol";
+import {SafeCastLib} from "@solady/utils/SafeCastLib.sol";
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
 
-    function MINIMUM_LIQUIDITY() external pure returns (uint256);
-    function factory() external view returns (address);
-    function token0() external view returns (address);
-    function token1() external view returns (address);
-    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
-    function price0CumulativeLast() external view returns (uint256);
-    function price1CumulativeLast() external view returns (uint256);
-    function kLast() external view returns (uint256);
+import {IDistributor, IGTELaunchpadV2Pair} from "./interfaces/IDistributor.sol";
+import "./libraries/RewardsTracker.sol";
 
-    function mint(address to) external returns (uint256 liquidity);
-    function burn(address to) external returns (uint256 amount0, uint256 amount1);
-    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
-    function skim(address to) external;
-    function sync() external;
+/// @notice This contract receives tokens from
+contract Distributor is OwnableRoles, IDistributor {
+    using SafeTransferLib for address;
 
-    function initialize(address, address, address, address) external;
-}
+    event TotalPendingRewardsIncreased(address indexed asset, uint256 amount);
+    event TotalPendingRewardsDecreased(address indexed asset, uint256 amount);
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
+    error Initialized();
+    error RewardsExist();
+    error RewardsDoNotExist();
+    error ClaimAmountExceedsTotalPendingRewards();
+    error NoSharesToIncentivize();
+    error SkimOverflow();
 
-interface IGTELaunchpadV2Pair {
-    function rewardsPoolActive() external view returns (uint256);
-    function accruedLaunchpadFee0() external view returns (uint112);
-    function accruedLaunchpadFee1() external view returns (uint112);
-    function launchpadLp() external view returns (address);
-    function launchpadFeeDistributor() external view returns (address);
-    function REWARDS_FEE_SHARE() external view returns (uint256);
+    uint256 public constant ADMIN_ROLE = _ROLE_0;
 
-    function endRewardsAccrual() external;
-}
+    bool private initialized;
+    address public launchpad;
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
+    /// @dev metadata to recover donations while preserving pending rewards
+    mapping(address => uint256) public totalPendingRewards;
 
-/// @notice Initializable mixin for the upgradeable contracts.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/Initializable.sol)
-/// @author Modified from OpenZeppelin (https://github.com/OpenZeppelin/openzeppelin-contracts/tree/master/contracts/proxy/utils/Initializable.sol)
-abstract contract Initializable {
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                       CUSTOM ERRORS                        */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev The contract is already initialized.
-    error InvalidInitialization();
-
-    /// @dev The contract is not initializing.
-    error NotInitializing();
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                           EVENTS                           */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Triggered when the contract has been initialized.
-    event Initialized(uint64 version);
-
-    /// @dev `keccak256(bytes("Initialized(uint64)"))`.
-    bytes32 private constant _INTIALIZED_EVENT_SIGNATURE =
-        0xc7f505b2f371ae2175ee4913f4499e1f2633a7b5936321eed1cdaeb6115181d2;
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                          STORAGE                           */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev The default initializable slot is given by:
-    /// `bytes32(~uint256(uint32(bytes4(keccak256("_INITIALIZABLE_SLOT")))))`.
-    ///
-    /// Bits Layout:
-    /// - [0]     `initializing`
-    /// - [1..64] `initializedVersion`
-    bytes32 private constant _INITIALIZABLE_SLOT =
-        0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffbf601132;
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                         OPERATIONS                         */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Override to return a custom storage slot if required.
-    function _initializableSlot() internal pure virtual returns (bytes32) {
-        return _INITIALIZABLE_SLOT;
+    constructor() {
+        _initializeOwner(msg.sender);
     }
 
-    /// @dev Guards an initializer function so that it can be invoked at most once.
-    ///
-    /// You can guard a function with `onlyInitializing` such that it can be called
-    /// through a function guarded with `initializer`.
-    ///
-    /// This is similar to `reinitializer(1)`, except that in the context of a constructor,
-    /// an `initializer` guarded function can be invoked multiple times.
-    /// This can be useful during testing and is not expected to be used in production.
-    ///
-    /// Emits an {Initialized} event.
-    modifier initializer() virtual {
-        bytes32 s = _initializableSlot();
-        /// @solidity memory-safe-assembly
-        assembly {
-            let i := sload(s)
-            // Set `initializing` to 1, `initializedVersion` to 1.
-            sstore(s, 3)
-            // If `!(initializing == 0 && initializedVersion == 0)`.
-            if i {
-                // If `!(address(this).code.length == 0 && initializedVersion == 1)`.
-                if iszero(lt(extcodesize(address()), eq(shr(1, i), 1))) {
-                    mstore(0x00, 0xf92ee8a9) // `InvalidInitialization()`.
-                    revert(0x1c, 0x04)
-                }
-                s := shl(shl(255, i), s) // Skip initializing if `initializing == 1`.
-            }
-        }
-        _;
-        /// @solidity memory-safe-assembly
-        assembly {
-            if s {
-                // Set `initializing` to 0, `initializedVersion` to 1.
-                sstore(s, 2)
-                // Emit the {Initialized} event.
-                mstore(0x20, 1)
-                log1(0x20, 0x20, _INTIALIZED_EVENT_SIGNATURE)
-            }
-        }
+    /// @dev There is no init check anywhere else because this contract can't be used until the launchpad address is set
+    function initialize(address _launchpad) public onlyOwner {
+        if (initialized) revert Initialized();
+        launchpad = _launchpad;
+        initialized = true;
     }
 
-    /// @dev Guards an reinitialzer function so that it can be invoked at most once.
-    ///
-    /// You can guard a function with `onlyInitializing` such that it can be called
-    /// through a function guarded with `reinitializer`.
-    ///
-    /// Emits an {Initialized} event.
-    modifier reinitializer(uint64 version) virtual {
-        bytes32 s = _initializableSlot();
-        /// @solidity memory-safe-assembly
-        assembly {
-            version := and(version, 0xffffffffffffffff) // Clean upper bits.
-            let i := sload(s)
-            // If `initializing == 1 || initializedVersion >= version`.
-            if iszero(lt(and(i, 1), lt(shr(1, i), version))) {
-                mstore(0x00, 0xf92ee8a9) // `InvalidInitialization()`.
-                revert(0x1c, 0x04)
-            }
-            // Set `initializing` to 1, `initializedVersion` to `version`.
-            sstore(s, or(1, shl(1, version)))
-        }
-        _;
-        /// @solidity memory-safe-assembly
-        assembly {
-            // Set `initializing` to 0, `initializedVersion` to `version`.
-            sstore(s, shl(1, version))
-            // Emit the {Initialized} event.
-            mstore(0x20, version)
-            log1(0x20, 0x20, _INTIALIZED_EVENT_SIGNATURE)
-        }
-    }
-
-    /// @dev Guards a function such that it can only be called in the scope
-    /// of a function guarded with `initializer` or `reinitializer`.
-    modifier onlyInitializing() virtual {
-        _checkInitializing();
+    modifier onlyLaunchpad() {
+        if (msg.sender != launchpad) revert Unauthorized();
         _;
     }
 
-    /// @dev Reverts if the contract is not initializing.
-    function _checkInitializing() internal view virtual {
-        bytes32 s = _initializableSlot();
-        /// @solidity memory-safe-assembly
-        assembly {
-            if iszero(and(1, sload(s))) {
-                mstore(0x00, 0xd7e6bcf8) // `NotInitializing()`.
-                revert(0x1c, 0x04)
-            }
+    function skimExcessRewards(address asset, uint256 amount) external onlyOwnerOrRoles(ADMIN_ROLE) {
+        if (amount > asset.balanceOf(address(this)) - totalPendingRewards[asset]) revert SkimOverflow();
+
+        asset.safeTransfer(msg.sender, amount);
+    }
+
+    function getRewardsPoolData(address launchAsset) external view returns (RewardPoolDataMemory memory) {
+        return RewardsTrackerStorage.getRewardPool(launchAsset).getRewardsPoolData();
+    }
+
+    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory) {
+        return RewardsTrackerStorage.getRewardPool(launchAsset).getUserData(account);
+    }
+
+    function getUserDataForTokens(address[] calldata launchAssets, address account)
+        external
+        view
+        returns (UserRewardData[] memory)
+    {
+        UserRewardData[] memory data = new UserRewardData[](launchAssets.length);
+
+        for (uint256 i = 0; i < launchAssets.length; i++) {
+            data[i] = RewardsTrackerStorage.getRewardPool(launchAssets[i]).getUserData(account);
+        }
+        return data;
+    }
+
+    function getPendingRewards(address launchAsset, address account)
+        external
+        view
+        returns (uint256 pendingBase, uint256 pendingQuote)
+    {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        return rs.getPendingRewards(account);
+    }
+
+    function endRewards(IGTELaunchpadV2Pair pair) external onlyLaunchpad {
+        pair.endRewardsAccrual();
+    }
+
+    /// @notice Initializes the rewards pair from the launchpad
+    /// @dev Neither the launchAsset, nor the quoteAsset can be the baseAsset of an existing reward pool
+    function createRewardsPair(address launchAsset, address quoteAsset) external onlyLaunchpad {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+        RewardPoolData storage rsq = RewardsTrackerStorage.getRewardPool(quoteAsset);
+
+        // Sanity check in case the admin makes the quote asset of launchpad an existing asset
+        if (rs.quoteAsset != address(0) || rsq.quoteAsset != address(0)) revert RewardsExist();
+
+        rs.initializePair(launchAsset, quoteAsset);
+    }
+
+    /// @notice Allows rewards to be added to a pool regardless of token order
+    /// @dev Pools can only be created once per asset combo, regardless of the order of the assets
+    /// Additionally, anyone can add rewards as incentive, even while a pair is still bonding
+    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external {
+        (address launchAsset, address quoteAsset, uint128 launchAssetAmount, uint128 quoteAssetAmount) =
+            (token0, token1, amount0, amount1);
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(token0);
+
+        if (rs.quoteAsset == address(0)) {
+            rs = RewardsTrackerStorage.getRewardPool(token1);
+
+            if (rs.quoteAsset == address(0)) revert RewardsDoNotExist();
+
+            (launchAsset, quoteAsset, launchAssetAmount, quoteAssetAmount) = (token1, token0, amount1, amount0);
+        }
+
+        if (rs.totalShares == 0) revert NoSharesToIncentivize();
+
+        if (launchAssetAmount > 0) {
+            rs.addBaseRewards(launchAsset, launchAssetAmount);
+            _increaseTotalPending(launchAsset, launchAssetAmount);
+            launchAsset.safeTransferFrom(msg.sender, address(this), uint256(launchAssetAmount));
+        }
+
+        if (quoteAssetAmount > 0) {
+            rs.addQuoteRewards(launchAsset, quoteAsset, quoteAssetAmount);
+            _increaseTotalPending(quoteAsset, quoteAssetAmount);
+            quoteAsset.safeTransferFrom(msg.sender, address(this), uint256(quoteAssetAmount));
         }
     }
 
-    /// @dev Locks any future initializations by setting the initialized version to `2**64 - 1`.
-    ///
-    /// Calling this in the constructor will prevent the contract from being initialized
-    /// or reinitialized. It is recommended to use this to lock implementation contracts
-    /// that are designed to be called through proxies.
-    ///
-    /// Emits an {Initialized} event the first time it is successfully called.
-    function _disableInitializers() internal virtual {
-        bytes32 s = _initializableSlot();
-        /// @solidity memory-safe-assembly
-        assembly {
-            let i := sload(s)
-            if and(i, 1) {
-                mstore(0x00, 0xf92ee8a9) // `InvalidInitialization()`.
-                revert(0x1c, 0x04)
-            }
-            let uint64max := shr(192, s) // Computed to save bytecode.
-            if iszero(eq(shr(1, i), uint64max)) {
-                // Set `initializing` to 0, `initializedVersion` to `2**64 - 1`.
-                sstore(s, shl(1, uint64max))
-                // Emit the {Initialized} event.
-                mstore(0x20, uint64max)
-                log1(0x20, 0x20, _INTIALIZED_EVENT_SIGNATURE)
-            }
+    /// @dev This can only be called while `launchAsset` is bonding, so we dont need to check if the pool exists or is still active
+    function increaseStake(address launchAsset, address account, uint96 shares)
+        external
+        onlyLaunchpad
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        (baseAmount, quoteAmount) = rs.stake(account, uint96(shares));
+        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
+    }
+
+    /// @dev This can only be called while `launchAsset` still shares to remove from bonders, so it cannot be called after the pool has been deactivated
+    function decreaseStake(address launchAsset, address account, uint96 shares)
+        external
+        onlyLaunchpad
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        (baseAmount, quoteAmount) = rs.unstake(account, uint96(shares));
+        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
+    }
+
+    /// @dev This can be called even after a pool has been deactivated, as accounts may still have pending rewards
+    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount) {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        (baseAmount, quoteAmount) = rs.claim(msg.sender);
+
+        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
+    }
+
+    function _distributeAssets(address base, uint256 baseAmount, address quote, uint256 quoteAmount) internal {
+        if (baseAmount > 0) {
+            _decreaseTotalPending(base, baseAmount);
+            base.safeTransfer(msg.sender, baseAmount);
+        }
+
+        if (quoteAmount > 0) {
+            _decreaseTotalPending(quote, quoteAmount);
+            quote.safeTransfer(msg.sender, quoteAmount);
         }
     }
 
-    /// @dev Returns the highest version that has been initialized.
-    function _getInitializedVersion() internal view virtual returns (uint64 version) {
-        bytes32 s = _initializableSlot();
-        /// @solidity memory-safe-assembly
-        assembly {
-            version := shr(1, sload(s))
+    function _increaseTotalPending(address asset, uint256 amount) internal {
+        unchecked {
+            totalPendingRewards[asset] += amount;
         }
+
+        emit TotalPendingRewardsIncreased(asset, amount);
     }
 
-    /// @dev Returns whether the contract is currently initializing.
-    function _isInitializing() internal view virtual returns (bool result) {
-        bytes32 s = _initializableSlot();
-        /// @solidity memory-safe-assembly
-        assembly {
-            result := and(1, sload(s))
+    function _decreaseTotalPending(address asset, uint256 amount) internal {
+        uint256 currTotal = totalPendingRewards[asset];
+
+        if (currTotal < amount) revert ClaimAmountExceedsTotalPendingRewards();
+
+        unchecked {
+            totalPendingRewards[asset] -= amount;
         }
+
+        emit TotalPendingRewardsDecreased(asset, amount);
     }
 }
 
@@ -2385,31 +2096,6 @@ abstract contract OwnableRoles is Ownable {
     uint256 internal constant _ROLE_255 = 1 << 255;
 }
 
-pragma solidity 0.8.27;
-
-import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
-
-import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
-
-interface IDistributor {
-    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
-    function getUserDataForTokens(address[] calldata launchAssets, address account)
-        external
-        view
-        returns (UserRewardData[] memory);
-    function increaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function decreaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
-    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
-    function createRewardsPair(address launchAsset, address quoteToken) external;
-
-    function endRewards(IGTELaunchpadV2Pair pair) external;
-}
-
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
@@ -2689,95 +2375,6 @@ abstract contract Ownable {
     }
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {LaunchToken} from "../LaunchToken.sol";
-import {IBondingCurveMinimal} from "../BondingCurves/IBondingCurveMinimal.sol";
-import {ICLOBManager} from "../../clob/ICLOBManager.sol";
-import {IOperatorPanel} from "../../utils/interfaces/IOperatorPanel.sol";
-import {IDistributor} from "./IDistributor.sol";
-import {IUniswapV2RouterMinimal} from "./IUniswapV2RouterMinimal.sol";
-import {IUniswapV2FactoryMinimal} from "./IUniswapV2FactoryMinimal.sol";
-import {LaunchpadLPVault} from "../LaunchpadLPVault.sol";
-
-interface ILaunchpad {
-    struct BuyData {
-        address account;
-        address token;
-        address recipient;
-        uint256 amountOutBase;
-        uint256 maxAmountInQuote;
-    }
-
-    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
-        external
-        view
-        returns (uint256 baseAmount);
-    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
-        external
-        view
-        returns (uint256 quoteAmount);
-
-    struct LaunchData {
-        bool active;
-        address quote;
-        IBondingCurveMinimal curve;
-    }
-
-    function launch(string memory name, string memory symbol, string memory mediaURI)
-        external
-        payable
-        returns (address token);
-
-    function buy(BuyData calldata buyData)
-        external
-        returns (uint256 amountOutBaseActual, uint256 amountInQuoteActual);
-
-    function sell(address account, address token, address recipient, uint256 amountInBase, uint256 minAmountOutQuote)
-        external
-        returns (uint256 amountInBaseActual, uint256 amountOutQuoteActual);
-
-    function increaseStake(address account, uint96 shares) external;
-
-    function decreaseStake(address account, uint96 shares) external;
-    
-    function endRewards() external;
-
-    function updateBondingCurve(address newBondingCurve) external;
-
-    function pullFees() external;
-
-    // slither-disable-next-line naming-convention
-    function TOTAL_SUPPLY() external view returns (uint256);
-
-    // slither-disable-next-line naming-convention
-    function BONDING_SUPPLY() external view returns (uint256);
-
-    // slither-disable-next-line naming-convention
-    function ABI_VERSION() external view returns (uint256);
-
-    function gteRouter() external view returns (address);
-
-    function operator() external view returns (IOperatorPanel);
-
-    function distributor() external view returns (IDistributor);
-
-    function uniV2Router() external view returns (IUniswapV2RouterMinimal);
-
-    function launchpadLPVault() external view returns (LaunchpadLPVault);
-
-    function currentQuoteAsset() external view returns (LaunchToken);
-
-    function currentBondingCurve() external view returns (IBondingCurveMinimal);
-
-    function launchFee() external view returns (uint256);
-
-    function eventNonce() external view returns (uint256);
-
-    function launches(address launchToken) external view returns (LaunchData memory);
-}
-
 pragma solidity 0.8.27;
 
 import "./interfaces/IUniswapV2ERC20.sol";
@@ -2870,6 +2467,640 @@ contract UniswapV2ERC20 is IUniswapV2ERC20 {
         require(recoveredAddress != address(0) && recoveredAddress == owner, "UniswapV2: INVALID_SIGNATURE");
         _approve(owner, spender, value);
     }
+}
+
+pragma solidity 0.8.27;
+
+interface IUniswapV2Pair {
+    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
+    event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
+    event Swap(
+        address indexed sender,
+        uint256 amount0In,
+        uint256 amount1In,
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address indexed to
+    );
+    event Sync(uint112 reserve0, uint112 reserve1);
+
+    function MINIMUM_LIQUIDITY() external pure returns (uint256);
+    function factory() external view returns (address);
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function price0CumulativeLast() external view returns (uint256);
+    function price1CumulativeLast() external view returns (uint256);
+    function kLast() external view returns (uint256);
+
+    function mint(address to) external returns (uint256 liquidity);
+    function burn(address to) external returns (uint256 amount0, uint256 amount1);
+    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
+    function skim(address to) external;
+    function sync() external;
+
+    function initialize(address, address, address, address) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
+/// @notice Reentrancy guard mixin.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/ReentrancyGuard.sol)
+abstract contract ReentrancyGuard {
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                       CUSTOM ERRORS                        */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Unauthorized reentrant call.
+    error Reentrancy();
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                          STORAGE                           */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Equivalent to: `uint72(bytes9(keccak256("_REENTRANCY_GUARD_SLOT")))`.
+    /// 9 bytes is large enough to avoid collisions with lower slots,
+    /// but not too large to result in excessive bytecode bloat.
+    uint256 private constant _REENTRANCY_GUARD_SLOT = 0x929eee149b4bd21268;
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                      REENTRANCY GUARD                      */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Guards a function from reentrancy.
+    modifier nonReentrant() virtual {
+        /// @solidity memory-safe-assembly
+        assembly {
+            if eq(sload(_REENTRANCY_GUARD_SLOT), address()) {
+                mstore(0x00, 0xab143c06) // `Reentrancy()`.
+                revert(0x1c, 0x04)
+            }
+            sstore(_REENTRANCY_GUARD_SLOT, address())
+        }
+        _;
+        /// @solidity memory-safe-assembly
+        assembly {
+            sstore(_REENTRANCY_GUARD_SLOT, codesize())
+        }
+    }
+
+    /// @dev Guards a view function from read-only reentrancy.
+    modifier nonReadReentrant() virtual {
+        /// @solidity memory-safe-assembly
+        assembly {
+            if eq(sload(_REENTRANCY_GUARD_SLOT), address()) {
+                mstore(0x00, 0xab143c06) // `Reentrancy()`.
+                revert(0x1c, 0x04)
+            }
+        }
+        _;
+    }
+}
+
+pragma solidity 0.8.27;
+
+import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
+
+import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
+
+interface IDistributor {
+    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
+    function getUserDataForTokens(address[] calldata launchAssets, address account)
+        external
+        view
+        returns (UserRewardData[] memory);
+    function increaseStake(address launchAsset, address account, uint96 shares)
+        external
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function decreaseStake(address launchAsset, address account, uint96 shares)
+        external
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
+    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
+    function createRewardsPair(address launchAsset, address quoteToken) external;
+
+    function endRewards(IGTELaunchpadV2Pair pair) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
+/// @notice Initializable mixin for the upgradeable contracts.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/Initializable.sol)
+/// @author Modified from OpenZeppelin (https://github.com/OpenZeppelin/openzeppelin-contracts/tree/master/contracts/proxy/utils/Initializable.sol)
+abstract contract Initializable {
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                       CUSTOM ERRORS                        */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev The contract is already initialized.
+    error InvalidInitialization();
+
+    /// @dev The contract is not initializing.
+    error NotInitializing();
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                           EVENTS                           */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Triggered when the contract has been initialized.
+    event Initialized(uint64 version);
+
+    /// @dev `keccak256(bytes("Initialized(uint64)"))`.
+    bytes32 private constant _INTIALIZED_EVENT_SIGNATURE =
+        0xc7f505b2f371ae2175ee4913f4499e1f2633a7b5936321eed1cdaeb6115181d2;
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                          STORAGE                           */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev The default initializable slot is given by:
+    /// `bytes32(~uint256(uint32(bytes4(keccak256("_INITIALIZABLE_SLOT")))))`.
+    ///
+    /// Bits Layout:
+    /// - [0]     `initializing`
+    /// - [1..64] `initializedVersion`
+    bytes32 private constant _INITIALIZABLE_SLOT =
+        0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffbf601132;
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                         OPERATIONS                         */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Override to return a custom storage slot if required.
+    function _initializableSlot() internal pure virtual returns (bytes32) {
+        return _INITIALIZABLE_SLOT;
+    }
+
+    /// @dev Guards an initializer function so that it can be invoked at most once.
+    ///
+    /// You can guard a function with `onlyInitializing` such that it can be called
+    /// through a function guarded with `initializer`.
+    ///
+    /// This is similar to `reinitializer(1)`, except that in the context of a constructor,
+    /// an `initializer` guarded function can be invoked multiple times.
+    /// This can be useful during testing and is not expected to be used in production.
+    ///
+    /// Emits an {Initialized} event.
+    modifier initializer() virtual {
+        bytes32 s = _initializableSlot();
+        /// @solidity memory-safe-assembly
+        assembly {
+            let i := sload(s)
+            // Set `initializing` to 1, `initializedVersion` to 1.
+            sstore(s, 3)
+            // If `!(initializing == 0 && initializedVersion == 0)`.
+            if i {
+                // If `!(address(this).code.length == 0 && initializedVersion == 1)`.
+                if iszero(lt(extcodesize(address()), eq(shr(1, i), 1))) {
+                    mstore(0x00, 0xf92ee8a9) // `InvalidInitialization()`.
+                    revert(0x1c, 0x04)
+                }
+                s := shl(shl(255, i), s) // Skip initializing if `initializing == 1`.
+            }
+        }
+        _;
+        /// @solidity memory-safe-assembly
+        assembly {
+            if s {
+                // Set `initializing` to 0, `initializedVersion` to 1.
+                sstore(s, 2)
+                // Emit the {Initialized} event.
+                mstore(0x20, 1)
+                log1(0x20, 0x20, _INTIALIZED_EVENT_SIGNATURE)
+            }
+        }
+    }
+
+    /// @dev Guards an reinitialzer function so that it can be invoked at most once.
+    ///
+    /// You can guard a function with `onlyInitializing` such that it can be called
+    /// through a function guarded with `reinitializer`.
+    ///
+    /// Emits an {Initialized} event.
+    modifier reinitializer(uint64 version) virtual {
+        bytes32 s = _initializableSlot();
+        /// @solidity memory-safe-assembly
+        assembly {
+            version := and(version, 0xffffffffffffffff) // Clean upper bits.
+            let i := sload(s)
+            // If `initializing == 1 || initializedVersion >= version`.
+            if iszero(lt(and(i, 1), lt(shr(1, i), version))) {
+                mstore(0x00, 0xf92ee8a9) // `InvalidInitialization()`.
+                revert(0x1c, 0x04)
+            }
+            // Set `initializing` to 1, `initializedVersion` to `version`.
+            sstore(s, or(1, shl(1, version)))
+        }
+        _;
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Set `initializing` to 0, `initializedVersion` to `version`.
+            sstore(s, shl(1, version))
+            // Emit the {Initialized} event.
+            mstore(0x20, version)
+            log1(0x20, 0x20, _INTIALIZED_EVENT_SIGNATURE)
+        }
+    }
+
+    /// @dev Guards a function such that it can only be called in the scope
+    /// of a function guarded with `initializer` or `reinitializer`.
+    modifier onlyInitializing() virtual {
+        _checkInitializing();
+        _;
+    }
+
+    /// @dev Reverts if the contract is not initializing.
+    function _checkInitializing() internal view virtual {
+        bytes32 s = _initializableSlot();
+        /// @solidity memory-safe-assembly
+        assembly {
+            if iszero(and(1, sload(s))) {
+                mstore(0x00, 0xd7e6bcf8) // `NotInitializing()`.
+                revert(0x1c, 0x04)
+            }
+        }
+    }
+
+    /// @dev Locks any future initializations by setting the initialized version to `2**64 - 1`.
+    ///
+    /// Calling this in the constructor will prevent the contract from being initialized
+    /// or reinitialized. It is recommended to use this to lock implementation contracts
+    /// that are designed to be called through proxies.
+    ///
+    /// Emits an {Initialized} event the first time it is successfully called.
+    function _disableInitializers() internal virtual {
+        bytes32 s = _initializableSlot();
+        /// @solidity memory-safe-assembly
+        assembly {
+            let i := sload(s)
+            if and(i, 1) {
+                mstore(0x00, 0xf92ee8a9) // `InvalidInitialization()`.
+                revert(0x1c, 0x04)
+            }
+            let uint64max := shr(192, s) // Computed to save bytecode.
+            if iszero(eq(shr(1, i), uint64max)) {
+                // Set `initializing` to 0, `initializedVersion` to `2**64 - 1`.
+                sstore(s, shl(1, uint64max))
+                // Emit the {Initialized} event.
+                mstore(0x20, uint64max)
+                log1(0x20, 0x20, _INTIALIZED_EVENT_SIGNATURE)
+            }
+        }
+    }
+
+    /// @dev Returns the highest version that has been initialized.
+    function _getInitializedVersion() internal view virtual returns (uint64 version) {
+        bytes32 s = _initializableSlot();
+        /// @solidity memory-safe-assembly
+        assembly {
+            version := shr(1, sload(s))
+        }
+    }
+
+    /// @dev Returns whether the contract is currently initializing.
+    function _isInitializing() internal view virtual returns (bool result) {
+        bytes32 s = _initializableSlot();
+        /// @solidity memory-safe-assembly
+        assembly {
+            result := and(1, sload(s))
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+interface IGTELaunchpadV2Pair {
+    function rewardsPoolActive() external view returns (uint256);
+    function accruedLaunchpadFee0() external view returns (uint112);
+    function accruedLaunchpadFee1() external view returns (uint112);
+    function launchpadLp() external view returns (address);
+    function launchpadFeeDistributor() external view returns (address);
+    function REWARDS_FEE_SHARE() external view returns (uint256);
+
+    function endRewardsAccrual() external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {LaunchToken} from "../LaunchToken.sol";
+import {IBondingCurveMinimal} from "../BondingCurves/IBondingCurveMinimal.sol";
+import {ICLOBManager} from "../../clob/ICLOBManager.sol";
+import {IOperatorPanel} from "../../utils/interfaces/IOperatorPanel.sol";
+import {IDistributor} from "./IDistributor.sol";
+import {IUniswapV2RouterMinimal} from "./IUniswapV2RouterMinimal.sol";
+import {IUniswapV2FactoryMinimal} from "./IUniswapV2FactoryMinimal.sol";
+import {LaunchpadLPVault} from "../LaunchpadLPVault.sol";
+
+interface ILaunchpad {
+    struct BuyData {
+        address account;
+        address token;
+        address recipient;
+        uint256 amountOutBase;
+        uint256 maxAmountInQuote;
+    }
+
+    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
+        external
+        view
+        returns (uint256 baseAmount);
+    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
+        external
+        view
+        returns (uint256 quoteAmount);
+
+    struct LaunchData {
+        bool active;
+        address quote;
+        IBondingCurveMinimal curve;
+    }
+
+    function launch(string memory name, string memory symbol, string memory mediaURI)
+        external
+        payable
+        returns (address token);
+
+    function buy(BuyData calldata buyData)
+        external
+        returns (uint256 amountOutBaseActual, uint256 amountInQuoteActual);
+
+    function sell(address account, address token, address recipient, uint256 amountInBase, uint256 minAmountOutQuote)
+        external
+        returns (uint256 amountInBaseActual, uint256 amountOutQuoteActual);
+
+    function increaseStake(address account, uint96 shares) external;
+
+    function decreaseStake(address account, uint96 shares) external;
+    
+    function endRewards() external;
+
+    function updateBondingCurve(address newBondingCurve) external;
+
+    function pullFees() external;
+
+    // slither-disable-next-line naming-convention
+    function TOTAL_SUPPLY() external view returns (uint256);
+
+    // slither-disable-next-line naming-convention
+    function BONDING_SUPPLY() external view returns (uint256);
+
+    // slither-disable-next-line naming-convention
+    function ABI_VERSION() external view returns (uint256);
+
+    function gteRouter() external view returns (address);
+
+    function operator() external view returns (IOperatorPanel);
+
+    function distributor() external view returns (IDistributor);
+
+    function uniV2Router() external view returns (IUniswapV2RouterMinimal);
+
+    function launchpadLPVault() external view returns (LaunchpadLPVault);
+
+    function currentQuoteAsset() external view returns (LaunchToken);
+
+    function currentBondingCurve() external view returns (IBondingCurveMinimal);
+
+    function launchFee() external view returns (uint256);
+
+    function eventNonce() external view returns (uint256);
+
+    function launches(address launchToken) external view returns (LaunchData memory);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {Side, Order, OrderId} from "./types/Order.sol";
+import {MarketConfig, MarketSettings, Limit} from "./types/Book.sol";
+import {MakerCredit} from "./types/TransientMakerData.sol";
+import {ICLOBManager} from "./ICLOBManager.sol";
+
+interface ICLOB {
+    struct SettleParams {
+        Side side;
+        address taker;
+        uint256 takerBaseAmount;
+        uint256 takerQuoteAmount;
+        address baseToken;
+        address quoteToken;
+        MakerCredit[] makerCredits;
+    }
+
+    enum TiF {
+        // MAKER
+        GTC, // good-till-cancelled
+        MOC, // maker-or-cancel (post-only)
+        // TAKER-ONLY
+        FOK, // fill-or-kill
+        IOC // immediate-or-cancel
+
+    }
+
+    struct PlaceOrderArgs {
+        // metadata
+        Side side; // bid / ask
+        uint96 clientOrderId; // Optional user-defined id for makes
+        // time / execution
+        TiF tif; // time in force
+        uint32 expiryTime; // optional auto-cancel time (only for GTC, MOC)
+        // price
+        uint256 limitPrice; // if 0, market order
+        // size
+        uint256 amount;
+        bool baseDenominated; // which asset the amount denominates
+    }
+
+    struct PlaceOrderResult {
+        address account;
+        uint256 orderId;
+        uint256 basePosted; // amount posted in base (for maker orders)
+        int256 quoteTokenAmountTraded; // negative if outgoing, positive if incoming
+        int256 baseTokenAmountTraded; // negative if outgoing, positive if incoming
+        uint256 takerFee;
+        bool wasMarketOrder; // true if market order (limitPrice = 0), false if limit order
+    }
+
+    enum CancelType {
+        USER,
+        EXPIRY,
+        NON_COMPETITIVE
+    }
+
+    struct AmendArgs {
+        uint256 orderId;
+        uint256 amountInBase;
+        uint256 price;
+        uint32 cancelTimestamp;
+        Side side;
+    }
+
+    struct CancelArgs {
+        uint256[] orderIds;
+    }
+
+    function placeOrder(address account, PlaceOrderArgs calldata args) external returns (PlaceOrderResult memory);
+
+    function amend(address account, AmendArgs memory args) external returns (int256 quoteDelta, int256 baseDelta);
+
+    function cancel(address account, CancelArgs memory args) external returns (uint256, uint256); // quoteToken refunded, baseToken refunded
+
+    // Token Amount Calculators
+    function getQuoteTokenAmount(uint256 price, uint256 amountInBaseLots) external view returns (uint256);
+
+    function getBaseTokenAmount(uint256 price, uint256 amountInBaseLots) external view returns (uint256);
+
+    // Getters
+
+    function maxNumOrdersPerSide() external view returns (uint256);
+
+    function gteRouter() external view returns (address);
+
+    function getQuoteToken() external view returns (address);
+
+    function getBaseToken() external view returns (address);
+
+    function getMarketConfig() external view returns (MarketConfig memory);
+
+    function getTickSize() external view returns (uint256);
+
+    function getLotSizeInBase() external view returns (uint256);
+
+    function getOpenInterest() external view returns (uint256, uint256);
+
+    function getOrder(uint256 orderId) external view returns (Order memory);
+
+    function getTOB() external view returns (uint256, uint256);
+
+    function getLimit(uint256 price, Side side) external view returns (Limit memory);
+
+    function getNumBids() external view returns (uint256);
+
+    function getNumAsks() external view returns (uint256);
+
+    function getNextBiggestPrice(uint256 price, Side side) external view returns (uint256);
+
+    function getNextSmallestPrice(uint256 price, Side side) external view returns (uint256);
+
+    function getNextOrders(uint256 startOrderId, uint256 numOrders) external view returns (Order[] memory);
+
+    function getNextOrderId() external view returns (uint256);
+
+    function factory() external view returns (ICLOBManager);
+
+    function getOrdersPaginated(uint256 startPrice, Side side, uint256 pageSize)
+        external
+        view
+        returns (Order[] memory result, Order memory nextOrder);
+
+    function getOrdersPaginated(OrderId startOrderId, uint256 pageSize)
+        external
+        view
+        returns (Order[] memory result, Order memory nextOrder);
+
+    function setLotSizeInBase(uint256 newLotSizeInBase) external;
+    function setMaxLimitsPerTx(uint8 newMaxLimits) external;
+    function setTickSize(uint256 newTickSize) external;
+    function setMinLimitOrderAmountInBase(uint256 newMinLimitOrderAmountInBase) external;
+
+    function adminCancelExpiredOrders(OrderId[] calldata ids, Side side) external returns (bool[] memory);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+/**
+ * @title EventNonce
+ * @notice Shared event nonce management for tracking event ordering offchain
+ * @dev Uses ERC-7201 specifically for shared access across a contract's inheritance graph
+ */
+struct EventNonceStorage {
+    uint256 eventNonce;
+}
+
+/// @custom:storage-location erc7201:EventNonceStorage
+library EventNonceLib {
+    bytes32 constant EVENT_NONCE_STORAGE_POSITION =
+        keccak256(abi.encode(uint256(keccak256("EventNonceStorage")) - 1)) & ~bytes32(uint256(0xff));
+
+    // slither-disable-next-line uninitialized-storage
+    function getEventNonceStorage() internal pure returns (EventNonceStorage storage ds) {
+        bytes32 position = EVENT_NONCE_STORAGE_POSITION;
+
+        // slither-disable-next-line assembly
+        assembly {
+            ds.slot := position
+        }
+    }
+
+    /// @notice Increments and returns the event nonce
+    /// @return The new event nonce value
+    function inc() internal returns (uint256) {
+        EventNonceStorage storage ds = getEventNonceStorage();
+        return ++ds.eventNonce;
+    }
+
+    /// @notice Gets the current event nonce without incrementing
+    /// @return The current event nonce value
+    function getCurrentNonce() internal view returns (uint256) {
+        EventNonceStorage storage ds = getEventNonceStorage();
+        return ds.eventNonce;
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
+
+import {Ownable2StepUpgradeable} from "@openzeppelin-contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+
+contract LaunchpadLPVault is Ownable2StepUpgradeable {
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                ERRORS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev sig: 0xaf62991d
+    error FallbackRevert();
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                STATES
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    address public launchpad;
+
+    /// @dev The abi version of this impl so the indexer can handle event-changing upgrades
+    uint256 public constant ABI_VERSION = 1;
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                    CONSTRUCTOR AND INITIALIZATION
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address launchpad_, address initialOwner) external initializer {
+        launchpad = launchpad_;
+        __Ownable_init(initialOwner);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                FALLBACKS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    fallback() external {
+        revert FallbackRevert();
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+interface IUniV2Factory {
+    function createPair(address tokenA, address tokenB) external returns (address pair);
 }
 
 // SPDX-License-Identifier: MIT
@@ -3035,159 +3266,6 @@ interface IAccountManager {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-import {IOperatorPanel} from "../interfaces/IOperatorPanel.sol";
-import {SpotOperatorRoles, PerpsOperatorRoles, OperatorStorage} from "../OperatorPanel.sol";
-
-library OperatorHelperLib {
-    /// @dev sig: 0x732ea322
-    error OperatorDoesNotHaveRole();
-
-    function assertHasRole(uint256 rolesPacked, uint8 role) internal pure {
-        if (rolesPacked & 1 << role == 0 && rolesPacked & 1 == 0) revert OperatorDoesNotHaveRole();
-    }
-
-    /// @dev Performs operator check with both operator and router bypass
-    function onlySenderOrOperator(
-        IOperatorPanel operator,
-        address gteRouter,
-        address account,
-        SpotOperatorRoles requiredRole
-    ) internal view {
-        if (msg.sender == account || msg.sender == gteRouter) return;
-
-        uint256 rolesPacked = operator.getOperatorRoleApprovals(account, msg.sender);
-        assertHasRole(rolesPacked, uint8(requiredRole));
-    }
-
-    /// @dev Performs operator check with just operator
-    function onlySenderOrOperator(IOperatorPanel operator, address account, SpotOperatorRoles requiredRole)
-        internal
-        view
-    {
-        if (msg.sender == account) return;
-
-        uint256 rolesPacked = operator.getOperatorRoleApprovals(account, msg.sender);
-        assertHasRole(rolesPacked, uint8(requiredRole));
-    }
-
-    /// @dev Performs spot operator check with storage directly (for contracts inheriting Operator)
-    function onlySenderOrOperator(
-        OperatorStorage storage self,
-        address gteRouter,
-        address account,
-        SpotOperatorRoles requiredRole
-    ) internal view {
-        if (msg.sender == account || msg.sender == gteRouter) return;
-
-        uint256 rolesPacked = self.operatorRoleApprovals[account][msg.sender];
-        assertHasRole(rolesPacked, uint8(requiredRole));
-    }
-
-    /// @dev Performs perps operator check with storage directly (for contracts inheriting Operator)
-    function onlySenderOrOperator(OperatorStorage storage self, address account, PerpsOperatorRoles requiredRole)
-        internal
-        view
-    {
-        if (msg.sender == account) return;
-
-        uint256 rolesPacked = self.operatorRoleApprovals[account][msg.sender];
-        assertHasRole(rolesPacked, uint8(requiredRole));
-    }
-}
-
-pragma solidity 0.8.27;
-
-interface IUniswapV2FactoryMinimal {
-    function createPair(address tokenA, address tokenB) external returns (address pair);
-    function getPair(address tokenA, address tokenB) external view returns (address pair);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-interface IUniswapV2RouterMinimal {
-    function factory() external view returns (address);
-
-    function addLiquidity(
-        address tokenA,
-        address tokenB,
-        uint256 amountADesired,
-        uint256 amountBDesired,
-        uint256 amountAMin,
-        uint256 amountBMin,
-        address to,
-        uint256 deadline
-    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
-
-    function swapTokensForExactTokens(
-        uint256 amountOut,
-        uint256 amountInMax,
-        address[] calldata path,
-        address to,
-        uint256 deadline
-    ) external returns (uint256[] memory amounts);
-
-    function swapExactTokensForTokens(
-        uint256 amountIn,
-        uint256 amountOutMin,
-        address[] calldata path,
-        address to,
-        uint256 deadline
-    ) external returns (uint256[] memory amounts);
-
-    function getAmountIn(uint256 amountOut, uint256 reserveIn, uint256 reserveOut)
-        external
-        pure
-        returns (uint256 amountIn);
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
-
-import {Ownable2StepUpgradeable} from "@openzeppelin-contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
-
-contract LaunchpadLPVault is Ownable2StepUpgradeable {
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                ERRORS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev sig: 0xaf62991d
-    error FallbackRevert();
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                STATES
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    address public launchpad;
-
-    /// @dev The abi version of this impl so the indexer can handle event-changing upgrades
-    uint256 public constant ABI_VERSION = 1;
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                    CONSTRUCTOR AND INITIALIZATION
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    constructor() {
-        _disableInitializers();
-    }
-
-    function initialize(address launchpad_, address initialOwner) external initializer {
-        launchpad = launchpad_;
-        __Ownable_init(initialOwner);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                FALLBACKS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    fallback() external {
-        revert FallbackRevert();
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
 import {IOperatorPanel} from "./interfaces/IOperatorPanel.sol";
 import {EventNonceLib as OperatorEventNonce} from "./types/EventNonce.sol";
 
@@ -3301,339 +3379,63 @@ abstract contract OperatorPanel is IOperatorPanel {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-interface IUniV2Factory {
-    function createPair(address tokenA, address tokenB) external returns (address pair);
-}
+import {IOperatorPanel} from "../interfaces/IOperatorPanel.sol";
+import {SpotOperatorRoles, PerpsOperatorRoles, OperatorStorage} from "../OperatorPanel.sol";
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
+library OperatorHelperLib {
+    /// @dev sig: 0x732ea322
+    error OperatorDoesNotHaveRole();
 
-abstract contract BondingCurve {
-    function viewAveragePriceInX(address token, uint256 deltaY, bool isBuy) public view virtual returns (uint256);
-
-    // slither-disable-next-line naming-convention
-    function getAverageCostInY(address token, uint256 x_0, uint256 x_1) public virtual returns (uint256);
-
-    // slither-disable-next-line naming-convention
-    function viewAverageCostInY(address token, uint256 x_0, uint256 x_1) public view virtual returns (uint256);
-}
-
-pragma solidity 0.8.27;
-
-interface IUniswapV2Pair {
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    event Transfer(address indexed from, address indexed to, uint256 value);
-
-    function name() external pure returns (string memory);
-    function symbol() external pure returns (string memory);
-    function decimals() external pure returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address owner) external view returns (uint256);
-    function allowance(address owner, address spender) external view returns (uint256);
-
-    function approve(address spender, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-
-    function DOMAIN_SEPARATOR() external view returns (bytes32);
-    function PERMIT_TYPEHASH() external pure returns (bytes32);
-    function nonces(address owner) external view returns (uint256);
-
-    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external;
-
-    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
-    event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
-    event Swap(
-        address indexed sender,
-        uint256 amount0In,
-        uint256 amount1In,
-        uint256 amount0Out,
-        uint256 amount1Out,
-        address indexed to
-    );
-    event Sync(uint112 reserve0, uint112 reserve1);
-
-    function MINIMUM_LIQUIDITY() external pure returns (uint256);
-    function factory() external view returns (address);
-    function token0() external view returns (address);
-    function token1() external view returns (address);
-    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
-    function price0CumulativeLast() external view returns (uint256);
-    function price1CumulativeLast() external view returns (uint256);
-    function kLast() external view returns (uint256);
-
-    function mint(address to) external returns (uint256 liquidity);
-    function burn(address to) external returns (uint256 amount0, uint256 amount1);
-    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
-    function skim(address to) external;
-    function sync() external;
-
-    function initialize(address, address) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {ICLOB} from "../ICLOB.sol";
-
-type OrderId is uint256;
-
-using OrderIdLib for OrderId global;
-
-library OrderIdLib {
-    function getClientOrderId(address account, uint96 id) internal pure returns (uint256) {
-        return uint256(bytes32(abi.encodePacked(account, id)));
+    function assertHasRole(uint256 rolesPacked, uint8 role) internal pure {
+        if (rolesPacked & 1 << role == 0 && rolesPacked & 1 == 0) revert OperatorDoesNotHaveRole();
     }
 
-    function toOrderId(uint256 id) internal pure returns (OrderId) {
-        return OrderId.wrap(id);
+    /// @dev Performs operator check with both operator and router bypass
+    function onlySenderOrOperator(
+        IOperatorPanel operator,
+        address gteRouter,
+        address account,
+        SpotOperatorRoles requiredRole
+    ) internal view {
+        if (msg.sender == account || msg.sender == gteRouter) return;
+
+        uint256 rolesPacked = operator.getOperatorRoleApprovals(account, msg.sender);
+        assertHasRole(rolesPacked, uint8(requiredRole));
     }
 
-    function unwrap(OrderId id) internal pure returns (uint256) {
-        return uint256(OrderId.unwrap(id));
-    }
-
-    function isNull(OrderId id) internal pure returns (bool) {
-        return id.unwrap() == NULL_ORDER_ID;
-    }
-}
-
-uint256 constant NULL_ORDER_ID = 0;
-uint32 constant NULL_TIMESTAMP = 0;
-
-enum Side {
-    BUY,
-    SELL
-}
-
-struct Order {
-    // SLOT 0 //
-    Side side;
-    uint32 cancelTimestamp;
-    OrderId id;
-    OrderId prevOrderId;
-    OrderId nextOrderId;
-    // SLOT 1 //
-    address owner;
-    // SLOT 2 //
-    uint256 price;
-    // SLOT 3 //
-    uint256 amount; // denominated in base for limit & either token for fill
-}
-
-using OrderLib for Order global;
-
-library OrderLib {
-    using OrderIdLib for uint256;
-
-    /// @dev sig: 0xd36d8965
-    error OrderNotFound();
-    /// @dev sig: 0x207d0854
-    error MarketOrderCannotMake();
-    /// @dev sig: 0x3228b943
-    error TakerOrdersCannotExpire();
-    /// @dev sig: 0x048fe9b3
-    error MakerOrderExpired();
-    /// @dev sig: 0x07928dcd
-    error PostOnlyOrderMustBeBaseDenominated();
-
-    /// @dev Generates and Order from place order args and verifies the args do not conflict with eachother
-    function toOrderChecked(ICLOB.PlaceOrderArgs calldata args, uint256 orderId, address owner)
+    /// @dev Performs operator check with just operator
+    function onlySenderOrOperator(IOperatorPanel operator, address account, SpotOperatorRoles requiredRole)
         internal
         view
-        returns (Order memory order)
     {
-        // Validate market order constraints
-        if (args.limitPrice == 0 && uint8(args.tif) < 2) revert MarketOrderCannotMake();
+        if (msg.sender == account) return;
 
-        // Check expiry for GTC and MOC orders (TiF 0 and 1)
-        if (uint8(args.tif) <= 1 && args.expiryTime > 0 && args.expiryTime < block.timestamp) {
-            revert MakerOrderExpired();
-        }
-
-        if (args.expiryTime > 0 && uint8(args.tif) > 1) revert TakerOrdersCannotExpire();
-
-        if (args.tif == ICLOB.TiF.MOC && !args.baseDenominated) revert PostOnlyOrderMustBeBaseDenominated();
-
-        // Set order fields after validation
-        if (args.limitPrice > 0) {
-            // limit order
-            order.price = args.limitPrice;
-        } else {
-            // market order, limitPrice = 0 | +inf
-            order.price = args.side == Side.BUY ? type(uint256).max : 0;
-        }
-
-        order.id = orderId.toOrderId();
-        order.side = args.side;
-        order.owner = owner;
-        order.amount = args.amount;
-        order.cancelTimestamp = args.expiryTime;
+        uint256 rolesPacked = operator.getOperatorRoleApprovals(account, msg.sender);
+        assertHasRole(rolesPacked, uint8(requiredRole));
     }
 
-    /// @dev Checks whether an order is expired from an Order struct
-    function isExpired(Order memory self) internal view returns (bool) {
-        // slither-disable-next-line timestamp
-        return self.cancelTimestamp != NULL_TIMESTAMP && self.cancelTimestamp < block.timestamp;
+    /// @dev Performs spot operator check with storage directly (for contracts inheriting Operator)
+    function onlySenderOrOperator(
+        OperatorStorage storage self,
+        address gteRouter,
+        address account,
+        SpotOperatorRoles requiredRole
+    ) internal view {
+        if (msg.sender == account || msg.sender == gteRouter) return;
+
+        uint256 rolesPacked = self.operatorRoleApprovals[account][msg.sender];
+        assertHasRole(rolesPacked, uint8(requiredRole));
     }
 
-    /// @dev Checks whether an order is expired from a timestamp
-    function isExpired(uint256 cancelTimestamp) internal view returns (bool) {
-        // slither-disable-next-line timestamp
-        return cancelTimestamp != NULL_TIMESTAMP && cancelTimestamp < block.timestamp;
-    }
-
-    /// @dev Checks whether an order is null
-    function isNull(Order storage self) internal view returns (bool) {
-        return self.id.unwrap() == NULL_ORDER_ID;
-    }
-
-    /// @dev Asserts that an order exists
-    function assertExists(Order storage self) internal view {
-        if (self.isNull()) revert OrderNotFound();
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {EventNonceLib as FeeDataEventNonce} from "contracts/utils/types/EventNonce.sol";
-
-import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
-import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
-
-type PackedFeeRates is uint256;
-
-using PackedFeeRatesLib for PackedFeeRates global;
-
-library PackedFeeRatesLib {
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                ERRORS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev sig: 0x39bdbb10
-    error FeeTiersExceedsMax();
-    /// @dev sig: 0x8e516923
-    error FeeTierIndexOutOfBounds();
-
-    uint256 private constant U16_PER_WORD = 16;
-
-    function packFeeRates(uint16[] memory fees) internal pure returns (PackedFeeRates) {
-        if (fees.length > U16_PER_WORD) revert FeeTiersExceedsMax();
-
-        uint256 packedValue = 0;
-        for (uint256 i; i < fees.length; i++) {
-            packedValue = packedValue | (uint256(fees[i]) << (i * U16_PER_WORD));
-        }
-
-        return PackedFeeRates.wrap(packedValue);
-    }
-
-    function getFeeAt(PackedFeeRates fees, uint256 index) internal pure returns (uint16) {
-        if (index >= 15) revert FeeTierIndexOutOfBounds();
-
-        uint256 shiftBits = index * U16_PER_WORD;
-
-        return uint16((PackedFeeRates.unwrap(fees) >> shiftBits) & 0xFFFF);
-    }
-}
-
-enum FeeTiers {
-    ZERO,
-    ONE,
-    TWO
-}
-
-struct FeeData {
-    mapping(address token => uint256) totalFees;
-    mapping(address token => uint256) unclaimedFees;
-    mapping(address account => FeeTiers) accountFeeTier;
-}
-
-using FeeDataLib for FeeData global;
-
-/// @custom:storage-location erc7201:FeeDataStorage
-library FeeDataStorageLib {
-    bytes32 constant FEE_DATA_STORAGE_POSITION =
-        keccak256(abi.encode(uint256(keccak256("FeeDataStorage")) - 1)) & ~bytes32(uint256(0xff));
-
-    /// @dev Gets the storage slot of the FeeData struct
-    // slither-disable-next-line uninitialized-storage
-    function getFeeDataStorage() internal pure returns (FeeData storage self) {
-        bytes32 position = FEE_DATA_STORAGE_POSITION;
-
-        // slither-disable-next-line assembly
-        assembly {
-            self.slot := position
-        }
-    }
-}
-
-library FeeDataLib {
-    using PackedFeeRatesLib for PackedFeeRates;
-    using FixedPointMathLib for uint256;
-    using SafeTransferLib for address;
-
-    /// @dev sig: 0x2227733fc4c8a9034cb58087dcf6995128b9c0233b038b03366aaf30c92b92d6
-    event FeesClaimed(uint256 indexed eventNonce, address indexed token, uint256 fee);
-    /// @dev sig: 0xfaa858b3dfeba08d811f5f70b037ea5cb20192ab57f696df5a74a281ef22751b
-    event AccountFeeTierUpdated(uint256 indexed eventNonce, address indexed account, FeeTiers newTier);
-    /// @dev sig: 0x91865da290f8efd7332deaf04dfb3d8fdcf887d7d5d9e55b2bd72c932c939b32
-    event FeesAccrued(uint256 indexed eventNonce, address indexed token, uint256 amount);
-
-    uint256 constant FEE_SCALING = 10_000_000;
-
-    /// @dev Returns the taker fee for a given amount and account
-    function getTakerFee(FeeData storage self, PackedFeeRates takerRates, address account, uint256 amount)
+    /// @dev Performs perps operator check with storage directly (for contracts inheriting Operator)
+    function onlySenderOrOperator(OperatorStorage storage self, address account, PerpsOperatorRoles requiredRole)
         internal
         view
-        returns (uint256)
     {
-        if (amount == 0) return 0;
+        if (msg.sender == account) return;
 
-        uint16 feeRate = takerRates.getFeeAt(uint256(self.accountFeeTier[account]));
-        return amount.fullMulDiv(feeRate, FEE_SCALING);
-    }
-
-    /// @dev Returns the maker fee for a given amount and account
-    function getMakerFee(FeeData storage self, PackedFeeRates makerRates, address account, uint256 amount)
-        internal
-        view
-        returns (uint256)
-    {
-        if (amount == 0) return 0;
-
-        uint16 feeRate = makerRates.getFeeAt(uint256(self.accountFeeTier[account]));
-        return amount.fullMulDiv(feeRate, FEE_SCALING);
-    }
-
-    /// @dev Returns the fee tier for a given account
-    function getAccountFeeTier(FeeData storage self, address account) internal view returns (FeeTiers tier) {
-        return self.accountFeeTier[account];
-    }
-
-    /// @dev Sets the fee tier for a given account
-    function setAccountFeeTier(FeeData storage self, address account, FeeTiers feeTier) internal {
-        self.accountFeeTier[account] = feeTier;
-
-        emit AccountFeeTierUpdated(FeeDataEventNonce.inc(), account, feeTier);
-    }
-
-    /// @dev Accrues fees for a given token
-    function accrueFee(FeeData storage self, address token, uint256 amount) internal {
-        self.totalFees[token] += amount;
-        self.unclaimedFees[token] += amount;
-
-        emit FeesAccrued(FeeDataEventNonce.inc(), token, amount);
-    }
-
-    /// @dev Claims fees for a given token
-    function claimFees(FeeData storage self, address token) internal returns (uint256 fees) {
-        fees = self.unclaimedFees[token];
-        delete self.unclaimedFees[token];
-
-        emit FeesClaimed(FeeDataEventNonce.inc(), token, fees);
+        uint256 rolesPacked = self.operatorRoleApprovals[account][msg.sender];
+        assertHasRole(rolesPacked, uint8(requiredRole));
     }
 }
 
@@ -3887,6 +3689,129 @@ library RewardsTrackerStorage {
 }
 
 // SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {ICLOB} from "../ICLOB.sol";
+
+type OrderId is uint256;
+
+using OrderIdLib for OrderId global;
+
+library OrderIdLib {
+    function getClientOrderId(address account, uint96 id) internal pure returns (uint256) {
+        return uint256(bytes32(abi.encodePacked(account, id)));
+    }
+
+    function toOrderId(uint256 id) internal pure returns (OrderId) {
+        return OrderId.wrap(id);
+    }
+
+    function unwrap(OrderId id) internal pure returns (uint256) {
+        return uint256(OrderId.unwrap(id));
+    }
+
+    function isNull(OrderId id) internal pure returns (bool) {
+        return id.unwrap() == NULL_ORDER_ID;
+    }
+}
+
+uint256 constant NULL_ORDER_ID = 0;
+uint32 constant NULL_TIMESTAMP = 0;
+
+enum Side {
+    BUY,
+    SELL
+}
+
+struct Order {
+    // SLOT 0 //
+    Side side;
+    uint32 cancelTimestamp;
+    OrderId id;
+    OrderId prevOrderId;
+    OrderId nextOrderId;
+    // SLOT 1 //
+    address owner;
+    // SLOT 2 //
+    uint256 price;
+    // SLOT 3 //
+    uint256 amount; // denominated in base for limit & either token for fill
+}
+
+using OrderLib for Order global;
+
+library OrderLib {
+    using OrderIdLib for uint256;
+
+    /// @dev sig: 0xd36d8965
+    error OrderNotFound();
+    /// @dev sig: 0x207d0854
+    error MarketOrderCannotMake();
+    /// @dev sig: 0x3228b943
+    error TakerOrdersCannotExpire();
+    /// @dev sig: 0x048fe9b3
+    error MakerOrderExpired();
+    /// @dev sig: 0x07928dcd
+    error PostOnlyOrderMustBeBaseDenominated();
+
+    /// @dev Generates and Order from place order args and verifies the args do not conflict with eachother
+    function toOrderChecked(ICLOB.PlaceOrderArgs calldata args, uint256 orderId, address owner)
+        internal
+        view
+        returns (Order memory order)
+    {
+        // Validate market order constraints
+        if (args.limitPrice == 0 && uint8(args.tif) < 2) revert MarketOrderCannotMake();
+
+        // Check expiry for GTC and MOC orders (TiF 0 and 1)
+        if (uint8(args.tif) <= 1 && args.expiryTime > 0 && args.expiryTime < block.timestamp) {
+            revert MakerOrderExpired();
+        }
+
+        if (args.expiryTime > 0 && uint8(args.tif) > 1) revert TakerOrdersCannotExpire();
+
+        if (args.tif == ICLOB.TiF.MOC && !args.baseDenominated) revert PostOnlyOrderMustBeBaseDenominated();
+
+        // Set order fields after validation
+        if (args.limitPrice > 0) {
+            // limit order
+            order.price = args.limitPrice;
+        } else {
+            // market order, limitPrice = 0 | +inf
+            order.price = args.side == Side.BUY ? type(uint256).max : 0;
+        }
+
+        order.id = orderId.toOrderId();
+        order.side = args.side;
+        order.owner = owner;
+        order.amount = args.amount;
+        order.cancelTimestamp = args.expiryTime;
+    }
+
+    /// @dev Checks whether an order is expired from an Order struct
+    function isExpired(Order memory self) internal view returns (bool) {
+        // slither-disable-next-line timestamp
+        return self.cancelTimestamp != NULL_TIMESTAMP && self.cancelTimestamp < block.timestamp;
+    }
+
+    /// @dev Checks whether an order is expired from a timestamp
+    function isExpired(uint256 cancelTimestamp) internal view returns (bool) {
+        // slither-disable-next-line timestamp
+        return cancelTimestamp != NULL_TIMESTAMP && cancelTimestamp < block.timestamp;
+    }
+
+    /// @dev Checks whether an order is null
+    function isNull(Order storage self) internal view returns (bool) {
+        return self.id.unwrap() == NULL_ORDER_ID;
+    }
+
+    /// @dev Asserts that an order exists
+    function assertExists(Order storage self) internal view {
+        if (self.isNull()) revert OrderNotFound();
+    }
+}
+
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
 import {IAccountManager} from "../account-manager/IAccountManager.sol";
@@ -3932,182 +3857,6 @@ interface ICLOBManager {
     function adminCancelExpiredOrders(ICLOB market, OrderId[] calldata ids, Side side) external;
     function setAccountFeeTiers(address[] calldata accounts, FeeTiers[] calldata feeTiers) external;
     function setMaxLimitsExempt(address[] calldata accounts, bool[] calldata toggles) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {Side, Order, OrderId} from "./types/Order.sol";
-import {MarketConfig, MarketSettings, Limit} from "./types/Book.sol";
-import {MakerCredit} from "./types/TransientMakerData.sol";
-import {ICLOBManager} from "./ICLOBManager.sol";
-
-interface ICLOB {
-    struct SettleParams {
-        Side side;
-        address taker;
-        uint256 takerBaseAmount;
-        uint256 takerQuoteAmount;
-        address baseToken;
-        address quoteToken;
-        MakerCredit[] makerCredits;
-    }
-
-    enum TiF {
-        // MAKER
-        GTC, // good-till-cancelled
-        MOC, // maker-or-cancel (post-only)
-        // TAKER-ONLY
-        FOK, // fill-or-kill
-        IOC // immediate-or-cancel
-
-    }
-
-    struct PlaceOrderArgs {
-        // metadata
-        Side side; // bid / ask
-        uint96 clientOrderId; // Optional user-defined id for makes
-        // time / execution
-        TiF tif; // time in force
-        uint32 expiryTime; // optional auto-cancel time (only for GTC, MOC)
-        // price
-        uint256 limitPrice; // if 0, market order
-        // size
-        uint256 amount;
-        bool baseDenominated; // which asset the amount denominates
-    }
-
-    struct PlaceOrderResult {
-        address account;
-        uint256 orderId;
-        uint256 basePosted; // amount posted in base (for maker orders)
-        int256 quoteTokenAmountTraded; // negative if outgoing, positive if incoming
-        int256 baseTokenAmountTraded; // negative if outgoing, positive if incoming
-        uint256 takerFee;
-        bool wasMarketOrder; // true if market order (limitPrice = 0), false if limit order
-    }
-
-    enum CancelType {
-        USER,
-        EXPIRY,
-        NON_COMPETITIVE
-    }
-
-    struct AmendArgs {
-        uint256 orderId;
-        uint256 amountInBase;
-        uint256 price;
-        uint32 cancelTimestamp;
-        Side side;
-    }
-
-    struct CancelArgs {
-        uint256[] orderIds;
-    }
-
-    function placeOrder(address account, PlaceOrderArgs calldata args) external returns (PlaceOrderResult memory);
-
-    function amend(address account, AmendArgs memory args) external returns (int256 quoteDelta, int256 baseDelta);
-
-    function cancel(address account, CancelArgs memory args) external returns (uint256, uint256); // quoteToken refunded, baseToken refunded
-
-    // Token Amount Calculators
-    function getQuoteTokenAmount(uint256 price, uint256 amountInBaseLots) external view returns (uint256);
-
-    function getBaseTokenAmount(uint256 price, uint256 amountInBaseLots) external view returns (uint256);
-
-    // Getters
-
-    function maxNumOrdersPerSide() external view returns (uint256);
-
-    function gteRouter() external view returns (address);
-
-    function getQuoteToken() external view returns (address);
-
-    function getBaseToken() external view returns (address);
-
-    function getMarketConfig() external view returns (MarketConfig memory);
-
-    function getTickSize() external view returns (uint256);
-
-    function getLotSizeInBase() external view returns (uint256);
-
-    function getOpenInterest() external view returns (uint256, uint256);
-
-    function getOrder(uint256 orderId) external view returns (Order memory);
-
-    function getTOB() external view returns (uint256, uint256);
-
-    function getLimit(uint256 price, Side side) external view returns (Limit memory);
-
-    function getNumBids() external view returns (uint256);
-
-    function getNumAsks() external view returns (uint256);
-
-    function getNextBiggestPrice(uint256 price, Side side) external view returns (uint256);
-
-    function getNextSmallestPrice(uint256 price, Side side) external view returns (uint256);
-
-    function getNextOrders(uint256 startOrderId, uint256 numOrders) external view returns (Order[] memory);
-
-    function getNextOrderId() external view returns (uint256);
-
-    function factory() external view returns (ICLOBManager);
-
-    function getOrdersPaginated(uint256 startPrice, Side side, uint256 pageSize)
-        external
-        view
-        returns (Order[] memory result, Order memory nextOrder);
-
-    function getOrdersPaginated(OrderId startOrderId, uint256 pageSize)
-        external
-        view
-        returns (Order[] memory result, Order memory nextOrder);
-
-    function setLotSizeInBase(uint256 newLotSizeInBase) external;
-    function setMaxLimitsPerTx(uint8 newMaxLimits) external;
-    function setTickSize(uint256 newTickSize) external;
-    function setMinLimitOrderAmountInBase(uint256 newMinLimitOrderAmountInBase) external;
-
-    function adminCancelExpiredOrders(OrderId[] calldata ids, Side side) external returns (bool[] memory);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-interface IOperatorPanel {
-    function approveOperator(address account, address operator, uint256 roles) external;
-    function disapproveOperator(address account, address operator, uint256 roles) external;
-    function getOperatorRoleApprovals(address account, address operator) external view returns (uint256);
-    function getOperatorEventNonce() external view returns (uint256);
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
-
-import {IERC165} from "@openzeppelin/interfaces/IERC165.sol";
-
-interface IBondingCurveMinimal is IERC165 {
-    function init(bytes memory data) external;
-
-    function initializeCurve(address token, uint256 totalSupply, uint256 bondingSupply) external;
-    function buy(address token, uint256 baseAmount) external returns (uint256 quoteAmount);
-    function sell(address token, uint256 baseAmount) external returns (uint256 quoteAmount);
-
-    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
-        external
-        view
-        returns (uint256 baseAmount);
-    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
-        external
-        view
-        returns (uint256 quoteAmount);
-    function baseSoldFromCurve(address token) external view returns (uint256);
-    function quoteBoughtByCurve(address token) external view returns (uint256);
-    function totalSupply(address token) external view returns (uint256);
-    function bondingSupply(address token) external view returns (uint256);
-
-    function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }
 
 // SPDX-License-Identifier: MIT
@@ -4266,87 +4015,70 @@ library TransientMakerData {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-/**
- * @title EventNonce
- * @notice Shared event nonce management for tracking event ordering offchain
- * @dev Uses ERC-7201 specifically for shared access across a contract's inheritance graph
- */
-struct EventNonceStorage {
-    uint256 eventNonce;
-}
+import {EventNonceLib as FeeDataEventNonce} from "contracts/utils/types/EventNonce.sol";
 
-/// @custom:storage-location erc7201:EventNonceStorage
-library EventNonceLib {
-    bytes32 constant EVENT_NONCE_STORAGE_POSITION =
-        keccak256(abi.encode(uint256(keccak256("EventNonceStorage")) - 1)) & ~bytes32(uint256(0xff));
-
-    // slither-disable-next-line uninitialized-storage
-    function getEventNonceStorage() internal pure returns (EventNonceStorage storage ds) {
-        bytes32 position = EVENT_NONCE_STORAGE_POSITION;
-
-        // slither-disable-next-line assembly
-        assembly {
-            ds.slot := position
-        }
-    }
-
-    /// @notice Increments and returns the event nonce
-    /// @return The new event nonce value
-    function inc() internal returns (uint256) {
-        EventNonceStorage storage ds = getEventNonceStorage();
-        return ++ds.eventNonce;
-    }
-
-    /// @notice Gets the current event nonce without incrementing
-    /// @return The current event nonce value
-    function getCurrentNonce() internal view returns (uint256) {
-        EventNonceStorage storage ds = getEventNonceStorage();
-        return ds.eventNonce;
-    }
-}
-
-
-## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-// Local types, libs, contracts, and interfaces
-import {CLOB, ICLOB} from "./CLOB.sol";
-import {Side, OrderId} from "./types/Order.sol";
-import {MakerCredit} from "./types/TransientMakerData.sol";
-import {ICLOBManager, ConfigParams, SettingsParams} from "./ICLOBManager.sol";
-import {FeeTiers} from "./types/FeeData.sol";
-import {CLOBStorageLib, MarketConfig, MarketSettings, MIN_MIN_LIMIT_ORDER_AMOUNT_BASE} from "./types/Book.sol";
-
-// Internal package libs and interfaces
-import {IAccountManager} from "../account-manager/IAccountManager.sol";
-import {EventNonceLib as CLOBEventNonce} from "contracts/utils/types/EventNonce.sol";
-
-// Solady and OZ imports
-import {Initializable} from "@solady/utils/Initializable.sol";
 import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
-import {OwnableRoles as CLOBAdminOwnableRoles} from "@solady/auth/OwnableRoles.sol";
-import {IERC20Metadata} from "@openzeppelin/token/ERC20/extensions/IERC20Metadata.sol";
-import {BeaconProxy, IBeacon} from "@openzeppelin/proxy/beacon/BeaconProxy.sol";
 
-struct CLOBManagerStorage {
-    mapping(address clob => bool) isCLOB;
-    mapping(bytes32 tokenPairHash => address) clob;
-    mapping(address account => bool) maxLimitWhitelist;
+type PackedFeeRates is uint256;
+
+using PackedFeeRatesLib for PackedFeeRates global;
+
+library PackedFeeRatesLib {
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                ERRORS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev sig: 0x39bdbb10
+    error FeeTiersExceedsMax();
+    /// @dev sig: 0x8e516923
+    error FeeTierIndexOutOfBounds();
+
+    uint256 private constant U16_PER_WORD = 16;
+
+    function packFeeRates(uint16[] memory fees) internal pure returns (PackedFeeRates) {
+        if (fees.length > U16_PER_WORD) revert FeeTiersExceedsMax();
+
+        uint256 packedValue = 0;
+        for (uint256 i; i < fees.length; i++) {
+            packedValue = packedValue | (uint256(fees[i]) << (i * U16_PER_WORD));
+        }
+
+        return PackedFeeRates.wrap(packedValue);
+    }
+
+    function getFeeAt(PackedFeeRates fees, uint256 index) internal pure returns (uint16) {
+        if (index >= 15) revert FeeTierIndexOutOfBounds();
+
+        uint256 shiftBits = index * U16_PER_WORD;
+
+        return uint16((PackedFeeRates.unwrap(fees) >> shiftBits) & 0xFFFF);
+    }
 }
 
-using CLOBManagerStorageLib for CLOBManagerStorage global;
+enum FeeTiers {
+    ZERO,
+    ONE,
+    TWO
+}
 
-/// @custom:storage-location erc7201:CLOBManagerStorage
-library CLOBManagerStorageLib {
-    bytes32 constant CLOB_MANAGER_STORAGE_POSITION =
-        keccak256(abi.encode(uint256(keccak256("CLOBManagerStorage")) - 1)) & ~bytes32(uint256(0xff));
+struct FeeData {
+    mapping(address token => uint256) totalFees;
+    mapping(address token => uint256) unclaimedFees;
+    mapping(address account => FeeTiers) accountFeeTier;
+}
 
-    /// @dev Gets the storage slot of the storage struct for the contract calling this library function
+using FeeDataLib for FeeData global;
+
+/// @custom:storage-location erc7201:FeeDataStorage
+library FeeDataStorageLib {
+    bytes32 constant FEE_DATA_STORAGE_POSITION =
+        keccak256(abi.encode(uint256(keccak256("FeeDataStorage")) - 1)) & ~bytes32(uint256(0xff));
+
+    /// @dev Gets the storage slot of the FeeData struct
     // slither-disable-next-line uninitialized-storage
-    function getCLOBManagerStorage() internal pure returns (CLOBManagerStorage storage self) {
-        bytes32 position = CLOB_MANAGER_STORAGE_POSITION;
+    function getFeeDataStorage() internal pure returns (FeeData storage self) {
+        bytes32 position = FEE_DATA_STORAGE_POSITION;
 
         // slither-disable-next-line assembly
         assembly {
@@ -4355,284 +4087,642 @@ library CLOBManagerStorageLib {
     }
 }
 
-/**
- * @title CLOBManager
- * @notice Main contract that handles CLOB admin functionality and fee calculations
- */
-contract CLOBManager is ICLOBManager, CLOBAdminOwnableRoles, Initializable {
+library FeeDataLib {
+    using PackedFeeRatesLib for PackedFeeRates;
     using FixedPointMathLib for uint256;
     using SafeTransferLib for address;
 
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                ERRORS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+    /// @dev sig: 0x2227733fc4c8a9034cb58087dcf6995128b9c0233b038b03366aaf30c92b92d6
+    event FeesClaimed(uint256 indexed eventNonce, address indexed token, uint256 fee);
+    /// @dev sig: 0xfaa858b3dfeba08d811f5f70b037ea5cb20192ab57f696df5a74a281ef22751b
+    event AccountFeeTierUpdated(uint256 indexed eventNonce, address indexed account, FeeTiers newTier);
+    /// @dev sig: 0x91865da290f8efd7332deaf04dfb3d8fdcf887d7d5d9e55b2bd72c932c939b32
+    event FeesAccrued(uint256 indexed eventNonce, address indexed token, uint256 amount);
 
-    /// @dev sig: 0x1e4f7d8c
-    error InvalidPair();
-    /// @dev sig: 0x8fc6f59b
-    error MarketExists();
-    /// @dev sig: 0xe591f33d
-    error InvalidSettings();
-    /// @dev sig: 0x1eb00b06
-    error InvalidTokenAddress();
-    /// @dev sig: 0x353f2237
-    error AdminPanelArrayLengthsInvalid();
-    /// @dev sig: 0xf9f68635
-    error MarketUnauthorized();
-    /// @dev sig: 0x6fbe54bd
-    error InvalidBeaconAddress();
-    /// @dev sig: 0x19ae8c78
-    error CLOBBeaconMustHaveRouter();
+    uint256 constant FEE_SCALING = 10_000_000;
+
+    /// @dev Returns the taker fee for a given amount and account
+    function getTakerFee(FeeData storage self, PackedFeeRates takerRates, address account, uint256 amount)
+        internal
+        view
+        returns (uint256)
+    {
+        if (amount == 0) return 0;
+
+        uint16 feeRate = takerRates.getFeeAt(uint256(self.accountFeeTier[account]));
+        return amount.fullMulDiv(feeRate, FEE_SCALING);
+    }
+
+    /// @dev Returns the maker fee for a given amount and account
+    function getMakerFee(FeeData storage self, PackedFeeRates makerRates, address account, uint256 amount)
+        internal
+        view
+        returns (uint256)
+    {
+        if (amount == 0) return 0;
+
+        uint16 feeRate = makerRates.getFeeAt(uint256(self.accountFeeTier[account]));
+        return amount.fullMulDiv(feeRate, FEE_SCALING);
+    }
+
+    /// @dev Returns the fee tier for a given account
+    function getAccountFeeTier(FeeData storage self, address account) internal view returns (FeeTiers tier) {
+        return self.accountFeeTier[account];
+    }
+
+    /// @dev Sets the fee tier for a given account
+    function setAccountFeeTier(FeeData storage self, address account, FeeTiers feeTier) internal {
+        self.accountFeeTier[account] = feeTier;
+
+        emit AccountFeeTierUpdated(FeeDataEventNonce.inc(), account, feeTier);
+    }
+
+    /// @dev Accrues fees for a given token
+    function accrueFee(FeeData storage self, address token, uint256 amount) internal {
+        self.totalFees[token] += amount;
+        self.unclaimedFees[token] += amount;
+
+        emit FeesAccrued(FeeDataEventNonce.inc(), token, amount);
+    }
+
+    /// @dev Claims fees for a given token
+    function claimFees(FeeData storage self, address token) internal returns (uint256 fees) {
+        fees = self.unclaimedFees[token];
+        delete self.unclaimedFees[token];
+
+        emit FeesClaimed(FeeDataEventNonce.inc(), token, fees);
+    }
+}
+
+pragma solidity 0.8.27;
+
+interface IUniswapV2Pair {
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    function name() external pure returns (string memory);
+    function symbol() external pure returns (string memory);
+    function decimals() external pure returns (uint8);
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address owner) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
+
+    function approve(address spender, uint256 value) external returns (bool);
+    function transfer(address to, uint256 value) external returns (bool);
+    function transferFrom(address from, address to, uint256 value) external returns (bool);
+
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+    function PERMIT_TYPEHASH() external pure returns (bytes32);
+    function nonces(address owner) external view returns (uint256);
+
+    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external;
+
+    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
+    event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
+    event Swap(
+        address indexed sender,
+        uint256 amount0In,
+        uint256 amount1In,
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address indexed to
+    );
+    event Sync(uint112 reserve0, uint112 reserve1);
+
+    function MINIMUM_LIQUIDITY() external pure returns (uint256);
+    function factory() external view returns (address);
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function price0CumulativeLast() external view returns (uint256);
+    function price1CumulativeLast() external view returns (uint256);
+    function kLast() external view returns (uint256);
+
+    function mint(address to) external returns (uint256 liquidity);
+    function burn(address to) external returns (uint256 amount0, uint256 amount1);
+    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
+    function skim(address to) external;
+    function sync() external;
+
+    function initialize(address, address) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+abstract contract BondingCurve {
+    function viewAveragePriceInX(address token, uint256 deltaY, bool isBuy) public view virtual returns (uint256);
+
+    // slither-disable-next-line naming-convention
+    function getAverageCostInY(address token, uint256 x_0, uint256 x_1) public virtual returns (uint256);
+
+    // slither-disable-next-line naming-convention
+    function viewAverageCostInY(address token, uint256 x_0, uint256 x_1) public view virtual returns (uint256);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+interface IUniswapV2RouterMinimal {
+    function factory() external view returns (address);
+
+    function addLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address to,
+        uint256 deadline
+    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
+
+    function swapTokensForExactTokens(
+        uint256 amountOut,
+        uint256 amountInMax,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
+
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
+
+    function getAmountIn(uint256 amountOut, uint256 reserveIn, uint256 reserveOut)
+        external
+        pure
+        returns (uint256 amountIn);
+}
+
+pragma solidity 0.8.27;
+
+interface IUniswapV2FactoryMinimal {
+    function createPair(address tokenA, address tokenB) external returns (address pair);
+    function getPair(address tokenA, address tokenB) external view returns (address pair);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+interface IOperatorPanel {
+    function approveOperator(address account, address operator, uint256 roles) external;
+    function disapproveOperator(address account, address operator, uint256 roles) external;
+    function getOperatorRoleApprovals(address account, address operator) external view returns (uint256);
+    function getOperatorEventNonce() external view returns (uint256);
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
+
+import {IERC165} from "@openzeppelin/interfaces/IERC165.sol";
+
+interface IBondingCurveMinimal is IERC165 {
+    function init(bytes memory data) external;
+
+    function initializeCurve(address token, uint256 totalSupply, uint256 bondingSupply) external;
+    function buy(address token, uint256 baseAmount) external returns (uint256 quoteAmount);
+    function sell(address token, uint256 baseAmount) external returns (uint256 quoteAmount);
+
+    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
+        external
+        view
+        returns (uint256 baseAmount);
+    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
+        external
+        view
+        returns (uint256 quoteAmount);
+    function baseSoldFromCurve(address token) external view returns (uint256);
+    function quoteBoughtByCurve(address token) external view returns (uint256);
+    function totalSupply(address token) external view returns (uint256);
+    function bondingSupply(address token) external view returns (uint256);
+
+    function supportsInterface(bytes4 interfaceId) external view returns (bool);
+}
+
+
+## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {IAccountManager} from "./IAccountManager.sol";
+import {ICLOB} from "../clob/ICLOB.sol";
+import {MakerCredit} from "../clob/types/TransientMakerData.sol";
+import {IPerpManager} from "../perps/interfaces/IPerpManager.sol";
+import {Side} from "../clob/types/Order.sol";
+import {OperatorHelperLib} from "../utils/types/OperatorHelperLib.sol";
+import {EventNonceLib as AccountEventNonce} from "../utils/types/EventNonce.sol";
+import {Initializable} from "@solady/utils/Initializable.sol";
+import {OwnableRoles} from "@solady/auth/OwnableRoles.sol";
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
+import {OperatorPanel, SpotOperatorRoles} from "../utils/OperatorPanel.sol";
+import {
+    FeeData,
+    FeeDataLib,
+    FeeDataStorageLib,
+    PackedFeeRates,
+    PackedFeeRatesLib,
+    FeeTiers
+} from "../clob/types/FeeData.sol";
+
+struct AccountManagerStorage {
+    mapping(address market => bool) isMarket;
+    mapping(address account => mapping(address asset => uint256)) accountTokenBalances;
+}
+
+/**
+ * @title AccountManager
+ * @notice Handles account balances, deposits, withdrawals, for GTE spot as well as inheriting Operator
+ */
+contract AccountManager is IAccountManager, OperatorPanel, Initializable, OwnableRoles {
+    using SafeTransferLib for address;
+    using FixedPointMathLib for uint256;
+    using PackedFeeRatesLib for PackedFeeRates;
 
     /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
                                 EVENTS
     ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    event MarketCreated(
-        uint256 indexed eventNonce,
-        address indexed creator,
-        address indexed baseToken,
-        address quoteToken,
-        address market,
-        uint8 quoteDecimals,
-        uint8 baseDecimals,
-        ConfigParams config,
-        SettingsParams settings
-    );
+    /// @dev sig: 0x07796b317344e6f18fa32ed89b6074ad66549cee7fb7b8c3e9f1c42c496f1c5c
+    event MarketRegistered(uint256 indexed eventNonce, address indexed market);
+    /// @dev sig: 0x1ae35cf838a52070167575d4dedf6631cc160136bee10eeca1575d2e3cc8a075
+    event AccountDebited(uint256 indexed eventNonce, address indexed account, address indexed token, uint256 amount);
+    /// @dev sig: 0x074f9f8975d437bea257b7e6abcfb4b45312683f7f8f120dde3faae76f783b58
+    event AccountCredited(uint256 indexed eventNonce, address indexed account, address indexed token, uint256 amount);
 
     /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                CONSTANTS
+                                ERRORS
     ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    /// @dev The abi version of this impl so the indexer can handle event-changing upgrades
-    uint256 public constant ABI_VERSION = 1;
-
-    /// @dev Create and call markets to edit their settings
-    uint256 public constant MARKET_MANAGER = 1;
-    /// @dev Sets users' fee tiers in this contract
-    uint256 public constant FEE_TIER_SETTER = 1 << 1;
-    /// @dev Whitelists addresses to bypass the markets' max limits per txn
-    uint256 public constant MAX_LIMIT_WHITELISTER = 1 << 2;
-    /// @dev Clears expired orders from markets
-    uint256 public constant EXPIRED_ORDER_CLEARER = 1 << 3;
+    /// @dev sig: 0x00b8f216
+    error BalanceInsufficient();
+    /// @dev sig: 0x467cb8b4
+    error GTERouterUnauthorized();
+    /// @dev sig: 0x30eee8ba
+    error CLOBManagerUnauthorized();
+    /// @dev sig: 0x9d1c9c18
+    error MarketUnauthorized();
+    /// @dev sig: 0x38422dcd
+    error UnmatchingArrayLengths();
+    error NotPerpManager();
 
     /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
                             IMMUTABLE STATE
     ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    /// @dev The beacon proxy containing the logic implementation all clobs' storage use
-    address public immutable beacon;
-    /// @dev The external AccountManager contract
-    IAccountManager public immutable accountManager;
+    uint256 public constant FEE_COLLECTOR = 1;
+
+    /// @dev The global router address that can bypass the operator check
+    address public immutable gteRouter;
+    /// @dev The CLOBManager address that can call settlement functions
+    address public immutable clobManager;
+    /// @dev Packed spot maker fee rates for all tiers
+    PackedFeeRates public immutable spotMakerFeeRates;
+    /// @dev Packed spot taker fee rates for all tiers
+    PackedFeeRates public immutable spotTakerFeeRates;
 
     /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            CONSTRUCTOR
+                                MODIFIERS
     ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    constructor(address _beacon, address _accountManager) {
-        if (_beacon == address(0)) revert InvalidBeaconAddress();
-        beacon = _beacon;
-        accountManager = IAccountManager(_accountManager);
+    /// @dev Ensures msg.sender is a registered market
+    modifier onlyMarket() {
+        if (!_getAccountStorage().isMarket[msg.sender]) revert MarketUnauthorized();
+        _;
+    }
+
+    /// @dev Ensures msg.sender is the router
+    modifier onlyGTERouter() {
+        if (msg.sender != gteRouter) revert GTERouterUnauthorized();
+        _;
+    }
+
+    /// @dev Ensures msg.sender is the CLOBManager
+    modifier onlyCLOBManager() {
+        if (msg.sender != clobManager) revert CLOBManagerUnauthorized();
+        _;
+    }
+
+    /// @dev Ensures that if an account is not the msg.sender, both that account and the owner have approved msg.sender
+    modifier onlySenderOrOperator(address account, SpotOperatorRoles requiredRole) {
+        OperatorHelperLib.onlySenderOrOperator(_getOperatorStorage(), gteRouter, account, requiredRole);
+        _;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                CONSTRUCTOR
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    constructor(
+        address _gteRouter,
+        address _clobManager,
+        address _operatorHub,
+        uint16[] memory _spotMakerFees,
+        uint16[] memory _spotTakerFees,
+        address _perpManager
+    ) OperatorPanel(_operatorHub) {
+        gteRouter = _gteRouter;
+        clobManager = _clobManager;
+        spotMakerFeeRates = PackedFeeRatesLib.packFeeRates(_spotMakerFees);
+        spotTakerFeeRates = PackedFeeRatesLib.packFeeRates(_spotTakerFees);
+        perpManager = IPerpManager(_perpManager);
         _disableInitializers();
     }
 
-    /// @dev Initializes the contract following ERC1967Factory pattern
+    /// @dev Initializes the contract
     function initialize(address _owner) external initializer {
         _initializeOwner(_owner);
     }
+
+    IPerpManager immutable perpManager;
 
     /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
                             EXTERNAL GETTERS
     ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    /// @notice Gets the market address for a given `tokenA` and `tokenB`
-    function getMarketAddress(address tokenA, address tokenB) external view returns (address marketAddress) {
-        return _getStorage().clob[_getTokenHash(tokenA, tokenB)];
-    }
-
-    /// @notice Gets if `market` is a clob created by this factory
-    function isMarket(address market) external view returns (bool) {
-        return _getStorage().isCLOB[market];
-    }
-
-    /// @notice Gets whether an account is exempt from max limits
-    function getMaxLimitExempt(address account) external view returns (bool) {
-        return _getStorage().maxLimitWhitelist[account];
+    /// @notice Gets an `account`'s balance of `token`
+    function getAccountBalance(address account, address token) external view returns (uint256) {
+        return _getAccountStorage().accountTokenBalances[account][token];
     }
 
     /// @notice Gets the current event nonce
     function getEventNonce() external view returns (uint256) {
-        return CLOBEventNonce.getCurrentNonce();
+        return AccountEventNonce.getCurrentNonce();
+    }
+
+    /// @notice Gets the total fees collected for a token
+    function getTotalFees(address token) external view returns (uint256) {
+        return FeeDataStorageLib.getFeeDataStorage().totalFees[token];
+    }
+
+    /// @notice Gets the unclaimed fees for a token
+    function getUnclaimedFees(address token) external view returns (uint256) {
+        return FeeDataStorageLib.getFeeDataStorage().unclaimedFees[token];
+    }
+
+    /// @notice Gets the fee tier for an account
+    function getFeeTier(address account) external view returns (FeeTiers) {
+        return FeeDataStorageLib.getFeeDataStorage().getAccountFeeTier(account);
+    }
+
+    /// @notice Gets the spot taker fee rate for a given fee tier
+    function getSpotTakerFeeRateForTier(FeeTiers tier) external view returns (uint256) {
+        return spotTakerFeeRates.getFeeAt(uint256(tier));
+    }
+
+    /// @notice Gets the spot maker fee rate for a given fee tier
+    function getSpotMakerFeeRateForTier(FeeTiers tier) external view returns (uint256) {
+        return spotMakerFeeRates.getFeeAt(uint256(tier));
     }
 
     /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            ADMIN FUNCTIONS
+                                ACCOUNTS
     ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    /// @notice Creates a new market for `quoteToken` and `baseToken` using beacon proxy
-    function createMarket(address baseToken, address quoteToken, SettingsParams calldata settings)
+    /// @notice Deposits via transfer from the account
+    function deposit(address account, address token, uint256 amount)
         external
         virtual
-        onlyOwnerOrRoles(MARKET_MANAGER)
-        returns (address marketAddress)
+        onlySenderOrOperator(account, SpotOperatorRoles.SPOT_DEPOSIT)
     {
-        _assertValidTokenPair(quoteToken, baseToken);
-
-        uint8 quoteDecimals = IERC20Metadata(quoteToken).decimals();
-        uint8 baseDecimals = IERC20Metadata(baseToken).decimals();
-
-        ConfigParams memory config;
-
-        config.quoteToken = quoteToken;
-        config.baseToken = baseToken;
-        config.quoteSize = 10 ** quoteDecimals;
-        config.baseSize = 10 ** baseDecimals;
-
-        _assertValidSettings(settings, config.baseSize);
-
-        CLOBManagerStorage storage self = _getStorage();
-
-        bytes32 tokenPairHash = _getTokenHash(quoteToken, baseToken);
-
-        if (self.clob[tokenPairHash] > address(0)) revert MarketExists();
-
-        bytes memory initData = abi.encodeWithSelector(
-            CLOB.initialize.selector,
-            MarketConfig({
-                quoteToken: config.quoteToken,
-                baseToken: config.baseToken,
-                quoteSize: config.quoteSize,
-                baseSize: config.baseSize
-            }),
-            MarketSettings({
-                status: true,
-                maxLimitsPerTx: settings.maxLimitsPerTx,
-                minLimitOrderAmountInBase: settings.minLimitOrderAmountInBase,
-                tickSize: settings.tickSize,
-                lotSizeInBase: settings.lotSizeInBase
-            }),
-            settings.owner
-        );
-
-        // Beacon is immutable and itself non upgradeable
-        marketAddress = address(new BeaconProxy(beacon, initData));
-
-        self.isCLOB[marketAddress] = true;
-        self.clob[tokenPairHash] = marketAddress;
-
-        // Register the market in AccountManager
-        accountManager.registerMarket(marketAddress);
-
-        _emitMarketCreated(msg.sender, marketAddress, quoteDecimals, baseDecimals, config, settings);
+        _creditAccount(_getAccountStorage(), account, token, amount);
+        token.safeTransferFrom(account, address(this), amount);
     }
 
-    /// @notice Sets the tick size for a market
-    function setTickSize(ICLOB market, uint256 newTickSize) external onlyOwnerOrRoles(MARKET_MANAGER) {
-        market.setTickSize(newTickSize);
-    }
-
-    /// @notice Sets the lot size for a market
-    function setLotSizeInBase(ICLOB market, uint256 newLotSize) external onlyOwnerOrRoles(MARKET_MANAGER) {
-        market.setLotSizeInBase(newLotSize);
-    }
-
-    /// @notice Sets the min limit order amount in base for a market
-    function setMinLimitOrderAmountInBase(ICLOB market, uint256 newMinLimitOrderAmountInBase)
+    function depositTo(address account, address token, uint256 amount)
         external
-        onlyOwnerOrRoles(MARKET_MANAGER)
     {
-        market.setMinLimitOrderAmountInBase(newMinLimitOrderAmountInBase);
+        _creditAccount(_getAccountStorage(), account, token, amount);
+        token.safeTransferFrom(msg.sender, address(this), amount);
     }
 
-    /// @notice Clears out expired orders from one side of a market
-    function adminCancelExpiredOrders(ICLOB market, OrderId[] calldata ids, Side side)
+    function depositFromPerps(address account, uint256 amount)
         external
-        onlyOwnerOrRoles(EXPIRED_ORDER_CLEARER)
+        onlySenderOrOperator(account, SpotOperatorRoles.PERP_TO_SPOT_DEPOSIT)
     {
-        market.adminCancelExpiredOrders(ids, side);
+        perpManager.withdrawToSpot(account, amount);
+        _creditAccount(_getAccountStorage(), account, perpManager.getCollateralAsset(), amount);
     }
 
-    /// @notice Sets fee tiers for accounts
-    function setAccountFeeTiers(address[] calldata accounts, FeeTiers[] calldata feeTiers)
-        external
-        onlyOwnerOrRoles(FEE_TIER_SETTER)
-    {
-        accountManager.setSpotAccountFeeTiers(accounts, feeTiers);
+    /// @notice Deposits via transfer from the router
+    function depositFromRouter(address account, address token, uint256 amount) external onlyGTERouter {
+        _creditAccount(_getAccountStorage(), account, token, amount);
+        token.safeTransferFrom(gteRouter, address(this), amount);
     }
 
-    /// @notice Sets max limit exemptions for accounts
-    function setMaxLimitsExempt(address[] calldata accounts, bool[] calldata toggles)
+    /// @notice Withdraws to account
+    function withdraw(address account, address token, uint256 amount)
         external
-        onlyOwnerOrRoles(MAX_LIMIT_WHITELISTER)
+        virtual
+        onlySenderOrOperator(account, SpotOperatorRoles.SPOT_WITHDRAW)
     {
-        if (accounts.length != toggles.length) revert AdminPanelArrayLengthsInvalid();
+        _debitAccount(_getAccountStorage(), account, token, amount);
+        token.safeTransfer(account, amount);
+    }
 
-        CLOBManagerStorage storage self = _getStorage();
-        for (uint256 i = 0; i < accounts.length; i++) {
-            self.maxLimitWhitelist[accounts[i]] = toggles[i];
+    function withdrawToPerps(address account, uint256 amount) external {
+        if (msg.sender != address(perpManager)) revert NotPerpManager();
+
+        address token = perpManager.getCollateralAsset();
+
+        _debitAccount(_getAccountStorage(), account, token, amount);
+        token.safeTransfer(address(perpManager), amount);
+    }
+
+    /// @notice Withdraws from account to router
+    function withdrawToRouter(address account, address token, uint256 amount) external onlyGTERouter {
+        _debitAccount(_getAccountStorage(), account, token, amount);
+        token.safeTransfer(gteRouter, amount);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                ADMIN
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @notice Registers a market address, can only be called by CLOBManager
+    function registerMarket(address market) external onlyCLOBManager {
+        _getAccountStorage().isMarket[market] = true;
+        emit MarketRegistered(AccountEventNonce.inc(), market);
+    }
+
+    /// @notice Collects accrued fees for a token and transfers to recipient
+    function collectFees(address token, address feeRecipient)
+        external
+        virtual
+        onlyOwnerOrRoles(FEE_COLLECTOR)
+        returns (uint256 fee)
+    {
+        FeeData storage feeData = FeeDataStorageLib.getFeeDataStorage();
+        fee = feeData.claimFees(token);
+
+        if (fee > 0) {
+            // Transfer fees directly from contract balance to recipient
+            token.safeTransfer(feeRecipient, fee);
         }
     }
 
-    /// @notice Sets the max limits per tx for a market
-    function setMaxLimitsPerTx(ICLOB market, uint8 newMaxLimits) external onlyOwnerOrRoles(MARKET_MANAGER) {
-        market.setMaxLimitsPerTx(newMaxLimits);
+    /// @notice Sets the spot fee tier for a single account, can only be called by CLOBManager
+    function setSpotAccountFeeTier(address account, FeeTiers feeTier) external virtual onlyCLOBManager {
+        FeeData storage feeData = FeeDataStorageLib.getFeeDataStorage();
+        feeData.setAccountFeeTier(account, feeTier);
+    }
+
+    /// @notice Sets the spot fee tiers for multiple accounts, can only be called by CLOBManager
+    function setSpotAccountFeeTiers(address[] calldata accounts, FeeTiers[] calldata feeTiers)
+        external
+        virtual
+        onlyCLOBManager
+    {
+        if (accounts.length != feeTiers.length) revert UnmatchingArrayLengths();
+
+        FeeData storage feeData = FeeDataStorageLib.getFeeDataStorage();
+        for (uint256 i = 0; i < accounts.length; i++) {
+            feeData.setAccountFeeTier(accounts[i], feeTiers[i]);
+        }
     }
 
     /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            INTERNAL ASSERTIONS
+                                SETTLEMENT
     ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    /// @dev Checks config and settings params are within correct bounds
-    function _assertValidSettings(SettingsParams calldata settings, uint256 baseSize) internal pure {
-        if (settings.maxLimitsPerTx == 0) revert InvalidSettings();
-        if (settings.minLimitOrderAmountInBase < MIN_MIN_LIMIT_ORDER_AMOUNT_BASE) revert InvalidSettings();
-        if (settings.minLimitOrderAmountInBase < settings.lotSizeInBase) revert InvalidSettings();
-        if (settings.tickSize.fullMulDiv(settings.lotSizeInBase, baseSize) == 0) revert InvalidSettings();
+    /// @notice The hook for markets to perform account settlement after a fill, including fee calculations
+    function settleIncomingOrder(ICLOB.SettleParams calldata params)
+        external
+        virtual
+        onlyMarket
+        returns (uint256 takerFee)
+    {
+        AccountManagerStorage storage self = _getAccountStorage();
+        FeeData storage feeData = FeeDataStorageLib.getFeeDataStorage();
+
+        // Credit taker less fee
+        address takerFeeToken;
+        if (params.side == Side.BUY) {
+            takerFee = feeData.getTakerFee(spotTakerFeeRates, params.taker, params.takerBaseAmount);
+            takerFeeToken = params.baseToken;
+
+            // Taker settlement
+            _debitAccount(self, params.taker, params.quoteToken, params.takerQuoteAmount);
+            _creditAccount(self, params.taker, params.baseToken, params.takerBaseAmount - takerFee);
+        } else {
+            takerFee = feeData.getTakerFee(spotTakerFeeRates, params.taker, params.takerQuoteAmount);
+            takerFeeToken = params.quoteToken;
+
+            // Taker settlement
+            _debitAccount(self, params.taker, params.baseToken, params.takerBaseAmount);
+            _creditAccount(self, params.taker, params.quoteToken, params.takerQuoteAmount - takerFee);
+        }
+
+        // Accrue taker fee
+        if (takerFee > 0) feeData.accrueFee(takerFeeToken, takerFee);
+
+        // Process maker settlement and fees
+        uint256 currMakerFee = 0;
+        uint256 totalQuoteMakerFee = 0;
+        uint256 totalBaseMakerFee = 0;
+
+        for (uint256 i; i < params.makerCredits.length; ++i) {
+            MakerCredit memory credit = params.makerCredits[i];
+
+            // Calculate fees only for the matching side
+            if (params.side == Side.BUY && credit.quoteAmount > 0) {
+                currMakerFee = feeData.getMakerFee(spotMakerFeeRates, credit.maker, credit.quoteAmount);
+                credit.quoteAmount -= currMakerFee;
+                totalQuoteMakerFee += currMakerFee;
+            } else if (params.side == Side.SELL && credit.baseAmount > 0) {
+                currMakerFee = feeData.getMakerFee(spotMakerFeeRates, credit.maker, credit.baseAmount);
+                credit.baseAmount -= currMakerFee;
+                totalBaseMakerFee += currMakerFee;
+            }
+
+            // Credit both base and quote amounts if any (not just fills less fee, but also expiry and non-competitive refunds)
+            if (credit.baseAmount > 0) _creditAccountNoEvent(self, credit.maker, params.baseToken, credit.baseAmount);
+
+            if (credit.quoteAmount > 0) {
+                _creditAccountNoEvent(self, credit.maker, params.quoteToken, credit.quoteAmount);
+            }
+        }
+
+        // Accrue total collected maker fees
+        if (totalBaseMakerFee > 0) feeData.accrueFee(params.baseToken, totalBaseMakerFee);
+        if (totalQuoteMakerFee > 0) feeData.accrueFee(params.quoteToken, totalQuoteMakerFee);
     }
 
-    /// @dev Performs sanity checks on the addresses passed to make it slightly more difficult to deploy a broken market
-    function _assertValidTokenPair(address quoteToken, address baseToken) internal pure {
-        if (quoteToken == baseToken) revert InvalidPair();
-        if (quoteToken == address(0)) revert InvalidTokenAddress();
-        if (baseToken == address(0)) revert InvalidTokenAddress();
+    /// @notice Credits account, called by markets for amends/cancels
+    function creditAccount(address account, address token, uint256 amount) external virtual onlyMarket {
+        _creditAccount(_getAccountStorage(), account, token, amount);
+    }
+
+    /// @notice Credits account without event, called by markets for non-competitive order removal
+    function creditAccountNoEvent(address account, address token, uint256 amount) external virtual onlyMarket {
+        _creditAccountNoEvent(_getAccountStorage(), account, token, amount);
+    }
+
+    /// @notice Debits account, called by markets for amends
+    function debitAccount(address account, address token, uint256 amount) external virtual onlyMarket {
+        _debitAccount(_getAccountStorage(), account, token, amount);
     }
 
     /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            PRIVATE HELPERS
+                            INTERNAL HELPERS
     ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    /// @dev Event helper that prevents stack from blowing without IR
-    function _emitMarketCreated(
-        address creator,
-        address marketAddress,
-        uint8 quoteDecimals,
-        uint8 baseDecimals,
-        ConfigParams memory config,
-        SettingsParams calldata settings
-    ) internal {
-        emit MarketCreated(
-            CLOBEventNonce.inc(),
-            creator,
-            config.baseToken,
-            config.quoteToken,
-            marketAddress,
-            quoteDecimals,
-            baseDecimals,
-            config,
-            settings
-        );
+    function _creditAccount(AccountManagerStorage storage self, address account, address token, uint256 amount)
+        internal
+    {
+        unchecked {
+            self.accountTokenBalances[account][token] += amount;
+        }
+        emit AccountCredited(AccountEventNonce.inc(), account, token, amount);
     }
 
-    /// @dev Gets the token hash which can be used as a UID for a market
-    function _getTokenHash(address tokenA, address tokenB) internal pure returns (bytes32) {
-        (tokenA, tokenB) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+    function _creditAccountNoEvent(AccountManagerStorage storage self, address account, address token, uint256 amount)
+        internal
+    {
+        unchecked {
+            self.accountTokenBalances[account][token] += amount;
+        }
+    }
 
-        return keccak256(abi.encodePacked(tokenA, tokenB));
+    function _debitAccount(AccountManagerStorage storage self, address account, address token, uint256 amount)
+        internal
+    {
+        if (self.accountTokenBalances[account][token] < amount) revert BalanceInsufficient();
+
+        unchecked {
+            self.accountTokenBalances[account][token] -= amount;
+        }
+        emit AccountDebited(AccountEventNonce.inc(), account, token, amount);
     }
 
     /// @dev Helper to set the storage slot of the storage struct for this contract
-    function _getStorage() internal pure returns (CLOBManagerStorage storage ds) {
-        return CLOBManagerStorageLib.getCLOBManagerStorage();
+    function _getAccountStorage() internal pure returns (AccountManagerStorage storage ds) {
+        return AccountManagerStorageLib.getAccountManagerStorage();
+    }
+}
+
+using AccountManagerStorageLib for AccountManagerStorage global;
+
+/// @custom:storage-location erc7201:AccountManagerStorage
+library AccountManagerStorageLib {
+    bytes32 constant ACCOUNT_MANAGER_STORAGE_POSITION =
+        keccak256(abi.encode(uint256(keccak256("AccountManagerStorage")) - 1)) & ~bytes32(uint256(0xff));
+
+    /// @dev Gets the storage slot of the storage struct for the contract calling this library function
+    // slither-disable-next-line uninitialized-storage
+    function getAccountManagerStorage() internal pure returns (AccountManagerStorage storage self) {
+        bytes32 position = ACCOUNT_MANAGER_STORAGE_POSITION;
+
+        // slither-disable-next-line assembly
+        assembly {
+            self.slot := position
+        }
     }
 }
 
@@ -5622,6 +5712,547 @@ contract CLOB is ICLOB, Ownable2StepUpgradeable {
     }
 }
 
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
+
+import {IERC165} from "@openzeppelin/interfaces/IERC165.sol";
+import {IBondingCurveMinimal} from "./IBondingCurveMinimal.sol";
+import {Ownable} from "@solady/auth/Ownable.sol";
+
+contract SimpleBondingCurve is IBondingCurveMinimal {
+    struct Reserves {
+        uint256 quoteReserve;
+        uint256 baseReserve;
+    }
+
+    struct Supply {
+        uint256 totalSupply;
+        uint256 bondingSupply;
+    }
+
+    /// @dev sig: 0x811abebed4bd76417e15038991a2a59847b86a0ece32d4dcc5c37f7641f0580d
+    event VirtualReservesSet(uint256 virtualBase, uint256 virtualQuote);
+    /// @dev sig: 0xf1dc3d06c4e72b9153d6aba8efebafe8d45e438daab475fa1410c907c526d98b
+    event ReservesSet(address indexed token, uint256 quoteReserve, uint256 baseReserve);
+    /// @dev sig: 0x1b77ab811805ecfa41dda62047dae05b29f779f97d4735116c794a5c1a050cf0
+    event NewTokenLaunched(address indexed token, uint256 virtualBase, uint256 virtualQuote);
+
+    /// @dev can only be set once, at initialization; see {Launchpad.sol}::line_162
+    uint256 public VIRTUAL_BASE; // can be customized to change curve
+    uint256 public VIRTUAL_QUOTE; // can be customized to change curve
+
+    mapping(address token => Reserves) internal reserves;
+    mapping(address token => Supply) internal supply;
+
+    address public immutable launchpad;
+
+    /// @dev sig:0xed6fcad9
+    error NotLaunchpad();
+    /// @dev sig: 0x8447642d
+    error NotLaunchpadOwner();
+    /// @dev sig: 0x56965ca0
+    error InvalidVirtualBase();
+    /// @dev sig: 0xad5eefd0
+    error InvalidVirtualQuote();
+
+    constructor(address launchpad_) {
+        launchpad = launchpad_;
+    }
+
+    modifier onlyLaunchpad() {
+        if (msg.sender != launchpad) revert NotLaunchpad();
+        _;
+    }
+
+    modifier onlyLaunchpadOwner() {
+        if (msg.sender != Ownable(launchpad).owner()) revert NotLaunchpadOwner();
+        _;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                NEW CURVE
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev {SimpleBondingCurve} awaits an ABI-encoded (virtualBase, virtualQuote) tuple
+    function init(bytes memory data) external onlyLaunchpad {
+        (uint256 virtualBase, uint256 virtualQuote) = abi.decode(data, (uint256, uint256));
+
+        _setVirtualReserves(virtualBase, virtualQuote);
+    }
+
+    /// @dev other kinds of curves might require more than just setting the reserves for that token curve's launch
+    function initializeCurve(address token, uint256 totalSupply_, uint256 bondingSupply_) external onlyLaunchpad {
+        _setReserves(token, VIRTUAL_QUOTE, bondingSupply_ + VIRTUAL_BASE);
+        _setSupply(token, totalSupply_, bondingSupply_);
+
+        emit NewTokenLaunched(token, VIRTUAL_BASE, VIRTUAL_QUOTE);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                SETTERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev deprecated
+    function setReserves(address token, uint256 quoteReserve, uint256 baseReserve) external onlyLaunchpadOwner {
+        _setReserves(token, quoteReserve, baseReserve);
+    }
+
+    /// @dev deprecated
+    function setVirtualReserves(uint256 virtualBase, uint256 virtualQuote) external onlyLaunchpadOwner {
+        if (virtualBase == 0) revert InvalidVirtualBase();
+        if (virtualQuote == 0) revert InvalidVirtualQuote();
+
+        _setVirtualReserves(virtualBase, virtualQuote);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            TRADING LOGIC
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function buy(address token, uint256 baseAmount) external onlyLaunchpad returns (uint256 quoteAmount) {
+        Reserves storage r = reserves[token];
+
+        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, true);
+
+        r.quoteReserve += quoteAmount;
+        r.baseReserve -= baseAmount;
+    }
+
+    function sell(address token, uint256 baseAmount) external onlyLaunchpad returns (uint256 quoteAmount) {
+        Reserves storage r = reserves[token];
+
+        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, false);
+
+        r.quoteReserve -= quoteAmount;
+        r.baseReserve += baseAmount;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                GETTERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function bondingSupply(address token) external view returns (uint256) {
+        return supply[token].bondingSupply;
+    }
+
+    function totalSupply(address token) external view returns (uint256) {
+        return supply[token].totalSupply;
+    }
+
+    function baseSoldFromCurve(address token) external view returns (uint256) {
+        return (supply[token].bondingSupply + VIRTUAL_BASE) - reserves[token].baseReserve;
+    }
+
+    function quoteBoughtByCurve(address token) external view returns (uint256) {
+        return reserves[token].quoteReserve - VIRTUAL_QUOTE;
+    }
+
+    function getReserves(address token) external view returns (uint256 quoteReserve, uint256 baseReserve) {
+        Reserves storage r = reserves[token];
+        quoteReserve = r.quoteReserve;
+        baseReserve = r.baseReserve;
+    }
+
+    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
+        external
+        view
+        returns (uint256 baseAmount)
+    {
+        Reserves storage r = reserves[token];
+        baseAmount = _getBaseAmount(quoteAmount, r.quoteReserve, r.baseReserve, isBuy);
+    }
+
+    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
+        external
+        view
+        returns (uint256 quoteAmount)
+    {
+        Reserves storage r = reserves[token];
+        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, isBuy);
+    }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == type(IERC165).interfaceId || interfaceId == type(IBondingCurveMinimal).interfaceId;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                HELPERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function _setReserves(address token, uint256 quoteReserve, uint256 baseReserve) internal {
+        Reserves storage r = reserves[token];
+        r.quoteReserve = quoteReserve;
+        r.baseReserve = baseReserve;
+
+        emit ReservesSet(token, quoteReserve, baseReserve);
+    }
+
+    function _setSupply(address token, uint256 totalSupply_, uint256 bondingSupply_) internal {
+        Supply storage s = supply[token];
+        s.totalSupply = totalSupply_;
+        s.bondingSupply = bondingSupply_;
+    }
+
+    function _setVirtualReserves(uint256 virtualBase, uint256 virtualQuote) internal {
+        if (virtualBase == 0) revert InvalidVirtualBase();
+        if (virtualQuote == 0) revert InvalidVirtualQuote();
+
+        VIRTUAL_BASE = virtualBase;
+        VIRTUAL_QUOTE = virtualQuote;
+
+        emit VirtualReservesSet(virtualBase, virtualQuote);
+    }
+
+    function _getBaseAmount(uint256 quoteAmount, uint256 quoteReserve, uint256 baseReserve, bool isBuy)
+        internal
+        pure
+        returns (uint256 baseAmount)
+    {
+        uint256 quoteReserveAfter = isBuy ? quoteReserve + quoteAmount : quoteReserve - quoteAmount;
+
+        return (quoteAmount * baseReserve) / quoteReserveAfter;
+    }
+
+    function _getQuoteAmount(uint256 baseAmount, uint256 quoteReserve, uint256 baseReserve, bool isBuy)
+        internal
+        pure
+        returns (uint256 quoteAmount)
+    {
+        uint256 baseReserveAfter = isBuy ? baseReserve - baseAmount : baseReserve + baseAmount;
+
+        return (quoteReserve * baseAmount) / baseReserveAfter;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+// Local types, libs, contracts, and interfaces
+import {CLOB, ICLOB} from "./CLOB.sol";
+import {Side, OrderId} from "./types/Order.sol";
+import {MakerCredit} from "./types/TransientMakerData.sol";
+import {ICLOBManager, ConfigParams, SettingsParams} from "./ICLOBManager.sol";
+import {FeeTiers} from "./types/FeeData.sol";
+import {CLOBStorageLib, MarketConfig, MarketSettings, MIN_MIN_LIMIT_ORDER_AMOUNT_BASE} from "./types/Book.sol";
+
+// Internal package libs and interfaces
+import {IAccountManager} from "../account-manager/IAccountManager.sol";
+import {EventNonceLib as CLOBEventNonce} from "contracts/utils/types/EventNonce.sol";
+
+// Solady and OZ imports
+import {Initializable} from "@solady/utils/Initializable.sol";
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
+import {OwnableRoles as CLOBAdminOwnableRoles} from "@solady/auth/OwnableRoles.sol";
+import {IERC20Metadata} from "@openzeppelin/token/ERC20/extensions/IERC20Metadata.sol";
+import {BeaconProxy, IBeacon} from "@openzeppelin/proxy/beacon/BeaconProxy.sol";
+
+struct CLOBManagerStorage {
+    mapping(address clob => bool) isCLOB;
+    mapping(bytes32 tokenPairHash => address) clob;
+    mapping(address account => bool) maxLimitWhitelist;
+}
+
+using CLOBManagerStorageLib for CLOBManagerStorage global;
+
+/// @custom:storage-location erc7201:CLOBManagerStorage
+library CLOBManagerStorageLib {
+    bytes32 constant CLOB_MANAGER_STORAGE_POSITION =
+        keccak256(abi.encode(uint256(keccak256("CLOBManagerStorage")) - 1)) & ~bytes32(uint256(0xff));
+
+    /// @dev Gets the storage slot of the storage struct for the contract calling this library function
+    // slither-disable-next-line uninitialized-storage
+    function getCLOBManagerStorage() internal pure returns (CLOBManagerStorage storage self) {
+        bytes32 position = CLOB_MANAGER_STORAGE_POSITION;
+
+        // slither-disable-next-line assembly
+        assembly {
+            self.slot := position
+        }
+    }
+}
+
+/**
+ * @title CLOBManager
+ * @notice Main contract that handles CLOB admin functionality and fee calculations
+ */
+contract CLOBManager is ICLOBManager, CLOBAdminOwnableRoles, Initializable {
+    using FixedPointMathLib for uint256;
+    using SafeTransferLib for address;
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                ERRORS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev sig: 0x1e4f7d8c
+    error InvalidPair();
+    /// @dev sig: 0x8fc6f59b
+    error MarketExists();
+    /// @dev sig: 0xe591f33d
+    error InvalidSettings();
+    /// @dev sig: 0x1eb00b06
+    error InvalidTokenAddress();
+    /// @dev sig: 0x353f2237
+    error AdminPanelArrayLengthsInvalid();
+    /// @dev sig: 0xf9f68635
+    error MarketUnauthorized();
+    /// @dev sig: 0x6fbe54bd
+    error InvalidBeaconAddress();
+    /// @dev sig: 0x19ae8c78
+    error CLOBBeaconMustHaveRouter();
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                EVENTS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    event MarketCreated(
+        uint256 indexed eventNonce,
+        address indexed creator,
+        address indexed baseToken,
+        address quoteToken,
+        address market,
+        uint8 quoteDecimals,
+        uint8 baseDecimals,
+        ConfigParams config,
+        SettingsParams settings
+    );
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                CONSTANTS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev The abi version of this impl so the indexer can handle event-changing upgrades
+    uint256 public constant ABI_VERSION = 1;
+
+    /// @dev Create and call markets to edit their settings
+    uint256 public constant MARKET_MANAGER = 1;
+    /// @dev Sets users' fee tiers in this contract
+    uint256 public constant FEE_TIER_SETTER = 1 << 1;
+    /// @dev Whitelists addresses to bypass the markets' max limits per txn
+    uint256 public constant MAX_LIMIT_WHITELISTER = 1 << 2;
+    /// @dev Clears expired orders from markets
+    uint256 public constant EXPIRED_ORDER_CLEARER = 1 << 3;
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            IMMUTABLE STATE
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev The beacon proxy containing the logic implementation all clobs' storage use
+    address public immutable beacon;
+    /// @dev The external AccountManager contract
+    IAccountManager public immutable accountManager;
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            CONSTRUCTOR
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    constructor(address _beacon, address _accountManager) {
+        if (_beacon == address(0)) revert InvalidBeaconAddress();
+        beacon = _beacon;
+        accountManager = IAccountManager(_accountManager);
+        _disableInitializers();
+    }
+
+    /// @dev Initializes the contract following ERC1967Factory pattern
+    function initialize(address _owner) external initializer {
+        _initializeOwner(_owner);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            EXTERNAL GETTERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @notice Gets the market address for a given `tokenA` and `tokenB`
+    function getMarketAddress(address tokenA, address tokenB) external view returns (address marketAddress) {
+        return _getStorage().clob[_getTokenHash(tokenA, tokenB)];
+    }
+
+    /// @notice Gets if `market` is a clob created by this factory
+    function isMarket(address market) external view returns (bool) {
+        return _getStorage().isCLOB[market];
+    }
+
+    /// @notice Gets whether an account is exempt from max limits
+    function getMaxLimitExempt(address account) external view returns (bool) {
+        return _getStorage().maxLimitWhitelist[account];
+    }
+
+    /// @notice Gets the current event nonce
+    function getEventNonce() external view returns (uint256) {
+        return CLOBEventNonce.getCurrentNonce();
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            ADMIN FUNCTIONS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @notice Creates a new market for `quoteToken` and `baseToken` using beacon proxy
+    function createMarket(address baseToken, address quoteToken, SettingsParams calldata settings)
+        external
+        virtual
+        onlyOwnerOrRoles(MARKET_MANAGER)
+        returns (address marketAddress)
+    {
+        _assertValidTokenPair(quoteToken, baseToken);
+
+        uint8 quoteDecimals = IERC20Metadata(quoteToken).decimals();
+        uint8 baseDecimals = IERC20Metadata(baseToken).decimals();
+
+        ConfigParams memory config;
+
+        config.quoteToken = quoteToken;
+        config.baseToken = baseToken;
+        config.quoteSize = 10 ** quoteDecimals;
+        config.baseSize = 10 ** baseDecimals;
+
+        _assertValidSettings(settings, config.baseSize);
+
+        CLOBManagerStorage storage self = _getStorage();
+
+        bytes32 tokenPairHash = _getTokenHash(quoteToken, baseToken);
+
+        if (self.clob[tokenPairHash] > address(0)) revert MarketExists();
+
+        bytes memory initData = abi.encodeWithSelector(
+            CLOB.initialize.selector,
+            MarketConfig({
+                quoteToken: config.quoteToken,
+                baseToken: config.baseToken,
+                quoteSize: config.quoteSize,
+                baseSize: config.baseSize
+            }),
+            MarketSettings({
+                status: true,
+                maxLimitsPerTx: settings.maxLimitsPerTx,
+                minLimitOrderAmountInBase: settings.minLimitOrderAmountInBase,
+                tickSize: settings.tickSize,
+                lotSizeInBase: settings.lotSizeInBase
+            }),
+            settings.owner
+        );
+
+        // Beacon is immutable and itself non upgradeable
+        marketAddress = address(new BeaconProxy(beacon, initData));
+
+        self.isCLOB[marketAddress] = true;
+        self.clob[tokenPairHash] = marketAddress;
+
+        // Register the market in AccountManager
+        accountManager.registerMarket(marketAddress);
+
+        _emitMarketCreated(msg.sender, marketAddress, quoteDecimals, baseDecimals, config, settings);
+    }
+
+    /// @notice Sets the tick size for a market
+    function setTickSize(ICLOB market, uint256 newTickSize) external onlyOwnerOrRoles(MARKET_MANAGER) {
+        market.setTickSize(newTickSize);
+    }
+
+    /// @notice Sets the lot size for a market
+    function setLotSizeInBase(ICLOB market, uint256 newLotSize) external onlyOwnerOrRoles(MARKET_MANAGER) {
+        market.setLotSizeInBase(newLotSize);
+    }
+
+    /// @notice Sets the min limit order amount in base for a market
+    function setMinLimitOrderAmountInBase(ICLOB market, uint256 newMinLimitOrderAmountInBase)
+        external
+        onlyOwnerOrRoles(MARKET_MANAGER)
+    {
+        market.setMinLimitOrderAmountInBase(newMinLimitOrderAmountInBase);
+    }
+
+    /// @notice Clears out expired orders from one side of a market
+    function adminCancelExpiredOrders(ICLOB market, OrderId[] calldata ids, Side side)
+        external
+        onlyOwnerOrRoles(EXPIRED_ORDER_CLEARER)
+    {
+        market.adminCancelExpiredOrders(ids, side);
+    }
+
+    /// @notice Sets fee tiers for accounts
+    function setAccountFeeTiers(address[] calldata accounts, FeeTiers[] calldata feeTiers)
+        external
+        onlyOwnerOrRoles(FEE_TIER_SETTER)
+    {
+        accountManager.setSpotAccountFeeTiers(accounts, feeTiers);
+    }
+
+    /// @notice Sets max limit exemptions for accounts
+    function setMaxLimitsExempt(address[] calldata accounts, bool[] calldata toggles)
+        external
+        onlyOwnerOrRoles(MAX_LIMIT_WHITELISTER)
+    {
+        if (accounts.length != toggles.length) revert AdminPanelArrayLengthsInvalid();
+
+        CLOBManagerStorage storage self = _getStorage();
+        for (uint256 i = 0; i < accounts.length; i++) {
+            self.maxLimitWhitelist[accounts[i]] = toggles[i];
+        }
+    }
+
+    /// @notice Sets the max limits per tx for a market
+    function setMaxLimitsPerTx(ICLOB market, uint8 newMaxLimits) external onlyOwnerOrRoles(MARKET_MANAGER) {
+        market.setMaxLimitsPerTx(newMaxLimits);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            INTERNAL ASSERTIONS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev Checks config and settings params are within correct bounds
+    function _assertValidSettings(SettingsParams calldata settings, uint256 baseSize) internal pure {
+        if (settings.maxLimitsPerTx == 0) revert InvalidSettings();
+        if (settings.minLimitOrderAmountInBase < MIN_MIN_LIMIT_ORDER_AMOUNT_BASE) revert InvalidSettings();
+        if (settings.minLimitOrderAmountInBase < settings.lotSizeInBase) revert InvalidSettings();
+        if (settings.tickSize.fullMulDiv(settings.lotSizeInBase, baseSize) == 0) revert InvalidSettings();
+    }
+
+    /// @dev Performs sanity checks on the addresses passed to make it slightly more difficult to deploy a broken market
+    function _assertValidTokenPair(address quoteToken, address baseToken) internal pure {
+        if (quoteToken == baseToken) revert InvalidPair();
+        if (quoteToken == address(0)) revert InvalidTokenAddress();
+        if (baseToken == address(0)) revert InvalidTokenAddress();
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            PRIVATE HELPERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev Event helper that prevents stack from blowing without IR
+    function _emitMarketCreated(
+        address creator,
+        address marketAddress,
+        uint8 quoteDecimals,
+        uint8 baseDecimals,
+        ConfigParams memory config,
+        SettingsParams calldata settings
+    ) internal {
+        emit MarketCreated(
+            CLOBEventNonce.inc(),
+            creator,
+            config.baseToken,
+            config.quoteToken,
+            marketAddress,
+            quoteDecimals,
+            baseDecimals,
+            config,
+            settings
+        );
+    }
+
+    /// @dev Gets the token hash which can be used as a UID for a market
+    function _getTokenHash(address tokenA, address tokenB) internal pure returns (bytes32) {
+        (tokenA, tokenB) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+
+        return keccak256(abi.encodePacked(tokenA, tokenB));
+    }
+
+    /// @dev Helper to set the storage slot of the storage struct for this contract
+    function _getStorage() internal pure returns (CLOBManagerStorage storage ds) {
+        return CLOBManagerStorageLib.getCLOBManagerStorage();
+    }
+}
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
@@ -6019,637 +6650,6 @@ contract PerpManager is AdminPanel, LiquidatorPanel, ViewPort, OperatorPanel {
         returns (uint256 collateral)
     {
         collateral = baseAmount.fullMulDiv(price, 1e18).fullMulDiv(1e18, leverage);
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
-
-import {IERC165} from "@openzeppelin/interfaces/IERC165.sol";
-import {IBondingCurveMinimal} from "./IBondingCurveMinimal.sol";
-import {Ownable} from "@solady/auth/Ownable.sol";
-
-contract SimpleBondingCurve is IBondingCurveMinimal {
-    struct Reserves {
-        uint256 quoteReserve;
-        uint256 baseReserve;
-    }
-
-    struct Supply {
-        uint256 totalSupply;
-        uint256 bondingSupply;
-    }
-
-    /// @dev sig: 0x811abebed4bd76417e15038991a2a59847b86a0ece32d4dcc5c37f7641f0580d
-    event VirtualReservesSet(uint256 virtualBase, uint256 virtualQuote);
-    /// @dev sig: 0xf1dc3d06c4e72b9153d6aba8efebafe8d45e438daab475fa1410c907c526d98b
-    event ReservesSet(address indexed token, uint256 quoteReserve, uint256 baseReserve);
-    /// @dev sig: 0x1b77ab811805ecfa41dda62047dae05b29f779f97d4735116c794a5c1a050cf0
-    event NewTokenLaunched(address indexed token, uint256 virtualBase, uint256 virtualQuote);
-
-    /// @dev can only be set once, at initialization; see {Launchpad.sol}::line_162
-    uint256 public VIRTUAL_BASE; // can be customized to change curve
-    uint256 public VIRTUAL_QUOTE; // can be customized to change curve
-
-    mapping(address token => Reserves) internal reserves;
-    mapping(address token => Supply) internal supply;
-
-    address public immutable launchpad;
-
-    /// @dev sig:0xed6fcad9
-    error NotLaunchpad();
-    /// @dev sig: 0x8447642d
-    error NotLaunchpadOwner();
-    /// @dev sig: 0x56965ca0
-    error InvalidVirtualBase();
-    /// @dev sig: 0xad5eefd0
-    error InvalidVirtualQuote();
-
-    constructor(address launchpad_) {
-        launchpad = launchpad_;
-    }
-
-    modifier onlyLaunchpad() {
-        if (msg.sender != launchpad) revert NotLaunchpad();
-        _;
-    }
-
-    modifier onlyLaunchpadOwner() {
-        if (msg.sender != Ownable(launchpad).owner()) revert NotLaunchpadOwner();
-        _;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                NEW CURVE
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev {SimpleBondingCurve} awaits an ABI-encoded (virtualBase, virtualQuote) tuple
-    function init(bytes memory data) external onlyLaunchpad {
-        (uint256 virtualBase, uint256 virtualQuote) = abi.decode(data, (uint256, uint256));
-
-        _setVirtualReserves(virtualBase, virtualQuote);
-    }
-
-    /// @dev other kinds of curves might require more than just setting the reserves for that token curve's launch
-    function initializeCurve(address token, uint256 totalSupply_, uint256 bondingSupply_) external onlyLaunchpad {
-        _setReserves(token, VIRTUAL_QUOTE, bondingSupply_ + VIRTUAL_BASE);
-        _setSupply(token, totalSupply_, bondingSupply_);
-
-        emit NewTokenLaunched(token, VIRTUAL_BASE, VIRTUAL_QUOTE);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                SETTERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev deprecated
-    function setReserves(address token, uint256 quoteReserve, uint256 baseReserve) external onlyLaunchpadOwner {
-        _setReserves(token, quoteReserve, baseReserve);
-    }
-
-    /// @dev deprecated
-    function setVirtualReserves(uint256 virtualBase, uint256 virtualQuote) external onlyLaunchpadOwner {
-        if (virtualBase == 0) revert InvalidVirtualBase();
-        if (virtualQuote == 0) revert InvalidVirtualQuote();
-
-        _setVirtualReserves(virtualBase, virtualQuote);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            TRADING LOGIC
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function buy(address token, uint256 baseAmount) external onlyLaunchpad returns (uint256 quoteAmount) {
-        Reserves storage r = reserves[token];
-
-        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, true);
-
-        r.quoteReserve += quoteAmount;
-        r.baseReserve -= baseAmount;
-    }
-
-    function sell(address token, uint256 baseAmount) external onlyLaunchpad returns (uint256 quoteAmount) {
-        Reserves storage r = reserves[token];
-
-        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, false);
-
-        r.quoteReserve -= quoteAmount;
-        r.baseReserve += baseAmount;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                GETTERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function bondingSupply(address token) external view returns (uint256) {
-        return supply[token].bondingSupply;
-    }
-
-    function totalSupply(address token) external view returns (uint256) {
-        return supply[token].totalSupply;
-    }
-
-    function baseSoldFromCurve(address token) external view returns (uint256) {
-        return (supply[token].bondingSupply + VIRTUAL_BASE) - reserves[token].baseReserve;
-    }
-
-    function quoteBoughtByCurve(address token) external view returns (uint256) {
-        return reserves[token].quoteReserve - VIRTUAL_QUOTE;
-    }
-
-    function getReserves(address token) external view returns (uint256 quoteReserve, uint256 baseReserve) {
-        Reserves storage r = reserves[token];
-        quoteReserve = r.quoteReserve;
-        baseReserve = r.baseReserve;
-    }
-
-    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
-        external
-        view
-        returns (uint256 baseAmount)
-    {
-        Reserves storage r = reserves[token];
-        baseAmount = _getBaseAmount(quoteAmount, r.quoteReserve, r.baseReserve, isBuy);
-    }
-
-    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
-        external
-        view
-        returns (uint256 quoteAmount)
-    {
-        Reserves storage r = reserves[token];
-        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, isBuy);
-    }
-
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IERC165).interfaceId || interfaceId == type(IBondingCurveMinimal).interfaceId;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                HELPERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function _setReserves(address token, uint256 quoteReserve, uint256 baseReserve) internal {
-        Reserves storage r = reserves[token];
-        r.quoteReserve = quoteReserve;
-        r.baseReserve = baseReserve;
-
-        emit ReservesSet(token, quoteReserve, baseReserve);
-    }
-
-    function _setSupply(address token, uint256 totalSupply_, uint256 bondingSupply_) internal {
-        Supply storage s = supply[token];
-        s.totalSupply = totalSupply_;
-        s.bondingSupply = bondingSupply_;
-    }
-
-    function _setVirtualReserves(uint256 virtualBase, uint256 virtualQuote) internal {
-        if (virtualBase == 0) revert InvalidVirtualBase();
-        if (virtualQuote == 0) revert InvalidVirtualQuote();
-
-        VIRTUAL_BASE = virtualBase;
-        VIRTUAL_QUOTE = virtualQuote;
-
-        emit VirtualReservesSet(virtualBase, virtualQuote);
-    }
-
-    function _getBaseAmount(uint256 quoteAmount, uint256 quoteReserve, uint256 baseReserve, bool isBuy)
-        internal
-        pure
-        returns (uint256 baseAmount)
-    {
-        uint256 quoteReserveAfter = isBuy ? quoteReserve + quoteAmount : quoteReserve - quoteAmount;
-
-        return (quoteAmount * baseReserve) / quoteReserveAfter;
-    }
-
-    function _getQuoteAmount(uint256 baseAmount, uint256 quoteReserve, uint256 baseReserve, bool isBuy)
-        internal
-        pure
-        returns (uint256 quoteAmount)
-    {
-        uint256 baseReserveAfter = isBuy ? baseReserve - baseAmount : baseReserve + baseAmount;
-
-        return (quoteReserve * baseAmount) / baseReserveAfter;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {IAccountManager} from "./IAccountManager.sol";
-import {ICLOB} from "../clob/ICLOB.sol";
-import {MakerCredit} from "../clob/types/TransientMakerData.sol";
-import {IPerpManager} from "../perps/interfaces/IPerpManager.sol";
-import {Side} from "../clob/types/Order.sol";
-import {OperatorHelperLib} from "../utils/types/OperatorHelperLib.sol";
-import {EventNonceLib as AccountEventNonce} from "../utils/types/EventNonce.sol";
-import {Initializable} from "@solady/utils/Initializable.sol";
-import {OwnableRoles} from "@solady/auth/OwnableRoles.sol";
-import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
-import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
-import {OperatorPanel, SpotOperatorRoles} from "../utils/OperatorPanel.sol";
-import {
-    FeeData,
-    FeeDataLib,
-    FeeDataStorageLib,
-    PackedFeeRates,
-    PackedFeeRatesLib,
-    FeeTiers
-} from "../clob/types/FeeData.sol";
-
-struct AccountManagerStorage {
-    mapping(address market => bool) isMarket;
-    mapping(address account => mapping(address asset => uint256)) accountTokenBalances;
-}
-
-/**
- * @title AccountManager
- * @notice Handles account balances, deposits, withdrawals, for GTE spot as well as inheriting Operator
- */
-contract AccountManager is IAccountManager, OperatorPanel, Initializable, OwnableRoles {
-    using SafeTransferLib for address;
-    using FixedPointMathLib for uint256;
-    using PackedFeeRatesLib for PackedFeeRates;
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                EVENTS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev sig: 0x07796b317344e6f18fa32ed89b6074ad66549cee7fb7b8c3e9f1c42c496f1c5c
-    event MarketRegistered(uint256 indexed eventNonce, address indexed market);
-    /// @dev sig: 0x1ae35cf838a52070167575d4dedf6631cc160136bee10eeca1575d2e3cc8a075
-    event AccountDebited(uint256 indexed eventNonce, address indexed account, address indexed token, uint256 amount);
-    /// @dev sig: 0x074f9f8975d437bea257b7e6abcfb4b45312683f7f8f120dde3faae76f783b58
-    event AccountCredited(uint256 indexed eventNonce, address indexed account, address indexed token, uint256 amount);
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                ERRORS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev sig: 0x00b8f216
-    error BalanceInsufficient();
-    /// @dev sig: 0x467cb8b4
-    error GTERouterUnauthorized();
-    /// @dev sig: 0x30eee8ba
-    error CLOBManagerUnauthorized();
-    /// @dev sig: 0x9d1c9c18
-    error MarketUnauthorized();
-    /// @dev sig: 0x38422dcd
-    error UnmatchingArrayLengths();
-    error NotPerpManager();
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            IMMUTABLE STATE
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    uint256 public constant FEE_COLLECTOR = 1;
-
-    /// @dev The global router address that can bypass the operator check
-    address public immutable gteRouter;
-    /// @dev The CLOBManager address that can call settlement functions
-    address public immutable clobManager;
-    /// @dev Packed spot maker fee rates for all tiers
-    PackedFeeRates public immutable spotMakerFeeRates;
-    /// @dev Packed spot taker fee rates for all tiers
-    PackedFeeRates public immutable spotTakerFeeRates;
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                MODIFIERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev Ensures msg.sender is a registered market
-    modifier onlyMarket() {
-        if (!_getAccountStorage().isMarket[msg.sender]) revert MarketUnauthorized();
-        _;
-    }
-
-    /// @dev Ensures msg.sender is the router
-    modifier onlyGTERouter() {
-        if (msg.sender != gteRouter) revert GTERouterUnauthorized();
-        _;
-    }
-
-    /// @dev Ensures msg.sender is the CLOBManager
-    modifier onlyCLOBManager() {
-        if (msg.sender != clobManager) revert CLOBManagerUnauthorized();
-        _;
-    }
-
-    /// @dev Ensures that if an account is not the msg.sender, both that account and the owner have approved msg.sender
-    modifier onlySenderOrOperator(address account, SpotOperatorRoles requiredRole) {
-        OperatorHelperLib.onlySenderOrOperator(_getOperatorStorage(), gteRouter, account, requiredRole);
-        _;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                CONSTRUCTOR
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    constructor(
-        address _gteRouter,
-        address _clobManager,
-        address _operatorHub,
-        uint16[] memory _spotMakerFees,
-        uint16[] memory _spotTakerFees,
-        address _perpManager
-    ) OperatorPanel(_operatorHub) {
-        gteRouter = _gteRouter;
-        clobManager = _clobManager;
-        spotMakerFeeRates = PackedFeeRatesLib.packFeeRates(_spotMakerFees);
-        spotTakerFeeRates = PackedFeeRatesLib.packFeeRates(_spotTakerFees);
-        perpManager = IPerpManager(_perpManager);
-        _disableInitializers();
-    }
-
-    /// @dev Initializes the contract
-    function initialize(address _owner) external initializer {
-        _initializeOwner(_owner);
-    }
-
-    IPerpManager immutable perpManager;
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            EXTERNAL GETTERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @notice Gets an `account`'s balance of `token`
-    function getAccountBalance(address account, address token) external view returns (uint256) {
-        return _getAccountStorage().accountTokenBalances[account][token];
-    }
-
-    /// @notice Gets the current event nonce
-    function getEventNonce() external view returns (uint256) {
-        return AccountEventNonce.getCurrentNonce();
-    }
-
-    /// @notice Gets the total fees collected for a token
-    function getTotalFees(address token) external view returns (uint256) {
-        return FeeDataStorageLib.getFeeDataStorage().totalFees[token];
-    }
-
-    /// @notice Gets the unclaimed fees for a token
-    function getUnclaimedFees(address token) external view returns (uint256) {
-        return FeeDataStorageLib.getFeeDataStorage().unclaimedFees[token];
-    }
-
-    /// @notice Gets the fee tier for an account
-    function getFeeTier(address account) external view returns (FeeTiers) {
-        return FeeDataStorageLib.getFeeDataStorage().getAccountFeeTier(account);
-    }
-
-    /// @notice Gets the spot taker fee rate for a given fee tier
-    function getSpotTakerFeeRateForTier(FeeTiers tier) external view returns (uint256) {
-        return spotTakerFeeRates.getFeeAt(uint256(tier));
-    }
-
-    /// @notice Gets the spot maker fee rate for a given fee tier
-    function getSpotMakerFeeRateForTier(FeeTiers tier) external view returns (uint256) {
-        return spotMakerFeeRates.getFeeAt(uint256(tier));
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                ACCOUNTS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @notice Deposits via transfer from the account
-    function deposit(address account, address token, uint256 amount)
-        external
-        virtual
-        onlySenderOrOperator(account, SpotOperatorRoles.SPOT_DEPOSIT)
-    {
-        _creditAccount(_getAccountStorage(), account, token, amount);
-        token.safeTransferFrom(account, address(this), amount);
-    }
-
-    function depositTo(address account, address token, uint256 amount)
-        external
-    {
-        _creditAccount(_getAccountStorage(), account, token, amount);
-        token.safeTransferFrom(msg.sender, address(this), amount);
-    }
-
-    function depositFromPerps(address account, uint256 amount)
-        external
-        onlySenderOrOperator(account, SpotOperatorRoles.PERP_TO_SPOT_DEPOSIT)
-    {
-        perpManager.withdrawToSpot(account, amount);
-        _creditAccount(_getAccountStorage(), account, perpManager.getCollateralAsset(), amount);
-    }
-
-    /// @notice Deposits via transfer from the router
-    function depositFromRouter(address account, address token, uint256 amount) external onlyGTERouter {
-        _creditAccount(_getAccountStorage(), account, token, amount);
-        token.safeTransferFrom(gteRouter, address(this), amount);
-    }
-
-    /// @notice Withdraws to account
-    function withdraw(address account, address token, uint256 amount)
-        external
-        virtual
-        onlySenderOrOperator(account, SpotOperatorRoles.SPOT_WITHDRAW)
-    {
-        _debitAccount(_getAccountStorage(), account, token, amount);
-        token.safeTransfer(account, amount);
-    }
-
-    function withdrawToPerps(address account, uint256 amount) external {
-        if (msg.sender != address(perpManager)) revert NotPerpManager();
-
-        address token = perpManager.getCollateralAsset();
-
-        _debitAccount(_getAccountStorage(), account, token, amount);
-        token.safeTransfer(address(perpManager), amount);
-    }
-
-    /// @notice Withdraws from account to router
-    function withdrawToRouter(address account, address token, uint256 amount) external onlyGTERouter {
-        _debitAccount(_getAccountStorage(), account, token, amount);
-        token.safeTransfer(gteRouter, amount);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                ADMIN
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @notice Registers a market address, can only be called by CLOBManager
-    function registerMarket(address market) external onlyCLOBManager {
-        _getAccountStorage().isMarket[market] = true;
-        emit MarketRegistered(AccountEventNonce.inc(), market);
-    }
-
-    /// @notice Collects accrued fees for a token and transfers to recipient
-    function collectFees(address token, address feeRecipient)
-        external
-        virtual
-        onlyOwnerOrRoles(FEE_COLLECTOR)
-        returns (uint256 fee)
-    {
-        FeeData storage feeData = FeeDataStorageLib.getFeeDataStorage();
-        fee = feeData.claimFees(token);
-
-        if (fee > 0) {
-            // Transfer fees directly from contract balance to recipient
-            token.safeTransfer(feeRecipient, fee);
-        }
-    }
-
-    /// @notice Sets the spot fee tier for a single account, can only be called by CLOBManager
-    function setSpotAccountFeeTier(address account, FeeTiers feeTier) external virtual onlyCLOBManager {
-        FeeData storage feeData = FeeDataStorageLib.getFeeDataStorage();
-        feeData.setAccountFeeTier(account, feeTier);
-    }
-
-    /// @notice Sets the spot fee tiers for multiple accounts, can only be called by CLOBManager
-    function setSpotAccountFeeTiers(address[] calldata accounts, FeeTiers[] calldata feeTiers)
-        external
-        virtual
-        onlyCLOBManager
-    {
-        if (accounts.length != feeTiers.length) revert UnmatchingArrayLengths();
-
-        FeeData storage feeData = FeeDataStorageLib.getFeeDataStorage();
-        for (uint256 i = 0; i < accounts.length; i++) {
-            feeData.setAccountFeeTier(accounts[i], feeTiers[i]);
-        }
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                SETTLEMENT
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @notice The hook for markets to perform account settlement after a fill, including fee calculations
-    function settleIncomingOrder(ICLOB.SettleParams calldata params)
-        external
-        virtual
-        onlyMarket
-        returns (uint256 takerFee)
-    {
-        AccountManagerStorage storage self = _getAccountStorage();
-        FeeData storage feeData = FeeDataStorageLib.getFeeDataStorage();
-
-        // Credit taker less fee
-        address takerFeeToken;
-        if (params.side == Side.BUY) {
-            takerFee = feeData.getTakerFee(spotTakerFeeRates, params.taker, params.takerBaseAmount);
-            takerFeeToken = params.baseToken;
-
-            // Taker settlement
-            _debitAccount(self, params.taker, params.quoteToken, params.takerQuoteAmount);
-            _creditAccount(self, params.taker, params.baseToken, params.takerBaseAmount - takerFee);
-        } else {
-            takerFee = feeData.getTakerFee(spotTakerFeeRates, params.taker, params.takerQuoteAmount);
-            takerFeeToken = params.quoteToken;
-
-            // Taker settlement
-            _debitAccount(self, params.taker, params.baseToken, params.takerBaseAmount);
-            _creditAccount(self, params.taker, params.quoteToken, params.takerQuoteAmount - takerFee);
-        }
-
-        // Accrue taker fee
-        if (takerFee > 0) feeData.accrueFee(takerFeeToken, takerFee);
-
-        // Process maker settlement and fees
-        uint256 currMakerFee = 0;
-        uint256 totalQuoteMakerFee = 0;
-        uint256 totalBaseMakerFee = 0;
-
-        for (uint256 i; i < params.makerCredits.length; ++i) {
-            MakerCredit memory credit = params.makerCredits[i];
-
-            // Calculate fees only for the matching side
-            if (params.side == Side.BUY && credit.quoteAmount > 0) {
-                currMakerFee = feeData.getMakerFee(spotMakerFeeRates, credit.maker, credit.quoteAmount);
-                credit.quoteAmount -= currMakerFee;
-                totalQuoteMakerFee += currMakerFee;
-            } else if (params.side == Side.SELL && credit.baseAmount > 0) {
-                currMakerFee = feeData.getMakerFee(spotMakerFeeRates, credit.maker, credit.baseAmount);
-                credit.baseAmount -= currMakerFee;
-                totalBaseMakerFee += currMakerFee;
-            }
-
-            // Credit both base and quote amounts if any (not just fills less fee, but also expiry and non-competitive refunds)
-            if (credit.baseAmount > 0) _creditAccountNoEvent(self, credit.maker, params.baseToken, credit.baseAmount);
-
-            if (credit.quoteAmount > 0) {
-                _creditAccountNoEvent(self, credit.maker, params.quoteToken, credit.quoteAmount);
-            }
-        }
-
-        // Accrue total collected maker fees
-        if (totalBaseMakerFee > 0) feeData.accrueFee(params.baseToken, totalBaseMakerFee);
-        if (totalQuoteMakerFee > 0) feeData.accrueFee(params.quoteToken, totalQuoteMakerFee);
-    }
-
-    /// @notice Credits account, called by markets for amends/cancels
-    function creditAccount(address account, address token, uint256 amount) external virtual onlyMarket {
-        _creditAccount(_getAccountStorage(), account, token, amount);
-    }
-
-    /// @notice Credits account without event, called by markets for non-competitive order removal
-    function creditAccountNoEvent(address account, address token, uint256 amount) external virtual onlyMarket {
-        _creditAccountNoEvent(_getAccountStorage(), account, token, amount);
-    }
-
-    /// @notice Debits account, called by markets for amends
-    function debitAccount(address account, address token, uint256 amount) external virtual onlyMarket {
-        _debitAccount(_getAccountStorage(), account, token, amount);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            INTERNAL HELPERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function _creditAccount(AccountManagerStorage storage self, address account, address token, uint256 amount)
-        internal
-    {
-        unchecked {
-            self.accountTokenBalances[account][token] += amount;
-        }
-        emit AccountCredited(AccountEventNonce.inc(), account, token, amount);
-    }
-
-    function _creditAccountNoEvent(AccountManagerStorage storage self, address account, address token, uint256 amount)
-        internal
-    {
-        unchecked {
-            self.accountTokenBalances[account][token] += amount;
-        }
-    }
-
-    function _debitAccount(AccountManagerStorage storage self, address account, address token, uint256 amount)
-        internal
-    {
-        if (self.accountTokenBalances[account][token] < amount) revert BalanceInsufficient();
-
-        unchecked {
-            self.accountTokenBalances[account][token] -= amount;
-        }
-        emit AccountDebited(AccountEventNonce.inc(), account, token, amount);
-    }
-
-    /// @dev Helper to set the storage slot of the storage struct for this contract
-    function _getAccountStorage() internal pure returns (AccountManagerStorage storage ds) {
-        return AccountManagerStorageLib.getAccountManagerStorage();
-    }
-}
-
-using AccountManagerStorageLib for AccountManagerStorage global;
-
-/// @custom:storage-location erc7201:AccountManagerStorage
-library AccountManagerStorageLib {
-    bytes32 constant ACCOUNT_MANAGER_STORAGE_POSITION =
-        keccak256(abi.encode(uint256(keccak256("AccountManagerStorage")) - 1)) & ~bytes32(uint256(0xff));
-
-    /// @dev Gets the storage slot of the storage struct for the contract calling this library function
-    // slither-disable-next-line uninitialized-storage
-    function getAccountManagerStorage() internal pure returns (AccountManagerStorage storage self) {
-        bytes32 position = ACCOUNT_MANAGER_STORAGE_POSITION;
-
-        // slither-disable-next-line assembly
-        assembly {
-            self.slot := position
-        }
     }
 }
 

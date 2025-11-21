@@ -3,9 +3,9 @@ use tokio::sync::Semaphore;
 
 // increase once hit higher openai teir
 const MAX_CONCURRENTS_VERIFY: usize = 75;
-const MAX_CONCURRENTS_REVIEW: usize = 6;
+const MAX_CONCURRENTS_REVIEW: usize = 1;
 const MAX_CONCURRENTS_POC: usize = 1; // Run PoC tests atomically to avoid cross-file compilation errors
-const MAX_CONCURRENTS_GENERAL: usize = 75;
+const MAX_CONCURRENTS_GENERAL: usize = 10; // lowered to 10 for gemini
 
 // at module scope or pass it in
 pub static VERIFY_SEM: once_cell::sync::Lazy<Arc<Semaphore>> =

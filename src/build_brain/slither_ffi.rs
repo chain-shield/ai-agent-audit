@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,6 @@ use tokio::sync::Mutex;
 
 use crate::build_brain::parsers::parse_slithir_contract_summary;
 use crate::build_brain::summarize::summarize_src_files;
-// use crate::build_brain::summarize::summarize_src_files;
 use crate::cost::cost_data::get_token_count;
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::check_folder_name::contains_build_config;
@@ -237,20 +236,34 @@ pub fn build_slither_args(
         format!("{}:/workspace", repo.root.display()),
         "-w".to_string(),
         "/workspace".to_string(),
+    ];
+
+    // Note: We don't set FOUNDRY_PROFILE for Slither because:
+    // 1. Custom build profiles may reference solc versions not available in Docker
+    // 2. Slither will use foundry.toml's default profile or auto-detect settings
+    // 3. For static analysis, exact compiler version match is less critical than for builds
+
+    args.extend([
         "ghcr.io/trailofbits/eth-security-toolbox:nightly".to_string(),
         "slither".to_string(),
-    ];
+    ]);
 
     // Add project-specific arguments (collect flags first; add target last)
     match project_type {
-        ProjectType::Foundry => {
-            // Let Slither handle compilation itself for better reliability
-            // The --foundry-ignore-compile flag can cause issues with build artifact parsing
-            // Slither will run 'forge clean' and 'forge build' automatically
-            log::debug!("Foundry project detected. Slither will handle compilation automatically.");
-        }
-        ProjectType::FoundryYarn => {
-            // Let Slither compile from source (no ignore flags)
+        ProjectType::Foundry | ProjectType::FoundryYarn => {
+            // Skip recompilation and use existing build artifacts
+            // This is critical for projects using custom/pre-release solc versions
+            // that may not be available in Slither's Docker container
+            if target_path.join("out").exists() {
+                args.extend([
+                    "--foundry-ignore-compile".to_string(),
+                    "--foundry-out-directory".to_string(),
+                    "out".to_string(),
+                ]);
+                log::debug!("Foundry project detected. Using existing build artifacts from out/");
+            } else {
+                log::debug!("Foundry project detected. Slither will handle compilation.");
+            }
         }
         ProjectType::Hardhat => {
             // Hardhat projects typically compile to artifacts
@@ -378,14 +391,17 @@ pub async fn run_printer(
 ) -> Result<String> {
     let key = cache_key(&repo.root, printer, subfolder.clone());
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
-    let mut printer_cache = cache.lock().await;
 
-    // Return cached output if exists
-    if let Some(cached) = printer_cache.get(&key) {
-        return Ok(cached.clone());
-    }
+    // Check cache
+    {
+        let printer_cache = cache.lock().await;
+        if let Some(cached) = printer_cache.get(&key) {
+            return Ok(cached.clone());
+        }
+    } // Lock is dropped here
 
     log::info!("Running Slither printer: {}", printer);
+
     let args = build_slither_args(repo, Some(printer), subfolder, false);
     let output = Command::new("docker")
         .args(&args)
@@ -428,6 +444,7 @@ pub async fn run_printer(
         get_token_count(&text)
     );
     // Save to cache and return
+    let mut printer_cache = cache.lock().await;
     printer_cache.insert(key, text.clone());
     Ok(text)
 }
@@ -559,14 +576,17 @@ pub async fn run_printer_json(
 ) -> Result<String> {
     let key = cache_key(&repo.root, printer, subfolder.clone());
     let cache = Arc::clone(&PRINTER_OUTPUT_CACHE);
-    let mut printer_cache = cache.lock().await;
 
-    // Return cached output if exists
-    if let Some(cached) = printer_cache.get(&key) {
-        return Ok(cached.clone());
-    }
+    // Check cache
+    {
+        let printer_cache = cache.lock().await;
+        if let Some(cached) = printer_cache.get(&key) {
+            return Ok(cached.clone());
+        }
+    } // Lock is dropped here
 
     // log::info!("Running Slither printer: {}", printer);
+
     let args = build_slither_args(repo, Some(printer), subfolder.clone(), true);
 
     // Log the full docker command for debugging
@@ -601,6 +621,7 @@ pub async fn run_printer_json(
         printer,
         get_token_count(&text)
     );
+    let mut printer_cache = cache.lock().await;
     printer_cache.insert(key, text.clone());
 
     Ok(text)

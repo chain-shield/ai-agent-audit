@@ -136,6 +136,45 @@ interface IUniswapV2Factory {
     function setFeeToSetter(address) external;
 }
 
+pragma solidity 0.8.27;
+
+import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
+
+import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
+
+interface IDistributor {
+    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
+    function getUserDataForTokens(address[] calldata launchAssets, address account)
+        external
+        view
+        returns (UserRewardData[] memory);
+    function increaseStake(address launchAsset, address account, uint96 shares)
+        external
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function decreaseStake(address launchAsset, address account, uint96 shares)
+        external
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
+    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
+    function createRewardsPair(address launchAsset, address quoteToken) external;
+
+    function endRewards(IGTELaunchpadV2Pair pair) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+interface IGTELaunchpadV2Pair {
+    function rewardsPoolActive() external view returns (uint256);
+    function accruedLaunchpadFee0() external view returns (uint112);
+    function accruedLaunchpadFee1() external view returns (uint112);
+    function launchpadLp() external view returns (address);
+    function launchpadFeeDistributor() external view returns (address);
+    function REWARDS_FEE_SHARE() external view returns (uint256);
+
+    function endRewardsAccrual() external;
+}
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
@@ -462,49 +501,82 @@ contract GTELaunchpadV2Pair is IUniswapV2Pair, IGTELaunchpadV2Pair, UniswapV2ERC
     }
 }
 
-pragma solidity 0.8.27;
-
-import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
-
-import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
-
-interface IDistributor {
-    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
-    function getUserDataForTokens(address[] calldata launchAssets, address account)
-        external
-        view
-        returns (UserRewardData[] memory);
-    function increaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function decreaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
-    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
-    function createRewardsPair(address launchAsset, address quoteToken) external;
-
-    function endRewards(IGTELaunchpadV2Pair pair) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-interface IGTELaunchpadV2Pair {
-    function rewardsPoolActive() external view returns (uint256);
-    function accruedLaunchpadFee0() external view returns (uint112);
-    function accruedLaunchpadFee1() external view returns (uint112);
-    function launchpadLp() external view returns (address);
-    function launchpadFeeDistributor() external view returns (address);
-    function REWARDS_FEE_SHARE() external view returns (uint256);
-
-    function endRewardsAccrual() external;
-}
-
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
 
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
+pragma solidity 0.8.27;
+
+interface IUniswapV2Pair {
+    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
+    event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
+    event Swap(
+        address indexed sender,
+        uint256 amount0In,
+        uint256 amount1In,
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address indexed to
+    );
+    event Sync(uint112 reserve0, uint112 reserve1);
+
+    function MINIMUM_LIQUIDITY() external pure returns (uint256);
+    function factory() external view returns (address);
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function price0CumulativeLast() external view returns (uint256);
+    function price1CumulativeLast() external view returns (uint256);
+    function kLast() external view returns (uint256);
+
+    function mint(address to) external returns (uint256 liquidity);
+    function burn(address to) external returns (uint256 amount0, uint256 amount1);
+    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
+    function skim(address to) external;
+    function sync() external;
+
+    function initialize(address, address, address, address) external;
+}
+
+pragma solidity 0.8.27;
+
+interface IERC20 {
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+    function decimals() external view returns (uint8);
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address owner) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
+
+    function approve(address spender, uint256 value) external returns (bool);
+    function transfer(address to, uint256 value) external returns (bool);
+    function transferFrom(address from, address to, uint256 value) external returns (bool);
+}
+
+pragma solidity 0.8.27;
+
+// a library for handling binary fixed point numbers (https://en.wikipedia.org/wiki/Q_(number_format))
+
+// range: [0, 2**112 - 1]
+// resolution: 1 / 2**112
+
+library UQ112x112 {
+    uint224 constant Q112 = 2 ** 112;
+
+    // encode a uint112 as a UQ112x112
+    function encode(uint112 y) internal pure returns (uint224 z) {
+        z = uint224(y) * Q112; // never overflows
+    }
+
+    // divide a UQ112x112 by a uint112, returning a UQ112x112
+    function uqdiv(uint224 x, uint112 y) internal pure returns (uint224 z) {
+        z = x / uint224(y);
+    }
+}
+
 pragma solidity 0.8.27;
 
 import "./interfaces/IUniswapV2ERC20.sol";
@@ -601,6 +673,12 @@ contract UniswapV2ERC20 is IUniswapV2ERC20 {
 
 pragma solidity 0.8.27;
 
+interface IUniswapV2Callee {
+    function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
+}
+
+pragma solidity 0.8.27;
+
 // a library for performing various math operations
 
 library Math {
@@ -621,84 +699,6 @@ library Math {
             z = 1;
         }
     }
-}
-
-pragma solidity 0.8.27;
-
-interface IUniswapV2Pair {
-    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
-    event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
-    event Swap(
-        address indexed sender,
-        uint256 amount0In,
-        uint256 amount1In,
-        uint256 amount0Out,
-        uint256 amount1Out,
-        address indexed to
-    );
-    event Sync(uint112 reserve0, uint112 reserve1);
-
-    function MINIMUM_LIQUIDITY() external pure returns (uint256);
-    function factory() external view returns (address);
-    function token0() external view returns (address);
-    function token1() external view returns (address);
-    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
-    function price0CumulativeLast() external view returns (uint256);
-    function price1CumulativeLast() external view returns (uint256);
-    function kLast() external view returns (uint256);
-
-    function mint(address to) external returns (uint256 liquidity);
-    function burn(address to) external returns (uint256 amount0, uint256 amount1);
-    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
-    function skim(address to) external;
-    function sync() external;
-
-    function initialize(address, address, address, address) external;
-}
-
-pragma solidity 0.8.27;
-
-// a library for handling binary fixed point numbers (https://en.wikipedia.org/wiki/Q_(number_format))
-
-// range: [0, 2**112 - 1]
-// resolution: 1 / 2**112
-
-library UQ112x112 {
-    uint224 constant Q112 = 2 ** 112;
-
-    // encode a uint112 as a UQ112x112
-    function encode(uint112 y) internal pure returns (uint224 z) {
-        z = uint224(y) * Q112; // never overflows
-    }
-
-    // divide a UQ112x112 by a uint112, returning a UQ112x112
-    function uqdiv(uint224 x, uint112 y) internal pure returns (uint224 z) {
-        z = x / uint224(y);
-    }
-}
-
-pragma solidity 0.8.27;
-
-interface IUniswapV2Callee {
-    function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
-}
-
-pragma solidity 0.8.27;
-
-interface IERC20 {
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    event Transfer(address indexed from, address indexed to, uint256 value);
-
-    function name() external view returns (string memory);
-    function symbol() external view returns (string memory);
-    function decimals() external view returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address owner) external view returns (uint256);
-    function allowance(address owner, address spender) external view returns (uint256);
-
-    function approve(address spender, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
 }
 
 

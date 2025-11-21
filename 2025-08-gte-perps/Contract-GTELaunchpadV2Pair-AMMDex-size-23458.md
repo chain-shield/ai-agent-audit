@@ -424,229 +424,6 @@ contract UniswapV2ERC20 is IUniswapV2ERC20 {
     }
 }
 
-pragma solidity 0.8.27;
-
-interface IUniswapV2Factory {
-    event PairCreated(address indexed token0, address indexed token1, address pair, uint256);
-
-    function feeTo() external view returns (address);
-    function feeToSetter() external view returns (address);
-
-    function getPair(address tokenA, address tokenB) external view returns (address pair);
-    function allPairs(uint256) external view returns (address pair);
-    function allPairsLength() external view returns (uint256);
-
-    function createPair(address tokenA, address tokenB) external returns (address pair);
-
-    function setFeeTo(address) external;
-    function setFeeToSetter(address) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-// import {Initializable} from "@solady/utils/Initializable.sol";
-import {OwnableRoles} from "@solady/auth/OwnableRoles.sol";
-import {SafeCastLib} from "@solady/utils/SafeCastLib.sol";
-import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
-
-import {IDistributor, IGTELaunchpadV2Pair} from "./interfaces/IDistributor.sol";
-import "./libraries/RewardsTracker.sol";
-
-/// @notice This contract receives tokens from
-contract Distributor is OwnableRoles, IDistributor {
-    using SafeTransferLib for address;
-
-    event TotalPendingRewardsIncreased(address indexed asset, uint256 amount);
-    event TotalPendingRewardsDecreased(address indexed asset, uint256 amount);
-
-    error Initialized();
-    error RewardsExist();
-    error RewardsDoNotExist();
-    error ClaimAmountExceedsTotalPendingRewards();
-    error NoSharesToIncentivize();
-    error SkimOverflow();
-
-    uint256 public constant ADMIN_ROLE = _ROLE_0;
-
-    bool private initialized;
-    address public launchpad;
-
-    /// @dev metadata to recover donations while preserving pending rewards
-    mapping(address => uint256) public totalPendingRewards;
-
-    constructor() {
-        _initializeOwner(msg.sender);
-    }
-
-    /// @dev There is no init check anywhere else because this contract can't be used until the launchpad address is set
-    function initialize(address _launchpad) public onlyOwner {
-        if (initialized) revert Initialized();
-        launchpad = _launchpad;
-        initialized = true;
-    }
-
-    modifier onlyLaunchpad() {
-        if (msg.sender != launchpad) revert Unauthorized();
-        _;
-    }
-
-    function skimExcessRewards(address asset, uint256 amount) external onlyOwnerOrRoles(ADMIN_ROLE) {
-        if (amount > asset.balanceOf(address(this)) - totalPendingRewards[asset]) revert SkimOverflow();
-
-        asset.safeTransfer(msg.sender, amount);
-    }
-
-    function getRewardsPoolData(address launchAsset) external view returns (RewardPoolDataMemory memory) {
-        return RewardsTrackerStorage.getRewardPool(launchAsset).getRewardsPoolData();
-    }
-
-    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory) {
-        return RewardsTrackerStorage.getRewardPool(launchAsset).getUserData(account);
-    }
-
-    function getUserDataForTokens(address[] calldata launchAssets, address account)
-        external
-        view
-        returns (UserRewardData[] memory)
-    {
-        UserRewardData[] memory data = new UserRewardData[](launchAssets.length);
-
-        for (uint256 i = 0; i < launchAssets.length; i++) {
-            data[i] = RewardsTrackerStorage.getRewardPool(launchAssets[i]).getUserData(account);
-        }
-        return data;
-    }
-
-    function getPendingRewards(address launchAsset, address account)
-        external
-        view
-        returns (uint256 pendingBase, uint256 pendingQuote)
-    {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        return rs.getPendingRewards(account);
-    }
-
-    function endRewards(IGTELaunchpadV2Pair pair) external onlyLaunchpad {
-        pair.endRewardsAccrual();
-    }
-
-    /// @notice Initializes the rewards pair from the launchpad
-    /// @dev Neither the launchAsset, nor the quoteAsset can be the baseAsset of an existing reward pool
-    function createRewardsPair(address launchAsset, address quoteAsset) external onlyLaunchpad {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-        RewardPoolData storage rsq = RewardsTrackerStorage.getRewardPool(quoteAsset);
-
-        // Sanity check in case the admin makes the quote asset of launchpad an existing asset
-        if (rs.quoteAsset != address(0) || rsq.quoteAsset != address(0)) revert RewardsExist();
-
-        rs.initializePair(launchAsset, quoteAsset);
-    }
-
-    /// @notice Allows rewards to be added to a pool regardless of token order
-    /// @dev Pools can only be created once per asset combo, regardless of the order of the assets
-    /// Additionally, anyone can add rewards as incentive, even while a pair is still bonding
-    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external {
-        (address launchAsset, address quoteAsset, uint128 launchAssetAmount, uint128 quoteAssetAmount) =
-            (token0, token1, amount0, amount1);
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(token0);
-
-        if (rs.quoteAsset == address(0)) {
-            rs = RewardsTrackerStorage.getRewardPool(token1);
-
-            if (rs.quoteAsset == address(0)) revert RewardsDoNotExist();
-
-            (launchAsset, quoteAsset, launchAssetAmount, quoteAssetAmount) = (token1, token0, amount1, amount0);
-        }
-
-        if (rs.totalShares == 0) revert NoSharesToIncentivize();
-
-        if (launchAssetAmount > 0) {
-            rs.addBaseRewards(launchAsset, launchAssetAmount);
-            _increaseTotalPending(launchAsset, launchAssetAmount);
-            launchAsset.safeTransferFrom(msg.sender, address(this), uint256(launchAssetAmount));
-        }
-
-        if (quoteAssetAmount > 0) {
-            rs.addQuoteRewards(launchAsset, quoteAsset, quoteAssetAmount);
-            _increaseTotalPending(quoteAsset, quoteAssetAmount);
-            quoteAsset.safeTransferFrom(msg.sender, address(this), uint256(quoteAssetAmount));
-        }
-    }
-
-    /// @dev This can only be called while `launchAsset` is bonding, so we dont need to check if the pool exists or is still active
-    function increaseStake(address launchAsset, address account, uint96 shares)
-        external
-        onlyLaunchpad
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        (baseAmount, quoteAmount) = rs.stake(account, uint96(shares));
-        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
-    }
-
-    /// @dev This can only be called while `launchAsset` still shares to remove from bonders, so it cannot be called after the pool has been deactivated
-    function decreaseStake(address launchAsset, address account, uint96 shares)
-        external
-        onlyLaunchpad
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        (baseAmount, quoteAmount) = rs.unstake(account, uint96(shares));
-        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
-    }
-
-    /// @dev This can be called even after a pool has been deactivated, as accounts may still have pending rewards
-    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount) {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        (baseAmount, quoteAmount) = rs.claim(msg.sender);
-
-        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
-    }
-
-    function _distributeAssets(address base, uint256 baseAmount, address quote, uint256 quoteAmount) internal {
-        if (baseAmount > 0) {
-            _decreaseTotalPending(base, baseAmount);
-            base.safeTransfer(msg.sender, baseAmount);
-        }
-
-        if (quoteAmount > 0) {
-            _decreaseTotalPending(quote, quoteAmount);
-            quote.safeTransfer(msg.sender, quoteAmount);
-        }
-    }
-
-    function _increaseTotalPending(address asset, uint256 amount) internal {
-        unchecked {
-            totalPendingRewards[asset] += amount;
-        }
-
-        emit TotalPendingRewardsIncreased(asset, amount);
-    }
-
-    function _decreaseTotalPending(address asset, uint256 amount) internal {
-        uint256 currTotal = totalPendingRewards[asset];
-
-        if (currTotal < amount) revert ClaimAmountExceedsTotalPendingRewards();
-
-        unchecked {
-            totalPendingRewards[asset] -= amount;
-        }
-
-        emit TotalPendingRewardsDecreased(asset, amount);
-    }
-}
-
-pragma solidity 0.8.27;
-
-interface IUniswapV2Callee {
-    function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
-}
-
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
@@ -899,40 +676,224 @@ library RewardsTrackerStorage {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-interface IGTELaunchpadV2Pair {
-    function rewardsPoolActive() external view returns (uint256);
-    function accruedLaunchpadFee0() external view returns (uint112);
-    function accruedLaunchpadFee1() external view returns (uint112);
-    function launchpadLp() external view returns (address);
-    function launchpadFeeDistributor() external view returns (address);
-    function REWARDS_FEE_SHARE() external view returns (uint256);
+// import {Initializable} from "@solady/utils/Initializable.sol";
+import {OwnableRoles} from "@solady/auth/OwnableRoles.sol";
+import {SafeCastLib} from "@solady/utils/SafeCastLib.sol";
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
 
-    function endRewardsAccrual() external;
+import {IDistributor, IGTELaunchpadV2Pair} from "./interfaces/IDistributor.sol";
+import "./libraries/RewardsTracker.sol";
+
+/// @notice This contract receives tokens from
+contract Distributor is OwnableRoles, IDistributor {
+    using SafeTransferLib for address;
+
+    event TotalPendingRewardsIncreased(address indexed asset, uint256 amount);
+    event TotalPendingRewardsDecreased(address indexed asset, uint256 amount);
+
+    error Initialized();
+    error RewardsExist();
+    error RewardsDoNotExist();
+    error ClaimAmountExceedsTotalPendingRewards();
+    error NoSharesToIncentivize();
+    error SkimOverflow();
+
+    uint256 public constant ADMIN_ROLE = _ROLE_0;
+
+    bool private initialized;
+    address public launchpad;
+
+    /// @dev metadata to recover donations while preserving pending rewards
+    mapping(address => uint256) public totalPendingRewards;
+
+    constructor() {
+        _initializeOwner(msg.sender);
+    }
+
+    /// @dev There is no init check anywhere else because this contract can't be used until the launchpad address is set
+    function initialize(address _launchpad) public onlyOwner {
+        if (initialized) revert Initialized();
+        launchpad = _launchpad;
+        initialized = true;
+    }
+
+    modifier onlyLaunchpad() {
+        if (msg.sender != launchpad) revert Unauthorized();
+        _;
+    }
+
+    function skimExcessRewards(address asset, uint256 amount) external onlyOwnerOrRoles(ADMIN_ROLE) {
+        if (amount > asset.balanceOf(address(this)) - totalPendingRewards[asset]) revert SkimOverflow();
+
+        asset.safeTransfer(msg.sender, amount);
+    }
+
+    function getRewardsPoolData(address launchAsset) external view returns (RewardPoolDataMemory memory) {
+        return RewardsTrackerStorage.getRewardPool(launchAsset).getRewardsPoolData();
+    }
+
+    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory) {
+        return RewardsTrackerStorage.getRewardPool(launchAsset).getUserData(account);
+    }
+
+    function getUserDataForTokens(address[] calldata launchAssets, address account)
+        external
+        view
+        returns (UserRewardData[] memory)
+    {
+        UserRewardData[] memory data = new UserRewardData[](launchAssets.length);
+
+        for (uint256 i = 0; i < launchAssets.length; i++) {
+            data[i] = RewardsTrackerStorage.getRewardPool(launchAssets[i]).getUserData(account);
+        }
+        return data;
+    }
+
+    function getPendingRewards(address launchAsset, address account)
+        external
+        view
+        returns (uint256 pendingBase, uint256 pendingQuote)
+    {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        return rs.getPendingRewards(account);
+    }
+
+    function endRewards(IGTELaunchpadV2Pair pair) external onlyLaunchpad {
+        pair.endRewardsAccrual();
+    }
+
+    /// @notice Initializes the rewards pair from the launchpad
+    /// @dev Neither the launchAsset, nor the quoteAsset can be the baseAsset of an existing reward pool
+    function createRewardsPair(address launchAsset, address quoteAsset) external onlyLaunchpad {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+        RewardPoolData storage rsq = RewardsTrackerStorage.getRewardPool(quoteAsset);
+
+        // Sanity check in case the admin makes the quote asset of launchpad an existing asset
+        if (rs.quoteAsset != address(0) || rsq.quoteAsset != address(0)) revert RewardsExist();
+
+        rs.initializePair(launchAsset, quoteAsset);
+    }
+
+    /// @notice Allows rewards to be added to a pool regardless of token order
+    /// @dev Pools can only be created once per asset combo, regardless of the order of the assets
+    /// Additionally, anyone can add rewards as incentive, even while a pair is still bonding
+    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external {
+        (address launchAsset, address quoteAsset, uint128 launchAssetAmount, uint128 quoteAssetAmount) =
+            (token0, token1, amount0, amount1);
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(token0);
+
+        if (rs.quoteAsset == address(0)) {
+            rs = RewardsTrackerStorage.getRewardPool(token1);
+
+            if (rs.quoteAsset == address(0)) revert RewardsDoNotExist();
+
+            (launchAsset, quoteAsset, launchAssetAmount, quoteAssetAmount) = (token1, token0, amount1, amount0);
+        }
+
+        if (rs.totalShares == 0) revert NoSharesToIncentivize();
+
+        if (launchAssetAmount > 0) {
+            rs.addBaseRewards(launchAsset, launchAssetAmount);
+            _increaseTotalPending(launchAsset, launchAssetAmount);
+            launchAsset.safeTransferFrom(msg.sender, address(this), uint256(launchAssetAmount));
+        }
+
+        if (quoteAssetAmount > 0) {
+            rs.addQuoteRewards(launchAsset, quoteAsset, quoteAssetAmount);
+            _increaseTotalPending(quoteAsset, quoteAssetAmount);
+            quoteAsset.safeTransferFrom(msg.sender, address(this), uint256(quoteAssetAmount));
+        }
+    }
+
+    /// @dev This can only be called while `launchAsset` is bonding, so we dont need to check if the pool exists or is still active
+    function increaseStake(address launchAsset, address account, uint96 shares)
+        external
+        onlyLaunchpad
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        (baseAmount, quoteAmount) = rs.stake(account, uint96(shares));
+        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
+    }
+
+    /// @dev This can only be called while `launchAsset` still shares to remove from bonders, so it cannot be called after the pool has been deactivated
+    function decreaseStake(address launchAsset, address account, uint96 shares)
+        external
+        onlyLaunchpad
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        (baseAmount, quoteAmount) = rs.unstake(account, uint96(shares));
+        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
+    }
+
+    /// @dev This can be called even after a pool has been deactivated, as accounts may still have pending rewards
+    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount) {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        (baseAmount, quoteAmount) = rs.claim(msg.sender);
+
+        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
+    }
+
+    function _distributeAssets(address base, uint256 baseAmount, address quote, uint256 quoteAmount) internal {
+        if (baseAmount > 0) {
+            _decreaseTotalPending(base, baseAmount);
+            base.safeTransfer(msg.sender, baseAmount);
+        }
+
+        if (quoteAmount > 0) {
+            _decreaseTotalPending(quote, quoteAmount);
+            quote.safeTransfer(msg.sender, quoteAmount);
+        }
+    }
+
+    function _increaseTotalPending(address asset, uint256 amount) internal {
+        unchecked {
+            totalPendingRewards[asset] += amount;
+        }
+
+        emit TotalPendingRewardsIncreased(asset, amount);
+    }
+
+    function _decreaseTotalPending(address asset, uint256 amount) internal {
+        uint256 currTotal = totalPendingRewards[asset];
+
+        if (currTotal < amount) revert ClaimAmountExceedsTotalPendingRewards();
+
+        unchecked {
+            totalPendingRewards[asset] -= amount;
+        }
+
+        emit TotalPendingRewardsDecreased(asset, amount);
+    }
 }
 
 pragma solidity 0.8.27;
 
-import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
+interface IUniswapV2Factory {
+    event PairCreated(address indexed token0, address indexed token1, address pair, uint256);
 
-import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
+    function feeTo() external view returns (address);
+    function feeToSetter() external view returns (address);
 
-interface IDistributor {
-    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
-    function getUserDataForTokens(address[] calldata launchAssets, address account)
-        external
-        view
-        returns (UserRewardData[] memory);
-    function increaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function decreaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
-    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
-    function createRewardsPair(address launchAsset, address quoteToken) external;
+    function getPair(address tokenA, address tokenB) external view returns (address pair);
+    function allPairs(uint256) external view returns (address pair);
+    function allPairsLength() external view returns (uint256);
 
-    function endRewards(IGTELaunchpadV2Pair pair) external;
+    function createPair(address tokenA, address tokenB) external returns (address pair);
+
+    function setFeeTo(address) external;
+    function setFeeToSetter(address) external;
+}
+
+pragma solidity 0.8.27;
+
+interface IUniswapV2Callee {
+    function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
 }
 
 // SPDX-License-Identifier: MIT
@@ -1473,6 +1434,31 @@ abstract contract OwnableRoles is Ownable {
 
 pragma solidity 0.8.27;
 
+import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
+
+import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
+
+interface IDistributor {
+    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
+    function getUserDataForTokens(address[] calldata launchAssets, address account)
+        external
+        view
+        returns (UserRewardData[] memory);
+    function increaseStake(address launchAsset, address account, uint96 shares)
+        external
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function decreaseStake(address launchAsset, address account, uint96 shares)
+        external
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
+    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
+    function createRewardsPair(address launchAsset, address quoteToken) external;
+
+    function endRewards(IGTELaunchpadV2Pair pair) external;
+}
+
+pragma solidity 0.8.27;
+
 interface IUniswapV2Pair {
     event Mint(address indexed sender, uint256 amount0, uint256 amount1);
     event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
@@ -1507,293 +1493,15 @@ interface IUniswapV2Pair {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-struct UserRewardData {
-    uint96 shares; // User's current share count (up to ~7.9e28)
-    uint96 baseRewardDebt; // Used to calculate base token rewards owed
-    uint96 quoteRewardDebt; // Used to calculate quote token rewards owed
-}
+interface IGTELaunchpadV2Pair {
+    function rewardsPoolActive() external view returns (uint256);
+    function accruedLaunchpadFee0() external view returns (uint112);
+    function accruedLaunchpadFee1() external view returns (uint112);
+    function launchpadLp() external view returns (address);
+    function launchpadFeeDistributor() external view returns (address);
+    function REWARDS_FEE_SHARE() external view returns (uint256);
 
-struct RewardPoolData {
-    // SLOT 0 //
-    uint96 totalShares; // Sum of all user shares
-    address quoteAsset; // Secondary reward token
-    // SLOT 1 //
-    uint128 pendingBaseRewards;
-    uint128 pendingQuoteRewards;
-    // SLOT 2 //
-    uint256 accBaseRewardPerShare; // Accumulated base rewards per share, scaled by 1e12
-    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
-    // SLOT 3 //
-    mapping(address => UserRewardData) userRewards; // User-specific reward data
-}
-
-struct RewardPoolDataMemory {
-    uint96 totalShares; // Sum of all user shares
-    address quoteAsset; // Secondary reward token
-    uint128 pendingBaseRewards;
-    uint128 pendingQuoteRewards; //
-    uint256 accBaseRewardPerShare;
-    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
-}
-
-using RewardsTrackerLib for RewardPoolData global;
-/**
- * @title RewardsLibrary
- * @dev Library with internal functions for pro rata reward distribution
- */
-
-library RewardsTrackerLib {
-    /// @dev sig: 0x9511e79574c9aa195c27c3455b60ba70c9a6efbcfc431ae68b8a3cb4d3764f6c
-    event PairRewardsInitialized(address indexed baseAsset, address indexed quoteAsset);
-    /// @dev sig: 0x2cbe0649bcb43ba4ace580eeeb0c95a516dec93862fe4cc4e7e60528575cec67
-    event BaseRewardsAdded(address indexed baseAsset, uint256 amount);
-    /// @dev sig: 0x28590542f9792ca8533cd1beac50e724892009d1f19ed17351f264be124d3293
-    event QuoteRewardsAdded(address indexed baseAsset, address indexed quoteAsset, uint256 amount);
-
-    /// @dev sig: 0xe3e46b04
-    error ZeroShareStake();
-    /// @dev sig: 0xe331bd04
-    error ZeroShareClaim();
-    /// @dev sig: 0x39996567
-    error InsufficientShares();
-
-    // Scale factor used for fixed-point math
-    uint128 public constant PRECISION_FACTOR = 1e12;
-
-    function getQuoteAsset(RewardPoolData storage self) internal view returns (address) {
-        return self.quoteAsset;
-    }
-
-    function getUserData(RewardPoolData storage self, address account) internal view returns (UserRewardData memory) {
-        return self.userRewards[account];
-    }
-
-    function getRewardsPoolData(RewardPoolData storage self) internal view returns (RewardPoolDataMemory memory pm) {
-        pm = RewardPoolDataMemory({
-            quoteAsset: self.quoteAsset,
-            totalShares: self.totalShares,
-            pendingBaseRewards: self.pendingBaseRewards,
-            pendingQuoteRewards: self.pendingQuoteRewards,
-            accBaseRewardPerShare: self.accBaseRewardPerShare,
-            accQuoteRewardPerShare: self.accQuoteRewardPerShare
-        });
-    }
-
-    function initializePair(RewardPoolData storage self, address baseAsset, address quoteAsset) internal {
-        self.quoteAsset = quoteAsset;
-        emit PairRewardsInitialized(baseAsset, quoteAsset);
-    }
-
-    function addBaseRewards(RewardPoolData storage self, address baseAsset, uint128 amount) internal {
-        self.pendingBaseRewards += amount;
-        emit BaseRewardsAdded(baseAsset, amount);
-    }
-
-    function addQuoteRewards(RewardPoolData storage self, address baseAsset, address quoteAsset, uint128 amount)
-        internal
-    {
-        self.pendingQuoteRewards += amount;
-        emit QuoteRewardsAdded(baseAsset, quoteAsset, amount);
-    }
-
-    function stake(RewardPoolData storage self, address user, uint96 newShares)
-        internal
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        if (newShares == 0) revert ZeroShareStake();
-
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
-
-        UserRewardData storage userData = self.userRewards[user];
-
-        uint256 existingShares = uint96(userData.shares);
-
-        // Calculate pending rewards before updating shares
-        if (existingShares > 0) {
-            baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
-            quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
-        }
-
-        // Update user shares
-        userData.shares += newShares;
-        self.totalShares += newShares;
-
-        // Update reward debts
-        userData.baseRewardDebt = uint96(totalAccRewards(existingShares + newShares, accBaseRewardsPerShare));
-        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares + newShares, accQuoteRewardsPerShare));
-    }
-
-    function unstake(RewardPoolData storage self, address user, uint96 removeShares)
-        internal
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
-
-        UserRewardData storage userData = self.userRewards[user];
-
-        if (removeShares == 0) revert ZeroShareStake();
-
-        uint256 existingShares = uint256(userData.shares);
-        if (existingShares < removeShares) revert InsufficientShares();
-
-        // Calculate pending rewards before updating shares
-        baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
-        quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
-
-        // Update user shares
-        userData.shares -= removeShares;
-        self.totalShares -= removeShares;
-
-        // Update reward debts
-        userData.baseRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accBaseRewardsPerShare));
-        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accQuoteRewardsPerShare));
-    }
-
-    function claim(RewardPoolData storage self, address user)
-        internal
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        UserRewardData storage userData = self.userRewards[user];
-        uint256 shares = uint256(userData.shares);
-
-        if (shares == 0) revert ZeroShareClaim();
-
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
-
-        // Calculate pending rewards
-        uint256 totalAccBaseRewards = totalAccRewards(shares, accBaseRewardsPerShare);
-        uint256 totalAccQuoteRewards = totalAccRewards(shares, accQuoteRewardsPerShare);
-
-        baseAmount = totalAccBaseRewards - uint128(userData.baseRewardDebt);
-        quoteAmount = totalAccQuoteRewards - uint128(userData.quoteRewardDebt);
-
-        // Update reward debts
-        userData.baseRewardDebt = uint96(totalAccBaseRewards);
-        userData.quoteRewardDebt = uint96(totalAccQuoteRewards);
-    }
-
-    function getPendingRewards(RewardPoolData storage self, address user)
-        internal
-        view
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = getAccRewardsPerShare(self);
-
-        UserRewardData storage userData = self.userRewards[user];
-        uint256 shares = uint256(userData.shares);
-
-        // Unstaking claims pending rewards, so if no shares, then no pending
-        if (shares == 0) return (0, 0);
-
-        baseAmount = totalAccRewards(shares, accBaseRewardsPerShare) - uint128(userData.baseRewardDebt);
-        quoteAmount = totalAccRewards(shares, accQuoteRewardsPerShare) - uint128(userData.quoteRewardDebt);
-    }
-
-    function totalAccRewards(uint256 shares, uint256 accRewardsPerShare) internal pure returns (uint256) {
-        return (shares * accRewardsPerShare) / PRECISION_FACTOR;
-    }
-
-    /// @dev Applies the new accrued rewards per share to the rewards state
-    function update(RewardPoolData storage self)
-        internal
-        returns (uint256 newAccBaseRewardsPerShare, uint256 newAccQuoteRewardsPerShare)
-    {
-        (newAccBaseRewardsPerShare, newAccQuoteRewardsPerShare) = getAccRewardsPerShare(self);
-
-        if (self.pendingBaseRewards > 0) {
-            self.accBaseRewardPerShare = newAccBaseRewardsPerShare;
-            delete self.pendingBaseRewards;
-        }
-
-        if (self.pendingQuoteRewards > 0) {
-            self.accQuoteRewardPerShare = newAccQuoteRewardsPerShare;
-            delete self.pendingQuoteRewards;
-        }
-    }
-
-    /// @dev Gets the new accrued rewards per share without updating rewards state
-    function getAccRewardsPerShare(RewardPoolData storage self)
-        internal
-        view
-        returns (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare)
-    {
-        uint96 totalShares = self.totalShares;
-        if (totalShares == 0) return (self.accBaseRewardPerShare, self.accQuoteRewardPerShare);
-
-        accBaseRewardsPerShare = self.accBaseRewardPerShare;
-        accQuoteRewardsPerShare = self.accQuoteRewardPerShare;
-
-        if (self.pendingBaseRewards > 0) {
-            accBaseRewardsPerShare += ((self.pendingBaseRewards * PRECISION_FACTOR) / uint128(totalShares));
-        }
-
-        if (self.pendingQuoteRewards > 0) {
-            accQuoteRewardsPerShare += ((self.pendingQuoteRewards * PRECISION_FACTOR) / uint128(totalShares));
-        }
-    }
-}
-
-/**
- * @title RewardsStorage
- * @dev Storage library for rewards distribution using EIP-1967 pattern
- */
-library RewardsTrackerStorage {
-    bytes32 internal constant LAUNCH_ASSET_TO_REWARDS_SLOT =
-        keccak256(abi.encode(uint256(keccak256("rewardsTrackerPool.self.slot")) - 1)) & ~bytes32(uint256(0xff));
-
-    function rewardPoolSlot(address baseAsset) private pure returns (bytes32) {
-        return keccak256(abi.encodePacked(baseAsset, LAUNCH_ASSET_TO_REWARDS_SLOT));
-    }
-
-    function getRewardPool(address baseAsset) internal pure returns (RewardPoolData storage p) {
-        bytes32 slot = rewardPoolSlot(baseAsset);
-        assembly {
-            p.slot := slot
-        }
-    }
-}
-
-pragma solidity 0.8.27;
-
-interface IUniswapV2ERC20 {
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    event Transfer(address indexed from, address indexed to, uint256 value);
-
-    function name() external pure returns (string memory);
-    function symbol() external pure returns (string memory);
-    function decimals() external pure returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address owner) external view returns (uint256);
-    function allowance(address owner, address spender) external view returns (uint256);
-
-    function approve(address spender, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-
-    function DOMAIN_SEPARATOR() external view returns (bytes32);
-    function PERMIT_TYPEHASH() external pure returns (bytes32);
-    function nonces(address owner) external view returns (uint256);
-
-    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external;
-}
-
-pragma solidity 0.8.27;
-
-// a library for performing overflow-safe math, courtesy of DappHub (https://github.com/dapphub/ds-math)
-
-library SafeMath {
-    function add(uint256 x, uint256 y) internal pure returns (uint256 z) {
-        return x + y;
-    }
-
-    function sub(uint256 x, uint256 y) internal pure returns (uint256 z) {
-        return x - y;
-    }
-
-    function mul(uint256 x, uint256 y) internal pure returns (uint256 z) {
-        return x * y;
-    }
+    function endRewardsAccrual() external;
 }
 
 pragma solidity 0.8.27;
@@ -2070,28 +1778,323 @@ library RewardsTrackerStorage {
     }
 }
 
+pragma solidity 0.8.27;
+
+// a library for performing overflow-safe math, courtesy of DappHub (https://github.com/dapphub/ds-math)
+
+library SafeMath {
+    function add(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        return x + y;
+    }
+
+    function sub(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        return x - y;
+    }
+
+    function mul(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        return x * y;
+    }
+}
+
+pragma solidity 0.8.27;
+
+interface IUniswapV2ERC20 {
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    function name() external pure returns (string memory);
+    function symbol() external pure returns (string memory);
+    function decimals() external pure returns (uint8);
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address owner) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
+
+    function approve(address spender, uint256 value) external returns (bool);
+    function transfer(address to, uint256 value) external returns (bool);
+    function transferFrom(address from, address to, uint256 value) external returns (bool);
+
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+    function PERMIT_TYPEHASH() external pure returns (bytes32);
+    function nonces(address owner) external view returns (uint256);
+
+    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+struct UserRewardData {
+    uint96 shares; // User's current share count (up to ~7.9e28)
+    uint96 baseRewardDebt; // Used to calculate base token rewards owed
+    uint96 quoteRewardDebt; // Used to calculate quote token rewards owed
+}
+
+struct RewardPoolData {
+    // SLOT 0 //
+    uint96 totalShares; // Sum of all user shares
+    address quoteAsset; // Secondary reward token
+    // SLOT 1 //
+    uint128 pendingBaseRewards;
+    uint128 pendingQuoteRewards;
+    // SLOT 2 //
+    uint256 accBaseRewardPerShare; // Accumulated base rewards per share, scaled by 1e12
+    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
+    // SLOT 3 //
+    mapping(address => UserRewardData) userRewards; // User-specific reward data
+}
+
+struct RewardPoolDataMemory {
+    uint96 totalShares; // Sum of all user shares
+    address quoteAsset; // Secondary reward token
+    uint128 pendingBaseRewards;
+    uint128 pendingQuoteRewards; //
+    uint256 accBaseRewardPerShare;
+    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
+}
+
+using RewardsTrackerLib for RewardPoolData global;
+/**
+ * @title RewardsLibrary
+ * @dev Library with internal functions for pro rata reward distribution
+ */
+
+library RewardsTrackerLib {
+    /// @dev sig: 0x9511e79574c9aa195c27c3455b60ba70c9a6efbcfc431ae68b8a3cb4d3764f6c
+    event PairRewardsInitialized(address indexed baseAsset, address indexed quoteAsset);
+    /// @dev sig: 0x2cbe0649bcb43ba4ace580eeeb0c95a516dec93862fe4cc4e7e60528575cec67
+    event BaseRewardsAdded(address indexed baseAsset, uint256 amount);
+    /// @dev sig: 0x28590542f9792ca8533cd1beac50e724892009d1f19ed17351f264be124d3293
+    event QuoteRewardsAdded(address indexed baseAsset, address indexed quoteAsset, uint256 amount);
+
+    /// @dev sig: 0xe3e46b04
+    error ZeroShareStake();
+    /// @dev sig: 0xe331bd04
+    error ZeroShareClaim();
+    /// @dev sig: 0x39996567
+    error InsufficientShares();
+
+    // Scale factor used for fixed-point math
+    uint128 public constant PRECISION_FACTOR = 1e12;
+
+    function getQuoteAsset(RewardPoolData storage self) internal view returns (address) {
+        return self.quoteAsset;
+    }
+
+    function getUserData(RewardPoolData storage self, address account) internal view returns (UserRewardData memory) {
+        return self.userRewards[account];
+    }
+
+    function getRewardsPoolData(RewardPoolData storage self) internal view returns (RewardPoolDataMemory memory pm) {
+        pm = RewardPoolDataMemory({
+            quoteAsset: self.quoteAsset,
+            totalShares: self.totalShares,
+            pendingBaseRewards: self.pendingBaseRewards,
+            pendingQuoteRewards: self.pendingQuoteRewards,
+            accBaseRewardPerShare: self.accBaseRewardPerShare,
+            accQuoteRewardPerShare: self.accQuoteRewardPerShare
+        });
+    }
+
+    function initializePair(RewardPoolData storage self, address baseAsset, address quoteAsset) internal {
+        self.quoteAsset = quoteAsset;
+        emit PairRewardsInitialized(baseAsset, quoteAsset);
+    }
+
+    function addBaseRewards(RewardPoolData storage self, address baseAsset, uint128 amount) internal {
+        self.pendingBaseRewards += amount;
+        emit BaseRewardsAdded(baseAsset, amount);
+    }
+
+    function addQuoteRewards(RewardPoolData storage self, address baseAsset, address quoteAsset, uint128 amount)
+        internal
+    {
+        self.pendingQuoteRewards += amount;
+        emit QuoteRewardsAdded(baseAsset, quoteAsset, amount);
+    }
+
+    function stake(RewardPoolData storage self, address user, uint96 newShares)
+        internal
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        if (newShares == 0) revert ZeroShareStake();
+
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
+
+        UserRewardData storage userData = self.userRewards[user];
+
+        uint256 existingShares = uint96(userData.shares);
+
+        // Calculate pending rewards before updating shares
+        if (existingShares > 0) {
+            baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
+            quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
+        }
+
+        // Update user shares
+        userData.shares += newShares;
+        self.totalShares += newShares;
+
+        // Update reward debts
+        userData.baseRewardDebt = uint96(totalAccRewards(existingShares + newShares, accBaseRewardsPerShare));
+        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares + newShares, accQuoteRewardsPerShare));
+    }
+
+    function unstake(RewardPoolData storage self, address user, uint96 removeShares)
+        internal
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
+
+        UserRewardData storage userData = self.userRewards[user];
+
+        if (removeShares == 0) revert ZeroShareStake();
+
+        uint256 existingShares = uint256(userData.shares);
+        if (existingShares < removeShares) revert InsufficientShares();
+
+        // Calculate pending rewards before updating shares
+        baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
+        quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
+
+        // Update user shares
+        userData.shares -= removeShares;
+        self.totalShares -= removeShares;
+
+        // Update reward debts
+        userData.baseRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accBaseRewardsPerShare));
+        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accQuoteRewardsPerShare));
+    }
+
+    function claim(RewardPoolData storage self, address user)
+        internal
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        UserRewardData storage userData = self.userRewards[user];
+        uint256 shares = uint256(userData.shares);
+
+        if (shares == 0) revert ZeroShareClaim();
+
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
+
+        // Calculate pending rewards
+        uint256 totalAccBaseRewards = totalAccRewards(shares, accBaseRewardsPerShare);
+        uint256 totalAccQuoteRewards = totalAccRewards(shares, accQuoteRewardsPerShare);
+
+        baseAmount = totalAccBaseRewards - uint128(userData.baseRewardDebt);
+        quoteAmount = totalAccQuoteRewards - uint128(userData.quoteRewardDebt);
+
+        // Update reward debts
+        userData.baseRewardDebt = uint96(totalAccBaseRewards);
+        userData.quoteRewardDebt = uint96(totalAccQuoteRewards);
+    }
+
+    function getPendingRewards(RewardPoolData storage self, address user)
+        internal
+        view
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = getAccRewardsPerShare(self);
+
+        UserRewardData storage userData = self.userRewards[user];
+        uint256 shares = uint256(userData.shares);
+
+        // Unstaking claims pending rewards, so if no shares, then no pending
+        if (shares == 0) return (0, 0);
+
+        baseAmount = totalAccRewards(shares, accBaseRewardsPerShare) - uint128(userData.baseRewardDebt);
+        quoteAmount = totalAccRewards(shares, accQuoteRewardsPerShare) - uint128(userData.quoteRewardDebt);
+    }
+
+    function totalAccRewards(uint256 shares, uint256 accRewardsPerShare) internal pure returns (uint256) {
+        return (shares * accRewardsPerShare) / PRECISION_FACTOR;
+    }
+
+    /// @dev Applies the new accrued rewards per share to the rewards state
+    function update(RewardPoolData storage self)
+        internal
+        returns (uint256 newAccBaseRewardsPerShare, uint256 newAccQuoteRewardsPerShare)
+    {
+        (newAccBaseRewardsPerShare, newAccQuoteRewardsPerShare) = getAccRewardsPerShare(self);
+
+        if (self.pendingBaseRewards > 0) {
+            self.accBaseRewardPerShare = newAccBaseRewardsPerShare;
+            delete self.pendingBaseRewards;
+        }
+
+        if (self.pendingQuoteRewards > 0) {
+            self.accQuoteRewardPerShare = newAccQuoteRewardsPerShare;
+            delete self.pendingQuoteRewards;
+        }
+    }
+
+    /// @dev Gets the new accrued rewards per share without updating rewards state
+    function getAccRewardsPerShare(RewardPoolData storage self)
+        internal
+        view
+        returns (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare)
+    {
+        uint96 totalShares = self.totalShares;
+        if (totalShares == 0) return (self.accBaseRewardPerShare, self.accQuoteRewardPerShare);
+
+        accBaseRewardsPerShare = self.accBaseRewardPerShare;
+        accQuoteRewardsPerShare = self.accQuoteRewardPerShare;
+
+        if (self.pendingBaseRewards > 0) {
+            accBaseRewardsPerShare += ((self.pendingBaseRewards * PRECISION_FACTOR) / uint128(totalShares));
+        }
+
+        if (self.pendingQuoteRewards > 0) {
+            accQuoteRewardsPerShare += ((self.pendingQuoteRewards * PRECISION_FACTOR) / uint128(totalShares));
+        }
+    }
+}
+
+/**
+ * @title RewardsStorage
+ * @dev Storage library for rewards distribution using EIP-1967 pattern
+ */
+library RewardsTrackerStorage {
+    bytes32 internal constant LAUNCH_ASSET_TO_REWARDS_SLOT =
+        keccak256(abi.encode(uint256(keccak256("rewardsTrackerPool.self.slot")) - 1)) & ~bytes32(uint256(0xff));
+
+    function rewardPoolSlot(address baseAsset) private pure returns (bytes32) {
+        return keccak256(abi.encodePacked(baseAsset, LAUNCH_ASSET_TO_REWARDS_SLOT));
+    }
+
+    function getRewardPool(address baseAsset) internal pure returns (RewardPoolData storage p) {
+        bytes32 slot = rewardPoolSlot(baseAsset);
+        assembly {
+            p.slot := slot
+        }
+    }
+}
+
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
 
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 pragma solidity 0.8.27;
 
-// a library for handling binary fixed point numbers (https://en.wikipedia.org/wiki/Q_(number_format))
+// a library for performing various math operations
 
-// range: [0, 2**112 - 1]
-// resolution: 1 / 2**112
-
-library UQ112x112 {
-    uint224 constant Q112 = 2 ** 112;
-
-    // encode a uint112 as a UQ112x112
-    function encode(uint112 y) internal pure returns (uint224 z) {
-        z = uint224(y) * Q112; // never overflows
+library Math {
+    function min(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        z = x < y ? x : y;
     }
 
-    // divide a UQ112x112 by a uint112, returning a UQ112x112
-    function uqdiv(uint224 x, uint112 y) internal pure returns (uint224 z) {
-        z = x / uint224(y);
+    // babylonian method (https://en.wikipedia.org/wiki/Methods_of_computing_square_roots#Babylonian_method)
+    function sqrt(uint256 y) internal pure returns (uint256 z) {
+        if (y > 3) {
+            z = y;
+            uint256 x = y / 2 + 1;
+            while (x < z) {
+                z = x;
+                x = (y / x + x) / 2;
+            }
+        } else if (y != 0) {
+            z = 1;
+        }
     }
 }
 
@@ -2115,25 +2118,22 @@ interface IERC20 {
 
 pragma solidity 0.8.27;
 
-// a library for performing various math operations
+// a library for handling binary fixed point numbers (https://en.wikipedia.org/wiki/Q_(number_format))
 
-library Math {
-    function min(uint256 x, uint256 y) internal pure returns (uint256 z) {
-        z = x < y ? x : y;
+// range: [0, 2**112 - 1]
+// resolution: 1 / 2**112
+
+library UQ112x112 {
+    uint224 constant Q112 = 2 ** 112;
+
+    // encode a uint112 as a UQ112x112
+    function encode(uint112 y) internal pure returns (uint224 z) {
+        z = uint224(y) * Q112; // never overflows
     }
 
-    // babylonian method (https://en.wikipedia.org/wiki/Methods_of_computing_square_roots#Babylonian_method)
-    function sqrt(uint256 y) internal pure returns (uint256 z) {
-        if (y > 3) {
-            z = y;
-            uint256 x = y / 2 + 1;
-            while (x < z) {
-                z = x;
-                x = (y / x + x) / 2;
-            }
-        } else if (y != 0) {
-            z = 1;
-        }
+    // divide a UQ112x112 by a uint112, returning a UQ112x112
+    function uqdiv(uint224 x, uint112 y) internal pure returns (uint224 z) {
+        z = x / uint224(y);
     }
 }
 

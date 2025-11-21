@@ -3,6 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct Actors {
     pub actors: Vec<Actor>,
 }
@@ -24,13 +25,13 @@ pub struct Actor {
 // NOTE: run 5X to get abuses by capability
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ActorAbuses {
-    pub actor_name: String,
-    pub capability: String,
     pub abuses: Vec<ActorAbuse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ActorAbuse {
+    pub actor_name: String,
+    pub capability: String,
     /// 50 word or less C4-style headline, explaining exploit
     pub title: String,
     /// step by step breakdown of how exploit is executed
@@ -41,6 +42,12 @@ pub struct ActorAbuse {
     pub assets_at_risk: Vec<String>,
     /// NEW: Who suffers? (LP, DAO, user, MEV, protocol treasury, etc.)
     pub victim: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct IsActorAbuseLegit {
+    is_legit_abuse: bool,
+    why_its_not_legit: String,
 }
 
 #[derive(

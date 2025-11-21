@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 /// # Arguments
 // * `codeblocks_path` - Path to the code blocks database
 /// * `repo` - Repository paths and metadata for naming
-pub async fn save_contract_and_fn_ir(
+pub async fn save_codeblocks_locally(
     codeblocks_path: &PathBuf,
     repo: &RepoPaths,
 ) -> anyhow::Result<()> {

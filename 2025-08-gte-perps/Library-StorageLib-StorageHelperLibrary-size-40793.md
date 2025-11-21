@@ -203,901 +203,6 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
-
-struct PriceHistory {
-    PriceSnapshot[] snapshots;
-}
-
-struct PriceSnapshot {
-    uint256 price;
-    int256 basisSpread;
-    uint256 timestamp;
-}
-
-using PriceHistoryLib for PriceHistory global;
-
-library PriceHistoryLib {
-    using FixedPointMathLib for uint256;
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                SETTERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @notice snapshots
-    function snapshot(PriceHistory storage history, uint256 price) internal {
-        uint256 length = history.snapshots.length;
-
-        if (length > 0 && history.snapshots[length - 1].timestamp == block.timestamp) {
-            history.snapshots[length - 1].price = price;
-        } else {
-            history.snapshots.push(PriceSnapshot(price, 0, block.timestamp));
-        }
-    }
-
-    function snapshotBasisSpread(PriceHistory storage history, int256 basisSpread) internal {
-        history.snapshots.push(PriceSnapshot(0, basisSpread, 0));
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                               GETTERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function latest(PriceHistory storage history) internal view returns (uint256) {
-        uint256 length = history.snapshots.length;
-
-        if (length == 0) return 0;
-
-        return history.snapshots[length - 1].price;
-    }
-
-    function twap(PriceHistory storage history, uint256 twapInterval) internal view returns (uint256) {
-        uint256 idx = history.snapshots.length;
-
-        if (idx == 0) return 0;
-
-        PriceSnapshot memory currentSnapshot = history.snapshots[--idx];
-
-        if (idx == 0) return currentSnapshot.price;
-
-        uint256 targetTime = block.timestamp - twapInterval;
-        uint256 timePeriod = block.timestamp - currentSnapshot.timestamp;
-        uint256 elapsedTime = timePeriod;
-        uint256 weightedPrice = currentSnapshot.price * timePeriod;
-        uint256 previousTime = currentSnapshot.timestamp;
-
-        while (currentSnapshot.timestamp > targetTime) {
-            // history is too short
-            if (idx == 0) break;
-
-            currentSnapshot = history.snapshots[--idx];
-
-            if (currentSnapshot.timestamp < targetTime) {
-                // if snapshot is before target time, bound the time period
-                elapsedTime += timePeriod = previousTime - targetTime;
-            } else {
-                elapsedTime += timePeriod = previousTime - currentSnapshot.timestamp;
-            }
-
-            weightedPrice += currentSnapshot.price * timePeriod;
-            previousTime = currentSnapshot.timestamp;
-        }
-
-        return weightedPrice / elapsedTime;
-    }
-
-    /// @notice returns ema of basis spread
-    function ema(PriceHistory storage history, uint256 period) internal view returns (int256) {
-        uint256 n = history.snapshots.length;
-        if (n == 0 || period == 0) return 0;
-
-        // only consider up to `period` most recent entries
-        uint256 count = period <= n ? period : n;
-        uint256 start = n - count;
-
-        int256 k = (2 * 1e18) / (int256(count) + 1);
-
-        // initialize EMA using the first value in the slice (scaled)
-        int256 _ema = history.snapshots[start].basisSpread * 1e18;
-
-        // apply EMA formula over the remaining `count - 1` entries
-        for (uint256 i = start + 1; i < n; i++) {
-            int256 pWad = history.snapshots[i].basisSpread * 1e18;
-            _ema = (pWad * k + _ema * (1e18 - k)) / 1e18;
-        }
-
-        // Return unscaled EMA value
-        return _ema / 1e18;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
-
-import {Constants} from "./Constants.sol";
-
-struct InsuranceFund {
-    uint256 balance;
-}
-
-using InsuranceFundLib for InsuranceFund global;
-
-library InsuranceFundLib {
-    using SafeTransferLib for address;
-
-    address constant USDC = Constants.USDC;
-
-    event InsuranceFundWithdrawal(address indexed account, uint256 amount);
-    event InsuranceFundDeposit(address indexed account, uint256 amount);
-
-    error InsufficientInsuranceFundBalance();
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                               INSURANCE
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function pay(InsuranceFund storage self, uint256 amount) internal {
-        if (amount == 0) return;
-        assembly {
-            let currentBalance := sload(self.slot)
-            let newBalance := add(currentBalance, amount)
-            sstore(self.slot, newBalance)
-        }
-    }
-
-    function claim(InsuranceFund storage self, uint256 amount) internal {
-        if (amount == 0) return;
-        if (self.balance < amount) revert InsufficientInsuranceFundBalance();
-        assembly {
-            let currentBalance := sload(self.slot)
-            let newBalance := sub(currentBalance, amount)
-            sstore(self.slot, newBalance)
-        }
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                 ADMIN
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function withdraw(InsuranceFund storage self, uint256 amount) internal {
-        if (self.balance < amount) revert InsufficientInsuranceFundBalance();
-        assembly {
-            let currentBalance := sload(self.slot)
-            let newBalance := sub(currentBalance, amount)
-            sstore(self.slot, newBalance)
-        }
-        USDC.safeTransfer(msg.sender, amount);
-        emit InsuranceFundWithdrawal(msg.sender, amount);
-    }
-
-    function deposit(InsuranceFund storage self, uint256 amount) internal {
-        assembly {
-            let currentBalance := sload(self.slot)
-            let newBalance := add(currentBalance, amount)
-            sstore(self.slot, newBalance)
-        }
-        USDC.safeTransferFrom(msg.sender, address(this), amount);
-        emit InsuranceFundDeposit(msg.sender, amount);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                GETTERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function getBalance(
-        InsuranceFund storage self
-    ) internal view returns (uint256) {
-        return self.balance;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {Side, TiF, Status, TradeType, BookType} from "./Enums.sol";
-import {Position} from "./Position.sol";
-
-/*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                        MARKET CREATION
-▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-struct MarketParams {
-    uint256 maxOpenLeverage; // 1e18 = 1x
-    uint256 maintenanceMarginRatio; // 0.5e18 = 50%
-    uint256 liquidationFeeRate; // .01e18 = 1%
-    uint256 divergenceCap; // 0.1e18 = trades can occur at max 10% price from mark
-    uint256 reduceOnlyCap; // max number of reduce only orders per subaccount
-    uint256 partialLiquidationThreshold; // 20_000e18 = positions worth $20k and over will be partially liquidated
-    uint256 partialLiquidationRate; // 0.2e18 = 20% of position will be liquidated on partial liquidation
-    bool crossMarginEnabled; // true if there can be more than 1 position open per subaccount
-    uint256 fundingInterval;
-    uint256 resetInterval;
-    uint256 resetIterations;
-    uint256 innerClamp;
-    uint256 outerClamp;
-    int256 interestRate;
-    uint256 maxNumOrders; // max number of orders per book
-    uint8 maxLimitsPerTx; // max number of limit orders per transaction
-    uint256 minLimitOrderAmountInBase; // minimum amount in base for limit orders
-    uint256 tickSize; // 0.01e18 = 1 cent
-    uint256 lotSize;
-    uint256 initialPrice; // initial price of the market in quote token
-}
-
-/*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            ORDER POST
-▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-struct PlaceOrderArgs {
-    // account
-    uint256 subaccount;
-    // metadata
-    bytes32 asset;
-    Side side;
-    // price
-    uint256 limitPrice; // if 0, market order (system internally sets 0 ask or +inf bid)
-    // size
-    uint256 amount;
-    bool baseDenominated; // true: amount in base; false: amount in quote
-    // time / execution
-    TiF tif; // time in force
-    uint32 expiryTime; // optional auto-cancel time (only for GTC, MOC)
-    // custom id tag
-    uint96 clientOrderId;
-    bool reduceOnly; // true if order is reduce-only
-}
-
-struct AmendLimitOrderArgs {
-    bytes32 asset;
-    uint256 subaccount;
-    uint256 orderId;
-    uint256 baseAmount;
-    uint256 price;
-    uint32 expiryTime;
-    Side side;
-    bool reduceOnly;
-}
-
-struct Condition {
-    uint256 triggerPrice;
-    bool stopLoss;
-}
-
-struct SignData {
-    bytes sig;
-    uint256 nonce;
-    uint256 expiry;
-}
-
-/*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                        EXTERNAL RESULT
-▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-struct PlaceOrderResult {
-    uint256 orderId;
-    uint256 basePosted; // base posted on the book
-    uint256 quoteTraded;
-    uint256 baseTraded;
-}
-
-/*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                        INTERNAL HELPERS
-▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-struct MakerFillResult {
-    bytes32 asset;
-    BookType bookType;
-    uint256 orderId;
-    address maker;
-    uint256 subaccount;
-    Side side;
-    uint256 quoteAmountTraded;
-    uint256 baseAmountTraded;
-    bool reduceOnly;
-}
-
-struct PositionUpdateResult {
-    int256 marginDelta;
-    int256 rpnl;
-    bool sideClose;
-    OIDelta oiDelta;
-}
-
-struct __TradeData__ {
-    uint256 baseTraded;
-    uint256 quoteTraded;
-    uint256 filledAmount;
-}
-
-struct FundingPaymentResult {
-    int256 fundingPayment;
-    int256 marginDelta;
-    uint256 debt;
-}
-
-struct TradeExecutedData {
-    bytes32 asset;
-    address account;
-    uint256 subaccount;
-    Side side;
-    uint256 quoteTraded;
-    uint256 baseTraded;
-    Position position;
-    int256 margin;
-    int256 rpnl;
-    uint256 fee;
-    TradeType tradeType;
-}
-
-struct LiquidateData {
-    uint256 fee;
-    int256 rpnl;
-    int256 marginDelta;
-    uint256 debt;
-}
-
-struct BackstopLiquidateData {
-    int256 rpnl;
-    int256 marginDelta;
-    uint256 debt;
-}
-
-struct MakerSettleData {
-    address account;
-    uint256 subaccount;
-    int256 marginDelta;
-    int256 collateralDelta;
-    uint256 debt;
-    uint256 makerFee;
-    bool close;
-}
-
-struct LiquidateeSettleData {
-    address account;
-    uint256 subaccount;
-    int256 marginDelta;
-    uint256 debt;
-    uint256 fee;
-    bool fullLiquidation;
-}
-
-struct LiquidatorData {
-    address liquidator;
-    uint256 volume; // in quote
-}
-
-struct TakerSettleData {
-    address account;
-    uint256 subaccount;
-    int256 marginDelta;
-    int256 collateralDelta;
-    uint256 debt;
-    uint256 takerFee;
-    bool close;
-}
-
-struct Account {
-    address account;
-    uint256 subaccount;
-}
-
-struct DeleveragePair {
-    Account maker; // the underwater account in a deleverage
-    Account taker; // the in profit account in a deleverage
-}
-
-struct OIDelta {
-    int256 long;
-    int256 short;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
-
-import {RedBlackTree} from "../../clob/types/RedBlackTree.sol";
-import {__TradeData__} from "./Structs.sol";
-import {BookType, Side} from "./Enums.sol";
-import {Order, OrderLib, OrderId, OrderIdLib} from "./Order.sol";
-import {ClearingHouseLib} from "./ClearingHouse.sol";
-import {StorageLib} from "./StorageLib.sol";
-
-uint256 constant MIN_LIMIT_PRICE = 1;
-uint256 constant MIN_FILL_ORDER_AMOUNT_BASE = 1;
-uint256 constant MIN_MIN_LIMIT_ORDER_AMOUNT_BASE = 10;
-
-struct BookConfig {
-    bytes32 asset;
-    uint256 lotSize;
-    BookType bookType;
-}
-
-struct BookSettings {
-    uint256 maxNumOrders;
-    uint8 maxLimitsPerTx;
-    uint256 minLimitOrderAmountInBase;
-    uint256 tickSize;
-}
-
-struct BookMetadata {
-    uint96 orderIdCounter;
-    uint256 numBids;
-    uint256 numAsks;
-    uint256 baseOI;
-    uint256 quoteOI;
-}
-
-struct Limit {
-    uint64 numOrders;
-    OrderId headOrder;
-    OrderId tailOrder;
-}
-
-struct Book {
-    BookConfig config;
-    BookMetadata metadata;
-    RedBlackTree bidTree; // header
-    RedBlackTree askTree; // header
-    mapping(OrderId => Order) orders;
-    mapping(uint256 price => Limit) bidLimits; // header
-    mapping(uint256 price => Limit) askLimits; // header
-}
-
-using BookLib for Book global;
-
-library BookLib {
-    using OrderIdLib for uint256;
-    using FixedPointMathLib for uint256;
-
-    error OrderPriceOutOfBounds();
-    error LimitPriceOutOfBounds();
-    error LimitOrderAmountNotOnLotSize();
-    error LimitOrderAmountOutOfBounds();
-    error NoOrdersAtLimit();
-    error LimitsPlacedExceedsMaxThisTx();
-    error InvalidMaxLimitsPerTx();
-    error InvalidMinLimitOrderAmountInBase();
-    error OrderIdInUse();
-
-    bytes32 constant MAX_LIMIT_ALLOWLIST =
-        keccak256(abi.encode(uint256(keccak256("MAX_LIMIT_ALLOWLIST")) - 1)) & ~bytes32(uint256(0xff));
-
-    bytes32 constant TRANSIENT_LIMITS_PLACED =
-        keccak256(abi.encode(uint256(keccak256("TRANSIENT_LIMITS_PLACED")) - 1)) & ~bytes32(uint256(0xff));
-
-    // ASSERTIONS //
-
-    function exists(Book storage self) internal view returns (bool) {
-        return self.config.asset != bytes32(0);
-    }
-
-    function assertLimitPriceInBounds(Book storage self, uint256 price) internal view {
-        uint256 tickSize = StorageLib.loadBookSettings(self.config.asset).tickSize;
-
-        if (price == 0 || price % tickSize != 0) revert LimitPriceOutOfBounds();
-    }
-
-    function assertPriceInBounds(Book storage self, uint256 price) internal view {
-        // zero price is ok for market orders
-        if (price % StorageLib.loadBookSettings(self.config.asset).tickSize != 0) revert OrderPriceOutOfBounds();
-    }
-
-    function assertOrdersAtLimit(Book storage self, uint256 price, Side side) internal view {
-        if (self.getLimit(price, side).numOrders == 0) revert NoOrdersAtLimit();
-    }
-
-    function assertLimitOrderAmountInBounds(Book storage self, uint256 orderAmountInBase) internal view {
-        if (orderAmountInBase < StorageLib.loadBookSettings(self.config.asset).minLimitOrderAmountInBase) {
-            revert LimitOrderAmountOutOfBounds();
-        }
-        if (orderAmountInBase % self.config.lotSize != 0) revert LimitOrderAmountNotOnLotSize();
-    }
-
-    function assertUnusedOrderId(Book storage self, uint256 orderId) internal view {
-        if (self.orders[orderId.wrap()].owner != address(0)) revert OrderIdInUse();
-    }
-
-    // GETTERS //
-
-    /// @dev Returns the highest bid price
-    function getBestBid(Book storage self) internal view returns (uint256) {
-        return self.bidTree.maximum();
-    }
-
-    /// @dev Returns the lowest ask price
-    function getBestAsk(Book storage self) internal view returns (uint256) {
-        return self.askTree.minimum();
-    }
-
-    /// @dev Returns the lowest bid price
-    function getMinBidPrice(Book storage self) internal view returns (uint256) {
-        return self.bidTree.minimum();
-    }
-
-    /// @dev Returns the highest ask price
-    function getMaxAskPrice(Book storage self) internal view returns (uint256) {
-        return self.askTree.maximum();
-    }
-
-    function getMaxLimitExempt(address who) internal view returns (bool allowed) {
-        bytes32 slot = keccak256(abi.encode(MAX_LIMIT_ALLOWLIST, who));
-
-        // slither-disable-next-line assembly
-        assembly {
-            allowed := sload(slot)
-        }
-    }
-
-    function getLimit(Book storage self, uint256 price, Side side) internal view returns (Limit storage) {
-        return side == Side.BUY ? self.bidLimits[price] : self.askLimits[price];
-    }
-
-    function getNextBiggestPrice(Book storage self, uint256 price, Side side) internal view returns (uint256) {
-        return side == Side.BUY ? self.bidTree.getNextBiggest(price) : self.askTree.getNextBiggest(price);
-    }
-
-    function getNextSmallestPrice(Book storage self, uint256 price, Side side) internal view returns (uint256) {
-        return side == Side.BUY ? self.bidTree.getNextSmallest(price) : self.askTree.getNextSmallest(price);
-    }
-
-    function getTradedAmounts(
-        Book storage self,
-        uint256 makerBase,
-        uint256 takerAmount,
-        uint256 price,
-        bool baseDenominated
-    ) internal view returns (__TradeData__ memory tradeData) {
-        uint256 lotSize = self.config.lotSize;
-
-        uint256 takerBase = baseDenominated ? takerAmount : takerAmount.fullMulDiv(1e18, price);
-
-        takerBase -= tradeData.baseTraded = makerBase.min(takerBase) / lotSize * lotSize;
-        tradeData.quoteTraded = tradeData.baseTraded.fullMulDiv(price, 1e18);
-
-        if (takerBase < lotSize) {
-            // filledAmount is only used to decrease the taker order amount — doesn't represent traded position
-            // this prevents FOK orders from reverting on dust from lots & rounding errors when converting
-            // quote -> base -> quote in quote denominated orders
-            tradeData.filledAmount = takerAmount;
-        } else {
-            tradeData.filledAmount = baseDenominated ? tradeData.baseTraded : tradeData.quoteTraded;
-        }
-    }
-
-    function boundToLots(Book storage self, uint256 baseAmount) internal view returns (uint256) {
-        uint256 lotSize = self.config.lotSize;
-
-        return baseAmount / lotSize * lotSize;
-    }
-
-    function getPostableBaseAmount(Book storage self, uint256 baseAmount)
-        internal
-        view
-        returns (uint256 postableBaseAmount)
-    {
-        postableBaseAmount = self.boundToLots(baseAmount);
-
-        if (postableBaseAmount < StorageLib.loadBookSettings(self.config.asset).minLimitOrderAmountInBase) return 0;
-    }
-
-    function quoteBidInBase(Book storage self, uint256 baseAmount)
-        internal
-        view
-        returns (uint256 quoteAmount, uint256 baseUsed)
-    {
-        uint256 bestAsk = self.getBestAsk();
-
-        uint256 quoteFromLimit;
-        uint256 baseFromLimit;
-        while (baseAmount > 0) {
-            if (bestAsk == type(uint256).max) break;
-
-            (quoteFromLimit, baseFromLimit) = _getQuoteLimit(self, self.askLimits[bestAsk], bestAsk, baseAmount);
-
-            quoteAmount += quoteFromLimit;
-            baseUsed += baseFromLimit;
-            baseAmount -= baseFromLimit;
-            bestAsk = self.getNextBiggestPrice(bestAsk, Side.SELL);
-        }
-    }
-
-    function quoteBidInQuote(Book storage self, uint256 quoteAmount)
-        internal
-        view
-        returns (uint256 baseAmount, uint256 quoteUsed)
-    {
-        uint256 bestAsk = self.getBestAsk();
-
-        uint256 baseFromLimit;
-        uint256 quoteFromLimit;
-        while (quoteAmount > 0) {
-            if (bestAsk == type(uint256).max) break;
-
-            (baseFromLimit, quoteFromLimit) = _getBaseLimit(self, self.askLimits[bestAsk], bestAsk, quoteAmount);
-
-            baseAmount += baseFromLimit;
-            quoteUsed += quoteFromLimit;
-            quoteAmount -= quoteFromLimit;
-            bestAsk = self.getNextBiggestPrice(bestAsk, Side.SELL);
-        }
-    }
-
-    function quoteAskInBase(Book storage self, uint256 baseAmount)
-        internal
-        view
-        returns (uint256 quoteAmount, uint256 baseUsed)
-    {
-        uint256 bestBid = self.getBestBid();
-
-        uint256 quoteFromLimit;
-        uint256 baseFromLimit;
-        while (baseAmount > 0) {
-            if (bestBid == 0) break;
-
-            (quoteFromLimit, baseFromLimit) = _getQuoteLimit(self, self.bidLimits[bestBid], bestBid, baseAmount);
-
-            quoteAmount += quoteFromLimit;
-            baseUsed += baseFromLimit;
-            baseAmount -= baseFromLimit;
-            bestBid = self.getNextSmallestPrice(bestBid, Side.BUY);
-        }
-    }
-
-    function quoteAskInQuote(Book storage self, uint256 quoteAmount)
-        internal
-        view
-        returns (uint256 baseAmount, uint256 quoteUsed)
-    {
-        uint256 bestBid = self.getBestBid();
-
-        uint256 baseFromLimit;
-        uint256 quoteFromLimit;
-        while (quoteAmount > 0) {
-            if (bestBid == 0) break;
-
-            (baseFromLimit, quoteFromLimit) = _getBaseLimit(self, self.bidLimits[bestBid], bestBid, quoteAmount);
-
-            baseAmount += baseFromLimit;
-            quoteUsed += quoteFromLimit;
-            quoteAmount -= quoteFromLimit;
-            bestBid = self.getNextSmallestPrice(bestBid, Side.BUY);
-        }
-    }
-
-    function getNextOrders(Book storage self, OrderId startOrderId, uint256 numOrders)
-        internal
-        view
-        returns (Order[] memory)
-    {
-        Order storage currentOrder = self.orders[startOrderId];
-        currentOrder.assertExists();
-
-        uint256 count = 0;
-        Order[] memory orders = new Order[](numOrders);
-
-        while (count < numOrders && !currentOrder.isNull()) {
-            orders[count] = currentOrder;
-            count++;
-
-            if (currentOrder.nextOrderId.unwrap() != 0) {
-                currentOrder = self.orders[currentOrder.nextOrderId];
-            } else {
-                uint256 nextPrice = self.getNextBiggestPrice(currentOrder.price, currentOrder.side);
-
-                if (nextPrice == 0) break;
-
-                Limit storage nextLimit = self.getLimit(nextPrice, currentOrder.side);
-
-                currentOrder = self.orders[nextLimit.headOrder];
-            }
-        }
-
-        return orders;
-    }
-
-    function toOrderId(Book storage self, address account, uint96 clientOrderId) internal returns (uint256 orderId) {
-        if (clientOrderId == 0) return self.incrementOrderId();
-
-        orderId = OrderIdLib.getOrderId(account, clientOrderId);
-
-        self.assertUnusedOrderId(orderId);
-    }
-
-    /// @dev returns incremented orderId
-    function incrementOrderId(Book storage self) internal returns (uint256) {
-        return ++self.metadata.orderIdCounter;
-    }
-
-    function setMaxLimitExempt(address who, bool toggle) internal {
-        bytes32 slot = keccak256(abi.encode(MAX_LIMIT_ALLOWLIST, who));
-
-        // slither-disable-next-line assembly
-        assembly {
-            sstore(slot, toggle)
-        }
-    }
-
-    function setMaxLimitsPerTx(Book storage self, uint8 newMax) internal {
-        if (newMax == 0) revert InvalidMaxLimitsPerTx();
-
-        StorageLib.loadBookSettings(self.config.asset).maxLimitsPerTx = newMax;
-    }
-
-    function setMinLimitOrderAmountInBase(Book storage self, uint256 newLimitOrderAmountInBase) internal {
-        if (newLimitOrderAmountInBase < MIN_MIN_LIMIT_ORDER_AMOUNT_BASE) revert InvalidMinLimitOrderAmountInBase();
-
-        StorageLib.loadBookSettings(self.config.asset).minLimitOrderAmountInBase = newLimitOrderAmountInBase;
-    }
-
-    function _getTransientLimitsPlaced() private view returns (uint8 limitsPlaced) {
-        bytes32 slot = TRANSIENT_LIMITS_PLACED;
-
-        // This solidity version does not support the `transient` identifier
-        // slither-disable-next-line assembly
-        assembly {
-            limitsPlaced := tload(slot)
-        }
-    }
-
-    function incrementLimitsPlaced(Book storage self, address account) internal {
-        uint8 limitsPlaced = _getTransientLimitsPlaced();
-
-        if (limitsPlaced == StorageLib.loadBookSettings(self.config.asset).maxLimitsPerTx) {
-            if (getMaxLimitExempt(account)) return;
-            revert LimitsPlacedExceedsMaxThisTx();
-        }
-
-        bytes32 slot = TRANSIENT_LIMITS_PLACED;
-
-        // This solidity version does not support the `transient` identifier
-        // slither-disable-next-line assembly
-        assembly {
-            tstore(slot, add(limitsPlaced, 1))
-        }
-    }
-
-    function addOrderToBook(Book storage self, Order memory order) internal {
-        if (order.reduceOnly) {
-            StorageLib.loadMarket(self.config.asset).linkReduceOnlyOrder(
-                order.owner, order.subaccount, order.id.unwrap(), self.config.bookType
-            );
-        }
-
-        Limit storage limit = _updateBookPostOrder(self, order);
-        _updateLimitPostOrder(self, limit, order);
-
-        self.orders[order.id] = order;
-    }
-
-    function removeOrderFromBook(Book storage self, Order memory order) internal {
-        if (order.reduceOnly) {
-            StorageLib.loadMarket(self.config.asset).unlinkReduceOnlyOrder(
-                order.owner, order.subaccount, order.id.unwrap(), self.config.bookType
-            );
-        }
-
-        _updateLimitRemoveOrder(self, order);
-        _updateBookRemoveOrder(self, order);
-    }
-
-    function _updateBookPostOrder(Book storage self, Order memory order) private returns (Limit storage limit) {
-        if (order.side == Side.BUY) {
-            limit = self.bidLimits[order.price];
-            if (limit.numOrders == 0) self.bidTree.insert(order.price);
-            self.metadata.numBids++;
-            self.metadata.quoteOI += order.amount.fullMulDiv(order.price, 1e18);
-        } else {
-            limit = self.askLimits[order.price];
-            if (limit.numOrders == 0) self.askTree.insert(order.price);
-            self.metadata.numAsks++;
-            self.metadata.baseOI += order.amount;
-        }
-    }
-
-    function _updateLimitPostOrder(Book storage self, Limit storage limit, Order memory order) private {
-        limit.numOrders++;
-
-        if (limit.headOrder.unwrap() == 0) {
-            limit.headOrder = order.id;
-            limit.tailOrder = order.id;
-        } else {
-            Order storage tailOrder = self.orders[limit.tailOrder];
-            tailOrder.nextOrderId = order.id;
-            order.prevOrderId = tailOrder.id;
-            limit.tailOrder = order.id;
-        }
-    }
-
-    function _updateBookRemoveOrder(Book storage self, Order memory order) private {
-        if (order.side == Side.BUY) {
-            self.metadata.numBids--;
-
-            self.metadata.quoteOI -= order.amount.fullMulDiv(order.price, 1e18);
-        } else {
-            self.metadata.numAsks--;
-
-            self.metadata.baseOI -= order.amount;
-        }
-
-        delete self.orders[order.id];
-    }
-
-    function _updateLimitRemoveOrder(Book storage self, Order memory order) private {
-        Limit storage limit = order.side == Side.BUY ? self.bidLimits[order.price] : self.askLimits[order.price];
-
-        if (limit.numOrders == 1) {
-            if (order.side == Side.BUY) {
-                delete self.bidLimits[order.price];
-                self.bidTree.remove(order.price);
-            } else {
-                delete self.askLimits[order.price];
-                self.askTree.remove(order.price);
-            }
-            return;
-        }
-
-        limit.numOrders--;
-
-        if (order.prevOrderId.unwrap() != 0) self.orders[order.prevOrderId].nextOrderId = order.nextOrderId;
-        else limit.headOrder = order.nextOrderId;
-
-        if (order.nextOrderId.unwrap() != 0) self.orders[order.nextOrderId].prevOrderId = order.prevOrderId;
-        else limit.tailOrder = order.prevOrderId;
-    }
-
-    function _getQuoteLimit(Book storage self, Limit storage limit, uint256 price, uint256 baseAmount)
-        private
-        view
-        returns (uint256 quoteAmount, uint256 baseUsed)
-    {
-        uint256 numOrders = limit.numOrders;
-        OrderId orderId = limit.headOrder;
-
-        uint256 fillAmount;
-        for (uint256 i; i < numOrders; ++i) {
-            if (baseAmount == 0) break;
-            if (orderId.unwrap() == 0) break;
-
-            fillAmount = self.orders[orderId].amount.min(baseAmount);
-
-            quoteAmount += fillAmount.fullMulDiv(price, 1e18);
-            baseAmount -= fillAmount;
-            baseUsed += fillAmount;
-
-            orderId = self.orders[orderId].nextOrderId;
-        }
-    }
-
-    function _getBaseLimit(Book storage self, Limit storage limit, uint256 price, uint256 quoteAmount)
-        private
-        view
-        returns (uint256 baseAmount, uint256 quoteUsed)
-    {
-        uint256 numOrders = limit.numOrders;
-        OrderId orderId = limit.headOrder;
-
-        uint256 fillAmount;
-        for (uint256 i; i < numOrders; ++i) {
-            if (quoteAmount == 0) break;
-            if (orderId.unwrap() == 0) break;
-
-            fillAmount = self.orders[orderId].amount.min(quoteAmount.fullMulDiv(1e18, price));
-
-            baseAmount += fillAmount;
-            quoteUsed += fillAmount.fullMulDiv(price, 1e18);
-            quoteAmount -= fillAmount.fullMulDiv(price, 1e18);
-
-            orderId = self.orders[orderId].nextOrderId;
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
 import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
@@ -1753,236 +858,113 @@ library CLOBLib {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {PlaceOrderArgs, AmendLimitOrderArgs} from "./Structs.sol";
-import {Side} from "./Enums.sol";
-
-type OrderId is uint256;
-
-using OrderIdLib for OrderId global;
-
-library OrderIdLib {
-    error UintExceedsOrderIdSize();
-
-    function getOrderId(address account, uint96 id) internal pure returns (uint256) {
-        return uint256(bytes32(abi.encodePacked(account, id)));
-    }
-
-    // @todo rename to toOrderId
-    function wrap(uint256 id) internal pure returns (OrderId) {
-        return OrderId.wrap(id);
-    }
-
-    function unwrap(OrderId id) internal pure returns (uint256) {
-        return OrderId.unwrap(id);
-    }
-}
-
-uint256 constant NULL_ORDER_ID = 0;
-uint32 constant NULL_TIMESTAMP = 0;
-
-struct Order {
-    // SLOT 0 //
-    Side side;
-    uint32 expiryTime;
-    OrderId id;
-    OrderId prevOrderId;
-    OrderId nextOrderId;
-    // SLOT 1 //
-    address owner;
-    // SLOT 2 //
-    uint256 price;
-    // SLOT 3 //
-    uint256 amount;
-    // SLOT 4 //
-    uint256 subaccount;
-    // SLOT 5 //
-    bool reduceOnly;
-}
-
-using OrderLib for Order global;
-
-library OrderLib {
-    using OrderIdLib for uint256;
-
-    error OrderNotFound();
-
-    function toOrder(PlaceOrderArgs memory args, uint256 orderId, address owner)
-        internal
-        pure
-        returns (Order memory order)
-    {
-        order.side = args.side;
-        order.expiryTime = args.expiryTime;
-        order.id = orderId.wrap();
-        order.owner = owner;
-        order.amount = args.amount;
-        order.price = args.limitPrice;
-        order.subaccount = args.subaccount;
-        order.reduceOnly = args.reduceOnly;
-
-        // zero price == max slippage
-        if (order.price == 0 && order.side == Side.BUY) order.price = type(uint256).max; // set to max for buy orders
-    }
-
-    function toOrder(AmendLimitOrderArgs calldata args, Order storage currentOrder)
-        internal
-        view
-        returns (Order memory newOrder)
-    {
-        newOrder.owner = currentOrder.owner;
-        newOrder.id = currentOrder.id;
-        newOrder.side = args.side;
-        newOrder.price = args.price;
-        newOrder.amount = args.baseAmount;
-        newOrder.reduceOnly = args.reduceOnly;
-        newOrder.subaccount = currentOrder.subaccount;
-        newOrder.expiryTime = args.expiryTime;
-    }
-
-    function isExpired(Order memory self) internal view returns (bool) {
-        // slither-disable-next-line timestamp
-        return self.expiryTime != NULL_TIMESTAMP && self.expiryTime < block.timestamp;
-    }
-
-    function isExpired(uint256 expiryTime) internal view returns (bool) {
-        // slither-disable-next-line timestamp
-        return expiryTime != NULL_TIMESTAMP && expiryTime < block.timestamp;
-    }
-
-    // @todo this reads the whole order into memory
-    function isNull(Order memory self) internal pure returns (bool) {
-        return self.id.unwrap() == NULL_ORDER_ID;
-    }
-
-    // @todo this reads the whole order into memory
-    function assertExists(Order memory self) internal pure {
-        if (self.isNull()) revert OrderNotFound();
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-enum Side {
-    BUY,
-    SELL
-}
-
-enum TiF {
-    // MAKER
-    GTC, // good-till-cancelled
-    MOC, // maker-or-cancel (post-only)
-    // TAKER
-    FOK, // fill-or-kill
-    IOC // immediate-or-cancel
-
-}
-
-enum Status {
-    NULL,
-    INACTIVE,
-    ACTIVE,
-    DELISTED
-}
-
-enum FeeTier {
-    ZERO,
-    ONE,
-    TWO
-}
-
-enum BookType {
-    STANDARD,
-    BACKSTOP
-}
-
-enum TradeType {
-    TAKER,
-    MAKER,
-    LIQUIDATOR,
-    LIQUIDATEE,
-    DELEVERAGE_MAKER,
-    DELEVERAGE_TAKER,
-    DELIST
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-interface IGTL {
-    function orderUpdated(int256 marginDelta) external;
-    function addSubaccount(uint256 subaccount) external;
-    function removeSubaccount(uint256 subaccount) external;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
+pragma solidity ^0.8.27;
 
 import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
-import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
 
-import {PackedFeeRates, PackedFeeRatesLib} from "./PackedFeeRatesLib.sol";
-import {FeeTier} from "./Enums.sol";
-
-struct FeeManager {
-    mapping(address account => FeeTier) accountFeeTier;
-    PackedFeeRates takerFeeRates;
-    PackedFeeRates makerFeeRates;
+struct PriceHistory {
+    PriceSnapshot[] snapshots;
 }
 
-using FeeManagerLib for FeeManager global;
+struct PriceSnapshot {
+    uint256 price;
+    int256 basisSpread;
+    uint256 timestamp;
+}
 
-library FeeManagerLib {
+using PriceHistoryLib for PriceHistory global;
+
+library PriceHistoryLib {
     using FixedPointMathLib for uint256;
 
-    uint256 constant FEE_SCALING = 10_000_000;
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                SETTERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    function setAccountFeeTier(FeeManager storage self, address account, FeeTier feeTier) internal {
-        self.accountFeeTier[account] = feeTier;
+    /// @notice snapshots
+    function snapshot(PriceHistory storage history, uint256 price) internal {
+        uint256 length = history.snapshots.length;
+
+        if (length > 0 && history.snapshots[length - 1].timestamp == block.timestamp) {
+            history.snapshots[length - 1].price = price;
+        } else {
+            history.snapshots.push(PriceSnapshot(price, 0, block.timestamp));
+        }
     }
 
-    function setTakerFeeRates(FeeManager storage self, uint16[] memory takerFeeRates) internal {
-        self.takerFeeRates = PackedFeeRatesLib.packFeeRates(takerFeeRates);
+    function snapshotBasisSpread(PriceHistory storage history, int256 basisSpread) internal {
+        history.snapshots.push(PriceSnapshot(0, basisSpread, 0));
     }
 
-    function setMakerFeeRates(FeeManager storage self, uint16[] memory makerFeeRates) internal {
-        self.makerFeeRates = PackedFeeRatesLib.packFeeRates(makerFeeRates);
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                               GETTERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function latest(PriceHistory storage history) internal view returns (uint256) {
+        uint256 length = history.snapshots.length;
+
+        if (length == 0) return 0;
+
+        return history.snapshots[length - 1].price;
     }
 
-    function getTakerFee(FeeManager storage self, address account, uint256 amount) internal view returns (uint256) {
-        if (amount == 0) return 0;
+    function twap(PriceHistory storage history, uint256 twapInterval) internal view returns (uint256) {
+        uint256 idx = history.snapshots.length;
 
-        uint16 feeRate = self.getTakerFeeRate(account);
-        return amount.fullMulDiv(feeRate, FEE_SCALING);
+        if (idx == 0) return 0;
+
+        PriceSnapshot memory currentSnapshot = history.snapshots[--idx];
+
+        if (idx == 0) return currentSnapshot.price;
+
+        uint256 targetTime = block.timestamp - twapInterval;
+        uint256 timePeriod = block.timestamp - currentSnapshot.timestamp;
+        uint256 elapsedTime = timePeriod;
+        uint256 weightedPrice = currentSnapshot.price * timePeriod;
+        uint256 previousTime = currentSnapshot.timestamp;
+
+        while (currentSnapshot.timestamp > targetTime) {
+            // history is too short
+            if (idx == 0) break;
+
+            currentSnapshot = history.snapshots[--idx];
+
+            if (currentSnapshot.timestamp < targetTime) {
+                // if snapshot is before target time, bound the time period
+                elapsedTime += timePeriod = previousTime - targetTime;
+            } else {
+                elapsedTime += timePeriod = previousTime - currentSnapshot.timestamp;
+            }
+
+            weightedPrice += currentSnapshot.price * timePeriod;
+            previousTime = currentSnapshot.timestamp;
+        }
+
+        return weightedPrice / elapsedTime;
     }
 
-    function getMakerFee(FeeManager storage self, address account, uint256 amount) internal view returns (uint256) {
-        if (amount == 0) return 0;
+    /// @notice returns ema of basis spread
+    function ema(PriceHistory storage history, uint256 period) internal view returns (int256) {
+        uint256 n = history.snapshots.length;
+        if (n == 0 || period == 0) return 0;
 
-        uint16 feeRate = self.getMakerFeeRate(account);
-        return amount.fullMulDiv(feeRate, FEE_SCALING);
-    }
+        // only consider up to `period` most recent entries
+        uint256 count = period <= n ? period : n;
+        uint256 start = n - count;
 
-    function getTakerFeeRate(FeeManager storage self, address account) internal view returns (uint16 feeRate) {
-        return self.takerFeeRates.getFeeAt(uint256(self.accountFeeTier[account]));
-    }
+        int256 k = (2 * 1e18) / (int256(count) + 1);
 
-    function getMakerFeeRate(FeeManager storage self, address account) internal view returns (uint16 feeRate) {
-        return self.makerFeeRates.getFeeAt(uint256(self.accountFeeTier[account]));
-    }
+        // initialize EMA using the first value in the slice (scaled)
+        int256 _ema = history.snapshots[start].basisSpread * 1e18;
 
-    function getAccountFeeTier(FeeManager storage self, address account) internal view returns (FeeTier tier) {
-        return self.accountFeeTier[account];
-    }
+        // apply EMA formula over the remaining `count - 1` entries
+        for (uint256 i = start + 1; i < n; i++) {
+            int256 pWad = history.snapshots[i].basisSpread * 1e18;
+            _ema = (pWad * k + _ema * (1e18 - k)) / 1e18;
+        }
 
-    function getAccountTakerFeeRate(FeeManager storage self, address account) internal view returns (uint16 feeRate) {
-        return self.takerFeeRates.getFeeAt(uint256(self.accountFeeTier[account]));
-    }
-
-    function getAccountMakerFeeRate(FeeManager storage self, address account) internal view returns (uint16 feeRate) {
-        return self.makerFeeRates.getFeeAt(uint256(self.accountFeeTier[account]));
+        // Return unscaled EMA value
+        return _ema / 1e18;
     }
 }
 
@@ -2776,6 +1758,793 @@ library ClearingHouseLib {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+
+import {StorageLib} from "./StorageLib.sol";
+
+struct FundingRateSettings {
+    uint256 fundingInterval;
+    uint256 resetInterval;
+    uint256 resetIterations;
+    uint256 innerClamp;
+    uint256 outerClamp;
+    int256 interestRate;
+}
+
+struct FundingRateEngine {
+    int256 fundingRate;
+    int256 cumulativeFundingIndex;
+    uint256 lastFundingTime;
+    uint256 resetIterationsLeft;
+}
+
+using FundingLib for FundingRateEngine global;
+using FundingLib for FundingRateSettings global;
+
+library FundingLib {
+    using FixedPointMathLib for *;
+    using SafeCastLib for uint256;
+
+    error FundingIntervalNotElapsed();
+
+    function init(FundingRateSettings storage settings, FundingRateSettings memory initSettings) internal {
+        settings.fundingInterval = initSettings.fundingInterval;
+        settings.resetInterval = initSettings.resetInterval;
+        settings.resetIterations = initSettings.resetIterations;
+        settings.innerClamp = initSettings.innerClamp;
+        settings.outerClamp = initSettings.outerClamp;
+        settings.interestRate = initSettings.interestRate;
+    }
+
+    function settleFunding(FundingRateEngine storage self, bytes32 asset, uint256 markTwap, uint256 indexTwap)
+        internal
+        returns (int256 fundingIndex, int256 cumulativeFundingIndex)
+    {
+        FundingRateSettings storage settings = StorageLib.loadFundingRateSettings(asset);
+
+        self.assertFundingIntervalElapsed(asset);
+
+        self.lastFundingTime = block.timestamp;
+
+        int256 fundingRate;
+        (fundingIndex, fundingRate) = _calcFundingIndex({
+            self: self,
+            settings: settings,
+            markTwap: markTwap.toInt256(),
+            indexTwap: indexTwap.toInt256()
+        });
+
+        cumulativeFundingIndex = self.cumulativeFundingIndex += fundingIndex;
+        self.fundingRate = fundingRate;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                               GETTERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function getFundingInterval(FundingRateEngine storage self, bytes32 asset) internal view returns (uint256) {
+        FundingRateSettings storage settings = StorageLib.loadFundingRateSettings(asset);
+
+        return self.resetIterationsLeft == 0 ? settings.fundingInterval : settings.resetInterval;
+    }
+
+    function getCumulativeFunding(FundingRateEngine storage self) internal view returns (int256) {
+        return self.cumulativeFundingIndex;
+    }
+
+    function getTimeSinceLastFunding(FundingRateEngine storage self) internal view returns (uint256) {
+        return block.timestamp - self.lastFundingTime;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                               ASSERTIONS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function assertFundingIntervalElapsed(FundingRateEngine storage self, bytes32 asset) internal view {
+        uint256 elapsedTime = self.getTimeSinceLastFunding();
+        uint256 interval = self.getFundingInterval(asset);
+
+        if (interval > elapsedTime) revert FundingIntervalNotElapsed();
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            PRIVATE HELPERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function _calcFundingIndex(
+        FundingRateEngine storage self,
+        FundingRateSettings storage settings,
+        int256 markTwap,
+        int256 indexTwap
+    ) private returns (int256 fundingIndex, int256 fundingRate) {
+        int256 innerClamp = settings.innerClamp.toInt256();
+        int256 outerClamp = settings.outerClamp.toInt256();
+
+        int256 premium = _div(markTwap - indexTwap, indexTwap);
+
+        int256 rawFunding = premium + (settings.interestRate - premium).clamp(-innerClamp, innerClamp);
+
+        fundingRate = rawFunding.clamp(-outerClamp, outerClamp);
+
+        if (fundingRate != rawFunding) self.resetIterationsLeft = settings.resetIterations;
+        else if (self.resetIterationsLeft > 0) --self.resetIterationsLeft;
+
+        fundingIndex = _mul(fundingRate, indexTwap);
+    }
+
+    // @dev wrapper for fullMulDiv to handle int256
+    function _div(int256 a, int256 b) private pure returns (int256) {
+        uint256 result = a.abs().fullMulDiv(1e18, b.abs());
+        return a < 0 != b < 0 ? -result.toInt256() : result.toInt256();
+    }
+
+    function _mul(int256 a, int256 b) private pure returns (int256) {
+        uint256 result = a.abs().fullMulDiv(b.abs(), 1e18);
+        return a < 0 != b < 0 ? -result.toInt256() : result.toInt256();
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "@solady/utils/SafeCastLib.sol";
+
+import {Side} from "./Enums.sol";
+import {FundingPaymentResult, PositionUpdateResult, OIDelta} from "./Structs.sol";
+
+struct Position {
+    bool isLong;
+    uint256 amount;
+    uint256 openNotional;
+    uint256 leverage;
+    int256 lastCumulativeFunding;
+}
+
+using PositionLib for Position global;
+
+library PositionLib {
+    using FixedPointMathLib for *;
+    using SafeCastLib for uint256;
+
+    struct __CloseCache__ {
+        uint256 closeSize;
+        uint256 closedOpenNotional;
+        uint256 currentNotional;
+        uint256 marginRemoved;
+        int256 remainingMargin;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                          POSITION MANAGEMENT
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function processTrade(Position memory self, Side side, uint256 quoteTraded, uint256 baseTraded)
+        internal
+        pure
+        returns (PositionUpdateResult memory result)
+    {
+        bool openLong = side == Side.BUY && (self.isLong || self.amount == 0);
+        bool openShort = side == Side.SELL && (!self.isLong || self.amount == 0);
+
+        if (openLong || openShort) {
+            result.marginDelta = _open(self, side, quoteTraded, baseTraded);
+
+            if (side == Side.BUY) result.oiDelta.long += baseTraded.toInt256();
+            else result.oiDelta.short += baseTraded.toInt256();
+        } else {
+            result = _close(self, side, quoteTraded, baseTraded);
+        }
+    }
+
+    function realizeFundingPayment(Position memory self, int256 cumulativeFunding)
+        internal
+        pure
+        returns (int256 fundingPayment)
+    {
+        if (self.lastCumulativeFunding == cumulativeFunding) return 0;
+
+        fundingPayment = _getFundingPayment({
+            amount: self.isLong ? self.amount.toInt256() : -self.amount.toInt256(),
+            lastCumulativePremiumFunding: self.lastCumulativeFunding,
+            cumulativePremiumFunding: cumulativeFunding
+        });
+
+        self.lastCumulativeFunding = cumulativeFunding;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                               FILL LOGIC
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function _open(Position memory self, Side side, uint256 quoteTraded, uint256 baseTraded)
+        private
+        pure
+        returns (int256 marginDelta)
+    {
+        if (self.leverage == 0) self.leverage = 1e18; // default leverage
+
+        self.isLong = side == Side.BUY;
+
+        self.amount += baseTraded;
+        self.openNotional += quoteTraded;
+
+        marginDelta = quoteTraded.fullMulDiv(1e18, self.leverage).toInt256();
+    }
+
+    /// @dev covers decrease, close, reverse open
+    function _close(Position memory self, Side side, uint256 quoteTraded, uint256 baseTraded)
+        private
+        pure
+        returns (PositionUpdateResult memory result)
+    {
+        __CloseCache__ memory cache;
+
+        cache.closeSize = self.amount.min(baseTraded);
+
+        // pro rate quote amounts by close
+        cache.closedOpenNotional = self.openNotional.fullMulDiv(cache.closeSize, self.amount);
+        cache.currentNotional = quoteTraded.fullMulDiv(cache.closeSize, baseTraded);
+
+        result.rpnl = _pnl(self.isLong, cache.closedOpenNotional, cache.currentNotional);
+        result.marginDelta = -cache.closedOpenNotional.fullMulDiv(1e18, self.leverage).toInt256();
+
+        self.openNotional -= cache.closedOpenNotional;
+        self.amount -= cache.closeSize;
+
+        quoteTraded -= cache.currentNotional;
+        baseTraded -= cache.closeSize;
+
+        if (self.isLong) result.oiDelta.long = -cache.closeSize.toInt256();
+        else result.oiDelta.short = -cache.closeSize.toInt256();
+
+        if (result.sideClose = self.amount == 0) {
+            // reverse open
+            if (baseTraded > 0) {
+                result.marginDelta = _open(self, side, quoteTraded, baseTraded);
+
+                if (self.isLong) result.oiDelta.long += baseTraded.toInt256();
+                else result.oiDelta.short += baseTraded.toInt256();
+            } else {
+                // full close, set to defaults
+                delete self.lastCumulativeFunding;
+                delete self.isLong;
+            }
+        }
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                HELPERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function _getFundingPayment(int256 amount, int256 lastCumulativePremiumFunding, int256 cumulativePremiumFunding)
+        private
+        pure
+        returns (int256)
+    {
+        if (amount == 0) return 0;
+
+        return _mul(amount, cumulativePremiumFunding - lastCumulativePremiumFunding);
+    }
+
+    /// @dev wrapper for fullMulDiv to handle int256
+    function _mul(int256 amt, int256 fundingDelta) private pure returns (int256) {
+        uint256 result = amt.abs().fullMulDiv(fundingDelta.abs(), 1e18);
+        return amt < 0 != fundingDelta < 0 ? -result.toInt256() : result.toInt256();
+    }
+
+    function _pnl(bool isLong, uint256 openNotional, uint256 currentNotional) private pure returns (int256 pnl) {
+        if (isLong) pnl = currentNotional.toInt256() - openNotional.toInt256();
+        else pnl = openNotional.toInt256() - currentNotional.toInt256();
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
+
+import {RedBlackTree} from "../../clob/types/RedBlackTree.sol";
+import {__TradeData__} from "./Structs.sol";
+import {BookType, Side} from "./Enums.sol";
+import {Order, OrderLib, OrderId, OrderIdLib} from "./Order.sol";
+import {ClearingHouseLib} from "./ClearingHouse.sol";
+import {StorageLib} from "./StorageLib.sol";
+
+uint256 constant MIN_LIMIT_PRICE = 1;
+uint256 constant MIN_FILL_ORDER_AMOUNT_BASE = 1;
+uint256 constant MIN_MIN_LIMIT_ORDER_AMOUNT_BASE = 10;
+
+struct BookConfig {
+    bytes32 asset;
+    uint256 lotSize;
+    BookType bookType;
+}
+
+struct BookSettings {
+    uint256 maxNumOrders;
+    uint8 maxLimitsPerTx;
+    uint256 minLimitOrderAmountInBase;
+    uint256 tickSize;
+}
+
+struct BookMetadata {
+    uint96 orderIdCounter;
+    uint256 numBids;
+    uint256 numAsks;
+    uint256 baseOI;
+    uint256 quoteOI;
+}
+
+struct Limit {
+    uint64 numOrders;
+    OrderId headOrder;
+    OrderId tailOrder;
+}
+
+struct Book {
+    BookConfig config;
+    BookMetadata metadata;
+    RedBlackTree bidTree; // header
+    RedBlackTree askTree; // header
+    mapping(OrderId => Order) orders;
+    mapping(uint256 price => Limit) bidLimits; // header
+    mapping(uint256 price => Limit) askLimits; // header
+}
+
+using BookLib for Book global;
+
+library BookLib {
+    using OrderIdLib for uint256;
+    using FixedPointMathLib for uint256;
+
+    error OrderPriceOutOfBounds();
+    error LimitPriceOutOfBounds();
+    error LimitOrderAmountNotOnLotSize();
+    error LimitOrderAmountOutOfBounds();
+    error NoOrdersAtLimit();
+    error LimitsPlacedExceedsMaxThisTx();
+    error InvalidMaxLimitsPerTx();
+    error InvalidMinLimitOrderAmountInBase();
+    error OrderIdInUse();
+
+    bytes32 constant MAX_LIMIT_ALLOWLIST =
+        keccak256(abi.encode(uint256(keccak256("MAX_LIMIT_ALLOWLIST")) - 1)) & ~bytes32(uint256(0xff));
+
+    bytes32 constant TRANSIENT_LIMITS_PLACED =
+        keccak256(abi.encode(uint256(keccak256("TRANSIENT_LIMITS_PLACED")) - 1)) & ~bytes32(uint256(0xff));
+
+    // ASSERTIONS //
+
+    function exists(Book storage self) internal view returns (bool) {
+        return self.config.asset != bytes32(0);
+    }
+
+    function assertLimitPriceInBounds(Book storage self, uint256 price) internal view {
+        uint256 tickSize = StorageLib.loadBookSettings(self.config.asset).tickSize;
+
+        if (price == 0 || price % tickSize != 0) revert LimitPriceOutOfBounds();
+    }
+
+    function assertPriceInBounds(Book storage self, uint256 price) internal view {
+        // zero price is ok for market orders
+        if (price % StorageLib.loadBookSettings(self.config.asset).tickSize != 0) revert OrderPriceOutOfBounds();
+    }
+
+    function assertOrdersAtLimit(Book storage self, uint256 price, Side side) internal view {
+        if (self.getLimit(price, side).numOrders == 0) revert NoOrdersAtLimit();
+    }
+
+    function assertLimitOrderAmountInBounds(Book storage self, uint256 orderAmountInBase) internal view {
+        if (orderAmountInBase < StorageLib.loadBookSettings(self.config.asset).minLimitOrderAmountInBase) {
+            revert LimitOrderAmountOutOfBounds();
+        }
+        if (orderAmountInBase % self.config.lotSize != 0) revert LimitOrderAmountNotOnLotSize();
+    }
+
+    function assertUnusedOrderId(Book storage self, uint256 orderId) internal view {
+        if (self.orders[orderId.wrap()].owner != address(0)) revert OrderIdInUse();
+    }
+
+    // GETTERS //
+
+    /// @dev Returns the highest bid price
+    function getBestBid(Book storage self) internal view returns (uint256) {
+        return self.bidTree.maximum();
+    }
+
+    /// @dev Returns the lowest ask price
+    function getBestAsk(Book storage self) internal view returns (uint256) {
+        return self.askTree.minimum();
+    }
+
+    /// @dev Returns the lowest bid price
+    function getMinBidPrice(Book storage self) internal view returns (uint256) {
+        return self.bidTree.minimum();
+    }
+
+    /// @dev Returns the highest ask price
+    function getMaxAskPrice(Book storage self) internal view returns (uint256) {
+        return self.askTree.maximum();
+    }
+
+    function getMaxLimitExempt(address who) internal view returns (bool allowed) {
+        bytes32 slot = keccak256(abi.encode(MAX_LIMIT_ALLOWLIST, who));
+
+        // slither-disable-next-line assembly
+        assembly {
+            allowed := sload(slot)
+        }
+    }
+
+    function getLimit(Book storage self, uint256 price, Side side) internal view returns (Limit storage) {
+        return side == Side.BUY ? self.bidLimits[price] : self.askLimits[price];
+    }
+
+    function getNextBiggestPrice(Book storage self, uint256 price, Side side) internal view returns (uint256) {
+        return side == Side.BUY ? self.bidTree.getNextBiggest(price) : self.askTree.getNextBiggest(price);
+    }
+
+    function getNextSmallestPrice(Book storage self, uint256 price, Side side) internal view returns (uint256) {
+        return side == Side.BUY ? self.bidTree.getNextSmallest(price) : self.askTree.getNextSmallest(price);
+    }
+
+    function getTradedAmounts(
+        Book storage self,
+        uint256 makerBase,
+        uint256 takerAmount,
+        uint256 price,
+        bool baseDenominated
+    ) internal view returns (__TradeData__ memory tradeData) {
+        uint256 lotSize = self.config.lotSize;
+
+        uint256 takerBase = baseDenominated ? takerAmount : takerAmount.fullMulDiv(1e18, price);
+
+        takerBase -= tradeData.baseTraded = makerBase.min(takerBase) / lotSize * lotSize;
+        tradeData.quoteTraded = tradeData.baseTraded.fullMulDiv(price, 1e18);
+
+        if (takerBase < lotSize) {
+            // filledAmount is only used to decrease the taker order amount — doesn't represent traded position
+            // this prevents FOK orders from reverting on dust from lots & rounding errors when converting
+            // quote -> base -> quote in quote denominated orders
+            tradeData.filledAmount = takerAmount;
+        } else {
+            tradeData.filledAmount = baseDenominated ? tradeData.baseTraded : tradeData.quoteTraded;
+        }
+    }
+
+    function boundToLots(Book storage self, uint256 baseAmount) internal view returns (uint256) {
+        uint256 lotSize = self.config.lotSize;
+
+        return baseAmount / lotSize * lotSize;
+    }
+
+    function getPostableBaseAmount(Book storage self, uint256 baseAmount)
+        internal
+        view
+        returns (uint256 postableBaseAmount)
+    {
+        postableBaseAmount = self.boundToLots(baseAmount);
+
+        if (postableBaseAmount < StorageLib.loadBookSettings(self.config.asset).minLimitOrderAmountInBase) return 0;
+    }
+
+    function quoteBidInBase(Book storage self, uint256 baseAmount)
+        internal
+        view
+        returns (uint256 quoteAmount, uint256 baseUsed)
+    {
+        uint256 bestAsk = self.getBestAsk();
+
+        uint256 quoteFromLimit;
+        uint256 baseFromLimit;
+        while (baseAmount > 0) {
+            if (bestAsk == type(uint256).max) break;
+
+            (quoteFromLimit, baseFromLimit) = _getQuoteLimit(self, self.askLimits[bestAsk], bestAsk, baseAmount);
+
+            quoteAmount += quoteFromLimit;
+            baseUsed += baseFromLimit;
+            baseAmount -= baseFromLimit;
+            bestAsk = self.getNextBiggestPrice(bestAsk, Side.SELL);
+        }
+    }
+
+    function quoteBidInQuote(Book storage self, uint256 quoteAmount)
+        internal
+        view
+        returns (uint256 baseAmount, uint256 quoteUsed)
+    {
+        uint256 bestAsk = self.getBestAsk();
+
+        uint256 baseFromLimit;
+        uint256 quoteFromLimit;
+        while (quoteAmount > 0) {
+            if (bestAsk == type(uint256).max) break;
+
+            (baseFromLimit, quoteFromLimit) = _getBaseLimit(self, self.askLimits[bestAsk], bestAsk, quoteAmount);
+
+            baseAmount += baseFromLimit;
+            quoteUsed += quoteFromLimit;
+            quoteAmount -= quoteFromLimit;
+            bestAsk = self.getNextBiggestPrice(bestAsk, Side.SELL);
+        }
+    }
+
+    function quoteAskInBase(Book storage self, uint256 baseAmount)
+        internal
+        view
+        returns (uint256 quoteAmount, uint256 baseUsed)
+    {
+        uint256 bestBid = self.getBestBid();
+
+        uint256 quoteFromLimit;
+        uint256 baseFromLimit;
+        while (baseAmount > 0) {
+            if (bestBid == 0) break;
+
+            (quoteFromLimit, baseFromLimit) = _getQuoteLimit(self, self.bidLimits[bestBid], bestBid, baseAmount);
+
+            quoteAmount += quoteFromLimit;
+            baseUsed += baseFromLimit;
+            baseAmount -= baseFromLimit;
+            bestBid = self.getNextSmallestPrice(bestBid, Side.BUY);
+        }
+    }
+
+    function quoteAskInQuote(Book storage self, uint256 quoteAmount)
+        internal
+        view
+        returns (uint256 baseAmount, uint256 quoteUsed)
+    {
+        uint256 bestBid = self.getBestBid();
+
+        uint256 baseFromLimit;
+        uint256 quoteFromLimit;
+        while (quoteAmount > 0) {
+            if (bestBid == 0) break;
+
+            (baseFromLimit, quoteFromLimit) = _getBaseLimit(self, self.bidLimits[bestBid], bestBid, quoteAmount);
+
+            baseAmount += baseFromLimit;
+            quoteUsed += quoteFromLimit;
+            quoteAmount -= quoteFromLimit;
+            bestBid = self.getNextSmallestPrice(bestBid, Side.BUY);
+        }
+    }
+
+    function getNextOrders(Book storage self, OrderId startOrderId, uint256 numOrders)
+        internal
+        view
+        returns (Order[] memory)
+    {
+        Order storage currentOrder = self.orders[startOrderId];
+        currentOrder.assertExists();
+
+        uint256 count = 0;
+        Order[] memory orders = new Order[](numOrders);
+
+        while (count < numOrders && !currentOrder.isNull()) {
+            orders[count] = currentOrder;
+            count++;
+
+            if (currentOrder.nextOrderId.unwrap() != 0) {
+                currentOrder = self.orders[currentOrder.nextOrderId];
+            } else {
+                uint256 nextPrice = self.getNextBiggestPrice(currentOrder.price, currentOrder.side);
+
+                if (nextPrice == 0) break;
+
+                Limit storage nextLimit = self.getLimit(nextPrice, currentOrder.side);
+
+                currentOrder = self.orders[nextLimit.headOrder];
+            }
+        }
+
+        return orders;
+    }
+
+    function toOrderId(Book storage self, address account, uint96 clientOrderId) internal returns (uint256 orderId) {
+        if (clientOrderId == 0) return self.incrementOrderId();
+
+        orderId = OrderIdLib.getOrderId(account, clientOrderId);
+
+        self.assertUnusedOrderId(orderId);
+    }
+
+    /// @dev returns incremented orderId
+    function incrementOrderId(Book storage self) internal returns (uint256) {
+        return ++self.metadata.orderIdCounter;
+    }
+
+    function setMaxLimitExempt(address who, bool toggle) internal {
+        bytes32 slot = keccak256(abi.encode(MAX_LIMIT_ALLOWLIST, who));
+
+        // slither-disable-next-line assembly
+        assembly {
+            sstore(slot, toggle)
+        }
+    }
+
+    function setMaxLimitsPerTx(Book storage self, uint8 newMax) internal {
+        if (newMax == 0) revert InvalidMaxLimitsPerTx();
+
+        StorageLib.loadBookSettings(self.config.asset).maxLimitsPerTx = newMax;
+    }
+
+    function setMinLimitOrderAmountInBase(Book storage self, uint256 newLimitOrderAmountInBase) internal {
+        if (newLimitOrderAmountInBase < MIN_MIN_LIMIT_ORDER_AMOUNT_BASE) revert InvalidMinLimitOrderAmountInBase();
+
+        StorageLib.loadBookSettings(self.config.asset).minLimitOrderAmountInBase = newLimitOrderAmountInBase;
+    }
+
+    function _getTransientLimitsPlaced() private view returns (uint8 limitsPlaced) {
+        bytes32 slot = TRANSIENT_LIMITS_PLACED;
+
+        // This solidity version does not support the `transient` identifier
+        // slither-disable-next-line assembly
+        assembly {
+            limitsPlaced := tload(slot)
+        }
+    }
+
+    function incrementLimitsPlaced(Book storage self, address account) internal {
+        uint8 limitsPlaced = _getTransientLimitsPlaced();
+
+        if (limitsPlaced == StorageLib.loadBookSettings(self.config.asset).maxLimitsPerTx) {
+            if (getMaxLimitExempt(account)) return;
+            revert LimitsPlacedExceedsMaxThisTx();
+        }
+
+        bytes32 slot = TRANSIENT_LIMITS_PLACED;
+
+        // This solidity version does not support the `transient` identifier
+        // slither-disable-next-line assembly
+        assembly {
+            tstore(slot, add(limitsPlaced, 1))
+        }
+    }
+
+    function addOrderToBook(Book storage self, Order memory order) internal {
+        if (order.reduceOnly) {
+            StorageLib.loadMarket(self.config.asset).linkReduceOnlyOrder(
+                order.owner, order.subaccount, order.id.unwrap(), self.config.bookType
+            );
+        }
+
+        Limit storage limit = _updateBookPostOrder(self, order);
+        _updateLimitPostOrder(self, limit, order);
+
+        self.orders[order.id] = order;
+    }
+
+    function removeOrderFromBook(Book storage self, Order memory order) internal {
+        if (order.reduceOnly) {
+            StorageLib.loadMarket(self.config.asset).unlinkReduceOnlyOrder(
+                order.owner, order.subaccount, order.id.unwrap(), self.config.bookType
+            );
+        }
+
+        _updateLimitRemoveOrder(self, order);
+        _updateBookRemoveOrder(self, order);
+    }
+
+    function _updateBookPostOrder(Book storage self, Order memory order) private returns (Limit storage limit) {
+        if (order.side == Side.BUY) {
+            limit = self.bidLimits[order.price];
+            if (limit.numOrders == 0) self.bidTree.insert(order.price);
+            self.metadata.numBids++;
+            self.metadata.quoteOI += order.amount.fullMulDiv(order.price, 1e18);
+        } else {
+            limit = self.askLimits[order.price];
+            if (limit.numOrders == 0) self.askTree.insert(order.price);
+            self.metadata.numAsks++;
+            self.metadata.baseOI += order.amount;
+        }
+    }
+
+    function _updateLimitPostOrder(Book storage self, Limit storage limit, Order memory order) private {
+        limit.numOrders++;
+
+        if (limit.headOrder.unwrap() == 0) {
+            limit.headOrder = order.id;
+            limit.tailOrder = order.id;
+        } else {
+            Order storage tailOrder = self.orders[limit.tailOrder];
+            tailOrder.nextOrderId = order.id;
+            order.prevOrderId = tailOrder.id;
+            limit.tailOrder = order.id;
+        }
+    }
+
+    function _updateBookRemoveOrder(Book storage self, Order memory order) private {
+        if (order.side == Side.BUY) {
+            self.metadata.numBids--;
+
+            self.metadata.quoteOI -= order.amount.fullMulDiv(order.price, 1e18);
+        } else {
+            self.metadata.numAsks--;
+
+            self.metadata.baseOI -= order.amount;
+        }
+
+        delete self.orders[order.id];
+    }
+
+    function _updateLimitRemoveOrder(Book storage self, Order memory order) private {
+        Limit storage limit = order.side == Side.BUY ? self.bidLimits[order.price] : self.askLimits[order.price];
+
+        if (limit.numOrders == 1) {
+            if (order.side == Side.BUY) {
+                delete self.bidLimits[order.price];
+                self.bidTree.remove(order.price);
+            } else {
+                delete self.askLimits[order.price];
+                self.askTree.remove(order.price);
+            }
+            return;
+        }
+
+        limit.numOrders--;
+
+        if (order.prevOrderId.unwrap() != 0) self.orders[order.prevOrderId].nextOrderId = order.nextOrderId;
+        else limit.headOrder = order.nextOrderId;
+
+        if (order.nextOrderId.unwrap() != 0) self.orders[order.nextOrderId].prevOrderId = order.prevOrderId;
+        else limit.tailOrder = order.prevOrderId;
+    }
+
+    function _getQuoteLimit(Book storage self, Limit storage limit, uint256 price, uint256 baseAmount)
+        private
+        view
+        returns (uint256 quoteAmount, uint256 baseUsed)
+    {
+        uint256 numOrders = limit.numOrders;
+        OrderId orderId = limit.headOrder;
+
+        uint256 fillAmount;
+        for (uint256 i; i < numOrders; ++i) {
+            if (baseAmount == 0) break;
+            if (orderId.unwrap() == 0) break;
+
+            fillAmount = self.orders[orderId].amount.min(baseAmount);
+
+            quoteAmount += fillAmount.fullMulDiv(price, 1e18);
+            baseAmount -= fillAmount;
+            baseUsed += fillAmount;
+
+            orderId = self.orders[orderId].nextOrderId;
+        }
+    }
+
+    function _getBaseLimit(Book storage self, Limit storage limit, uint256 price, uint256 quoteAmount)
+        private
+        view
+        returns (uint256 baseAmount, uint256 quoteUsed)
+    {
+        uint256 numOrders = limit.numOrders;
+        OrderId orderId = limit.headOrder;
+
+        uint256 fillAmount;
+        for (uint256 i; i < numOrders; ++i) {
+            if (quoteAmount == 0) break;
+            if (orderId.unwrap() == 0) break;
+
+            fillAmount = self.orders[orderId].amount.min(quoteAmount.fullMulDiv(1e18, price));
+
+            baseAmount += fillAmount;
+            quoteUsed += fillAmount.fullMulDiv(price, 1e18);
+            quoteAmount -= fillAmount.fullMulDiv(price, 1e18);
+
+            orderId = self.orders[orderId].nextOrderId;
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
 import {DynamicArrayLib} from "@solady/utils/DynamicArrayLib.sol";
 import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "@solady/utils/SafeCastLib.sol";
@@ -3421,6 +3190,215 @@ library MarketLib {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
+import {Side, TiF, Status, TradeType, BookType} from "./Enums.sol";
+import {Position} from "./Position.sol";
+
+/*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                        MARKET CREATION
+▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+struct MarketParams {
+    uint256 maxOpenLeverage; // 1e18 = 1x
+    uint256 maintenanceMarginRatio; // 0.5e18 = 50%
+    uint256 liquidationFeeRate; // .01e18 = 1%
+    uint256 divergenceCap; // 0.1e18 = trades can occur at max 10% price from mark
+    uint256 reduceOnlyCap; // max number of reduce only orders per subaccount
+    uint256 partialLiquidationThreshold; // 20_000e18 = positions worth $20k and over will be partially liquidated
+    uint256 partialLiquidationRate; // 0.2e18 = 20% of position will be liquidated on partial liquidation
+    bool crossMarginEnabled; // true if there can be more than 1 position open per subaccount
+    uint256 fundingInterval;
+    uint256 resetInterval;
+    uint256 resetIterations;
+    uint256 innerClamp;
+    uint256 outerClamp;
+    int256 interestRate;
+    uint256 maxNumOrders; // max number of orders per book
+    uint8 maxLimitsPerTx; // max number of limit orders per transaction
+    uint256 minLimitOrderAmountInBase; // minimum amount in base for limit orders
+    uint256 tickSize; // 0.01e18 = 1 cent
+    uint256 lotSize;
+    uint256 initialPrice; // initial price of the market in quote token
+}
+
+/*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            ORDER POST
+▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+struct PlaceOrderArgs {
+    // account
+    uint256 subaccount;
+    // metadata
+    bytes32 asset;
+    Side side;
+    // price
+    uint256 limitPrice; // if 0, market order (system internally sets 0 ask or +inf bid)
+    // size
+    uint256 amount;
+    bool baseDenominated; // true: amount in base; false: amount in quote
+    // time / execution
+    TiF tif; // time in force
+    uint32 expiryTime; // optional auto-cancel time (only for GTC, MOC)
+    // custom id tag
+    uint96 clientOrderId;
+    bool reduceOnly; // true if order is reduce-only
+}
+
+struct AmendLimitOrderArgs {
+    bytes32 asset;
+    uint256 subaccount;
+    uint256 orderId;
+    uint256 baseAmount;
+    uint256 price;
+    uint32 expiryTime;
+    Side side;
+    bool reduceOnly;
+}
+
+struct Condition {
+    uint256 triggerPrice;
+    bool stopLoss;
+}
+
+struct SignData {
+    bytes sig;
+    uint256 nonce;
+    uint256 expiry;
+}
+
+/*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                        EXTERNAL RESULT
+▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+struct PlaceOrderResult {
+    uint256 orderId;
+    uint256 basePosted; // base posted on the book
+    uint256 quoteTraded;
+    uint256 baseTraded;
+}
+
+/*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                        INTERNAL HELPERS
+▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+struct MakerFillResult {
+    bytes32 asset;
+    BookType bookType;
+    uint256 orderId;
+    address maker;
+    uint256 subaccount;
+    Side side;
+    uint256 quoteAmountTraded;
+    uint256 baseAmountTraded;
+    bool reduceOnly;
+}
+
+struct PositionUpdateResult {
+    int256 marginDelta;
+    int256 rpnl;
+    bool sideClose;
+    OIDelta oiDelta;
+}
+
+struct __TradeData__ {
+    uint256 baseTraded;
+    uint256 quoteTraded;
+    uint256 filledAmount;
+}
+
+struct FundingPaymentResult {
+    int256 fundingPayment;
+    int256 marginDelta;
+    uint256 debt;
+}
+
+struct TradeExecutedData {
+    bytes32 asset;
+    address account;
+    uint256 subaccount;
+    Side side;
+    uint256 quoteTraded;
+    uint256 baseTraded;
+    Position position;
+    int256 margin;
+    int256 rpnl;
+    uint256 fee;
+    TradeType tradeType;
+}
+
+struct LiquidateData {
+    uint256 fee;
+    int256 rpnl;
+    int256 marginDelta;
+    uint256 debt;
+}
+
+struct BackstopLiquidateData {
+    int256 rpnl;
+    int256 marginDelta;
+    uint256 debt;
+}
+
+struct MakerSettleData {
+    address account;
+    uint256 subaccount;
+    int256 marginDelta;
+    int256 collateralDelta;
+    uint256 debt;
+    uint256 makerFee;
+    bool close;
+}
+
+struct LiquidateeSettleData {
+    address account;
+    uint256 subaccount;
+    int256 marginDelta;
+    uint256 debt;
+    uint256 fee;
+    bool fullLiquidation;
+}
+
+struct LiquidatorData {
+    address liquidator;
+    uint256 volume; // in quote
+}
+
+struct TakerSettleData {
+    address account;
+    uint256 subaccount;
+    int256 marginDelta;
+    int256 collateralDelta;
+    uint256 debt;
+    uint256 takerFee;
+    bool close;
+}
+
+struct Account {
+    address account;
+    uint256 subaccount;
+}
+
+struct DeleveragePair {
+    Account maker; // the underwater account in a deleverage
+    Account taker; // the in profit account in a deleverage
+}
+
+struct OIDelta {
+    int256 long;
+    int256 short;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+interface IGTL {
+    function orderUpdated(int256 marginDelta) external;
+    function addSubaccount(uint256 subaccount) external;
+    function removeSubaccount(uint256 subaccount) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
 library Constants {
     // ADDRESSES
     address constant USDC = 0xE9b6e75C243B6100ffcb1c66e8f78F96FeeA727F;
@@ -3430,329 +3408,6 @@ library Constants {
     uint256 constant KEEPER_ROLE = 1 << 6;
     uint256 constant LIQUIDATOR_ROLE = 1 << 5;
     uint256 constant BACKSTOP_LIQUIDATOR_ROLE = 1 << 4;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {LiquidatorData} from "./Structs.sol";
-
-library BackstopLiquidatorDataLib {
-    /// erc7201('TransientLiquidators')
-    bytes32 constant TRANSIENT_LIQUIDATORS_SLOT = 0x4241b72dd798242510fb56f3af1b11b473993219eaff939db6095ef4a72ad900;
-    /// erc7201('TransientVolume')
-    bytes32 constant TRANSIENT_VOLUME_SLOT = 0xddbbbd6c2145904e746c66ce13af468e7d054181c91f1b7fbae06864da072000;
-
-    function addLiquidatorVolume(address liquidator, uint256 volume) internal {
-        bytes32 slot = keccak256(abi.encode(TRANSIENT_VOLUME_SLOT, liquidator));
-
-        bool exists;
-        assembly ("memory-safe") {
-            exists := iszero(iszero(tload(slot)))
-
-            if iszero(exists) { tstore(slot, 1) }
-
-            let totalVolume := tload(add(slot, 1))
-
-            tstore(add(slot, 1), add(totalVolume, volume))
-        }
-
-        if (!exists) _addLiquidator(liquidator);
-    }
-
-    function getLiquidatorDataAndClearStorage() internal returns (LiquidatorData[] memory liquidatorData) {
-        address[] memory liquidators = _getLiquidatorsAndClear();
-
-        uint256 length = liquidators.length;
-
-        liquidatorData = new LiquidatorData[](length);
-
-        uint256 volume;
-        for (uint256 i; i < length; i++) {
-            volume = _getVolumeAndClear(liquidators[i]);
-
-            liquidatorData[i] = LiquidatorData({liquidator: liquidators[i], volume: volume});
-        }
-    }
-
-    function _addLiquidator(address liquidator) internal {
-        bytes32 slot = TRANSIENT_LIQUIDATORS_SLOT;
-
-        assembly ("memory-safe") {
-            let len := tload(slot)
-
-            mstore(0x00, slot)
-
-            let dataSlot := keccak256(0x00, 0x20)
-
-            tstore(add(dataSlot, len), liquidator)
-            tstore(slot, add(len, 1))
-        }
-    }
-
-    function _getLiquidatorsAndClear() internal returns (address[] memory liquidators) {
-        bytes32 slot = TRANSIENT_LIQUIDATORS_SLOT;
-
-        assembly ("memory-safe") {
-            let len := tload(slot)
-
-            liquidators := mload(0x40)
-
-            mstore(liquidators, len)
-
-            mstore(0x00, slot)
-
-            let dataSlot := keccak256(0x00, 0x20)
-            let memPointer := add(liquidators, 0x20)
-
-            for { let i := 0 } lt(i, len) { i := add(i, 1) } {
-                mstore(add(memPointer, mul(i, 0x20)), tload(add(dataSlot, i)))
-                tstore(add(dataSlot, i), 0) // clear maker
-            }
-
-            mstore(0x40, add(memPointer, mul(len, 0x20)))
-            tstore(slot, 0) // clear length
-        }
-    }
-
-    function _getVolumeAndClear(address liquidator) internal returns (uint256 volume) {
-        bytes32 slot = keccak256(abi.encode(TRANSIENT_VOLUME_SLOT, liquidator));
-
-        assembly ("memory-safe") {
-            volume := tload(add(slot, 1))
-
-            tstore(slot, 0)
-            tstore(add(slot, 1), 0)
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
-import {SafeCastLib} from "@solady/utils/SafeCastLib.sol";
-
-import {Side} from "./Enums.sol";
-import {FundingPaymentResult, PositionUpdateResult, OIDelta} from "./Structs.sol";
-
-struct Position {
-    bool isLong;
-    uint256 amount;
-    uint256 openNotional;
-    uint256 leverage;
-    int256 lastCumulativeFunding;
-}
-
-using PositionLib for Position global;
-
-library PositionLib {
-    using FixedPointMathLib for *;
-    using SafeCastLib for uint256;
-
-    struct __CloseCache__ {
-        uint256 closeSize;
-        uint256 closedOpenNotional;
-        uint256 currentNotional;
-        uint256 marginRemoved;
-        int256 remainingMargin;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                          POSITION MANAGEMENT
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function processTrade(Position memory self, Side side, uint256 quoteTraded, uint256 baseTraded)
-        internal
-        pure
-        returns (PositionUpdateResult memory result)
-    {
-        bool openLong = side == Side.BUY && (self.isLong || self.amount == 0);
-        bool openShort = side == Side.SELL && (!self.isLong || self.amount == 0);
-
-        if (openLong || openShort) {
-            result.marginDelta = _open(self, side, quoteTraded, baseTraded);
-
-            if (side == Side.BUY) result.oiDelta.long += baseTraded.toInt256();
-            else result.oiDelta.short += baseTraded.toInt256();
-        } else {
-            result = _close(self, side, quoteTraded, baseTraded);
-        }
-    }
-
-    function realizeFundingPayment(Position memory self, int256 cumulativeFunding)
-        internal
-        pure
-        returns (int256 fundingPayment)
-    {
-        if (self.lastCumulativeFunding == cumulativeFunding) return 0;
-
-        fundingPayment = _getFundingPayment({
-            amount: self.isLong ? self.amount.toInt256() : -self.amount.toInt256(),
-            lastCumulativePremiumFunding: self.lastCumulativeFunding,
-            cumulativePremiumFunding: cumulativeFunding
-        });
-
-        self.lastCumulativeFunding = cumulativeFunding;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                               FILL LOGIC
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function _open(Position memory self, Side side, uint256 quoteTraded, uint256 baseTraded)
-        private
-        pure
-        returns (int256 marginDelta)
-    {
-        if (self.leverage == 0) self.leverage = 1e18; // default leverage
-
-        self.isLong = side == Side.BUY;
-
-        self.amount += baseTraded;
-        self.openNotional += quoteTraded;
-
-        marginDelta = quoteTraded.fullMulDiv(1e18, self.leverage).toInt256();
-    }
-
-    /// @dev covers decrease, close, reverse open
-    function _close(Position memory self, Side side, uint256 quoteTraded, uint256 baseTraded)
-        private
-        pure
-        returns (PositionUpdateResult memory result)
-    {
-        __CloseCache__ memory cache;
-
-        cache.closeSize = self.amount.min(baseTraded);
-
-        // pro rate quote amounts by close
-        cache.closedOpenNotional = self.openNotional.fullMulDiv(cache.closeSize, self.amount);
-        cache.currentNotional = quoteTraded.fullMulDiv(cache.closeSize, baseTraded);
-
-        result.rpnl = _pnl(self.isLong, cache.closedOpenNotional, cache.currentNotional);
-        result.marginDelta = -cache.closedOpenNotional.fullMulDiv(1e18, self.leverage).toInt256();
-
-        self.openNotional -= cache.closedOpenNotional;
-        self.amount -= cache.closeSize;
-
-        quoteTraded -= cache.currentNotional;
-        baseTraded -= cache.closeSize;
-
-        if (self.isLong) result.oiDelta.long = -cache.closeSize.toInt256();
-        else result.oiDelta.short = -cache.closeSize.toInt256();
-
-        if (result.sideClose = self.amount == 0) {
-            // reverse open
-            if (baseTraded > 0) {
-                result.marginDelta = _open(self, side, quoteTraded, baseTraded);
-
-                if (self.isLong) result.oiDelta.long += baseTraded.toInt256();
-                else result.oiDelta.short += baseTraded.toInt256();
-            } else {
-                // full close, set to defaults
-                delete self.lastCumulativeFunding;
-                delete self.isLong;
-            }
-        }
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                HELPERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function _getFundingPayment(int256 amount, int256 lastCumulativePremiumFunding, int256 cumulativePremiumFunding)
-        private
-        pure
-        returns (int256)
-    {
-        if (amount == 0) return 0;
-
-        return _mul(amount, cumulativePremiumFunding - lastCumulativePremiumFunding);
-    }
-
-    /// @dev wrapper for fullMulDiv to handle int256
-    function _mul(int256 amt, int256 fundingDelta) private pure returns (int256) {
-        uint256 result = amt.abs().fullMulDiv(fundingDelta.abs(), 1e18);
-        return amt < 0 != fundingDelta < 0 ? -result.toInt256() : result.toInt256();
-    }
-
-    function _pnl(bool isLong, uint256 openNotional, uint256 currentNotional) private pure returns (int256 pnl) {
-        if (isLong) pnl = currentNotional.toInt256() - openNotional.toInt256();
-        else pnl = openNotional.toInt256() - currentNotional.toInt256();
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {RedBlackTreeLib} from "@solady/utils/RedBlackTreeLib.sol";
-
-uint256 constant MIN = 0;
-uint256 constant MAX = type(uint256).max;
-
-struct RedBlackTree {
-    RedBlackTreeLib.Tree tree;
-}
-
-using BookRedBlackTreeLib for RedBlackTree global;
-
-library BookRedBlackTreeLib {
-    /// @dev sig: 0x2b72e905
-    error NodeKeyInvalid();
-
-    function size(RedBlackTree storage tree) internal view returns (uint256) {
-        return RedBlackTreeLib.size(tree.tree);
-    }
-
-    /// @dev Returns the minimum value in the tree, or type(uint256).max if the tree is empty
-    function minimum(RedBlackTree storage tree) internal view returns (uint256) {
-        bytes32 result = RedBlackTreeLib.first(tree.tree);
-
-        if (result == bytes32(0)) return type(uint256).max;
-
-        return RedBlackTreeLib.value(result);
-    }
-
-    /// @dev Returns the maximum value in the tree, or type(uint256).min if the tree is empty
-    function maximum(RedBlackTree storage tree) internal view returns (uint256) {
-        bytes32 result = RedBlackTreeLib.last(tree.tree);
-
-        if (result == bytes32(0)) return type(uint256).min;
-
-        return RedBlackTreeLib.value(result);
-    }
-
-    function contains(RedBlackTree storage tree, uint256 nodeKey) internal view returns (bool) {
-        return RedBlackTreeLib.exists(tree.tree, nodeKey);
-    }
-
-    /// @dev Returns the nearest key greater than `nodeKey`, checking if nodeKey exists.
-    /// @dev If nodeKey is the maximum, returns MIN.
-    function getNextBiggest(RedBlackTree storage tree, uint256 nodeKey) internal view returns (uint256) {
-        if (nodeKey == tree.maximum()) return MAX;
-        if (nodeKey == uint256(type(uint256).max)) revert NodeKeyInvalid();
-
-        bytes32 result = RedBlackTreeLib.nearestAfter(tree.tree, nodeKey + 1);
-        return RedBlackTreeLib.value(result);
-    }
-
-    /// @dev Returns the nearest key less than `nodeKey`, checking if nodeKey exists.
-    /// @dev If nodeKey is the minimum, returns MAX.
-    function getNextSmallest(RedBlackTree storage tree, uint256 nodeKey) internal view returns (uint256) {
-        if (nodeKey == tree.minimum()) return MIN;
-        if (nodeKey == 0) revert NodeKeyInvalid();
-
-        bytes32 result = RedBlackTreeLib.nearestBefore(tree.tree, nodeKey - 1);
-        return RedBlackTreeLib.value(result);
-    }
-
-    function insert(RedBlackTree storage tree, uint256 nodeKey) internal {
-        RedBlackTreeLib.insert(tree.tree, nodeKey);
-    }
-
-    function remove(RedBlackTree storage tree, uint256 nodeKey) internal {
-        RedBlackTreeLib.remove(tree.tree, nodeKey);
-    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -3903,130 +3558,475 @@ library CollateralManagerLib {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
-
-import {StorageLib} from "./StorageLib.sol";
-
-struct FundingRateSettings {
-    uint256 fundingInterval;
-    uint256 resetInterval;
-    uint256 resetIterations;
-    uint256 innerClamp;
-    uint256 outerClamp;
-    int256 interestRate;
+enum Side {
+    BUY,
+    SELL
 }
 
-struct FundingRateEngine {
-    int256 fundingRate;
-    int256 cumulativeFundingIndex;
-    uint256 lastFundingTime;
-    uint256 resetIterationsLeft;
+enum TiF {
+    // MAKER
+    GTC, // good-till-cancelled
+    MOC, // maker-or-cancel (post-only)
+    // TAKER
+    FOK, // fill-or-kill
+    IOC // immediate-or-cancel
+
 }
 
-using FundingLib for FundingRateEngine global;
-using FundingLib for FundingRateSettings global;
+enum Status {
+    NULL,
+    INACTIVE,
+    ACTIVE,
+    DELISTED
+}
 
-library FundingLib {
-    using FixedPointMathLib for *;
-    using SafeCastLib for uint256;
+enum FeeTier {
+    ZERO,
+    ONE,
+    TWO
+}
 
-    error FundingIntervalNotElapsed();
+enum BookType {
+    STANDARD,
+    BACKSTOP
+}
 
-    function init(FundingRateSettings storage settings, FundingRateSettings memory initSettings) internal {
-        settings.fundingInterval = initSettings.fundingInterval;
-        settings.resetInterval = initSettings.resetInterval;
-        settings.resetIterations = initSettings.resetIterations;
-        settings.innerClamp = initSettings.innerClamp;
-        settings.outerClamp = initSettings.outerClamp;
-        settings.interestRate = initSettings.interestRate;
+enum TradeType {
+    TAKER,
+    MAKER,
+    LIQUIDATOR,
+    LIQUIDATEE,
+    DELEVERAGE_MAKER,
+    DELEVERAGE_TAKER,
+    DELIST
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {RedBlackTreeLib} from "@solady/utils/RedBlackTreeLib.sol";
+
+uint256 constant MIN = 0;
+uint256 constant MAX = type(uint256).max;
+
+struct RedBlackTree {
+    RedBlackTreeLib.Tree tree;
+}
+
+using BookRedBlackTreeLib for RedBlackTree global;
+
+library BookRedBlackTreeLib {
+    /// @dev sig: 0x2b72e905
+    error NodeKeyInvalid();
+
+    function size(RedBlackTree storage tree) internal view returns (uint256) {
+        return RedBlackTreeLib.size(tree.tree);
     }
 
-    function settleFunding(FundingRateEngine storage self, bytes32 asset, uint256 markTwap, uint256 indexTwap)
+    /// @dev Returns the minimum value in the tree, or type(uint256).max if the tree is empty
+    function minimum(RedBlackTree storage tree) internal view returns (uint256) {
+        bytes32 result = RedBlackTreeLib.first(tree.tree);
+
+        if (result == bytes32(0)) return type(uint256).max;
+
+        return RedBlackTreeLib.value(result);
+    }
+
+    /// @dev Returns the maximum value in the tree, or type(uint256).min if the tree is empty
+    function maximum(RedBlackTree storage tree) internal view returns (uint256) {
+        bytes32 result = RedBlackTreeLib.last(tree.tree);
+
+        if (result == bytes32(0)) return type(uint256).min;
+
+        return RedBlackTreeLib.value(result);
+    }
+
+    function contains(RedBlackTree storage tree, uint256 nodeKey) internal view returns (bool) {
+        return RedBlackTreeLib.exists(tree.tree, nodeKey);
+    }
+
+    /// @dev Returns the nearest key greater than `nodeKey`, checking if nodeKey exists.
+    /// @dev If nodeKey is the maximum, returns MIN.
+    function getNextBiggest(RedBlackTree storage tree, uint256 nodeKey) internal view returns (uint256) {
+        if (nodeKey == tree.maximum()) return MAX;
+        if (nodeKey == uint256(type(uint256).max)) revert NodeKeyInvalid();
+
+        bytes32 result = RedBlackTreeLib.nearestAfter(tree.tree, nodeKey + 1);
+        return RedBlackTreeLib.value(result);
+    }
+
+    /// @dev Returns the nearest key less than `nodeKey`, checking if nodeKey exists.
+    /// @dev If nodeKey is the minimum, returns MAX.
+    function getNextSmallest(RedBlackTree storage tree, uint256 nodeKey) internal view returns (uint256) {
+        if (nodeKey == tree.minimum()) return MIN;
+        if (nodeKey == 0) revert NodeKeyInvalid();
+
+        bytes32 result = RedBlackTreeLib.nearestBefore(tree.tree, nodeKey - 1);
+        return RedBlackTreeLib.value(result);
+    }
+
+    function insert(RedBlackTree storage tree, uint256 nodeKey) internal {
+        RedBlackTreeLib.insert(tree.tree, nodeKey);
+    }
+
+    function remove(RedBlackTree storage tree, uint256 nodeKey) internal {
+        RedBlackTreeLib.remove(tree.tree, nodeKey);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {LiquidatorData} from "./Structs.sol";
+
+library BackstopLiquidatorDataLib {
+    /// erc7201('TransientLiquidators')
+    bytes32 constant TRANSIENT_LIQUIDATORS_SLOT = 0x4241b72dd798242510fb56f3af1b11b473993219eaff939db6095ef4a72ad900;
+    /// erc7201('TransientVolume')
+    bytes32 constant TRANSIENT_VOLUME_SLOT = 0xddbbbd6c2145904e746c66ce13af468e7d054181c91f1b7fbae06864da072000;
+
+    function addLiquidatorVolume(address liquidator, uint256 volume) internal {
+        bytes32 slot = keccak256(abi.encode(TRANSIENT_VOLUME_SLOT, liquidator));
+
+        bool exists;
+        assembly ("memory-safe") {
+            exists := iszero(iszero(tload(slot)))
+
+            if iszero(exists) { tstore(slot, 1) }
+
+            let totalVolume := tload(add(slot, 1))
+
+            tstore(add(slot, 1), add(totalVolume, volume))
+        }
+
+        if (!exists) _addLiquidator(liquidator);
+    }
+
+    function getLiquidatorDataAndClearStorage() internal returns (LiquidatorData[] memory liquidatorData) {
+        address[] memory liquidators = _getLiquidatorsAndClear();
+
+        uint256 length = liquidators.length;
+
+        liquidatorData = new LiquidatorData[](length);
+
+        uint256 volume;
+        for (uint256 i; i < length; i++) {
+            volume = _getVolumeAndClear(liquidators[i]);
+
+            liquidatorData[i] = LiquidatorData({liquidator: liquidators[i], volume: volume});
+        }
+    }
+
+    function _addLiquidator(address liquidator) internal {
+        bytes32 slot = TRANSIENT_LIQUIDATORS_SLOT;
+
+        assembly ("memory-safe") {
+            let len := tload(slot)
+
+            mstore(0x00, slot)
+
+            let dataSlot := keccak256(0x00, 0x20)
+
+            tstore(add(dataSlot, len), liquidator)
+            tstore(slot, add(len, 1))
+        }
+    }
+
+    function _getLiquidatorsAndClear() internal returns (address[] memory liquidators) {
+        bytes32 slot = TRANSIENT_LIQUIDATORS_SLOT;
+
+        assembly ("memory-safe") {
+            let len := tload(slot)
+
+            liquidators := mload(0x40)
+
+            mstore(liquidators, len)
+
+            mstore(0x00, slot)
+
+            let dataSlot := keccak256(0x00, 0x20)
+            let memPointer := add(liquidators, 0x20)
+
+            for { let i := 0 } lt(i, len) { i := add(i, 1) } {
+                mstore(add(memPointer, mul(i, 0x20)), tload(add(dataSlot, i)))
+                tstore(add(dataSlot, i), 0) // clear maker
+            }
+
+            mstore(0x40, add(memPointer, mul(len, 0x20)))
+            tstore(slot, 0) // clear length
+        }
+    }
+
+    function _getVolumeAndClear(address liquidator) internal returns (uint256 volume) {
+        bytes32 slot = keccak256(abi.encode(TRANSIENT_VOLUME_SLOT, liquidator));
+
+        assembly ("memory-safe") {
+            volume := tload(add(slot, 1))
+
+            tstore(slot, 0)
+            tstore(add(slot, 1), 0)
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
+
+import {PackedFeeRates, PackedFeeRatesLib} from "./PackedFeeRatesLib.sol";
+import {FeeTier} from "./Enums.sol";
+
+struct FeeManager {
+    mapping(address account => FeeTier) accountFeeTier;
+    PackedFeeRates takerFeeRates;
+    PackedFeeRates makerFeeRates;
+}
+
+using FeeManagerLib for FeeManager global;
+
+library FeeManagerLib {
+    using FixedPointMathLib for uint256;
+
+    uint256 constant FEE_SCALING = 10_000_000;
+
+    function setAccountFeeTier(FeeManager storage self, address account, FeeTier feeTier) internal {
+        self.accountFeeTier[account] = feeTier;
+    }
+
+    function setTakerFeeRates(FeeManager storage self, uint16[] memory takerFeeRates) internal {
+        self.takerFeeRates = PackedFeeRatesLib.packFeeRates(takerFeeRates);
+    }
+
+    function setMakerFeeRates(FeeManager storage self, uint16[] memory makerFeeRates) internal {
+        self.makerFeeRates = PackedFeeRatesLib.packFeeRates(makerFeeRates);
+    }
+
+    function getTakerFee(FeeManager storage self, address account, uint256 amount) internal view returns (uint256) {
+        if (amount == 0) return 0;
+
+        uint16 feeRate = self.getTakerFeeRate(account);
+        return amount.fullMulDiv(feeRate, FEE_SCALING);
+    }
+
+    function getMakerFee(FeeManager storage self, address account, uint256 amount) internal view returns (uint256) {
+        if (amount == 0) return 0;
+
+        uint16 feeRate = self.getMakerFeeRate(account);
+        return amount.fullMulDiv(feeRate, FEE_SCALING);
+    }
+
+    function getTakerFeeRate(FeeManager storage self, address account) internal view returns (uint16 feeRate) {
+        return self.takerFeeRates.getFeeAt(uint256(self.accountFeeTier[account]));
+    }
+
+    function getMakerFeeRate(FeeManager storage self, address account) internal view returns (uint16 feeRate) {
+        return self.makerFeeRates.getFeeAt(uint256(self.accountFeeTier[account]));
+    }
+
+    function getAccountFeeTier(FeeManager storage self, address account) internal view returns (FeeTier tier) {
+        return self.accountFeeTier[account];
+    }
+
+    function getAccountTakerFeeRate(FeeManager storage self, address account) internal view returns (uint16 feeRate) {
+        return self.takerFeeRates.getFeeAt(uint256(self.accountFeeTier[account]));
+    }
+
+    function getAccountMakerFeeRate(FeeManager storage self, address account) internal view returns (uint16 feeRate) {
+        return self.makerFeeRates.getFeeAt(uint256(self.accountFeeTier[account]));
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {PlaceOrderArgs, AmendLimitOrderArgs} from "./Structs.sol";
+import {Side} from "./Enums.sol";
+
+type OrderId is uint256;
+
+using OrderIdLib for OrderId global;
+
+library OrderIdLib {
+    error UintExceedsOrderIdSize();
+
+    function getOrderId(address account, uint96 id) internal pure returns (uint256) {
+        return uint256(bytes32(abi.encodePacked(account, id)));
+    }
+
+    // @todo rename to toOrderId
+    function wrap(uint256 id) internal pure returns (OrderId) {
+        return OrderId.wrap(id);
+    }
+
+    function unwrap(OrderId id) internal pure returns (uint256) {
+        return OrderId.unwrap(id);
+    }
+}
+
+uint256 constant NULL_ORDER_ID = 0;
+uint32 constant NULL_TIMESTAMP = 0;
+
+struct Order {
+    // SLOT 0 //
+    Side side;
+    uint32 expiryTime;
+    OrderId id;
+    OrderId prevOrderId;
+    OrderId nextOrderId;
+    // SLOT 1 //
+    address owner;
+    // SLOT 2 //
+    uint256 price;
+    // SLOT 3 //
+    uint256 amount;
+    // SLOT 4 //
+    uint256 subaccount;
+    // SLOT 5 //
+    bool reduceOnly;
+}
+
+using OrderLib for Order global;
+
+library OrderLib {
+    using OrderIdLib for uint256;
+
+    error OrderNotFound();
+
+    function toOrder(PlaceOrderArgs memory args, uint256 orderId, address owner)
         internal
-        returns (int256 fundingIndex, int256 cumulativeFundingIndex)
+        pure
+        returns (Order memory order)
     {
-        FundingRateSettings storage settings = StorageLib.loadFundingRateSettings(asset);
+        order.side = args.side;
+        order.expiryTime = args.expiryTime;
+        order.id = orderId.wrap();
+        order.owner = owner;
+        order.amount = args.amount;
+        order.price = args.limitPrice;
+        order.subaccount = args.subaccount;
+        order.reduceOnly = args.reduceOnly;
 
-        self.assertFundingIntervalElapsed(asset);
+        // zero price == max slippage
+        if (order.price == 0 && order.side == Side.BUY) order.price = type(uint256).max; // set to max for buy orders
+    }
 
-        self.lastFundingTime = block.timestamp;
+    function toOrder(AmendLimitOrderArgs calldata args, Order storage currentOrder)
+        internal
+        view
+        returns (Order memory newOrder)
+    {
+        newOrder.owner = currentOrder.owner;
+        newOrder.id = currentOrder.id;
+        newOrder.side = args.side;
+        newOrder.price = args.price;
+        newOrder.amount = args.baseAmount;
+        newOrder.reduceOnly = args.reduceOnly;
+        newOrder.subaccount = currentOrder.subaccount;
+        newOrder.expiryTime = args.expiryTime;
+    }
 
-        int256 fundingRate;
-        (fundingIndex, fundingRate) = _calcFundingIndex({
-            self: self,
-            settings: settings,
-            markTwap: markTwap.toInt256(),
-            indexTwap: indexTwap.toInt256()
-        });
+    function isExpired(Order memory self) internal view returns (bool) {
+        // slither-disable-next-line timestamp
+        return self.expiryTime != NULL_TIMESTAMP && self.expiryTime < block.timestamp;
+    }
 
-        cumulativeFundingIndex = self.cumulativeFundingIndex += fundingIndex;
-        self.fundingRate = fundingRate;
+    function isExpired(uint256 expiryTime) internal view returns (bool) {
+        // slither-disable-next-line timestamp
+        return expiryTime != NULL_TIMESTAMP && expiryTime < block.timestamp;
+    }
+
+    // @todo this reads the whole order into memory
+    function isNull(Order memory self) internal pure returns (bool) {
+        return self.id.unwrap() == NULL_ORDER_ID;
+    }
+
+    // @todo this reads the whole order into memory
+    function assertExists(Order memory self) internal pure {
+        if (self.isNull()) revert OrderNotFound();
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
+
+import {Constants} from "./Constants.sol";
+
+struct InsuranceFund {
+    uint256 balance;
+}
+
+using InsuranceFundLib for InsuranceFund global;
+
+library InsuranceFundLib {
+    using SafeTransferLib for address;
+
+    address constant USDC = Constants.USDC;
+
+    event InsuranceFundWithdrawal(address indexed account, uint256 amount);
+    event InsuranceFundDeposit(address indexed account, uint256 amount);
+
+    error InsufficientInsuranceFundBalance();
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                               INSURANCE
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function pay(InsuranceFund storage self, uint256 amount) internal {
+        if (amount == 0) return;
+        assembly {
+            let currentBalance := sload(self.slot)
+            let newBalance := add(currentBalance, amount)
+            sstore(self.slot, newBalance)
+        }
+    }
+
+    function claim(InsuranceFund storage self, uint256 amount) internal {
+        if (amount == 0) return;
+        if (self.balance < amount) revert InsufficientInsuranceFundBalance();
+        assembly {
+            let currentBalance := sload(self.slot)
+            let newBalance := sub(currentBalance, amount)
+            sstore(self.slot, newBalance)
+        }
     }
 
     /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                               GETTERS
+                                 ADMIN
     ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    function getFundingInterval(FundingRateEngine storage self, bytes32 asset) internal view returns (uint256) {
-        FundingRateSettings storage settings = StorageLib.loadFundingRateSettings(asset);
-
-        return self.resetIterationsLeft == 0 ? settings.fundingInterval : settings.resetInterval;
+    function withdraw(InsuranceFund storage self, uint256 amount) internal {
+        if (self.balance < amount) revert InsufficientInsuranceFundBalance();
+        assembly {
+            let currentBalance := sload(self.slot)
+            let newBalance := sub(currentBalance, amount)
+            sstore(self.slot, newBalance)
+        }
+        USDC.safeTransfer(msg.sender, amount);
+        emit InsuranceFundWithdrawal(msg.sender, amount);
     }
 
-    function getCumulativeFunding(FundingRateEngine storage self) internal view returns (int256) {
-        return self.cumulativeFundingIndex;
-    }
-
-    function getTimeSinceLastFunding(FundingRateEngine storage self) internal view returns (uint256) {
-        return block.timestamp - self.lastFundingTime;
+    function deposit(InsuranceFund storage self, uint256 amount) internal {
+        assembly {
+            let currentBalance := sload(self.slot)
+            let newBalance := add(currentBalance, amount)
+            sstore(self.slot, newBalance)
+        }
+        USDC.safeTransferFrom(msg.sender, address(this), amount);
+        emit InsuranceFundDeposit(msg.sender, amount);
     }
 
     /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                               ASSERTIONS
+                                GETTERS
     ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    function assertFundingIntervalElapsed(FundingRateEngine storage self, bytes32 asset) internal view {
-        uint256 elapsedTime = self.getTimeSinceLastFunding();
-        uint256 interval = self.getFundingInterval(asset);
-
-        if (interval > elapsedTime) revert FundingIntervalNotElapsed();
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            PRIVATE HELPERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function _calcFundingIndex(
-        FundingRateEngine storage self,
-        FundingRateSettings storage settings,
-        int256 markTwap,
-        int256 indexTwap
-    ) private returns (int256 fundingIndex, int256 fundingRate) {
-        int256 innerClamp = settings.innerClamp.toInt256();
-        int256 outerClamp = settings.outerClamp.toInt256();
-
-        int256 premium = _div(markTwap - indexTwap, indexTwap);
-
-        int256 rawFunding = premium + (settings.interestRate - premium).clamp(-innerClamp, innerClamp);
-
-        fundingRate = rawFunding.clamp(-outerClamp, outerClamp);
-
-        if (fundingRate != rawFunding) self.resetIterationsLeft = settings.resetIterations;
-        else if (self.resetIterationsLeft > 0) --self.resetIterationsLeft;
-
-        fundingIndex = _mul(fundingRate, indexTwap);
-    }
-
-    // @dev wrapper for fullMulDiv to handle int256
-    function _div(int256 a, int256 b) private pure returns (int256) {
-        uint256 result = a.abs().fullMulDiv(1e18, b.abs());
-        return a < 0 != b < 0 ? -result.toInt256() : result.toInt256();
-    }
-
-    function _mul(int256 a, int256 b) private pure returns (int256) {
-        uint256 result = a.abs().fullMulDiv(b.abs(), 1e18);
-        return a < 0 != b < 0 ? -result.toInt256() : result.toInt256();
+    function getBalance(
+        InsuranceFund storage self
+    ) internal view returns (uint256) {
+        return self.balance;
     }
 }
 

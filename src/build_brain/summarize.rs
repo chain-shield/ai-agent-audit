@@ -22,11 +22,11 @@ use crate::{
         get_file_summary_from_db, get_summaries_from_db, insert_file_summaries_to_db,
         insert_file_summary_to_db,
     },
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::{
-        agent::agent_enums::{AgentMetadata, all_enum_variants, generate_enum_list},
+        agent::agent_enums::{all_enum_variants, generate_enum_list, AgentMetadata},
         contract::contract_category::{
-            ContractCategory, generate_formated_list_of_contract_categories,
+            generate_formated_list_of_contract_categories, ContractCategory,
         },
     },
     prepare_code::git_clone::RepoPaths,
@@ -71,7 +71,7 @@ pub async fn summarize_src_files(
     repo: &RepoPaths,
     semantics_path: &Path,
 ) -> Result<Vec<SrcFileSummary>> {
-    summarize_src_files_with_model(repo, semantics_path, "gpt-5-mini").await
+    summarize_src_files_with_model(repo, semantics_path, "gpt-5").await
 }
 
 pub async fn summarize_src_files_with_model(

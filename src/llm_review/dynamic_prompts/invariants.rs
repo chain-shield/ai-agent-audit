@@ -1,7 +1,7 @@
 use crate::llm_review::{
     agent::agent_enums::{all_enum_variants, generate_enum_list},
     threat_models::invariants::{
-        INVARIANT_LIBRARY, InvariantFinding, InvariantSpec, InvariantStatus, InvariantType,
+        InvariantFinding, InvariantSpec, InvariantStatus, InvariantType, INVARIANT_LIBRARY,
     },
     utils::prompt_context::generate_formatted_invariant_finding,
 };
@@ -24,7 +24,7 @@ You are not writing tests; you are designing the properties those tests would en
    - Are concrete enough to be checked automatically (given state and events).
 2. For each invariant, mentally try to falsify it using the implementation below:
    - Look for realistic flows, flag combinations, edge cases, or multi-step sequences that might break it.
-   - If you find a plausible violation path, treat the invariant as "Broken" and describe the scenario.
+   - If you find a plausible violation path, treat the invariant as "PossibleViolation" and describe the scenario.
    - If you see no realistic way to violate it, treat it as "Holds" (or the closest status from the allowed enum).
 
 You may include both "obviously critical" invariants and simpler ones, as long as they are precise, checkable, and relevant to security or correctness. The goal is to surface as many meaningful High and Medium risk issues as possible.
@@ -83,7 +83,7 @@ When designing each invariant:
      - Branches that skip checks (e.g. flag bits, mode switches, early returns).
      - Edge cases in loops, array indexing, or boundary conditions.
      - Multi-step flows (chained signatures, batched calls, upgradable configs) where state may drift from the intended invariant.
-   - If you find a credible way the invariant could be broken, mark it as Broken (or equivalent status) and describe:
+   - If you find a credible way the invariant could be broken, mark it as PossibleViolation (or equivalent status) and describe:
      - The pre-state (relevant configuration / storage / role assumptions).
      - The actions or sequence of calls.
      - The post-state and why it violates the invariant.

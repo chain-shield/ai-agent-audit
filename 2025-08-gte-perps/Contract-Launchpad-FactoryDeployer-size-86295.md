@@ -625,6 +625,205 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
+// import {Initializable} from "@solady/utils/Initializable.sol";
+import {OwnableRoles} from "@solady/auth/OwnableRoles.sol";
+import {SafeCastLib} from "@solady/utils/SafeCastLib.sol";
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
+
+import {IDistributor, IGTELaunchpadV2Pair} from "./interfaces/IDistributor.sol";
+import "./libraries/RewardsTracker.sol";
+
+/// @notice This contract receives tokens from
+contract Distributor is OwnableRoles, IDistributor {
+    using SafeTransferLib for address;
+
+    event TotalPendingRewardsIncreased(address indexed asset, uint256 amount);
+    event TotalPendingRewardsDecreased(address indexed asset, uint256 amount);
+
+    error Initialized();
+    error RewardsExist();
+    error RewardsDoNotExist();
+    error ClaimAmountExceedsTotalPendingRewards();
+    error NoSharesToIncentivize();
+    error SkimOverflow();
+
+    uint256 public constant ADMIN_ROLE = _ROLE_0;
+
+    bool private initialized;
+    address public launchpad;
+
+    /// @dev metadata to recover donations while preserving pending rewards
+    mapping(address => uint256) public totalPendingRewards;
+
+    constructor() {
+        _initializeOwner(msg.sender);
+    }
+
+    /// @dev There is no init check anywhere else because this contract can't be used until the launchpad address is set
+    function initialize(address _launchpad) public onlyOwner {
+        if (initialized) revert Initialized();
+        launchpad = _launchpad;
+        initialized = true;
+    }
+
+    modifier onlyLaunchpad() {
+        if (msg.sender != launchpad) revert Unauthorized();
+        _;
+    }
+
+    function skimExcessRewards(address asset, uint256 amount) external onlyOwnerOrRoles(ADMIN_ROLE) {
+        if (amount > asset.balanceOf(address(this)) - totalPendingRewards[asset]) revert SkimOverflow();
+
+        asset.safeTransfer(msg.sender, amount);
+    }
+
+    function getRewardsPoolData(address launchAsset) external view returns (RewardPoolDataMemory memory) {
+        return RewardsTrackerStorage.getRewardPool(launchAsset).getRewardsPoolData();
+    }
+
+    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory) {
+        return RewardsTrackerStorage.getRewardPool(launchAsset).getUserData(account);
+    }
+
+    function getUserDataForTokens(address[] calldata launchAssets, address account)
+        external
+        view
+        returns (UserRewardData[] memory)
+    {
+        UserRewardData[] memory data = new UserRewardData[](launchAssets.length);
+
+        for (uint256 i = 0; i < launchAssets.length; i++) {
+            data[i] = RewardsTrackerStorage.getRewardPool(launchAssets[i]).getUserData(account);
+        }
+        return data;
+    }
+
+    function getPendingRewards(address launchAsset, address account)
+        external
+        view
+        returns (uint256 pendingBase, uint256 pendingQuote)
+    {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        return rs.getPendingRewards(account);
+    }
+
+    function endRewards(IGTELaunchpadV2Pair pair) external onlyLaunchpad {
+        pair.endRewardsAccrual();
+    }
+
+    /// @notice Initializes the rewards pair from the launchpad
+    /// @dev Neither the launchAsset, nor the quoteAsset can be the baseAsset of an existing reward pool
+    function createRewardsPair(address launchAsset, address quoteAsset) external onlyLaunchpad {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+        RewardPoolData storage rsq = RewardsTrackerStorage.getRewardPool(quoteAsset);
+
+        // Sanity check in case the admin makes the quote asset of launchpad an existing asset
+        if (rs.quoteAsset != address(0) || rsq.quoteAsset != address(0)) revert RewardsExist();
+
+        rs.initializePair(launchAsset, quoteAsset);
+    }
+
+    /// @notice Allows rewards to be added to a pool regardless of token order
+    /// @dev Pools can only be created once per asset combo, regardless of the order of the assets
+    /// Additionally, anyone can add rewards as incentive, even while a pair is still bonding
+    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external {
+        (address launchAsset, address quoteAsset, uint128 launchAssetAmount, uint128 quoteAssetAmount) =
+            (token0, token1, amount0, amount1);
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(token0);
+
+        if (rs.quoteAsset == address(0)) {
+            rs = RewardsTrackerStorage.getRewardPool(token1);
+
+            if (rs.quoteAsset == address(0)) revert RewardsDoNotExist();
+
+            (launchAsset, quoteAsset, launchAssetAmount, quoteAssetAmount) = (token1, token0, amount1, amount0);
+        }
+
+        if (rs.totalShares == 0) revert NoSharesToIncentivize();
+
+        if (launchAssetAmount > 0) {
+            rs.addBaseRewards(launchAsset, launchAssetAmount);
+            _increaseTotalPending(launchAsset, launchAssetAmount);
+            launchAsset.safeTransferFrom(msg.sender, address(this), uint256(launchAssetAmount));
+        }
+
+        if (quoteAssetAmount > 0) {
+            rs.addQuoteRewards(launchAsset, quoteAsset, quoteAssetAmount);
+            _increaseTotalPending(quoteAsset, quoteAssetAmount);
+            quoteAsset.safeTransferFrom(msg.sender, address(this), uint256(quoteAssetAmount));
+        }
+    }
+
+    /// @dev This can only be called while `launchAsset` is bonding, so we dont need to check if the pool exists or is still active
+    function increaseStake(address launchAsset, address account, uint96 shares)
+        external
+        onlyLaunchpad
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        (baseAmount, quoteAmount) = rs.stake(account, uint96(shares));
+        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
+    }
+
+    /// @dev This can only be called while `launchAsset` still shares to remove from bonders, so it cannot be called after the pool has been deactivated
+    function decreaseStake(address launchAsset, address account, uint96 shares)
+        external
+        onlyLaunchpad
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        (baseAmount, quoteAmount) = rs.unstake(account, uint96(shares));
+        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
+    }
+
+    /// @dev This can be called even after a pool has been deactivated, as accounts may still have pending rewards
+    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount) {
+        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+
+        (baseAmount, quoteAmount) = rs.claim(msg.sender);
+
+        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
+    }
+
+    function _distributeAssets(address base, uint256 baseAmount, address quote, uint256 quoteAmount) internal {
+        if (baseAmount > 0) {
+            _decreaseTotalPending(base, baseAmount);
+            base.safeTransfer(msg.sender, baseAmount);
+        }
+
+        if (quoteAmount > 0) {
+            _decreaseTotalPending(quote, quoteAmount);
+            quote.safeTransfer(msg.sender, quoteAmount);
+        }
+    }
+
+    function _increaseTotalPending(address asset, uint256 amount) internal {
+        unchecked {
+            totalPendingRewards[asset] += amount;
+        }
+
+        emit TotalPendingRewardsIncreased(asset, amount);
+    }
+
+    function _decreaseTotalPending(address asset, uint256 amount) internal {
+        uint256 currTotal = totalPendingRewards[asset];
+
+        if (currTotal < amount) revert ClaimAmountExceedsTotalPendingRewards();
+
+        unchecked {
+            totalPendingRewards[asset] -= amount;
+        }
+
+        emit TotalPendingRewardsDecreased(asset, amount);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
 struct UserRewardData {
     uint96 shares; // User's current share count (up to ~7.9e28)
     uint96 baseRewardDebt; // Used to calculate base token rewards owed
@@ -871,198 +1070,6 @@ library RewardsTrackerStorage {
     }
 }
 
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
-
-import {IERC165} from "@openzeppelin/interfaces/IERC165.sol";
-
-interface IBondingCurveMinimal is IERC165 {
-    function init(bytes memory data) external;
-
-    function initializeCurve(address token, uint256 totalSupply, uint256 bondingSupply) external;
-    function buy(address token, uint256 baseAmount) external returns (uint256 quoteAmount);
-    function sell(address token, uint256 baseAmount) external returns (uint256 quoteAmount);
-
-    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
-        external
-        view
-        returns (uint256 baseAmount);
-    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
-        external
-        view
-        returns (uint256 quoteAmount);
-    function baseSoldFromCurve(address token) external view returns (uint256);
-    function quoteBoughtByCurve(address token) external view returns (uint256);
-    function totalSupply(address token) external view returns (uint256);
-    function bondingSupply(address token) external view returns (uint256);
-
-    function supportsInterface(bytes4 interfaceId) external view returns (bool);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {ERC20} from "@solady/tokens/ERC20.sol";
-
-import {ILaunchpad} from "./interfaces/ILaunchpad.sol";
-
-contract LaunchToken is ERC20 {
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                         ERRORS AND EVENTS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev sig: 0xd386ef3e
-    error BadAuth();
-    /// @dev sig: 0x9ca33913
-    error TransfersDisabledWhileBonding();
-    /// @dev sig: 0xe97e187c
-    error TotalSupplyExceedsMaxShares();
-
-    /// @dev event-sig:
-    event TransfersUnlocked(uint256 timestamp, uint256 eventNonce);
-    event FeeShareIncreased(address indexed account, uint256 amount, uint256 eventNonce);
-    event FeeShareDecreased(address indexed account, uint256 amount, uint256 eventNonce);
-    event FeeShareConcluded(uint256 timestamp, uint256 eventNonce);
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            CUSTOM STATE
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev The abi version of this impl so the indexer can handle event-changing upgrades
-    uint256 public constant ABI_VERSION = 1;
-
-    address public immutable launchpad;
-    address public immutable gteRouter;
-    string private _name;
-    string private _symbol;
-    string private _mediaURI;
-
-    bool public unlocked;
-    uint256 public eventNonce;
-    uint256 public totalFeeShare;
-    mapping(address => uint256) public bondingShare;
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                             CONSTRUCTOR
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    // slither-disable-next-line missing-zero-check
-    constructor(string memory name_, string memory symbol_, string memory mediaUri_, address gteRouter_) {
-        _name = name_;
-        _symbol = symbol_;
-        _mediaURI = mediaUri_;
-        gteRouter = gteRouter_;
-        launchpad = msg.sender;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                MODIFIERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    modifier onlyLaunchpad() {
-        if (msg.sender != launchpad) revert BadAuth();
-        _;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            PUBLIC VIEWS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @notice Implements solady token name
-    function name() public view override returns (string memory) {
-        return _name;
-    }
-
-    /// @notice Implements solady token symbol
-    function symbol() public view override returns (string memory) {
-        return _symbol;
-    }
-
-    /// @notice Additional data field for token image
-    function mediaURI() public view returns (string memory) {
-        return _mediaURI;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                              OWNER-ONLY
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @notice Entrypoint for launchpad (deployer) to unlock transfers
-    function unlock() external onlyLaunchpad {
-        unlocked = true;
-        emit TransfersUnlocked(block.timestamp, _incEventNonce());
-    }
-
-    /// @notice Entrypoint for launchpad to mint token (launchpad only calls once)
-    function mint(uint256 amount) external onlyLaunchpad {
-        _mint(launchpad, amount);
-
-        if (totalSupply() > type(uint96).max) revert TotalSupplyExceedsMaxShares();
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            INTERNAL ASSERTIONS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
-        if (!unlocked && from != launchpad && to != launchpad && to != gteRouter) {
-            revert TransfersDisabledWhileBonding();
-        }
-
-        if (!unlocked) {
-            if (from != launchpad && to != launchpad && to != gteRouter) revert TransfersDisabledWhileBonding();
-
-            if (from == launchpad && to != launchpad) _increaseFeeShares(to, amount);
-            else if (to != launchpad && to != gteRouter) revert TransfersDisabledWhileBonding();
-        }
-
-        if (from != launchpad) _decreaseFeeShares(from, amount);
-    }
-
-    function _increaseFeeShares(address account, uint256 amount) internal {
-        if (amount == 0 || account == address(0)) return;
-
-        emit FeeShareIncreased(account, amount, _incEventNonce());
-
-        unchecked {
-            totalFeeShare += amount;
-            bondingShare[account] += amount;
-        }
-
-        ILaunchpad(launchpad).increaseStake(account, uint96(amount));
-    }
-
-    function _decreaseFeeShares(address account, uint256 amount) internal {
-        uint256 share = bondingShare[account];
-        if (share == 0 || account == address(0)) return;
-
-        amount = amount > share ? share : amount;
-
-        emit FeeShareDecreased(account, amount, _incEventNonce());
-
-        unchecked {
-            totalFeeShare -= amount;
-            bondingShare[account] -= amount;
-        }
-
-        if (totalFeeShare == 0 && !unlocked) _endRewards();
-
-        ILaunchpad(launchpad).decreaseStake(account, uint96(amount));
-    }
-
-    /// @dev Hook to end rewards program for this base token if no more pre-bonding shares exist
-    function _endRewards() internal {
-        ILaunchpad(launchpad).endRewards();
-
-        emit FeeShareConcluded(block.timestamp, _incEventNonce());
-    }
-
-    function _incEventNonce() internal returns (uint256 nonce) {
-        nonce = eventNonce;
-        eventNonce++;
-    }
-}
-
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
@@ -1103,60 +1110,6 @@ library EventNonceLib {
         EventNonceStorage storage ds = getEventNonceStorage();
         return ds.eventNonce;
     }
-}
-
-pragma solidity 0.8.27;
-
-interface IUniswapV2Pair {
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    event Transfer(address indexed from, address indexed to, uint256 value);
-
-    function name() external pure returns (string memory);
-    function symbol() external pure returns (string memory);
-    function decimals() external pure returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address owner) external view returns (uint256);
-    function allowance(address owner, address spender) external view returns (uint256);
-
-    function approve(address spender, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-
-    function DOMAIN_SEPARATOR() external view returns (bytes32);
-    function PERMIT_TYPEHASH() external pure returns (bytes32);
-    function nonces(address owner) external view returns (uint256);
-
-    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
-        external;
-
-    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
-    event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
-    event Swap(
-        address indexed sender,
-        uint256 amount0In,
-        uint256 amount1In,
-        uint256 amount0Out,
-        uint256 amount1Out,
-        address indexed to
-    );
-    event Sync(uint112 reserve0, uint112 reserve1);
-
-    function MINIMUM_LIQUIDITY() external pure returns (uint256);
-    function factory() external view returns (address);
-    function token0() external view returns (address);
-    function token1() external view returns (address);
-    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
-    function price0CumulativeLast() external view returns (uint256);
-    function price1CumulativeLast() external view returns (uint256);
-    function kLast() external view returns (uint256);
-
-    function mint(address to) external returns (uint256 liquidity);
-    function burn(address to) external returns (uint256 amount0, uint256 amount1);
-    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
-    function skim(address to) external;
-    function sync() external;
-
-    function initialize(address, address) external;
 }
 
 // SPDX-License-Identifier: MIT
@@ -1267,43 +1220,58 @@ interface IUniswapV2FactoryMinimal {
     function getPair(address tokenA, address tokenB) external view returns (address pair);
 }
 
-// SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-interface IUniswapV2RouterMinimal {
+interface IUniswapV2Pair {
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    function name() external pure returns (string memory);
+    function symbol() external pure returns (string memory);
+    function decimals() external pure returns (uint8);
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address owner) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
+
+    function approve(address spender, uint256 value) external returns (bool);
+    function transfer(address to, uint256 value) external returns (bool);
+    function transferFrom(address from, address to, uint256 value) external returns (bool);
+
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+    function PERMIT_TYPEHASH() external pure returns (bytes32);
+    function nonces(address owner) external view returns (uint256);
+
+    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external;
+
+    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
+    event Burn(address indexed sender, uint256 amount0, uint256 amount1, address indexed to);
+    event Swap(
+        address indexed sender,
+        uint256 amount0In,
+        uint256 amount1In,
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address indexed to
+    );
+    event Sync(uint112 reserve0, uint112 reserve1);
+
+    function MINIMUM_LIQUIDITY() external pure returns (uint256);
     function factory() external view returns (address);
+    function token0() external view returns (address);
+    function token1() external view returns (address);
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function price0CumulativeLast() external view returns (uint256);
+    function price1CumulativeLast() external view returns (uint256);
+    function kLast() external view returns (uint256);
 
-    function addLiquidity(
-        address tokenA,
-        address tokenB,
-        uint256 amountADesired,
-        uint256 amountBDesired,
-        uint256 amountAMin,
-        uint256 amountBMin,
-        address to,
-        uint256 deadline
-    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
+    function mint(address to) external returns (uint256 liquidity);
+    function burn(address to) external returns (uint256 amount0, uint256 amount1);
+    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
+    function skim(address to) external;
+    function sync() external;
 
-    function swapTokensForExactTokens(
-        uint256 amountOut,
-        uint256 amountInMax,
-        address[] calldata path,
-        address to,
-        uint256 deadline
-    ) external returns (uint256[] memory amounts);
-
-    function swapExactTokensForTokens(
-        uint256 amountIn,
-        uint256 amountOutMin,
-        address[] calldata path,
-        address to,
-        uint256 deadline
-    ) external returns (uint256[] memory amounts);
-
-    function getAmountIn(uint256 amountOut, uint256 reserveIn, uint256 reserveOut)
-        external
-        pure
-        returns (uint256 amountIn);
+    function initialize(address, address) external;
 }
 
 // SPDX-License-Identifier: MIT
@@ -1864,200 +1832,313 @@ contract GTELaunchpadV2Pair is IUniswapV2Pair, IGTELaunchpadV2Pair, UniswapV2ERC
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-// import {Initializable} from "@solady/utils/Initializable.sol";
-import {OwnableRoles} from "@solady/auth/OwnableRoles.sol";
-import {SafeCastLib} from "@solady/utils/SafeCastLib.sol";
-import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
+import {ERC20} from "@solady/tokens/ERC20.sol";
 
-import {IDistributor, IGTELaunchpadV2Pair} from "./interfaces/IDistributor.sol";
-import "./libraries/RewardsTracker.sol";
+import {ILaunchpad} from "./interfaces/ILaunchpad.sol";
 
-/// @notice This contract receives tokens from
-contract Distributor is OwnableRoles, IDistributor {
-    using SafeTransferLib for address;
+contract LaunchToken is ERC20 {
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                         ERRORS AND EVENTS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    event TotalPendingRewardsIncreased(address indexed asset, uint256 amount);
-    event TotalPendingRewardsDecreased(address indexed asset, uint256 amount);
+    /// @dev sig: 0xd386ef3e
+    error BadAuth();
+    /// @dev sig: 0x9ca33913
+    error TransfersDisabledWhileBonding();
+    /// @dev sig: 0xe97e187c
+    error TotalSupplyExceedsMaxShares();
 
-    error Initialized();
-    error RewardsExist();
-    error RewardsDoNotExist();
-    error ClaimAmountExceedsTotalPendingRewards();
-    error NoSharesToIncentivize();
-    error SkimOverflow();
+    /// @dev event-sig:
+    event TransfersUnlocked(uint256 timestamp, uint256 eventNonce);
+    event FeeShareIncreased(address indexed account, uint256 amount, uint256 eventNonce);
+    event FeeShareDecreased(address indexed account, uint256 amount, uint256 eventNonce);
+    event FeeShareConcluded(uint256 timestamp, uint256 eventNonce);
 
-    uint256 public constant ADMIN_ROLE = _ROLE_0;
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            CUSTOM STATE
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-    bool private initialized;
-    address public launchpad;
+    /// @dev The abi version of this impl so the indexer can handle event-changing upgrades
+    uint256 public constant ABI_VERSION = 1;
 
-    /// @dev metadata to recover donations while preserving pending rewards
-    mapping(address => uint256) public totalPendingRewards;
+    address public immutable launchpad;
+    address public immutable gteRouter;
+    string private _name;
+    string private _symbol;
+    string private _mediaURI;
 
-    constructor() {
-        _initializeOwner(msg.sender);
+    bool public unlocked;
+    uint256 public eventNonce;
+    uint256 public totalFeeShare;
+    mapping(address => uint256) public bondingShare;
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                             CONSTRUCTOR
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    // slither-disable-next-line missing-zero-check
+    constructor(string memory name_, string memory symbol_, string memory mediaUri_, address gteRouter_) {
+        _name = name_;
+        _symbol = symbol_;
+        _mediaURI = mediaUri_;
+        gteRouter = gteRouter_;
+        launchpad = msg.sender;
     }
 
-    /// @dev There is no init check anywhere else because this contract can't be used until the launchpad address is set
-    function initialize(address _launchpad) public onlyOwner {
-        if (initialized) revert Initialized();
-        launchpad = _launchpad;
-        initialized = true;
-    }
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                MODIFIERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
     modifier onlyLaunchpad() {
-        if (msg.sender != launchpad) revert Unauthorized();
+        if (msg.sender != launchpad) revert BadAuth();
         _;
     }
 
-    function skimExcessRewards(address asset, uint256 amount) external onlyOwnerOrRoles(ADMIN_ROLE) {
-        if (amount > asset.balanceOf(address(this)) - totalPendingRewards[asset]) revert SkimOverflow();
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            PUBLIC VIEWS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-        asset.safeTransfer(msg.sender, amount);
+    /// @notice Implements solady token name
+    function name() public view override returns (string memory) {
+        return _name;
     }
 
-    function getRewardsPoolData(address launchAsset) external view returns (RewardPoolDataMemory memory) {
-        return RewardsTrackerStorage.getRewardPool(launchAsset).getRewardsPoolData();
+    /// @notice Implements solady token symbol
+    function symbol() public view override returns (string memory) {
+        return _symbol;
     }
 
-    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory) {
-        return RewardsTrackerStorage.getRewardPool(launchAsset).getUserData(account);
+    /// @notice Additional data field for token image
+    function mediaURI() public view returns (string memory) {
+        return _mediaURI;
     }
 
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                              OWNER-ONLY
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @notice Entrypoint for launchpad (deployer) to unlock transfers
+    function unlock() external onlyLaunchpad {
+        unlocked = true;
+        emit TransfersUnlocked(block.timestamp, _incEventNonce());
+    }
+
+    /// @notice Entrypoint for launchpad to mint token (launchpad only calls once)
+    function mint(uint256 amount) external onlyLaunchpad {
+        _mint(launchpad, amount);
+
+        if (totalSupply() > type(uint96).max) revert TotalSupplyExceedsMaxShares();
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            INTERNAL ASSERTIONS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override {
+        if (!unlocked && from != launchpad && to != launchpad && to != gteRouter) {
+            revert TransfersDisabledWhileBonding();
+        }
+
+        if (!unlocked) {
+            if (from != launchpad && to != launchpad && to != gteRouter) revert TransfersDisabledWhileBonding();
+
+            if (from == launchpad && to != launchpad) _increaseFeeShares(to, amount);
+            else if (to != launchpad && to != gteRouter) revert TransfersDisabledWhileBonding();
+        }
+
+        if (from != launchpad) _decreaseFeeShares(from, amount);
+    }
+
+    function _increaseFeeShares(address account, uint256 amount) internal {
+        if (amount == 0 || account == address(0)) return;
+
+        emit FeeShareIncreased(account, amount, _incEventNonce());
+
+        unchecked {
+            totalFeeShare += amount;
+            bondingShare[account] += amount;
+        }
+
+        ILaunchpad(launchpad).increaseStake(account, uint96(amount));
+    }
+
+    function _decreaseFeeShares(address account, uint256 amount) internal {
+        uint256 share = bondingShare[account];
+        if (share == 0 || account == address(0)) return;
+
+        amount = amount > share ? share : amount;
+
+        emit FeeShareDecreased(account, amount, _incEventNonce());
+
+        unchecked {
+            totalFeeShare -= amount;
+            bondingShare[account] -= amount;
+        }
+
+        if (totalFeeShare == 0 && !unlocked) _endRewards();
+
+        ILaunchpad(launchpad).decreaseStake(account, uint96(amount));
+    }
+
+    /// @dev Hook to end rewards program for this base token if no more pre-bonding shares exist
+    function _endRewards() internal {
+        ILaunchpad(launchpad).endRewards();
+
+        emit FeeShareConcluded(block.timestamp, _incEventNonce());
+    }
+
+    function _incEventNonce() internal returns (uint256 nonce) {
+        nonce = eventNonce;
+        eventNonce++;
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
+
+import {IERC165} from "@openzeppelin/interfaces/IERC165.sol";
+
+interface IBondingCurveMinimal is IERC165 {
+    function init(bytes memory data) external;
+
+    function initializeCurve(address token, uint256 totalSupply, uint256 bondingSupply) external;
+    function buy(address token, uint256 baseAmount) external returns (uint256 quoteAmount);
+    function sell(address token, uint256 baseAmount) external returns (uint256 quoteAmount);
+
+    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
+        external
+        view
+        returns (uint256 baseAmount);
+    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
+        external
+        view
+        returns (uint256 quoteAmount);
+    function baseSoldFromCurve(address token) external view returns (uint256);
+    function quoteBoughtByCurve(address token) external view returns (uint256);
+    function totalSupply(address token) external view returns (uint256);
+    function bondingSupply(address token) external view returns (uint256);
+
+    function supportsInterface(bytes4 interfaceId) external view returns (bool);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+interface IUniswapV2RouterMinimal {
+    function factory() external view returns (address);
+
+    function addLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address to,
+        uint256 deadline
+    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
+
+    function swapTokensForExactTokens(
+        uint256 amountOut,
+        uint256 amountInMax,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
+
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
+
+    function getAmountIn(uint256 amountOut, uint256 reserveIn, uint256 reserveOut)
+        external
+        pure
+        returns (uint256 amountIn);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
+/// @notice Reentrancy guard mixin.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/ReentrancyGuard.sol)
+abstract contract ReentrancyGuard {
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                       CUSTOM ERRORS                        */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Unauthorized reentrant call.
+    error Reentrancy();
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                          STORAGE                           */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Equivalent to: `uint72(bytes9(keccak256("_REENTRANCY_GUARD_SLOT")))`.
+    /// 9 bytes is large enough to avoid collisions with lower slots,
+    /// but not too large to result in excessive bytecode bloat.
+    uint256 private constant _REENTRANCY_GUARD_SLOT = 0x929eee149b4bd21268;
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                      REENTRANCY GUARD                      */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Guards a function from reentrancy.
+    modifier nonReentrant() virtual {
+        /// @solidity memory-safe-assembly
+        assembly {
+            if eq(sload(_REENTRANCY_GUARD_SLOT), address()) {
+                mstore(0x00, 0xab143c06) // `Reentrancy()`.
+                revert(0x1c, 0x04)
+            }
+            sstore(_REENTRANCY_GUARD_SLOT, address())
+        }
+        _;
+        /// @solidity memory-safe-assembly
+        assembly {
+            sstore(_REENTRANCY_GUARD_SLOT, codesize())
+        }
+    }
+
+    /// @dev Guards a view function from read-only reentrancy.
+    modifier nonReadReentrant() virtual {
+        /// @solidity memory-safe-assembly
+        assembly {
+            if eq(sload(_REENTRANCY_GUARD_SLOT), address()) {
+                mstore(0x00, 0xab143c06) // `Reentrancy()`.
+                revert(0x1c, 0x04)
+            }
+        }
+        _;
+    }
+}
+
+pragma solidity 0.8.27;
+
+import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
+
+import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
+
+interface IDistributor {
+    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
     function getUserDataForTokens(address[] calldata launchAssets, address account)
         external
         view
-        returns (UserRewardData[] memory)
-    {
-        UserRewardData[] memory data = new UserRewardData[](launchAssets.length);
-
-        for (uint256 i = 0; i < launchAssets.length; i++) {
-            data[i] = RewardsTrackerStorage.getRewardPool(launchAssets[i]).getUserData(account);
-        }
-        return data;
-    }
-
-    function getPendingRewards(address launchAsset, address account)
-        external
-        view
-        returns (uint256 pendingBase, uint256 pendingQuote)
-    {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        return rs.getPendingRewards(account);
-    }
-
-    function endRewards(IGTELaunchpadV2Pair pair) external onlyLaunchpad {
-        pair.endRewardsAccrual();
-    }
-
-    /// @notice Initializes the rewards pair from the launchpad
-    /// @dev Neither the launchAsset, nor the quoteAsset can be the baseAsset of an existing reward pool
-    function createRewardsPair(address launchAsset, address quoteAsset) external onlyLaunchpad {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-        RewardPoolData storage rsq = RewardsTrackerStorage.getRewardPool(quoteAsset);
-
-        // Sanity check in case the admin makes the quote asset of launchpad an existing asset
-        if (rs.quoteAsset != address(0) || rsq.quoteAsset != address(0)) revert RewardsExist();
-
-        rs.initializePair(launchAsset, quoteAsset);
-    }
-
-    /// @notice Allows rewards to be added to a pool regardless of token order
-    /// @dev Pools can only be created once per asset combo, regardless of the order of the assets
-    /// Additionally, anyone can add rewards as incentive, even while a pair is still bonding
-    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external {
-        (address launchAsset, address quoteAsset, uint128 launchAssetAmount, uint128 quoteAssetAmount) =
-            (token0, token1, amount0, amount1);
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(token0);
-
-        if (rs.quoteAsset == address(0)) {
-            rs = RewardsTrackerStorage.getRewardPool(token1);
-
-            if (rs.quoteAsset == address(0)) revert RewardsDoNotExist();
-
-            (launchAsset, quoteAsset, launchAssetAmount, quoteAssetAmount) = (token1, token0, amount1, amount0);
-        }
-
-        if (rs.totalShares == 0) revert NoSharesToIncentivize();
-
-        if (launchAssetAmount > 0) {
-            rs.addBaseRewards(launchAsset, launchAssetAmount);
-            _increaseTotalPending(launchAsset, launchAssetAmount);
-            launchAsset.safeTransferFrom(msg.sender, address(this), uint256(launchAssetAmount));
-        }
-
-        if (quoteAssetAmount > 0) {
-            rs.addQuoteRewards(launchAsset, quoteAsset, quoteAssetAmount);
-            _increaseTotalPending(quoteAsset, quoteAssetAmount);
-            quoteAsset.safeTransferFrom(msg.sender, address(this), uint256(quoteAssetAmount));
-        }
-    }
-
-    /// @dev This can only be called while `launchAsset` is bonding, so we dont need to check if the pool exists or is still active
+        returns (UserRewardData[] memory);
     function increaseStake(address launchAsset, address account, uint96 shares)
         external
-        onlyLaunchpad
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        (baseAmount, quoteAmount) = rs.stake(account, uint96(shares));
-        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
-    }
-
-    /// @dev This can only be called while `launchAsset` still shares to remove from bonders, so it cannot be called after the pool has been deactivated
+        returns (uint256 baseAmount, uint256 quoteAmount);
     function decreaseStake(address launchAsset, address account, uint96 shares)
         external
-        onlyLaunchpad
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
+    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
+    function createRewardsPair(address launchAsset, address quoteToken) external;
 
-        (baseAmount, quoteAmount) = rs.unstake(account, uint96(shares));
-        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
-    }
-
-    /// @dev This can be called even after a pool has been deactivated, as accounts may still have pending rewards
-    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount) {
-        RewardPoolData storage rs = RewardsTrackerStorage.getRewardPool(launchAsset);
-
-        (baseAmount, quoteAmount) = rs.claim(msg.sender);
-
-        _distributeAssets(launchAsset, baseAmount, rs.quoteAsset, quoteAmount);
-    }
-
-    function _distributeAssets(address base, uint256 baseAmount, address quote, uint256 quoteAmount) internal {
-        if (baseAmount > 0) {
-            _decreaseTotalPending(base, baseAmount);
-            base.safeTransfer(msg.sender, baseAmount);
-        }
-
-        if (quoteAmount > 0) {
-            _decreaseTotalPending(quote, quoteAmount);
-            quote.safeTransfer(msg.sender, quoteAmount);
-        }
-    }
-
-    function _increaseTotalPending(address asset, uint256 amount) internal {
-        unchecked {
-            totalPendingRewards[asset] += amount;
-        }
-
-        emit TotalPendingRewardsIncreased(asset, amount);
-    }
-
-    function _decreaseTotalPending(address asset, uint256 amount) internal {
-        uint256 currTotal = totalPendingRewards[asset];
-
-        if (currTotal < amount) revert ClaimAmountExceedsTotalPendingRewards();
-
-        unchecked {
-            totalPendingRewards[asset] -= amount;
-        }
-
-        emit TotalPendingRewardsDecreased(asset, amount);
-    }
+    function endRewards(IGTELaunchpadV2Pair pair) external;
 }
 
 pragma solidity 0.8.27;
@@ -2152,6 +2233,109 @@ contract UniswapV2ERC20 is IUniswapV2ERC20 {
         require(recoveredAddress != address(0) && recoveredAddress == owner, "UniswapV2: INVALID_SIGNATURE");
         _approve(owner, spender, value);
     }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+interface IGTELaunchpadV2Pair {
+    function rewardsPoolActive() external view returns (uint256);
+    function accruedLaunchpadFee0() external view returns (uint112);
+    function accruedLaunchpadFee1() external view returns (uint112);
+    function launchpadLp() external view returns (address);
+    function launchpadFeeDistributor() external view returns (address);
+    function REWARDS_FEE_SHARE() external view returns (uint256);
+
+    function endRewardsAccrual() external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {LaunchToken} from "../LaunchToken.sol";
+import {IBondingCurveMinimal} from "../BondingCurves/IBondingCurveMinimal.sol";
+import {ICLOBManager} from "../../clob/ICLOBManager.sol";
+import {IOperatorPanel} from "../../utils/interfaces/IOperatorPanel.sol";
+import {IDistributor} from "./IDistributor.sol";
+import {IUniswapV2RouterMinimal} from "./IUniswapV2RouterMinimal.sol";
+import {IUniswapV2FactoryMinimal} from "./IUniswapV2FactoryMinimal.sol";
+import {LaunchpadLPVault} from "../LaunchpadLPVault.sol";
+
+interface ILaunchpad {
+    struct BuyData {
+        address account;
+        address token;
+        address recipient;
+        uint256 amountOutBase;
+        uint256 maxAmountInQuote;
+    }
+
+    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
+        external
+        view
+        returns (uint256 baseAmount);
+    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
+        external
+        view
+        returns (uint256 quoteAmount);
+
+    struct LaunchData {
+        bool active;
+        address quote;
+        IBondingCurveMinimal curve;
+    }
+
+    function launch(string memory name, string memory symbol, string memory mediaURI)
+        external
+        payable
+        returns (address token);
+
+    function buy(BuyData calldata buyData)
+        external
+        returns (uint256 amountOutBaseActual, uint256 amountInQuoteActual);
+
+    function sell(address account, address token, address recipient, uint256 amountInBase, uint256 minAmountOutQuote)
+        external
+        returns (uint256 amountInBaseActual, uint256 amountOutQuoteActual);
+
+    function increaseStake(address account, uint96 shares) external;
+
+    function decreaseStake(address account, uint96 shares) external;
+    
+    function endRewards() external;
+
+    function updateBondingCurve(address newBondingCurve) external;
+
+    function pullFees() external;
+
+    // slither-disable-next-line naming-convention
+    function TOTAL_SUPPLY() external view returns (uint256);
+
+    // slither-disable-next-line naming-convention
+    function BONDING_SUPPLY() external view returns (uint256);
+
+    // slither-disable-next-line naming-convention
+    function ABI_VERSION() external view returns (uint256);
+
+    function gteRouter() external view returns (address);
+
+    function operator() external view returns (IOperatorPanel);
+
+    function distributor() external view returns (IDistributor);
+
+    function uniV2Router() external view returns (IUniswapV2RouterMinimal);
+
+    function launchpadLPVault() external view returns (LaunchpadLPVault);
+
+    function currentQuoteAsset() external view returns (LaunchToken);
+
+    function currentBondingCurve() external view returns (IBondingCurveMinimal);
+
+    function launchFee() external view returns (uint256);
+
+    function eventNonce() external view returns (uint256);
+
+    function launches(address launchToken) external view returns (LaunchData memory);
 }
 
 // SPDX-License-Identifier: MIT
@@ -2690,195 +2874,301 @@ abstract contract OwnableRoles is Ownable {
     uint256 internal constant _ROLE_255 = 1 << 255;
 }
 
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
+
+import {Ownable2StepUpgradeable} from "@openzeppelin-contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+
+contract LaunchpadLPVault is Ownable2StepUpgradeable {
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                ERRORS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev sig: 0xaf62991d
+    error FallbackRevert();
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                STATES
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    address public launchpad;
+
+    /// @dev The abi version of this impl so the indexer can handle event-changing upgrades
+    uint256 public constant ABI_VERSION = 1;
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                    CONSTRUCTOR AND INITIALIZATION
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address launchpad_, address initialOwner) external initializer {
+        launchpad = launchpad_;
+        __Ownable_init(initialOwner);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                FALLBACKS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    fallback() external {
+        revert FallbackRevert();
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {IAccountManager} from "../account-manager/IAccountManager.sol";
+import {FeeTiers} from "./types/FeeData.sol";
+import {ICLOB} from "./ICLOB.sol";
+import {Side, OrderId} from "./types/Order.sol";
+import {MakerCredit} from "./types/TransientMakerData.sol";
+
+struct ConfigParams {
+    address quoteToken;
+    address baseToken;
+    uint256 quoteSize;
+    uint256 baseSize;
+}
+
+struct SettingsParams {
+    address owner;
+    uint8 maxLimitsPerTx;
+    uint256 minLimitOrderAmountInBase;
+    uint256 tickSize;
+    uint256 lotSizeInBase;
+}
+
+interface ICLOBManager {
+    // Basic getters from ICLOBAdminPanel
+    function beacon() external view returns (address);
+    function getMarketAddress(address quoteToken, address baseToken) external view returns (address);
+    function isMarket(address market) external view returns (bool);
+
+    // Market creation and management from ICLOBAdminPanel
+    function createMarket(address baseToken, address quoteToken, SettingsParams calldata settings)
+        external
+        returns (address marketAddress);
+
+    // Limit management getters
+    function getMaxLimitExempt(address account) external view returns (bool);
+
+    // Admin settings
+    function setMaxLimitsPerTx(ICLOB market, uint8 newMaxLimits) external;
+    function setTickSize(ICLOB market, uint256 newTickSize) external;
+    function setLotSizeInBase(ICLOB market, uint256 newLotSize) external;
+    function setMinLimitOrderAmountInBase(ICLOB market, uint256 newMinLimitOrderAmountInBase) external;
+    function adminCancelExpiredOrders(ICLOB market, OrderId[] calldata ids, Side side) external;
+    function setAccountFeeTiers(address[] calldata accounts, FeeTiers[] calldata feeTiers) external;
+    function setMaxLimitsExempt(address[] calldata accounts, bool[] calldata toggles) external;
+}
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-interface IGTELaunchpadV2Pair {
-    function rewardsPoolActive() external view returns (uint256);
-    function accruedLaunchpadFee0() external view returns (uint112);
-    function accruedLaunchpadFee1() external view returns (uint112);
-    function launchpadLp() external view returns (address);
-    function launchpadFeeDistributor() external view returns (address);
-    function REWARDS_FEE_SHARE() external view returns (uint256);
+import {EventNonceLib as FeeDataEventNonce} from "contracts/utils/types/EventNonce.sol";
 
-    function endRewardsAccrual() external;
-}
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
 
-pragma solidity 0.8.27;
+type PackedFeeRates is uint256;
 
-import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
+using PackedFeeRatesLib for PackedFeeRates global;
 
-import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
+library PackedFeeRatesLib {
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                ERRORS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
 
-interface IDistributor {
-    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
-    function getUserDataForTokens(address[] calldata launchAssets, address account)
-        external
-        view
-        returns (UserRewardData[] memory);
-    function increaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function decreaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
-    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
-    function createRewardsPair(address launchAsset, address quoteToken) external;
+    /// @dev sig: 0x39bdbb10
+    error FeeTiersExceedsMax();
+    /// @dev sig: 0x8e516923
+    error FeeTierIndexOutOfBounds();
 
-    function endRewards(IGTELaunchpadV2Pair pair) external;
-}
+    uint256 private constant U16_PER_WORD = 16;
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
+    function packFeeRates(uint16[] memory fees) internal pure returns (PackedFeeRates) {
+        if (fees.length > U16_PER_WORD) revert FeeTiersExceedsMax();
 
-/// @notice Reentrancy guard mixin.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/ReentrancyGuard.sol)
-abstract contract ReentrancyGuard {
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                       CUSTOM ERRORS                        */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Unauthorized reentrant call.
-    error Reentrancy();
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                          STORAGE                           */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Equivalent to: `uint72(bytes9(keccak256("_REENTRANCY_GUARD_SLOT")))`.
-    /// 9 bytes is large enough to avoid collisions with lower slots,
-    /// but not too large to result in excessive bytecode bloat.
-    uint256 private constant _REENTRANCY_GUARD_SLOT = 0x929eee149b4bd21268;
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                      REENTRANCY GUARD                      */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Guards a function from reentrancy.
-    modifier nonReentrant() virtual {
-        /// @solidity memory-safe-assembly
-        assembly {
-            if eq(sload(_REENTRANCY_GUARD_SLOT), address()) {
-                mstore(0x00, 0xab143c06) // `Reentrancy()`.
-                revert(0x1c, 0x04)
-            }
-            sstore(_REENTRANCY_GUARD_SLOT, address())
+        uint256 packedValue = 0;
+        for (uint256 i; i < fees.length; i++) {
+            packedValue = packedValue | (uint256(fees[i]) << (i * U16_PER_WORD));
         }
-        _;
-        /// @solidity memory-safe-assembly
-        assembly {
-            sstore(_REENTRANCY_GUARD_SLOT, codesize())
-        }
+
+        return PackedFeeRates.wrap(packedValue);
     }
 
-    /// @dev Guards a view function from read-only reentrancy.
-    modifier nonReadReentrant() virtual {
-        /// @solidity memory-safe-assembly
+    function getFeeAt(PackedFeeRates fees, uint256 index) internal pure returns (uint16) {
+        if (index >= 15) revert FeeTierIndexOutOfBounds();
+
+        uint256 shiftBits = index * U16_PER_WORD;
+
+        return uint16((PackedFeeRates.unwrap(fees) >> shiftBits) & 0xFFFF);
+    }
+}
+
+enum FeeTiers {
+    ZERO,
+    ONE,
+    TWO
+}
+
+struct FeeData {
+    mapping(address token => uint256) totalFees;
+    mapping(address token => uint256) unclaimedFees;
+    mapping(address account => FeeTiers) accountFeeTier;
+}
+
+using FeeDataLib for FeeData global;
+
+/// @custom:storage-location erc7201:FeeDataStorage
+library FeeDataStorageLib {
+    bytes32 constant FEE_DATA_STORAGE_POSITION =
+        keccak256(abi.encode(uint256(keccak256("FeeDataStorage")) - 1)) & ~bytes32(uint256(0xff));
+
+    /// @dev Gets the storage slot of the FeeData struct
+    // slither-disable-next-line uninitialized-storage
+    function getFeeDataStorage() internal pure returns (FeeData storage self) {
+        bytes32 position = FEE_DATA_STORAGE_POSITION;
+
+        // slither-disable-next-line assembly
         assembly {
-            if eq(sload(_REENTRANCY_GUARD_SLOT), address()) {
-                mstore(0x00, 0xab143c06) // `Reentrancy()`.
-                revert(0x1c, 0x04)
-            }
+            self.slot := position
         }
-        _;
+    }
+}
+
+library FeeDataLib {
+    using PackedFeeRatesLib for PackedFeeRates;
+    using FixedPointMathLib for uint256;
+    using SafeTransferLib for address;
+
+    /// @dev sig: 0x2227733fc4c8a9034cb58087dcf6995128b9c0233b038b03366aaf30c92b92d6
+    event FeesClaimed(uint256 indexed eventNonce, address indexed token, uint256 fee);
+    /// @dev sig: 0xfaa858b3dfeba08d811f5f70b037ea5cb20192ab57f696df5a74a281ef22751b
+    event AccountFeeTierUpdated(uint256 indexed eventNonce, address indexed account, FeeTiers newTier);
+    /// @dev sig: 0x91865da290f8efd7332deaf04dfb3d8fdcf887d7d5d9e55b2bd72c932c939b32
+    event FeesAccrued(uint256 indexed eventNonce, address indexed token, uint256 amount);
+
+    uint256 constant FEE_SCALING = 10_000_000;
+
+    /// @dev Returns the taker fee for a given amount and account
+    function getTakerFee(FeeData storage self, PackedFeeRates takerRates, address account, uint256 amount)
+        internal
+        view
+        returns (uint256)
+    {
+        if (amount == 0) return 0;
+
+        uint16 feeRate = takerRates.getFeeAt(uint256(self.accountFeeTier[account]));
+        return amount.fullMulDiv(feeRate, FEE_SCALING);
+    }
+
+    /// @dev Returns the maker fee for a given amount and account
+    function getMakerFee(FeeData storage self, PackedFeeRates makerRates, address account, uint256 amount)
+        internal
+        view
+        returns (uint256)
+    {
+        if (amount == 0) return 0;
+
+        uint16 feeRate = makerRates.getFeeAt(uint256(self.accountFeeTier[account]));
+        return amount.fullMulDiv(feeRate, FEE_SCALING);
+    }
+
+    /// @dev Returns the fee tier for a given account
+    function getAccountFeeTier(FeeData storage self, address account) internal view returns (FeeTiers tier) {
+        return self.accountFeeTier[account];
+    }
+
+    /// @dev Sets the fee tier for a given account
+    function setAccountFeeTier(FeeData storage self, address account, FeeTiers feeTier) internal {
+        self.accountFeeTier[account] = feeTier;
+
+        emit AccountFeeTierUpdated(FeeDataEventNonce.inc(), account, feeTier);
+    }
+
+    /// @dev Accrues fees for a given token
+    function accrueFee(FeeData storage self, address token, uint256 amount) internal {
+        self.totalFees[token] += amount;
+        self.unclaimedFees[token] += amount;
+
+        emit FeesAccrued(FeeDataEventNonce.inc(), token, amount);
+    }
+
+    /// @dev Claims fees for a given token
+    function claimFees(FeeData storage self, address token) internal returns (uint256 fees) {
+        fees = self.unclaimedFees[token];
+        delete self.unclaimedFees[token];
+
+        emit FeesClaimed(FeeDataEventNonce.inc(), token, fees);
     }
 }
 
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-import {LaunchToken} from "../LaunchToken.sol";
-import {IBondingCurveMinimal} from "../BondingCurves/IBondingCurveMinimal.sol";
-import {ICLOBManager} from "../../clob/ICLOBManager.sol";
-import {IOperatorPanel} from "../../utils/interfaces/IOperatorPanel.sol";
-import {IDistributor} from "./IDistributor.sol";
-import {IUniswapV2RouterMinimal} from "./IUniswapV2RouterMinimal.sol";
-import {IUniswapV2FactoryMinimal} from "./IUniswapV2FactoryMinimal.sol";
-import {LaunchpadLPVault} from "../LaunchpadLPVault.sol";
+import {IOperatorPanel} from "../interfaces/IOperatorPanel.sol";
+import {SpotOperatorRoles, PerpsOperatorRoles, OperatorStorage} from "../OperatorPanel.sol";
 
-interface ILaunchpad {
-    struct BuyData {
-        address account;
-        address token;
-        address recipient;
-        uint256 amountOutBase;
-        uint256 maxAmountInQuote;
+library OperatorHelperLib {
+    /// @dev sig: 0x732ea322
+    error OperatorDoesNotHaveRole();
+
+    function assertHasRole(uint256 rolesPacked, uint8 role) internal pure {
+        if (rolesPacked & 1 << role == 0 && rolesPacked & 1 == 0) revert OperatorDoesNotHaveRole();
     }
 
-    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
-        external
-        view
-        returns (uint256 baseAmount);
-    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
-        external
-        view
-        returns (uint256 quoteAmount);
+    /// @dev Performs operator check with both operator and router bypass
+    function onlySenderOrOperator(
+        IOperatorPanel operator,
+        address gteRouter,
+        address account,
+        SpotOperatorRoles requiredRole
+    ) internal view {
+        if (msg.sender == account || msg.sender == gteRouter) return;
 
-    struct LaunchData {
-        bool active;
-        address quote;
-        IBondingCurveMinimal curve;
+        uint256 rolesPacked = operator.getOperatorRoleApprovals(account, msg.sender);
+        assertHasRole(rolesPacked, uint8(requiredRole));
     }
 
-    function launch(string memory name, string memory symbol, string memory mediaURI)
-        external
-        payable
-        returns (address token);
+    /// @dev Performs operator check with just operator
+    function onlySenderOrOperator(IOperatorPanel operator, address account, SpotOperatorRoles requiredRole)
+        internal
+        view
+    {
+        if (msg.sender == account) return;
 
-    function buy(BuyData calldata buyData)
-        external
-        returns (uint256 amountOutBaseActual, uint256 amountInQuoteActual);
+        uint256 rolesPacked = operator.getOperatorRoleApprovals(account, msg.sender);
+        assertHasRole(rolesPacked, uint8(requiredRole));
+    }
 
-    function sell(address account, address token, address recipient, uint256 amountInBase, uint256 minAmountOutQuote)
-        external
-        returns (uint256 amountInBaseActual, uint256 amountOutQuoteActual);
+    /// @dev Performs spot operator check with storage directly (for contracts inheriting Operator)
+    function onlySenderOrOperator(
+        OperatorStorage storage self,
+        address gteRouter,
+        address account,
+        SpotOperatorRoles requiredRole
+    ) internal view {
+        if (msg.sender == account || msg.sender == gteRouter) return;
 
-    function increaseStake(address account, uint96 shares) external;
+        uint256 rolesPacked = self.operatorRoleApprovals[account][msg.sender];
+        assertHasRole(rolesPacked, uint8(requiredRole));
+    }
 
-    function decreaseStake(address account, uint96 shares) external;
-    
-    function endRewards() external;
+    /// @dev Performs perps operator check with storage directly (for contracts inheriting Operator)
+    function onlySenderOrOperator(OperatorStorage storage self, address account, PerpsOperatorRoles requiredRole)
+        internal
+        view
+    {
+        if (msg.sender == account) return;
 
-    function updateBondingCurve(address newBondingCurve) external;
-
-    function pullFees() external;
-
-    // slither-disable-next-line naming-convention
-    function TOTAL_SUPPLY() external view returns (uint256);
-
-    // slither-disable-next-line naming-convention
-    function BONDING_SUPPLY() external view returns (uint256);
-
-    // slither-disable-next-line naming-convention
-    function ABI_VERSION() external view returns (uint256);
-
-    function gteRouter() external view returns (address);
-
-    function operator() external view returns (IOperatorPanel);
-
-    function distributor() external view returns (IDistributor);
-
-    function uniV2Router() external view returns (IUniswapV2RouterMinimal);
-
-    function launchpadLPVault() external view returns (LaunchpadLPVault);
-
-    function currentQuoteAsset() external view returns (LaunchToken);
-
-    function currentBondingCurve() external view returns (IBondingCurveMinimal);
-
-    function launchFee() external view returns (uint256);
-
-    function eventNonce() external view returns (uint256);
-
-    function launches(address launchToken) external view returns (LaunchData memory);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-interface IUniV2Factory {
-    function createPair(address tokenA, address tokenB) external returns (address pair);
+        uint256 rolesPacked = self.operatorRoleApprovals[account][msg.sender];
+        assertHasRole(rolesPacked, uint8(requiredRole));
+    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -3035,72 +3325,193 @@ library TransientMakerData {
 // slither-disable-end assembly
 
 // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+interface IOperatorPanel {
+    function approveOperator(address account, address operator, uint256 roles) external;
+    function disapproveOperator(address account, address operator, uint256 roles) external;
+    function getOperatorRoleApprovals(address account, address operator) external view returns (uint256);
+    function getOperatorEventNonce() external view returns (uint256);
+}
+
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-import {EventNonceLib as FeeDataEventNonce} from "contracts/utils/types/EventNonce.sol";
+abstract contract BondingCurve {
+    function viewAveragePriceInX(address token, uint256 deltaY, bool isBuy) public view virtual returns (uint256);
 
-import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
-import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
+    // slither-disable-next-line naming-convention
+    function getAverageCostInY(address token, uint256 x_0, uint256 x_1) public virtual returns (uint256);
 
-type PackedFeeRates is uint256;
+    // slither-disable-next-line naming-convention
+    function viewAverageCostInY(address token, uint256 x_0, uint256 x_1) public view virtual returns (uint256);
+}
 
-using PackedFeeRatesLib for PackedFeeRates global;
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
 
-library PackedFeeRatesLib {
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                ERRORS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+import {ICLOB} from "../ICLOB.sol";
 
-    /// @dev sig: 0x39bdbb10
-    error FeeTiersExceedsMax();
-    /// @dev sig: 0x8e516923
-    error FeeTierIndexOutOfBounds();
+type OrderId is uint256;
 
-    uint256 private constant U16_PER_WORD = 16;
+using OrderIdLib for OrderId global;
 
-    function packFeeRates(uint16[] memory fees) internal pure returns (PackedFeeRates) {
-        if (fees.length > U16_PER_WORD) revert FeeTiersExceedsMax();
+library OrderIdLib {
+    function getClientOrderId(address account, uint96 id) internal pure returns (uint256) {
+        return uint256(bytes32(abi.encodePacked(account, id)));
+    }
 
-        uint256 packedValue = 0;
-        for (uint256 i; i < fees.length; i++) {
-            packedValue = packedValue | (uint256(fees[i]) << (i * U16_PER_WORD));
+    function toOrderId(uint256 id) internal pure returns (OrderId) {
+        return OrderId.wrap(id);
+    }
+
+    function unwrap(OrderId id) internal pure returns (uint256) {
+        return uint256(OrderId.unwrap(id));
+    }
+
+    function isNull(OrderId id) internal pure returns (bool) {
+        return id.unwrap() == NULL_ORDER_ID;
+    }
+}
+
+uint256 constant NULL_ORDER_ID = 0;
+uint32 constant NULL_TIMESTAMP = 0;
+
+enum Side {
+    BUY,
+    SELL
+}
+
+struct Order {
+    // SLOT 0 //
+    Side side;
+    uint32 cancelTimestamp;
+    OrderId id;
+    OrderId prevOrderId;
+    OrderId nextOrderId;
+    // SLOT 1 //
+    address owner;
+    // SLOT 2 //
+    uint256 price;
+    // SLOT 3 //
+    uint256 amount; // denominated in base for limit & either token for fill
+}
+
+using OrderLib for Order global;
+
+library OrderLib {
+    using OrderIdLib for uint256;
+
+    /// @dev sig: 0xd36d8965
+    error OrderNotFound();
+    /// @dev sig: 0x207d0854
+    error MarketOrderCannotMake();
+    /// @dev sig: 0x3228b943
+    error TakerOrdersCannotExpire();
+    /// @dev sig: 0x048fe9b3
+    error MakerOrderExpired();
+    /// @dev sig: 0x07928dcd
+    error PostOnlyOrderMustBeBaseDenominated();
+
+    /// @dev Generates and Order from place order args and verifies the args do not conflict with eachother
+    function toOrderChecked(ICLOB.PlaceOrderArgs calldata args, uint256 orderId, address owner)
+        internal
+        view
+        returns (Order memory order)
+    {
+        // Validate market order constraints
+        if (args.limitPrice == 0 && uint8(args.tif) < 2) revert MarketOrderCannotMake();
+
+        // Check expiry for GTC and MOC orders (TiF 0 and 1)
+        if (uint8(args.tif) <= 1 && args.expiryTime > 0 && args.expiryTime < block.timestamp) {
+            revert MakerOrderExpired();
         }
 
-        return PackedFeeRates.wrap(packedValue);
+        if (args.expiryTime > 0 && uint8(args.tif) > 1) revert TakerOrdersCannotExpire();
+
+        if (args.tif == ICLOB.TiF.MOC && !args.baseDenominated) revert PostOnlyOrderMustBeBaseDenominated();
+
+        // Set order fields after validation
+        if (args.limitPrice > 0) {
+            // limit order
+            order.price = args.limitPrice;
+        } else {
+            // market order, limitPrice = 0 | +inf
+            order.price = args.side == Side.BUY ? type(uint256).max : 0;
+        }
+
+        order.id = orderId.toOrderId();
+        order.side = args.side;
+        order.owner = owner;
+        order.amount = args.amount;
+        order.cancelTimestamp = args.expiryTime;
     }
 
-    function getFeeAt(PackedFeeRates fees, uint256 index) internal pure returns (uint16) {
-        if (index >= 15) revert FeeTierIndexOutOfBounds();
+    /// @dev Checks whether an order is expired from an Order struct
+    function isExpired(Order memory self) internal view returns (bool) {
+        // slither-disable-next-line timestamp
+        return self.cancelTimestamp != NULL_TIMESTAMP && self.cancelTimestamp < block.timestamp;
+    }
 
-        uint256 shiftBits = index * U16_PER_WORD;
+    /// @dev Checks whether an order is expired from a timestamp
+    function isExpired(uint256 cancelTimestamp) internal view returns (bool) {
+        // slither-disable-next-line timestamp
+        return cancelTimestamp != NULL_TIMESTAMP && cancelTimestamp < block.timestamp;
+    }
 
-        return uint16((PackedFeeRates.unwrap(fees) >> shiftBits) & 0xFFFF);
+    /// @dev Checks whether an order is null
+    function isNull(Order storage self) internal view returns (bool) {
+        return self.id.unwrap() == NULL_ORDER_ID;
+    }
+
+    /// @dev Asserts that an order exists
+    function assertExists(Order storage self) internal view {
+        if (self.isNull()) revert OrderNotFound();
     }
 }
 
-enum FeeTiers {
-    ZERO,
-    ONE,
-    TWO
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+import {IOperatorPanel} from "./interfaces/IOperatorPanel.sol";
+import {EventNonceLib as OperatorEventNonce} from "./types/EventNonce.sol";
+
+// @todo rename "spot" to "account"
+enum SpotOperatorRoles {
+    ADMIN,
+    PLACE_ORDER,
+    SPOT_DEPOSIT,
+    SPOT_WITHDRAW,
+    PERP_TO_SPOT_DEPOSIT,
+    LAUNCHPAD_FILL
 }
 
-struct FeeData {
-    mapping(address token => uint256) totalFees;
-    mapping(address token => uint256) unclaimedFees;
-    mapping(address account => FeeTiers) accountFeeTier;
+enum PerpsOperatorRoles {
+    ADMIN,
+    PLACE_ORDER,
+    SET_LEVERAGE,
+    DEPOSIT_MARGIN,
+    WITHDRAW_MARGIN,
+    DEPOSIT_ACCOUNT,
+    WITHDRAW_ACCOUNT,
+    SPOT_TO_PERP_DEPOSIT
 }
 
-using FeeDataLib for FeeData global;
+struct OperatorStorage {
+    mapping(address account => mapping(address operator => uint256)) operatorRoleApprovals;
+}
 
-/// @custom:storage-location erc7201:FeeDataStorage
-library FeeDataStorageLib {
-    bytes32 constant FEE_DATA_STORAGE_POSITION =
-        keccak256(abi.encode(uint256(keccak256("FeeDataStorage")) - 1)) & ~bytes32(uint256(0xff));
+using OperatorStorageLib for OperatorStorage global;
 
-    /// @dev Gets the storage slot of the FeeData struct
+/// @custom:storage-location erc7201:OperatorStorage
+library OperatorStorageLib {
+    bytes32 constant OPERATOR_STORAGE_POSITION =
+        keccak256(abi.encode(uint256(keccak256("OperatorStorage")) - 1)) & ~bytes32(uint256(0xff));
+
+    /// @dev Gets the storage slot of the storage struct for the contract calling this library function
     // slither-disable-next-line uninitialized-storage
-    function getFeeDataStorage() internal pure returns (FeeData storage self) {
-        bytes32 position = FEE_DATA_STORAGE_POSITION;
+    function getOperatorStorage() internal pure returns (OperatorStorage storage self) {
+        bytes32 position = OPERATOR_STORAGE_POSITION;
 
         // slither-disable-next-line assembly
         assembly {
@@ -3109,70 +3520,66 @@ library FeeDataStorageLib {
     }
 }
 
-library FeeDataLib {
-    using PackedFeeRatesLib for PackedFeeRates;
-    using FixedPointMathLib for uint256;
-    using SafeTransferLib for address;
+abstract contract OperatorPanel is IOperatorPanel {
+    /// @dev sig: 0xb816c81e0d2e75687754a9cb3111541c16ab454792482bf1dd02093f2203f353
+    event OperatorApproved(
+        uint256 indexed eventNonce, address indexed account, address indexed operator, uint256 newRoles
+    );
+    /// @dev sig: 0x1145ef8300109b8668d5581d376603c552d28f5aaefa3ca8fb7524286a41a7ae
+    event OperatorDisapproved(
+        uint256 indexed eventNonce, address indexed account, address indexed operator, uint256 removedRoles
+    );
 
-    /// @dev sig: 0x2227733fc4c8a9034cb58087dcf6995128b9c0233b038b03366aaf30c92b92d6
-    event FeesClaimed(uint256 indexed eventNonce, address indexed token, uint256 fee);
-    /// @dev sig: 0xfaa858b3dfeba08d811f5f70b037ea5cb20192ab57f696df5a74a281ef22751b
-    event AccountFeeTierUpdated(uint256 indexed eventNonce, address indexed account, FeeTiers newTier);
-    /// @dev sig: 0x91865da290f8efd7332deaf04dfb3d8fdcf887d7d5d9e55b2bd72c932c939b32
-    event FeesAccrued(uint256 indexed eventNonce, address indexed token, uint256 amount);
+    /// @dev sig: 0x732ea322
+    error OperatorDoesNotHaveRole();
+    /// @dev sig: 0xe9a05878
+    error OperatorChangeUnauthorized();
 
-    uint256 constant FEE_SCALING = 10_000_000;
+    address public immutable operatorHub;
 
-    /// @dev Returns the taker fee for a given amount and account
-    function getTakerFee(FeeData storage self, PackedFeeRates takerRates, address account, uint256 amount)
-        internal
-        view
-        returns (uint256)
+    constructor(address operatorHub_) {
+        operatorHub = operatorHub_;
+    }
+
+    modifier onlySenderOrOperatorHub(address account) {
+        if (msg.sender != account && msg.sender != operatorHub) revert OperatorChangeUnauthorized();
+        _;
+    }
+
+    function _getOperatorStorage() internal pure returns (OperatorStorage storage self) {
+        return OperatorStorageLib.getOperatorStorage();
+    }
+
+    function getOperatorRoleApprovals(address account, address operator) external view returns (uint256) {
+        return _getOperatorStorage().operatorRoleApprovals[account][operator];
+    }
+
+    function approveOperator(address account, address operator, uint256 roles)
+        external
+        onlySenderOrOperatorHub(account)
     {
-        if (amount == 0) return 0;
+        OperatorStorage storage self = _getOperatorStorage();
 
-        uint16 feeRate = takerRates.getFeeAt(uint256(self.accountFeeTier[account]));
-        return amount.fullMulDiv(feeRate, FEE_SCALING);
+        uint256 approvedRoles = self.operatorRoleApprovals[account][operator];
+        self.operatorRoleApprovals[account][operator] = approvedRoles | roles;
+
+        emit OperatorApproved(OperatorEventNonce.inc(), account, operator, roles);
     }
 
-    /// @dev Returns the maker fee for a given amount and account
-    function getMakerFee(FeeData storage self, PackedFeeRates makerRates, address account, uint256 amount)
-        internal
-        view
-        returns (uint256)
+    function disapproveOperator(address account, address operator, uint256 roles)
+        external
+        onlySenderOrOperatorHub(account)
     {
-        if (amount == 0) return 0;
+        OperatorStorage storage self = _getOperatorStorage();
 
-        uint16 feeRate = makerRates.getFeeAt(uint256(self.accountFeeTier[account]));
-        return amount.fullMulDiv(feeRate, FEE_SCALING);
+        uint256 approvedRoles = self.operatorRoleApprovals[account][operator];
+        self.operatorRoleApprovals[account][operator] = approvedRoles & (~roles);
+
+        emit OperatorDisapproved(OperatorEventNonce.inc(), account, operator, roles);
     }
 
-    /// @dev Returns the fee tier for a given account
-    function getAccountFeeTier(FeeData storage self, address account) internal view returns (FeeTiers tier) {
-        return self.accountFeeTier[account];
-    }
-
-    /// @dev Sets the fee tier for a given account
-    function setAccountFeeTier(FeeData storage self, address account, FeeTiers feeTier) internal {
-        self.accountFeeTier[account] = feeTier;
-
-        emit AccountFeeTierUpdated(FeeDataEventNonce.inc(), account, feeTier);
-    }
-
-    /// @dev Accrues fees for a given token
-    function accrueFee(FeeData storage self, address token, uint256 amount) internal {
-        self.totalFees[token] += amount;
-        self.unclaimedFees[token] += amount;
-
-        emit FeesAccrued(FeeDataEventNonce.inc(), token, amount);
-    }
-
-    /// @dev Claims fees for a given token
-    function claimFees(FeeData storage self, address token) internal returns (uint256 fees) {
-        fees = self.unclaimedFees[token];
-        delete self.unclaimedFees[token];
-
-        emit FeesClaimed(FeeDataEventNonce.inc(), token, fees);
+    function getOperatorEventNonce() external view returns (uint256) {
+        return OperatorEventNonce.getCurrentNonce();
     }
 }
 
@@ -3314,29 +3721,117 @@ interface ICLOB {
     function adminCancelExpiredOrders(OrderId[] calldata ids, Side side) external returns (bool[] memory);
 }
 
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
+import {IOperatorPanel} from "./interfaces/IOperatorPanel.sol";
+import {EventNonceLib as OperatorEventNonce} from "./types/EventNonce.sol";
 
-import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
+// @todo rename "spot" to "account"
+enum SpotOperatorRoles {
+    ADMIN,
+    PLACE_ORDER,
+    SPOT_DEPOSIT,
+    SPOT_WITHDRAW,
+    PERP_TO_SPOT_DEPOSIT,
+    LAUNCHPAD_FILL
+}
 
-interface IDistributor {
-    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
-    function getUserDataForTokens(address[] calldata launchAssets, address account)
-        external
-        view
-        returns (UserRewardData[] memory);
-    function increaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function decreaseStake(address launchAsset, address account, uint96 shares)
-        external
-        returns (uint256 baseAmount, uint256 quoteAmount);
-    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
-    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
-    function createRewardsPair(address launchAsset, address quoteToken) external;
+enum PerpsOperatorRoles {
+    ADMIN,
+    PLACE_ORDER,
+    SET_LEVERAGE,
+    DEPOSIT_MARGIN,
+    WITHDRAW_MARGIN,
+    DEPOSIT_ACCOUNT,
+    WITHDRAW_ACCOUNT,
+    SPOT_TO_PERP_DEPOSIT
+}
 
-    function endRewards(IGTELaunchpadV2Pair pair) external;
+struct OperatorStorage {
+    mapping(address account => mapping(address operator => uint256)) operatorRoleApprovals;
+}
+
+using OperatorStorageLib for OperatorStorage global;
+
+/// @custom:storage-location erc7201:OperatorStorage
+library OperatorStorageLib {
+    bytes32 constant OPERATOR_STORAGE_POSITION =
+        keccak256(abi.encode(uint256(keccak256("OperatorStorage")) - 1)) & ~bytes32(uint256(0xff));
+
+    /// @dev Gets the storage slot of the storage struct for the contract calling this library function
+    // slither-disable-next-line uninitialized-storage
+    function getOperatorStorage() internal pure returns (OperatorStorage storage self) {
+        bytes32 position = OPERATOR_STORAGE_POSITION;
+
+        // slither-disable-next-line assembly
+        assembly {
+            self.slot := position
+        }
+    }
+}
+
+abstract contract OperatorPanel is IOperatorPanel {
+    /// @dev sig: 0xb816c81e0d2e75687754a9cb3111541c16ab454792482bf1dd02093f2203f353
+    event OperatorApproved(
+        uint256 indexed eventNonce, address indexed account, address indexed operator, uint256 newRoles
+    );
+    /// @dev sig: 0x1145ef8300109b8668d5581d376603c552d28f5aaefa3ca8fb7524286a41a7ae
+    event OperatorDisapproved(
+        uint256 indexed eventNonce, address indexed account, address indexed operator, uint256 removedRoles
+    );
+
+    /// @dev sig: 0x732ea322
+    error OperatorDoesNotHaveRole();
+    /// @dev sig: 0xe9a05878
+    error OperatorChangeUnauthorized();
+
+    address public immutable operatorHub;
+
+    constructor(address operatorHub_) {
+        operatorHub = operatorHub_;
+    }
+
+    modifier onlySenderOrOperatorHub(address account) {
+        if (msg.sender != account && msg.sender != operatorHub) revert OperatorChangeUnauthorized();
+        _;
+    }
+
+    function _getOperatorStorage() internal pure returns (OperatorStorage storage self) {
+        return OperatorStorageLib.getOperatorStorage();
+    }
+
+    function getOperatorRoleApprovals(address account, address operator) external view returns (uint256) {
+        return _getOperatorStorage().operatorRoleApprovals[account][operator];
+    }
+
+    function approveOperator(address account, address operator, uint256 roles)
+        external
+        onlySenderOrOperatorHub(account)
+    {
+        OperatorStorage storage self = _getOperatorStorage();
+
+        uint256 approvedRoles = self.operatorRoleApprovals[account][operator];
+        self.operatorRoleApprovals[account][operator] = approvedRoles | roles;
+
+        emit OperatorApproved(OperatorEventNonce.inc(), account, operator, roles);
+    }
+
+    function disapproveOperator(address account, address operator, uint256 roles)
+        external
+        onlySenderOrOperatorHub(account)
+    {
+        OperatorStorage storage self = _getOperatorStorage();
+
+        uint256 approvedRoles = self.operatorRoleApprovals[account][operator];
+        self.operatorRoleApprovals[account][operator] = approvedRoles & (~roles);
+
+        emit OperatorDisapproved(OperatorEventNonce.inc(), account, operator, roles);
+    }
+
+    function getOperatorEventNonce() external view returns (uint256) {
+        return OperatorEventNonce.getCurrentNonce();
+    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -3591,113 +4086,256 @@ library RewardsTrackerStorage {
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-import {IOperatorPanel} from "./interfaces/IOperatorPanel.sol";
-import {EventNonceLib as OperatorEventNonce} from "./types/EventNonce.sol";
-
-// @todo rename "spot" to "account"
-enum SpotOperatorRoles {
-    ADMIN,
-    PLACE_ORDER,
-    SPOT_DEPOSIT,
-    SPOT_WITHDRAW,
-    PERP_TO_SPOT_DEPOSIT,
-    LAUNCHPAD_FILL
+interface IUniV2Factory {
+    function createPair(address tokenA, address tokenB) external returns (address pair);
 }
 
-enum PerpsOperatorRoles {
-    ADMIN,
-    PLACE_ORDER,
-    SET_LEVERAGE,
-    DEPOSIT_MARGIN,
-    WITHDRAW_MARGIN,
-    DEPOSIT_ACCOUNT,
-    WITHDRAW_ACCOUNT,
-    SPOT_TO_PERP_DEPOSIT
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+struct UserRewardData {
+    uint96 shares; // User's current share count (up to ~7.9e28)
+    uint96 baseRewardDebt; // Used to calculate base token rewards owed
+    uint96 quoteRewardDebt; // Used to calculate quote token rewards owed
 }
 
-struct OperatorStorage {
-    mapping(address account => mapping(address operator => uint256)) operatorRoleApprovals;
+struct RewardPoolData {
+    // SLOT 0 //
+    uint96 totalShares; // Sum of all user shares
+    address quoteAsset; // Secondary reward token
+    // SLOT 1 //
+    uint128 pendingBaseRewards;
+    uint128 pendingQuoteRewards;
+    // SLOT 2 //
+    uint256 accBaseRewardPerShare; // Accumulated base rewards per share, scaled by 1e12
+    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
+    // SLOT 3 //
+    mapping(address => UserRewardData) userRewards; // User-specific reward data
 }
 
-using OperatorStorageLib for OperatorStorage global;
+struct RewardPoolDataMemory {
+    uint96 totalShares; // Sum of all user shares
+    address quoteAsset; // Secondary reward token
+    uint128 pendingBaseRewards;
+    uint128 pendingQuoteRewards; //
+    uint256 accBaseRewardPerShare;
+    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
+}
 
-/// @custom:storage-location erc7201:OperatorStorage
-library OperatorStorageLib {
-    bytes32 constant OPERATOR_STORAGE_POSITION =
-        keccak256(abi.encode(uint256(keccak256("OperatorStorage")) - 1)) & ~bytes32(uint256(0xff));
+using RewardsTrackerLib for RewardPoolData global;
+/**
+ * @title RewardsLibrary
+ * @dev Library with internal functions for pro rata reward distribution
+ */
 
-    /// @dev Gets the storage slot of the storage struct for the contract calling this library function
-    // slither-disable-next-line uninitialized-storage
-    function getOperatorStorage() internal pure returns (OperatorStorage storage self) {
-        bytes32 position = OPERATOR_STORAGE_POSITION;
+library RewardsTrackerLib {
+    /// @dev sig: 0x9511e79574c9aa195c27c3455b60ba70c9a6efbcfc431ae68b8a3cb4d3764f6c
+    event PairRewardsInitialized(address indexed baseAsset, address indexed quoteAsset);
+    /// @dev sig: 0x2cbe0649bcb43ba4ace580eeeb0c95a516dec93862fe4cc4e7e60528575cec67
+    event BaseRewardsAdded(address indexed baseAsset, uint256 amount);
+    /// @dev sig: 0x28590542f9792ca8533cd1beac50e724892009d1f19ed17351f264be124d3293
+    event QuoteRewardsAdded(address indexed baseAsset, address indexed quoteAsset, uint256 amount);
 
-        // slither-disable-next-line assembly
-        assembly {
-            self.slot := position
+    /// @dev sig: 0xe3e46b04
+    error ZeroShareStake();
+    /// @dev sig: 0xe331bd04
+    error ZeroShareClaim();
+    /// @dev sig: 0x39996567
+    error InsufficientShares();
+
+    // Scale factor used for fixed-point math
+    uint128 public constant PRECISION_FACTOR = 1e12;
+
+    function getQuoteAsset(RewardPoolData storage self) internal view returns (address) {
+        return self.quoteAsset;
+    }
+
+    function getUserData(RewardPoolData storage self, address account) internal view returns (UserRewardData memory) {
+        return self.userRewards[account];
+    }
+
+    function getRewardsPoolData(RewardPoolData storage self) internal view returns (RewardPoolDataMemory memory pm) {
+        pm = RewardPoolDataMemory({
+            quoteAsset: self.quoteAsset,
+            totalShares: self.totalShares,
+            pendingBaseRewards: self.pendingBaseRewards,
+            pendingQuoteRewards: self.pendingQuoteRewards,
+            accBaseRewardPerShare: self.accBaseRewardPerShare,
+            accQuoteRewardPerShare: self.accQuoteRewardPerShare
+        });
+    }
+
+    function initializePair(RewardPoolData storage self, address baseAsset, address quoteAsset) internal {
+        self.quoteAsset = quoteAsset;
+        emit PairRewardsInitialized(baseAsset, quoteAsset);
+    }
+
+    function addBaseRewards(RewardPoolData storage self, address baseAsset, uint128 amount) internal {
+        self.pendingBaseRewards += amount;
+        emit BaseRewardsAdded(baseAsset, amount);
+    }
+
+    function addQuoteRewards(RewardPoolData storage self, address baseAsset, address quoteAsset, uint128 amount)
+        internal
+    {
+        self.pendingQuoteRewards += amount;
+        emit QuoteRewardsAdded(baseAsset, quoteAsset, amount);
+    }
+
+    function stake(RewardPoolData storage self, address user, uint96 newShares)
+        internal
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        if (newShares == 0) revert ZeroShareStake();
+
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
+
+        UserRewardData storage userData = self.userRewards[user];
+
+        uint256 existingShares = uint96(userData.shares);
+
+        // Calculate pending rewards before updating shares
+        if (existingShares > 0) {
+            baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
+            quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
+        }
+
+        // Update user shares
+        userData.shares += newShares;
+        self.totalShares += newShares;
+
+        // Update reward debts
+        userData.baseRewardDebt = uint96(totalAccRewards(existingShares + newShares, accBaseRewardsPerShare));
+        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares + newShares, accQuoteRewardsPerShare));
+    }
+
+    function unstake(RewardPoolData storage self, address user, uint96 removeShares)
+        internal
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
+
+        UserRewardData storage userData = self.userRewards[user];
+
+        if (removeShares == 0) revert ZeroShareStake();
+
+        uint256 existingShares = uint256(userData.shares);
+        if (existingShares < removeShares) revert InsufficientShares();
+
+        // Calculate pending rewards before updating shares
+        baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
+        quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
+
+        // Update user shares
+        userData.shares -= removeShares;
+        self.totalShares -= removeShares;
+
+        // Update reward debts
+        userData.baseRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accBaseRewardsPerShare));
+        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accQuoteRewardsPerShare));
+    }
+
+    function claim(RewardPoolData storage self, address user)
+        internal
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        UserRewardData storage userData = self.userRewards[user];
+        uint256 shares = uint256(userData.shares);
+
+        if (shares == 0) revert ZeroShareClaim();
+
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
+
+        // Calculate pending rewards
+        uint256 totalAccBaseRewards = totalAccRewards(shares, accBaseRewardsPerShare);
+        uint256 totalAccQuoteRewards = totalAccRewards(shares, accQuoteRewardsPerShare);
+
+        baseAmount = totalAccBaseRewards - uint128(userData.baseRewardDebt);
+        quoteAmount = totalAccQuoteRewards - uint128(userData.quoteRewardDebt);
+
+        // Update reward debts
+        userData.baseRewardDebt = uint96(totalAccBaseRewards);
+        userData.quoteRewardDebt = uint96(totalAccQuoteRewards);
+    }
+
+    function getPendingRewards(RewardPoolData storage self, address user)
+        internal
+        view
+        returns (uint256 baseAmount, uint256 quoteAmount)
+    {
+        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = getAccRewardsPerShare(self);
+
+        UserRewardData storage userData = self.userRewards[user];
+        uint256 shares = uint256(userData.shares);
+
+        // Unstaking claims pending rewards, so if no shares, then no pending
+        if (shares == 0) return (0, 0);
+
+        baseAmount = totalAccRewards(shares, accBaseRewardsPerShare) - uint128(userData.baseRewardDebt);
+        quoteAmount = totalAccRewards(shares, accQuoteRewardsPerShare) - uint128(userData.quoteRewardDebt);
+    }
+
+    function totalAccRewards(uint256 shares, uint256 accRewardsPerShare) internal pure returns (uint256) {
+        return (shares * accRewardsPerShare) / PRECISION_FACTOR;
+    }
+
+    /// @dev Applies the new accrued rewards per share to the rewards state
+    function update(RewardPoolData storage self)
+        internal
+        returns (uint256 newAccBaseRewardsPerShare, uint256 newAccQuoteRewardsPerShare)
+    {
+        (newAccBaseRewardsPerShare, newAccQuoteRewardsPerShare) = getAccRewardsPerShare(self);
+
+        if (self.pendingBaseRewards > 0) {
+            self.accBaseRewardPerShare = newAccBaseRewardsPerShare;
+            delete self.pendingBaseRewards;
+        }
+
+        if (self.pendingQuoteRewards > 0) {
+            self.accQuoteRewardPerShare = newAccQuoteRewardsPerShare;
+            delete self.pendingQuoteRewards;
+        }
+    }
+
+    /// @dev Gets the new accrued rewards per share without updating rewards state
+    function getAccRewardsPerShare(RewardPoolData storage self)
+        internal
+        view
+        returns (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare)
+    {
+        uint96 totalShares = self.totalShares;
+        if (totalShares == 0) return (self.accBaseRewardPerShare, self.accQuoteRewardPerShare);
+
+        accBaseRewardsPerShare = self.accBaseRewardPerShare;
+        accQuoteRewardsPerShare = self.accQuoteRewardPerShare;
+
+        if (self.pendingBaseRewards > 0) {
+            accBaseRewardsPerShare += ((self.pendingBaseRewards * PRECISION_FACTOR) / uint128(totalShares));
+        }
+
+        if (self.pendingQuoteRewards > 0) {
+            accQuoteRewardsPerShare += ((self.pendingQuoteRewards * PRECISION_FACTOR) / uint128(totalShares));
         }
     }
 }
 
-abstract contract OperatorPanel is IOperatorPanel {
-    /// @dev sig: 0xb816c81e0d2e75687754a9cb3111541c16ab454792482bf1dd02093f2203f353
-    event OperatorApproved(
-        uint256 indexed eventNonce, address indexed account, address indexed operator, uint256 newRoles
-    );
-    /// @dev sig: 0x1145ef8300109b8668d5581d376603c552d28f5aaefa3ca8fb7524286a41a7ae
-    event OperatorDisapproved(
-        uint256 indexed eventNonce, address indexed account, address indexed operator, uint256 removedRoles
-    );
+/**
+ * @title RewardsStorage
+ * @dev Storage library for rewards distribution using EIP-1967 pattern
+ */
+library RewardsTrackerStorage {
+    bytes32 internal constant LAUNCH_ASSET_TO_REWARDS_SLOT =
+        keccak256(abi.encode(uint256(keccak256("rewardsTrackerPool.self.slot")) - 1)) & ~bytes32(uint256(0xff));
 
-    /// @dev sig: 0x732ea322
-    error OperatorDoesNotHaveRole();
-    /// @dev sig: 0xe9a05878
-    error OperatorChangeUnauthorized();
-
-    address public immutable operatorHub;
-
-    constructor(address operatorHub_) {
-        operatorHub = operatorHub_;
+    function rewardPoolSlot(address baseAsset) private pure returns (bytes32) {
+        return keccak256(abi.encodePacked(baseAsset, LAUNCH_ASSET_TO_REWARDS_SLOT));
     }
 
-    modifier onlySenderOrOperatorHub(address account) {
-        if (msg.sender != account && msg.sender != operatorHub) revert OperatorChangeUnauthorized();
-        _;
-    }
-
-    function _getOperatorStorage() internal pure returns (OperatorStorage storage self) {
-        return OperatorStorageLib.getOperatorStorage();
-    }
-
-    function getOperatorRoleApprovals(address account, address operator) external view returns (uint256) {
-        return _getOperatorStorage().operatorRoleApprovals[account][operator];
-    }
-
-    function approveOperator(address account, address operator, uint256 roles)
-        external
-        onlySenderOrOperatorHub(account)
-    {
-        OperatorStorage storage self = _getOperatorStorage();
-
-        uint256 approvedRoles = self.operatorRoleApprovals[account][operator];
-        self.operatorRoleApprovals[account][operator] = approvedRoles | roles;
-
-        emit OperatorApproved(OperatorEventNonce.inc(), account, operator, roles);
-    }
-
-    function disapproveOperator(address account, address operator, uint256 roles)
-        external
-        onlySenderOrOperatorHub(account)
-    {
-        OperatorStorage storage self = _getOperatorStorage();
-
-        uint256 approvedRoles = self.operatorRoleApprovals[account][operator];
-        self.operatorRoleApprovals[account][operator] = approvedRoles & (~roles);
-
-        emit OperatorDisapproved(OperatorEventNonce.inc(), account, operator, roles);
-    }
-
-    function getOperatorEventNonce() external view returns (uint256) {
-        return OperatorEventNonce.getCurrentNonce();
+    function getRewardPool(address baseAsset) internal pure returns (RewardPoolData storage p) {
+        bytes32 slot = rewardPoolSlot(baseAsset);
+        assembly {
+            p.slot := slot
+        }
     }
 }
 
@@ -3748,667 +4386,29 @@ interface IAccountManager {
     function debitAccount(address account, address token, uint256 amount) external;
 }
 
-// SPDX-License-Identifier: MIT
 pragma solidity 0.8.27;
 
-import {ICLOB} from "../ICLOB.sol";
+import {IGTELaunchpadV2Pair} from "../uniswap/interfaces/IGTELaunchpadV2Pair.sol";
 
-type OrderId is uint256;
+import {UserRewardData, RewardPoolDataMemory} from "../libraries/RewardsTracker.sol";
 
-using OrderIdLib for OrderId global;
-
-library OrderIdLib {
-    function getClientOrderId(address account, uint96 id) internal pure returns (uint256) {
-        return uint256(bytes32(abi.encodePacked(account, id)));
-    }
-
-    function toOrderId(uint256 id) internal pure returns (OrderId) {
-        return OrderId.wrap(id);
-    }
-
-    function unwrap(OrderId id) internal pure returns (uint256) {
-        return uint256(OrderId.unwrap(id));
-    }
-
-    function isNull(OrderId id) internal pure returns (bool) {
-        return id.unwrap() == NULL_ORDER_ID;
-    }
-}
-
-uint256 constant NULL_ORDER_ID = 0;
-uint32 constant NULL_TIMESTAMP = 0;
-
-enum Side {
-    BUY,
-    SELL
-}
-
-struct Order {
-    // SLOT 0 //
-    Side side;
-    uint32 cancelTimestamp;
-    OrderId id;
-    OrderId prevOrderId;
-    OrderId nextOrderId;
-    // SLOT 1 //
-    address owner;
-    // SLOT 2 //
-    uint256 price;
-    // SLOT 3 //
-    uint256 amount; // denominated in base for limit & either token for fill
-}
-
-using OrderLib for Order global;
-
-library OrderLib {
-    using OrderIdLib for uint256;
-
-    /// @dev sig: 0xd36d8965
-    error OrderNotFound();
-    /// @dev sig: 0x207d0854
-    error MarketOrderCannotMake();
-    /// @dev sig: 0x3228b943
-    error TakerOrdersCannotExpire();
-    /// @dev sig: 0x048fe9b3
-    error MakerOrderExpired();
-    /// @dev sig: 0x07928dcd
-    error PostOnlyOrderMustBeBaseDenominated();
-
-    /// @dev Generates and Order from place order args and verifies the args do not conflict with eachother
-    function toOrderChecked(ICLOB.PlaceOrderArgs calldata args, uint256 orderId, address owner)
-        internal
-        view
-        returns (Order memory order)
-    {
-        // Validate market order constraints
-        if (args.limitPrice == 0 && uint8(args.tif) < 2) revert MarketOrderCannotMake();
-
-        // Check expiry for GTC and MOC orders (TiF 0 and 1)
-        if (uint8(args.tif) <= 1 && args.expiryTime > 0 && args.expiryTime < block.timestamp) {
-            revert MakerOrderExpired();
-        }
-
-        if (args.expiryTime > 0 && uint8(args.tif) > 1) revert TakerOrdersCannotExpire();
-
-        if (args.tif == ICLOB.TiF.MOC && !args.baseDenominated) revert PostOnlyOrderMustBeBaseDenominated();
-
-        // Set order fields after validation
-        if (args.limitPrice > 0) {
-            // limit order
-            order.price = args.limitPrice;
-        } else {
-            // market order, limitPrice = 0 | +inf
-            order.price = args.side == Side.BUY ? type(uint256).max : 0;
-        }
-
-        order.id = orderId.toOrderId();
-        order.side = args.side;
-        order.owner = owner;
-        order.amount = args.amount;
-        order.cancelTimestamp = args.expiryTime;
-    }
-
-    /// @dev Checks whether an order is expired from an Order struct
-    function isExpired(Order memory self) internal view returns (bool) {
-        // slither-disable-next-line timestamp
-        return self.cancelTimestamp != NULL_TIMESTAMP && self.cancelTimestamp < block.timestamp;
-    }
-
-    /// @dev Checks whether an order is expired from a timestamp
-    function isExpired(uint256 cancelTimestamp) internal view returns (bool) {
-        // slither-disable-next-line timestamp
-        return cancelTimestamp != NULL_TIMESTAMP && cancelTimestamp < block.timestamp;
-    }
-
-    /// @dev Checks whether an order is null
-    function isNull(Order storage self) internal view returns (bool) {
-        return self.id.unwrap() == NULL_ORDER_ID;
-    }
-
-    /// @dev Asserts that an order exists
-    function assertExists(Order storage self) internal view {
-        if (self.isNull()) revert OrderNotFound();
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {IOperatorPanel} from "../interfaces/IOperatorPanel.sol";
-import {SpotOperatorRoles, PerpsOperatorRoles, OperatorStorage} from "../OperatorPanel.sol";
-
-library OperatorHelperLib {
-    /// @dev sig: 0x732ea322
-    error OperatorDoesNotHaveRole();
-
-    function assertHasRole(uint256 rolesPacked, uint8 role) internal pure {
-        if (rolesPacked & 1 << role == 0 && rolesPacked & 1 == 0) revert OperatorDoesNotHaveRole();
-    }
-
-    /// @dev Performs operator check with both operator and router bypass
-    function onlySenderOrOperator(
-        IOperatorPanel operator,
-        address gteRouter,
-        address account,
-        SpotOperatorRoles requiredRole
-    ) internal view {
-        if (msg.sender == account || msg.sender == gteRouter) return;
-
-        uint256 rolesPacked = operator.getOperatorRoleApprovals(account, msg.sender);
-        assertHasRole(rolesPacked, uint8(requiredRole));
-    }
-
-    /// @dev Performs operator check with just operator
-    function onlySenderOrOperator(IOperatorPanel operator, address account, SpotOperatorRoles requiredRole)
-        internal
-        view
-    {
-        if (msg.sender == account) return;
-
-        uint256 rolesPacked = operator.getOperatorRoleApprovals(account, msg.sender);
-        assertHasRole(rolesPacked, uint8(requiredRole));
-    }
-
-    /// @dev Performs spot operator check with storage directly (for contracts inheriting Operator)
-    function onlySenderOrOperator(
-        OperatorStorage storage self,
-        address gteRouter,
-        address account,
-        SpotOperatorRoles requiredRole
-    ) internal view {
-        if (msg.sender == account || msg.sender == gteRouter) return;
-
-        uint256 rolesPacked = self.operatorRoleApprovals[account][msg.sender];
-        assertHasRole(rolesPacked, uint8(requiredRole));
-    }
-
-    /// @dev Performs perps operator check with storage directly (for contracts inheriting Operator)
-    function onlySenderOrOperator(OperatorStorage storage self, address account, PerpsOperatorRoles requiredRole)
-        internal
-        view
-    {
-        if (msg.sender == account) return;
-
-        uint256 rolesPacked = self.operatorRoleApprovals[account][msg.sender];
-        assertHasRole(rolesPacked, uint8(requiredRole));
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-struct UserRewardData {
-    uint96 shares; // User's current share count (up to ~7.9e28)
-    uint96 baseRewardDebt; // Used to calculate base token rewards owed
-    uint96 quoteRewardDebt; // Used to calculate quote token rewards owed
-}
-
-struct RewardPoolData {
-    // SLOT 0 //
-    uint96 totalShares; // Sum of all user shares
-    address quoteAsset; // Secondary reward token
-    // SLOT 1 //
-    uint128 pendingBaseRewards;
-    uint128 pendingQuoteRewards;
-    // SLOT 2 //
-    uint256 accBaseRewardPerShare; // Accumulated base rewards per share, scaled by 1e12
-    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
-    // SLOT 3 //
-    mapping(address => UserRewardData) userRewards; // User-specific reward data
-}
-
-struct RewardPoolDataMemory {
-    uint96 totalShares; // Sum of all user shares
-    address quoteAsset; // Secondary reward token
-    uint128 pendingBaseRewards;
-    uint128 pendingQuoteRewards; //
-    uint256 accBaseRewardPerShare;
-    uint256 accQuoteRewardPerShare; // Accumulated quote rewards per share, scaled by 1e12
-}
-
-using RewardsTrackerLib for RewardPoolData global;
-/**
- * @title RewardsLibrary
- * @dev Library with internal functions for pro rata reward distribution
- */
-
-library RewardsTrackerLib {
-    /// @dev sig: 0x9511e79574c9aa195c27c3455b60ba70c9a6efbcfc431ae68b8a3cb4d3764f6c
-    event PairRewardsInitialized(address indexed baseAsset, address indexed quoteAsset);
-    /// @dev sig: 0x2cbe0649bcb43ba4ace580eeeb0c95a516dec93862fe4cc4e7e60528575cec67
-    event BaseRewardsAdded(address indexed baseAsset, uint256 amount);
-    /// @dev sig: 0x28590542f9792ca8533cd1beac50e724892009d1f19ed17351f264be124d3293
-    event QuoteRewardsAdded(address indexed baseAsset, address indexed quoteAsset, uint256 amount);
-
-    /// @dev sig: 0xe3e46b04
-    error ZeroShareStake();
-    /// @dev sig: 0xe331bd04
-    error ZeroShareClaim();
-    /// @dev sig: 0x39996567
-    error InsufficientShares();
-
-    // Scale factor used for fixed-point math
-    uint128 public constant PRECISION_FACTOR = 1e12;
-
-    function getQuoteAsset(RewardPoolData storage self) internal view returns (address) {
-        return self.quoteAsset;
-    }
-
-    function getUserData(RewardPoolData storage self, address account) internal view returns (UserRewardData memory) {
-        return self.userRewards[account];
-    }
-
-    function getRewardsPoolData(RewardPoolData storage self) internal view returns (RewardPoolDataMemory memory pm) {
-        pm = RewardPoolDataMemory({
-            quoteAsset: self.quoteAsset,
-            totalShares: self.totalShares,
-            pendingBaseRewards: self.pendingBaseRewards,
-            pendingQuoteRewards: self.pendingQuoteRewards,
-            accBaseRewardPerShare: self.accBaseRewardPerShare,
-            accQuoteRewardPerShare: self.accQuoteRewardPerShare
-        });
-    }
-
-    function initializePair(RewardPoolData storage self, address baseAsset, address quoteAsset) internal {
-        self.quoteAsset = quoteAsset;
-        emit PairRewardsInitialized(baseAsset, quoteAsset);
-    }
-
-    function addBaseRewards(RewardPoolData storage self, address baseAsset, uint128 amount) internal {
-        self.pendingBaseRewards += amount;
-        emit BaseRewardsAdded(baseAsset, amount);
-    }
-
-    function addQuoteRewards(RewardPoolData storage self, address baseAsset, address quoteAsset, uint128 amount)
-        internal
-    {
-        self.pendingQuoteRewards += amount;
-        emit QuoteRewardsAdded(baseAsset, quoteAsset, amount);
-    }
-
-    function stake(RewardPoolData storage self, address user, uint96 newShares)
-        internal
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        if (newShares == 0) revert ZeroShareStake();
-
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
-
-        UserRewardData storage userData = self.userRewards[user];
-
-        uint256 existingShares = uint96(userData.shares);
-
-        // Calculate pending rewards before updating shares
-        if (existingShares > 0) {
-            baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
-            quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
-        }
-
-        // Update user shares
-        userData.shares += newShares;
-        self.totalShares += newShares;
-
-        // Update reward debts
-        userData.baseRewardDebt = uint96(totalAccRewards(existingShares + newShares, accBaseRewardsPerShare));
-        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares + newShares, accQuoteRewardsPerShare));
-    }
-
-    function unstake(RewardPoolData storage self, address user, uint96 removeShares)
-        internal
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
-
-        UserRewardData storage userData = self.userRewards[user];
-
-        if (removeShares == 0) revert ZeroShareStake();
-
-        uint256 existingShares = uint256(userData.shares);
-        if (existingShares < removeShares) revert InsufficientShares();
-
-        // Calculate pending rewards before updating shares
-        baseAmount = totalAccRewards(existingShares, accBaseRewardsPerShare) - userData.baseRewardDebt;
-        quoteAmount = totalAccRewards(existingShares, accQuoteRewardsPerShare) - userData.quoteRewardDebt;
-
-        // Update user shares
-        userData.shares -= removeShares;
-        self.totalShares -= removeShares;
-
-        // Update reward debts
-        userData.baseRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accBaseRewardsPerShare));
-        userData.quoteRewardDebt = uint96(totalAccRewards(existingShares - removeShares, accQuoteRewardsPerShare));
-    }
-
-    function claim(RewardPoolData storage self, address user)
-        internal
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        UserRewardData storage userData = self.userRewards[user];
-        uint256 shares = uint256(userData.shares);
-
-        if (shares == 0) revert ZeroShareClaim();
-
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = self.update();
-
-        // Calculate pending rewards
-        uint256 totalAccBaseRewards = totalAccRewards(shares, accBaseRewardsPerShare);
-        uint256 totalAccQuoteRewards = totalAccRewards(shares, accQuoteRewardsPerShare);
-
-        baseAmount = totalAccBaseRewards - uint128(userData.baseRewardDebt);
-        quoteAmount = totalAccQuoteRewards - uint128(userData.quoteRewardDebt);
-
-        // Update reward debts
-        userData.baseRewardDebt = uint96(totalAccBaseRewards);
-        userData.quoteRewardDebt = uint96(totalAccQuoteRewards);
-    }
-
-    function getPendingRewards(RewardPoolData storage self, address user)
-        internal
-        view
-        returns (uint256 baseAmount, uint256 quoteAmount)
-    {
-        (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare) = getAccRewardsPerShare(self);
-
-        UserRewardData storage userData = self.userRewards[user];
-        uint256 shares = uint256(userData.shares);
-
-        // Unstaking claims pending rewards, so if no shares, then no pending
-        if (shares == 0) return (0, 0);
-
-        baseAmount = totalAccRewards(shares, accBaseRewardsPerShare) - uint128(userData.baseRewardDebt);
-        quoteAmount = totalAccRewards(shares, accQuoteRewardsPerShare) - uint128(userData.quoteRewardDebt);
-    }
-
-    function totalAccRewards(uint256 shares, uint256 accRewardsPerShare) internal pure returns (uint256) {
-        return (shares * accRewardsPerShare) / PRECISION_FACTOR;
-    }
-
-    /// @dev Applies the new accrued rewards per share to the rewards state
-    function update(RewardPoolData storage self)
-        internal
-        returns (uint256 newAccBaseRewardsPerShare, uint256 newAccQuoteRewardsPerShare)
-    {
-        (newAccBaseRewardsPerShare, newAccQuoteRewardsPerShare) = getAccRewardsPerShare(self);
-
-        if (self.pendingBaseRewards > 0) {
-            self.accBaseRewardPerShare = newAccBaseRewardsPerShare;
-            delete self.pendingBaseRewards;
-        }
-
-        if (self.pendingQuoteRewards > 0) {
-            self.accQuoteRewardPerShare = newAccQuoteRewardsPerShare;
-            delete self.pendingQuoteRewards;
-        }
-    }
-
-    /// @dev Gets the new accrued rewards per share without updating rewards state
-    function getAccRewardsPerShare(RewardPoolData storage self)
-        internal
-        view
-        returns (uint256 accBaseRewardsPerShare, uint256 accQuoteRewardsPerShare)
-    {
-        uint96 totalShares = self.totalShares;
-        if (totalShares == 0) return (self.accBaseRewardPerShare, self.accQuoteRewardPerShare);
-
-        accBaseRewardsPerShare = self.accBaseRewardPerShare;
-        accQuoteRewardsPerShare = self.accQuoteRewardPerShare;
-
-        if (self.pendingBaseRewards > 0) {
-            accBaseRewardsPerShare += ((self.pendingBaseRewards * PRECISION_FACTOR) / uint128(totalShares));
-        }
-
-        if (self.pendingQuoteRewards > 0) {
-            accQuoteRewardsPerShare += ((self.pendingQuoteRewards * PRECISION_FACTOR) / uint128(totalShares));
-        }
-    }
-}
-
-/**
- * @title RewardsStorage
- * @dev Storage library for rewards distribution using EIP-1967 pattern
- */
-library RewardsTrackerStorage {
-    bytes32 internal constant LAUNCH_ASSET_TO_REWARDS_SLOT =
-        keccak256(abi.encode(uint256(keccak256("rewardsTrackerPool.self.slot")) - 1)) & ~bytes32(uint256(0xff));
-
-    function rewardPoolSlot(address baseAsset) private pure returns (bytes32) {
-        return keccak256(abi.encodePacked(baseAsset, LAUNCH_ASSET_TO_REWARDS_SLOT));
-    }
-
-    function getRewardPool(address baseAsset) internal pure returns (RewardPoolData storage p) {
-        bytes32 slot = rewardPoolSlot(baseAsset);
-        assembly {
-            p.slot := slot
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-abstract contract BondingCurve {
-    function viewAveragePriceInX(address token, uint256 deltaY, bool isBuy) public view virtual returns (uint256);
-
-    // slither-disable-next-line naming-convention
-    function getAverageCostInY(address token, uint256 x_0, uint256 x_1) public virtual returns (uint256);
-
-    // slither-disable-next-line naming-convention
-    function viewAverageCostInY(address token, uint256 x_0, uint256 x_1) public view virtual returns (uint256);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-interface IOperatorPanel {
-    function approveOperator(address account, address operator, uint256 roles) external;
-    function disapproveOperator(address account, address operator, uint256 roles) external;
-    function getOperatorRoleApprovals(address account, address operator) external view returns (uint256);
-    function getOperatorEventNonce() external view returns (uint256);
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
-
-import {Ownable2StepUpgradeable} from "@openzeppelin-contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
-
-contract LaunchpadLPVault is Ownable2StepUpgradeable {
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                ERRORS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev sig: 0xaf62991d
-    error FallbackRevert();
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                STATES
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    address public launchpad;
-
-    /// @dev The abi version of this impl so the indexer can handle event-changing upgrades
-    uint256 public constant ABI_VERSION = 1;
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                    CONSTRUCTOR AND INITIALIZATION
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    constructor() {
-        _disableInitializers();
-    }
-
-    function initialize(address launchpad_, address initialOwner) external initializer {
-        launchpad = launchpad_;
-        __Ownable_init(initialOwner);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                FALLBACKS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    fallback() external {
-        revert FallbackRevert();
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-import {IOperatorPanel} from "./interfaces/IOperatorPanel.sol";
-import {EventNonceLib as OperatorEventNonce} from "./types/EventNonce.sol";
-
-// @todo rename "spot" to "account"
-enum SpotOperatorRoles {
-    ADMIN,
-    PLACE_ORDER,
-    SPOT_DEPOSIT,
-    SPOT_WITHDRAW,
-    PERP_TO_SPOT_DEPOSIT,
-    LAUNCHPAD_FILL
-}
-
-enum PerpsOperatorRoles {
-    ADMIN,
-    PLACE_ORDER,
-    SET_LEVERAGE,
-    DEPOSIT_MARGIN,
-    WITHDRAW_MARGIN,
-    DEPOSIT_ACCOUNT,
-    WITHDRAW_ACCOUNT,
-    SPOT_TO_PERP_DEPOSIT
-}
-
-struct OperatorStorage {
-    mapping(address account => mapping(address operator => uint256)) operatorRoleApprovals;
-}
-
-using OperatorStorageLib for OperatorStorage global;
-
-/// @custom:storage-location erc7201:OperatorStorage
-library OperatorStorageLib {
-    bytes32 constant OPERATOR_STORAGE_POSITION =
-        keccak256(abi.encode(uint256(keccak256("OperatorStorage")) - 1)) & ~bytes32(uint256(0xff));
-
-    /// @dev Gets the storage slot of the storage struct for the contract calling this library function
-    // slither-disable-next-line uninitialized-storage
-    function getOperatorStorage() internal pure returns (OperatorStorage storage self) {
-        bytes32 position = OPERATOR_STORAGE_POSITION;
-
-        // slither-disable-next-line assembly
-        assembly {
-            self.slot := position
-        }
-    }
-}
-
-abstract contract OperatorPanel is IOperatorPanel {
-    /// @dev sig: 0xb816c81e0d2e75687754a9cb3111541c16ab454792482bf1dd02093f2203f353
-    event OperatorApproved(
-        uint256 indexed eventNonce, address indexed account, address indexed operator, uint256 newRoles
-    );
-    /// @dev sig: 0x1145ef8300109b8668d5581d376603c552d28f5aaefa3ca8fb7524286a41a7ae
-    event OperatorDisapproved(
-        uint256 indexed eventNonce, address indexed account, address indexed operator, uint256 removedRoles
-    );
-
-    /// @dev sig: 0x732ea322
-    error OperatorDoesNotHaveRole();
-    /// @dev sig: 0xe9a05878
-    error OperatorChangeUnauthorized();
-
-    address public immutable operatorHub;
-
-    constructor(address operatorHub_) {
-        operatorHub = operatorHub_;
-    }
-
-    modifier onlySenderOrOperatorHub(address account) {
-        if (msg.sender != account && msg.sender != operatorHub) revert OperatorChangeUnauthorized();
-        _;
-    }
-
-    function _getOperatorStorage() internal pure returns (OperatorStorage storage self) {
-        return OperatorStorageLib.getOperatorStorage();
-    }
-
-    function getOperatorRoleApprovals(address account, address operator) external view returns (uint256) {
-        return _getOperatorStorage().operatorRoleApprovals[account][operator];
-    }
-
-    function approveOperator(address account, address operator, uint256 roles)
+interface IDistributor {
+    function getUserData(address launchAsset, address account) external view returns (UserRewardData memory);
+    function getUserDataForTokens(address[] calldata launchAssets, address account)
         external
-        onlySenderOrOperatorHub(account)
-    {
-        OperatorStorage storage self = _getOperatorStorage();
-
-        uint256 approvedRoles = self.operatorRoleApprovals[account][operator];
-        self.operatorRoleApprovals[account][operator] = approvedRoles | roles;
-
-        emit OperatorApproved(OperatorEventNonce.inc(), account, operator, roles);
-    }
-
-    function disapproveOperator(address account, address operator, uint256 roles)
+        view
+        returns (UserRewardData[] memory);
+    function increaseStake(address launchAsset, address account, uint96 shares)
         external
-        onlySenderOrOperatorHub(account)
-    {
-        OperatorStorage storage self = _getOperatorStorage();
-
-        uint256 approvedRoles = self.operatorRoleApprovals[account][operator];
-        self.operatorRoleApprovals[account][operator] = approvedRoles & (~roles);
-
-        emit OperatorDisapproved(OperatorEventNonce.inc(), account, operator, roles);
-    }
-
-    function getOperatorEventNonce() external view returns (uint256) {
-        return OperatorEventNonce.getCurrentNonce();
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
-
-import {IAccountManager} from "../account-manager/IAccountManager.sol";
-import {FeeTiers} from "./types/FeeData.sol";
-import {ICLOB} from "./ICLOB.sol";
-import {Side, OrderId} from "./types/Order.sol";
-import {MakerCredit} from "./types/TransientMakerData.sol";
-
-struct ConfigParams {
-    address quoteToken;
-    address baseToken;
-    uint256 quoteSize;
-    uint256 baseSize;
-}
-
-struct SettingsParams {
-    address owner;
-    uint8 maxLimitsPerTx;
-    uint256 minLimitOrderAmountInBase;
-    uint256 tickSize;
-    uint256 lotSizeInBase;
-}
-
-interface ICLOBManager {
-    // Basic getters from ICLOBAdminPanel
-    function beacon() external view returns (address);
-    function getMarketAddress(address quoteToken, address baseToken) external view returns (address);
-    function isMarket(address market) external view returns (bool);
-
-    // Market creation and management from ICLOBAdminPanel
-    function createMarket(address baseToken, address quoteToken, SettingsParams calldata settings)
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function decreaseStake(address launchAsset, address account, uint96 shares)
         external
-        returns (address marketAddress);
+        returns (uint256 baseAmount, uint256 quoteAmount);
+    function claimRewards(address launchAsset) external returns (uint256 baseAmount, uint256 quoteAmount);
+    function addRewards(address token0, address token1, uint128 amount0, uint128 amount1) external;
+    function createRewardsPair(address launchAsset, address quoteToken) external;
 
-    // Limit management getters
-    function getMaxLimitExempt(address account) external view returns (bool);
-
-    // Admin settings
-    function setMaxLimitsPerTx(ICLOB market, uint8 newMaxLimits) external;
-    function setTickSize(ICLOB market, uint256 newTickSize) external;
-    function setLotSizeInBase(ICLOB market, uint256 newLotSize) external;
-    function setMinLimitOrderAmountInBase(ICLOB market, uint256 newMinLimitOrderAmountInBase) external;
-    function adminCancelExpiredOrders(ICLOB market, OrderId[] calldata ids, Side side) external;
-    function setAccountFeeTiers(address[] calldata accounts, FeeTiers[] calldata feeTiers) external;
-    function setMaxLimitsExempt(address[] calldata accounts, bool[] calldata toggles) external;
+    function endRewards(IGTELaunchpadV2Pair pair) external;
 }
 
 
@@ -4810,547 +4810,6 @@ contract PerpManager is AdminPanel, LiquidatorPanel, ViewPort, OperatorPanel {
         returns (uint256 collateral)
     {
         collateral = baseAmount.fullMulDiv(price, 1e18).fullMulDiv(1e18, leverage);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-// Local types, libs, contracts, and interfaces
-import {CLOB, ICLOB} from "./CLOB.sol";
-import {Side, OrderId} from "./types/Order.sol";
-import {MakerCredit} from "./types/TransientMakerData.sol";
-import {ICLOBManager, ConfigParams, SettingsParams} from "./ICLOBManager.sol";
-import {FeeTiers} from "./types/FeeData.sol";
-import {CLOBStorageLib, MarketConfig, MarketSettings, MIN_MIN_LIMIT_ORDER_AMOUNT_BASE} from "./types/Book.sol";
-
-// Internal package libs and interfaces
-import {IAccountManager} from "../account-manager/IAccountManager.sol";
-import {EventNonceLib as CLOBEventNonce} from "contracts/utils/types/EventNonce.sol";
-
-// Solady and OZ imports
-import {Initializable} from "@solady/utils/Initializable.sol";
-import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
-import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
-import {OwnableRoles as CLOBAdminOwnableRoles} from "@solady/auth/OwnableRoles.sol";
-import {IERC20Metadata} from "@openzeppelin/token/ERC20/extensions/IERC20Metadata.sol";
-import {BeaconProxy, IBeacon} from "@openzeppelin/proxy/beacon/BeaconProxy.sol";
-
-struct CLOBManagerStorage {
-    mapping(address clob => bool) isCLOB;
-    mapping(bytes32 tokenPairHash => address) clob;
-    mapping(address account => bool) maxLimitWhitelist;
-}
-
-using CLOBManagerStorageLib for CLOBManagerStorage global;
-
-/// @custom:storage-location erc7201:CLOBManagerStorage
-library CLOBManagerStorageLib {
-    bytes32 constant CLOB_MANAGER_STORAGE_POSITION =
-        keccak256(abi.encode(uint256(keccak256("CLOBManagerStorage")) - 1)) & ~bytes32(uint256(0xff));
-
-    /// @dev Gets the storage slot of the storage struct for the contract calling this library function
-    // slither-disable-next-line uninitialized-storage
-    function getCLOBManagerStorage() internal pure returns (CLOBManagerStorage storage self) {
-        bytes32 position = CLOB_MANAGER_STORAGE_POSITION;
-
-        // slither-disable-next-line assembly
-        assembly {
-            self.slot := position
-        }
-    }
-}
-
-/**
- * @title CLOBManager
- * @notice Main contract that handles CLOB admin functionality and fee calculations
- */
-contract CLOBManager is ICLOBManager, CLOBAdminOwnableRoles, Initializable {
-    using FixedPointMathLib for uint256;
-    using SafeTransferLib for address;
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                ERRORS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev sig: 0x1e4f7d8c
-    error InvalidPair();
-    /// @dev sig: 0x8fc6f59b
-    error MarketExists();
-    /// @dev sig: 0xe591f33d
-    error InvalidSettings();
-    /// @dev sig: 0x1eb00b06
-    error InvalidTokenAddress();
-    /// @dev sig: 0x353f2237
-    error AdminPanelArrayLengthsInvalid();
-    /// @dev sig: 0xf9f68635
-    error MarketUnauthorized();
-    /// @dev sig: 0x6fbe54bd
-    error InvalidBeaconAddress();
-    /// @dev sig: 0x19ae8c78
-    error CLOBBeaconMustHaveRouter();
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                EVENTS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    event MarketCreated(
-        uint256 indexed eventNonce,
-        address indexed creator,
-        address indexed baseToken,
-        address quoteToken,
-        address market,
-        uint8 quoteDecimals,
-        uint8 baseDecimals,
-        ConfigParams config,
-        SettingsParams settings
-    );
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                CONSTANTS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev The abi version of this impl so the indexer can handle event-changing upgrades
-    uint256 public constant ABI_VERSION = 1;
-
-    /// @dev Create and call markets to edit their settings
-    uint256 public constant MARKET_MANAGER = 1;
-    /// @dev Sets users' fee tiers in this contract
-    uint256 public constant FEE_TIER_SETTER = 1 << 1;
-    /// @dev Whitelists addresses to bypass the markets' max limits per txn
-    uint256 public constant MAX_LIMIT_WHITELISTER = 1 << 2;
-    /// @dev Clears expired orders from markets
-    uint256 public constant EXPIRED_ORDER_CLEARER = 1 << 3;
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            IMMUTABLE STATE
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev The beacon proxy containing the logic implementation all clobs' storage use
-    address public immutable beacon;
-    /// @dev The external AccountManager contract
-    IAccountManager public immutable accountManager;
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            CONSTRUCTOR
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    constructor(address _beacon, address _accountManager) {
-        if (_beacon == address(0)) revert InvalidBeaconAddress();
-        beacon = _beacon;
-        accountManager = IAccountManager(_accountManager);
-        _disableInitializers();
-    }
-
-    /// @dev Initializes the contract following ERC1967Factory pattern
-    function initialize(address _owner) external initializer {
-        _initializeOwner(_owner);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            EXTERNAL GETTERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @notice Gets the market address for a given `tokenA` and `tokenB`
-    function getMarketAddress(address tokenA, address tokenB) external view returns (address marketAddress) {
-        return _getStorage().clob[_getTokenHash(tokenA, tokenB)];
-    }
-
-    /// @notice Gets if `market` is a clob created by this factory
-    function isMarket(address market) external view returns (bool) {
-        return _getStorage().isCLOB[market];
-    }
-
-    /// @notice Gets whether an account is exempt from max limits
-    function getMaxLimitExempt(address account) external view returns (bool) {
-        return _getStorage().maxLimitWhitelist[account];
-    }
-
-    /// @notice Gets the current event nonce
-    function getEventNonce() external view returns (uint256) {
-        return CLOBEventNonce.getCurrentNonce();
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            ADMIN FUNCTIONS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @notice Creates a new market for `quoteToken` and `baseToken` using beacon proxy
-    function createMarket(address baseToken, address quoteToken, SettingsParams calldata settings)
-        external
-        virtual
-        onlyOwnerOrRoles(MARKET_MANAGER)
-        returns (address marketAddress)
-    {
-        _assertValidTokenPair(quoteToken, baseToken);
-
-        uint8 quoteDecimals = IERC20Metadata(quoteToken).decimals();
-        uint8 baseDecimals = IERC20Metadata(baseToken).decimals();
-
-        ConfigParams memory config;
-
-        config.quoteToken = quoteToken;
-        config.baseToken = baseToken;
-        config.quoteSize = 10 ** quoteDecimals;
-        config.baseSize = 10 ** baseDecimals;
-
-        _assertValidSettings(settings, config.baseSize);
-
-        CLOBManagerStorage storage self = _getStorage();
-
-        bytes32 tokenPairHash = _getTokenHash(quoteToken, baseToken);
-
-        if (self.clob[tokenPairHash] > address(0)) revert MarketExists();
-
-        bytes memory initData = abi.encodeWithSelector(
-            CLOB.initialize.selector,
-            MarketConfig({
-                quoteToken: config.quoteToken,
-                baseToken: config.baseToken,
-                quoteSize: config.quoteSize,
-                baseSize: config.baseSize
-            }),
-            MarketSettings({
-                status: true,
-                maxLimitsPerTx: settings.maxLimitsPerTx,
-                minLimitOrderAmountInBase: settings.minLimitOrderAmountInBase,
-                tickSize: settings.tickSize,
-                lotSizeInBase: settings.lotSizeInBase
-            }),
-            settings.owner
-        );
-
-        // Beacon is immutable and itself non upgradeable
-        marketAddress = address(new BeaconProxy(beacon, initData));
-
-        self.isCLOB[marketAddress] = true;
-        self.clob[tokenPairHash] = marketAddress;
-
-        // Register the market in AccountManager
-        accountManager.registerMarket(marketAddress);
-
-        _emitMarketCreated(msg.sender, marketAddress, quoteDecimals, baseDecimals, config, settings);
-    }
-
-    /// @notice Sets the tick size for a market
-    function setTickSize(ICLOB market, uint256 newTickSize) external onlyOwnerOrRoles(MARKET_MANAGER) {
-        market.setTickSize(newTickSize);
-    }
-
-    /// @notice Sets the lot size for a market
-    function setLotSizeInBase(ICLOB market, uint256 newLotSize) external onlyOwnerOrRoles(MARKET_MANAGER) {
-        market.setLotSizeInBase(newLotSize);
-    }
-
-    /// @notice Sets the min limit order amount in base for a market
-    function setMinLimitOrderAmountInBase(ICLOB market, uint256 newMinLimitOrderAmountInBase)
-        external
-        onlyOwnerOrRoles(MARKET_MANAGER)
-    {
-        market.setMinLimitOrderAmountInBase(newMinLimitOrderAmountInBase);
-    }
-
-    /// @notice Clears out expired orders from one side of a market
-    function adminCancelExpiredOrders(ICLOB market, OrderId[] calldata ids, Side side)
-        external
-        onlyOwnerOrRoles(EXPIRED_ORDER_CLEARER)
-    {
-        market.adminCancelExpiredOrders(ids, side);
-    }
-
-    /// @notice Sets fee tiers for accounts
-    function setAccountFeeTiers(address[] calldata accounts, FeeTiers[] calldata feeTiers)
-        external
-        onlyOwnerOrRoles(FEE_TIER_SETTER)
-    {
-        accountManager.setSpotAccountFeeTiers(accounts, feeTiers);
-    }
-
-    /// @notice Sets max limit exemptions for accounts
-    function setMaxLimitsExempt(address[] calldata accounts, bool[] calldata toggles)
-        external
-        onlyOwnerOrRoles(MAX_LIMIT_WHITELISTER)
-    {
-        if (accounts.length != toggles.length) revert AdminPanelArrayLengthsInvalid();
-
-        CLOBManagerStorage storage self = _getStorage();
-        for (uint256 i = 0; i < accounts.length; i++) {
-            self.maxLimitWhitelist[accounts[i]] = toggles[i];
-        }
-    }
-
-    /// @notice Sets the max limits per tx for a market
-    function setMaxLimitsPerTx(ICLOB market, uint8 newMaxLimits) external onlyOwnerOrRoles(MARKET_MANAGER) {
-        market.setMaxLimitsPerTx(newMaxLimits);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            INTERNAL ASSERTIONS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev Checks config and settings params are within correct bounds
-    function _assertValidSettings(SettingsParams calldata settings, uint256 baseSize) internal pure {
-        if (settings.maxLimitsPerTx == 0) revert InvalidSettings();
-        if (settings.minLimitOrderAmountInBase < MIN_MIN_LIMIT_ORDER_AMOUNT_BASE) revert InvalidSettings();
-        if (settings.minLimitOrderAmountInBase < settings.lotSizeInBase) revert InvalidSettings();
-        if (settings.tickSize.fullMulDiv(settings.lotSizeInBase, baseSize) == 0) revert InvalidSettings();
-    }
-
-    /// @dev Performs sanity checks on the addresses passed to make it slightly more difficult to deploy a broken market
-    function _assertValidTokenPair(address quoteToken, address baseToken) internal pure {
-        if (quoteToken == baseToken) revert InvalidPair();
-        if (quoteToken == address(0)) revert InvalidTokenAddress();
-        if (baseToken == address(0)) revert InvalidTokenAddress();
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            PRIVATE HELPERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev Event helper that prevents stack from blowing without IR
-    function _emitMarketCreated(
-        address creator,
-        address marketAddress,
-        uint8 quoteDecimals,
-        uint8 baseDecimals,
-        ConfigParams memory config,
-        SettingsParams calldata settings
-    ) internal {
-        emit MarketCreated(
-            CLOBEventNonce.inc(),
-            creator,
-            config.baseToken,
-            config.quoteToken,
-            marketAddress,
-            quoteDecimals,
-            baseDecimals,
-            config,
-            settings
-        );
-    }
-
-    /// @dev Gets the token hash which can be used as a UID for a market
-    function _getTokenHash(address tokenA, address tokenB) internal pure returns (bytes32) {
-        (tokenA, tokenB) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-
-        return keccak256(abi.encodePacked(tokenA, tokenB));
-    }
-
-    /// @dev Helper to set the storage slot of the storage struct for this contract
-    function _getStorage() internal pure returns (CLOBManagerStorage storage ds) {
-        return CLOBManagerStorageLib.getCLOBManagerStorage();
-    }
-}
-
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
-
-import {IERC165} from "@openzeppelin/interfaces/IERC165.sol";
-import {IBondingCurveMinimal} from "./IBondingCurveMinimal.sol";
-import {Ownable} from "@solady/auth/Ownable.sol";
-
-contract SimpleBondingCurve is IBondingCurveMinimal {
-    struct Reserves {
-        uint256 quoteReserve;
-        uint256 baseReserve;
-    }
-
-    struct Supply {
-        uint256 totalSupply;
-        uint256 bondingSupply;
-    }
-
-    /// @dev sig: 0x811abebed4bd76417e15038991a2a59847b86a0ece32d4dcc5c37f7641f0580d
-    event VirtualReservesSet(uint256 virtualBase, uint256 virtualQuote);
-    /// @dev sig: 0xf1dc3d06c4e72b9153d6aba8efebafe8d45e438daab475fa1410c907c526d98b
-    event ReservesSet(address indexed token, uint256 quoteReserve, uint256 baseReserve);
-    /// @dev sig: 0x1b77ab811805ecfa41dda62047dae05b29f779f97d4735116c794a5c1a050cf0
-    event NewTokenLaunched(address indexed token, uint256 virtualBase, uint256 virtualQuote);
-
-    /// @dev can only be set once, at initialization; see {Launchpad.sol}::line_162
-    uint256 public VIRTUAL_BASE; // can be customized to change curve
-    uint256 public VIRTUAL_QUOTE; // can be customized to change curve
-
-    mapping(address token => Reserves) internal reserves;
-    mapping(address token => Supply) internal supply;
-
-    address public immutable launchpad;
-
-    /// @dev sig:0xed6fcad9
-    error NotLaunchpad();
-    /// @dev sig: 0x8447642d
-    error NotLaunchpadOwner();
-    /// @dev sig: 0x56965ca0
-    error InvalidVirtualBase();
-    /// @dev sig: 0xad5eefd0
-    error InvalidVirtualQuote();
-
-    constructor(address launchpad_) {
-        launchpad = launchpad_;
-    }
-
-    modifier onlyLaunchpad() {
-        if (msg.sender != launchpad) revert NotLaunchpad();
-        _;
-    }
-
-    modifier onlyLaunchpadOwner() {
-        if (msg.sender != Ownable(launchpad).owner()) revert NotLaunchpadOwner();
-        _;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                NEW CURVE
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev {SimpleBondingCurve} awaits an ABI-encoded (virtualBase, virtualQuote) tuple
-    function init(bytes memory data) external onlyLaunchpad {
-        (uint256 virtualBase, uint256 virtualQuote) = abi.decode(data, (uint256, uint256));
-
-        _setVirtualReserves(virtualBase, virtualQuote);
-    }
-
-    /// @dev other kinds of curves might require more than just setting the reserves for that token curve's launch
-    function initializeCurve(address token, uint256 totalSupply_, uint256 bondingSupply_) external onlyLaunchpad {
-        _setReserves(token, VIRTUAL_QUOTE, bondingSupply_ + VIRTUAL_BASE);
-        _setSupply(token, totalSupply_, bondingSupply_);
-
-        emit NewTokenLaunched(token, VIRTUAL_BASE, VIRTUAL_QUOTE);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                SETTERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    /// @dev deprecated
-    function setReserves(address token, uint256 quoteReserve, uint256 baseReserve) external onlyLaunchpadOwner {
-        _setReserves(token, quoteReserve, baseReserve);
-    }
-
-    /// @dev deprecated
-    function setVirtualReserves(uint256 virtualBase, uint256 virtualQuote) external onlyLaunchpadOwner {
-        if (virtualBase == 0) revert InvalidVirtualBase();
-        if (virtualQuote == 0) revert InvalidVirtualQuote();
-
-        _setVirtualReserves(virtualBase, virtualQuote);
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                            TRADING LOGIC
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function buy(address token, uint256 baseAmount) external onlyLaunchpad returns (uint256 quoteAmount) {
-        Reserves storage r = reserves[token];
-
-        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, true);
-
-        r.quoteReserve += quoteAmount;
-        r.baseReserve -= baseAmount;
-    }
-
-    function sell(address token, uint256 baseAmount) external onlyLaunchpad returns (uint256 quoteAmount) {
-        Reserves storage r = reserves[token];
-
-        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, false);
-
-        r.quoteReserve -= quoteAmount;
-        r.baseReserve += baseAmount;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                GETTERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function bondingSupply(address token) external view returns (uint256) {
-        return supply[token].bondingSupply;
-    }
-
-    function totalSupply(address token) external view returns (uint256) {
-        return supply[token].totalSupply;
-    }
-
-    function baseSoldFromCurve(address token) external view returns (uint256) {
-        return (supply[token].bondingSupply + VIRTUAL_BASE) - reserves[token].baseReserve;
-    }
-
-    function quoteBoughtByCurve(address token) external view returns (uint256) {
-        return reserves[token].quoteReserve - VIRTUAL_QUOTE;
-    }
-
-    function getReserves(address token) external view returns (uint256 quoteReserve, uint256 baseReserve) {
-        Reserves storage r = reserves[token];
-        quoteReserve = r.quoteReserve;
-        baseReserve = r.baseReserve;
-    }
-
-    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
-        external
-        view
-        returns (uint256 baseAmount)
-    {
-        Reserves storage r = reserves[token];
-        baseAmount = _getBaseAmount(quoteAmount, r.quoteReserve, r.baseReserve, isBuy);
-    }
-
-    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
-        external
-        view
-        returns (uint256 quoteAmount)
-    {
-        Reserves storage r = reserves[token];
-        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, isBuy);
-    }
-
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IERC165).interfaceId || interfaceId == type(IBondingCurveMinimal).interfaceId;
-    }
-
-    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
-                                HELPERS
-    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
-
-    function _setReserves(address token, uint256 quoteReserve, uint256 baseReserve) internal {
-        Reserves storage r = reserves[token];
-        r.quoteReserve = quoteReserve;
-        r.baseReserve = baseReserve;
-
-        emit ReservesSet(token, quoteReserve, baseReserve);
-    }
-
-    function _setSupply(address token, uint256 totalSupply_, uint256 bondingSupply_) internal {
-        Supply storage s = supply[token];
-        s.totalSupply = totalSupply_;
-        s.bondingSupply = bondingSupply_;
-    }
-
-    function _setVirtualReserves(uint256 virtualBase, uint256 virtualQuote) internal {
-        if (virtualBase == 0) revert InvalidVirtualBase();
-        if (virtualQuote == 0) revert InvalidVirtualQuote();
-
-        VIRTUAL_BASE = virtualBase;
-        VIRTUAL_QUOTE = virtualQuote;
-
-        emit VirtualReservesSet(virtualBase, virtualQuote);
-    }
-
-    function _getBaseAmount(uint256 quoteAmount, uint256 quoteReserve, uint256 baseReserve, bool isBuy)
-        internal
-        pure
-        returns (uint256 baseAmount)
-    {
-        uint256 quoteReserveAfter = isBuy ? quoteReserve + quoteAmount : quoteReserve - quoteAmount;
-
-        return (quoteAmount * baseReserve) / quoteReserveAfter;
-    }
-
-    function _getQuoteAmount(uint256 baseAmount, uint256 quoteReserve, uint256 baseReserve, bool isBuy)
-        internal
-        pure
-        returns (uint256 quoteAmount)
-    {
-        uint256 baseReserveAfter = isBuy ? baseReserve - baseAmount : baseReserve + baseAmount;
-
-        return (quoteReserve * baseAmount) / baseReserveAfter;
     }
 }
 
@@ -5770,6 +5229,218 @@ library AccountManagerStorageLib {
         assembly {
             self.slot := position
         }
+    }
+}
+
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.27;
+
+import {IERC165} from "@openzeppelin/interfaces/IERC165.sol";
+import {IBondingCurveMinimal} from "./IBondingCurveMinimal.sol";
+import {Ownable} from "@solady/auth/Ownable.sol";
+
+contract SimpleBondingCurve is IBondingCurveMinimal {
+    struct Reserves {
+        uint256 quoteReserve;
+        uint256 baseReserve;
+    }
+
+    struct Supply {
+        uint256 totalSupply;
+        uint256 bondingSupply;
+    }
+
+    /// @dev sig: 0x811abebed4bd76417e15038991a2a59847b86a0ece32d4dcc5c37f7641f0580d
+    event VirtualReservesSet(uint256 virtualBase, uint256 virtualQuote);
+    /// @dev sig: 0xf1dc3d06c4e72b9153d6aba8efebafe8d45e438daab475fa1410c907c526d98b
+    event ReservesSet(address indexed token, uint256 quoteReserve, uint256 baseReserve);
+    /// @dev sig: 0x1b77ab811805ecfa41dda62047dae05b29f779f97d4735116c794a5c1a050cf0
+    event NewTokenLaunched(address indexed token, uint256 virtualBase, uint256 virtualQuote);
+
+    /// @dev can only be set once, at initialization; see {Launchpad.sol}::line_162
+    uint256 public VIRTUAL_BASE; // can be customized to change curve
+    uint256 public VIRTUAL_QUOTE; // can be customized to change curve
+
+    mapping(address token => Reserves) internal reserves;
+    mapping(address token => Supply) internal supply;
+
+    address public immutable launchpad;
+
+    /// @dev sig:0xed6fcad9
+    error NotLaunchpad();
+    /// @dev sig: 0x8447642d
+    error NotLaunchpadOwner();
+    /// @dev sig: 0x56965ca0
+    error InvalidVirtualBase();
+    /// @dev sig: 0xad5eefd0
+    error InvalidVirtualQuote();
+
+    constructor(address launchpad_) {
+        launchpad = launchpad_;
+    }
+
+    modifier onlyLaunchpad() {
+        if (msg.sender != launchpad) revert NotLaunchpad();
+        _;
+    }
+
+    modifier onlyLaunchpadOwner() {
+        if (msg.sender != Ownable(launchpad).owner()) revert NotLaunchpadOwner();
+        _;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                NEW CURVE
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev {SimpleBondingCurve} awaits an ABI-encoded (virtualBase, virtualQuote) tuple
+    function init(bytes memory data) external onlyLaunchpad {
+        (uint256 virtualBase, uint256 virtualQuote) = abi.decode(data, (uint256, uint256));
+
+        _setVirtualReserves(virtualBase, virtualQuote);
+    }
+
+    /// @dev other kinds of curves might require more than just setting the reserves for that token curve's launch
+    function initializeCurve(address token, uint256 totalSupply_, uint256 bondingSupply_) external onlyLaunchpad {
+        _setReserves(token, VIRTUAL_QUOTE, bondingSupply_ + VIRTUAL_BASE);
+        _setSupply(token, totalSupply_, bondingSupply_);
+
+        emit NewTokenLaunched(token, VIRTUAL_BASE, VIRTUAL_QUOTE);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                SETTERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev deprecated
+    function setReserves(address token, uint256 quoteReserve, uint256 baseReserve) external onlyLaunchpadOwner {
+        _setReserves(token, quoteReserve, baseReserve);
+    }
+
+    /// @dev deprecated
+    function setVirtualReserves(uint256 virtualBase, uint256 virtualQuote) external onlyLaunchpadOwner {
+        if (virtualBase == 0) revert InvalidVirtualBase();
+        if (virtualQuote == 0) revert InvalidVirtualQuote();
+
+        _setVirtualReserves(virtualBase, virtualQuote);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            TRADING LOGIC
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function buy(address token, uint256 baseAmount) external onlyLaunchpad returns (uint256 quoteAmount) {
+        Reserves storage r = reserves[token];
+
+        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, true);
+
+        r.quoteReserve += quoteAmount;
+        r.baseReserve -= baseAmount;
+    }
+
+    function sell(address token, uint256 baseAmount) external onlyLaunchpad returns (uint256 quoteAmount) {
+        Reserves storage r = reserves[token];
+
+        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, false);
+
+        r.quoteReserve -= quoteAmount;
+        r.baseReserve += baseAmount;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                GETTERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function bondingSupply(address token) external view returns (uint256) {
+        return supply[token].bondingSupply;
+    }
+
+    function totalSupply(address token) external view returns (uint256) {
+        return supply[token].totalSupply;
+    }
+
+    function baseSoldFromCurve(address token) external view returns (uint256) {
+        return (supply[token].bondingSupply + VIRTUAL_BASE) - reserves[token].baseReserve;
+    }
+
+    function quoteBoughtByCurve(address token) external view returns (uint256) {
+        return reserves[token].quoteReserve - VIRTUAL_QUOTE;
+    }
+
+    function getReserves(address token) external view returns (uint256 quoteReserve, uint256 baseReserve) {
+        Reserves storage r = reserves[token];
+        quoteReserve = r.quoteReserve;
+        baseReserve = r.baseReserve;
+    }
+
+    function quoteBaseForQuote(address token, uint256 quoteAmount, bool isBuy)
+        external
+        view
+        returns (uint256 baseAmount)
+    {
+        Reserves storage r = reserves[token];
+        baseAmount = _getBaseAmount(quoteAmount, r.quoteReserve, r.baseReserve, isBuy);
+    }
+
+    function quoteQuoteForBase(address token, uint256 baseAmount, bool isBuy)
+        external
+        view
+        returns (uint256 quoteAmount)
+    {
+        Reserves storage r = reserves[token];
+        quoteAmount = _getQuoteAmount(baseAmount, r.quoteReserve, r.baseReserve, isBuy);
+    }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == type(IERC165).interfaceId || interfaceId == type(IBondingCurveMinimal).interfaceId;
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                HELPERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    function _setReserves(address token, uint256 quoteReserve, uint256 baseReserve) internal {
+        Reserves storage r = reserves[token];
+        r.quoteReserve = quoteReserve;
+        r.baseReserve = baseReserve;
+
+        emit ReservesSet(token, quoteReserve, baseReserve);
+    }
+
+    function _setSupply(address token, uint256 totalSupply_, uint256 bondingSupply_) internal {
+        Supply storage s = supply[token];
+        s.totalSupply = totalSupply_;
+        s.bondingSupply = bondingSupply_;
+    }
+
+    function _setVirtualReserves(uint256 virtualBase, uint256 virtualQuote) internal {
+        if (virtualBase == 0) revert InvalidVirtualBase();
+        if (virtualQuote == 0) revert InvalidVirtualQuote();
+
+        VIRTUAL_BASE = virtualBase;
+        VIRTUAL_QUOTE = virtualQuote;
+
+        emit VirtualReservesSet(virtualBase, virtualQuote);
+    }
+
+    function _getBaseAmount(uint256 quoteAmount, uint256 quoteReserve, uint256 baseReserve, bool isBuy)
+        internal
+        pure
+        returns (uint256 baseAmount)
+    {
+        uint256 quoteReserveAfter = isBuy ? quoteReserve + quoteAmount : quoteReserve - quoteAmount;
+
+        return (quoteAmount * baseReserve) / quoteReserveAfter;
+    }
+
+    function _getQuoteAmount(uint256 baseAmount, uint256 quoteReserve, uint256 baseReserve, bool isBuy)
+        internal
+        pure
+        returns (uint256 quoteAmount)
+    {
+        uint256 baseReserveAfter = isBuy ? baseReserve - baseAmount : baseReserve + baseAmount;
+
+        return (quoteReserve * baseAmount) / baseReserveAfter;
     }
 }
 
@@ -6759,12 +6430,353 @@ contract CLOB is ICLOB, Ownable2StepUpgradeable {
     }
 }
 
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+// Local types, libs, contracts, and interfaces
+import {CLOB, ICLOB} from "./CLOB.sol";
+import {Side, OrderId} from "./types/Order.sol";
+import {MakerCredit} from "./types/TransientMakerData.sol";
+import {ICLOBManager, ConfigParams, SettingsParams} from "./ICLOBManager.sol";
+import {FeeTiers} from "./types/FeeData.sol";
+import {CLOBStorageLib, MarketConfig, MarketSettings, MIN_MIN_LIMIT_ORDER_AMOUNT_BASE} from "./types/Book.sol";
+
+// Internal package libs and interfaces
+import {IAccountManager} from "../account-manager/IAccountManager.sol";
+import {EventNonceLib as CLOBEventNonce} from "contracts/utils/types/EventNonce.sol";
+
+// Solady and OZ imports
+import {Initializable} from "@solady/utils/Initializable.sol";
+import {SafeTransferLib} from "@solady/utils/SafeTransferLib.sol";
+import {FixedPointMathLib} from "@solady/utils/FixedPointMathLib.sol";
+import {OwnableRoles as CLOBAdminOwnableRoles} from "@solady/auth/OwnableRoles.sol";
+import {IERC20Metadata} from "@openzeppelin/token/ERC20/extensions/IERC20Metadata.sol";
+import {BeaconProxy, IBeacon} from "@openzeppelin/proxy/beacon/BeaconProxy.sol";
+
+struct CLOBManagerStorage {
+    mapping(address clob => bool) isCLOB;
+    mapping(bytes32 tokenPairHash => address) clob;
+    mapping(address account => bool) maxLimitWhitelist;
+}
+
+using CLOBManagerStorageLib for CLOBManagerStorage global;
+
+/// @custom:storage-location erc7201:CLOBManagerStorage
+library CLOBManagerStorageLib {
+    bytes32 constant CLOB_MANAGER_STORAGE_POSITION =
+        keccak256(abi.encode(uint256(keccak256("CLOBManagerStorage")) - 1)) & ~bytes32(uint256(0xff));
+
+    /// @dev Gets the storage slot of the storage struct for the contract calling this library function
+    // slither-disable-next-line uninitialized-storage
+    function getCLOBManagerStorage() internal pure returns (CLOBManagerStorage storage self) {
+        bytes32 position = CLOB_MANAGER_STORAGE_POSITION;
+
+        // slither-disable-next-line assembly
+        assembly {
+            self.slot := position
+        }
+    }
+}
+
+/**
+ * @title CLOBManager
+ * @notice Main contract that handles CLOB admin functionality and fee calculations
+ */
+contract CLOBManager is ICLOBManager, CLOBAdminOwnableRoles, Initializable {
+    using FixedPointMathLib for uint256;
+    using SafeTransferLib for address;
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                ERRORS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev sig: 0x1e4f7d8c
+    error InvalidPair();
+    /// @dev sig: 0x8fc6f59b
+    error MarketExists();
+    /// @dev sig: 0xe591f33d
+    error InvalidSettings();
+    /// @dev sig: 0x1eb00b06
+    error InvalidTokenAddress();
+    /// @dev sig: 0x353f2237
+    error AdminPanelArrayLengthsInvalid();
+    /// @dev sig: 0xf9f68635
+    error MarketUnauthorized();
+    /// @dev sig: 0x6fbe54bd
+    error InvalidBeaconAddress();
+    /// @dev sig: 0x19ae8c78
+    error CLOBBeaconMustHaveRouter();
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                EVENTS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    event MarketCreated(
+        uint256 indexed eventNonce,
+        address indexed creator,
+        address indexed baseToken,
+        address quoteToken,
+        address market,
+        uint8 quoteDecimals,
+        uint8 baseDecimals,
+        ConfigParams config,
+        SettingsParams settings
+    );
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                                CONSTANTS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev The abi version of this impl so the indexer can handle event-changing upgrades
+    uint256 public constant ABI_VERSION = 1;
+
+    /// @dev Create and call markets to edit their settings
+    uint256 public constant MARKET_MANAGER = 1;
+    /// @dev Sets users' fee tiers in this contract
+    uint256 public constant FEE_TIER_SETTER = 1 << 1;
+    /// @dev Whitelists addresses to bypass the markets' max limits per txn
+    uint256 public constant MAX_LIMIT_WHITELISTER = 1 << 2;
+    /// @dev Clears expired orders from markets
+    uint256 public constant EXPIRED_ORDER_CLEARER = 1 << 3;
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            IMMUTABLE STATE
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev The beacon proxy containing the logic implementation all clobs' storage use
+    address public immutable beacon;
+    /// @dev The external AccountManager contract
+    IAccountManager public immutable accountManager;
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            CONSTRUCTOR
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    constructor(address _beacon, address _accountManager) {
+        if (_beacon == address(0)) revert InvalidBeaconAddress();
+        beacon = _beacon;
+        accountManager = IAccountManager(_accountManager);
+        _disableInitializers();
+    }
+
+    /// @dev Initializes the contract following ERC1967Factory pattern
+    function initialize(address _owner) external initializer {
+        _initializeOwner(_owner);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            EXTERNAL GETTERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @notice Gets the market address for a given `tokenA` and `tokenB`
+    function getMarketAddress(address tokenA, address tokenB) external view returns (address marketAddress) {
+        return _getStorage().clob[_getTokenHash(tokenA, tokenB)];
+    }
+
+    /// @notice Gets if `market` is a clob created by this factory
+    function isMarket(address market) external view returns (bool) {
+        return _getStorage().isCLOB[market];
+    }
+
+    /// @notice Gets whether an account is exempt from max limits
+    function getMaxLimitExempt(address account) external view returns (bool) {
+        return _getStorage().maxLimitWhitelist[account];
+    }
+
+    /// @notice Gets the current event nonce
+    function getEventNonce() external view returns (uint256) {
+        return CLOBEventNonce.getCurrentNonce();
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            ADMIN FUNCTIONS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @notice Creates a new market for `quoteToken` and `baseToken` using beacon proxy
+    function createMarket(address baseToken, address quoteToken, SettingsParams calldata settings)
+        external
+        virtual
+        onlyOwnerOrRoles(MARKET_MANAGER)
+        returns (address marketAddress)
+    {
+        _assertValidTokenPair(quoteToken, baseToken);
+
+        uint8 quoteDecimals = IERC20Metadata(quoteToken).decimals();
+        uint8 baseDecimals = IERC20Metadata(baseToken).decimals();
+
+        ConfigParams memory config;
+
+        config.quoteToken = quoteToken;
+        config.baseToken = baseToken;
+        config.quoteSize = 10 ** quoteDecimals;
+        config.baseSize = 10 ** baseDecimals;
+
+        _assertValidSettings(settings, config.baseSize);
+
+        CLOBManagerStorage storage self = _getStorage();
+
+        bytes32 tokenPairHash = _getTokenHash(quoteToken, baseToken);
+
+        if (self.clob[tokenPairHash] > address(0)) revert MarketExists();
+
+        bytes memory initData = abi.encodeWithSelector(
+            CLOB.initialize.selector,
+            MarketConfig({
+                quoteToken: config.quoteToken,
+                baseToken: config.baseToken,
+                quoteSize: config.quoteSize,
+                baseSize: config.baseSize
+            }),
+            MarketSettings({
+                status: true,
+                maxLimitsPerTx: settings.maxLimitsPerTx,
+                minLimitOrderAmountInBase: settings.minLimitOrderAmountInBase,
+                tickSize: settings.tickSize,
+                lotSizeInBase: settings.lotSizeInBase
+            }),
+            settings.owner
+        );
+
+        // Beacon is immutable and itself non upgradeable
+        marketAddress = address(new BeaconProxy(beacon, initData));
+
+        self.isCLOB[marketAddress] = true;
+        self.clob[tokenPairHash] = marketAddress;
+
+        // Register the market in AccountManager
+        accountManager.registerMarket(marketAddress);
+
+        _emitMarketCreated(msg.sender, marketAddress, quoteDecimals, baseDecimals, config, settings);
+    }
+
+    /// @notice Sets the tick size for a market
+    function setTickSize(ICLOB market, uint256 newTickSize) external onlyOwnerOrRoles(MARKET_MANAGER) {
+        market.setTickSize(newTickSize);
+    }
+
+    /// @notice Sets the lot size for a market
+    function setLotSizeInBase(ICLOB market, uint256 newLotSize) external onlyOwnerOrRoles(MARKET_MANAGER) {
+        market.setLotSizeInBase(newLotSize);
+    }
+
+    /// @notice Sets the min limit order amount in base for a market
+    function setMinLimitOrderAmountInBase(ICLOB market, uint256 newMinLimitOrderAmountInBase)
+        external
+        onlyOwnerOrRoles(MARKET_MANAGER)
+    {
+        market.setMinLimitOrderAmountInBase(newMinLimitOrderAmountInBase);
+    }
+
+    /// @notice Clears out expired orders from one side of a market
+    function adminCancelExpiredOrders(ICLOB market, OrderId[] calldata ids, Side side)
+        external
+        onlyOwnerOrRoles(EXPIRED_ORDER_CLEARER)
+    {
+        market.adminCancelExpiredOrders(ids, side);
+    }
+
+    /// @notice Sets fee tiers for accounts
+    function setAccountFeeTiers(address[] calldata accounts, FeeTiers[] calldata feeTiers)
+        external
+        onlyOwnerOrRoles(FEE_TIER_SETTER)
+    {
+        accountManager.setSpotAccountFeeTiers(accounts, feeTiers);
+    }
+
+    /// @notice Sets max limit exemptions for accounts
+    function setMaxLimitsExempt(address[] calldata accounts, bool[] calldata toggles)
+        external
+        onlyOwnerOrRoles(MAX_LIMIT_WHITELISTER)
+    {
+        if (accounts.length != toggles.length) revert AdminPanelArrayLengthsInvalid();
+
+        CLOBManagerStorage storage self = _getStorage();
+        for (uint256 i = 0; i < accounts.length; i++) {
+            self.maxLimitWhitelist[accounts[i]] = toggles[i];
+        }
+    }
+
+    /// @notice Sets the max limits per tx for a market
+    function setMaxLimitsPerTx(ICLOB market, uint8 newMaxLimits) external onlyOwnerOrRoles(MARKET_MANAGER) {
+        market.setMaxLimitsPerTx(newMaxLimits);
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            INTERNAL ASSERTIONS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev Checks config and settings params are within correct bounds
+    function _assertValidSettings(SettingsParams calldata settings, uint256 baseSize) internal pure {
+        if (settings.maxLimitsPerTx == 0) revert InvalidSettings();
+        if (settings.minLimitOrderAmountInBase < MIN_MIN_LIMIT_ORDER_AMOUNT_BASE) revert InvalidSettings();
+        if (settings.minLimitOrderAmountInBase < settings.lotSizeInBase) revert InvalidSettings();
+        if (settings.tickSize.fullMulDiv(settings.lotSizeInBase, baseSize) == 0) revert InvalidSettings();
+    }
+
+    /// @dev Performs sanity checks on the addresses passed to make it slightly more difficult to deploy a broken market
+    function _assertValidTokenPair(address quoteToken, address baseToken) internal pure {
+        if (quoteToken == baseToken) revert InvalidPair();
+        if (quoteToken == address(0)) revert InvalidTokenAddress();
+        if (baseToken == address(0)) revert InvalidTokenAddress();
+    }
+
+    /*▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀
+                            PRIVATE HELPERS
+    ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀*/
+
+    /// @dev Event helper that prevents stack from blowing without IR
+    function _emitMarketCreated(
+        address creator,
+        address marketAddress,
+        uint8 quoteDecimals,
+        uint8 baseDecimals,
+        ConfigParams memory config,
+        SettingsParams calldata settings
+    ) internal {
+        emit MarketCreated(
+            CLOBEventNonce.inc(),
+            creator,
+            config.baseToken,
+            config.quoteToken,
+            marketAddress,
+            quoteDecimals,
+            baseDecimals,
+            config,
+            settings
+        );
+    }
+
+    /// @dev Gets the token hash which can be used as a UID for a market
+    function _getTokenHash(address tokenA, address tokenB) internal pure returns (bytes32) {
+        (tokenA, tokenB) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+
+        return keccak256(abi.encodePacked(tokenA, tokenB));
+    }
+
+    /// @dev Helper to set the storage slot of the storage struct for this contract
+    function _getStorage() internal pure returns (CLOBManagerStorage storage ds) {
+        return CLOBManagerStorageLib.getCLOBManagerStorage();
+    }
+}
+
 
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 pragma solidity 0.8.27;
 
-interface IUniswapV2Callee {
-    function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
+interface IUniswapV2Factory {
+    event PairCreated(address indexed token0, address indexed token1, address pair, uint256);
+
+    function feeTo() external view returns (address);
+    function feeToSetter() external view returns (address);
+
+    function getPair(address tokenA, address tokenB) external view returns (address pair);
+    function allPairs(uint256) external view returns (address pair);
+    function allPairsLength() external view returns (uint256);
+
+    function createPair(address tokenA, address tokenB) external returns (address pair);
+
+    function setFeeTo(address) external;
+    function setFeeToSetter(address) external;
 }
 
 pragma solidity 0.8.27;
@@ -6802,59 +6814,8 @@ interface IUniswapV2Pair {
 
 pragma solidity 0.8.27;
 
-// a library for handling binary fixed point numbers (https://en.wikipedia.org/wiki/Q_(number_format))
-
-// range: [0, 2**112 - 1]
-// resolution: 1 / 2**112
-
-library UQ112x112 {
-    uint224 constant Q112 = 2 ** 112;
-
-    // encode a uint112 as a UQ112x112
-    function encode(uint112 y) internal pure returns (uint224 z) {
-        z = uint224(y) * Q112; // never overflows
-    }
-
-    // divide a UQ112x112 by a uint112, returning a UQ112x112
-    function uqdiv(uint224 x, uint112 y) internal pure returns (uint224 z) {
-        z = x / uint224(y);
-    }
-}
-
-pragma solidity 0.8.27;
-
-interface IERC20 {
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    event Transfer(address indexed from, address indexed to, uint256 value);
-
-    function name() external view returns (string memory);
-    function symbol() external view returns (string memory);
-    function decimals() external view returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address owner) external view returns (uint256);
-    function allowance(address owner, address spender) external view returns (uint256);
-
-    function approve(address spender, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-}
-
-pragma solidity 0.8.27;
-
-interface IUniswapV2Factory {
-    event PairCreated(address indexed token0, address indexed token1, address pair, uint256);
-
-    function feeTo() external view returns (address);
-    function feeToSetter() external view returns (address);
-
-    function getPair(address tokenA, address tokenB) external view returns (address pair);
-    function allPairs(uint256) external view returns (address pair);
-    function allPairsLength() external view returns (uint256);
-
-    function createPair(address tokenA, address tokenB) external returns (address pair);
-
-    function setFeeTo(address) external;
-    function setFeeToSetter(address) external;
+interface IUniswapV2Callee {
+    function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
 }
 
 pragma solidity 0.8.27;
@@ -6878,6 +6839,45 @@ library Math {
         } else if (y != 0) {
             z = 1;
         }
+    }
+}
+
+pragma solidity 0.8.27;
+
+interface IERC20 {
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+    function decimals() external view returns (uint8);
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address owner) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
+
+    function approve(address spender, uint256 value) external returns (bool);
+    function transfer(address to, uint256 value) external returns (bool);
+    function transferFrom(address from, address to, uint256 value) external returns (bool);
+}
+
+pragma solidity 0.8.27;
+
+// a library for handling binary fixed point numbers (https://en.wikipedia.org/wiki/Q_(number_format))
+
+// range: [0, 2**112 - 1]
+// resolution: 1 / 2**112
+
+library UQ112x112 {
+    uint224 constant Q112 = 2 ** 112;
+
+    // encode a uint112 as a UQ112x112
+    function encode(uint112 y) internal pure returns (uint224 z) {
+        z = uint224(y) * Q112; // never overflows
+    }
+
+    // divide a UQ112x112 by a uint112, returning a UQ112x112
+    function uqdiv(uint224 x, uint112 y) internal pure returns (uint224 z) {
+        z = x / uint224(y);
     }
 }
 
