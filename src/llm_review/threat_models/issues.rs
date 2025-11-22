@@ -204,7 +204,7 @@ impl IssueStructTrait for ActorAbuses {
         dedup_pattern(self).await
     }
     fn issue_title(&self) -> String {
-        "actor".to_string()
+        "actor exploit".to_string()
     }
     fn multi_issue_to_findings_prompt(&self, repo: &RepoPaths) -> String {
         generate_multi_actor_to_findings_prompt(&self, repo)
