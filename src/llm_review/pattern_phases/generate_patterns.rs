@@ -112,12 +112,6 @@ where
                 "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
             ));
 
-            info!("actor abuse instruction_prompt => {}", instruction_prompt);
-            info!(
-                "actor abuse json_requirement_prompt => {}",
-                json_requirement_prompt
-            );
-
             for run in 0..ACTOR_RUNS {
                 spawn_run(Arc::clone(&prompt), run + 1);
             }
