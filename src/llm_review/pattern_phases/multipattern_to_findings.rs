@@ -56,7 +56,7 @@ where
 
     let runs = if issue_title == "invariant" {
         INVARIANT_DISCOVERY_RUNS
-    } else if issue_title == "actor" {
+    } else if issue_title == "actor exploit" {
         ACTOR_DISCOVERY_RUNS
     } else {
         PATTERN_DISCOVERY_RUNS

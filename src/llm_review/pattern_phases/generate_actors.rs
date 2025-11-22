@@ -36,6 +36,12 @@ pub async fn execute(code: &str, arc_agent: &Arc<AIAgent>, repo: &RepoPaths) -> 
     let json_requirement_prompt = dynamic_prompts::actors::get_actor_list_json();
     let prompt = format!("{instruction_prompt}{code_plus_context}{json_requirement_prompt}");
 
+    info!("actor instruction_prompt => {}", instruction_prompt);
+    info!(
+        "actor json_requirement_prompt => {}",
+        json_requirement_prompt
+    );
+
     // Single LLM call - no need for threads since we only run once per contract
     info!("---- LLM analysis for Enumerating Actors ----");
     let actors: Actors = arc_agent.extract_with_retry(&prompt).await?;

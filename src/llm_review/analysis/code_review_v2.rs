@@ -6,7 +6,7 @@ use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
 use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::contract::contract_category::{
-    ContractCategory, get_contract_spec_from_category,
+    get_contract_spec_from_category, ContractCategory,
 };
 use crate::llm_review::contract::contract_file_map::ContractType;
 use crate::llm_review::findings::findings::CLAUDE_4_5_SONNET;
@@ -62,11 +62,11 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these failed
-    let custom_scoped_contracts = Some(vec![
-        "GTELaunchpadV2Pair".to_string(),
-        "Distributor".to_string(),
-    ]);
-    // let custom_scoped_contracts: Option<Vec<_>> = None;
+    // let custom_scoped_contracts = Some(vec![
+    //     "GTELaunchpadV2Pair".to_string(),
+    //     "Distributor".to_string(),
+    // ]);
+    let custom_scoped_contracts: Option<Vec<_>> = None;
 
     let (
         ai_verify_agent,
@@ -295,7 +295,7 @@ pub async fn generate_ai_agents(
     rigorous PoC tests that validate the findings.";
 
     // Create verification agent using OpenAI O3
-    let verify_config = AgentConfig::new(Some(repo.clone()))
+    let _verify_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5")
         .with_preamble(verify_preamble)
         .with_file_picker(false); // Disabled to avoid rate limits
@@ -313,7 +313,7 @@ pub async fn generate_ai_agents(
         .with_file_picker(false) // Disabled to avoid rate limits
         .with_file_retrieval(false);
 
-    let ai_finding_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
+    // let ai_finding_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
     let ai_pattern_verify_agent =
         Arc::new(AgentFactory::create_gemini_agent(&verify_config_gemini)?);
     // let _finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
@@ -358,9 +358,9 @@ pub async fn generate_ai_agents(
     // )?);
 
     Ok((
-        ai_pattern_verify_agent,
+        ai_pattern_verify_agent.clone(),
         pattern_discovery_gemini_agent.clone(),
-        ai_finding_verify_agent,
+        ai_pattern_verify_agent,
         pattern_discovery_gemini_agent,
     ))
 }
