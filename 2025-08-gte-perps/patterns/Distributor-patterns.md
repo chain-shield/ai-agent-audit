@@ -1,79 +1,95 @@
-## Verified Patterns Found: 21
+## Verified Patterns Found: 20
 
 ## Verified Patterns Found in following Categories:
 
+- FeeOnTransferAssumption
 - ERC20DecimalsMismatch
 - UnsafeAssembyTypeCasts
+- EpochOrIndexMonotonicity
 - PrecisionDriftAccumulation
-- FeeOnTransferAssumption
-- StandardViolation
-- PricePrecisionOrRoundingError
+- MaturityorGatingByPass
+- UnsafeRecipient
+- AccessControlOrAuthByPass
 - GriefableCallbacks
 - FlashLoanEconomicManipulation
-- AccessControlOrAuthByPass
-- ReserveOrPriceDesync
 - AccountingInvariantViolation
+- PricePrecisionOrRoundingError
 
 
 
 ## Summary of Patterns
 
-Missing Asset Validation in addRewards Enables Reward Theft
+Launchpad Graduation Permanently Disables Fee Accrual
 
-Precision loss in reward accumulator leads to permanent loss of rewards
+Rewards accrual precision loss freezes funds due to index truncation
 
-Precision Loss leading to Stuck Funds
+Precision loss in RewardsTrackerLib locks rewards for standard tokens
 
-User rewards misdirected to Launchpad contract instead of user
+Permanent Lock of Reward Dust due to Precision Loss
 
-AMM Pair Denial-of-Service via Distributor Revert
+Unsafe Downcast in Reward Debt Calculation
 
-Potential Denial of Service on Pair via Rewards Callback
+Unsafe Downcast to uint96 in RewardsTrackerLib
 
-Denial of Service in Uniswap V2 Pair via Distributor Integration
+Rewards lost due to precision loss in RewardsTrackerLib
 
-Rewards Loss due to Insufficient Precision Factor
+Loss of rewards due to low precision in RewardsTracker accumulator
 
-Permanent locking of dust rewards due to accounting precision loss
+Rewards accounting precision loss leads to stuck funds
 
-Flash Loan / Sandwich Attack on Instant Reward Distribution
+Rewards permanently lost due to precision mismatch in RewardsTracker
 
-Token supply cap causes DoS or reward loss via implicit type casting
+increaseStake and decreaseStake divert user rewards to the Launchpad contract
 
-Precision Loss in RewardsTracker causes massive reward burning for standard decimals
+Precision Loss in RewardsTrackerLib leads to permanent loss of rewards
 
-High precision loss in rewards accumulator due to low PRECISION_FACTOR
+Liquidity Pool DoS via Griefable Fee Distribution Callback
 
-Accumulated Precision Loss Locks Funds Permanently
+Insolvency via Fee-on-Transfer Tokens in Rewards Accounting
 
-Launchpad fee bypass via flash loan liquidity inflation
+Premature disabling of LP rewards via endRewards call
 
-Permanent Lock of Reward Dust due to Precision Drift
+Accrued fees deleted instead of distributed in endRewardsAccrual
 
-Low Precision Factor Causes Reward Loss for High-Supply Tokens
+addRewards allows depositing mismatched quote tokens to inflate reward pool
 
-DoS of Pair swaps when Distributor shares are zero
+Flash loan manipulation of LP supply allows theft of Launchpad fees
 
-Fee-on-transfer tokens break reward accounting in addRewards
+Arbitrary token in addRewards breaks reward accounting causing DoS
 
-Missing Input Validation in addRewards Enables Reward Dilution and DoS
-
-Arbitrary Token Injection via `addRewards` Corrupts Reward Accounting
+DoS in Launchpad Pair swaps when Distributor staking pool is empty
 
 ## Patterns
 
 
 
- ### Issue Type: ReserveOrPriceDesync
+ ### Issue Type: AccountingInvariantViolation
 
- ### Relevant Function/Location: Distributor.addRewards
+ ### Relevant Function/Location: Distributor.endRewards
 
  ### Title
-Missing Asset Validation in addRewards Enables Reward Theft
+Launchpad Graduation Permanently Disables Fee Accrual
  ### Description/Code Snippet
-The `addRewards` function identifies the `launchAsset` pool but fails to verify that the second token argument (`quoteAsset`) matches the pool's configured `rs.quoteAsset`. An attacker can call `addRewards(ValidLaunchToken, FakeToken, 0, amount)` to inflate `rs.pendingQuoteRewards` with a worthless token. This increases the global `accQuoteRewardPerShare` for the valid pool. Users (including the attacker) can then claim legitimate quote tokens (e.g., USDC) from the contract based on this inflated accumulator, draining the distributor's balance of real assets.
+The `endRewards` function in `Distributor.sol` calls `pair.endRewardsAccrual()`, which sets `rewardsPoolActive` to 0. This function is intended to be called upon launchpad graduation to unlock transfers. However, disabling `rewardsPoolActive` permanently stops `GTELaunchpadV2Pair` from calculating and sending trading fees to the Distributor. This violates the protocol invariant that launchpad pairs feed the distributor, rendering the fee accrual mechanism non-functional exactly when trading begins.
  ### Static Signals
-assumes invariant without verifying, input token not checked against storage
+flag disables critical fee logic, lifecycle function disables revenue stream
+ ### Assets at Risk
+rewards
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
+
+
+
+
+ ### Issue Type: EpochOrIndexMonotonicity
+
+ ### Relevant Function/Location: Distributor.update
+
+ ### Title
+Rewards accrual precision loss freezes funds due to index truncation
+ ### Description/Code Snippet
+In `RewardsTrackerLib.getAccRewardsPerShare`, the reward accumulator increment is calculated as `(pending * 1e12) / totalShares`. If `totalShares` is large (e.g. 1e24) or pending rewards are small (dust from fees), this division truncates to 0. The subsequent `update` function deletes the `pending` rewards from storage but fails to increment the `accRewardPerShare` index. As a result, these rewards are permanently erased from the distribution logic but remain counted in `Distributor.totalPendingRewards`, making them indistributable to users and un-skimmable by admins (bricking the funds).
+ ### Static Signals
+delete self.pendingBaseRewards, division before summation
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -83,14 +99,14 @@ rewards
 
  ### Issue Type: AccountingInvariantViolation
 
- ### Relevant Function/Location: RewardsTracker.sol.update
+ ### Relevant Function/Location: Distributor.getAccRewardsPerShare
 
  ### Title
-Precision loss in reward accumulator leads to permanent loss of rewards
+Precision loss in RewardsTrackerLib locks rewards for standard tokens
  ### Description/Code Snippet
-The `RewardsTrackerLib.update` function calculates accumulated rewards per share using a precision factor of `1e12`: `(pending * 1e12) / totalShares`. For tokens with 18 decimals, `totalShares` (tracking token supply) is often much larger than `1e12`. If `pending` rewards are small (e.g., from frequent small fee accruals), `pending * 1e12` may be less than `totalShares`, causing the division to yield 0. The `pending` amount is deleted from storage but not added to the accumulator, resulting in a 100% loss of those rewards. An attacker can grief the protocol by repeatedly calling `claim()` to flush pending rewards while they are still in the dust range.
+The `RewardsTrackerLib` uses a fixed `PRECISION_FACTOR` of `1e12`. For a standard 18-decimal staking token (LaunchToken), `totalShares` can easily reach `1e24` (e.g., 1 million tokens). If rewards are added in a low-decimal token (e.g., USDC, 6 decimals), the calculation `(pendingRewards * 1e12) / totalShares` will truncate to zero for significant reward amounts (e.g., < 1,000,000 USDC in the example). Since `pendingRewards` are deleted upon update regardless of whether they contributed to `accRewardPerShare`, these rewards are effectively burned/locked in the contract.
  ### Static Signals
-division by totalShares, precision factor 1e12, integer truncation
+PRECISION_FACTOR = 1e12, division before multiplication, high decimals shares vs low decimals rewards
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -100,135 +116,14 @@ rewards
 
  ### Issue Type: PrecisionDriftAccumulation
 
- ### Relevant Function/Location: RewardsTrackerLib.getAccRewardsPerShare
-
- ### Title
-Precision Loss leading to Stuck Funds
- ### Description/Code Snippet
-In `RewardsTrackerLib.getAccRewardsPerShare`, the calculation `(pending * PRECISION_FACTOR) / totalShares` floors to zero if `pending * 1e12 < totalShares`. However, `Distributor` tracks the full `amount` in `totalPendingRewards`. Repeated small deposits via `addRewards` will increment `totalPendingRewards` without increasing the `accRewardsPerShare` used for distribution. This causes `totalPendingRewards` to permanently exceed the actual distributable claims, preventing the `skimExcessRewards` function (which relies on `balance - totalPendingRewards`) from working and locking the dust amounts forever.
- ### Static Signals
-division before addition, floor rounding in accumulator
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccountingInvariantViolation
-
- ### Relevant Function/Location: Distributor._distributeAssets
-
- ### Title
-User rewards misdirected to Launchpad contract instead of user
- ### Description/Code Snippet
-The `increaseStake` and `decreaseStake` functions in `Distributor` are restricted to `onlyLaunchpad`. These functions trigger reward distribution via `_distributeAssets`, which transfers pending rewards to `msg.sender`. Since `msg.sender` is the Launchpad contract, any rewards accrued by a user (e.g., from a previous buy or added incentives) are transferred to the Launchpad contract instead of the user's wallet when they buy more or sell. Unless the Launchpad has a mechanism to recover these funds, they are permanently lost to the user.
- ### Static Signals
-msg.sender used as recipient in restricted function, onlyLaunchpad modifier, safeTransfer(msg.sender)
- ### Assets at Risk
-Reward tokens (Base and Quote assets)
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: GriefableCallbacks
-
- ### Relevant Function/Location: GTELaunchpadV2Pair._update
-
- ### Title
-AMM Pair Denial-of-Service via Distributor Revert
- ### Description/Code Snippet
-The `GTELaunchpadV2Pair` contract calls `Distributor.addRewards` within its critical `_update` function (executed on every swap, mint, and burn). If `Distributor.addRewards` reverts, the entire AMM pair becomes unusable.
-
-One specific trigger is the `NoSharesToIncentivize` revert in `Distributor.addRewards`, which occurs if `rs.totalShares == 0`. If the Launchpad logic allows all stakes to be removed (e.g., post-graduation) without simultaneously disabling the Pair's fee accrual via `endRewards`, any subsequent interaction with the Pair will revert. Additionally, if the reward token (e.g., USDC) blacklists the Distributor contract, the `safeTransferFrom` in `addRewards` will revert, bricking the AMM pair.
- ### Static Signals
-external call in hot path, no try/catch, revert on external condition
- ### Assets at Risk
-liquidity pool availability
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: GriefableCallbacks
-
  ### Relevant Function/Location: Distributor.addRewards
 
  ### Title
-Potential Denial of Service on Pair via Rewards Callback
+Permanent Lock of Reward Dust due to Precision Loss
  ### Description/Code Snippet
-The `GTELaunchpadV2Pair` calls `Distributor.addRewards` during every swap if `rewardsPoolActive > 0`. The `Distributor.addRewards` function strictly reverts with `NoSharesToIncentivize` if `rs.totalShares == 0`. If a scenario arises where the pair is active but all users have unstaked (or no one has staked yet, and `totalShares` is 0), any attempt to swap on the pair will revert, effectively causing a DoS on the liquidity pool.
+In `RewardsTrackerLib.update`, the calculation of `accBaseRewardPerShare` uses integer division, truncating remainders (dust). These truncated amounts are removed from `pendingBaseRewards` (marking them as distributed) but are not added to the accumulator, so users can never claim them. However, `Distributor.totalPendingRewards` tracks the full added amount. `skimExcessRewards` only allows withdrawing funds in excess of `totalPendingRewards`. Consequently, the 'lost' dust remains accounted for in `totalPendingRewards` but is mathematically unclaimable, permanently locking it in the contract.
  ### Static Signals
-external call in loop/hook, revert condition in callback
- ### Assets at Risk
-liquidity pool
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: StandardViolation
-
- ### Relevant Function/Location: Distributor.addRewards
-
- ### Title
-Denial of Service in Uniswap V2 Pair via Distributor Integration
- ### Description/Code Snippet
-The `GTELaunchpadV2Pair` contract calls `Distributor.addRewards` in its `_update` function whenever fees are accrued. `Distributor.addRewards` contains a strict check: `if (rs.totalShares == 0) revert NoSharesToIncentivize();`. If the Distributor's total shares drop to zero (e.g., because all users have unstaked or sold their launch tokens), `addRewards` will revert. Consequently, the `_update` function in the Pair will revert, causing all Swaps, Mints, and Burns on the main trading pair to fail, effectively freezing the liquidity pool.
- ### Static Signals
-revert NoSharesToIncentivize(), external call in _update
- ### Assets at Risk
-Liquidity Pool Functionality
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: ERC20DecimalsMismatch
-
- ### Relevant Function/Location: Distributor.RewardsTrackerLib.update
-
- ### Title
-Rewards Loss due to Insufficient Precision Factor
- ### Description/Code Snippet
-The `PRECISION_FACTOR` in `RewardsTrackerLib` is set to 1e12. When distributing rewards where the staking token has 18 decimals and a large total supply (e.g., > 1M tokens / 1e24 wei) and the reward token has low decimals (e.g., USDC with 6 decimals), the accumulator calculation `(amount * 1e12) / totalShares` frequently truncates to zero. For example, with 1M staked tokens, a reward injection of 1,000 USDC (1e9 wei) results in `1e9 * 1e12 / 1e24 = 0`, causing the entire reward amount to be lost permanently.
- ### Static Signals
-mixes token amounts with 18-decimal math unscaled
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccountingInvariantViolation
-
- ### Relevant Function/Location: Distributor.skimExcessRewards
-
- ### Title
-Permanent locking of dust rewards due to accounting precision loss
- ### Description/Code Snippet
-In `RewardsTrackerLib.update()`, the function `getAccRewardsPerShare` calculates `accBaseRewardsPerShare += ((self.pendingBaseRewards * PRECISION_FACTOR) / uint128(totalShares))`. If `pendingBaseRewards * 1e12` is less than `totalShares`, the increment is zero due to integer division. However, `update()` subsequently deletes `self.pendingBaseRewards` regardless of whether the accumulator increased. The `Distributor` contract tracks the full amount in `totalPendingRewards`. This creates a discrepancy where `totalPendingRewards` includes amounts that were effectively burned from the internal accounting. Since `skimExcessRewards` relies on `asset.balanceOf(this) - totalPendingRewards`, these dust amounts cannot be skimmed by the admin, nor can they be claimed by users, leading to permanently stuck funds.
- ### Static Signals
-state variable tracks value cleared in library, precision loss in division
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: FlashLoanEconomicManipulation
-
- ### Relevant Function/Location: Distributor.addRewards
-
- ### Title
-Flash Loan / Sandwich Attack on Instant Reward Distribution
- ### Description/Code Snippet
-The `addRewards` function distributes rewards immediately to current stakers without any vesting or streaming duration. An attacker can front-run an `addRewards` transaction (or their own reward addition) by flash-buying a large amount of shares via the Launchpad's bonding curve (calling `increaseStake`), capturing a large portion of the rewards, and then selling/claiming in the same transaction.
- ### Static Signals
-rewards added and distributed in same block, no vesting/streaming period, shares manipulable via flash loan
+consistent floor toward sender/receiver, divide before multiply
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -238,14 +133,14 @@ rewards
 
  ### Issue Type: UnsafeAssembyTypeCasts
 
- ### Relevant Function/Location: Distributor.increaseStake
+ ### Relevant Function/Location: RewardsTrackerLib.stake
 
  ### Title
-Token supply cap causes DoS or reward loss via implicit type casting
+Unsafe Downcast in Reward Debt Calculation
  ### Description/Code Snippet
-The `RewardsTrackerLib` and `Distributor` enforce a `uint96` type for `shares` and `totalShares`. If a launched token has a total supply exceeding `type(uint96).max` (approx 7.9e28, or ~79 billion with 18 decimals), this creates a critical failure mode. For high-supply tokens (common in meme coins), `increaseStake` will either revert (if cast safely upstream) causing a DoS of the `Launchpad.buy` function, or silently truncate the stake (if cast unsafely) causing massive loss of user rewards. Given the permissionless nature of the launcher, this limit is easily breached.
+In `RewardsTrackerLib.sol`, the `stake`, `unstake`, and `claim` functions explicitly cast the result of `totalAccRewards` (uint256) to `uint96` when updating `userData.baseRewardDebt` and `userData.quoteRewardDebt`. For tokens with high supply (common in meme coins or localized test tokens where supply > ~7.9e28 wei, i.e., ~79 billion tokens with 18 decimals), the accumulated rewards can exceed `type(uint96).max`. The explicit cast `uint96(...)` truncates the higher bits without reverting. This results in a significantly lower recorded debt than actual. When the user subsequently claims, the formula `reward = totalAccRewards - debt` uses the full `totalAccRewards` and the truncated `debt`, yielding a massive, incorrect payout that drains the distributor.
  ### Static Signals
-uint96(shares), uint96 totalShares
+userData.baseRewardDebt = uint96(totalAccRewards(...)), userData.quoteRewardDebt = uint96(totalAccRewards(...))
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -253,16 +148,33 @@ rewards
 
 
 
- ### Issue Type: ERC20DecimalsMismatch
+ ### Issue Type: UnsafeAssembyTypeCasts
+
+ ### Relevant Function/Location: Distributor.stake
+
+ ### Title
+Unsafe Downcast to uint96 in RewardsTrackerLib
+ ### Description/Code Snippet
+In `RewardsTrackerLib`, `baseRewardDebt` and `quoteRewardDebt` are explicitly cast to `uint96` without overflow checks. If `accRewardPerShare` grows sufficiently large (e.g., due to rewards being added when `totalShares` is very low, such as 1 wei), the debt calculation `(shares * acc) / 1e12` can exceed `type(uint96).max`. The downcast truncates the high bits, resulting in a stored debt significantly lower than the actual distributed value. This causes future `claim` calls to calculate an inflated `pendingReward`, allowing the user to drain the contract.
+ ### Static Signals
+uint96(totalAccRewards(...)), downcasts without range checks
+ ### Assets at Risk
+rewards
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: FeeOnTransferAssumption
 
  ### Relevant Function/Location: Distributor.update
 
  ### Title
-Precision Loss in RewardsTracker causes massive reward burning for standard decimals
+Rewards lost due to precision loss in RewardsTrackerLib
  ### Description/Code Snippet
-The `RewardsTrackerLib` uses a hardcoded `PRECISION_FACTOR` of `1e12` to calculate `accRewardPerShare`. The formula is `(pending * 1e12) / totalShares`. `totalShares` represents token amounts, typically with 18 decimals. If a project has a total supply of 100M tokens (1e26 units), and 1000 USDC (1e9 units, 6 decimals) are added as rewards: `1e9 * 1e12 = 1e21`. Dividing `1e21` by `1e26` yields 0. The `pending` rewards are deleted (cleared) in `update()`, but the accumulator is not incremented. This results in the complete loss of rewards for legitimate stakers whenever `(reward * 1e12) < totalShares`. For 18-decimal tokens, `1e12` precision is insufficient and leads to significant fund loss.
+In `RewardsTrackerLib.update`, the calculation `(pending * PRECISION_FACTOR) / totalShares` suffers from precision loss if `totalShares` is large relative to `pending` (specifically if `pending < totalShares / 1e12`). The `pending` rewards are deleted (cleared) regardless of whether they contributed to the accumulator, leading to permanent loss of 'dust' rewards stuck in the Distributor contract.
  ### Static Signals
-PRECISION_FACTOR = 1e12, division before multiplication (implicit in ratio), delete pending without remainder check
+division before addition, pending deleted unconditionally
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -275,11 +187,11 @@ rewards
  ### Relevant Function/Location: RewardsTrackerLib.update
 
  ### Title
-High precision loss in rewards accumulator due to low PRECISION_FACTOR
+Loss of rewards due to low precision in RewardsTracker accumulator
  ### Description/Code Snippet
-The `RewardsTrackerLib` sets `PRECISION_FACTOR` to `1e12`. When `update()` calculates `accBaseRewardPerShare`, it uses the formula `(pending * 1e12) / totalShares`. If `totalShares` (often 18 decimals) exceeds `pending * 1e12`, the result truncates to zero. For example, if 1 token (1e18 shares) is staked, any reward amount less than 1e6 (1 USDC) is truncated to 0, removed from pending, and permanently locked in the contract (as `totalPendingRewards` still tracks it, preventing skimming).
+The `RewardsTrackerLib` uses a `PRECISION_FACTOR` of `1e12` to calculate `accBaseRewardPerShare`. When `totalShares` is large (e.g., > 1e18) and the pending reward amount is small (e.g., < 1e6), the calculation `(pending * 1e12) / totalShares` rounds down to zero. The function then resets `pendingBaseRewards` to 0 without increasing the accumulator, causing those rewards to be permanently locked in `totalPendingRewards` and unclaimable by users.
  ### Static Signals
-mix 6/8/18 decimals without normalization, divide before multiply
+divide before multiply, mix 6/8/18 decimals without normalization
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -287,16 +199,16 @@ rewards
 
 
 
- ### Issue Type: PrecisionDriftAccumulation
+ ### Issue Type: AccountingInvariantViolation
 
- ### Relevant Function/Location: Distributor.skimExcessRewards
+ ### Relevant Function/Location: RewardsTrackerLib.update
 
  ### Title
-Accumulated Precision Loss Locks Funds Permanently
+Rewards accounting precision loss leads to stuck funds
  ### Description/Code Snippet
-Due to the precision issue in `RewardsTrackerLib`, rewards that round to zero are removed from `pendingBaseRewards` but not added to `accBaseRewardPerShare`. These tokens remain in the `Distributor` contract's balance. However, `skimExcessRewards` calculates skimmable amounts as `balance - totalPendingRewards`. Since `totalPendingRewards` was incremented when rewards were added (via `_increaseTotalPending`), the contract accounting believes these funds are pending distribution. This results in the funds being permanently locked: they cannot be claimed by users (due to zero accrual) and cannot be skimmed by the admin (due to accounting checks).
+In `RewardsTrackerLib.update`, the calculation `(pendingBaseRewards * PRECISION_FACTOR) / totalShares` suffers from precision loss. `PRECISION_FACTOR` is 1e12. If `totalShares` (e.g., 18-decimal LaunchToken supply ~1e27) is significantly larger than `pendingBaseRewards * 1e12`, the division yields zero. The `pendingBaseRewards` are then deleted without incrementing `accBaseRewardPerShare`. These rewards remain in the contract balance and `totalPendingRewards` variable but are mathematically inaccessible to users, permanently locking them.
  ### Static Signals
-balance check vs accounting var, rounding down to zero
+accBaseRewardsPerShare += ((self.pendingBaseRewards * PRECISION_FACTOR) / uint128(totalShares)), delete self.pendingBaseRewards
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -304,16 +216,16 @@ rewards
 
 
 
- ### Issue Type: FlashLoanEconomicManipulation
+ ### Issue Type: ERC20DecimalsMismatch
 
- ### Relevant Function/Location: GTELaunchpadV2Pair._getLaunchpadFees
+ ### Relevant Function/Location: RewardsTrackerLib.update
 
  ### Title
-Launchpad fee bypass via flash loan liquidity inflation
+Rewards permanently lost due to precision mismatch in RewardsTracker
  ### Description/Code Snippet
-In `GTELaunchpadV2Pair._getLaunchpadFees`, the fee collected for the Distributor is calculated as a fraction of the Launchpad's share of total liquidity (`totalSupply()`). An attacker can flash-mint a massive amount of LP tokens to inflate `totalSupply` before a swap, diluting the fee to near zero, then burn the LP tokens, effectively bypassing the protocol fee.
+In `RewardsTrackerLib.sol`, `update()` calculates `accBaseRewardPerShare` using `(pending * 1e12) / totalShares`. Since `PRECISION_FACTOR` is fixed at `1e12`, and staking tokens (LaunchTokens) typically use 18 decimals with large supplies (e.g. `1e24` wei), while rewards can be low-decimal tokens (e.g. USDC, 6 decimals), the calculation `(rewardAmount * 1e12) / totalShares` frequently truncates to zero. This causes `pendingBaseRewards` to be cleared (set to 0) without increasing `accBaseRewardPerShare`. The rewards are effectively burned from the user's perspective but remain locked in the `Distributor` contract balance. Critically, `skimExcessRewards` cannot recover them because `totalPendingRewards` still tracks these lost amounts as liabilities.
  ### Static Signals
-fee calculation depends on totalSupply(), uses spot balance in swap path, no time-weighted average
+mixes token amounts with 18-decimal math unscaled, PRECISION_FACTOR = 1e12
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -321,37 +233,33 @@ rewards
 
 
 
- ### Issue Type: PrecisionDriftAccumulation
+ ### Issue Type: UnsafeRecipient
 
- ### Relevant Function/Location: Distributor.addRewards
+ ### Relevant Function/Location: Distributor.increaseStake
 
  ### Title
-Permanent Lock of Reward Dust due to Precision Drift
+increaseStake and decreaseStake divert user rewards to the Launchpad contract
  ### Description/Code Snippet
-In `RewardsTrackerLib.update`, the accumulated reward per share is calculated as `acc += (amount * 1e12) / totalShares`. Any remainder from this division (dust) is lost from the distributable amount tracked by `accBaseRewardPerShare`/`accQuoteRewardPerShare`.
-
-However, `Distributor.addRewards` increments `totalPendingRewards` by the full `amount`. Users can only claim the truncated amount derived from the accumulator. As a result, `totalPendingRewards` remains permanently higher than the sum of all possible claims by the amount of the dust.
-
-Since `skimExcessRewards` enforces `amount <= balance - totalPendingRewards`, this dust portion is considered 'owed' to users by the accounting system but is mathematically impossible to claim, causing it to be locked in the contract forever.
+When `increaseStake` or `decreaseStake` is called by the `Launchpad`, pending rewards for the user (`account`) are calculated via `rs.stake` / `rs.unstake`. However, the internal function `_distributeAssets` transfers these rewards to `msg.sender` (the `Launchpad` contract) instead of the `account`. Unless the Launchpad is explicitly designed to sweep these tokens to the user (which is non-standard for this flow), the rewards are locked in the Launchpad contract.
  ### Static Signals
-acc += amount / totalShares, balance - totalPendingRewards check, no dust rollup mechanism
+base.safeTransfer(msg.sender, baseAmount), msg.sender != account
  ### Assets at Risk
 rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
 
 
 
 
- ### Issue Type: PricePrecisionOrRoundingError
+ ### Issue Type: AccountingInvariantViolation
 
  ### Relevant Function/Location: RewardsTrackerLib.getAccRewardsPerShare
 
  ### Title
-Low Precision Factor Causes Reward Loss for High-Supply Tokens
+Precision Loss in RewardsTrackerLib leads to permanent loss of rewards
  ### Description/Code Snippet
-The `RewardsTrackerLib` uses a fixed `PRECISION_FACTOR` of `1e12` for calculating `accRewardsPerShare`. For tokens with high total supply (e.g., 18 decimals, 1M+ tokens = 1e24 units), the division `(pendingRewards * 1e12) / totalShares` will round down to zero for significant reward amounts (e.g., 1 USDC = 1e6 units -> 1e18 numerator < 1e24 denominator). These rewards are added to `totalPendingRewards` but never accrue to user shares, effectively locking them in the contract forever as they cannot be claimed nor skimmed (since `skimExcessRewards` respects `totalPendingRewards`).
+The `RewardsTrackerLib` uses a `PRECISION_FACTOR` of `1e12` for reward accumulation (`acc += amount * 1e12 / totalShares`). However, `totalShares` can be up to `uint96` (approx 7.9e28). For high-supply launch tokens (e.g., 1 billion tokens = 1e27 wei) and low-decimal reward tokens like USDC (6 decimals), the numerator `amount * 1e12` is frequently smaller than `totalShares`. For example, a 10 USDC reward (1e7) yields `1e7 * 1e12 = 1e19`. If shares > 10 tokens (1e19), the division results in 0. The `update` function deletes the `pendingRewards` but adds 0 to `accBaseRewardPerShare`, causing the rewards to be permanently stuck in `totalPendingRewards` (preventing skimming) but unclaimed by users.
  ### Static Signals
-mix 6/8/18 decimals without normalization, divide before multiply, precision factor too low
+PRECISION_FACTOR = 1e12, division by totalShares without sufficient scaling
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -364,11 +272,11 @@ rewards
  ### Relevant Function/Location: GTELaunchpadV2Pair._distributeLaunchpadFees
 
  ### Title
-DoS of Pair swaps when Distributor shares are zero
+Liquidity Pool DoS via Griefable Fee Distribution Callback
  ### Description/Code Snippet
-The `GTELaunchpadV2Pair` calls `Distributor.addRewards` during every swap/mint/burn via `_update`. `Distributor.addRewards` reverts if `totalShares == 0`. If the staking pool becomes empty (e.g. all users transfer out or unstake), the Uniswap Pair becomes unusable as all operations will revert.
+The `GTELaunchpadV2Pair` calls `_distributeLaunchpadFees` during every `_update` (triggered by `swap`, `mint`, `burn`). This function calls `Distributor.addRewards`, which executes a `safeTransferFrom` to pull fees from the Pair. If this transfer fails (e.g., the reward token is paused, the Distributor address is blacklisted by the token like USDC, or the token has a malicious hook), the entire Pair transaction reverts. This allows a single external factor to freeze the liquidity pool.
  ### Static Signals
-external call in hot path, revert in external call blocks execution, addRewards reverts on zero shares
+external call in loop without failure isolation, no try/catch around external hook, callback success required for core flow to proceed
  ### Assets at Risk
 liquidity
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -381,14 +289,48 @@ liquidity
  ### Relevant Function/Location: Distributor.addRewards
 
  ### Title
-Fee-on-transfer tokens break reward accounting in addRewards
+Insolvency via Fee-on-Transfer Tokens in Rewards Accounting
  ### Description/Code Snippet
-The `addRewards` function updates `totalPendingRewards` and the pool's `pendingBaseRewards` using the input `amount` parameter, but subsequently calls `safeTransferFrom` without verifying the actual amount received. If a fee-on-transfer or deflationary token is used as the reward asset, the contract will track more rewards than it actually holds. This insolvency ensures that the last users to attempt `claimRewards` will fail due to insufficient contract balance, effectively locking their funds.
+The `addRewards` function accounts for the full input `amount` in `totalPendingRewards` and the `RewardsTracker` state, but uses `safeTransferFrom` to pull tokens. If the reward token has a transfer fee (FOT), the contract receives less than `amount`. This creates a discrepancy where `totalPendingRewards` exceeds the actual contract balance. Eventually, the Distributor will lack sufficient funds to pay out the last claimers, leading to insolvency.
  ### Static Signals
-uses input amount instead of post-transfer delta, no balanceBefore/After check, accounting based on transfer parameter, not actual balance change
+uses input amount instead of post-transfer delta, no balanceBefore/After check, accounting based on transfer parameter
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: MaturityorGatingByPass
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair.endRewardsAccrual
+
+ ### Title
+Premature disabling of LP rewards via endRewards call
+ ### Description/Code Snippet
+The `Distributor.endRewards` function calls `pair.endRewardsAccrual()`, which sets `rewardsPoolActive` to 0. According to the system overview, `endRewards` is called at 'Graduation', immediately after the pair is deployed. This action permanently disables the `GTELaunchpadV2Pair` from accruing fees for the Distributor, violating the documented behavior that the pair's fees feed the distributor.
+ ### Static Signals
+delete rewardsPoolActive, endRewards called at graduation
+ ### Assets at Risk
+rewards
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
+
+
+
+
+ ### Issue Type: MaturityorGatingByPass
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair.endRewardsAccrual
+
+ ### Title
+Accrued fees deleted instead of distributed in endRewardsAccrual
+ ### Description/Code Snippet
+`GTELaunchpadV2Pair.endRewardsAccrual` deletes `accruedLaunchpadFee0` and `accruedLaunchpadFee1` before calling `_update`. If this function is called when there are undistributed accrued fees (e.g., from swaps in the same block or if `_distributeLaunchpadFees` hasn't run), those fees are permanently destroyed instead of being sent to the Distributor.
+ ### Static Signals
+delete accruedLaunchpadFee0, call to _update after delete
+ ### Assets at Risk
+rewards
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
 
 
 
@@ -398,11 +340,45 @@ rewards
  ### Relevant Function/Location: Distributor.addRewards
 
  ### Title
-Missing Input Validation in addRewards Enables Reward Dilution and DoS
+addRewards allows depositing mismatched quote tokens to inflate reward pool
  ### Description/Code Snippet
-The `addRewards` function accepts `token0` and `token1` and determines the target pool by checking if either is a registered launch asset. However, it fails to verify that the *other* token provided matches the pool's configured `quoteAsset` stored in `rs.quoteAsset`. An attacker can call `addRewards(RealLaunchAsset, MaliciousToken, ...)` which the contract accepts, incorrectly treating `MaliciousToken` as the pool's quote asset. This increments `rs.pendingQuoteRewards` and transfers `MaliciousToken` to the contract. Subsequent calls to `update()` or `claimRewards()` incorporate this inflated pending amount into `accQuoteRewardPerShare`. Since `claimRewards` pays out the *configured* `rs.quoteAsset` (not the malicious one), the inflated accumulator causes the contract to attempt transferring more valid quote tokens than it holds (or than are owed), draining the pool's quote asset reserves or causing `claimRewards` to revert (DoS) due to arithmetic underflow in `_decreaseTotalPending`.
+The `addRewards` function identifies the reward pool using one of the two input tokens but fails to verify that the *second* token matches the pool's configured `quoteAsset`. An attacker can provide a valid `launchAsset` and a worthless/malicious token as the `quoteAsset`. The contract accepts the worthless token, transfers it in, and increments the pool's `pendingQuoteRewards`. Since `pendingQuoteRewards` is used to calculate the accumulator for the pool's *actual* `quoteAsset` (e.g., USDC), users will effectively claim real USDC based on the attacker's worthless deposits, draining the contract.
  ### Static Signals
-no require(token1 == rs.quoteAsset), rs.addQuoteRewards(..., quoteAsset, ...), quoteAsset variable derived from input parameters without validation against storage
+rs.quoteAsset != address(0), missing require(quoteAsset == rs.quoteAsset)
+ ### Assets at Risk
+rewards
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: FlashLoanEconomicManipulation
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair._getLaunchpadFees
+
+ ### Title
+Flash loan manipulation of LP supply allows theft of Launchpad fees
+ ### Description/Code Snippet
+The `GTELaunchpadV2Pair` calculates the `launchpadFee` based on the ratio of `launchpadLp` balance to the total LP supply (`totalSupply`). An attacker can use a flash loan to deposit assets and mint a massive amount of LP tokens, inflating `totalSupply` and diluting the Launchpad's fee share to near zero. The attacker then performs swaps where the fee stays in the pool (captured by their majority LP position) instead of being sent to the Distributor.
+ ### Static Signals
+fee calculated using totalSupply, uses totalSupply in same tx as deposit/withdraw, fee share depends on balance ratio
+ ### Assets at Risk
+rewards, treasury
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: Distributor.addRewards
+
+ ### Title
+Arbitrary token in addRewards breaks reward accounting causing DoS
+ ### Description/Code Snippet
+The `addRewards` function allows a caller to specify `token1` arbitrarily. If `token0` is a valid launch asset, the function assumes `token1` is the corresponding quote asset without validation. An attacker can call `addRewards(validLaunchAsset, maliciousToken, 0, amount)`. This inflates the internal `pendingQuoteRewards` (which tracks the valid quote asset, e.g., USDC) while transferring and tracking `totalPendingRewards` for the malicious token. When users claim, the contract attempts to transfer the real quote asset. The `_decreaseTotalPending` check fails because `totalPendingRewards[USDC]` was never incremented, causing a revert. This permanently prevents all users from claiming rewards (DoS).
+ ### Static Signals
+missing validation of token1 == rs.quoteAsset, update internal state based on unchecked input asset
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -415,12 +391,12 @@ rewards
  ### Relevant Function/Location: Distributor.addRewards
 
  ### Title
-Arbitrary Token Injection via `addRewards` Corrupts Reward Accounting
+DoS in Launchpad Pair swaps when Distributor staking pool is empty
  ### Description/Code Snippet
-The `addRewards` function allows permissionless reward addition by specifying two tokens (`token0`, `token1`). The contract identifies the reward pool associated with one of the tokens (`LaunchAsset`) but fails to verify that the second token matches the pool's immutable `quoteAsset`. An attacker can call `addRewards` with a valid `LaunchAsset` and a worthless `MaliciousToken`. The contract accepts the `MaliciousToken` via transfer, but increments the pool's `pendingQuoteRewards` accumulator. Since `pendingQuoteRewards` drives the distribution of the legitimate `quoteAsset` (e.g., USDC) in `_distributeAssets`, users claiming rewards will be paid out in USDC based on the inflated value from the malicious token deposit, draining the legitimate USDC rewards from the contract.
+ The `GTELaunchpadV2Pair` contract logic mandates fee distribution to the `Distributor` during every `swap()` that accrues fees (`_update` -> `_distributeLaunchpadFees` -> `Distributor.addRewards`). However, `Distributor.addRewards` explicitly reverts with `NoSharesToIncentivize` if `totalShares == 0`. If all users unstake their tokens (or if the pool has 0 shares for any reason, e.g. post-launch sell-off), any swap attempt on the Pair will revert due to this check. This creates a denial of service on the main liquidity pool dependent on the state of the external staking contract.
  ### Static Signals
-token/asset address changes without accounting migration, balance tracking references different token than actual holdings, no require(token1 == rs.quoteAsset)
+revert NoSharesToIncentivize, fee distribution logic coupled to external state
  ### Assets at Risk
-rewards
+fees
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 

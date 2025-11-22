@@ -8,7 +8,7 @@ use crate::{
         agent::agent_enums::AIAgent,
         analysis::{
             context_state::{generate_audit_scope, get_metadata_context},
-            semaphore::VERIFY_SEM,
+            semaphore::GENERAL_SEM,
         },
         findings::{
             finding_enums::Severity,
@@ -193,7 +193,7 @@ pub async fn execute(
         let repo_clone = Arc::clone(&arc_repo);
         let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
         let verify_prompt_and_scope = Arc::clone(&updated_verify_prompt);
-        let sem = Arc::clone(&VERIFY_SEM);
+        let sem = Arc::clone(&GENERAL_SEM);
 
         handles.push(tokio::spawn(async move {
             // ── acquire permit ────────────────────────
@@ -328,7 +328,7 @@ fn generate_verify_enum_lists(repo: &RepoPaths) -> VerifyEnumLists {
 }
 
 pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
-    let (severity_rubic, contest) = match repo.audit_type {
+    let (_, contest) = match repo.audit_type {
         AuditType::Code4rena => (CODE4RENA_SEVERITY_RUBRIC, "Code4rena"),
         AuditType::Sherlock => (SHERLOCK_SEVERITY_RUBRIC, "Sherlock"),
         AuditType::Cantina => (CANTINA_SEVERITY_RUBRIC, "Cantina"),
@@ -349,47 +349,210 @@ pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
 
     Your task: decide if a reported finding is Valid and to accurately assess its Severity in a {contest} contest.
 
-    ### SCOPE CHECK
-        - Is finding in scope? (see scope provided below)
+    # 🚨 CRITICAL VERIFICATION GATES - ALL MUST PASS
 
-    ### VALIDITY CHECK
-        - Trace execution path - does attack work?
-        - Check safeguards: access control, reentrancy guards, pauses, timelocks, validation
-        - Verify root cause is correct
-        - Check external dependencies - are assumptions reasonable?
+    You MUST verify the finding passes ALL gates. If ANY gate fails, the finding is Invalid or QA/Low.
 
-    ### COFIGURATION CHECK
-        **Does finding rely on constants (time, thresholds, buffers)?**
-        If YES, check:
-        - `// for testnet`, `// for testing`, `// temporary` comments
-        - Suspiciously small values (WEEK=1800 vs 604800, BUFFER=300 vs 3600)
-        - Commented-out production values
-        - Re-assess with production config
+    ---
 
-    ### SEVERITY && LIKELIHOOD CHECK
-        - Does finding Impact and Likelihood justify current Severity score?
-        - Please use Severity Rubric below to evaluate Severity Score
+    ## 🔍 PRE-GATE SANITY CHECK - VERIFY BUG EXISTS
 
-    ### WHEN IN DOUBT, LEAN TOWARD VALID, MARK AS SomeWhatConfident
-        - If a finding shows realistic user loss, mark Valid even if documented
-        - If a finding matches historical C4 Medium patterns, mark Valid
-        - If a finding shows missing standard protections, mark Valid
-        - Mark "in doubt" findings as SomeWhatConfident (not VeryConfident or Confident)
+    **BEFORE checking any gates, verify the bug actually exists in the code:**
+
+    **Step 1: Trace the Code Path**
+    - Locate exact function/contract, verify vulnerable code path exists (not hallucinated)
+    - Trace execution flow step-by-step, check if code matches finding's description
+
+    **INVALID if:** Function/contract doesn't exist, code path impossible, execution flow doesn't match
+
+    **Step 2: Verify Invariant Actually Exists**
+    - Check if claimed invariant is documented (NatSpec, comments, docs)
+    - Verify invariant is enforced elsewhere, confirm it's a real protocol requirement
+
+    **INVALID if:** Invariant not documented, not enforced elsewhere, assumed but not required
+
+    **Step 3: Reproduce the Issue**
+    - Can you trace exact steps to trigger the bug? Does PoC demonstrate claimed issue?
+
+    **INVALID if:** Cannot trace execution path, PoC doesn't trigger vulnerability, preconditions impossible
+
+    **⚠️ If sanity check fails → INVALID (hallucination). If passes → Proceed to GATE 1**
+
+    ---
+
+    ## GATE 1: SCOPE CHECK
+
+    **INVALID:** Root cause in OOS library, OOS token (except USDT), view-only cosmetic
+    **VALID:** Root cause in-scope OR in-scope code misuses OOS library
+
+    ---
+
+    ## GATE 2: USER ERROR CHECK 🚨
+
+    **INVALID if requires:** User chooses bad recipient, provides bad parameters, approves malicious contract, signs malicious data
+    **VALID if:** Protocol forces vulnerable state, attacker exploits without user involvement, user follows normal flow but protocol fails
+
+    ---
+
+    ## GATE 3: IMPACT CLASSIFICATION
+
+    **HIGH:** Theft/permanent loss of assets, unauthorized drains, economic attacks (non-dust)
+    **MEDIUM:** DoS of critical actions, accounting drift, mispricing, privilege escalation
+    **QA/LOW:** Dust amounts, stylistic issues, event inconsistencies, view-function errors
+
+    ---
+
+    ## GATE 4: LIKELIHOOD ASSESSMENT 🚨
+
+    **COMMON:** No preconditions, works anytime/anywhere, no special resources
+    **OCCASIONAL:** Specific but realistic conditions, some chains, moderate setup
+    **RARE:** Multiple unlikely conditions, extreme market states, significant resources
+
+    **Severity Matrix:**
+
+    **CRITICAL Impact** (bricks entire protocol, steals ALL funds, complete takeover):
+    - Common/Occasional → HIGH | Rare → **MEDIUM** ✅ (Exception: critical overrides rare)
+
+    **HIGH Impact** (substantial loss, core function break, major DoS):
+    - Common → HIGH | Occasional → HIGH/MEDIUM | Rare → LOW ❌
+
+    **MEDIUM Impact** (temporary DoS, accounting drift, bounded loss):
+    - Common → MEDIUM | Occasional → MEDIUM/LOW | Rare → QA ❌
+
+    **🚨 Key: CRITICAL = entire protocol/ALL funds/complete takeover | HIGH = substantial/core/major**
+
+    **Exception:** CRITICAL + Rare → still MEDIUM (protocol-ending bugs always valid)
+
+    ---
+
+    ## GATE 5: GOVERNANCE/CENTRALIZATION RISK 🚨🚨
+
+    **Question: Can governance/team prevent this by acting responsibly?**
+
+    **INVALID/QA if YES:**
+    - ❌ Admin sets wrong parameters, chooses malicious oracle, misconfigures
+    - ❌ Team deploys on wrong chain, doesn't verify addresses
+    - ❌ Team chooses malicious integration, configures incorrectly
+    - ❌ **"If [TrustedComponent] fails/has bug/behaves unexpectedly"** (assumes future bug)
+
+    **VALID if NO (code vulnerability):**
+    - ✅ Code should verify/check/validate but doesn't (missing runtime verification)
+    - ✅ Non-privileged user gains privileged access (privilege escalation)
+
+    **Key: Code logic/access control = VALID | Deployment/parameters/trusted component = INVALID**
+
+    **Red flags:** "Team should verify", "Only on chain X", "If [Component] fails", "Admin chooses"
+
+    ---
+
+    ## GATE 6: UNSUPPORTED TOKEN CHECK
+
+    **INVALID:** Fee-on-transfer/rebasing/decimals edge cases (unless explicitly supported or USDT)
+
+    ---
+
+    ## GATE 7: SPECULATION CHECK 🚨🚨
+
+    **Question: Does root cause exist NOW and is exploitable with TODAY's code?**
+
+    **INVALID if speculative:**
+    - ❌ "If protocol integrates/adds/upgrades in future..."
+    - ❌ **"If [Component] fails/has bug/behaves unexpectedly/is paused..."** (assumes future bug)
+    - ❌ "Could/might/potentially happen if..." (hypothetical)
+
+    **VALID if current:**
+    - ✅ Bug in current code, exploit works now, no future changes needed
+    - ✅ Plausible future integration (docs mention it, code has hooks, strong evidence)
+
+    **Red flags:** "If [Component] fails", "Could happen if", "When protocol adds", "Future integration"
+
+    ---
+
+    ## GATE 8: "BY DESIGN" CHECK 🚨🚨
+
+    **Question: Is this documented as intentional? Check NatSpec, comments, docs, function naming.**
+
+    **🚨 CRITICAL EXCEPTION: Documentation ≠ Not a Vulnerability**
+
+    **VALID despite documentation if creates:**
+    - ✅ Economic risk/loss for users (liquidators, LPs, depositors)
+    - ✅ Missing standard protection (slippage, deadline, minOut, price bounds)
+    - ✅ MEV/value extraction opportunity
+    - ✅ Incentive misalignment harming protocol
+
+    **Examples VALID despite docs:**
+    - ✅ Missing slippage/deadline/minOut → controllable loss (Medium) - C4 consistently awards Medium
+    - ✅ Unfair fee structure → systematic disadvantage (Low/Medium)
+
+    **INVALID if documented + no harm:**
+    - ❌ Admin emergency pause, governance timelock (protective measures)
+
+    **When in doubt:** Mark VALID + SomeWhatConfident (false negatives worse than false positives)
+
+    ---
+
+    ## GATE 9: EXPLOITABILITY (PoC)
+
+    **Requirements:** Minimal reproducible PoC showing state change, non-dust effect, realistic actors
+
+    ---
+
+    ## GATE 10: CONFIGURATION CHECK
+
+    **If finding relies on constants:** Check for testnet comments, suspiciously small values, commented-out production values
+
+    ---
+
+    ## GATE 11: EXISTING SAFEGUARDS CHECK 🚨🚨
+
+    **Question: Does code already have safeguards that mitigate/eliminate this vulnerability?**
+
+    **INVALID if safeguards exist and work:**
+    - ❌ Reentrancy → has `nonReentrant`, CEI pattern, or guard
+    - ❌ Integer overflow → Solidity 0.8+ with built-in checks
+    - ❌ Access control → has `onlyOwner`, `onlyRole`, role checks
+    - ❌ Front-running → has commit-reveal, deadlines, slippage protection
+    - ❌ Oracle manipulation → has TWAP, multiple sources, price bounds
+    - ❌ DoS → has pagination, gas limits, circuit breakers
+    - ❌ Precision loss → has proper scaling, rounding checks
+
+    **VALID if safeguards missing or insufficient:**
+    - ✅ No safeguard exists for attack vector
+    - ✅ Safeguard bypassable (show bypass in PoC)
+    - ✅ Safeguard incomplete (only some functions protected)
+    - ✅ Safeguard has wrong parameters (deadline too long, slippage too high)
+    - ✅ Safeguard incorrectly implemented (show flaw in PoC)
+
+    **How to Check:** Search codebase for modifiers/guards, verify vulnerable function uses them, test if bypassable
+
+    **Red Flags (Check for safeguards first):**
+    - "Missing reentrancy guard" → Search for `nonReentrant`, CEI pattern
+    - "Integer overflow" → Check Solidity version (0.8+ has built-in checks)
+    - "Missing access control" → Search for `onlyOwner`, `onlyRole`, role checks
+    - "Oracle manipulation" → Search for TWAP, multiple oracles, price validation
+    - "Front-running" → Search for `deadline`, `minAmountOut`, slippage checks
+
+    ---
+
+    ## WHEN IN DOUBT → VALID + SomeWhatConfident
+
+    **Lean toward VALID if:** Realistic user loss, matches historical patterns, missing standard protections
+    **Mark INVALID if:** Assumes future bugs (GATE 7), requires governance mistake (GATE 5), requires user error (GATE 2), safeguards exist (GATE 11), bug doesn't exist (PRE-GATE)
+
+    ---
+
+    # OUTPUT REQUIREMENTS
 
     Based on your assessment please provided the following:
 
-    *Severity:* {severity_list} 
-    *Finding Severity Justification:* Explain why you assigned this severity. 
+    *Severity:* {severity_list}
+    *Finding Severity Justification:* Explain why you assigned this severity. Reference which gates passed/failed.
     *Finding Status:* {finding_status_list}
-    *Status Justification:* if invalid, out of scope, or needs more info, please explain why.
+    *Status Justification:* If invalid, out of scope, or needs more info, please explain why. **MUST cite specific gate failures (e.g., "GATE 7 FAIL: Assumes future Distributor bug").**
     *Finding Status Confidence:* {finding_confidence_list}
-    *Finding Status Confidence Justification:* if Somewhat Confident, please explain why. 
+    *Finding Status Confidence Justification:* If Somewhat Confident, please explain why.
     *Finding Complexity:* How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty.
 
-    ## {contest} Guidelines
-    # {contest} Severity Rubric (What {contest} Actually Pays For)
-
-    {severity_rubic}
 "#
     )
 }

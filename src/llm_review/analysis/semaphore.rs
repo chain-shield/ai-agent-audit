@@ -2,10 +2,10 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 // increase once hit higher openai teir
-const MAX_CONCURRENTS_VERIFY: usize = 75;
+const MAX_CONCURRENTS_VERIFY: usize = 1; // lower to 3 for gemini: default 10
 const MAX_CONCURRENTS_REVIEW: usize = 1;
 const MAX_CONCURRENTS_POC: usize = 1; // Run PoC tests atomically to avoid cross-file compilation errors
-const MAX_CONCURRENTS_GENERAL: usize = 10; // lowered to 10 for gemini
+const MAX_CONCURRENTS_GENERAL: usize = 5; // lowered to 3 for gemini big token count: default 10
 
 // at module scope or pass it in
 pub static VERIFY_SEM: once_cell::sync::Lazy<Arc<Semaphore>> =

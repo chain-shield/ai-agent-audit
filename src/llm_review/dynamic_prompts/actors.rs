@@ -1,6 +1,6 @@
 use crate::llm_review::{
     agent::agent_enums::{all_enum_variants, generate_enum_list},
-    threat_models::actors::{Actor, ActorAbuse, RoleType, ACTOR_CENTRIC_VULN_TYPES},
+    threat_models::actors::{Actor, ActorAbuse, RoleType, ACTOR_CENTRIC_VULN_PATTERNS},
 };
 
 pub fn generate_actors_prompt() -> String {
@@ -29,7 +29,7 @@ pub fn generate_actors_prompt() -> String {
 pub fn generate_actor_abuses_prompt(actors: &[Actor]) -> String {
     let actors_capabilities = generate_formated_list_from_actor_data(actors);
 
-    let exploit_enums = generate_enum_list(ACTOR_CENTRIC_VULN_TYPES);
+    let exploit_enums = generate_enum_list(ACTOR_CENTRIC_VULN_PATTERNS);
     format!(
         r#"
         Your job is to **propose and evaluate all the ways bad actors could game or abuse the system** for the target contract and its role in the wider protocol.
@@ -57,9 +57,9 @@ pub fn generate_actor_abuses_prompt(actors: &[Actor]) -> String {
     )
 }
 
-pub fn generate_actor_verify_prompt(abuse: &ActorAbuse) -> String {
+pub fn generate_actor_abuse_verify_prompt(abuse: &ActorAbuse) -> String {
     let verify_json = get_verify_actor_abuse_json();
-    let actor_abuse_report = generate_formatted_actor_abuse(&[abuse.clone()]);
+    let actor_abuse_report = generate_formatted_actor_abuse_list(&[abuse.clone()]);
 
     format!(
         r#"
@@ -85,37 +85,37 @@ pub fn generate_actor_verify_prompt(abuse: &ActorAbuse) -> String {
 }
 
 pub fn get_actor_abuse_json() -> String {
-    let exploit_enum = generate_enum_list(ACTOR_CENTRIC_VULN_TYPES);
+    let exploit_enum = generate_enum_list(ACTOR_CENTRIC_VULN_PATTERNS);
 
     format!(
         r#"
 
         ## OUTPUT REQUIREMENTS
-        
+
         - STRICT JSON ONLY (no markdown, no comments):
 
         {{
         "abuses": [
             {{
             "actor_name": "Insert exact actor name",
-            "contract": "Insert exact actor capability",
+            "capability": "Insert exact actor capability",
             "title": "50 word or less C4-style headline, explaining exploit",
             "scenario": "step by step breakdown of how exploit is executed",
-            "likely_category": {exploit_enum},
-            "assets_at_risk": ["vault disposits","protocol treasury"],
+            "category": {exploit_enum},
+            "assets_at_risk": ["vault deposits","protocol treasury"],
             "victim": "Who suffers? (LP, DAO, user, MEV, protocol treasury, etc.)"
             }}
         ]
         }}
 
-        - If no vulnerabilities are found, return: 
+        - If no vulnerabilities are found, return:
 
         {{
         "abuses": []
         }}
 
-        **Note: **NO extra text** and **NO code fencing** in reponse, just plain JSON. 
-        **Please double-check opening and closing brakets: `}}` and `]`, make sure 
+        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON.
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure
         they match up correctly.
     "#,
     )
@@ -158,33 +158,47 @@ pub fn get_verify_actor_abuse_json() -> String {
     )
 }
 
-pub fn generate_formatted_actor_abuse(abuses: &[ActorAbuse]) -> String {
+pub fn generate_formatted_actor_abuse_list(abuses: &[ActorAbuse]) -> String {
     let mut abuse_list = String::new();
 
     for abuse in abuses {
-        abuse_list.push_str("\n\n");
-        abuse_list.push_str(&format!("### Actor Name: {}\n", &abuse.actor_name));
-        abuse_list.push_str("\n");
-
-        abuse_list.push_str(&format!("### Actor Capability: {}\n", &abuse.capability));
-        abuse_list.push_str("\n");
-
-        abuse_list.push_str(&format!("### Abuse Title: {}\n", &abuse.title));
-        abuse_list.push_str("\n");
-
-        abuse_list.push_str(&format!(
-            "### Likely Category: {}\n",
-            &abuse.likely_category.to_string()
-        ));
-        abuse_list.push_str("\n");
-
-        abuse_list.push_str(&format!(
-            "### Assets at Risk: {}\n",
-            &abuse.assets_at_risk.join(", ")
-        ));
-        abuse_list.push_str("\n");
+        let abuse_item = generate_formatted_actor_abuse(abuse);
+        abuse_list.push_str(&abuse_item);
     }
     abuse_list
+}
+
+pub fn generate_formatted_actor_abuse(abuse: &ActorAbuse) -> String {
+    let mut abuse_item = String::new();
+    abuse_item.push_str("\n");
+    abuse_item.push_str(&format!("### Actor Name: {}\n", &abuse.actor_name));
+    abuse_item.push_str("\n");
+
+    abuse_item.push_str(&format!("### Actor Capability: {}\n", &abuse.capability));
+    abuse_item.push_str("\n");
+
+    abuse_item.push_str(&format!("### Abuse Title: {}\n", &abuse.title));
+    abuse_item.push_str("\n");
+
+    abuse_item.push_str(&format!("### Scenario: {}\n", &abuse.scenario));
+    abuse_item.push_str("\n");
+
+    abuse_item.push_str(&format!(
+        "### Likely Category: {}\n",
+        &abuse.category.to_string()
+    ));
+    abuse_item.push_str("\n");
+
+    abuse_item.push_str(&format!(
+        "### Assets at Risk: {}\n",
+        &abuse.assets_at_risk.join(", ")
+    ));
+    abuse_item.push_str("\n");
+
+    abuse_item.push_str(&format!("### Victim: {}\n", &abuse.victim));
+    abuse_item.push_str("\n");
+
+    abuse_item
 }
 
 pub fn generate_formated_list_from_actor_data(actors: &[Actor]) -> String {

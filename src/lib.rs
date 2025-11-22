@@ -111,6 +111,7 @@ pub mod llm_review {
     }
     /// Security audit phases
     pub mod dynamic_prompts {
+        pub mod actor_findings;
         pub mod actors;
         pub mod findings_template;
         pub mod inv_findings;
@@ -128,6 +129,7 @@ pub mod llm_review {
         pub mod create_report;
     }
     pub mod pattern_phases {
+        pub mod generate_actors;
         /// Phase 2: Parallel vulnerability detection across multiple AI agents
         pub mod generate_patterns;
         pub mod multipattern_to_findings;

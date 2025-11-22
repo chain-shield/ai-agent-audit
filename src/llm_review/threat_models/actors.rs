@@ -1,4 +1,4 @@
-use crate::llm_review::findings::finding_enums::VulnerabilityType;
+use crate::llm_review::threat_models::patterns::VulnerabilityPattern;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
@@ -37,17 +37,11 @@ pub struct ActorAbuse {
     /// step by step breakdown of how exploit is executed
     pub scenario: String,
     /// What type of security Vulnerability is this?
-    pub likely_category: VulnerabilityType,
+    pub category: VulnerabilityPattern,
     /// i.e. ["vault diposits"]
     pub assets_at_risk: Vec<String>,
     /// NEW: Who suffers? (LP, DAO, user, MEV, protocol treasury, etc.)
     pub victim: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
-pub struct IsActorAbuseLegit {
-    is_legit_abuse: bool,
-    why_its_not_legit: String,
 }
 
 #[derive(
@@ -109,28 +103,30 @@ pub enum RoleType {
     Other,
 }
 
-pub static ACTOR_CENTRIC_VULN_TYPES: &[VulnerabilityType] = &[
-    VulnerabilityType::AccessControl, // actor gains roles/privilege they shouldn't
-    VulnerabilityType::AuthByPass,    // uses legit flow to bypass intended policies
-    VulnerabilityType::SignatureReplay, // stale/partial signature reuse (EOA-focused)
-    VulnerabilityType::ReplayAttack,  // transaction/nonce replay across contexts
-    VulnerabilityType::FrontrunMev,   // economic sandwich/front-run exploitation
-    VulnerabilityType::FlashLoanEconomicManipulation, // capital-free multi-tx economic attacks
-    VulnerabilityType::Oracle,        // abusing external pricing assumptions
-    VulnerabilityType::SlippageMissingOrInsufficient, // exploit lack of price protection
-    VulnerabilityType::AccountingInvariantViolation, // degrade solvency for profit
-    VulnerabilityType::UntrustedDelegateCall, // actor routes calls into malicious modules
-    VulnerabilityType::DelegatecallLowLevelOps, // generic state-hijack via delegatecall
-    VulnerabilityType::MulticallCrossPathReentrancy, // cross-path execution ordering attacks
-    VulnerabilityType::ForcedAssetVsStrictEquality, // force-send or mismatch in accounting
-    VulnerabilityType::TimelockEdgeCase, // admin follows spec but guarantees break
-    VulnerabilityType::AuthorityOrGovernance, // rational actor escalates privileges within rules
-    VulnerabilityType::BeaconFactoryAuthorityDrift, // upgrade path abused at module/authority boundary
-    VulnerabilityType::ERC4626SharePrice,           // actor gains share-price advantage
-    VulnerabilityType::ERC20DecimalsMismatch,       // decimals-based value capture opportunities
-    VulnerabilityType::TWAPWindowPinning,           // actor manipulates oracle read window
-    VulnerabilityType::FeeOnTransferAssumption,     // exploits non-standard token behaviors
-    VulnerabilityType::GasGriefBlockLimit,          // DoS others’ flows to create asymmetry
-    VulnerabilityType::PausableEmergencyStop,       // abuse emergency mechanics for gain
-    VulnerabilityType::Custom,                      // fallback when none apply cleanly
+pub static ACTOR_CENTRIC_VULN_PATTERNS: &[VulnerabilityPattern] = &[
+    VulnerabilityPattern::AccessControlOrAuthByPass, // actor gains roles/privilege or bypasses policies
+    VulnerabilityPattern::PermitOrSignatureReplay,   // stale/partial signature reuse (EOA-focused)
+    VulnerabilityPattern::DoubleExecutionOrReplay,   // transaction/nonce replay across contexts
+    VulnerabilityPattern::FlashLoanEconomicManipulation, // capital-free multi-tx economic attacks (includes MEV/frontrun)
+    VulnerabilityPattern::OracleUsingDEXorTWAP,          // abusing external pricing assumptions
+    VulnerabilityPattern::SlippageMissingOrInsufficient, // exploit lack of price protection
+    VulnerabilityPattern::AccountingInvariantViolation,  // degrade solvency for profit
+    VulnerabilityPattern::UntrustedDelegateCall, // actor routes calls into malicious modules
+    VulnerabilityPattern::GovernanceDelegationFlaw, // generic state-hijack via delegatecall (includes DelegatecallLowLevelOps)
+    VulnerabilityPattern::MulticallCrossPathReentrancy, // cross-path execution ordering attacks
+    VulnerabilityPattern::ForcedAssetVsStrictEquality, // force-send or mismatch in accounting
+    VulnerabilityPattern::TimelockEdgeCase,         // admin follows spec but guarantees break
+    VulnerabilityPattern::ConfigFootgun, // rational actor escalates privileges within rules (governance/authority)
+    VulnerabilityPattern::BeaconOrFactoryAuthorityDrift, // upgrade path abused at module/authority boundary
+    VulnerabilityPattern::ERC4626SharePriceMismatch,     // actor gains share-price advantage
+    VulnerabilityPattern::ERC20DecimalsMismatch, // decimals-based value capture opportunities
+    VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity, // actor manipulates oracle read window
+    VulnerabilityPattern::FeeOnTransferAssumption, // exploits non-standard token behaviors
+    VulnerabilityPattern::GriefableCallbacks, // DoS others’ flows to create asymmetry (gas grief)
+    VulnerabilityPattern::UnprotectedPauseOrStop, // abuse emergency mechanics for gain
+    VulnerabilityPattern::Reentrancy,         // classic reentrancy attacks (actor-driven)
+    VulnerabilityPattern::ReadOnlyReentrancy, // read-only reentrancy for price manipulation
+    VulnerabilityPattern::SandwichableOracle, // on-chain spot read manipulable within one tx
+    VulnerabilityPattern::PermitFrontRun,     // permit usable/front-runnable in same block
+    VulnerabilityPattern::ReplayAcrossForksOrL2s, // message valid on fork/sibling chain replays
 ];

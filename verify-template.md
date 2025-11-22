@@ -5,150 +5,16 @@ Follow these steps, please
 
 Honest Assessment:
 1. is the bug IN SCOPE per client scope? see covenant-scope.md 
+2. make sure this bug is not already covered in V12 findings: 
+
 if its in scope then...
-2. honest assessment: is bug legit? does protocol have safeguards against it? carefuly trace code and read natspec + inline comments.
-3. is 'Derived From' pattern/invariant assumption correct? 
-4. is this by design?
-Check ALL:
-- NatSpec (@dev, @notice, @custom)
-- Inline comments (`// NOTE:`, `// IMPORTANT:`)
-- megapot-docs.md & megapot-scope.md (Known Limitations, Design Decisions)
-- Function placement (Emergency/Admin sections)
-- Function naming (emergencyPause, adminOnly)
+2. honest assessment: is bug legit? 
+Go through checklist in verify-checklist.md, list each step and why it passes or fails.
 
-**EXCEPTION: Documentation does NOT Always Mean Not a Vulnerability**
-- Documented behavior can STILL be a valid finding if it creates:
-  • Economic risk/loss for users (e.g., liquidators, LPs, depositors)
-  • Incentive misalignment that harms protocol health
-  • Unfair value extraction or MEV opportunities
-  • Lack of user protection (missing slippage, deadlines, bounds)
-- Examples of VALID findings despite being "by design":
-  • Liquidations without minOut → liquidator loss risk (Medium)
-  • Auctions without price floors → value extraction (Medium)
-  • Withdrawals without deadlines → MEV/sandwich risk (Medium)
-  • Fee mechanisms that systematically favor one party (Low/Medium)
-- For this Edge Case, where it is documented behavior but still a vulnerability, mark it as Valid and SohmeWhatConfident
 
-**EXCEPTION: Standard Compliance - Interface Declaration ≠ Implementation Requirement**
-- Standards often allow flexibility: declaring an interface as view/pure does NOT mean all implementations must be view/pure
-- StandardViolation is VALID if code breaks composability with legitimate standard-compliant contracts (e.g., STATICCALL to interfaces that allow stateful implementations)
-- Do NOT reject just because documentation says "non-standard implementations not supported" - compatibility breaks are still valid findings
-
-**NOTE**: If there is any ambiguity about whether this finding is not a valid because its "by design", then mark as valid BUT mark as SomeWhatConfident
-
-5. Configuration check: 
-**Does finding rely on constants (time, thresholds, buffers)?**
-
-If YES, check:
-- `// for testnet`, `// for testing`, `// temporary` comments
-- Suspiciously small values (WEEK=1800 vs 604800, BUFFER=300 vs 3600)
-- Commented-out production values
-- Re-assess with production config
-
-6. how likely is this attack? For Medium or High severity attack cannot be unliklely, unless its HIGH impact.
-7. is Impact accurately stated?
-
-**WHEN IN DOUBT, LEAN TOWARD VALID**
-- If a finding shows realistic user loss, mark Valid even if documented
-- If a finding matches historical C4 Medium patterns, mark Valid
-- If a finding shows missing standard protections, mark Valid
-- Only mark Invalid if you're VERY confident it's a non-issue
-- Mark "in doubt" findings as SomeWhatConfident (not VeryConfident or Confident)
-- Remember: False negatives (missing real bugs) are worse than false positives
-
-**Please go through verify-checklist.md to fully confirm finding is valid.**
-
-1. is the bug IN SCOPE per client scope? see covenant-scope.md 
-if its in scope then...
-2. honest assessment: is bug legit? does protocol have safeguards against it? carefuly trace code. 
-3. is this by design? (look at natspec comments and megapot-docs.md)
-   **NOTE:** Documented behavior can still be a vulnerability if it creates economic risk or harms users
-4. how likely is this attack? For Medium or High severity attack cannot be unliklely, unless its HIGH impact.
-5. is Impact accurately stated?
-6. is the severity level accurately stated? where severity levels are:  High | Medium | Low | informational ?
+2. is the severity level accurately stated? where severity levels are:  High | Medium | Low | informational ?
 Would it likely receive **≥ Medium severity** in a Code4rena contest
 
-# Code4rena Severity Classifications
-
-## Estimating Risk
-
-**Assets** = funds, NFTs, data, authorization, or private/confidential information.
-
-* **High (3):** Assets can be directly or indirectly stolen, lost, or compromised (with a valid, realistic attack path).
-* **Medium (2):** Assets not directly at risk, but protocol function, availability, or value could be impacted. Requires assumptions or external conditions for exploitation.
-* **QA (Low):** Includes:
-
-  * Low-risk issues (no asset risk, state handling, spec mismatch, comments).
-  * Governance/Centralization risks (admin privileges, trust assumptions).
-  * Non-critical issues (style, clarity, syntax, versioning, monitoring/events).
-
-### Loss of Assets
-
-* **Dust amounts** (rounding errors, marginal fee variations) → QA/Low.
-* **Real amounts** → Severity depends on conditions and likelihood.
-
-### Loss of Yield
-
-* **Matured yield** loss = High (same as capital).
-* **Dust yield** loss = QA/Low.
-* **Unmatured yield/in-motion yield** = capped at Medium.
-
-## Centralization Risks
-
-* Assume assigned roles are trustworthy and act in the protocol’s best interest.
-* Reckless admin mistakes = invalid.
-* Direct misuse of privileges = QA.
-* Bugs only reachable via admin misuse = QA.
-* Privilege escalation = judged by likelihood and impact (up to Medium).
-* Vulnerabilities in privileged functions under reasonable use = up to Medium.
-
-## Unsupported / Non-Standard Tokens
-
-* Non-standard ERC-20 or fee-on-transfer tokens = **out of scope** unless explicitly supported in docs.
-* Exception: **USDT** (in-scope despite non-standard behavior).
-* Judges should invalidate non-compliant findings.
-* Definition of ERC-20 = [Ethereum docs](https://ethereum.org/en/developers/docs/standards/tokens/erc-20/).
-
-## View Functions
-
-* Findings about unused `view` functions = Low (QA) at best.
-
-## Out-of-Scope (OOS) Libraries
-
-* Root cause in OOS contract = OOS.
-* Incorrect use of OOS functionality in in-scope contract = valid, in-scope.
-* Judge discretion applies for edge cases.
-
-## User Mistakes
-
-* Issues requiring careless user input = QA at best, may be invalid.
-* Non-privileged users expected to preview transactions.
-* Phishing and bad user hygiene fall under this rule.
-
-## Speculation on Future Code
-
-* Issues not exploitable within current scope = speculative.
-* Only valid if root cause exists in current code.
-* Wardens may argue likelihood of future code changes making bug manifest.
-* Judges may assign severity based on likelihood and impact.
-* Integrations: assume competent third-party integrator with due diligence.
-
-## Event-Related Impacts
-
-* Faulty events assessed by broader functional impact:
-
-  * Used in bridging/proofs = severity based on function affected.
-  * Non-compliance with EIPs = based on impact.
-  * Cosmetic/readability issues = Low.
-* Front-end display/readability bugs = capped at Low.
-
-## Other Specific Rules
-
-* **Approve race condition:** 
-
-  * Approve/safeApprove front-run = **not a valid vulnerability**.
-  * Approve/safeApprove = **not deprecated**.
-  * `increaseAllowance` / `decreaseAllowance` = deprecated, but usage is not a finding.
 
 
 NEXT

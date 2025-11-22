@@ -1,10 +1,17 @@
+ALL PRIVILEGED ROLES in protocol are TRUSTED.  
+- PRIVILEGED ACTORS CANNOT ACT MALICIOUSLY.
+- MISTAKES by PRIVILEGED ACTORS are considered 
+governance risk (NOT security vulnerability).
+
+**NOTE**: This protocol uses solidity version `0.8.31`
+
 ## Publicly known issues
 
 _Anything included in this section is considered a publicly known issue and is therefore ineligible for awards._
 
 ### Compiler Vulnerabilities
 
-Any vulnerabilities that pertain to the experimental nature of the `0.8.31` pre-release candidate and the project's toolkits are considered out-of-scope for the purposes of this contest.
+**NOTE**: Any vulnerabilities that pertain to the experimental nature of the `0.8.31` pre-release candidate and the project's toolkits are considered out-of-scope for the purposes of this contest.
 
 ### Non-Standard EIP-20 Assets
 

@@ -144,49 +144,95 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-type StorageSlot is bytes32;
+import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
+import {PoolConfig} from "./poolConfig.sol";
 
-using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
+type PositionId is bytes32;
 
-function load(StorageSlot slot) view returns (bytes32 value) {
+using {validate, salt, tickLower, tickUpper} for PositionId global;
+
+function salt(PositionId positionId) pure returns (bytes24 v) {
     assembly ("memory-safe") {
-        value := sload(slot)
+        v := shl(64, shr(64, positionId))
     }
 }
 
-function loadTwo(StorageSlot slot) view returns (bytes32 value0, bytes32 value1) {
-    value0 = slot.load();
-    value1 = slot.next().load();
-}
-
-function store(StorageSlot slot, bytes32 value) {
+function tickLower(PositionId positionId) pure returns (int32 v) {
     assembly ("memory-safe") {
-        sstore(slot, value)
+        // shift down, then signextend to 32 bits
+        v := signextend(3, shr(32, positionId))
     }
 }
 
-function storeTwo(StorageSlot slot, bytes32 value0, bytes32 value1) {
-    slot.store(value0);
-    slot.next().store(value1);
-}
-
-function next(StorageSlot slot) pure returns (StorageSlot nextSlot) {
+function tickUpper(PositionId positionId) pure returns (int32 v) {
     assembly ("memory-safe") {
-        nextSlot := add(slot, 1)
+        // lowest 4 bytes, then signextend to 32 bits
+        v := signextend(3, positionId)
     }
 }
 
-function add(StorageSlot slot, uint256 addend) pure returns (StorageSlot summedSlot) {
+function createPositionId(bytes24 _salt, int32 _tickLower, int32 _tickUpper) pure returns (PositionId v) {
     assembly ("memory-safe") {
-        summedSlot := add(slot, addend)
+        // v = salt | (tickLower << 32) | tickUpper
+        v := or(shl(64, shr(64, _salt)), or(shl(32, and(_tickLower, 0xFFFFFFFF)), and(_tickUpper, 0xFFFFFFFF)))
     }
 }
 
-function sub(StorageSlot slot, uint256 subtrahend) pure returns (StorageSlot differenceSlot) {
-    assembly ("memory-safe") {
-        differenceSlot := sub(slot, subtrahend)
+/// @notice Thrown when the order of the position bounds is invalid, i.e. tickLower >= tickUpper
+error BoundsOrder();
+/// @notice Thrown when the bounds of the position are outside the pool's min/max tick range
+error MinMaxBounds();
+/// @notice Thrown when the ticks of the bounds do not align with tick spacing for concentrated pools
+error BoundsTickSpacing();
+/// @notice Thrown when stableswap pool positions are not at the min/max tick for the config
+error StableswapMustBeFullRange();
+
+function validate(PositionId positionId, PoolConfig config) pure {
+    if (config.isConcentrated()) {
+        if (positionId.tickLower() >= positionId.tickUpper()) revert BoundsOrder();
+        if (positionId.tickLower() < MIN_TICK || positionId.tickUpper() > MAX_TICK) revert MinMaxBounds();
+        int32 spacing = int32(config.concentratedTickSpacing());
+        if (positionId.tickLower() % spacing != 0 || positionId.tickUpper() % spacing != 0) revert BoundsTickSpacing();
+    } else {
+        (int32 lower, int32 upper) = config.stableswapActiveLiquidityTickRange();
+        // For stableswap pools, positions must be exactly min/max tick
+        if (positionId.tickLower() != lower || positionId.tickUpper() != upper) revert StableswapMustBeFullRange();
     }
 }
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+/// @notice Unique identifier for a pool
+/// @dev Wraps bytes32 to provide type safety for pool identifiers
+type PoolId is bytes32;
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// Protocol Constants
+// Contains all constant values used throughout the Ekubo Protocol
+// These constants define the boundaries and special values for the protocol's operation
+
+// The minimum tick value supported by the protocol
+// Corresponds to the minimum possible price ratio in the protocol
+int32 constant MIN_TICK = -88722835;
+
+// The maximum tick value supported by the protocol
+// Corresponds to the maximum possible price ratio in the protocol
+int32 constant MAX_TICK = 88722835;
+
+// The maximum tick magnitude (absolute value of MAX_TICK)
+// Used for validation and bounds checking in tick-related calculations
+uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
+
+// The maximum allowed tick spacing for pools
+// Defines the upper limit for tick spacing configuration in pool creation
+uint32 constant MAX_TICK_SPACING = 698605;
+
+// Address used to represent the native token (ETH) within the protocol
+// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
+address constant NATIVE_TOKEN_ADDRESS = address(0);
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
@@ -417,93 +463,47 @@ function validate(PoolConfig config) pure {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-// Protocol Constants
-// Contains all constant values used throughout the Ekubo Protocol
-// These constants define the boundaries and special values for the protocol's operation
+type StorageSlot is bytes32;
 
-// The minimum tick value supported by the protocol
-// Corresponds to the minimum possible price ratio in the protocol
-int32 constant MIN_TICK = -88722835;
+using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
 
-// The maximum tick value supported by the protocol
-// Corresponds to the maximum possible price ratio in the protocol
-int32 constant MAX_TICK = 88722835;
-
-// The maximum tick magnitude (absolute value of MAX_TICK)
-// Used for validation and bounds checking in tick-related calculations
-uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
-
-// The maximum allowed tick spacing for pools
-// Defines the upper limit for tick spacing configuration in pool creation
-uint32 constant MAX_TICK_SPACING = 698605;
-
-// Address used to represent the native token (ETH) within the protocol
-// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
-address constant NATIVE_TOKEN_ADDRESS = address(0);
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-/// @notice Unique identifier for a pool
-/// @dev Wraps bytes32 to provide type safety for pool identifiers
-type PoolId is bytes32;
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
-import {PoolConfig} from "./poolConfig.sol";
-
-type PositionId is bytes32;
-
-using {validate, salt, tickLower, tickUpper} for PositionId global;
-
-function salt(PositionId positionId) pure returns (bytes24 v) {
+function load(StorageSlot slot) view returns (bytes32 value) {
     assembly ("memory-safe") {
-        v := shl(64, shr(64, positionId))
+        value := sload(slot)
     }
 }
 
-function tickLower(PositionId positionId) pure returns (int32 v) {
+function loadTwo(StorageSlot slot) view returns (bytes32 value0, bytes32 value1) {
+    value0 = slot.load();
+    value1 = slot.next().load();
+}
+
+function store(StorageSlot slot, bytes32 value) {
     assembly ("memory-safe") {
-        // shift down, then signextend to 32 bits
-        v := signextend(3, shr(32, positionId))
+        sstore(slot, value)
     }
 }
 
-function tickUpper(PositionId positionId) pure returns (int32 v) {
+function storeTwo(StorageSlot slot, bytes32 value0, bytes32 value1) {
+    slot.store(value0);
+    slot.next().store(value1);
+}
+
+function next(StorageSlot slot) pure returns (StorageSlot nextSlot) {
     assembly ("memory-safe") {
-        // lowest 4 bytes, then signextend to 32 bits
-        v := signextend(3, positionId)
+        nextSlot := add(slot, 1)
     }
 }
 
-function createPositionId(bytes24 _salt, int32 _tickLower, int32 _tickUpper) pure returns (PositionId v) {
+function add(StorageSlot slot, uint256 addend) pure returns (StorageSlot summedSlot) {
     assembly ("memory-safe") {
-        // v = salt | (tickLower << 32) | tickUpper
-        v := or(shl(64, shr(64, _salt)), or(shl(32, and(_tickLower, 0xFFFFFFFF)), and(_tickUpper, 0xFFFFFFFF)))
+        summedSlot := add(slot, addend)
     }
 }
 
-/// @notice Thrown when the order of the position bounds is invalid, i.e. tickLower >= tickUpper
-error BoundsOrder();
-/// @notice Thrown when the bounds of the position are outside the pool's min/max tick range
-error MinMaxBounds();
-/// @notice Thrown when the ticks of the bounds do not align with tick spacing for concentrated pools
-error BoundsTickSpacing();
-/// @notice Thrown when stableswap pool positions are not at the min/max tick for the config
-error StableswapMustBeFullRange();
-
-function validate(PositionId positionId, PoolConfig config) pure {
-    if (config.isConcentrated()) {
-        if (positionId.tickLower() >= positionId.tickUpper()) revert BoundsOrder();
-        if (positionId.tickLower() < MIN_TICK || positionId.tickUpper() > MAX_TICK) revert MinMaxBounds();
-        int32 spacing = int32(config.concentratedTickSpacing());
-        if (positionId.tickLower() % spacing != 0 || positionId.tickUpper() % spacing != 0) revert BoundsTickSpacing();
-    } else {
-        (int32 lower, int32 upper) = config.stableswapActiveLiquidityTickRange();
-        // For stableswap pools, positions must be exactly min/max tick
-        if (positionId.tickLower() != lower || positionId.tickUpper() != upper) revert StableswapMustBeFullRange();
+function sub(StorageSlot slot, uint256 subtrahend) pure returns (StorageSlot differenceSlot) {
+    assembly ("memory-safe") {
+        differenceSlot := sub(slot, subtrahend)
     }
 }
 
