@@ -1,11 +1,15 @@
 // represents abstraction of Findings and ContractInvariants
 
 use crate::{
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::{
-        agent::agent_enums::AIAgent,
-        agent::agent_factory::{AgentConfig, AgentFactory},
+        agent::{
+            agent_enums::AIAgent,
+            agent_factory::{AgentConfig, AgentFactory},
+        },
         dynamic_prompts::{
+            actor_findings::{generate_actor_to_findings, generate_multi_actor_to_findings_prompt},
+            actors::{generate_actor_abuse_verify_prompt, generate_formatted_actor_abuse},
             findings_template::{
                 get_findings_json_requirement, get_json_requirement_for_multipattern,
             },
@@ -19,7 +23,10 @@ use crate::{
             patterns::generate_pattern_verify_prompt,
         },
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
-        threat_models::patterns::VulnerabilityPattern,
+        threat_models::{
+            actors::{Actor, ActorAbuse, ActorAbuses},
+            patterns::VulnerabilityPattern,
+        },
         utils::prompt_context::{generate_formatted_invariant_finding, generate_formatted_pattern},
     },
     prepare_code::git_clone::RepoPaths,
@@ -42,6 +49,7 @@ use crate::llm_review::threat_models::{
 pub enum IssuePrompt {
     Pattern(Vec<PatternCategory>),
     Invariant(Vec<InvariantType>),
+    Actor(Vec<Actor>),
 }
 
 #[async_trait]
@@ -66,6 +74,39 @@ pub trait IssueTrait: Send + Sync {
     fn generate_verify_prompt(&self) -> String;
     fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String;
     fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String;
+}
+
+#[async_trait]
+impl IssueTrait for ActorAbuse {
+    fn hash(&self) -> String {
+        format!(
+            "{}-{}-{}",
+            self.actor_name,
+            self.capability,
+            self.category.to_string()
+        )
+    }
+    async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
+        is_duplicate_pattern(self, issue, ai_agent).await
+    }
+    fn get_issue_report(&self) -> String {
+        generate_formatted_actor_abuse(&self)
+    }
+    fn description(&self) -> String {
+        self.title.clone()
+    }
+    fn title_str(&self) -> String {
+        format!("{} - {}", self.category.to_string(), self.title)
+    }
+    fn generate_verify_prompt(&self) -> String {
+        generate_actor_abuse_verify_prompt(&self)
+    }
+    fn pattern_to_findings_prompt(&self, repo: &RepoPaths) -> String {
+        generate_actor_to_findings(self, repo)
+    }
+    fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
+        get_findings_json_requirement(&self.category, &self.title, repo)
+    }
 }
 
 #[async_trait]
@@ -142,6 +183,35 @@ impl IssueTrait for Pattern {
     }
     fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
         get_findings_json_requirement(&self.issue_type, &self.title, repo)
+    }
+}
+
+#[async_trait]
+impl IssueStructTrait for ActorAbuses {
+    type Spec = ActorAbuse;
+    fn issues(&self) -> &[ActorAbuse] {
+        &self.abuses
+    }
+    fn issues_mut(&mut self) -> &mut Vec<ActorAbuse> {
+        &mut self.abuses
+    }
+    fn new(issues: Vec<ActorAbuse>) -> Self {
+        Self {
+            abuses: issues.to_vec(),
+        }
+    }
+    async fn dedup(self) -> anyhow::Result<Self> {
+        dedup_pattern(self).await
+    }
+    fn issue_title(&self) -> String {
+        "actor".to_string()
+    }
+    fn multi_issue_to_findings_prompt(&self, repo: &RepoPaths) -> String {
+        generate_multi_actor_to_findings_prompt(&self, repo)
+    }
+    fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
+        let actors: Vec<VulnerabilityPattern> = self.issues().iter().map(|p| p.category).collect();
+        get_json_requirement_for_multipattern(&actors, "Malicious Actor Abuse", repo)
     }
 }
 

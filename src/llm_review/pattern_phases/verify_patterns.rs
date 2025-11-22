@@ -8,6 +8,7 @@ use crate::{
         agent::agent_enums::AIAgent,
         analysis::{context_state::get_metadata_context, semaphore::GENERAL_SEM},
         threat_models::{
+            actors::ActorAbuses,
             invariants::ContractInvariants,
             issues::{IssueStructTrait, IssueTrait},
             patterns::Patterns,
@@ -18,7 +19,7 @@ use crate::{
 use log::info;
 
 use schemars::JsonSchema;
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -38,9 +39,25 @@ pub struct LegitInvariant {
     pub why_its_not_legit: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct LegitActorMalice {
+    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
+    is_legit_abuse: bool,
+    why_its_not_legit: Option<String>,
+}
+
 pub trait IsLegit {
     fn is_legit(&self) -> bool;
     fn why_not_legit(&self) -> String;
+}
+
+impl IsLegit for LegitActorMalice {
+    fn is_legit(&self) -> bool {
+        self.is_legit_abuse
+    }
+    fn why_not_legit(&self) -> String {
+        self.why_its_not_legit.clone().unwrap_or_default()
+    }
 }
 
 impl IsLegit for LegitInvariant {
@@ -77,6 +94,15 @@ pub async fn verify_invariants(
     repo: &RepoPaths,
 ) -> Result<ContractInvariants> {
     execute::<ContractInvariants, LegitInvariant>(patterns, code, agent, repo).await
+}
+
+pub async fn verify_actor_abuses(
+    patterns: ActorAbuses,
+    code: &str,
+    agent: &Arc<AIAgent>,
+    repo: &RepoPaths,
+) -> Result<ActorAbuses> {
+    execute::<ActorAbuses, LegitActorMalice>(patterns, code, agent, repo).await
 }
 /// Executes the verification phase
 ///

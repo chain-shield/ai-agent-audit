@@ -29,7 +29,6 @@ When you withdraw liquidity from Ekubo, you pay a fee equal to the swap fee of t
 
 Thus, the fee incentivizes **all of** liquidity concentration, passive liquidity and low fees.
 
-{% hint style="info" %}
 This fee is collected by the protocol, able to be withdrawn by the protocol's current `owner`.&#x20;
 
 The owner of the protocol is [Ekubo Governance](https://docs.ekubo.org/user-guides/governance). As of January 2025, Ekubo Governance currently directs all protocol revenue towards [EKUBO buybacks](https://app.ekubo.org/governance/revenue-buybacks).

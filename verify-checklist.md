@@ -1,531 +1,325 @@
+# 🚨 CRITICAL VERIFICATION GATES - ALL MUST PASS
 
-1. **Scope Gate** → Is root cause in-scope?
+**Your task:** Decide if a reported finding is **Valid** and accurately assess its **Severity** in a Code4rena contest.
 
-   * OOS library root cause → **INVALID**.
-   * OOS token behavior unless USDT or explicitly supported → **INVALID**.
-   * View-only cosmetic/event-only w/o functional impact → **QA/Low**.
-
-2. **User Error Gate** → Does exploit require user mistake, error, or bad judgment?
-
-   * **User chooses bad input** (wrong recipient, bad parameters, malicious contract) → **INVALID/QA**.
-   * **User signs malicious data** without protocol forcing it → **INVALID/QA**.
-   * **Protocol forces user into vulnerable state** → **VALID**.
-   * **Attacker exploits without user involvement** → **VALID**.
-
-   **Red Flags for User Error:**
-   * "If user chooses X, then Y happens" → likely user error
-   * "User must validate input before calling" → likely user error
-   * "Transaction reverts if user provides bad input" → likely user error
-   * No attacker involvement, just user mistake → likely invalid
-
-3. **Impact Gate (C4 definitions)**
-
-   * Direct/indirect **asset loss/compromise** with real path → **High** (or Medium if low-likelihood).
-   * Protocol function/value/availability impact (DoS, grief, accounting drift, price miscalc, governance blockage) with stated assumptions → **Medium**.
-   * Only dust fees / readability → **QA/Low**.
-
-4. **Likelihood Gate** → Rigorous probability assessment
-
-   * **Common (High Likelihood):**
-     - No special preconditions required
-     - Works on any chain / any time
-     - Attacker needs no special resources
-     - Example: Missing access control, always-exploitable logic bug
-
-   * **Occasional (Medium Likelihood):**
-     - Requires specific but realistic conditions
-     - Works on some chains or under common market conditions
-     - Attacker needs moderate setup (deploy contract, front-run, etc.)
-     - Example: Chain-specific deployment issue, timing-dependent attack
-
-   * **Rare (Low Likelihood):**
-     - Requires multiple unlikely conditions to align
-     - Depends on extreme market conditions or rare states
-     - Requires significant resources or privileged position
-     - Example: Storage collision requiring specific slot values, multi-step attacks with low probability
-
-   **Severity Adjustment:**
-   * High-impact + **Common** → **High**
-   * High-impact + **Occasional** → **High/Medium** (argue likelihood)
-   * High-impact + **Rare** → **Medium/Low** (likely rejected)
-   * Medium-impact + **Common** → **Medium**
-   * Medium-impact + **Occasional** → **Medium/Low**
-   * Medium-impact + **Rare** → **QA/Low** (likely rejected)
-
-5. **Exploitability Gate (PoC)**
-
-   * Minimal, reproducible PoC that **demonstrates state change** consistent with impact?
-   * If not reproducible in clean scenario ⇒ **rework** or **downgrade**.
-
-6. **Governance/Centralization Gate** ⚠️ EXPANDED
-
-   **Critical Question:** Can this be prevented by governance/team acting responsibly?
-
-   **Governance Risk (QA/Low):**
-   * Requires admin misuse or negligence → **QA/Low** or **INVALID** per C4
-   * **Deployment decisions** (NEW):
-     - Team deploys on wrong chain without verification
-     - Team doesn't verify hardcoded addresses match on target chain
-     - Chain-specific configuration issues
-     - "Only on chain X" problems
-   * **Configuration choices**:
-     - Admin sets wrong parameters
-     - Team chooses malicious oracle/integration
-     - Hardcoded constants that vary by chain
-
-   **Code Vulnerability (Medium/High):**
-   * Vulnerable even under **reasonable** privileged usage → up to **Medium**
-   * **Missing runtime verification** (code should check, not rely on governance):
-     - Missing codehash verification
-     - Missing access control
-     - Missing input validation
-   * **Privilege escalation** via code path → up to **Medium**
-
-   **Key Distinction:**
-   * **Governance controls decision** → QA/Low (governance risk)
-   * **Code should enforce** → Medium/High (code vulnerability)
-
-   **Red Flags for Governance Risk:**
-   * "Team should verify before deploying" → Governance responsibility
-   * "Only on chain X" → Deployment decision
-   * "Hardcoded address varies by chain" → Configuration choice
-   * "Can be prevented by due diligence" → Governance action
-   * "Admin/team chooses..." → Governance decision
-
-7. **Unsupported Token Gate**
-
-   * Fee-on-transfer/rebasing/decimals edge unless protocol **explicitly** supports → **OOS** (except **USDT**).
-
-8. **Speculation Gate**
-
-   * Root cause exists **now** and is exploitable with today’s code? If no → **speculative** (likely **LOW/INVALID**).
-   * If future integration could trigger, argue **likelihood** & **path** explicitly.
-
-If it passes all gates with a working PoC and the effect is ≥ Medium per above, **submit**.
+You MUST verify the finding passes **ALL gates**. If ANY gate fails, the finding is **Invalid** or **QA/Low**.
 
 ---
 
-# Detailed Gate Verification
+## 🔍 PRE-GATE SANITY CHECK - VERIFY BUG EXISTS
+
+**BEFORE checking any gates, verify the bug actually exists in the code:**
+
+### **Step 1: Trace the Code Path**
+- ✅ Locate the exact function/contract mentioned in the finding
+- ✅ Verify the vulnerable code path exists (not hallucinated)
+- ✅ Trace execution flow step-by-step to confirm the issue
+- ✅ Check if code matches the finding's description
+
+**INVALID if:**
+- ❌ Function/contract doesn't exist in codebase
+- ❌ Code path described is impossible (wrong function signatures, missing calls)
+- ❌ Finding describes code that was removed/changed
+- ❌ Execution flow doesn't match the claimed vulnerability
+
+### **Step 2: Verify Invariant Actually Exists**
+- ✅ Check if the claimed invariant is documented (NatSpec, comments, docs)
+- ✅ Verify the invariant is enforced elsewhere in the code
+- ✅ Confirm the invariant is a real protocol requirement (not assumed)
+
+**INVALID if:**
+- ❌ Invariant is not documented anywhere
+- ❌ Invariant is not enforced in similar functions
+- ❌ Invariant is assumed but not a real protocol requirement
+- ❌ "Should maintain X" without evidence X is required
+
+**Common Hallucinations:**
+- "Function X calls Y" → Verify X actually calls Y (check code)
+- "Missing check for Z" → Verify Z check is actually needed (check invariants)
+- "Breaks invariant I" → Verify I is a real invariant (check docs/comments)
+- "State S can occur" → Verify S is actually reachable (trace execution)
+
+### **Step 3: Reproduce the Issue**
+- ✅ Can you trace the exact steps to trigger the bug?
+- ✅ Does the PoC actually demonstrate the claimed issue?
+- ✅ Are the preconditions realistic and achievable?
+
+**INVALID if:**
+- ❌ Cannot trace execution path to the claimed bug
+- ❌ PoC doesn't actually trigger the vulnerability
+- ❌ Preconditions are impossible to achieve
 
 ---
 
-## 1) Scope & Root-Cause Validation (GATE 1)
+**⚠️ If sanity check fails → INVALID (hallucination/misunderstanding)**
 
-* **Contract in scope?** File matches contest scope list; cross-check imports.
-* **Root cause location:** The bug arises in **in-scope code’s logic** (not in an OOS lib).
-
-  * If the bug is **incorrect use** of an OOS lib by in-scope code → **valid**; cite misuse site.
-  * If the bug is **inside** OOS lib → **OOS**.
-
-**Checklist**
-
-* [ ] File is in scope (path & commit).
-* [ ] Root cause in in-scope contract/function.
-* [ ] If involving tokens: non-standard behavior is **explicitly supported** (or token is **USDT**).
+**✅ If sanity check passes → Proceed to GATE 1**
 
 ---
 
-## 2) User Error Gate (GATE 2) ⚠️ NEW
+## GATE 1: SCOPE CHECK
 
-**Critical Question:** Does the exploit require the user to make a mistake?
+**INVALID:**
+- ❌ Root cause in OOS library
+- ❌ OOS token behavior (except USDT or explicitly supported)
+- ❌ View-only cosmetic/event-only without functional impact
 
-### User Error Patterns (INVALID/QA):
-
-1. **User chooses bad recipient/target**
-   - Example: "User sends ETH to contract without receive() function"
-   - Example: "User chooses malicious refund recipient"
-   - **Verdict:** INVALID - User's responsibility to validate recipient
-
-2. **User provides bad parameters**
-   - Example: "User sets slippage to 100%, loses funds"
-   - Example: "User sets deadline too far in future, gets sandwiched"
-   - **Verdict:** INVALID/QA - User controls parameters
-
-3. **User approves malicious contract**
-   - Example: "User approves attacker contract, gets drained"
-   - **Verdict:** INVALID - User's responsibility to verify approvals
-
-4. **User signs malicious transaction data**
-   - Example: "User signs nested multicall with allowFailure=true"
-   - **Verdict:** INVALID/QA - User controls what they sign
-
-### Valid Patterns (NOT User Error):
-
-1. **Protocol forces user into vulnerable state**
-   - Example: "Protocol automatically sets approval without user control"
-   - **Verdict:** VALID - Protocol bug
-
-2. **Attacker exploits without user involvement**
-   - Example: "Attacker calls public function to drain protocol funds"
-   - **Verdict:** VALID - Permissionless attack
-
-3. **User follows normal flow, protocol fails to protect**
-   - Example: "User calls withdraw(), protocol doesn't clear approval"
-   - **Verdict:** VALID - Protocol should handle cleanup
-
-**Checklist**
-
-* [ ] Exploit does NOT require user to choose bad recipient/target
-* [ ] Exploit does NOT require user to provide bad parameters
-* [ ] Exploit does NOT require user to approve malicious contract
-* [ ] Exploit does NOT require user to sign malicious data
-* [ ] OR: Protocol forces user into vulnerable state (not user's choice)
-* [ ] OR: Attacker can exploit without any user involvement
+**VALID:**
+- ✅ Root cause in-scope
+- ✅ In-scope code misuses OOS library
 
 ---
 
-## 2) Impact Classification (GATE 2)
+## GATE 2: USER ERROR CHECK 🚨
 
-Map your effect to C4:
+**Critical Question:** Does exploit require user mistake?
 
-### High (3)
+**INVALID if requires:**
+- ❌ User chooses bad recipient/target
+- ❌ User provides bad parameters (slippage, deadline, amount)
+- ❌ User approves malicious contract
+- ❌ User signs malicious transaction data
 
-* Theft or permanent loss of assets (funds/NFTs); unauthorized drains; seizure of **authorization**; leakage of **private data** in a way that compromises assets.
-* Economic attacks causing real capital loss (not dust), even if multi-step but **realistic**.
+**VALID if:**
+- ✅ Protocol forces user into vulnerable state
+- ✅ Attacker exploits without user involvement
+- ✅ User follows normal flow, protocol fails to protect
 
-### Medium (2)
-
-* No direct asset loss, but **protocol function/value/availability** harmed:
-
-  * **DoS** of critical actions (e.g., can’t deposit/withdraw, can’t execute governance queue).
-  * **Accounting drift** creating extractable value in plausible conditions.
-  * **Rounding** leading to non-dust value loss/gain.
-  * **Governance blockage**/grief preventing timelock execution under reasonable conditions.
-  * **Oracle / price calc** issues enabling mispricing (without guaranteed drain).
-  * **Privilege escalation** likelihood-dependent (up to Medium).
-
-### QA/Low
-
-* Dust amounts, stylistic issues, events inconsistencies without functional break, pure view-function errors.
-
-**Checklist**
-
-* [ ] Name the **asset or function at risk**.
-* [ ] Quantify **magnitude** (≥ dust).
-* [ ] Show **who benefits / who loses**.
+**Red Flags:**
+- "If user chooses X..." → likely user error
+- "User must validate..." → likely user error
+- "Transaction reverts if user provides bad input" → likely user error
 
 ---
 
-## 3) Impact Classification (GATE 3)
+## GATE 3: IMPACT CLASSIFICATION
 
-Map your effect to C4:
+**HIGH (3):**
+- Theft/permanent loss of assets (funds/NFTs)
+- Unauthorized drains, seizure of authorization
+- Economic attacks causing real capital loss (non-dust)
 
-### High (3)
+**MEDIUM (2):**
+- DoS of critical actions (deposit/withdraw/governance)
+- Accounting drift creating extractable value
+- Rounding leading to non-dust loss/gain
+- Oracle/price calc issues enabling mispricing
+- Privilege escalation (likelihood-dependent)
 
-* Theft or permanent loss of assets (funds/NFTs); unauthorized drains; seizure of **authorization**; leakage of **private data** in a way that compromises assets.
-* Economic attacks causing real capital loss (not dust), even if multi-step but **realistic**.
-
-### Medium (2)
-
-* No direct asset loss, but **protocol function/value/availability** harmed:
-
-  * **DoS** of critical actions (e.g., can't deposit/withdraw, can't execute governance queue).
-  * **Accounting drift** creating extractable value in plausible conditions.
-  * **Rounding** leading to non-dust value loss/gain.
-  * **Governance blockage**/grief preventing timelock execution under reasonable conditions.
-  * **Oracle / price calc** issues enabling mispricing (without guaranteed drain).
-  * **Privilege escalation** likelihood-dependent (up to Medium).
-
-### QA/Low
-
-* Dust amounts, stylistic issues, events inconsistencies without functional break, pure view-function errors.
-
-**Checklist**
-
-* [ ] Name the **asset or function at risk**.
-* [ ] Quantify **magnitude** (≥ dust).
-* [ ] Show **who benefits / who loses**.
+**QA/LOW:**
+- Dust amounts, stylistic issues, event inconsistencies
+- View-function errors without functional impact
 
 ---
 
-## 5) Governance/Centralization Risk (GATE 5) ⚠️ EXPANDED
+## GATE 4: LIKELIHOOD ASSESSMENT 🚨
 
-**Critical Question:** Can this be prevented by governance/team acting responsibly?
+**COMMON (High Likelihood):**
+- No preconditions, works anytime/anywhere
+- No special resources or timing needed
+- Example: Missing access control, logic bug
 
-### Governance Risk Patterns (QA/Low):
+**OCCASIONAL (Medium Likelihood):**
+- Specific but realistic conditions
+- Works on some chains or common market conditions
+- Moderate setup (deploy contract, front-run)
+- Example: Chain-specific issue, timing-dependent
 
-#### **1. Admin/Owner Actions**
-- Admin sets wrong parameters
-- Owner chooses malicious oracle
-- Governance misconfigures protocol
-- **Verdict:** QA/Low - Assume governance acts responsibly
+**RARE (Low Likelihood):**
+- Multiple unlikely conditions must align
+- Extreme market conditions or rare states
+- Significant resources or privileged position
+- Example: Storage collision, multi-step low-probability
 
-#### **2. Deployment Decisions** ⚠️ NEW
-- Team deploys on wrong chain without verification
-- Team doesn't verify hardcoded addresses match on target chain
-- Chain-specific configuration issues
-- "Only on chain X" problems
-- **Verdict:** QA/Low - Team should verify before deploying
+**Severity Matrix:**
 
-#### **3. Integration Choices**
-- Team chooses malicious integration
-- Team selects wrong external contract
-- Team configures integration incorrectly
-- **Verdict:** QA/Low - Team should do due diligence
+**CRITICAL Impact** (bricks entire protocol, steals ALL funds, complete takeover):
+- Common/Occasional → **HIGH** | Rare → **MEDIUM** ✅ (Exception: critical overrides rare)
 
-### Code Vulnerability Patterns (Medium/High):
+**HIGH Impact** (substantial loss, core function break, major DoS):
+- Common → **HIGH** | Occasional → **HIGH/MEDIUM** | Rare → **LOW** ❌
 
-#### **1. Missing Runtime Verification**
-- Code should verify codehash but doesn't
-- Code should check access control but doesn't
-- Code should validate input but doesn't
-- **Verdict:** Medium/High - Code bug, not governance issue
+**MEDIUM Impact** (temporary DoS, accounting drift, bounded loss):
+- Common → **MEDIUM** | Occasional → **MEDIUM/LOW** | Rare → **QA** ❌
 
-#### **2. Privilege Escalation**
-- Non-privileged user can gain privileged access
-- Code path allows unauthorized actions
-- **Verdict:** Up to Medium - Code vulnerability
-
-### Real Examples from This Audit:
-
-**DOWNGRADED (Governance Risk):**
-- ❌ "Multicall3 address mismatch on Sophon"
-  - Reason: Team chooses which chains to deploy on
-  - Team should verify addresses before deploying
-  - Judge: "Chain-specific configuration issue" → **Low**
-
-**VALID (Code Vulnerability):**
-- ✅ "Missing onlyDelegatecall guard on public functions"
-  - Reason: Code should enforce access control
-  - Not preventable by governance action
-  - Judge: Missing access control → **High**
-
-### Key Distinction:
-
-**Ask: "Who controls this decision?"**
-
-| Decision | Controller | Verdict |
-|----------|-----------|---------|
-| **Code logic** | Code itself | ✅ Valid vulnerability |
-| **Access control** | Code itself | ✅ Valid vulnerability |
-| **Deployment chain** | Team/Governance | ❌ Governance risk (QA/Low) |
-| **Address verification** | Team/Governance | ❌ Governance risk (QA/Low) |
-| **Parameter values** | Admin/Governance | ❌ Governance risk (QA/Low) |
-
-**Checklist**
-
-* [ ] Issue does NOT require admin/owner misuse or negligence
-* [ ] Issue does NOT require team to deploy on wrong chain
-* [ ] Issue does NOT require team to skip address verification
-* [ ] Issue does NOT require governance to choose bad parameters
-* [ ] OR: Code should enforce but doesn't (missing runtime verification)
-* [ ] OR: Privilege escalation via code path (not governance action)
+**🚨 Key:** CRITICAL = entire protocol/ALL funds/complete takeover | HIGH = substantial/core/major
 
 ---
 
-## 6) Likelihood Assessment (GATE 6) ⚠️ ENHANCED
+## GATE 5: GOVERNANCE/CENTRALIZATION RISK 🚨🚨
 
-**Critical:** Rigorously assess probability of exploit occurring in production.
+**Critical Question:** Can governance/team prevent this by acting responsibly?
 
-### Likelihood Categories:
+**INVALID/QA if YES (Governance Risk):**
+- ❌ Admin sets wrong parameters, chooses malicious oracle
+- ❌ Team deploys on wrong chain, doesn't verify addresses
+- ❌ Team chooses malicious integration, configures incorrectly
+- ❌ **"If [TrustedComponent] fails/has bug/behaves unexpectedly"** (assumes future bug)
 
-#### **Common (High Likelihood)**
-- ✅ No special preconditions required
-- ✅ Works on any chain / any time
-- ✅ Attacker needs no special resources or timing
-- ✅ Always exploitable once deployed
-- **Examples:**
-  - Missing access control on public function
-  - Logic bug in core calculation
-  - Reentrancy without guards
-  - **Severity:** High-impact + Common = **HIGH**
+**VALID if NO (Code Vulnerability):**
+- ✅ Code should verify/check/validate but doesn't (missing runtime verification)
+- ✅ Non-privileged user gains privileged access (privilege escalation)
 
-#### **Occasional (Medium Likelihood)**
-- ⚠️ Requires specific but realistic conditions
-- ⚠️ Works on some chains or under common market conditions
-- ⚠️ Attacker needs moderate setup (deploy contract, front-run, etc.)
-- ⚠️ Timing-dependent but achievable
-- **Examples:**
-  - Chain-specific deployment issue (e.g., Multicall3 on Sophon)
-  - Market condition dependent (e.g., low liquidity)
-  - Requires specific contract state (but reachable)
-  - **Severity:** High-impact + Occasional = **HIGH/MEDIUM**
+**Key Distinction:**
+- **Code logic/access control** → VALID
+- **Deployment/parameters/trusted component** → INVALID
 
-#### **Rare (Low Likelihood)**
-- ❌ Requires multiple unlikely conditions to align
-- ❌ Depends on extreme market conditions or rare states
-- ❌ Requires significant resources or privileged position
-- ❌ Storage collision requiring specific slot values
-- **Examples:**
-  - Storage collision requiring wallet slot 0 to be non-zero
-  - Multi-step attack requiring 3+ unlikely conditions
-  - Requires admin mistake + user mistake + market condition
-  - **Severity:** High-impact + Rare = **MEDIUM/LOW** (likely rejected)
-
-### Severity Matrix:
-
-| Impact ↓ / Likelihood → | Common | Occasional | Rare |
-|-------------------------|--------|------------|------|
-| **High** (asset theft) | HIGH ✅ | HIGH/MEDIUM ⚠️ | MEDIUM/LOW ❌ |
-| **Medium** (DoS/accounting) | MEDIUM ✅ | MEDIUM/LOW ⚠️ | QA/LOW ❌ |
-| **Low** (dust/cosmetic) | QA/LOW | QA/LOW | INVALID ❌ |
-
-### Likelihood Red Flags (Likely Rejection):
-
-1. **"Requires wallet slot 0 to be non-zero"**
-   - ❌ Unlikely - most wallets use namespaced storage
-   - **Verdict:** Rare likelihood → likely rejected
-
-2. **"Requires user to choose malicious recipient"**
-   - ❌ User error - not a likelihood issue, it's invalid
-   - **Verdict:** User error → invalid
-
-3. **"Requires admin to misconfigure + user to make mistake"**
-   - ❌ Multiple unlikely conditions
-   - **Verdict:** Rare likelihood → likely rejected
-
-4. **"Only exploitable on chains without EIP-1153"**
-   - ⚠️ Depends on deployment timeline
-   - **Verdict:** Occasional likelihood → argue carefully
-
-5. **"Only on chain X" / "Chain-specific issue"** ⚠️ NEW
-   - ❌ May be governance risk (team chooses deployment chain)
-   - ❌ "Team should verify before deploying" → Governance responsibility
-   - **Verdict:** Check GATE 5 (Governance Risk) → likely QA/Low
-
-**Checklist**
-
-* [ ] Explicit preconditions & external requirements documented
-* [ ] Attack steps are realistic on mainnet conditions (not contrived-only)
-* [ ] No reliance on user negligence (that would be user error, not likelihood)
-* [ ] Likelihood category assigned: Common / Occasional / Rare
-* [ ] If Rare: strong justification for why it's still valid
-* [ ] If Occasional: clear argument for why conditions are realistic
+**Red Flags:**
+- "Team should verify before deploying"
+- "Only on chain X"
+- "If [Component] fails/has bug"
+- "Admin/team chooses..."
 
 ---
 
-## 4) Exploitability Proof (PoC) (GATE 4)
+## GATE 6: UNSUPPORTED TOKEN CHECK
 
-Produce a **minimal Foundry test** that:
-
-* Sets state to legit scenario (fork or local deployment).
-* Executes the **attack path** step-by-step.
-* **Asserts** final state delta: balances, auth, timelock state, price, share accounting—**non-dust** effect.
-
-**PoC skeleton**
-
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-
-import "forge-std/Test.sol";
-import {Target, Token} from "../src/Target.sol";
-
-contract ExploitTest is Test {
-    Target target;
-    Token  token;
-    address attacker = address(0xBEEF);
-
-    function setUp() public {
-        // deploy or fork setup
-        target = new Target(/*...*/);
-        token  = new Token(/*...*/);
-        // seed attacker, pool, etc.
-    }
-
-    function test_attack_paths() public {
-        // 1) Preconditions
-        // 2) Trigger vulnerability
-        // 3) Observe effects
-        uint256 before = token.balanceOf(attacker);
-
-        // ...attack steps...
-
-        uint256 after_ = token.balanceOf(attacker);
-        assertGt(after_ - before, 1e12, "non-dust profit");
-        // Or assert state invariants broken / DoS demonstrated
-    }
-}
-```
-
-**Fuzz add-on (optional but strong):** a fuzz where invariant fails under a reasonable domain strengthens Medium/High.
-
-**Checklist**
-
-* [ ] Single-click `forge test` runs the PoC.
-* [ ] Clear `assert` shows the **effect** magnitude.
-* [ ] Uses realistic actors/roles and parameters.
+**INVALID:**
+- ❌ Fee-on-transfer/rebasing/decimals edge cases
+- ❌ Unless explicitly supported or USDT
 
 ---
 
-## 5) Centralization & Roles (GATE 5)
+## GATE 7: SPECULATION CHECK 🚨🚨
 
-* **Assume admins act correctly**; findings requiring admin misuse ⇒ **QA/Low/Invalid**.
-* If the attack works **even when admins follow spec** (e.g., parameter constraints violated by code, or unavoidable route) ⇒ **Medium+**.
-* **Privilege escalation** via code path under reasonable usage can be **Medium**.
+**Critical Question:** Does root cause exist NOW and is exploitable with TODAY's code?
 
-**Checklist**
+**INVALID if speculative:**
+- ❌ "If protocol integrates/adds/upgrades in future..."
+- ❌ **"If [Component] fails/has bug/behaves unexpectedly/is paused..."** (assumes future bug)
+- ❌ "Could/might/potentially happen if..." (hypothetical)
 
-* [ ] Does not require guardian/governor negligence or malicious admin actions.
-* [ ] If privilege involved, it’s an **escalation**, not normal usage.
+**VALID if current:**
+- ✅ Bug in current code, exploit works now
+- ✅ Plausible future integration (docs mention it, code has hooks, strong evidence)
 
----
-
-## 6) Token Model Constraints (GATE 6)
-
-* ERC-20 non-standard (rebasing/FoT/decimals mismatch) is **OOS unless explicitly supported** (USDT exception).
-* If protocol **claims support**, demonstrate how the handling is insufficient to cause Medium+ effect.
-
-**Checklist**
-
-* [ ] If using non-standard tokens, cite docs proving they are supported.
-* [ ] Otherwise, avoid that angle (or mark OOS).
+**Red Flags:**
+- "If [Component] fails"
+- "Could happen if"
+- "When protocol adds"
+- "Future integration"
 
 ---
 
-## 7) Speculation & Integrations (GATE 7)
+## GATE 8: "BY DESIGN" CHECK 🚨🚨
 
-* **Root cause exists now**.
-* If impact needs a future integration: explain **why that integration is plausible**, and how the root cause already enables it. Otherwise **QA/Low**.
+**Critical Question:** Is this documented as intentional? Check NatSpec, comments, docs, function naming.
 
-**Checklist**
+**🚨 CRITICAL EXCEPTION: Documentation ≠ Not a Vulnerability**
 
-* [ ] No dependency on hypothetical future code, unless likelihood is argued & credible.
+**VALID despite documentation if creates:**
+- ✅ Economic risk/loss for users (liquidators, LPs, depositors)
+- ✅ Missing standard protection (slippage, deadline, minOut, price bounds)
+- ✅ MEV/value extraction opportunity
+- ✅ Incentive misalignment harming protocol
 
----
+**Examples VALID despite docs:**
+- ✅ Missing slippage/deadline/minOut → controllable loss (**Medium**) - C4 consistently awards Medium
+- ✅ Unfair fee structure → systematic disadvantage (Low/Medium)
 
-## 8) Quantification & Non-Dust Thresholds
+**INVALID if documented + no harm:**
+- ❌ Admin emergency pause, governance timelock (protective measures)
 
-* Show **numbers**: amounts at risk, percentage slippage, value drift per operation.
-* Back results with math and PoC outputs (e.g., “profit = 0.42 ETH”, “protocol loses 0.3% TVL per cycle”).
-* If rounding: prove it scales (loopable grief, first/last depositor attack, or affects many users).
-
-**Checklist**
-
-* [ ] Non-dust threshold exceeded (document the threshold for the asset).
-* [ ] If cumulative, prove repeatability.
-
----
-
-## 9) Duplicate / Non-Novel Check
-
-* Search for the same root cause in prior issues 
-* If dup found suggest combining with result with it (if different exploit) or picking one of the 2.
-
-
----
-## 10) Reliability Boosters (to avoid down-grading)
-
-* **State all assumptions** explicitly (liquidity, oracle freshness, fee settings, role addresses).
-* **Show both sides**: a short note why alternate explanations are **not** required (e.g., “doesn’t rely on a revertible user step”).
-* **Edge-cases**: include boundary tests (0, 1 wei, min/max inputs, rollover).
-* **Events**: if events are involved, tie it to **functional** impact (bridging/proofs); otherwise judges cap at Low.
-* **Clean language**: no speculative language without matching proof.
+**When in doubt:** Mark **VALID + SomeWhatConfident** (false negatives worse than false positives)
 
 ---
 
-## 11) Quick Severity Rubric (snap-score)
+## GATE 9: EXPLOITABILITY (PoC)
 
-* **HIGH** if: asset drain/theft **or** matured yield loss **with PoC**.
-* **MEDIUM** if:
+**Requirements:**
+- Minimal reproducible PoC
+- Demonstrates state change consistent with impact
+- Non-dust effect
+- Realistic actors and parameters
 
-  * Functional DoS that blocks core actions, **or**
-  * Governance blockage/queue corruption under reasonable conditions, **or**
-  * Value leakage ≥ non-dust (loopable/abusable) without guaranteed drain, **or**
-  * Price/accounting error affecting user equity in meaningful amounts, **or**
-  * Likely privilege escalation.
-* **QA/LOW** if:
+**If not reproducible in clean scenario → rework or downgrade**
 
-  * Dust rounding only; stylistic; view-only misreports; event cosmetics; requires admin misuse; unsupported token quirk unless claimed supported.
+---
 
+## GATE 10: CONFIGURATION CHECK
+
+**If finding relies on constants:**
+- Check for testnet comments
+- Suspiciously small values
+- Commented-out production values
+
+---
+
+## GATE 11: EXISTING SAFEGUARDS CHECK 🚨🚨
+
+**Critical Question:** Does the code already have safeguards that mitigate or eliminate this vulnerability?
+
+**INVALID if safeguards exist and work, including but not limited to:**
+- ❌ **Reentrancy** → Code has `nonReentrant` modifier, CEI pattern, or reentrancy guard
+- ❌ **Integer overflow/underflow** → Using Solidity 0.8+ with built-in overflow checks
+- ❌ **Access control** → Function has proper modifiers (`onlyOwner`, `onlyRole`, role checks)
+- ❌ **Front-running** → Code uses commit-reveal, deadlines, or slippage protection
+- ❌ **Oracle manipulation** → Code uses TWAP, multiple oracle sources, or price bounds
+- ❌ **DoS via unbounded loop** → Code has pagination, gas limits, or circuit breakers
+- ❌ **Precision loss** → Code uses proper scaling, rounding direction checks, or minimum thresholds
+- ❌ **Flash loan attacks** → Code has flash loan detection or same-block protection
+- ❌ **Price manipulation** → Code has price validation, bounds checks, or sanity limits
+
+**VALID if safeguards missing or insufficient:**
+- ✅ No safeguard exists for the attack vector
+- ✅ Safeguard exists but is **bypassable** (show bypass in PoC)
+- ✅ Safeguard is **incomplete** (only protects some functions, not all)
+- ✅ Safeguard has **wrong parameters** (deadline too long, slippage too high, bounds too wide)
+- ✅ Safeguard is **incorrectly implemented** (logic flaw, off-by-one, wrong condition)
+
+**How to Check:**
+1. **Search codebase** for relevant modifiers/guards (e.g., `nonReentrant`, `onlyOwner`)
+2. **Check if vulnerable function** uses the safeguard
+3. **Verify safeguard parameters** are sufficient (e.g., deadline < 30 min, slippage < 5%)
+4. **Test if safeguard can be bypassed** (include bypass in PoC if claiming it's insufficient)
+5. **Check all code paths** - safeguard must protect ALL vulnerable paths, not just some
+
+**Red Flags (Likely Invalid - Check for Safeguards First):**
+- "Missing reentrancy guard" → Search for `nonReentrant`, `ReentrancyGuard`, CEI pattern, state locks
+- "Integer overflow" → Check Solidity version (0.8+ has built-in checks, 0.7- needs SafeMath)
+- "Missing access control" → Search for `onlyOwner`, `onlyRole`, `require(msg.sender ==`, role checks
+- "Oracle manipulation" → Search for `TWAP`, `consult`, multiple oracle calls, price validation
+- "Front-running" → Search for `deadline`, `minAmountOut`, `slippage`, commit-reveal pattern
+- "DoS via gas" → Search for pagination, `maxIterations`, gas limits, circuit breakers
+- "Flash loan attack" → Search for `block.number` checks, flash loan detection, same-block protection
+
+**Exception (Still VALID despite safeguard):**
+- ✅ Safeguard exists but is **incorrectly implemented** → VALID (show the implementation flaw in PoC)
+- ✅ Safeguard exists but **doesn't cover all cases** → VALID (show the uncovered case in PoC)
+- ✅ Safeguard exists but has **insufficient parameters** → VALID (show how to exploit weak parameters)
+- ✅ Safeguard can be **bypassed** → VALID (show the bypass in PoC)
+
+**Examples:**
+
+**INVALID (Safeguard Exists):**
+- ❌ "Reentrancy in withdraw()" → But function has `nonReentrant` modifier
+- ❌ "Integer overflow in multiply()" → But using Solidity 0.8.20
+- ❌ "Missing access control on setFee()" → But function has `onlyOwner` modifier
+- ❌ "Front-running in swap()" → But function has `deadline` and `minAmountOut` parameters
+
+**VALID (Safeguard Missing or Insufficient):**
+- ✅ "Reentrancy in withdraw()" → No `nonReentrant` modifier, no CEI pattern
+- ✅ "Integer overflow in multiply()" → Using Solidity 0.7.6 without SafeMath
+- ✅ "Access control bypass in setFee()" → `onlyOwner` check is after state change (can be bypassed)
+- ✅ "Front-running in swap()" → `deadline` is set to `type(uint256).max` (ineffective)
+
+---
+
+## ✅ WHEN IN DOUBT → VALID + SomeWhatConfident
+
+**Lean toward VALID if:**
+- Realistic user loss
+- Matches historical C4 patterns
+- Missing standard protections
+
+**Mark INVALID if:**
+- Assumes future bugs (GATE 7)
+- Requires governance mistake (GATE 5)
+- Requires user error (GATE 2)
+- Safeguards already exist and work (GATE 11)
+- Bug doesn't actually exist in code (PRE-GATE SANITY CHECK)
+
+---
+
+**If it passes PRE-GATE SANITY CHECK + all 11 gates with a working PoC and effect ≥ Medium → SUBMIT**
 

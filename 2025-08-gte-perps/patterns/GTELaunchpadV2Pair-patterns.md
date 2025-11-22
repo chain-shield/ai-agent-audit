@@ -1,595 +1,64 @@
-## Verified Patterns Found: 36
+## Verified Patterns Found: 20
 
 ## Verified Patterns Found in following Categories:
 
-- PermitFrontRun
 - FeeOnTransferAssumption
-- UnsafeAssembyTypeCasts
-- UnsafeRecipient
-- GriefableCallbacks
-- AccessControlOrAuthByPass
-- StandardViolation
+- PermitFrontRun
 - FlashLoanEconomicManipulation
-- FeeAccountingDrift
-- UnprotectedPauseOrStop
-- InitOrderOrUnintialized
 - AccountingInvariantViolation
-- NonStandardERC20Behavior
+- PermitOrSignatureReplay
+- UnsafeRecipient
+- StandardViolation
 - PermitMisuse
-- ERC20DecimalsMismatch
-- PrecisionDriftAccumulation
-- PricePrecisionOrRoundingError
+- GriefableCallbacks
+- ReadOnlyReentrancy
+- ReserveOrPriceDesync
 
 
 
 ## Summary of Patterns
 
-Premature Permanent Disabling of Fees via endRewards
+DoS via Griefable Distributor Callback
 
-DoS of Claiming due to Unsafe Downcast
+Accounting Invariant Violation allowing Fee Skimming
 
-Premature disabling of Pair fees via endRewards breaks protocol incentives
+Malleable signatures in permit allow front-running
 
-Rewards lost due to insufficient precision factor (1e12)
+DoS on USDT pairs due to unsafe approval reset
 
-Sandwich attack on permissionless reward distribution during bonding phase
+Permit signature malleability allows front-running DoS
 
-Signature Malleability in Permit
+Trading DoS due to SafeApprove Incompatibility (USDT)
 
-Premature Permanent Disabling of Reward Fees
+Replayable Permits due to Static Domain Separator
 
-Rewards precision loss due to insufficient scaling factor
+Flash Loan Fee Manipulation via LP Token Transfer during Swap
 
-Rewards permanently locked due to precision loss in tracking
+Accrued Launchpad Fees Theft via mint()
 
-uint96 Share Cap Causes DoS for High Supply Tokens
+Flash-minting liquidity dilutes launchpad fee revenue
 
-Stuck Dust Rewards Prevent Skimming via Accounting Invariant Violation
+Read-Only Reentrancy in Swap Callback
 
-Proxy Initialization Vulnerability
+Reserve Desync via Skim if Distributor Fails to Pull
 
-Insufficient Precision in RewardsTracker Causes Reward Loss
+`endRewardsAccrual` deletes accrued fees without distribution
 
-Systematic loss of rewards due to insufficient precision factor
+Read-Only Reentrancy via Rewards Distribution
 
-Overflow in UserRewardData due to uint96 limits for high-supply tokens
+Skimming of Accrued Fees via Accounting Invariant Violation
 
-Incompatible precision factor causes total reward loss for USDC pairs
+Burn Revert Due to Fee Accounting Mismatch
 
-AMM Swap DoS when Distributor has zero shares
+Fee-on-transfer tokens cause Distributor insolvency
 
-Permit signature malleability enables front-running DoS
+USDT/Non-standard Token Approval Revert in Fee Distribution
 
-Unclaimable dust accumulation in totalPendingRewards
+Launchpad Fee Dilution via Flash-Minted Liquidity Inflation
 
-Precision Loss in Reward Distribution for High-Supply Tokens
-
-Uninitialized Reward Pool DoS
-
-Reward Loss due to Low Precision Factor
-
-Precision Loss in RewardsTracker Erases Rewards for Large Pools
-
-Launchpad fee rounding leads to revenue loss
-
-Unclaimable dust rewards cause accounting drift and lock funds
-
-Malleable signatures accepted in UniswapV2ERC20 permit
-
-Low precision factor in RewardsTracker leads to significant yield loss
-
-Claiming blocked by coupled asset transfer failure
-
-Flash loan manipulation of LP totalSupply bypasses Launchpad fee
-
-AMM Pair DoS via Reverting Fee Distribution Hook
-
-Insolvency with Fee-On-Transfer tokens in `addRewards`
-
-DoS of AMM Swaps when Distributor Shares are Zero
-
-Rewards Misdirected to Launchpad Contract instead of User
-
-Fee-On-Transfer Token Support Missing in addRewards
-
-addRewards allows mismatched quote tokens enabling reward theft
-
-Missing asset validation in addRewards allows draining legitimate reward tokens
+Denial of Service via Reverting Distributor Callback
 
 ## Patterns
-
-
-
- ### Issue Type: UnprotectedPauseOrStop
-
- ### Relevant Function/Location: GTELaunchpadV2Pair.endRewardsAccrual
-
- ### Title
-Premature Permanent Disabling of Fees via endRewards
- ### Description/Code Snippet
-The `Distributor.endRewards` function calls `pair.endRewardsAccrual()`, which permanently deletes `rewardsPoolActive` (setting it to 0). According to the documentation, `endRewards` is called at graduation (when the pair is created). This sequence immediately stops the pair from ever accruing Launchpad fees, breaking the intended economic flow where the pair fees feed the Distributor.
- ### Static Signals
-delete rewardsPoolActive, rewardsPoolActive check in _update
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
-
-
-
-
- ### Issue Type: UnsafeAssembyTypeCasts
-
- ### Relevant Function/Location: Distributor.stake/unstake/claim
-
- ### Title
-DoS of Claiming due to Unsafe Downcast
- ### Description/Code Snippet
-In `RewardsTrackerLib`, the `baseRewardDebt` is updated by casting `totalAccRewards` (uint256) to `uint96`. For high-supply tokens or long-running pools, `accRewardPerShare` (scaled by 1e12) multiplied by shares can exceed `type(uint96).max` (approx 7.9e28). This downcast truncates the debt value. During `claim`, the full `totalAccRewards` is compared to the truncated debt, resulting in an erroneously huge claim amount that causes `_decreaseTotalPending` to revert due to underflow/insufficient balance, permanently locking user funds.
- ### Static Signals
-uint96(totalAccRewards(...)), explicit downcast without SafeCast, uint96 used for cumulative debt tracking
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: StandardViolation
-
- ### Relevant Function/Location: GTELaunchpadV2Pair.endRewardsAccrual
-
- ### Title
-Premature disabling of Pair fees via endRewards breaks protocol incentives
- ### Description/Code Snippet
-The protocol documentation states that `GTELaunchpadV2Pair` fees feed the Launchpad Distributor. However, the `endRewards` function (called at graduation) invokes `pair.endRewardsAccrual()`, which sets `rewardsPoolActive` to 0. In `GTELaunchpadV2Pair`, fee collection is conditional on `rewardsPoolActive > 0`. Consequently, as soon as the token graduates and the pair is fully established, the fee mechanism is permanently disabled, violating the intended economic design.
- ### Static Signals
-delete rewardsPoolActive, conditional fee logic depends on rewardsPoolActive
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
-
-
-
-
- ### Issue Type: PricePrecisionOrRoundingError
-
- ### Relevant Function/Location: RewardsTrackerLib.getAccRewardsPerShare
-
- ### Title
-Rewards lost due to insufficient precision factor (1e12)
- ### Description/Code Snippet
-The `RewardsTrackerLib` uses a `PRECISION_FACTOR` of `1e12`. In `getAccRewardsPerShare`, the calculation is `(pending * 1e12) / totalShares`. If `totalShares` is large (e.g., 80% of a 1B supply token = 8e26 wei) and the added reward amount is small (e.g., 1 USDC = 1e6 wei), the numerator `1e6 * 1e12 = 1e18` is smaller than the denominator `8e26`, resulting in 0. The `pending` rewards are deleted (cleared) in `update()`, but `accRewardsPerShare` does not increase, effectively burning the rewards.
- ### Static Signals
-mix 6/8/18 decimals without normalization, precision factor 1e12 too low for high supply
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: FlashLoanEconomicManipulation
-
- ### Relevant Function/Location: Distributor.addRewards
-
- ### Title
-Sandwich attack on permissionless reward distribution during bonding phase
- ### Description/Code Snippet
-Rewards added via `addRewards` are distributed instantaneously to current shareholders (updating `accRewardPerShare` immediately). During the bonding phase, shares are acquired by buying the `LaunchToken` on the bonding curve. An attacker can front-run a large `addRewards` transaction (e.g., from the Pair flushing fees or a project incentive) by flash-buying shares on the curve, claiming a large portion of the rewards, and back-running by selling the shares. This extracts value from the reward provider to the attacker.
- ### Static Signals
-Instant reward distribution in RewardsTrackerLib, Permissionless addRewards, Liquid shares via bonding curve
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: PermitMisuse
-
- ### Relevant Function/Location: UniswapV2ERC20.permit
-
- ### Title
-Signature Malleability in Permit
- ### Description/Code Snippet
-The `permit` function in `UniswapV2ERC20` uses `ecrecover` without validating that the `s` value of the signature is in the lower half of the curve (`s <= secp256k1n/2`). While nonces prevent replay of the exact message, this allows malleable signatures to be accepted, violating EIP-2612 strict compliance and potentially causing issues with transaction malleability checks in integrations.
- ### Static Signals
-ecrecover usage without s-value check, missing require(uint256(s) <= 0x7FFFF...)
- ### Assets at Risk
-
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccountingInvariantViolation
-
- ### Relevant Function/Location: GTELaunchpadV2Pair.endRewardsAccrual
-
- ### Title
-Premature Permanent Disabling of Reward Fees
- ### Description/Code Snippet
-The documentation states that `Distributor.endRewards` is called at 'Graduation', yet `endRewards` calls `pair.endRewardsAccrual()`, which permanently sets `rewardsPoolActive = 0` and deletes accrued fees. This action effectively disables the logic that feeds fees to the Distributor immediately upon the pair's official launch, contradicting the protocol's stated mechanic that LP fees should incentivize stakers.
- ### Static Signals
-delete rewardsPoolActive, delete accruedLaunchpadFee0
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
-
-
-
-
- ### Issue Type: ERC20DecimalsMismatch
-
- ### Relevant Function/Location: Distributor.addRewards
-
- ### Title
-Rewards precision loss due to insufficient scaling factor
- ### Description/Code Snippet
-The `RewardsTrackerLib` uses a fixed precision factor of `1e12`. When distributing low-decimal rewards (e.g., USDC with 6 decimals) to holders of high-decimal shares (e.g., LaunchToken with 18 decimals), the accumulator calculation `(amount * 1e12) / totalShares` suffers from severe rounding. If `totalShares` (raw units) exceeds `amount * 1e12`, the result is zero. For example, distributing $100,000 USDC to 1,000,000 staked tokens (1e24 raw shares) results in `(100,000e6 * 1e12) / 1e24 = 1e23 / 1e24 = 0`. The rewards are permanently stuck in the contract and users receive nothing.
- ### Static Signals
-mixes token amounts with 18-decimal math unscaled, PRECISION_FACTOR = 1e12
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: ERC20DecimalsMismatch
-
- ### Relevant Function/Location: RewardsTrackerLib.getAccRewardsPerShare
-
- ### Title
-Rewards permanently locked due to precision loss in tracking
- ### Description/Code Snippet
-RewardsTrackerLib uses a fixed PRECISION_FACTOR of 1e12. If the reward token has low decimals (e.g., USDC with 6) and total shares are high (18 decimals), the calculation `(pending * 1e12) / totalShares` rounds to zero. The pending rewards are cleared (deleted) but the accumulator is not incremented, causing funds to be permanently locked.
- ### Static Signals
-mixes token amounts with 18-decimal math unscaled, precision factor 1e12 used with division
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccountingInvariantViolation
-
- ### Relevant Function/Location: Distributor.increaseStake
-
- ### Title
-uint96 Share Cap Causes DoS for High Supply Tokens
- ### Description/Code Snippet
-The `Distributor` and `RewardsTracker` structs limit `shares` and `totalShares` to `uint96` (max ~7.9e28). Many tokens (especially meme coins) have supplies exceeding this (e.g., 1 trillion tokens with 18 decimals = 1e30). If such a token is launched, the `increaseStake` function will revert when shares exceed `uint96` capacity, causing a Denial of Service for the Launchpad bonding/staking flow.
- ### Static Signals
-uint96 cast of shares, uint96 type for totalShares
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccountingInvariantViolation
-
- ### Relevant Function/Location: Distributor.skimExcessRewards
-
- ### Title
-Stuck Dust Rewards Prevent Skimming via Accounting Invariant Violation
- ### Description/Code Snippet
-The `Distributor` contract tracks `totalPendingRewards` by adding amounts in `addRewards` and subtracting amounts in `claimRewards`. However, `claimRewards` calculates the payout using `RewardsTrackerLib` which uses floor rounding (integer division). As a result, the amount claimed and subtracted from `totalPendingRewards` is slightly less than the theoretical amount owed. The 'dust' difference remains in the contract's balance and `totalPendingRewards` count. The `skimExcessRewards` function strictly requires `balance > totalPendingRewards`. Since the dust is permanently counted in `totalPendingRewards` but is mathematically unclaimed by users, `totalPendingRewards` remains equal to or higher than the claimable balance, making it impossible to ever skim this residual value.
- ### Static Signals
-balance - totalPendingRewards, unchecked subtraction
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresAdminRole
-
-
-
-
- ### Issue Type: InitOrderOrUnintialized
-
- ### Relevant Function/Location: Distributor.initialize
-
- ### Title
-Proxy Initialization Vulnerability
- ### Description/Code Snippet
-The `Distributor` constructor initializes the owner using `_initializeOwner(msg.sender)`. If this contract is deployed via minimal proxy clones (standard for Launchpads to save gas), the constructor logic does not affect the proxy's storage. The `initialize` function has an `onlyOwner` modifier, but since the proxy's owner storage slot is 0 and the caller is non-zero, `onlyOwner` checks fail. This makes the proxy undeployable/unusable. The `initialize` function should call `_initializeOwner` if not initialized.
- ### Static Signals
-_initializeOwner in constructor, initialize function protected by onlyOwner, missing owner setup in initialize
- ### Assets at Risk
-availability
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: PrecisionDriftAccumulation
-
- ### Relevant Function/Location: RewardsTrackerLib.getAccRewardsPerShare
-
- ### Title
-Insufficient Precision in RewardsTracker Causes Reward Loss
- ### Description/Code Snippet
-The `RewardsTrackerLib` uses a `PRECISION_FACTOR` of `1e12` for reward accumulation. The formula `acc += (pending * 1e12) / totalShares` is prone to rounding to zero if `totalShares` is large relative to `pending * 1e12`. For a standard ERC20 token with 18 decimals, a supply of 1 million tokens results in `1e24` shares. If rewards are added in small increments (e.g., high-frequency fees from the Pair, or USDC with 6 decimals), any reward amount less than `1e12` (1 trillion units of reward token) relative to `totalShares` scale will result in zero accumulation. For example, 1 USDC (1e6) reward distributed to 1M share tokens (1e24) yields `1e6 * 1e12 / 1e24 = 0`. The pending rewards are deleted from state but never accrued to users, resulting in permanent loss of funds.
- ### Static Signals
-PRECISION_FACTOR = 1e12, division by totalShares
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: ERC20DecimalsMismatch
-
- ### Relevant Function/Location: Distributor.getAccRewardsPerShare (in RewardsTrackerLib)
-
- ### Title
-Systematic loss of rewards due to insufficient precision factor
- ### Description/Code Snippet
-The `RewardsTrackerLib` uses a hardcoded `PRECISION_FACTOR` of `1e12` to scale rewards. When distributing rewards for tokens with low decimals (e.g., USDC with 6 decimals) against a staking token with high decimals and large supply (e.g., 800M tokens = 8e26 wei), the calculation `(pending * 1e12) / totalShares` rounds to zero for very significant amounts (e.g., up to 800,000 USDC). This results in the systematic loss of almost all quote asset rewards, which remain locked in the contract.
- ### Static Signals
-PRECISION_FACTOR = 1e12, mixes token amounts with 18-decimal math unscaled
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: PricePrecisionOrRoundingError
-
- ### Relevant Function/Location: Distributor.increaseStake
-
- ### Title
-Overflow in UserRewardData due to uint96 limits for high-supply tokens
- ### Description/Code Snippet
-The `UserRewardData` struct in `RewardsTracker.sol` uses `uint96` for `shares`, `baseRewardDebt`, and `quoteRewardDebt`. `uint96` has a maximum value of approximately `7.9e28`. For tokens with 18 decimals, this corresponds to a supply of roughly 79 billion tokens. Many launchpad projects (especially memecoins) feature supplies in the trillions or quadrillions (e.g., 1e12 * 1e18 = 1e30). If such a token is launched, `increaseStake` will revert due to overflow when `totalShares` exceeds ~79 billion, enabling a permanent DoS on the launchpad for that asset and locking user funds.
- ### Static Signals
-uint96 shares, uint96 baseRewardDebt, mix 6/8/18 decimals without normalization
- ### Assets at Risk
-users' staked assets
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: NonStandardERC20Behavior
-
- ### Relevant Function/Location: RewardsTrackerLib.getAccRewardsPerShare
-
- ### Title
-Incompatible precision factor causes total reward loss for USDC pairs
- ### Description/Code Snippet
-The `RewardsTrackerLib` uses a hardcoded `PRECISION_FACTOR` of `1e12`. When the `launchAsset` has 18 decimals (common) and the `quoteAsset` is USDC (6 decimals), the reward accrual calculation `(pending * 1e12) / totalShares` rounds to zero for standard amounts. For instance, with 1M tokens staked (1e24 wei), 1 USDC reward (1e6 wei) results in `1e18 / 1e24 = 0`. This leads to the complete loss of yield for stakers unless improbably large reward amounts are added at once.
- ### Static Signals
-fixed precision factor, division before multiplication potential, decimals mismatch
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccountingInvariantViolation
-
- ### Relevant Function/Location: GTELaunchpadV2Pair.swap
-
- ### Title
-AMM Swap DoS when Distributor has zero shares
- ### Description/Code Snippet
-GTELaunchpadV2Pair calls `Distributor.addRewards` during swaps to distribute fees. `addRewards` reverts if `totalShares` is zero. If all users unstake from the Distributor (e.g., after launchpad graduation/migration), the AMM pair becomes unusable as every swap attempts to distribute fees and reverts.
- ### Static Signals
-external call in critical path, revert condition in called contract triggers DoS
- ### Assets at Risk
-
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: PermitFrontRun
-
- ### Relevant Function/Location: UniswapV2ERC20.permit
-
- ### Title
-Permit signature malleability enables front-running DoS
- ### Description/Code Snippet
-The `permit` function in UniswapV2ERC20 uses `ecrecover` without verifying that the `s` value is in the lower half of the curve. Attackers can observe a valid permit transaction, flip the `s` value to create a valid equivalent signature, and front-run the user to consume the nonce, causing the user's transaction to revert.
- ### Static Signals
-ecrecover used without requiring s <= secp256k1n/2, no ECDSA library usage
- ### Assets at Risk
-
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: PrecisionDriftAccumulation
-
- ### Relevant Function/Location: Distributor.addRewards
-
- ### Title
-Unclaimable dust accumulation in totalPendingRewards
- ### Description/Code Snippet
-In `RewardsTrackerLib.update()`, the `accBaseRewardPerShare` is calculated as `(pending * 1e12) / totalShares`. If `totalShares` is significantly large (which is expected for high-supply launch tokens) and `pending` is small, this division rounds down to zero. The `pending` amount is cleared from `pendingBaseRewards` but not added to the global accumulator. However, `Distributor` tracks this amount in `totalPendingRewards` via `addRewards`. This creates a permanent divergence where `totalPendingRewards` includes funds that are mathematically impossible for users to claim. This 'ghost' balance cannot be skimmed by `skimExcessRewards` (as `balance - totalPending` would imply no excess), effectively locking the dust in the contract forever.
- ### Static Signals
-consistent floor toward sender/receiver, divide before multiply
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: PricePrecisionOrRoundingError
-
- ### Relevant Function/Location: Distributor.getAccRewardsPerShare
-
- ### Title
-Precision Loss in Reward Distribution for High-Supply Tokens
- ### Description/Code Snippet
-The `RewardsTrackerLib` uses a hardcoded `PRECISION_FACTOR` of `1e12` while `totalShares` (uint96) allows up to ~7.9e28 shares. For tokens with high total supply, the reward accumulator calculation `(pending * 1e12) / totalShares` suffers from significant truncation (rounding to zero) if the pending reward amount is not sufficiently large relative to the supply. Frequent user interactions triggering `update()` can systematically lose rewards to rounding errors.
- ### Static Signals
-mix 6/8/18 decimals without normalization, divide before multiply
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: InitOrderOrUnintialized
-
- ### Relevant Function/Location: Distributor.addRewards
-
- ### Title
-Uninitialized Reward Pool DoS
- ### Description/Code Snippet
-The `GTELaunchpadV2Pair` is deployed via a factory and initialized. However, the corresponding reward pool in `Distributor` is created via a separate call to `createRewardsPair`. If the pair receives trades before `createRewardsPair` is called, `GTELaunchpadV2Pair._update` calls `Distributor.addRewards`, which reverts with `RewardsDoNotExist` (implied by the check `if (rs.quoteAsset == address(0))`). This bricks the pair until the distributor is configured.
- ### Static Signals
-revert RewardsDoNotExist, ordering dependency
- ### Assets at Risk
-
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: PrecisionDriftAccumulation
-
- ### Relevant Function/Location: Distributor.RewardsTrackerLib.getAccRewardsPerShare
-
- ### Title
-Reward Loss due to Low Precision Factor
- ### Description/Code Snippet
-The `RewardsTrackerLib` uses a `PRECISION_FACTOR` of `1e12` to calculate `accRewardPerShare`. If the staking token has high decimals (e.g., 18) and the reward token has low decimals (e.g., USDC with 6), the calculation `(rewardAmount * 1e12) / totalShares` often truncates to zero for realistic amounts (e.g., < 1000 USDC reward for 1M staked tokens). This results in complete loss of rewards for stakers.
- ### Static Signals
-PRECISION_FACTOR = 1e12, division (pending * precision) / totalShares, scaling factor < 1e18
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: PrecisionDriftAccumulation
-
- ### Relevant Function/Location: RewardsTrackerLib.update
-
- ### Title
-Precision Loss in RewardsTracker Erases Rewards for Large Pools
- ### Description/Code Snippet
-The `RewardsTrackerLib` uses a `PRECISION_FACTOR` of `1e12` when calculating accumulated rewards per share. The update formula is `acc += (pending * 1e12) / totalShares`. If `pending * 1e12 < totalShares`, the result is zero. For tokens with high supply (e.g., 100 billion tokens = 1e29 wei), even significant reward amounts (up to ~1e17 wei) are rounded down to zero and permanently lost from the accounting, leading to fee accounting drift and user loss.
- ### Static Signals
-PRECISION_FACTOR = 1e12, division by totalShares with low precision multiplier
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: FeeAccountingDrift
-
- ### Relevant Function/Location: GTELaunchpadV2Pair._getLaunchpadFees
-
- ### Title
-Launchpad fee rounding leads to revenue loss
- ### Description/Code Snippet
-In `GTELaunchpadV2Pair._getLaunchpadFees`, the fee calculation performs integer division `(amount * share * balance) / (total * 1000)`. Small trades or trades where the numerator is smaller than the denominator result in zero fees sent to the distributor, allowing systematic fee avoidance via order splitting.
- ### Static Signals
-fee taken before scaling normalization, division before summation
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: FeeAccountingDrift
-
- ### Relevant Function/Location: Distributor.skimExcessRewards
-
- ### Title
-Unclaimable dust rewards cause accounting drift and lock funds
- ### Description/Code Snippet
-Due to integer division in `RewardsTrackerLib`, a small portion of rewards (dust) is often left undistributed in the accumulator logic. However, `Distributor.totalPendingRewards` tracks the full input amount. As users claim, `totalPendingRewards` is decremented by the claimed amount, but not the dust. Over time, `totalPendingRewards` drifts higher than the actual claimable balance. Since `skimExcessRewards` calculates skimmable funds as `balance - totalPendingRewards`, this drift causes the function to under-calculate the excess, effectively locking the dust in the contract forever.
- ### Static Signals
-fee taken before scaling normalization, flooring in looped reward distribution
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresAdminRole
-
-
-
-
- ### Issue Type: PermitMisuse
-
- ### Relevant Function/Location: GTELaunchpadV2Pair.permit
-
- ### Title
-Malleable signatures accepted in UniswapV2ERC20 permit
- ### Description/Code Snippet
-The `permit` function in `UniswapV2ERC20` (inherited by `GTELaunchpadV2Pair`) uses `ecrecover` without verifying that the `s` value is in the lower half of the curve (`s <= secp256k1n/2`) or that `v` is 27/28. This allows an attacker to construct a valid signature with a high `s` value from a user's valid signature. While the nonce prevents replay of the same action, an attacker can front-run a user's `permit` transaction with the malleable signature, consuming the nonce and causing the user's original transaction (and any batched logic) to revert.
- ### Static Signals
-ecrecover used without requiring s <= secp256k1n/2, v not validated to 27/28
- ### Assets at Risk
-
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccountingInvariantViolation
-
- ### Relevant Function/Location: RewardsTrackerLib.update
-
- ### Title
-Low precision factor in RewardsTracker leads to significant yield loss
- ### Description/Code Snippet
-The `RewardsTrackerLib` uses a `PRECISION_FACTOR` of `1e12` for calculating `accRewardPerShare`. Launchpad tokens typically have 18 decimals and large supplies (e.g., 1 billion = 1e27 wei). If `totalShares` is around 1e27, any reward addition `amount` less than `1e15` (0.001 tokens) results in `(amount * 1e12) / 1e27 = 0`. Since `GTELaunchpadV2Pair` sends fees on every swap (often small amounts), a substantial portion of rewards will be lost to rounding errors and permanently locked in the `Distributor`.
- ### Static Signals
-PRECISION_FACTOR = 1e12, division by totalShares without high precision scaling
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: GriefableCallbacks
-
- ### Relevant Function/Location: Distributor.claimRewards
-
- ### Title
-Claiming blocked by coupled asset transfer failure
- ### Description/Code Snippet
-The `claimRewards` function attempts to distribute both `baseAsset` and `quoteAsset` rewards in the same transaction via `_distributeAssets`. If the `quoteAsset` (e.g., USDC) is paused, blacklists the user, or reverts on transfer for any reason, the user is unable to claim their `baseAsset` (Project Token) rewards. The failure of one asset's transfer griefs the claim of the other.
- ### Static Signals
-no try/catch around external hook, callback success required for core flow to proceed
- ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: FlashLoanEconomicManipulation
-
- ### Relevant Function/Location: GTELaunchpadV2Pair._getLaunchpadFees
-
- ### Title
-Flash loan manipulation of LP totalSupply bypasses Launchpad fee
- ### Description/Code Snippet
-The `GTELaunchpadV2Pair` calculates the `launchpadFee` (a protocol tax sent to the Distributor) based on the ratio of the Launchpad's LP balance to the total LP supply: `fee = amountIn * REWARDS_FEE_SHARE * launchpadLpBal / (totalLpBal * 1000)`. An attacker can flash-mint a massive amount of LP tokens to inflate `totalLpBal` (`totalSupply`) while `launchpadLpBal` remains constant. This drives the fee ratio to near zero. The attacker then performs swaps without paying the protocol tax (the 0.3% swap fee remains in the pool instead of being diverted). Finally, the attacker burns their LP tokens to reclaim their liquidity plus the untaxed swap fees, effectively stealing yield from the Distributor.
- ### Static Signals
-uses totalSupply/totalAssets in same tx as deposit/withdraw, fee calculation depends on spot totalSupply
- ### Assets at Risk
-rewards, fees
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
 
 
 
@@ -598,28 +67,28 @@ rewards, fees
  ### Relevant Function/Location: GTELaunchpadV2Pair._update
 
  ### Title
-AMM Pair DoS via Reverting Fee Distribution Hook
+DoS via Griefable Distributor Callback
  ### Description/Code Snippet
-The `GTELaunchpadV2Pair` contract calls `IDistributor(distributor).addRewards` inside its `_update` function (triggered by `swap`, `mint`, `burn`). This external call is not wrapped in a try/catch block. If `addRewards` reverts—for example, if the pair tokens are not registered in the Distributor (`RewardsDoNotExist`), or if there are no shares (`NoSharesToIncentivize`)—the core AMM functionality reverts. This renders the pair unusable for any tokens not explicitly supported by the Launchpad/Distributor, and creates a fragility where Distributor state issues brick the liquidity pool.
+The `_update` function, which is critical for `swap`, `mint`, `burn`, and `sync`, calls `IDistributor(launchpadFeeDistributor).addRewards`. If the external distributor contract reverts (due to logic error, gas limits, or intentional pausing), the entire Pair contract is Denial-of-Service (DoS) bricked, as all state-changing functions will fail.
  ### Static Signals
-no try/catch around external hook, callback success required for core flow to proceed
+call to external contract in critical state update, no try/catch around callback, callback failure causes revert
  ### Assets at Risk
-Liquidity Pool functionality
+Liquidity Pool availability
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 
 
 
 
- ### Issue Type: StandardViolation
+ ### Issue Type: AccountingInvariantViolation
 
- ### Relevant Function/Location: Distributor.addRewards
+ ### Relevant Function/Location: GTELaunchpadV2Pair.skim
 
  ### Title
-Insolvency with Fee-On-Transfer tokens in `addRewards`
+Accounting Invariant Violation allowing Fee Skimming
  ### Description/Code Snippet
-The `addRewards` function updates the internal `totalPendingRewards` and pool accounting by the full `amount` parameter, but uses `safeTransferFrom` to pull tokens. If the reward token (Base or Quote) implements a fee-on-transfer mechanism, the Distributor contract receives fewer tokens than it accounts for. This discrepancy creates a deficit, eventually causing the contract to hold insufficient funds to pay out the last claimers, leading to a DoS or loss of funds for late claimers.
+In `_update`, `reserve` is updated to `balance - totalLaunchpadFee`, assuming the fee tokens are transferred out. However, `_distributeLaunchpadFees` only approves the tokens; it relies on the Distributor to `transferFrom`. If the Distributor fails to pull the tokens (e.g. due to error or pause), the tokens remain in the contract balance but are excluded from `reserve`. The `skim` function calculates excess as `balance - reserve`, allowing anyone to claim these uncollected fees.
  ### Static Signals
-safeTransferFrom used without checking balance increase, Accounting state updated with input parameter directly
+emitted != claimed + unclaimed, accounting state not updated when underlying asset is swapped/upgraded
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -627,18 +96,52 @@ rewards
 
 
 
- ### Issue Type: StandardViolation
+ ### Issue Type: PermitFrontRun
 
- ### Relevant Function/Location: Distributor.addRewards
+ ### Relevant Function/Location: GTELaunchpadV2Pair.permit
 
  ### Title
-DoS of AMM Swaps when Distributor Shares are Zero
+Malleable signatures in permit allow front-running
  ### Description/Code Snippet
-The `GTELaunchpadV2Pair` attempts to distribute fees to the `Distributor` via `addRewards` on every swap where fees accrue. `Distributor.addRewards` explicitly reverts with `NoSharesToIncentivize` if `totalShares == 0`. If all users unstake (e.g., by selling their launch tokens or via Launchpad logic) or if the Launchpad initializes the pair before any stakes exist, the Uniswap pair becomes completely unusable (DoS) as all swap/mint/burn operations will revert.
+The `permit` function (inherited from `UniswapV2ERC20`) uses `ecrecover` without validating that the signature's `s` value is in the lower half of the curve (s <= secp256k1n/2). This allows an attacker to observe a valid pending `permit` transaction and submit a front-running transaction with the same `r` and an inverted `s` value. This second signature validates to the same address, consuming the user's nonce and causing the original transaction to revert, creating a Denial of Service vector for gasless approvals.
  ### Static Signals
-revert NoSharesToIncentivize, external call in state changing function
+ecrecover used without requiring s <= secp256k1n/2, nonces incremented on success
  ### Assets at Risk
 
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: GriefableCallbacks
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair._safeApprove
+
+ ### Title
+DoS on USDT pairs due to unsafe approval reset
+ ### Description/Code Snippet
+The `_safeApprove` function sets the allowance to `value` without first resetting it to 0. Certain tokens like USDT revert if `approve` is called with a non-zero value when the current allowance is already non-zero. If `_distributeLaunchpadFees` executes but the trusted Distributor fails to consume the entire allowance (or if a previous transaction failed to consume it), subsequent calls will revert, bricking the pair for that token.
+ ### Static Signals
+callback to arbitrary user-controlled address, no try/catch around external hook
+ ### Assets at Risk
+
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: PermitMisuse
+
+ ### Relevant Function/Location: UniswapV2ERC20.permit
+
+ ### Title
+Permit signature malleability allows front-running DoS
+ ### Description/Code Snippet
+The `permit` function in `UniswapV2ERC20` (inherited by `GTELaunchpadV2Pair`) uses `ecrecover` without verifying that the `s` value is in the lower half of the secp256k1 curve (`s <= 0x7FFFF...`). This allows a valid signature to be transformed into a second valid signature (using `secp256k1n - s`) for the same deadline and nonce. An attacker can front-run a user's permit transaction with the malleable signature, consuming the nonce and causing the user's original transaction to revert.
+ ### Static Signals
+ecrecover used without requiring s <= secp256k1n/2, nonces reused or not incremented (if front-run)
+ ### Assets at Risk
+user gas, transaction validity
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 
 
@@ -646,31 +149,82 @@ revert NoSharesToIncentivize, external call in state changing function
 
  ### Issue Type: UnsafeRecipient
 
- ### Relevant Function/Location: Distributor.increaseStake
+ ### Relevant Function/Location: GTELaunchpadV2Pair._distributeLaunchpadFees
 
  ### Title
-Rewards Misdirected to Launchpad Contract instead of User
+Trading DoS due to SafeApprove Incompatibility (USDT)
  ### Description/Code Snippet
-The functions `increaseStake` and `decreaseStake` are called by the `launchpad` contract to update user shares. These functions trigger `_distributeAssets` to pay out pending rewards accumulated by the user (`account`). However, `_distributeAssets` transfers the assets to `msg.sender` (the `launchpad` contract) instead of the user (`account`). Unless the Launchpad contract has specific logic to handle and forward these arbitrary reward tokens, the funds will be permanently stuck in the Launchpad contract.
+The `_distributeLaunchpadFees` function uses `_safeApprove` to approve the `distributor` to spend accrued fees. The standard `_safeApprove` implementation reverts if attempting to approve a non-zero value when the current allowance is already non-zero (to prevent front-running, a behavior enforced by tokens like USDT). If `IDistributor.addRewards` fails to consume the exact full allowance (e.g., due to fee-on-transfer or internal calculation mismatches), a residual allowance remains. Subsequent swaps will then revert when trying to approve the new fee, bricking the pair.
  ### Static Signals
-transfer to msg.sender in function called by intermediary, mismatch between beneficiary account and recipient
+changes allowance from X to Y without zeroing
  ### Assets at Risk
-rewards
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
+trading_availability
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 
 
 
 
- ### Issue Type: FeeOnTransferAssumption
+ ### Issue Type: PermitOrSignatureReplay
 
- ### Relevant Function/Location: Distributor.addRewards
+ ### Relevant Function/Location: UniswapV2ERC20.permit
 
  ### Title
-Fee-On-Transfer Token Support Missing in addRewards
+Replayable Permits due to Static Domain Separator
  ### Description/Code Snippet
-The `addRewards` function accepts arbitrary token addresses and amounts, updating the internal `totalPendingRewards` and `RewardPoolData` tracking based on the input `amount`. It then calls `safeTransferFrom(msg.sender, address(this), amount)`. If a Fee-On-Transfer (FOT) token is used, the contract receives less than `amount`, but the accounting records the full `amount`. This discrepancy leads to an insolvency of the reward pool, causing the last users who attempt to `claimRewards` to fail due to insufficient contract balance.
+The `UniswapV2ERC20` contract calculates `DOMAIN_SEPARATOR` in the constructor using the chain ID at deployment time. It does not recompute it if the chain ID changes (e.g., after a hard fork). This allows valid permits signed on one chain to be replayed on a forked chain, potentially allowing unauthorized spending of user assets.
  ### Static Signals
-accounting based on transfer parameter, not actual balance change, no balanceBefore/After check
+DOMAIN_SEPARATOR immutable, no block.chainid check in permit
+ ### Assets at Risk
+user funds via permit
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: FlashLoanEconomicManipulation
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair.swap
+
+ ### Title
+Flash Loan Fee Manipulation via LP Token Transfer during Swap
+ ### Description/Code Snippet
+The `_getLaunchpadFees` function calculates fees based on `balanceOf(launchpadLp)`. While `swap` is protected by the `lock` modifier, the inherited `transfer` function for LP tokens is not. An attacker (e.g., the `launchpadLp` owner) can flash-borrow LP tokens, transfer them to the `launchpadLp` address inside the `uniswapV2Call` callback, and inflate the `launchpadLpBal`. This forces the pool to deduct the maximum fee share from reserves, which is then sent to the Distributor (benefiting the attacker). The attacker can then retrieve their LP tokens. This siphons value from other LPs.
+ ### Static Signals
+branches on balanceOf(launchpadLp), unlocked LP token transfer during locked swap
+ ### Assets at Risk
+liquidity provider yield
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair.mint
+
+ ### Title
+Accrued Launchpad Fees Theft via mint()
+ ### Description/Code Snippet
+The `mint()` function calculates the amounts provided by a user as `balance - reserve`. However, the `_update()` function subtracts accrued launchpad fees from the reserves without immediately removing the tokens from the balance (if within the same block or if distribution is delayed). This breaks the accounting invariant. An attacker can trigger fee accrual (e.g., via `swap` or `sync`) and then immediately call `mint()` without transferring tokens. `mint` will interpret the accrued fees (which sit in `balance` but not `reserve`) as new liquidity provided by the attacker, allowing them to steal the pending rewards.
+ ### Static Signals
+amount0 = balance0.sub(_reserve0), reserve0 updated with fees subtracted, fees not subtracted from balance in mint calculation
+ ### Assets at Risk
+accruedLaunchpadFee0, accruedLaunchpadFee1
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair._getLaunchpadFees
+
+ ### Title
+Flash-minting liquidity dilutes launchpad fee revenue
+ ### Description/Code Snippet
+The `_getLaunchpadFees` function calculates the fee diverted to the launchpad based on the ratio of the launchpad's LP balance to the total LP supply (`launchpadLpBal / totalLpBal`). An attacker can flash-mint a massive amount of LP tokens immediately before a swap (and burn them afterwards) to dilute this ratio to near zero. This allows the attacker to bypass the fee diversion mechanism, keeping the swap fees within the pool reserves (which they momentarily own the majority of), thereby depriving the launchpad distributor of its intended revenue.
+ ### Static Signals
+rewards share depends on manipulable totalSupply, fee calculated using instantaneous spot ratio
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -678,20 +232,84 @@ rewards
 
 
 
- ### Issue Type: AccessControlOrAuthByPass
+ ### Issue Type: ReadOnlyReentrancy
 
- ### Relevant Function/Location: Distributor.addRewards
+ ### Relevant Function/Location: GTELaunchpadV2Pair.swap
 
  ### Title
-addRewards allows mismatched quote tokens enabling reward theft
+Read-Only Reentrancy in Swap Callback
  ### Description/Code Snippet
-The `addRewards` function allows permissionless addition of rewards to a pool. It identifies the target pool using `token0` and `token1` (determining which is base and which is quote). However, it fails to verify that the identified `quoteAsset` argument actually matches the pool's stored `quoteAsset` (e.g. `rs.quoteAsset`). 
-
-An attacker can call `addRewards(BaseToken, FakeToken, 0, Amount)`. The contract identifies the pool for `BaseToken`, sees `rs.quoteAsset` is set (e.g. to USDC), but proceeds to use `FakeToken` as the `quoteAsset` for the transfer. It transfers `FakeToken` from the attacker, but increases the pool's `pendingQuoteRewards` accumulator. 
-
-When `update()` runs, this amount is credited to the share accumulator. When users (or the attacker) claim, `claimRewards` distributes the pool's *actual* `quoteAsset` (USDC) based on the inflated accumulator. This allows 1:1 theft of the pool's quote assets using worthless tokens.
+The `swap` function executes the `uniswapV2Call` callback to the recipient before calling `_update` to sync the new reserves. During this callback, the token balances of the contract have changed, but the result of `getReserves()` still reflects the state prior to the swap. If any third-party contract (or the `launchpadFeeDistributor`) relies on `getReserves` or derived prices during this callback, they will receive stale data, enabling read-only reentrancy attacks.
  ### Static Signals
-missing check: quoteAsset == rs.quoteAsset, input argument mismatch with storage
+external call before view function stabilizes, uses getReserves/spot price that can change intratx
+ ### Assets at Risk
+
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: ReserveOrPriceDesync
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair._update
+
+ ### Title
+Reserve Desync via Skim if Distributor Fails to Pull
+ ### Description/Code Snippet
+In `_update`, `accruedLaunchpadFee` is deleted before calling `_distributeLaunchpadFees`. The logic subsequently calculates `reserve = balance - totalFee`, assuming the distributor pulls the fee. If the distributor records the reward but fails to pull the tokens (e.g., due to implementation specific behavior), `reserve` is reduced while `balance` remains high. The `skim` function then allows anyone to steal the undistributed fees.
+ ### Static Signals
+state deleted before external call, reserve invariant assumes external transfer
+ ### Assets at Risk
+accrued fees
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair.endRewardsAccrual
+
+ ### Title
+`endRewardsAccrual` deletes accrued fees without distribution
+ ### Description/Code Snippet
+The `endRewardsAccrual` function deletes `accruedLaunchpadFee0` and `accruedLaunchpadFee1` and deactivates the rewards pool without first distributing these accrued amounts. In the subsequent `_update` call, `accrued` is treated as 0, causing the reserves (`reserve0`, `reserve1`) to be set to the full token balance (`balance0`, `balance1`). This effectively donates the accumulated uncollected fees back to the pool's liquidity providers (inflating `k`) instead of sending them to the `launchpadFeeDistributor`, resulting in a permanent loss of revenue for the launchpad participants.
+ ### Static Signals
+accounting state not updated when underlying asset is swapped/upgraded, emitted != claimed + unclaimed
+ ### Assets at Risk
+rewards
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
+
+
+
+
+ ### Issue Type: ReadOnlyReentrancy
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair._update
+
+ ### Title
+Read-Only Reentrancy via Rewards Distribution
+ ### Description/Code Snippet
+In `_update`, the contract calls `_distributeLaunchpadFees` (which makes an external call to the `distributor`) *before* updating `reserve0`, `reserve1`, and `blockTimestampLast`. During this external call, `getReserves()` returns stale values (pre-swap/mint/burn reserves) while `balanceOf()` reflects the new state. If the distributor or any connected system reads the pair's price via `getReserves` during the callback, it acts on invalid data.
+ ### Static Signals
+external call before view function stabilizes, uses getReserves/spot price that can change intratx
+ ### Assets at Risk
+
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair._update
+
+ ### Title
+Skimming of Accrued Fees via Accounting Invariant Violation
+ ### Description/Code Snippet
+The `_update` function reduces `reserve0` and `reserve1` by the amount of `totalLaunchpadFee` and approves the `distributor` to spend this amount. It assumes the `distributor.addRewards` call will synchronously `transferFrom` these tokens out of the contract. If the distributor implementation does not pull the tokens immediately (or if the transfer fails silently/partially), the tokens remain in the contract's balance but are excluded from the reserve accounting. This creates a discrepancy where `balanceOf(this) > reserve`, allowing any user to steal the untransferred fees by calling `skim()`.
+ ### Static Signals
+balance tracking references different token than actual holdings, accounting state not updated when underlying asset is swapped/upgraded
  ### Assets at Risk
 rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -701,15 +319,83 @@ rewards
 
  ### Issue Type: AccountingInvariantViolation
 
- ### Relevant Function/Location: Distributor.addRewards
+ ### Relevant Function/Location: GTELaunchpadV2Pair.burn
 
  ### Title
-Missing asset validation in addRewards allows draining legitimate reward tokens
+Burn Revert Due to Fee Accounting Mismatch
  ### Description/Code Snippet
-The `addRewards` function in `Distributor.sol` accepts two arbitrary token addresses (`token0`, `token1`) and determines which one is the `launchAsset` by checking if a reward pool exists. However, it blindly accepts the *other* token as the `quoteAsset` without verifying it matches `rs.quoteAsset` (the pool's immutable quote token). An attacker can call `addRewards(launchAsset, FakeToken, 0, amount)`, which transfers `FakeToken` to the contract but increases the `rs.pendingQuoteRewards` counter. When legitimate users call `claimRewards`, the contract uses `rs.quoteAsset` (the real token, e.g., USDC) to pay out the inflated amount, effectively allowing the attacker to drain all real quote tokens from the Distributor.
+The `burn()` function calculates `amount0 = liquidity * balance0 / totalSupply`. If `balance0` contains accrued fees that haven't been distributed, a user burning a large portion of liquidity will withdraw their share plus a portion of the fees. Subsequently, `_update()` attempts to calculate `reserve0 = balance0 - accruedFees`. If the remaining `balance0` after the burn is less than `accruedFees`, the subtraction will underflow and revert, locking user funds and preventing liquidity removal.
  ### Static Signals
-input token variable used as key for state update without equality check against stored asset, rs.addQuoteRewards called with user-supplied address, claim function uses stored asset address while addRewards uses input address
+reserve calculation involves subtraction of fees, balance used in burn includes fees
+ ### Assets at Risk
+User Liquidity
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: FeeOnTransferAssumption
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair._distributeLaunchpadFees
+
+ ### Title
+Fee-on-transfer tokens cause Distributor insolvency
+ ### Description/Code Snippet
+The `_distributeLaunchpadFees` function approves the full `fee0` amount and calls `distributor.addRewards` with that same amount. For Fee-On-Transfer (FoT) tokens, the Distributor receives less than `fee0` during the transfer. However, the Distributor (consuming `RewardsTrackerLib`) typically accounts for rewards based on the input parameter (`fee0`). This discrepancy causes the Distributor's internal accounting to track more tokens than it physically holds, eventually leading to insolvency where the last users cannot claim their rewards.
+ ### Static Signals
+accounting based on transfer parameter, not actual balance change, assumes transferFrom(amount) credits exactly amount
  ### Assets at Risk
 rewards
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: StandardViolation
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair._safeApprove
+
+ ### Title
+USDT/Non-standard Token Approval Revert in Fee Distribution
+ ### Description/Code Snippet
+The function `_safeApprove` uses a low-level call to `approve` with a non-zero value. Tokens like USDT revert if `approve` is called with a non-zero value when the current allowance is already non-zero. In `_distributeLaunchpadFees`, `_safeApprove` is called every time fees are distributed. If `IDistributor.addRewards` fails to consume the entire allowance (e.g., due to partial transfers or logic updates), the subsequent call to `_safeApprove` in the next fee accrual will revert, causing a Denial of Service for the entire pair (swaps/mints/burns will fail).
+ ### Static Signals
+token.call(abi.encodeWithSelector(APPROVE_SELECTOR, to, value)), no approve(0) check
+ ### Assets at Risk
+liquidity pool availability
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: FlashLoanEconomicManipulation
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair._getLaunchpadFees
+
+ ### Title
+Launchpad Fee Dilution via Flash-Minted Liquidity Inflation
+ ### Description/Code Snippet
+The `_getLaunchpadFees` function calculates the Launchpad's fee share dynamically based on the ratio of the Launchpad's LP balance (`launchpadLpBal`) to the total LP supply (`totalLpBal`). An attacker can flash-mint a massive amount of LP tokens within a single transaction, inflating `totalSupply` and driving this ratio near zero. This manipulation allows the attacker (who now holds the majority of liquidity) to bypass the intended fee/tax that should go to the Distributor, effectively keeping the full 0.3% swap fee for themselves within the pool reserves.
+ ### Static Signals
+uses totalSupply/totalAssets in same tx as deposit/withdraw, fee calculated from manipulable pool state
+ ### Assets at Risk
+rewards
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: GriefableCallbacks
+
+ ### Relevant Function/Location: GTELaunchpadV2Pair._distributeLaunchpadFees
+
+ ### Title
+Denial of Service via Reverting Distributor Callback
+ ### Description/Code Snippet
+The `swap`, `mint`, and `burn` functions all trigger `_update`, which subsequently calls `_distributeLaunchpadFees`. This function performs an external call to `IDistributor(distributor).addRewards` to transfer fees. There is no `try/catch` block or gas limit for this call. Consequently, if the `Distributor` contract reverts (due to logic error, pause state, or malicious upgrade), all core trading functionality on the pair is permanently blocked, violating the isolation principle of the AMM.
+ ### Static Signals
+no try/catch around external hook, external call in critical flow
+ ### Assets at Risk
+trading_availability
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 

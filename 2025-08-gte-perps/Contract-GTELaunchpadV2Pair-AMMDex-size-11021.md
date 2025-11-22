@@ -579,20 +579,6 @@ library RewardsTrackerStorage {
     }
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.27;
-
-interface IGTELaunchpadV2Pair {
-    function rewardsPoolActive() external view returns (uint256);
-    function accruedLaunchpadFee0() external view returns (uint112);
-    function accruedLaunchpadFee1() external view returns (uint112);
-    function launchpadLp() external view returns (address);
-    function launchpadFeeDistributor() external view returns (address);
-    function REWARDS_FEE_SHARE() external view returns (uint256);
-
-    function endRewardsAccrual() external;
-}
-
 pragma solidity 0.8.27;
 
 import "./interfaces/IUniswapV2ERC20.sol";
@@ -685,6 +671,20 @@ contract UniswapV2ERC20 is IUniswapV2ERC20 {
         require(recoveredAddress != address(0) && recoveredAddress == owner, "UniswapV2: INVALID_SIGNATURE");
         _approve(owner, spender, value);
     }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.27;
+
+interface IGTELaunchpadV2Pair {
+    function rewardsPoolActive() external view returns (uint256);
+    function accruedLaunchpadFee0() external view returns (uint112);
+    function accruedLaunchpadFee1() external view returns (uint112);
+    function launchpadLp() external view returns (address);
+    function launchpadFeeDistributor() external view returns (address);
+    function REWARDS_FEE_SHARE() external view returns (uint256);
+
+    function endRewardsAccrual() external;
 }
 
 pragma solidity 0.8.27;
@@ -1000,30 +1000,6 @@ library RewardsTrackerStorage {
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 pragma solidity 0.8.27;
 
-interface IERC20 {
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    event Transfer(address indexed from, address indexed to, uint256 value);
-
-    function name() external view returns (string memory);
-    function symbol() external view returns (string memory);
-    function decimals() external view returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address owner) external view returns (uint256);
-    function allowance(address owner, address spender) external view returns (uint256);
-
-    function approve(address spender, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
-}
-
-pragma solidity 0.8.27;
-
-interface IUniswapV2Callee {
-    function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
-}
-
-pragma solidity 0.8.27;
-
 // a library for handling binary fixed point numbers (https://en.wikipedia.org/wiki/Q_(number_format))
 
 // range: [0, 2**112 - 1]
@@ -1045,20 +1021,20 @@ library UQ112x112 {
 
 pragma solidity 0.8.27;
 
-interface IUniswapV2Factory {
-    event PairCreated(address indexed token0, address indexed token1, address pair, uint256);
+interface IERC20 {
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Transfer(address indexed from, address indexed to, uint256 value);
 
-    function feeTo() external view returns (address);
-    function feeToSetter() external view returns (address);
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+    function decimals() external view returns (uint8);
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address owner) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
 
-    function getPair(address tokenA, address tokenB) external view returns (address pair);
-    function allPairs(uint256) external view returns (address pair);
-    function allPairsLength() external view returns (uint256);
-
-    function createPair(address tokenA, address tokenB) external returns (address pair);
-
-    function setFeeTo(address) external;
-    function setFeeToSetter(address) external;
+    function approve(address spender, uint256 value) external returns (bool);
+    function transfer(address to, uint256 value) external returns (bool);
+    function transferFrom(address from, address to, uint256 value) external returns (bool);
 }
 
 pragma solidity 0.8.27;
@@ -1083,6 +1059,30 @@ library Math {
             z = 1;
         }
     }
+}
+
+pragma solidity 0.8.27;
+
+interface IUniswapV2Callee {
+    function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external;
+}
+
+pragma solidity 0.8.27;
+
+interface IUniswapV2Factory {
+    event PairCreated(address indexed token0, address indexed token1, address pair, uint256);
+
+    function feeTo() external view returns (address);
+    function feeToSetter() external view returns (address);
+
+    function getPair(address tokenA, address tokenB) external view returns (address pair);
+    function allPairs(uint256) external view returns (address pair);
+    function allPairsLength() external view returns (uint256);
+
+    function createPair(address tokenA, address tokenB) external returns (address pair);
+
+    function setFeeTo(address) external;
+    function setFeeToSetter(address) external;
 }
 
 

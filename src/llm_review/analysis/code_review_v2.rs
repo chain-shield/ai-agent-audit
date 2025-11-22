@@ -6,7 +6,7 @@ use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
 use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::contract::contract_category::{
-    get_contract_spec_from_category, ContractCategory,
+    ContractCategory, get_contract_spec_from_category,
 };
 use crate::llm_review::contract::contract_file_map::ContractType;
 use crate::llm_review::findings::findings::CLAUDE_4_5_SONNET;
@@ -18,6 +18,7 @@ use crate::llm_review::{
     findings::findings::Findings,
     pattern_phases,
     threat_models::{
+        actors::{ActorAbuses, Actors},
         invariants::{ContractInvariants, InvariantFinding, InvariantStatus, InvariantType},
         issues::{IssuePrompt, IssueStructTrait},
         pattern_category::PatternCategory,
@@ -120,8 +121,8 @@ pub async fn review_codebase_for_security_issues_v2(
         contract_handles.push(tokio::spawn(async move {
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async move {
-                // Run pattern and invariant analysis concurrently within this task
-                let (patterns_res, invariants_res) = {
+                // Run pattern, invariant, and actor analysis concurrently within this task
+                let (patterns_res, invariants_res, actors_res) = {
                     let pattern_categories =
                         get_pattern_category_from_contract_category(contract_category);
                     tokio::join!(
@@ -134,6 +135,13 @@ pub async fn review_codebase_for_security_issues_v2(
                             &repo_clone
                         ),
                         process_invariants(
+                            &codeblock,
+                            &pattern_discovery_agent,
+                            &finding_discovery_agent,
+                            &verify_agent,
+                            &repo_clone
+                        ),
+                        process_actors(
                             &codeblock,
                             &pattern_discovery_agent,
                             &finding_discovery_agent,
@@ -153,6 +161,11 @@ pub async fn review_codebase_for_security_issues_v2(
                     raw_findings.findings.extend(invs.findings);
                 } else if let Err(e) = invariants_res {
                     log::error!("invariant analysis failed: {:#}", e);
+                }
+                if let Ok(acts) = actors_res {
+                    raw_findings.findings.extend(acts.findings);
+                } else if let Err(e) = actors_res {
+                    log::error!("actor analysis failed: {:#}", e);
                 }
 
                 if !raw_findings.findings.is_empty() {
@@ -525,6 +538,86 @@ async fn process_invariants(
         };
 
         Ok(findings_from_invariants)
+    } else {
+        Ok(Findings::default())
+    }
+}
+
+/// Process actor-centric analysis: generate actors, enumerate abuses, verify, and convert to findings
+///
+/// This function implements the complete actor-centric threat modeling workflow:
+/// 1. Generate actors and their capabilities from the contract
+/// 2. Enumerate potential abuses for each actor capability
+/// 3. Verify that abuses are legitimate security issues
+/// 4. Convert verified abuses into detailed security findings
+async fn process_actors(
+    codeblock: &str,
+    actor_abuse_discovery_agent: &Arc<AIAgent>,
+    finding_discovery_agent: &Arc<AIAgent>,
+    ai_verify_agent: &Arc<AIAgent>,
+    repo: &RepoPaths,
+) -> Result<Findings> {
+    // Phase 1: Generate actors and their capabilities
+    info!("PHASE 1: GENERATE ACTORS");
+    let actors: Actors =
+        pattern_phases::generate_actors::execute(codeblock, actor_abuse_discovery_agent, repo)
+            .await?;
+
+    let actor_count = actors.actors.len();
+    info!("total of {} Actors found!", actor_count);
+
+    let actor_prompt = IssuePrompt::Actor(actors.actors);
+
+    // Phase 2: Generate actor abuses (potential exploits for each actor capability)
+    info!("PHASE 2: GENERATE ACTOR ABUSES");
+    let actor_abuses = if actor_count > 0 {
+        pattern_phases::generate_patterns::execute(
+            actor_prompt,
+            codeblock,
+            actor_abuse_discovery_agent,
+            repo,
+        )
+        .await?
+    } else {
+        ActorAbuses::default()
+    };
+
+    // Phase 3: Verify actor abuses are legitimate security issues
+    info!("PHASE 3: VERIFY ACTOR ABUSES");
+    let verified_abuses = if !actor_abuses.abuses.is_empty() {
+        pattern_phases::verify_patterns::verify_actor_abuses(
+            actor_abuses,
+            codeblock,
+            ai_verify_agent,
+            repo,
+        )
+        .await?
+    } else {
+        ActorAbuses::default()
+    };
+
+    // Phase 4: Convert verified actor abuses into detailed security findings
+    info!("PHASE 4: GENERATE FINDINGS FROM ACTOR ABUSES");
+    if !verified_abuses.issues().is_empty() {
+        let findings_from_actors = if MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE {
+            pattern_phases::multipattern_to_findings::execute(
+                verified_abuses,
+                codeblock,
+                finding_discovery_agent,
+                repo,
+            )
+            .await?
+        } else {
+            pattern_phases::pattern_to_findings::execute(
+                verified_abuses,
+                codeblock,
+                finding_discovery_agent,
+                repo,
+            )
+            .await?
+        };
+
+        Ok(findings_from_actors)
     } else {
         Ok(Findings::default())
     }
