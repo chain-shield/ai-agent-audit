@@ -141,6 +141,471 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
+import { LibBytes } from "../../../utils/LibBytes.sol";
+import { ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX } from "./ISignalsImplicitMode.sol";
+
+using LibBytes for bytes;
+
+/// @notice Attestation for a specific session
+/// @param approvedSigner Address of the approved signer
+/// @param identityType Identity type
+/// @param issuerHash Hash of the issuer
+/// @param audienceHash Hash of the audience
+/// @param applicationData Unspecified application data
+/// @param authData Auth data
+struct Attestation {
+  address approvedSigner;
+  bytes4 identityType;
+  bytes32 issuerHash;
+  bytes32 audienceHash;
+  bytes applicationData;
+  AuthData authData;
+}
+
+/// @notice Auth data for an attestation
+/// @param redirectUrl Authorization redirect URL
+/// @param issuedAt Timestamp of the attestation issuance
+struct AuthData {
+  string redirectUrl;
+  uint64 issuedAt;
+}
+
+/// @title LibAttestation
+/// @author Michael Standen
+/// @notice Library for attestation management
+library LibAttestation {
+
+  /// @notice Hashes an attestation
+  function toHash(
+    Attestation memory attestation
+  ) internal pure returns (bytes32) {
+    return keccak256(toPacked(attestation));
+  }
+
+  /// @notice Decodes an attestation from a packed bytes array
+  /// @param encoded The packed bytes array
+  /// @param pointer The pointer to the start of the attestation
+  /// @return attestation The decoded attestation
+  /// @return newPointer The new pointer to the end of the attestation
+  function fromPacked(
+    bytes calldata encoded,
+    uint256 pointer
+  ) internal pure returns (Attestation memory attestation, uint256 newPointer) {
+    newPointer = pointer;
+    (attestation.approvedSigner, newPointer) = encoded.readAddress(newPointer);
+    (attestation.identityType, newPointer) = encoded.readBytes4(newPointer);
+    (attestation.issuerHash, newPointer) = encoded.readBytes32(newPointer);
+    (attestation.audienceHash, newPointer) = encoded.readBytes32(newPointer);
+    // Application data (arbitrary bytes)
+    uint256 dataSize;
+    (dataSize, newPointer) = encoded.readUint24(newPointer);
+    attestation.applicationData = encoded[newPointer:newPointer + dataSize];
+    newPointer += dataSize;
+    // Auth data
+    (attestation.authData, newPointer) = fromPackedAuthData(encoded, newPointer);
+    return (attestation, newPointer);
+  }
+
+  /// @notice Decodes the auth data from a packed bytes
+  /// @param encoded The packed bytes containing the auth data
+  /// @param pointer The pointer to the start of the auth data within the encoded data
+  /// @return authData The decoded auth data
+  /// @return newPointer The pointer to the end of the auth data within the encoded data
+  function fromPackedAuthData(
+    bytes calldata encoded,
+    uint256 pointer
+  ) internal pure returns (AuthData memory authData, uint256 newPointer) {
+    uint24 redirectUrlLength;
+    (redirectUrlLength, pointer) = encoded.readUint24(pointer);
+    authData.redirectUrl = string(encoded[pointer:pointer + redirectUrlLength]);
+    pointer += redirectUrlLength;
+    (authData.issuedAt, pointer) = encoded.readUint64(pointer);
+    return (authData, pointer);
+  }
+
+  /// @notice Encodes an attestation into a packed bytes array
+  /// @param attestation The attestation to encode
+  /// @return encoded The packed bytes array
+  function toPacked(
+    Attestation memory attestation
+  ) internal pure returns (bytes memory encoded) {
+    return abi.encodePacked(
+      attestation.approvedSigner,
+      attestation.identityType,
+      attestation.issuerHash,
+      attestation.audienceHash,
+      uint24(attestation.applicationData.length),
+      attestation.applicationData,
+      toPackAuthData(attestation.authData)
+    );
+  }
+
+  /// @notice Encodes the auth data into a packed bytes array
+  /// @param authData The auth data to encode
+  /// @return encoded The packed bytes array
+  function toPackAuthData(
+    AuthData memory authData
+  ) internal pure returns (bytes memory encoded) {
+    return abi.encodePacked(uint24(bytes(authData.redirectUrl).length), bytes(authData.redirectUrl), authData.issuedAt);
+  }
+
+  /// @notice Generates the implicit request magic return value
+  /// @param attestation The attestation
+  /// @param wallet The wallet
+  /// @return magic The expected implicit request magic
+  function generateImplicitRequestMagic(Attestation memory attestation, address wallet) internal pure returns (bytes32) {
+    return keccak256(
+      abi.encodePacked(ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX, wallet, attestation.audienceHash, attestation.issuerHash)
+    );
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Payload } from "../../../modules/Payload.sol";
+import { LibBytes } from "../../../utils/LibBytes.sol";
+
+import { SessionErrors } from "../SessionErrors.sol";
+import { IExplicitSessionManager, SessionPermissions, SessionUsageLimits } from "./IExplicitSessionManager.sol";
+import { Permission, UsageLimit } from "./Permission.sol";
+import { PermissionValidator } from "./PermissionValidator.sol";
+
+abstract contract ExplicitSessionManager is IExplicitSessionManager, PermissionValidator {
+
+  using LibBytes for bytes;
+
+  /// @notice Special address used for tracking native token value limits
+  address public constant VALUE_TRACKING_ADDRESS = address(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
+
+  /// @inheritdoc IExplicitSessionManager
+  function incrementUsageLimit(
+    UsageLimit[] calldata limits
+  ) external {
+    address wallet = msg.sender;
+    for (uint256 i = 0; i < limits.length; i++) {
+      if (limits[i].usageAmount < getLimitUsage(wallet, limits[i].usageHash)) {
+        // Cannot decrement usage limit
+        revert SessionErrors.InvalidLimitUsageIncrement();
+      }
+      setLimitUsage(wallet, limits[i].usageHash, limits[i].usageAmount);
+    }
+  }
+
+  /// @notice Validates an explicit call
+  /// @param payload The decoded payload containing calls
+  /// @param callIdx The index of the call to validate
+  /// @param wallet The wallet's address
+  /// @param sessionSigner The session signer's address
+  /// @param allSessionPermissions All sessions' permissions
+  /// @param permissionIdx The index of the permission to validate
+  /// @param sessionUsageLimits The session usage limits
+  /// @return newSessionUsageLimits The updated session usage limits
+  function _validateExplicitCall(
+    Payload.Decoded calldata payload,
+    uint256 callIdx,
+    address wallet,
+    address sessionSigner,
+    SessionPermissions[] memory allSessionPermissions,
+    uint8 permissionIdx,
+    SessionUsageLimits memory sessionUsageLimits
+  ) internal view returns (SessionUsageLimits memory newSessionUsageLimits) {
+    // Find the permissions for the given session signer
+    SessionPermissions memory sessionPermissions;
+    for (uint256 i = 0; i < allSessionPermissions.length; i++) {
+      if (allSessionPermissions[i].signer == sessionSigner) {
+        sessionPermissions = allSessionPermissions[i];
+        break;
+      }
+    }
+    if (sessionPermissions.signer == address(0)) {
+      revert SessionErrors.InvalidSessionSigner(sessionSigner);
+    }
+
+    // Check if session chainId is valid
+    if (sessionPermissions.chainId != 0 && sessionPermissions.chainId != block.chainid) {
+      revert SessionErrors.InvalidChainId(sessionPermissions.chainId);
+    }
+
+    // Check if session has expired.
+    if (sessionPermissions.deadline != 0 && block.timestamp > sessionPermissions.deadline) {
+      revert SessionErrors.SessionExpired(sessionPermissions.deadline);
+    }
+
+    // Delegate calls are not allowed
+    Payload.Call calldata call = payload.calls[callIdx];
+    if (call.delegateCall) {
+      revert SessionErrors.InvalidDelegateCall();
+    }
+
+    // Calls to incrementUsageLimit are the only allowed calls to this contract
+    if (call.to == address(this)) {
+      if (callIdx != 0) {
+        // IncrementUsageLimit call is only allowed as the first call
+        revert SessionErrors.InvalidLimitUsageIncrement();
+      }
+      if (call.value > 0) {
+        revert SessionErrors.InvalidValue();
+      }
+      // No permissions required for the increment call
+      return sessionUsageLimits;
+    }
+
+    // Get the permission for the current call
+    if (permissionIdx >= sessionPermissions.permissions.length) {
+      revert SessionErrors.MissingPermission();
+    }
+    Permission memory permission = sessionPermissions.permissions[permissionIdx];
+
+    // Validate the permission for the current call
+    (bool isValid, UsageLimit[] memory limits) =
+      validatePermission(permission, call, wallet, sessionSigner, sessionUsageLimits.limits);
+    if (!isValid) {
+      revert SessionErrors.InvalidPermission();
+    }
+    sessionUsageLimits.limits = limits;
+
+    // Increment the total value used
+    if (call.value > 0) {
+      sessionUsageLimits.totalValueUsed += call.value;
+    }
+    if (sessionUsageLimits.totalValueUsed > sessionPermissions.valueLimit) {
+      // Value limit exceeded
+      revert SessionErrors.InvalidValue();
+    }
+
+    return sessionUsageLimits;
+  }
+
+  /// @notice Verifies the limit usage increment
+  /// @param call The first call in the payload, which is expected to be the increment call
+  /// @param sessionUsageLimits The session usage limits
+  /// @dev Reverts if the required increment call is missing or invalid
+  /// @dev If no usage limits are used, this function does nothing
+  function _validateLimitUsageIncrement(
+    Payload.Call calldata call,
+    SessionUsageLimits[] memory sessionUsageLimits
+  ) internal view {
+    // Limits call is only required if there are usage limits used
+    if (sessionUsageLimits.length > 0) {
+      // Verify the first call is the increment call and cannot be skipped
+      if (call.to != address(this) || call.behaviorOnError != Payload.BEHAVIOR_REVERT_ON_ERROR || call.onlyFallback) {
+        revert SessionErrors.InvalidLimitUsageIncrement();
+      }
+
+      // Construct expected limit increments
+      uint256 totalLimitsLength = 0;
+      for (uint256 i = 0; i < sessionUsageLimits.length; i++) {
+        totalLimitsLength += sessionUsageLimits[i].limits.length;
+        if (sessionUsageLimits[i].totalValueUsed > 0) {
+          totalLimitsLength++;
+        }
+      }
+      UsageLimit[] memory limits = new UsageLimit[](totalLimitsLength);
+      uint256 limitIndex = 0;
+      for (uint256 i = 0; i < sessionUsageLimits.length; i++) {
+        for (uint256 j = 0; j < sessionUsageLimits[i].limits.length; j++) {
+          limits[limitIndex++] = sessionUsageLimits[i].limits[j];
+        }
+        if (sessionUsageLimits[i].totalValueUsed > 0) {
+          limits[limitIndex++] = UsageLimit({
+            usageHash: keccak256(abi.encode(sessionUsageLimits[i].signer, VALUE_TRACKING_ADDRESS)),
+            usageAmount: sessionUsageLimits[i].totalValueUsed
+          });
+        }
+      }
+
+      // Verify the increment call data
+      bytes memory expectedData = abi.encodeWithSelector(this.incrementUsageLimit.selector, limits);
+      bytes32 expectedDataHash = keccak256(expectedData);
+      bytes32 actualDataHash = keccak256(call.data);
+      if (actualDataHash != expectedDataHash) {
+        revert SessionErrors.InvalidLimitUsageIncrement();
+      }
+    } else {
+      // Do not allow self calls if there are no usage limits
+      if (call.to == address(this)) {
+        revert SessionErrors.InvalidLimitUsageIncrement();
+      }
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+/// @title SessionErrors
+/// @author Michael Standen
+/// @notice Errors for the session manager
+library SessionErrors {
+
+  /// @notice Invalid session signer
+  error InvalidSessionSigner(address invalidSigner);
+  /// @notice Invalid chainId
+  error InvalidChainId(uint256 invalidChainId);
+  /// @notice Invalid self call
+  error InvalidSelfCall();
+  /// @notice Invalid delegate call
+  error InvalidDelegateCall();
+  /// @notice Invalid call behavior
+  error InvalidBehavior();
+  /// @notice Invalid value
+  error InvalidValue();
+  /// @notice Invalid node type in session configuration
+  error InvalidNodeType(uint256 flag);
+  /// @notice Error thrown when the payload kind is invalid
+  error InvalidPayloadKind();
+  /// @notice Error thrown when the calls length is invalid
+  error InvalidCallsLength();
+  /// @notice Error thrown when the payload space is invalid
+  error InvalidSpace(uint256 space);
+
+  // ---- Explicit session errors ----
+
+  /// @notice Missing permission for explicit session
+  error MissingPermission();
+  /// @notice Invalid permission for explicit session
+  error InvalidPermission();
+  /// @notice Session expired
+  error SessionExpired(uint256 deadline);
+  /// @notice Invalid limit usage increment
+  error InvalidLimitUsageIncrement();
+
+  // ---- Implicit session errors ----
+
+  /// @notice Blacklisted address
+  error BlacklistedAddress(address target);
+  /// @notice Invalid implicit result
+  error InvalidImplicitResult();
+  /// @notice Invalid identity signer
+  error InvalidIdentitySigner();
+  /// @notice Invalid blacklist
+  error InvalidBlacklist();
+  /// @notice Invalid attestation
+  error InvalidAttestation();
+  /// @notice The blacklist was not sorted
+  error InvalidBlacklistUnsorted();
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { LibBytes } from "../../../utils/LibBytes.sol";
+
+/// @notice Permission for a specific session signer
+/// @param target Address of the target contract this permission applies to
+/// @param rules Array of parameter rules
+struct Permission {
+  address target;
+  ParameterRule[] rules;
+}
+
+/// @notice Parameter operation for a specific session signer
+enum ParameterOperation {
+  EQUAL,
+  NOT_EQUAL,
+  GREATER_THAN_OR_EQUAL,
+  LESS_THAN_OR_EQUAL
+}
+
+/// @notice Parameter rule for a specific session signer
+/// @param cumulative If the value should accumulate over multiple calls
+/// @param operation Operation to apply to the parameter
+/// @param value Value to compare against the masked parameter
+/// @param offset Offset in calldata to read the parameter
+/// @param mask Mask to apply to the parameter
+struct ParameterRule {
+  bool cumulative;
+  ParameterOperation operation;
+  bytes32 value;
+  uint256 offset;
+  bytes32 mask;
+}
+
+/// @notice Usage limit for a specific session signer
+/// @param usageHash Usage identifier
+/// @param usageAmount Amount of usage
+struct UsageLimit {
+  bytes32 usageHash;
+  uint256 usageAmount;
+}
+
+using LibBytes for bytes;
+
+/// @title LibPermission
+/// @author Michael Standen
+/// @notice Library for permission management
+library LibPermission {
+
+  /// @notice Error thrown when the rules length exceeds the maximum
+  error RulesLengthExceedsMax();
+
+  /// @notice Reads a permission from a packed bytes array
+  /// @param encoded The packed bytes array
+  /// @param pointer The pointer to the start of the permission
+  /// @return permission The decoded permission
+  /// @return newPointer The new pointer to the end of the permission
+  function readPermission(
+    bytes calldata encoded,
+    uint256 pointer
+  ) internal pure returns (Permission memory permission, uint256 newPointer) {
+    // Target
+    (permission.target, pointer) = encoded.readAddress(pointer);
+    // Rules
+    uint256 rulesLength;
+    (rulesLength, pointer) = encoded.readUint8(pointer);
+    permission.rules = new ParameterRule[](rulesLength);
+    for (uint256 i = 0; i < rulesLength; i++) {
+      uint8 operationCumulative;
+      (operationCumulative, pointer) = encoded.readUint8(pointer);
+      // 000X: cumulative
+      permission.rules[i].cumulative = operationCumulative & 1 != 0;
+      // XXX0: operation
+      permission.rules[i].operation = ParameterOperation(operationCumulative >> 1);
+
+      (permission.rules[i].value, pointer) = encoded.readBytes32(pointer);
+      (permission.rules[i].offset, pointer) = encoded.readUint256(pointer);
+      (permission.rules[i].mask, pointer) = encoded.readBytes32(pointer);
+    }
+    return (permission, pointer);
+  }
+
+  /// @notice Encodes a permission into a packed bytes array
+  /// @param permission The permission to encode
+  /// @return packed The packed bytes array
+  function toPacked(
+    Permission calldata permission
+  ) internal pure returns (bytes memory packed) {
+    if (permission.rules.length > type(uint8).max) {
+      revert RulesLengthExceedsMax();
+    }
+    packed = abi.encodePacked(permission.target, uint8(permission.rules.length));
+    for (uint256 i = 0; i < permission.rules.length; i++) {
+      packed = abi.encodePacked(packed, ruleToPacked(permission.rules[i]));
+    }
+  }
+
+  /// @notice Encodes a rule into a packed bytes array
+  /// @param rule The rule to encode
+  /// @return packed The packed bytes array
+  function ruleToPacked(
+    ParameterRule calldata rule
+  ) internal pure returns (bytes memory packed) {
+    // Combine operation and cumulative flag into a single byte
+    // 0x[operationx3][cumulative]
+    uint8 operationCumulative = (uint8(rule.operation) << 1) | (rule.cumulative ? 1 : 0);
+
+    return abi.encodePacked(operationCumulative, rule.value, rule.offset, rule.mask);
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
 import { Payload } from "../../../modules/Payload.sol";
 
 import { SessionErrors } from "../SessionErrors.sol";
@@ -218,6 +683,490 @@ abstract contract ImplicitSessionManager {
     }
 
     return false;
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Payload } from "../../../modules/Payload.sol";
+import { LibBytes } from "../../../utils/LibBytes.sol";
+import { ParameterOperation, ParameterRule, Permission, UsageLimit } from "./Permission.sol";
+
+/// @title PermissionValidator
+/// @author Michael Standen, Agustin Aguilar
+/// @notice Validates permissions for a given call
+abstract contract PermissionValidator {
+
+  using LibBytes for bytes;
+
+  /// @notice Emitted when the usage amount for a given wallet and usage hash is updated
+  event LimitUsageUpdated(address wallet, bytes32 usageHash, uint256 usageAmount);
+
+  /// @notice Mapping of usage limit hashes to their usage amounts
+  mapping(address => mapping(bytes32 => uint256)) private limitUsage;
+
+  /// @notice Get the usage amount for a given usage hash and wallet
+  /// @param wallet The wallet address
+  /// @param usageHash The usage hash
+  /// @return The usage amount
+  function getLimitUsage(address wallet, bytes32 usageHash) public view returns (uint256) {
+    return limitUsage[wallet][usageHash];
+  }
+
+  /// @notice Set the usage amount for a given usage hash and wallet
+  /// @param wallet The wallet address
+  /// @param usageHash The usage hash
+  /// @param usageAmount The usage amount
+  function setLimitUsage(address wallet, bytes32 usageHash, uint256 usageAmount) internal {
+    limitUsage[wallet][usageHash] = usageAmount;
+    emit LimitUsageUpdated(wallet, usageHash, usageAmount);
+  }
+
+  /// @notice Validates a rules permission
+  /// @param permission The rules permission to validate
+  /// @param call The call to validate against
+  /// @param wallet The wallet address
+  /// @param signer The signer address
+  /// @param usageLimits Array of current usage limits
+  /// @return True if the permission is valid, false otherwise
+  /// @return newUsageLimits New array of usage limits
+  function validatePermission(
+    Permission memory permission,
+    Payload.Call calldata call,
+    address wallet,
+    address signer,
+    UsageLimit[] memory usageLimits
+  ) public view returns (bool, UsageLimit[] memory newUsageLimits) {
+    if (permission.target != call.to) {
+      return (false, usageLimits);
+    }
+
+    // Copy usage limits into array with space for new rules
+    newUsageLimits = new UsageLimit[](usageLimits.length + permission.rules.length);
+    for (uint256 i = 0; i < usageLimits.length; i++) {
+      newUsageLimits[i] = usageLimits[i];
+    }
+    uint256 actualLimitsCount = usageLimits.length;
+
+    // Check each rule
+    for (uint256 i = 0; i < permission.rules.length; i++) {
+      ParameterRule memory rule = permission.rules[i];
+
+      // Extract value from calldata at offset
+      (bytes32 value,) = call.data.readBytes32(rule.offset);
+
+      // Apply mask
+      value = value & rule.mask;
+
+      if (rule.cumulative) {
+        // Calculate cumulative usage
+        uint256 value256 = uint256(value);
+        // Find the usage limit for the current rule
+        bytes32 usageHash = keccak256(abi.encode(signer, permission, i));
+        uint256 previousUsage;
+        UsageLimit memory usageLimit;
+        for (uint256 j = 0; j < newUsageLimits.length; j++) {
+          if (newUsageLimits[j].usageHash == bytes32(0)) {
+            // Initialize new usage limit
+            usageLimit = UsageLimit({ usageHash: usageHash, usageAmount: 0 });
+            newUsageLimits[j] = usageLimit;
+            actualLimitsCount = j + 1;
+            break;
+          }
+          if (newUsageLimits[j].usageHash == usageHash) {
+            // Value exists, use it
+            usageLimit = newUsageLimits[j];
+            previousUsage = usageLimit.usageAmount;
+            break;
+          }
+        }
+        if (previousUsage == 0) {
+          // Not in current payload, use storage
+          previousUsage = getLimitUsage(wallet, usageHash);
+        }
+        // Cumulate usage
+        value256 += previousUsage;
+        usageLimit.usageAmount = value256;
+        // Use the cumulative value for comparison
+        value = bytes32(value256);
+      }
+
+      // Compare based on operation
+      if (rule.operation == ParameterOperation.EQUAL) {
+        if (value != rule.value) {
+          return (false, usageLimits);
+        }
+      } else if (rule.operation == ParameterOperation.LESS_THAN_OR_EQUAL) {
+        if (uint256(value) > uint256(rule.value)) {
+          return (false, usageLimits);
+        }
+      } else if (rule.operation == ParameterOperation.NOT_EQUAL) {
+        if (value == rule.value) {
+          return (false, usageLimits);
+        }
+      } else if (rule.operation == ParameterOperation.GREATER_THAN_OR_EQUAL) {
+        if (uint256(value) < uint256(rule.value)) {
+          return (false, usageLimits);
+        }
+      }
+    }
+
+    // Fix array length
+    assembly {
+      mstore(newUsageLimits, actualLimitsCount)
+    }
+
+    return (true, newUsageLimits);
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { LibBytes } from "../utils/LibBytes.sol";
+
+using LibBytes for bytes;
+
+/// @title Payload
+/// @author Agustin Aguilar, Michael Standen, William Hua
+/// @notice Library for encoding and decoding payloads
+library Payload {
+
+  /// @notice Error thrown when the kind is invalid
+  error InvalidKind(uint8 kind);
+
+  /// @dev keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")
+  bytes32 private constant EIP712_DOMAIN_TYPEHASH = 0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f;
+
+  /// @dev keccak256("Sequence Wallet")
+  bytes32 private constant EIP712_DOMAIN_NAME_SEQUENCE =
+    0x4aa45ca7ad825ceb1bf35643f0a58c295239df563b1b565c2485f96477c56318;
+
+  /// @dev keccak256("3")
+  bytes32 private constant EIP712_DOMAIN_VERSION_SEQUENCE =
+    0x2a80e1ef1d7842f27f2e6be0972bb708b9a135c38860dbe73c27c3486c34f4de;
+
+  function domainSeparator(bool _noChainId, address _wallet) internal view returns (bytes32 _domainSeparator) {
+    return keccak256(
+      abi.encode(
+        EIP712_DOMAIN_TYPEHASH,
+        EIP712_DOMAIN_NAME_SEQUENCE,
+        EIP712_DOMAIN_VERSION_SEQUENCE,
+        _noChainId ? uint256(0) : uint256(block.chainid),
+        _wallet
+      )
+    );
+  }
+
+  /// @dev keccak256("Call(address to,uint256 value,bytes data,uint256 gasLimit,bool delegateCall,bool onlyFallback,uint256 behaviorOnError)")
+  bytes32 private constant CALL_TYPEHASH = 0x0603985259a953da1f65a522f589c17bd1d0117ec1d3abb7c0788aef251ef437;
+
+  /// @dev keccak256("Calls(Call[] calls,uint256 space,uint256 nonce,address[] wallets)Call(address to,uint256 value,bytes data,uint256 gasLimit,bool delegateCall,bool onlyFallback,uint256 behaviorOnError)")
+  bytes32 private constant CALLS_TYPEHASH = 0x11e1e4079a79a66e4ade50033cfe2678cdd5341d2dfe5ef9513edb1a0be147a2;
+
+  /// @dev keccak256("Message(bytes message,address[] wallets)")
+  bytes32 private constant MESSAGE_TYPEHASH = 0xe19a3b94fc3c7ece3f890d98a99bc422615537a08dea0603fa8425867d87d466;
+
+  /// @dev keccak256("ConfigUpdate(bytes32 imageHash,address[] wallets)")
+  bytes32 private constant CONFIG_UPDATE_TYPEHASH = 0x11fdeb7e8373a1aa96bfac8d0ea91526b2c5d15e5cee20e0543e780258f3e8e4;
+
+  /// @notice Kind of transaction
+  uint8 public constant KIND_TRANSACTIONS = 0x00;
+  /// @notice Kind of digest
+  uint8 public constant KIND_MESSAGE = 0x01;
+  /// @notice Kind of config update
+  uint8 public constant KIND_CONFIG_UPDATE = 0x02;
+  /// @notice Kind of message
+  uint8 public constant KIND_DIGEST = 0x03;
+
+  /// @notice Behavior on error: ignore error
+  uint8 public constant BEHAVIOR_IGNORE_ERROR = 0x00;
+  /// @notice Behavior on error: revert on error
+  uint8 public constant BEHAVIOR_REVERT_ON_ERROR = 0x01;
+  /// @notice Behavior on error: abort on error
+  uint8 public constant BEHAVIOR_ABORT_ON_ERROR = 0x02;
+
+  /// @notice Payload call information
+  /// @param to Address of the target contract
+  /// @param value Value to send with the call
+  /// @param data Data to send with the call
+  /// @param gasLimit Gas limit for the call
+  /// @param delegateCall If the call is a delegate call
+  /// @param onlyFallback If the call should only be executed in an error scenario
+  /// @param behaviorOnError Behavior on error
+  struct Call {
+    address to;
+    uint256 value;
+    bytes data;
+    uint256 gasLimit;
+    bool delegateCall;
+    bool onlyFallback;
+    uint256 behaviorOnError;
+  }
+
+  /// @notice Decoded payload
+  /// @param kind Kind of payload
+  /// @param noChainId If the chain ID should be omitted
+  /// @param calls Array of calls (transaction kind)
+  /// @param space Nonce space for the calls (transaction kind)
+  /// @param nonce Nonce value for the calls (transaction kind)
+  /// @param message Message to validate (message kind)
+  /// @param imageHash Image hash to update to (config update kind)
+  /// @param digest Digest to validate (digest kind)
+  /// @param parentWallets Parent wallets
+  struct Decoded {
+    uint8 kind;
+    bool noChainId;
+    // Transaction kind
+    Call[] calls;
+    uint256 space;
+    uint256 nonce;
+    // Message kind
+    bytes message;
+    // Config update kind
+    bytes32 imageHash;
+    // Digest kind for 1271
+    bytes32 digest;
+    // Parent wallets
+    address[] parentWallets;
+  }
+
+  function fromMessage(
+    bytes memory message
+  ) internal pure returns (Decoded memory _decoded) {
+    _decoded.kind = KIND_MESSAGE;
+    _decoded.message = message;
+  }
+
+  function fromConfigUpdate(
+    bytes32 imageHash
+  ) internal pure returns (Decoded memory _decoded) {
+    _decoded.kind = KIND_CONFIG_UPDATE;
+    _decoded.imageHash = imageHash;
+  }
+
+  function fromDigest(
+    bytes32 digest
+  ) internal pure returns (Decoded memory _decoded) {
+    _decoded.kind = KIND_DIGEST;
+    _decoded.digest = digest;
+  }
+
+  function fromPackedCalls(
+    bytes calldata packed
+  ) internal view returns (Decoded memory _decoded) {
+    _decoded.kind = KIND_TRANSACTIONS;
+
+    // Read the global flag
+    (uint256 globalFlag, uint256 pointer) = packed.readFirstUint8();
+
+    // First bit determines if space is zero or not
+    if (globalFlag & 0x01 == 0x01) {
+      _decoded.space = 0;
+    } else {
+      (_decoded.space, pointer) = packed.readUint160(pointer);
+    }
+
+    // Next 3 bits determine the size of the nonce
+    uint256 nonceSize = (globalFlag >> 1) & 0x07;
+
+    if (nonceSize > 0) {
+      // Read the nonce
+      (_decoded.nonce, pointer) = packed.readUintX(pointer, nonceSize);
+    }
+
+    uint256 numCalls;
+
+    // Bit 5 determines if the batch contains a single call
+    if (globalFlag & 0x10 == 0x10) {
+      numCalls = 1;
+    } else {
+      // Bit 6 determines if the number of calls uses 1 byte or 2 bytes
+      if (globalFlag & 0x20 == 0x20) {
+        (numCalls, pointer) = packed.readUint16(pointer);
+      } else {
+        (numCalls, pointer) = packed.readUint8(pointer);
+      }
+    }
+
+    // Read the calls
+    _decoded.calls = new Call[](numCalls);
+
+    for (uint256 i = 0; i < numCalls; i++) {
+      uint8 flags;
+      (flags, pointer) = packed.readUint8(pointer);
+
+      // First bit determines if this is a call to self
+      // or a call to another address
+      if (flags & 0x01 == 0x01) {
+        // Call to self
+        _decoded.calls[i].to = address(this);
+      } else {
+        // Call to another address
+        (_decoded.calls[i].to, pointer) = packed.readAddress(pointer);
+      }
+
+      // Second bit determines if the call has value or not
+      if (flags & 0x02 == 0x02) {
+        (_decoded.calls[i].value, pointer) = packed.readUint256(pointer);
+      }
+
+      // Third bit determines if the call has data or not
+      if (flags & 0x04 == 0x04) {
+        // 3 bytes determine the size of the calldata
+        uint256 calldataSize;
+        (calldataSize, pointer) = packed.readUint24(pointer);
+        _decoded.calls[i].data = packed[pointer:pointer + calldataSize];
+        pointer += calldataSize;
+      }
+
+      // Fourth bit determines if the call has a gas limit or not
+      if (flags & 0x08 == 0x08) {
+        (_decoded.calls[i].gasLimit, pointer) = packed.readUint256(pointer);
+      }
+
+      // Fifth bit determines if the call is a delegate call or not
+      _decoded.calls[i].delegateCall = (flags & 0x10 == 0x10);
+
+      // Sixth bit determines if the call is fallback only
+      _decoded.calls[i].onlyFallback = (flags & 0x20 == 0x20);
+
+      // Last 2 bits are directly mapped to the behavior on error
+      _decoded.calls[i].behaviorOnError = (flags & 0xC0) >> 6;
+    }
+  }
+
+  function hashCall(
+    Call memory c
+  ) internal pure returns (bytes32) {
+    return keccak256(
+      abi.encode(
+        CALL_TYPEHASH, c.to, c.value, keccak256(c.data), c.gasLimit, c.delegateCall, c.onlyFallback, c.behaviorOnError
+      )
+    );
+  }
+
+  function hashCalls(
+    Call[] memory calls
+  ) internal pure returns (bytes32) {
+    // In EIP712, an array is often hashed as the keccak256 of the concatenated
+    // hashes of each item. So we hash each Call, pack them, and hash again.
+    bytes32[] memory callHashes = new bytes32[](calls.length);
+    for (uint256 i = 0; i < calls.length; i++) {
+      callHashes[i] = hashCall(calls[i]);
+    }
+    return keccak256(abi.encodePacked(callHashes));
+  }
+
+  function toEIP712(
+    Decoded memory _decoded
+  ) internal pure returns (bytes32) {
+    bytes32 walletsHash = keccak256(abi.encodePacked(_decoded.parentWallets));
+
+    if (_decoded.kind == KIND_TRANSACTIONS) {
+      bytes32 callsHash = hashCalls(_decoded.calls);
+      // The top-level struct for Calls might be something like:
+      // Calls(bytes32 callsHash,uint256 space,uint256 nonce,bytes32 walletsHash)
+      return keccak256(abi.encode(CALLS_TYPEHASH, callsHash, _decoded.space, _decoded.nonce, walletsHash));
+    } else if (_decoded.kind == KIND_MESSAGE) {
+      // If you define your top-level as: Message(bytes32 messageHash,bytes32 walletsHash)
+      return keccak256(abi.encode(MESSAGE_TYPEHASH, keccak256(_decoded.message), walletsHash));
+    } else if (_decoded.kind == KIND_CONFIG_UPDATE) {
+      // Top-level: ConfigUpdate(bytes32 imageHash,bytes32 walletsHash)
+      return keccak256(abi.encode(CONFIG_UPDATE_TYPEHASH, _decoded.imageHash, walletsHash));
+    } else if (_decoded.kind == KIND_DIGEST) {
+      // Top-level: Use MESSAGE_TYPEHASH but assume the digest is already the hashed message
+      return keccak256(abi.encode(MESSAGE_TYPEHASH, _decoded.digest, walletsHash));
+    } else {
+      // Unknown kind
+      revert InvalidKind(_decoded.kind);
+    }
+  }
+
+  function hash(
+    Decoded memory _decoded
+  ) internal view returns (bytes32) {
+    bytes32 domain = domainSeparator(_decoded.noChainId, address(this));
+    bytes32 structHash = toEIP712(_decoded);
+    return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
+  }
+
+  function hashFor(Decoded memory _decoded, address _wallet) internal view returns (bytes32) {
+    bytes32 domain = domainSeparator(_decoded.noChainId, _wallet);
+    bytes32 structHash = toEIP712(_decoded);
+    return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title LibOptim
+/// @author Agustin Aguilar
+/// @notice Library for optimized EVM operations
+library LibOptim {
+
+  /**
+   * @notice Computes the keccak256 hash of two 32-byte inputs.
+   * @dev It uses only scratch memory space.
+   * @param _a The first 32 bytes of the hash.
+   * @param _b The second 32 bytes of the hash.
+   * @return c The keccak256 hash of the two 32-byte inputs.
+   */
+  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
+    assembly {
+      mstore(0, _a)
+      mstore(32, _b)
+      c := keccak256(0, 64)
+    }
+  }
+
+  /**
+   * @notice Returns the return data from the last call.
+   * @return r The return data from the last call.
+   */
+  function returnData() internal pure returns (bytes memory r) {
+    assembly {
+      let size := returndatasize()
+      r := mload(0x40)
+      let start := add(r, 32)
+      mstore(0x40, add(start, size))
+      mstore(r, size)
+      returndatacopy(start, 0, size)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _val The value to send to the contract.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters, using delegatecall.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
+    }
   }
 
 }
@@ -645,33 +1594,6 @@ library SessionSig {
 }
 
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../../../modules/Payload.sol";
-import { Attestation } from "./Attestation.sol";
-
-/// @dev Magic prefix for the implicit request
-bytes32 constant ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX = keccak256(abi.encodePacked("acceptImplicitRequest"));
-
-/// @title ISignalsImplicitMode
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Interface for the contracts that support implicit mode validation
-interface ISignalsImplicitMode {
-
-  /// @notice Determines if an implicit request is valid
-  /// @param wallet The wallet's address
-  /// @param attestation The attestation data
-  /// @param call The call to validate
-  /// @return magic The hash of the implicit request if valid
-  function acceptImplicitRequest(
-    address wallet,
-    Attestation calldata attestation,
-    Payload.Call calldata call
-  ) external view returns (bytes32 magic);
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
 /// @title Library for reading data from bytes arrays
@@ -795,785 +1717,6 @@ library LibBytes {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import { LibBytes } from "../utils/LibBytes.sol";
-
-using LibBytes for bytes;
-
-/// @title Payload
-/// @author Agustin Aguilar, Michael Standen, William Hua
-/// @notice Library for encoding and decoding payloads
-library Payload {
-
-  /// @notice Error thrown when the kind is invalid
-  error InvalidKind(uint8 kind);
-
-  /// @dev keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")
-  bytes32 private constant EIP712_DOMAIN_TYPEHASH = 0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f;
-
-  /// @dev keccak256("Sequence Wallet")
-  bytes32 private constant EIP712_DOMAIN_NAME_SEQUENCE =
-    0x4aa45ca7ad825ceb1bf35643f0a58c295239df563b1b565c2485f96477c56318;
-
-  /// @dev keccak256("3")
-  bytes32 private constant EIP712_DOMAIN_VERSION_SEQUENCE =
-    0x2a80e1ef1d7842f27f2e6be0972bb708b9a135c38860dbe73c27c3486c34f4de;
-
-  function domainSeparator(bool _noChainId, address _wallet) internal view returns (bytes32 _domainSeparator) {
-    return keccak256(
-      abi.encode(
-        EIP712_DOMAIN_TYPEHASH,
-        EIP712_DOMAIN_NAME_SEQUENCE,
-        EIP712_DOMAIN_VERSION_SEQUENCE,
-        _noChainId ? uint256(0) : uint256(block.chainid),
-        _wallet
-      )
-    );
-  }
-
-  /// @dev keccak256("Call(address to,uint256 value,bytes data,uint256 gasLimit,bool delegateCall,bool onlyFallback,uint256 behaviorOnError)")
-  bytes32 private constant CALL_TYPEHASH = 0x0603985259a953da1f65a522f589c17bd1d0117ec1d3abb7c0788aef251ef437;
-
-  /// @dev keccak256("Calls(Call[] calls,uint256 space,uint256 nonce,address[] wallets)Call(address to,uint256 value,bytes data,uint256 gasLimit,bool delegateCall,bool onlyFallback,uint256 behaviorOnError)")
-  bytes32 private constant CALLS_TYPEHASH = 0x11e1e4079a79a66e4ade50033cfe2678cdd5341d2dfe5ef9513edb1a0be147a2;
-
-  /// @dev keccak256("Message(bytes message,address[] wallets)")
-  bytes32 private constant MESSAGE_TYPEHASH = 0xe19a3b94fc3c7ece3f890d98a99bc422615537a08dea0603fa8425867d87d466;
-
-  /// @dev keccak256("ConfigUpdate(bytes32 imageHash,address[] wallets)")
-  bytes32 private constant CONFIG_UPDATE_TYPEHASH = 0x11fdeb7e8373a1aa96bfac8d0ea91526b2c5d15e5cee20e0543e780258f3e8e4;
-
-  /// @notice Kind of transaction
-  uint8 public constant KIND_TRANSACTIONS = 0x00;
-  /// @notice Kind of digest
-  uint8 public constant KIND_MESSAGE = 0x01;
-  /// @notice Kind of config update
-  uint8 public constant KIND_CONFIG_UPDATE = 0x02;
-  /// @notice Kind of message
-  uint8 public constant KIND_DIGEST = 0x03;
-
-  /// @notice Behavior on error: ignore error
-  uint8 public constant BEHAVIOR_IGNORE_ERROR = 0x00;
-  /// @notice Behavior on error: revert on error
-  uint8 public constant BEHAVIOR_REVERT_ON_ERROR = 0x01;
-  /// @notice Behavior on error: abort on error
-  uint8 public constant BEHAVIOR_ABORT_ON_ERROR = 0x02;
-
-  /// @notice Payload call information
-  /// @param to Address of the target contract
-  /// @param value Value to send with the call
-  /// @param data Data to send with the call
-  /// @param gasLimit Gas limit for the call
-  /// @param delegateCall If the call is a delegate call
-  /// @param onlyFallback If the call should only be executed in an error scenario
-  /// @param behaviorOnError Behavior on error
-  struct Call {
-    address to;
-    uint256 value;
-    bytes data;
-    uint256 gasLimit;
-    bool delegateCall;
-    bool onlyFallback;
-    uint256 behaviorOnError;
-  }
-
-  /// @notice Decoded payload
-  /// @param kind Kind of payload
-  /// @param noChainId If the chain ID should be omitted
-  /// @param calls Array of calls (transaction kind)
-  /// @param space Nonce space for the calls (transaction kind)
-  /// @param nonce Nonce value for the calls (transaction kind)
-  /// @param message Message to validate (message kind)
-  /// @param imageHash Image hash to update to (config update kind)
-  /// @param digest Digest to validate (digest kind)
-  /// @param parentWallets Parent wallets
-  struct Decoded {
-    uint8 kind;
-    bool noChainId;
-    // Transaction kind
-    Call[] calls;
-    uint256 space;
-    uint256 nonce;
-    // Message kind
-    bytes message;
-    // Config update kind
-    bytes32 imageHash;
-    // Digest kind for 1271
-    bytes32 digest;
-    // Parent wallets
-    address[] parentWallets;
-  }
-
-  function fromMessage(
-    bytes memory message
-  ) internal pure returns (Decoded memory _decoded) {
-    _decoded.kind = KIND_MESSAGE;
-    _decoded.message = message;
-  }
-
-  function fromConfigUpdate(
-    bytes32 imageHash
-  ) internal pure returns (Decoded memory _decoded) {
-    _decoded.kind = KIND_CONFIG_UPDATE;
-    _decoded.imageHash = imageHash;
-  }
-
-  function fromDigest(
-    bytes32 digest
-  ) internal pure returns (Decoded memory _decoded) {
-    _decoded.kind = KIND_DIGEST;
-    _decoded.digest = digest;
-  }
-
-  function fromPackedCalls(
-    bytes calldata packed
-  ) internal view returns (Decoded memory _decoded) {
-    _decoded.kind = KIND_TRANSACTIONS;
-
-    // Read the global flag
-    (uint256 globalFlag, uint256 pointer) = packed.readFirstUint8();
-
-    // First bit determines if space is zero or not
-    if (globalFlag & 0x01 == 0x01) {
-      _decoded.space = 0;
-    } else {
-      (_decoded.space, pointer) = packed.readUint160(pointer);
-    }
-
-    // Next 3 bits determine the size of the nonce
-    uint256 nonceSize = (globalFlag >> 1) & 0x07;
-
-    if (nonceSize > 0) {
-      // Read the nonce
-      (_decoded.nonce, pointer) = packed.readUintX(pointer, nonceSize);
-    }
-
-    uint256 numCalls;
-
-    // Bit 5 determines if the batch contains a single call
-    if (globalFlag & 0x10 == 0x10) {
-      numCalls = 1;
-    } else {
-      // Bit 6 determines if the number of calls uses 1 byte or 2 bytes
-      if (globalFlag & 0x20 == 0x20) {
-        (numCalls, pointer) = packed.readUint16(pointer);
-      } else {
-        (numCalls, pointer) = packed.readUint8(pointer);
-      }
-    }
-
-    // Read the calls
-    _decoded.calls = new Call[](numCalls);
-
-    for (uint256 i = 0; i < numCalls; i++) {
-      uint8 flags;
-      (flags, pointer) = packed.readUint8(pointer);
-
-      // First bit determines if this is a call to self
-      // or a call to another address
-      if (flags & 0x01 == 0x01) {
-        // Call to self
-        _decoded.calls[i].to = address(this);
-      } else {
-        // Call to another address
-        (_decoded.calls[i].to, pointer) = packed.readAddress(pointer);
-      }
-
-      // Second bit determines if the call has value or not
-      if (flags & 0x02 == 0x02) {
-        (_decoded.calls[i].value, pointer) = packed.readUint256(pointer);
-      }
-
-      // Third bit determines if the call has data or not
-      if (flags & 0x04 == 0x04) {
-        // 3 bytes determine the size of the calldata
-        uint256 calldataSize;
-        (calldataSize, pointer) = packed.readUint24(pointer);
-        _decoded.calls[i].data = packed[pointer:pointer + calldataSize];
-        pointer += calldataSize;
-      }
-
-      // Fourth bit determines if the call has a gas limit or not
-      if (flags & 0x08 == 0x08) {
-        (_decoded.calls[i].gasLimit, pointer) = packed.readUint256(pointer);
-      }
-
-      // Fifth bit determines if the call is a delegate call or not
-      _decoded.calls[i].delegateCall = (flags & 0x10 == 0x10);
-
-      // Sixth bit determines if the call is fallback only
-      _decoded.calls[i].onlyFallback = (flags & 0x20 == 0x20);
-
-      // Last 2 bits are directly mapped to the behavior on error
-      _decoded.calls[i].behaviorOnError = (flags & 0xC0) >> 6;
-    }
-  }
-
-  function hashCall(
-    Call memory c
-  ) internal pure returns (bytes32) {
-    return keccak256(
-      abi.encode(
-        CALL_TYPEHASH, c.to, c.value, keccak256(c.data), c.gasLimit, c.delegateCall, c.onlyFallback, c.behaviorOnError
-      )
-    );
-  }
-
-  function hashCalls(
-    Call[] memory calls
-  ) internal pure returns (bytes32) {
-    // In EIP712, an array is often hashed as the keccak256 of the concatenated
-    // hashes of each item. So we hash each Call, pack them, and hash again.
-    bytes32[] memory callHashes = new bytes32[](calls.length);
-    for (uint256 i = 0; i < calls.length; i++) {
-      callHashes[i] = hashCall(calls[i]);
-    }
-    return keccak256(abi.encodePacked(callHashes));
-  }
-
-  function toEIP712(
-    Decoded memory _decoded
-  ) internal pure returns (bytes32) {
-    bytes32 walletsHash = keccak256(abi.encodePacked(_decoded.parentWallets));
-
-    if (_decoded.kind == KIND_TRANSACTIONS) {
-      bytes32 callsHash = hashCalls(_decoded.calls);
-      // The top-level struct for Calls might be something like:
-      // Calls(bytes32 callsHash,uint256 space,uint256 nonce,bytes32 walletsHash)
-      return keccak256(abi.encode(CALLS_TYPEHASH, callsHash, _decoded.space, _decoded.nonce, walletsHash));
-    } else if (_decoded.kind == KIND_MESSAGE) {
-      // If you define your top-level as: Message(bytes32 messageHash,bytes32 walletsHash)
-      return keccak256(abi.encode(MESSAGE_TYPEHASH, keccak256(_decoded.message), walletsHash));
-    } else if (_decoded.kind == KIND_CONFIG_UPDATE) {
-      // Top-level: ConfigUpdate(bytes32 imageHash,bytes32 walletsHash)
-      return keccak256(abi.encode(CONFIG_UPDATE_TYPEHASH, _decoded.imageHash, walletsHash));
-    } else if (_decoded.kind == KIND_DIGEST) {
-      // Top-level: Use MESSAGE_TYPEHASH but assume the digest is already the hashed message
-      return keccak256(abi.encode(MESSAGE_TYPEHASH, _decoded.digest, walletsHash));
-    } else {
-      // Unknown kind
-      revert InvalidKind(_decoded.kind);
-    }
-  }
-
-  function hash(
-    Decoded memory _decoded
-  ) internal view returns (bytes32) {
-    bytes32 domain = domainSeparator(_decoded.noChainId, address(this));
-    bytes32 structHash = toEIP712(_decoded);
-    return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
-  }
-
-  function hashFor(Decoded memory _decoded, address _wallet) internal view returns (bytes32) {
-    bytes32 domain = domainSeparator(_decoded.noChainId, _wallet);
-    bytes32 structHash = toEIP712(_decoded);
-    return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { LibBytes } from "../../../utils/LibBytes.sol";
-import { ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX } from "./ISignalsImplicitMode.sol";
-
-using LibBytes for bytes;
-
-/// @notice Attestation for a specific session
-/// @param approvedSigner Address of the approved signer
-/// @param identityType Identity type
-/// @param issuerHash Hash of the issuer
-/// @param audienceHash Hash of the audience
-/// @param applicationData Unspecified application data
-/// @param authData Auth data
-struct Attestation {
-  address approvedSigner;
-  bytes4 identityType;
-  bytes32 issuerHash;
-  bytes32 audienceHash;
-  bytes applicationData;
-  AuthData authData;
-}
-
-/// @notice Auth data for an attestation
-/// @param redirectUrl Authorization redirect URL
-/// @param issuedAt Timestamp of the attestation issuance
-struct AuthData {
-  string redirectUrl;
-  uint64 issuedAt;
-}
-
-/// @title LibAttestation
-/// @author Michael Standen
-/// @notice Library for attestation management
-library LibAttestation {
-
-  /// @notice Hashes an attestation
-  function toHash(
-    Attestation memory attestation
-  ) internal pure returns (bytes32) {
-    return keccak256(toPacked(attestation));
-  }
-
-  /// @notice Decodes an attestation from a packed bytes array
-  /// @param encoded The packed bytes array
-  /// @param pointer The pointer to the start of the attestation
-  /// @return attestation The decoded attestation
-  /// @return newPointer The new pointer to the end of the attestation
-  function fromPacked(
-    bytes calldata encoded,
-    uint256 pointer
-  ) internal pure returns (Attestation memory attestation, uint256 newPointer) {
-    newPointer = pointer;
-    (attestation.approvedSigner, newPointer) = encoded.readAddress(newPointer);
-    (attestation.identityType, newPointer) = encoded.readBytes4(newPointer);
-    (attestation.issuerHash, newPointer) = encoded.readBytes32(newPointer);
-    (attestation.audienceHash, newPointer) = encoded.readBytes32(newPointer);
-    // Application data (arbitrary bytes)
-    uint256 dataSize;
-    (dataSize, newPointer) = encoded.readUint24(newPointer);
-    attestation.applicationData = encoded[newPointer:newPointer + dataSize];
-    newPointer += dataSize;
-    // Auth data
-    (attestation.authData, newPointer) = fromPackedAuthData(encoded, newPointer);
-    return (attestation, newPointer);
-  }
-
-  /// @notice Decodes the auth data from a packed bytes
-  /// @param encoded The packed bytes containing the auth data
-  /// @param pointer The pointer to the start of the auth data within the encoded data
-  /// @return authData The decoded auth data
-  /// @return newPointer The pointer to the end of the auth data within the encoded data
-  function fromPackedAuthData(
-    bytes calldata encoded,
-    uint256 pointer
-  ) internal pure returns (AuthData memory authData, uint256 newPointer) {
-    uint24 redirectUrlLength;
-    (redirectUrlLength, pointer) = encoded.readUint24(pointer);
-    authData.redirectUrl = string(encoded[pointer:pointer + redirectUrlLength]);
-    pointer += redirectUrlLength;
-    (authData.issuedAt, pointer) = encoded.readUint64(pointer);
-    return (authData, pointer);
-  }
-
-  /// @notice Encodes an attestation into a packed bytes array
-  /// @param attestation The attestation to encode
-  /// @return encoded The packed bytes array
-  function toPacked(
-    Attestation memory attestation
-  ) internal pure returns (bytes memory encoded) {
-    return abi.encodePacked(
-      attestation.approvedSigner,
-      attestation.identityType,
-      attestation.issuerHash,
-      attestation.audienceHash,
-      uint24(attestation.applicationData.length),
-      attestation.applicationData,
-      toPackAuthData(attestation.authData)
-    );
-  }
-
-  /// @notice Encodes the auth data into a packed bytes array
-  /// @param authData The auth data to encode
-  /// @return encoded The packed bytes array
-  function toPackAuthData(
-    AuthData memory authData
-  ) internal pure returns (bytes memory encoded) {
-    return abi.encodePacked(uint24(bytes(authData.redirectUrl).length), bytes(authData.redirectUrl), authData.issuedAt);
-  }
-
-  /// @notice Generates the implicit request magic return value
-  /// @param attestation The attestation
-  /// @param wallet The wallet
-  /// @return magic The expected implicit request magic
-  function generateImplicitRequestMagic(Attestation memory attestation, address wallet) internal pure returns (bytes32) {
-    return keccak256(
-      abi.encodePacked(ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX, wallet, attestation.audienceHash, attestation.issuerHash)
-    );
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../../../modules/Payload.sol";
-import { LibBytes } from "../../../utils/LibBytes.sol";
-
-import { SessionErrors } from "../SessionErrors.sol";
-import { IExplicitSessionManager, SessionPermissions, SessionUsageLimits } from "./IExplicitSessionManager.sol";
-import { Permission, UsageLimit } from "./Permission.sol";
-import { PermissionValidator } from "./PermissionValidator.sol";
-
-abstract contract ExplicitSessionManager is IExplicitSessionManager, PermissionValidator {
-
-  using LibBytes for bytes;
-
-  /// @notice Special address used for tracking native token value limits
-  address public constant VALUE_TRACKING_ADDRESS = address(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
-
-  /// @inheritdoc IExplicitSessionManager
-  function incrementUsageLimit(
-    UsageLimit[] calldata limits
-  ) external {
-    address wallet = msg.sender;
-    for (uint256 i = 0; i < limits.length; i++) {
-      if (limits[i].usageAmount < getLimitUsage(wallet, limits[i].usageHash)) {
-        // Cannot decrement usage limit
-        revert SessionErrors.InvalidLimitUsageIncrement();
-      }
-      setLimitUsage(wallet, limits[i].usageHash, limits[i].usageAmount);
-    }
-  }
-
-  /// @notice Validates an explicit call
-  /// @param payload The decoded payload containing calls
-  /// @param callIdx The index of the call to validate
-  /// @param wallet The wallet's address
-  /// @param sessionSigner The session signer's address
-  /// @param allSessionPermissions All sessions' permissions
-  /// @param permissionIdx The index of the permission to validate
-  /// @param sessionUsageLimits The session usage limits
-  /// @return newSessionUsageLimits The updated session usage limits
-  function _validateExplicitCall(
-    Payload.Decoded calldata payload,
-    uint256 callIdx,
-    address wallet,
-    address sessionSigner,
-    SessionPermissions[] memory allSessionPermissions,
-    uint8 permissionIdx,
-    SessionUsageLimits memory sessionUsageLimits
-  ) internal view returns (SessionUsageLimits memory newSessionUsageLimits) {
-    // Find the permissions for the given session signer
-    SessionPermissions memory sessionPermissions;
-    for (uint256 i = 0; i < allSessionPermissions.length; i++) {
-      if (allSessionPermissions[i].signer == sessionSigner) {
-        sessionPermissions = allSessionPermissions[i];
-        break;
-      }
-    }
-    if (sessionPermissions.signer == address(0)) {
-      revert SessionErrors.InvalidSessionSigner(sessionSigner);
-    }
-
-    // Check if session chainId is valid
-    if (sessionPermissions.chainId != 0 && sessionPermissions.chainId != block.chainid) {
-      revert SessionErrors.InvalidChainId(sessionPermissions.chainId);
-    }
-
-    // Check if session has expired.
-    if (sessionPermissions.deadline != 0 && block.timestamp > sessionPermissions.deadline) {
-      revert SessionErrors.SessionExpired(sessionPermissions.deadline);
-    }
-
-    // Delegate calls are not allowed
-    Payload.Call calldata call = payload.calls[callIdx];
-    if (call.delegateCall) {
-      revert SessionErrors.InvalidDelegateCall();
-    }
-
-    // Calls to incrementUsageLimit are the only allowed calls to this contract
-    if (call.to == address(this)) {
-      if (callIdx != 0) {
-        // IncrementUsageLimit call is only allowed as the first call
-        revert SessionErrors.InvalidLimitUsageIncrement();
-      }
-      if (call.value > 0) {
-        revert SessionErrors.InvalidValue();
-      }
-      // No permissions required for the increment call
-      return sessionUsageLimits;
-    }
-
-    // Get the permission for the current call
-    if (permissionIdx >= sessionPermissions.permissions.length) {
-      revert SessionErrors.MissingPermission();
-    }
-    Permission memory permission = sessionPermissions.permissions[permissionIdx];
-
-    // Validate the permission for the current call
-    (bool isValid, UsageLimit[] memory limits) =
-      validatePermission(permission, call, wallet, sessionSigner, sessionUsageLimits.limits);
-    if (!isValid) {
-      revert SessionErrors.InvalidPermission();
-    }
-    sessionUsageLimits.limits = limits;
-
-    // Increment the total value used
-    if (call.value > 0) {
-      sessionUsageLimits.totalValueUsed += call.value;
-    }
-    if (sessionUsageLimits.totalValueUsed > sessionPermissions.valueLimit) {
-      // Value limit exceeded
-      revert SessionErrors.InvalidValue();
-    }
-
-    return sessionUsageLimits;
-  }
-
-  /// @notice Verifies the limit usage increment
-  /// @param call The first call in the payload, which is expected to be the increment call
-  /// @param sessionUsageLimits The session usage limits
-  /// @dev Reverts if the required increment call is missing or invalid
-  /// @dev If no usage limits are used, this function does nothing
-  function _validateLimitUsageIncrement(
-    Payload.Call calldata call,
-    SessionUsageLimits[] memory sessionUsageLimits
-  ) internal view {
-    // Limits call is only required if there are usage limits used
-    if (sessionUsageLimits.length > 0) {
-      // Verify the first call is the increment call and cannot be skipped
-      if (call.to != address(this) || call.behaviorOnError != Payload.BEHAVIOR_REVERT_ON_ERROR || call.onlyFallback) {
-        revert SessionErrors.InvalidLimitUsageIncrement();
-      }
-
-      // Construct expected limit increments
-      uint256 totalLimitsLength = 0;
-      for (uint256 i = 0; i < sessionUsageLimits.length; i++) {
-        totalLimitsLength += sessionUsageLimits[i].limits.length;
-        if (sessionUsageLimits[i].totalValueUsed > 0) {
-          totalLimitsLength++;
-        }
-      }
-      UsageLimit[] memory limits = new UsageLimit[](totalLimitsLength);
-      uint256 limitIndex = 0;
-      for (uint256 i = 0; i < sessionUsageLimits.length; i++) {
-        for (uint256 j = 0; j < sessionUsageLimits[i].limits.length; j++) {
-          limits[limitIndex++] = sessionUsageLimits[i].limits[j];
-        }
-        if (sessionUsageLimits[i].totalValueUsed > 0) {
-          limits[limitIndex++] = UsageLimit({
-            usageHash: keccak256(abi.encode(sessionUsageLimits[i].signer, VALUE_TRACKING_ADDRESS)),
-            usageAmount: sessionUsageLimits[i].totalValueUsed
-          });
-        }
-      }
-
-      // Verify the increment call data
-      bytes memory expectedData = abi.encodeWithSelector(this.incrementUsageLimit.selector, limits);
-      bytes32 expectedDataHash = keccak256(expectedData);
-      bytes32 actualDataHash = keccak256(call.data);
-      if (actualDataHash != expectedDataHash) {
-        revert SessionErrors.InvalidLimitUsageIncrement();
-      }
-    } else {
-      // Do not allow self calls if there are no usage limits
-      if (call.to == address(this)) {
-        revert SessionErrors.InvalidLimitUsageIncrement();
-      }
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title LibOptim
-/// @author Agustin Aguilar
-/// @notice Library for optimized EVM operations
-library LibOptim {
-
-  /**
-   * @notice Computes the keccak256 hash of two 32-byte inputs.
-   * @dev It uses only scratch memory space.
-   * @param _a The first 32 bytes of the hash.
-   * @param _b The second 32 bytes of the hash.
-   * @return c The keccak256 hash of the two 32-byte inputs.
-   */
-  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
-    assembly {
-      mstore(0, _a)
-      mstore(32, _b)
-      c := keccak256(0, 64)
-    }
-  }
-
-  /**
-   * @notice Returns the return data from the last call.
-   * @return r The return data from the last call.
-   */
-  function returnData() internal pure returns (bytes memory r) {
-    assembly {
-      let size := returndatasize()
-      r := mload(0x40)
-      let start := add(r, 32)
-      mstore(0x40, add(start, size))
-      mstore(r, size)
-      returndatacopy(start, 0, size)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _val The value to send to the contract.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters, using delegatecall.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../../../modules/Payload.sol";
-import { LibBytes } from "../../../utils/LibBytes.sol";
-import { ParameterOperation, ParameterRule, Permission, UsageLimit } from "./Permission.sol";
-
-/// @title PermissionValidator
-/// @author Michael Standen, Agustin Aguilar
-/// @notice Validates permissions for a given call
-abstract contract PermissionValidator {
-
-  using LibBytes for bytes;
-
-  /// @notice Emitted when the usage amount for a given wallet and usage hash is updated
-  event LimitUsageUpdated(address wallet, bytes32 usageHash, uint256 usageAmount);
-
-  /// @notice Mapping of usage limit hashes to their usage amounts
-  mapping(address => mapping(bytes32 => uint256)) private limitUsage;
-
-  /// @notice Get the usage amount for a given usage hash and wallet
-  /// @param wallet The wallet address
-  /// @param usageHash The usage hash
-  /// @return The usage amount
-  function getLimitUsage(address wallet, bytes32 usageHash) public view returns (uint256) {
-    return limitUsage[wallet][usageHash];
-  }
-
-  /// @notice Set the usage amount for a given usage hash and wallet
-  /// @param wallet The wallet address
-  /// @param usageHash The usage hash
-  /// @param usageAmount The usage amount
-  function setLimitUsage(address wallet, bytes32 usageHash, uint256 usageAmount) internal {
-    limitUsage[wallet][usageHash] = usageAmount;
-    emit LimitUsageUpdated(wallet, usageHash, usageAmount);
-  }
-
-  /// @notice Validates a rules permission
-  /// @param permission The rules permission to validate
-  /// @param call The call to validate against
-  /// @param wallet The wallet address
-  /// @param signer The signer address
-  /// @param usageLimits Array of current usage limits
-  /// @return True if the permission is valid, false otherwise
-  /// @return newUsageLimits New array of usage limits
-  function validatePermission(
-    Permission memory permission,
-    Payload.Call calldata call,
-    address wallet,
-    address signer,
-    UsageLimit[] memory usageLimits
-  ) public view returns (bool, UsageLimit[] memory newUsageLimits) {
-    if (permission.target != call.to) {
-      return (false, usageLimits);
-    }
-
-    // Copy usage limits into array with space for new rules
-    newUsageLimits = new UsageLimit[](usageLimits.length + permission.rules.length);
-    for (uint256 i = 0; i < usageLimits.length; i++) {
-      newUsageLimits[i] = usageLimits[i];
-    }
-    uint256 actualLimitsCount = usageLimits.length;
-
-    // Check each rule
-    for (uint256 i = 0; i < permission.rules.length; i++) {
-      ParameterRule memory rule = permission.rules[i];
-
-      // Extract value from calldata at offset
-      (bytes32 value,) = call.data.readBytes32(rule.offset);
-
-      // Apply mask
-      value = value & rule.mask;
-
-      if (rule.cumulative) {
-        // Calculate cumulative usage
-        uint256 value256 = uint256(value);
-        // Find the usage limit for the current rule
-        bytes32 usageHash = keccak256(abi.encode(signer, permission, i));
-        uint256 previousUsage;
-        UsageLimit memory usageLimit;
-        for (uint256 j = 0; j < newUsageLimits.length; j++) {
-          if (newUsageLimits[j].usageHash == bytes32(0)) {
-            // Initialize new usage limit
-            usageLimit = UsageLimit({ usageHash: usageHash, usageAmount: 0 });
-            newUsageLimits[j] = usageLimit;
-            actualLimitsCount = j + 1;
-            break;
-          }
-          if (newUsageLimits[j].usageHash == usageHash) {
-            // Value exists, use it
-            usageLimit = newUsageLimits[j];
-            previousUsage = usageLimit.usageAmount;
-            break;
-          }
-        }
-        if (previousUsage == 0) {
-          // Not in current payload, use storage
-          previousUsage = getLimitUsage(wallet, usageHash);
-        }
-        // Cumulate usage
-        value256 += previousUsage;
-        usageLimit.usageAmount = value256;
-        // Use the cumulative value for comparison
-        value = bytes32(value256);
-      }
-
-      // Compare based on operation
-      if (rule.operation == ParameterOperation.EQUAL) {
-        if (value != rule.value) {
-          return (false, usageLimits);
-        }
-      } else if (rule.operation == ParameterOperation.LESS_THAN_OR_EQUAL) {
-        if (uint256(value) > uint256(rule.value)) {
-          return (false, usageLimits);
-        }
-      } else if (rule.operation == ParameterOperation.NOT_EQUAL) {
-        if (value == rule.value) {
-          return (false, usageLimits);
-        }
-      } else if (rule.operation == ParameterOperation.GREATER_THAN_OR_EQUAL) {
-        if (uint256(value) < uint256(rule.value)) {
-          return (false, usageLimits);
-        }
-      }
-    }
-
-    // Fix array length
-    assembly {
-      mstore(newUsageLimits, actualLimitsCount)
-    }
-
-    return (true, newUsageLimits);
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
 import { Payload } from "../Payload.sol";
 
 /// @title ISapient
@@ -1655,437 +1798,32 @@ interface IExplicitSessionManager {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-/// @title SessionErrors
-/// @author Michael Standen
-/// @notice Errors for the session manager
-library SessionErrors {
+import { Payload } from "../../../modules/Payload.sol";
+import { Attestation } from "./Attestation.sol";
 
-  /// @notice Invalid session signer
-  error InvalidSessionSigner(address invalidSigner);
-  /// @notice Invalid chainId
-  error InvalidChainId(uint256 invalidChainId);
-  /// @notice Invalid self call
-  error InvalidSelfCall();
-  /// @notice Invalid delegate call
-  error InvalidDelegateCall();
-  /// @notice Invalid call behavior
-  error InvalidBehavior();
-  /// @notice Invalid value
-  error InvalidValue();
-  /// @notice Invalid node type in session configuration
-  error InvalidNodeType(uint256 flag);
-  /// @notice Error thrown when the payload kind is invalid
-  error InvalidPayloadKind();
-  /// @notice Error thrown when the calls length is invalid
-  error InvalidCallsLength();
-  /// @notice Error thrown when the payload space is invalid
-  error InvalidSpace(uint256 space);
+/// @dev Magic prefix for the implicit request
+bytes32 constant ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX = keccak256(abi.encodePacked("acceptImplicitRequest"));
 
-  // ---- Explicit session errors ----
+/// @title ISignalsImplicitMode
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Interface for the contracts that support implicit mode validation
+interface ISignalsImplicitMode {
 
-  /// @notice Missing permission for explicit session
-  error MissingPermission();
-  /// @notice Invalid permission for explicit session
-  error InvalidPermission();
-  /// @notice Session expired
-  error SessionExpired(uint256 deadline);
-  /// @notice Invalid limit usage increment
-  error InvalidLimitUsageIncrement();
-
-  // ---- Implicit session errors ----
-
-  /// @notice Blacklisted address
-  error BlacklistedAddress(address target);
-  /// @notice Invalid implicit result
-  error InvalidImplicitResult();
-  /// @notice Invalid identity signer
-  error InvalidIdentitySigner();
-  /// @notice Invalid blacklist
-  error InvalidBlacklist();
-  /// @notice Invalid attestation
-  error InvalidAttestation();
-  /// @notice The blacklist was not sorted
-  error InvalidBlacklistUnsorted();
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { LibBytes } from "../../../utils/LibBytes.sol";
-
-/// @notice Permission for a specific session signer
-/// @param target Address of the target contract this permission applies to
-/// @param rules Array of parameter rules
-struct Permission {
-  address target;
-  ParameterRule[] rules;
-}
-
-/// @notice Parameter operation for a specific session signer
-enum ParameterOperation {
-  EQUAL,
-  NOT_EQUAL,
-  GREATER_THAN_OR_EQUAL,
-  LESS_THAN_OR_EQUAL
-}
-
-/// @notice Parameter rule for a specific session signer
-/// @param cumulative If the value should accumulate over multiple calls
-/// @param operation Operation to apply to the parameter
-/// @param value Value to compare against the masked parameter
-/// @param offset Offset in calldata to read the parameter
-/// @param mask Mask to apply to the parameter
-struct ParameterRule {
-  bool cumulative;
-  ParameterOperation operation;
-  bytes32 value;
-  uint256 offset;
-  bytes32 mask;
-}
-
-/// @notice Usage limit for a specific session signer
-/// @param usageHash Usage identifier
-/// @param usageAmount Amount of usage
-struct UsageLimit {
-  bytes32 usageHash;
-  uint256 usageAmount;
-}
-
-using LibBytes for bytes;
-
-/// @title LibPermission
-/// @author Michael Standen
-/// @notice Library for permission management
-library LibPermission {
-
-  /// @notice Error thrown when the rules length exceeds the maximum
-  error RulesLengthExceedsMax();
-
-  /// @notice Reads a permission from a packed bytes array
-  /// @param encoded The packed bytes array
-  /// @param pointer The pointer to the start of the permission
-  /// @return permission The decoded permission
-  /// @return newPointer The new pointer to the end of the permission
-  function readPermission(
-    bytes calldata encoded,
-    uint256 pointer
-  ) internal pure returns (Permission memory permission, uint256 newPointer) {
-    // Target
-    (permission.target, pointer) = encoded.readAddress(pointer);
-    // Rules
-    uint256 rulesLength;
-    (rulesLength, pointer) = encoded.readUint8(pointer);
-    permission.rules = new ParameterRule[](rulesLength);
-    for (uint256 i = 0; i < rulesLength; i++) {
-      uint8 operationCumulative;
-      (operationCumulative, pointer) = encoded.readUint8(pointer);
-      // 000X: cumulative
-      permission.rules[i].cumulative = operationCumulative & 1 != 0;
-      // XXX0: operation
-      permission.rules[i].operation = ParameterOperation(operationCumulative >> 1);
-
-      (permission.rules[i].value, pointer) = encoded.readBytes32(pointer);
-      (permission.rules[i].offset, pointer) = encoded.readUint256(pointer);
-      (permission.rules[i].mask, pointer) = encoded.readBytes32(pointer);
-    }
-    return (permission, pointer);
-  }
-
-  /// @notice Encodes a permission into a packed bytes array
-  /// @param permission The permission to encode
-  /// @return packed The packed bytes array
-  function toPacked(
-    Permission calldata permission
-  ) internal pure returns (bytes memory packed) {
-    if (permission.rules.length > type(uint8).max) {
-      revert RulesLengthExceedsMax();
-    }
-    packed = abi.encodePacked(permission.target, uint8(permission.rules.length));
-    for (uint256 i = 0; i < permission.rules.length; i++) {
-      packed = abi.encodePacked(packed, ruleToPacked(permission.rules[i]));
-    }
-  }
-
-  /// @notice Encodes a rule into a packed bytes array
-  /// @param rule The rule to encode
-  /// @return packed The packed bytes array
-  function ruleToPacked(
-    ParameterRule calldata rule
-  ) internal pure returns (bytes memory packed) {
-    // Combine operation and cumulative flag into a single byte
-    // 0x[operationx3][cumulative]
-    uint8 operationCumulative = (uint8(rule.operation) << 1) | (rule.cumulative ? 1 : 0);
-
-    return abi.encodePacked(operationCumulative, rule.value, rule.offset, rule.mask);
-  }
+  /// @notice Determines if an implicit request is valid
+  /// @param wallet The wallet's address
+  /// @param attestation The attestation data
+  /// @param call The call to validate
+  /// @return magic The hash of the implicit request if valid
+  function acceptImplicitRequest(
+    address wallet,
+    Attestation calldata attestation,
+    Payload.Call calldata call
+  ) external view returns (bytes32 magic);
 
 }
 
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-import { Calls } from "./Calls.sol";
-
-import { ReentrancyGuard } from "./ReentrancyGuard.sol";
-import { IAccount, PackedUserOperation } from "./interfaces/IAccount.sol";
-import { IERC1271_MAGIC_VALUE_HASH } from "./interfaces/IERC1271.sol";
-import { IEntryPoint } from "./interfaces/IEntryPoint.sol";
-
-/// @title ERC4337v07
-/// @author Agustin Aguilar, Michael Standen
-/// @notice ERC4337 v7 support
-abstract contract ERC4337v07 is ReentrancyGuard, IAccount, Calls {
-
-  uint256 internal constant SIG_VALIDATION_FAILED = 1;
-
-  address public immutable entrypoint;
-
-  error InvalidEntryPoint(address _entrypoint);
-  error ERC4337Disabled();
-
-  constructor(
-    address _entrypoint
-  ) {
-    entrypoint = _entrypoint;
-  }
-
-  /// @inheritdoc IAccount
-  function validateUserOp(
-    PackedUserOperation calldata userOp,
-    bytes32 userOpHash,
-    uint256 missingAccountFunds
-  ) external returns (uint256 validationData) {
-    if (entrypoint == address(0)) {
-      revert ERC4337Disabled();
-    }
-
-    if (msg.sender != entrypoint) {
-      revert InvalidEntryPoint(msg.sender);
-    }
-
-    // userOp.nonce is validated by the entrypoint
-
-    if (missingAccountFunds != 0) {
-      IEntryPoint(entrypoint).depositTo{ value: missingAccountFunds }(address(this));
-    }
-
-    if (this.isValidSignature(userOpHash, userOp.signature) != IERC1271_MAGIC_VALUE_HASH) {
-      return SIG_VALIDATION_FAILED;
-    }
-
-    return 0;
-  }
-
-  /// @notice Execute a user operation
-  /// @param _payload The packed payload
-  /// @dev This is the execute function for the EntryPoint to call.
-  function executeUserOp(
-    bytes calldata _payload
-  ) external nonReentrant {
-    if (entrypoint == address(0)) {
-      revert ERC4337Disabled();
-    }
-
-    if (msg.sender != entrypoint) {
-      revert InvalidEntryPoint(msg.sender);
-    }
-
-    this.selfExecute(_payload);
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { LibOptim } from "../utils/LibOptim.sol";
-import { Nonce } from "./Nonce.sol";
-import { Payload } from "./Payload.sol";
-
-import { ReentrancyGuard } from "./ReentrancyGuard.sol";
-import { BaseAuth } from "./auth/BaseAuth.sol";
-import { IDelegatedExtension } from "./interfaces/IDelegatedExtension.sol";
-
-/// @title Calls
-/// @author Agustin Aguilar, Michael Standen, William Hua
-/// @notice Contract for executing calls
-abstract contract Calls is ReentrancyGuard, BaseAuth, Nonce {
-
-  /// @notice Emitted when a call succeeds
-  event CallSucceeded(bytes32 _opHash, uint256 _index);
-  /// @notice Emitted when a call fails
-  event CallFailed(bytes32 _opHash, uint256 _index, bytes _returnData);
-  /// @notice Emitted when a call is aborted
-  event CallAborted(bytes32 _opHash, uint256 _index, bytes _returnData);
-  /// @notice Emitted when a call is skipped
-  event CallSkipped(bytes32 _opHash, uint256 _index);
-
-  /// @notice Error thrown when a call reverts
-  error Reverted(Payload.Decoded _payload, uint256 _index, bytes _returnData);
-  /// @notice Error thrown when a signature is invalid
-  error InvalidSignature(Payload.Decoded _payload, bytes _signature);
-  /// @notice Error thrown when there is not enough gas
-  error NotEnoughGas(Payload.Decoded _payload, uint256 _index, uint256 _gasLeft);
-
-  /// @notice Execute a call
-  /// @param _payload The payload
-  /// @param _signature The signature
-  function execute(bytes calldata _payload, bytes calldata _signature) external payable virtual nonReentrant {
-    uint256 startingGas = gasleft();
-    Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
-
-    _consumeNonce(decoded.space, decoded.nonce);
-    (bool isValid, bytes32 opHash) = signatureValidation(decoded, _signature);
-
-    if (!isValid) {
-      revert InvalidSignature(decoded, _signature);
-    }
-
-    _execute(startingGas, opHash, decoded);
-  }
-
-  /// @notice Execute a call
-  /// @dev Callable only by the contract itself
-  /// @param _payload The payload
-  function selfExecute(
-    bytes calldata _payload
-  ) external payable virtual onlySelf {
-    uint256 startingGas = gasleft();
-    Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
-    bytes32 opHash = Payload.hash(decoded);
-    _execute(startingGas, opHash, decoded);
-  }
-
-  function _execute(uint256 _startingGas, bytes32 _opHash, Payload.Decoded memory _decoded) private {
-    bool errorFlag = false;
-
-    uint256 numCalls = _decoded.calls.length;
-    for (uint256 i = 0; i < numCalls; i++) {
-      Payload.Call memory call = _decoded.calls[i];
-
-      // Skip onlyFallback calls if no error occurred
-      if (call.onlyFallback && !errorFlag) {
-        emit CallSkipped(_opHash, i);
-        continue;
-      }
-
-      // Reset the error flag
-      // onlyFallback calls only apply when the immediately preceding transaction fails
-      errorFlag = false;
-
-      uint256 gasLimit = call.gasLimit;
-      if (gasLimit != 0 && gasleft() < gasLimit) {
-        revert NotEnoughGas(_decoded, i, gasleft());
-      }
-
-      bool success;
-      if (call.delegateCall) {
-        (success) = LibOptim.delegatecall(
-          call.to,
-          gasLimit == 0 ? gasleft() : gasLimit,
-          abi.encodeWithSelector(
-            IDelegatedExtension.handleSequenceDelegateCall.selector,
-            _opHash,
-            _startingGas,
-            i,
-            numCalls,
-            _decoded.space,
-            call.data
-          )
-        );
-      } else {
-        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
-      }
-
-      if (!success) {
-        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
-          errorFlag = true;
-          emit CallFailed(_opHash, i, LibOptim.returnData());
-          continue;
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
-          revert Reverted(_decoded, i, LibOptim.returnData());
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
-          emit CallAborted(_opHash, i, LibOptim.returnData());
-          break;
-        }
-      }
-
-      emit CallSucceeded(_opHash, i);
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Wallet } from "../../Wallet.sol";
-import { Implementation } from "../Implementation.sol";
-import { Storage } from "../Storage.sol";
-import { BaseAuth } from "./BaseAuth.sol";
-
-/// @title Stage1Auth
-/// @author Agustin Aguilar
-/// @notice Stage 1 auth contract
-contract Stage1Auth is BaseAuth, Implementation {
-
-  /// @notice Error thrown when the image hash is zero
-  error ImageHashIsZero();
-  /// @notice Error thrown when the signature type is invalid
-  error InvalidSignatureType(bytes1 _type);
-
-  /// @notice Initialization code hash
-  bytes32 public immutable INIT_CODE_HASH;
-  /// @notice Factory address
-  address public immutable FACTORY;
-  /// @notice Stage 2 implementation address
-  address public immutable STAGE_2_IMPLEMENTATION;
-
-  /// @dev keccak256("org.arcadeum.module.auth.upgradable.image.hash")
-  bytes32 internal constant IMAGE_HASH_KEY = bytes32(0xea7157fa25e3aa17d0ae2d5280fa4e24d421c61842aa85e45194e1145aa72bf8);
-
-  /// @notice Emitted when the image hash is updated
-  event ImageHashUpdated(bytes32 newImageHash);
-
-  constructor(address _factory, address _stage2) {
-    // Build init code hash of the deployed wallets using that module
-    bytes32 initCodeHash = keccak256(abi.encodePacked(Wallet.creationCode, uint256(uint160(address(this)))));
-
-    INIT_CODE_HASH = initCodeHash;
-    FACTORY = _factory;
-    STAGE_2_IMPLEMENTATION = _stage2;
-  }
-
-  function _updateImageHash(
-    bytes32 _imageHash
-  ) internal virtual override {
-    // Update imageHash in storage
-    if (_imageHash == bytes32(0)) {
-      revert ImageHashIsZero();
-    }
-    Storage.writeBytes32(IMAGE_HASH_KEY, _imageHash);
-    emit ImageHashUpdated(_imageHash);
-
-    // Update wallet implementation to stage2 version
-    _updateImplementation(STAGE_2_IMPLEMENTATION);
-  }
-
-  function _isValidImage(
-    bytes32 _imageHash
-  ) internal view virtual override returns (bool) {
-    return address(uint160(uint256(keccak256(abi.encodePacked(hex"ff", FACTORY, _imageHash, INIT_CODE_HASH)))))
-      == address(this);
-  }
-
-}
-
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
@@ -2270,46 +2008,197 @@ import { Payload } from "./modules/Payload.sol";
 import { IDelegatedExtension } from "./modules/interfaces/IDelegatedExtension.sol";
 import { LibOptim } from "./utils/LibOptim.sol";
 
-/// @title Estimator
+/// @title Simulator
 /// @author William Hua
-/// @notice Helper for estimating the gas used for payload validation and execution
-contract Estimator is Stage2Module {
+/// @notice Helper for simulating the execution of a payload
+contract Simulator is Stage2Module {
 
   constructor(
     address _entryPoint
   ) Stage2Module(_entryPoint) { }
 
-  function _isValidImage(
-    bytes32 _imageHash
-  ) internal view virtual override returns (bool) {
-    super._isValidImage(_imageHash);
-    return true;
+  /// @notice Status of the call
+  enum Status {
+    Skipped,
+    Succeeded,
+    Failed,
+    Aborted,
+    Reverted,
+    NotEnoughGas
   }
 
-  /// @notice Estimate the gas used for payload validation and execution
-  /// @param _payload The payload to estimate the gas used for
-  /// @param _signature The signature to validate the payload with
-  /// @return gasUsed The gas used for payload validation and execution
-  function estimate(
-    bytes calldata _payload,
-    bytes calldata _signature
-  ) external payable virtual nonReentrant returns (uint256 gasUsed) {
+  /// @notice Result of the call
+  struct Result {
+    Status status;
+    bytes result;
+    uint256 gasUsed;
+  }
+
+  /// @notice Simulate the execution of a payload
+  /// @param _calls The calls to simulate
+  /// @return results The results of the calls
+  function simulate(
+    Payload.Call[] calldata _calls
+  ) external returns (Result[] memory results) {
+    uint256 startingGas = gasleft();
+    bool errorFlag = false;
+
+    uint256 numCalls = _calls.length;
+    results = new Result[](numCalls);
+    for (uint256 i = 0; i < numCalls; i++) {
+      Payload.Call memory call = _calls[i];
+
+      // Skip onlyFallback calls if no error occurred
+      if (call.onlyFallback && !errorFlag) {
+        continue;
+      }
+
+      // Reset the error flag
+      // onlyFallback calls only apply when the immediately preceding transaction fails
+      errorFlag = false;
+
+      uint256 gasLimit = call.gasLimit;
+      if (gasLimit != 0 && gasleft() < gasLimit) {
+        results[i].status = Status.NotEnoughGas;
+        results[i].result = abi.encode(gasleft());
+        return results;
+      }
+
+      bool success;
+      if (call.delegateCall) {
+        uint256 initial = gasleft();
+        (success) = LibOptim.delegatecall(
+          call.to,
+          gasLimit == 0 ? gasleft() : gasLimit,
+          abi.encodeWithSelector(
+            IDelegatedExtension.handleSequenceDelegateCall.selector, 0, startingGas, i, numCalls, 0, call.data
+          )
+        );
+        results[i].gasUsed = initial - gasleft();
+      } else {
+        uint256 initial = gasleft();
+        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
+        results[i].gasUsed = initial - gasleft();
+      }
+
+      if (!success) {
+        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
+          errorFlag = true;
+          results[i].status = Status.Failed;
+          results[i].result = LibOptim.returnData();
+          continue;
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
+          results[i].status = Status.Reverted;
+          results[i].result = LibOptim.returnData();
+          return results;
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
+          results[i].status = Status.Aborted;
+          results[i].result = LibOptim.returnData();
+          break;
+        }
+      }
+
+      results[i].status = Status.Succeeded;
+      results[i].result = LibOptim.returnData();
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Calls } from "./modules/Calls.sol";
+
+import { ERC4337v07 } from "./modules/ERC4337v07.sol";
+import { Hooks } from "./modules/Hooks.sol";
+import { Stage2Auth } from "./modules/auth/Stage2Auth.sol";
+import { IAuth } from "./modules/interfaces/IAuth.sol";
+
+/// @title Stage2Module
+/// @author Agustin Aguilar
+/// @notice The second stage of the wallet
+contract Stage2Module is Calls, Stage2Auth, Hooks, ERC4337v07 {
+
+  constructor(
+    address _entryPoint
+  ) ERC4337v07(_entryPoint) { }
+
+  /// @inheritdoc IAuth
+  function _isValidImage(
+    bytes32 _imageHash
+  ) internal view virtual override(IAuth, Stage2Auth) returns (bool) {
+    return super._isValidImage(_imageHash);
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { LibOptim } from "../utils/LibOptim.sol";
+import { Nonce } from "./Nonce.sol";
+import { Payload } from "./Payload.sol";
+
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
+import { BaseAuth } from "./auth/BaseAuth.sol";
+import { IDelegatedExtension } from "./interfaces/IDelegatedExtension.sol";
+
+/// @title Calls
+/// @author Agustin Aguilar, Michael Standen, William Hua
+/// @notice Contract for executing calls
+abstract contract Calls is ReentrancyGuard, BaseAuth, Nonce {
+
+  /// @notice Emitted when a call succeeds
+  event CallSucceeded(bytes32 _opHash, uint256 _index);
+  /// @notice Emitted when a call fails
+  event CallFailed(bytes32 _opHash, uint256 _index, bytes _returnData);
+  /// @notice Emitted when a call is aborted
+  event CallAborted(bytes32 _opHash, uint256 _index, bytes _returnData);
+  /// @notice Emitted when a call is skipped
+  event CallSkipped(bytes32 _opHash, uint256 _index);
+
+  /// @notice Error thrown when a call reverts
+  error Reverted(Payload.Decoded _payload, uint256 _index, bytes _returnData);
+  /// @notice Error thrown when a signature is invalid
+  error InvalidSignature(Payload.Decoded _payload, bytes _signature);
+  /// @notice Error thrown when there is not enough gas
+  error NotEnoughGas(Payload.Decoded _payload, uint256 _index, uint256 _gasLeft);
+
+  /// @notice Execute a call
+  /// @param _payload The payload
+  /// @param _signature The signature
+  function execute(bytes calldata _payload, bytes calldata _signature) external payable virtual nonReentrant {
     uint256 startingGas = gasleft();
     Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
 
-    _consumeNonce(decoded.space, readNonce(decoded.space));
+    _consumeNonce(decoded.space, decoded.nonce);
     (bool isValid, bytes32 opHash) = signatureValidation(decoded, _signature);
 
     if (!isValid) {
       revert InvalidSignature(decoded, _signature);
     }
 
-    _estimate(startingGas, opHash, decoded);
-
-    return startingGas - gasleft();
+    _execute(startingGas, opHash, decoded);
   }
 
-  function _estimate(uint256 _startingGas, bytes32 _opHash, Payload.Decoded memory _decoded) private {
+  /// @notice Execute a call
+  /// @dev Callable only by the contract itself
+  /// @param _payload The payload
+  function selfExecute(
+    bytes calldata _payload
+  ) external payable virtual onlySelf {
+    uint256 startingGas = gasleft();
+    Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
+    bytes32 opHash = Payload.hash(decoded);
+    _execute(startingGas, opHash, decoded);
+  }
+
+  function _execute(uint256 _startingGas, bytes32 _opHash, Payload.Decoded memory _decoded) private {
     bool errorFlag = false;
 
     uint256 numCalls = _decoded.calls.length;
@@ -2369,6 +2258,80 @@ contract Estimator is Stage2Module {
 
       emit CallSucceeded(_opHash, i);
     }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+import { Calls } from "./Calls.sol";
+
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
+import { IAccount, PackedUserOperation } from "./interfaces/IAccount.sol";
+import { IERC1271_MAGIC_VALUE_HASH } from "./interfaces/IERC1271.sol";
+import { IEntryPoint } from "./interfaces/IEntryPoint.sol";
+
+/// @title ERC4337v07
+/// @author Agustin Aguilar, Michael Standen
+/// @notice ERC4337 v7 support
+abstract contract ERC4337v07 is ReentrancyGuard, IAccount, Calls {
+
+  uint256 internal constant SIG_VALIDATION_FAILED = 1;
+
+  address public immutable entrypoint;
+
+  error InvalidEntryPoint(address _entrypoint);
+  error ERC4337Disabled();
+
+  constructor(
+    address _entrypoint
+  ) {
+    entrypoint = _entrypoint;
+  }
+
+  /// @inheritdoc IAccount
+  function validateUserOp(
+    PackedUserOperation calldata userOp,
+    bytes32 userOpHash,
+    uint256 missingAccountFunds
+  ) external returns (uint256 validationData) {
+    if (entrypoint == address(0)) {
+      revert ERC4337Disabled();
+    }
+
+    if (msg.sender != entrypoint) {
+      revert InvalidEntryPoint(msg.sender);
+    }
+
+    // userOp.nonce is validated by the entrypoint
+
+    if (missingAccountFunds != 0) {
+      IEntryPoint(entrypoint).depositTo{ value: missingAccountFunds }(address(this));
+    }
+
+    if (this.isValidSignature(userOpHash, userOp.signature) != IERC1271_MAGIC_VALUE_HASH) {
+      return SIG_VALIDATION_FAILED;
+    }
+
+    return 0;
+  }
+
+  /// @notice Execute a user operation
+  /// @param _payload The packed payload
+  /// @dev This is the execute function for the EntryPoint to call.
+  function executeUserOp(
+    bytes calldata _payload
+  ) external nonReentrant {
+    if (entrypoint == address(0)) {
+      revert ERC4337Disabled();
+    }
+
+    if (msg.sender != entrypoint) {
+      revert InvalidEntryPoint(msg.sender);
+    }
+
+    this.selfExecute(_payload);
   }
 
 }
@@ -2493,36 +2456,6 @@ contract Passkeys is ISapientCompact {
     }
 
     return _rootForPasskey(_requireUserVerification, _x, _y, _metadata);
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Stage2Module } from "./Stage2Module.sol";
-import { Calls } from "./modules/Calls.sol";
-
-import { ERC4337v07 } from "./modules/ERC4337v07.sol";
-import { Hooks } from "./modules/Hooks.sol";
-import { Stage1Auth } from "./modules/auth/Stage1Auth.sol";
-import { IAuth } from "./modules/interfaces/IAuth.sol";
-
-/// @title Stage1Module
-/// @author Agustin Aguilar
-/// @notice The initial stage of the wallet
-contract Stage1Module is Calls, Stage1Auth, Hooks, ERC4337v07 {
-
-  constructor(
-    address _factory,
-    address _entryPoint
-  ) Stage1Auth(_factory, address(new Stage2Module(_entryPoint))) ERC4337v07(_entryPoint) { }
-
-  /// @inheritdoc IAuth
-  function _isValidImage(
-    bytes32 _imageHash
-  ) internal view virtual override(IAuth, Stage1Auth) returns (bool) {
-    return super._isValidImage(_imageHash);
   }
 
 }
@@ -2748,109 +2681,62 @@ contract Recovery is ISapientCompact {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
-import { Stage2Module } from "./Stage2Module.sol";
+import { Wallet } from "../../Wallet.sol";
+import { Implementation } from "../Implementation.sol";
+import { Storage } from "../Storage.sol";
+import { BaseAuth } from "./BaseAuth.sol";
 
-import { Payload } from "./modules/Payload.sol";
-import { IDelegatedExtension } from "./modules/interfaces/IDelegatedExtension.sol";
-import { LibOptim } from "./utils/LibOptim.sol";
+/// @title Stage1Auth
+/// @author Agustin Aguilar
+/// @notice Stage 1 auth contract
+contract Stage1Auth is BaseAuth, Implementation {
 
-/// @title Simulator
-/// @author William Hua
-/// @notice Helper for simulating the execution of a payload
-contract Simulator is Stage2Module {
+  /// @notice Error thrown when the image hash is zero
+  error ImageHashIsZero();
+  /// @notice Error thrown when the signature type is invalid
+  error InvalidSignatureType(bytes1 _type);
 
-  constructor(
-    address _entryPoint
-  ) Stage2Module(_entryPoint) { }
+  /// @notice Initialization code hash
+  bytes32 public immutable INIT_CODE_HASH;
+  /// @notice Factory address
+  address public immutable FACTORY;
+  /// @notice Stage 2 implementation address
+  address public immutable STAGE_2_IMPLEMENTATION;
 
-  /// @notice Status of the call
-  enum Status {
-    Skipped,
-    Succeeded,
-    Failed,
-    Aborted,
-    Reverted,
-    NotEnoughGas
+  /// @dev keccak256("org.arcadeum.module.auth.upgradable.image.hash")
+  bytes32 internal constant IMAGE_HASH_KEY = bytes32(0xea7157fa25e3aa17d0ae2d5280fa4e24d421c61842aa85e45194e1145aa72bf8);
+
+  /// @notice Emitted when the image hash is updated
+  event ImageHashUpdated(bytes32 newImageHash);
+
+  constructor(address _factory, address _stage2) {
+    // Build init code hash of the deployed wallets using that module
+    bytes32 initCodeHash = keccak256(abi.encodePacked(Wallet.creationCode, uint256(uint160(address(this)))));
+
+    INIT_CODE_HASH = initCodeHash;
+    FACTORY = _factory;
+    STAGE_2_IMPLEMENTATION = _stage2;
   }
 
-  /// @notice Result of the call
-  struct Result {
-    Status status;
-    bytes result;
-    uint256 gasUsed;
-  }
-
-  /// @notice Simulate the execution of a payload
-  /// @param _calls The calls to simulate
-  /// @return results The results of the calls
-  function simulate(
-    Payload.Call[] calldata _calls
-  ) external returns (Result[] memory results) {
-    uint256 startingGas = gasleft();
-    bool errorFlag = false;
-
-    uint256 numCalls = _calls.length;
-    results = new Result[](numCalls);
-    for (uint256 i = 0; i < numCalls; i++) {
-      Payload.Call memory call = _calls[i];
-
-      // Skip onlyFallback calls if no error occurred
-      if (call.onlyFallback && !errorFlag) {
-        continue;
-      }
-
-      // Reset the error flag
-      // onlyFallback calls only apply when the immediately preceding transaction fails
-      errorFlag = false;
-
-      uint256 gasLimit = call.gasLimit;
-      if (gasLimit != 0 && gasleft() < gasLimit) {
-        results[i].status = Status.NotEnoughGas;
-        results[i].result = abi.encode(gasleft());
-        return results;
-      }
-
-      bool success;
-      if (call.delegateCall) {
-        uint256 initial = gasleft();
-        (success) = LibOptim.delegatecall(
-          call.to,
-          gasLimit == 0 ? gasleft() : gasLimit,
-          abi.encodeWithSelector(
-            IDelegatedExtension.handleSequenceDelegateCall.selector, 0, startingGas, i, numCalls, 0, call.data
-          )
-        );
-        results[i].gasUsed = initial - gasleft();
-      } else {
-        uint256 initial = gasleft();
-        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
-        results[i].gasUsed = initial - gasleft();
-      }
-
-      if (!success) {
-        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
-          errorFlag = true;
-          results[i].status = Status.Failed;
-          results[i].result = LibOptim.returnData();
-          continue;
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
-          results[i].status = Status.Reverted;
-          results[i].result = LibOptim.returnData();
-          return results;
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
-          results[i].status = Status.Aborted;
-          results[i].result = LibOptim.returnData();
-          break;
-        }
-      }
-
-      results[i].status = Status.Succeeded;
-      results[i].result = LibOptim.returnData();
+  function _updateImageHash(
+    bytes32 _imageHash
+  ) internal virtual override {
+    // Update imageHash in storage
+    if (_imageHash == bytes32(0)) {
+      revert ImageHashIsZero();
     }
+    Storage.writeBytes32(IMAGE_HASH_KEY, _imageHash);
+    emit ImageHashUpdated(_imageHash);
+
+    // Update wallet implementation to stage2 version
+    _updateImplementation(STAGE_2_IMPLEMENTATION);
+  }
+
+  function _isValidImage(
+    bytes32 _imageHash
+  ) internal view virtual override returns (bool) {
+    return address(uint160(uint256(keccak256(abi.encodePacked(hex"ff", FACTORY, _imageHash, INIT_CODE_HASH)))))
+      == address(this);
   }
 
 }
@@ -2858,26 +2744,28 @@ contract Simulator is Stage2Module {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
+import { Stage2Module } from "./Stage2Module.sol";
 import { Calls } from "./modules/Calls.sol";
 
 import { ERC4337v07 } from "./modules/ERC4337v07.sol";
 import { Hooks } from "./modules/Hooks.sol";
-import { Stage2Auth } from "./modules/auth/Stage2Auth.sol";
+import { Stage1Auth } from "./modules/auth/Stage1Auth.sol";
 import { IAuth } from "./modules/interfaces/IAuth.sol";
 
-/// @title Stage2Module
+/// @title Stage1Module
 /// @author Agustin Aguilar
-/// @notice The second stage of the wallet
-contract Stage2Module is Calls, Stage2Auth, Hooks, ERC4337v07 {
+/// @notice The initial stage of the wallet
+contract Stage1Module is Calls, Stage1Auth, Hooks, ERC4337v07 {
 
   constructor(
+    address _factory,
     address _entryPoint
-  ) ERC4337v07(_entryPoint) { }
+  ) Stage1Auth(_factory, address(new Stage2Module(_entryPoint))) ERC4337v07(_entryPoint) { }
 
   /// @inheritdoc IAuth
   function _isValidImage(
     bytes32 _imageHash
-  ) internal view virtual override(IAuth, Stage2Auth) returns (bool) {
+  ) internal view virtual override(IAuth, Stage1Auth) returns (bool) {
     return super._isValidImage(_imageHash);
   }
 
@@ -2925,6 +2813,118 @@ contract Stage2Auth is BaseAuth, Implementation {
     }
     Storage.writeBytes32(IMAGE_HASH_KEY, _imageHash);
     emit ImageHashUpdated(_imageHash);
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Stage2Module } from "./Stage2Module.sol";
+
+import { Payload } from "./modules/Payload.sol";
+import { IDelegatedExtension } from "./modules/interfaces/IDelegatedExtension.sol";
+import { LibOptim } from "./utils/LibOptim.sol";
+
+/// @title Estimator
+/// @author William Hua
+/// @notice Helper for estimating the gas used for payload validation and execution
+contract Estimator is Stage2Module {
+
+  constructor(
+    address _entryPoint
+  ) Stage2Module(_entryPoint) { }
+
+  function _isValidImage(
+    bytes32 _imageHash
+  ) internal view virtual override returns (bool) {
+    super._isValidImage(_imageHash);
+    return true;
+  }
+
+  /// @notice Estimate the gas used for payload validation and execution
+  /// @param _payload The payload to estimate the gas used for
+  /// @param _signature The signature to validate the payload with
+  /// @return gasUsed The gas used for payload validation and execution
+  function estimate(
+    bytes calldata _payload,
+    bytes calldata _signature
+  ) external payable virtual nonReentrant returns (uint256 gasUsed) {
+    uint256 startingGas = gasleft();
+    Payload.Decoded memory decoded = Payload.fromPackedCalls(_payload);
+
+    _consumeNonce(decoded.space, readNonce(decoded.space));
+    (bool isValid, bytes32 opHash) = signatureValidation(decoded, _signature);
+
+    if (!isValid) {
+      revert InvalidSignature(decoded, _signature);
+    }
+
+    _estimate(startingGas, opHash, decoded);
+
+    return startingGas - gasleft();
+  }
+
+  function _estimate(uint256 _startingGas, bytes32 _opHash, Payload.Decoded memory _decoded) private {
+    bool errorFlag = false;
+
+    uint256 numCalls = _decoded.calls.length;
+    for (uint256 i = 0; i < numCalls; i++) {
+      Payload.Call memory call = _decoded.calls[i];
+
+      // Skip onlyFallback calls if no error occurred
+      if (call.onlyFallback && !errorFlag) {
+        emit CallSkipped(_opHash, i);
+        continue;
+      }
+
+      // Reset the error flag
+      // onlyFallback calls only apply when the immediately preceding transaction fails
+      errorFlag = false;
+
+      uint256 gasLimit = call.gasLimit;
+      if (gasLimit != 0 && gasleft() < gasLimit) {
+        revert NotEnoughGas(_decoded, i, gasleft());
+      }
+
+      bool success;
+      if (call.delegateCall) {
+        (success) = LibOptim.delegatecall(
+          call.to,
+          gasLimit == 0 ? gasleft() : gasLimit,
+          abi.encodeWithSelector(
+            IDelegatedExtension.handleSequenceDelegateCall.selector,
+            _opHash,
+            _startingGas,
+            i,
+            numCalls,
+            _decoded.space,
+            call.data
+          )
+        );
+      } else {
+        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
+      }
+
+      if (!success) {
+        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
+          errorFlag = true;
+          emit CallFailed(_opHash, i, LibOptim.returnData());
+          continue;
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
+          revert Reverted(_decoded, i, LibOptim.returnData());
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
+          emit CallAborted(_opHash, i, LibOptim.returnData());
+          break;
+        }
+      }
+
+      emit CallSucceeded(_opHash, i);
+    }
   }
 
 }

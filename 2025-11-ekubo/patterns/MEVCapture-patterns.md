@@ -1,206 +1,78 @@
-## Verified Patterns Found: 16
+## Verified Patterns Found: 19
 
 ## Verified Patterns Found in following Categories:
 
-- TimelockEdgeCase
-- SlippageMissingOrInsufficient
-- FeeAccountingDrift
-- AccessControlOrAuthByPass
 - StandardViolation
+- GriefableCallbacks
 - FlashLoanEconomicManipulation
-- FeeOnTransferAssumption
 - UnsafeRecipient
-- UnboundedLoops
+- TWAPWindowPinningOrLowLiquidity
+- ForcedAssetVsStrictEquality
+- Reentrancy
+- FeeOnTransferAssumption
 - AccountingInvariantViolation
+- OracleUsingDEXorTWAP
+- SlippageMissingOrInsufficient
+- UnboundedLoops
 
 
 
 ## Summary of Patterns
 
-MEV Capture Fee Bypass via Trade Splitting
+MEVCapture extension permanently reverts all swaps
 
-Missing slippage protection in liquidity withdrawal
+Transient balance in TokenWrapper breaks ERC20 persistence
 
-Incentives claim function potentially allows theft via malleable ClaimKey
+Denial of Service via forced excess payments in FlashAccountant
 
-Deposit lacks explicit amount slippage protection
+TWAMM Virtual Orders Vulnerable to Sandwiching due to Instant Execution
 
-Missing zero-address check for recipient in fee collection and withdrawal
+TokenWrapper wrapping mechanism mints via debt accounting without explicit user credit
 
-Missing transaction deadline in deposit
+Oracle extrapolation returns stale pre-block state potentially misleading integrators
 
-Unsafe recipient allows burning funds
+Missing slippage protection in Positions.withdraw
 
-TWAMM virtual order execution allows DoS via dense time initialization
+Oracle TWAP manipulation via empty pool initialization
 
-Unsafe cast to int128 in fee accounting causes DoS for large amounts
+Oracle storage key collision due to raw address shifting
 
-MEVCapture extension locks pools due to beforeSwap revert loop
+MEV Capture fees can be bypassed by back-running
 
-Incompatibility with Fee-On-Transfer tokens
+Infinite Recursion / DoS in TWAMM pools
 
-DoS via Unbounded Loop in TWAMM Virtual Order Execution
+Fee Accounting Drift and Loss on Zero Liquidity
 
-Burning Position NFT permanently locks underlying liquidity
+Unsafe Recipient in FlashAccountant Withdrawal
 
-Incompatibility with Fee-on-Transfer Tokens
+Unsafe Default Slippage Parameter in Router Swap Overloads
 
-UnsafeRecipient in withdraw and collectFees
+Positions withdrawal lacks minimum output parameters for slippage protection
 
-Missing slippage protection and deadline in position withdrawal
+TokenWrapper violates ERC20 standard by not updating balances on wrap
+
+Potential Denial of Service in TokenWrapper due to strict calldata length check
+
+Incentives funding assumes 1:1 transfer and breaks with Fee-on-Transfer tokens
+
+Unbounded iteration in TWAMM virtual order execution enables DoS
 
 ## Patterns
 
 
 
- ### Issue Type: FeeAccountingDrift
+ ### Issue Type: GriefableCallbacks
 
- ### Relevant Function/Location: MEVCapture.handleForwardData
-
- ### Title
-MEV Capture Fee Bypass via Trade Splitting
- ### Description/Code Snippet
-The `MEVCapture` extension calculates the MEV fee based on the absolute tick displacement from the start of the block to the end of the current swap (`abs(stateAfter.tick() - tickLast)`). Since the fee rate scales linearly with displacement (up to a cap) and applies to the entire swap amount, splitting a large trade into multiple smaller trades allows a trader to pay significantly lower fees. The earlier swaps in the sequence pay fees based on smaller displacements, bypassing the intended progressive fee curve designed to capture LVR/MEV.
- ### Static Signals
-fee taken before scaling normalization, caller skims dust each claim via rounding
- ### Assets at Risk
-Protocol Revenue
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: SlippageMissingOrInsufficient
-
- ### Relevant Function/Location: Positions.withdraw
+ ### Relevant Function/Location: MEVCapture.beforeSwap
 
  ### Title
-Missing slippage protection in liquidity withdrawal
+MEVCapture extension permanently reverts all swaps
  ### Description/Code Snippet
-The `withdraw` function in `Positions.sol` allows users to burn liquidity for tokens but does not accept `amount0Min` or `amount1Min` parameters. The amounts of `token0` and `token1` returned depend on the pool's current price (tick). An attacker can sandwich the withdrawal transaction, manipulating the price to ensure the user receives a less desirable ratio or value of tokens than expected.
+The `MEVCapture` extension registers the `beforeSwap` hook (`beforeSwap: true` in `mevCaptureCallPoints`) but implements the hook to unconditionally `revert SwapMustHappenThroughForward()`. While this is intended to prevent direct swaps, the `MEVCapture` logic itself calls `CORE.swap` inside `handleForwardData`. Since `CORE.swap` invokes the `beforeSwap` hook of the configured extension, the extension's internal swap triggers its own revert. This circular dependency causes a Denial of Service for any pool configured with the `MEVCapture` extension, as no swap can ever complete.
  ### Static Signals
-withdraw(..., liquidity), no minAmount params, returns (amount0, amount1)
+revert in hook, callback success required for core flow
  ### Assets at Risk
-User liquidity/withdrawn tokens
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccessControlOrAuthByPass
-
- ### Relevant Function/Location: Incentives.claim
-
- ### Title
-Incentives claim function potentially allows theft via malleable ClaimKey
- ### Description/Code Snippet
-The `claim` function in `Incentives.sol` takes a `ClaimKey` struct (containing `account`, `amount`, etc.) and a merkle proof. It reconstructs the leaf using `c.toClaimId()`. If `toClaimId` does not include `c.account` in the hash generation, an attacker can observe a valid proof for a victim and submit the same proof with a modified `ClaimKey` where `account` is the attacker's address, stealing the claim.
- ### Static Signals
-struct passed to leaf generation, transfer to address in struct, merkle proof verification
- ### Assets at Risk
-incentive tokens
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: FlashLoanEconomicManipulation
-
- ### Relevant Function/Location: BasePositions.deposit
-
- ### Title
-Deposit lacks explicit amount slippage protection
- ### Description/Code Snippet
-The `deposit` function relies solely on `minLiquidity` and `maxAmount` constraints. It does not accept `amount0Min` or `amount1Min` parameters. If a user provides loose `maxAmount` caps to ensure execution, an attacker can manipulate the pool price (sandwich attack) to force the deposit to consume a skewed ratio of tokens (e.g., 100% token0, 0% token1) while still satisfying the `minLiquidity` threshold. This exposes users to immediate impermanent loss/bad entry price, as they cannot enforce a minimum valid ratio or amount for each token individually.
- ### Static Signals
-missing amount0Min param, missing amount1Min param, slippage check only on liquidity
- ### Assets at Risk
-User deposits
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: UnsafeRecipient
-
- ### Relevant Function/Location: BasePositions.collectFees
-
- ### Title
-Missing zero-address check for recipient in fee collection and withdrawal
- ### Description/Code Snippet
-The `collectFees` and `withdraw` functions in `BasePositions` accept a `recipient` address argument but do not validate that it is non-zero. If a user or frontend accidentally passes `address(0)` (the default value for uninitialized address variables), the funds will be withdrawn from the pool and effectively burned (transferred to the zero address), resulting in permanent loss of funds.
- ### Static Signals
-no zero-address guard
- ### Assets at Risk
-user funds
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: SlippageMissingOrInsufficient
-
- ### Relevant Function/Location: BasePositions.deposit
-
- ### Title
-Missing transaction deadline in deposit
- ### Description/Code Snippet
-The `deposit` function allows users to add liquidity to a position. While it includes `minLiquidity` for slippage protection regarding the minted amount, it lacks a `deadline` timestamp parameter. Transactions without a deadline can be held by validators/miners and executed at a later time when market conditions or the pool price have shifted unfavorably against the user's intent.
- ### Static Signals
-deadline omitted
- ### Assets at Risk
-User funds
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: UnsafeRecipient
-
- ### Relevant Function/Location: Positions.withdraw
-
- ### Title
-Unsafe recipient allows burning funds
- ### Description/Code Snippet
-The `withdraw` and `collectFees` functions in `Positions.sol`, as well as `swap` in `Router.sol`, accept a `recipient` address argument but fail to validate that it is not `address(0)`. If a user accidentally passes the zero address, the protocol will execute transfers to `address(0)`, permanently burning the tokens.
- ### Static Signals
-address recipient, no zero address check
- ### Assets at Risk
-User funds
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: TimelockEdgeCase
-
- ### Relevant Function/Location: TWAMM._executeVirtualOrdersFromWithinLock
-
- ### Title
-TWAMM virtual order execution allows DoS via dense time initialization
- ### Description/Code Snippet
-The `_executeVirtualOrdersFromWithinLock` function in `TWAMM.sol` iterates through initialized time buckets from the last execution time to the current block timestamp. An attacker can cheaply create many orders with sequentially increasing end times (e.g., every second or minute), densely populating the initialized times bitmap. This forces the `while` loop in `_executeVirtualOrdersFromWithinLock` to perform excessive iterations, potentially exceeding the block gas limit and causing a Denial of Service for the pool.
- ### Static Signals
-while loop over time, bitmap traversal, user-controlled end times
- ### Assets at Risk
-pool availability
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccountingInvariantViolation
-
- ### Relevant Function/Location: BasePositions.handleLockData
-
- ### Title
-Unsafe cast to int128 in fee accounting causes DoS for large amounts
- ### Description/Code Snippet
-In `handleLockData` (both `CALL_TYPE_WITHDRAW` and the logic handling `CALL_TYPE_DEPOSIT` via `collectFees`), the contract calculates protocol fees as `uint128`. It then casts these fees to `int128` when calling `CORE.updateSavedBalances`. If the fee amount exceeds `type(int128).max` (approx 1.7e38), the cast wraps to a negative number. Passing a negative delta to `updateSavedBalances` attempts to withdraw from the saved balance instead of depositing the fee. Since the contract likely has insufficient saved balance to cover this 'withdrawal', the Core will revert with `SavedBalanceOverflow`, causing a DoS on withdrawals or fee collections for tokens with very high supplies or decimals.
- ### Static Signals
-int128(swapProtocolFee0), int128(withdrawalFee0)
- ### Assets at Risk
-Fees
+Liquidity Pool Usability
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 
 
@@ -208,16 +80,271 @@ Fees
 
  ### Issue Type: StandardViolation
 
- ### Relevant Function/Location: MEVCapture.beforeSwap
+ ### Relevant Function/Location: TokenWrapper.transfer
 
  ### Title
-MEVCapture extension locks pools due to beforeSwap revert loop
+Transient balance in TokenWrapper breaks ERC20 persistence
  ### Description/Code Snippet
-The `MEVCapture` extension implements `beforeSwap` to unconditionally revert with `SwapMustHappenThroughForward`, intending to force users to use `forward`. However, when users correctly use `forward`, the `handleForwardData` function calls `CORE.swap`. `CORE.swap` invokes the registered extension's `beforeSwap` hook. Since `MEVCapture` registers for `beforeSwap`, this creates a circular call path that always reverts, effectively permanently freezing any pool using this extension.
+The `TokenWrapper` contract uses a `transient` variable `coreBalance` to track tokens transferred to `address(CORE)`. This logic is inside the `transfer` and `transferFrom` functions. Since transient storage is cleared at the end of every transaction, any tokens transferred to `address(CORE)` outside of a specific atomic transaction flow will be permanently lost (balance resets to zero). This violates the standard ERC20 invariant that balances are persistent.
  ### Static Signals
-revert in beforeSwap, CORE.swap called in handleForwardData, beforeSwap=true in CallPoints
+transient coreBalance, if (to == address(CORE)) coreBalance += amount
  ### Assets at Risk
-liquidity
+User tokens
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: ForcedAssetVsStrictEquality
+
+ ### Relevant Function/Location: FlashAccountant.completePayments
+
+ ### Title
+Denial of Service via forced excess payments in FlashAccountant
+ ### Description/Code Snippet
+The `FlashAccountant` (inherited by `Core`) enforces that the number of non-zero debt slots (`nonzeroDebtCount`) must be zero at the end of a lock. The system considers negative debt (credit) as a non-zero state. If an attacker can force a token or ETH transfer to the Core contract during a victim's transaction execution (e.g., via a hook or callback), the victim's subsequent `completePayments` or `receive` call will attribute the extra balance to the victim, resulting in a net credit (negative debt). This causes `nonzeroDebtCount` to remain positive, triggering the `DebtsNotZeroed` revert and griefing the transaction.
+ ### Static Signals
+fee accumulator reset depends on exact equality, require(debt == 0)
+ ### Assets at Risk
+user funds
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: TWAPWindowPinningOrLowLiquidity
+
+ ### Relevant Function/Location: TWAMM._executeVirtualOrdersFromWithinLock
+
+ ### Title
+TWAMM Virtual Orders Vulnerable to Sandwiching due to Instant Execution
+ ### Description/Code Snippet
+The `TWAMM` extension executes virtual orders (`lockAndExecuteVirtualOrders`) based on the current pool state at the moment of the first interaction in a block. Because this execution happens atomically with the user interaction and uses the spot price (or calculated price movement based on spot) without an external oracle or averaging window, it acts as a predictable, unprotected trade. MEV searchers can manipulate the pool price ('sandwich') immediately before triggering the TWAMM execution (via any call like `beforeSwap`), forcing the virtual orders to execute at a disadvantageous price, extracting value from the long-term order holders.
+ ### Static Signals
+uses spot price at execution, no freshness/age bound on observations, predictable manipulation
+ ### Assets at Risk
+TWAMM Order Collateral
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: TokenWrapper.handleForwardData
+
+ ### Title
+TokenWrapper wrapping mechanism mints via debt accounting without explicit user credit
+ ### Description/Code Snippet
+The `TokenWrapper` contract allows users to wrap tokens by incurring debt in the FlashAccountant system. When a user calls `forward` with a positive amount, the `TokenWrapper` (as locker) increases its saved balance of the underlying token and decreases its debt of the wrapper token. Since the debt is tracked by the Locker ID (which is shared with the user during forward), the user exits the forward with a credit (negative debt) of wrapper tokens. The user must then call `withdraw` to mint the actual ERC20 wrapper tokens. This unusual accounting flow relies on the `FlashAccountant` allowing `withdraw` to trigger `TokenWrapper.transfer`, which mints tokens when the sender is Core. While functional, this complex debt-based minting creates a risk of accounting invariant violations if the user fails to withdraw or if integrations misinterpret the debt state.
+ ### Static Signals
+updateDebt(-amount), no _mint call, transfer mints if msg.sender is Core
+ ### Assets at Risk
+User funds, Wrapper solvency
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: OracleUsingDEXorTWAP
+
+ ### Relevant Function/Location: Oracle.extrapolateSnapshot
+
+ ### Title
+Oracle extrapolation returns stale pre-block state potentially misleading integrators
+ ### Description/Code Snippet
+The `Oracle` extension's `extrapolateSnapshot` function is designed to return the state from the *last* snapshot. Due to `maybeInsertSnapshot` logic, a snapshot for the current block is only inserted once (at the first interaction), capturing the state *before* that interaction. Subsequent reads in the same block (even after large price movements) will return the pre-movement state (effectively the previous block's closing state) because `timePassed` will be 0. Integrators expecting `extrapolateSnapshot(now)` to reflect the *current* spot price or an updated TWAP including the current block's activity may be relying on stale data, potentially leading to mispricing in downstream protocols.
+ ### Static Signals
+timePassed == 0, CORE.poolState
+ ### Assets at Risk
+integrator funds
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: SlippageMissingOrInsufficient
+
+ ### Relevant Function/Location: BasePositions.withdraw
+
+ ### Title
+Missing slippage protection in Positions.withdraw
+ ### Description/Code Snippet
+The `withdraw` function in `BasePositions.sol` (inherited by `Positions.sol`) calculates the amount of token0 and token1 to return to the user based on the liquidity being burned and the current pool tick. However, it does not accept `amount0Min` and `amount1Min` parameters to enforce minimum output amounts. In concentrated liquidity pools, the ratio of assets in a position changes as the price moves. An attacker can sandwich a withdrawal transaction, manipulating the pool price to force the user's liquidity to be converted entirely into the less valuable asset or withdrawn at a disadvantageous exchange rate, without the user's consent or ability to revert.
+ ### Static Signals
+no minAmountOut parameter in liquidation/redemption, withdraw() converts shares to assets at current rate without minimum
+ ### Assets at Risk
+User liquidity
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: FlashLoanEconomicManipulation
+
+ ### Relevant Function/Location: Oracle.beforeInitializePool
+
+ ### Title
+Oracle TWAP manipulation via empty pool initialization
+ ### Description/Code Snippet
+The `Oracle` extension begins recording `tickCumulative` snapshots immediately upon pool initialization (`beforeInitializePool`), even if the pool has zero liquidity. An attacker can initialize a pool with an extreme tick value, wait for a significant duration without adding liquidity, and then fund the pool. The Oracle will effectively 'backdate' the extreme tick for the entire waiting period, producing a manipulated TWAP that could be exploited by downstream protocols relying on this Oracle.
+ ### Static Signals
+snapshot created with 0 liquidity, tickCumulative increments based on initial tick
+ ### Assets at Risk
+Downstream protocol funds
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: Oracle.expandCapacity
+
+ ### Title
+Oracle storage key collision due to raw address shifting
+ ### Description/Code Snippet
+The `expandCapacity` function in `Oracle.sol` uses `sstore(or(shl(32, token), i), 1)` to initialize storage slots. The key generation logic `(token << 32) | i` creates a collision hazard. Specifically, the storage slot for `Counts` of `TokenA` (key `TokenA`) collides with the storage slot for `Snapshot` index `0` of `TokenB` if `TokenA == TokenB << 32`. Since addresses are 160 bits, this condition is satisfiable for specific valid address pairs (e.g., `TokenB = 0x...01`, `TokenA = 0x...0100000000`). An attacker can corrupt the `Counts` struct of a target token (resetting index/count/capacity) by calling `expandCapacity` on the colliding token address, effectively bricking the oracle for the target.
+ ### Static Signals
+sstore(or(shl(32, token), i), 1), assembly writes to unchecked slots
+ ### Assets at Risk
+Oracle integrity
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: FlashLoanEconomicManipulation
+
+ ### Relevant Function/Location: MEVCapture.handleForwardData
+
+ ### Title
+MEV Capture fees can be bypassed by back-running
+ ### Description/Code Snippet
+The `MEVCapture` extension calculates fees based on the absolute difference between the current tick and the tick at the start of the block (`tickLast`). Logic: `(abs(stateAfter.tick() - tickLast) << 64) / tickSpacing`. If an arbitrageur or sandwich attacker performs a swap that restores the price to `tickLast` (closing the loop), the difference is zero, and they pay no MEV capture fee on the closing trade. This asymmetry allows MEV searchers to evade fees on the back-run leg of their strategy.
+ ### Static Signals
+FixedPointMathLib.abs(stateAfter.tick() - tickLast)
+ ### Assets at Risk
+Protocol Revenue
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: Reentrancy
+
+ ### Relevant Function/Location: TWAMM.beforeSwap
+
+ ### Title
+Infinite Recursion / DoS in TWAMM pools
+ ### Description/Code Snippet
+The TWAMM extension executes virtual orders by calling `CORE.swap`. However, `CORE.swap` triggers the `beforeSwap` hook on the pool's extension. Since the pool's extension is TWAMM itself, `beforeSwap` calls `lockAndExecuteVirtualOrders`, which attempts to execute virtual orders again. This creates an infinite recursion loop (Stack Overflow) for any swap on a TWAMM-enabled pool that has active virtual orders (amount > 0). This effectively denies service to the pool once orders are active.
+ ### Static Signals
+calls CORE.swap, beforeSwap calls lockAndExecuteVirtualOrders, recursive hook execution
+ ### Assets at Risk
+Pool availability
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: MEVCapture.handleForwardData
+
+ ### Title
+Fee Accounting Drift and Loss on Zero Liquidity
+ ### Description/Code Snippet
+The `MEVCapture` extension collects fees into its own saved balance and periodically distributes them to LPs via `CORE.accumulateAsFees`. However, `accumulateAsFees` skips distribution if the pool's active liquidity is zero (to avoid division by zero). If `MEVCapture` distributes collected fees while the pool is in a zero-liquidity state (e.g. price moved to a gap), the fees are removed from the extension's balance but not added to `feesPerLiquidity`, effectively burning them or leaving them inaccessible in the Core contract.
+ ### Static Signals
+CORE.accumulateAsFees called, liquidity checked for zero in Core, saved balance decremented
+ ### Assets at Risk
+Accumulated Protocol/MEV Fees
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: UnsafeRecipient
+
+ ### Relevant Function/Location: FlashAccountant.withdraw
+
+ ### Title
+Unsafe Recipient in FlashAccountant Withdrawal
+ ### Description/Code Snippet
+The `FlashAccountant.withdraw` function executes token transfers or ETH calls to a `recipient` address without checking if `recipient` is the zero address. If a user (or derived contract like `Positions`) mistakenly passes `address(0)`, funds are burned or irretrievably lost. While typically user error, standard safety patterns require a zero-address check for fund withdrawals.
+ ### Static Signals
+call(gas(), recipient, ...), no require(recipient != address(0))
+ ### Assets at Risk
+User funds
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: SlippageMissingOrInsufficient
+
+ ### Relevant Function/Location: Router.swap
+
+ ### Title
+Unsafe Default Slippage Parameter in Router Swap Overloads
+ ### Description/Code Snippet
+The Router contract provides `swap` overloads that default the `calculatedAmountThreshold` (minimum output amount) to `type(int256).min`. Users or integrators utilizing these overloads (e.g., to specify a `sqrtRatioLimit` and `skipAhead`) will unwittingly execute swaps with absolutely no output amount guarantee, relying solely on the price limit. In pools with low liquidity or during high volatility, a price limit alone may not prevent significant value loss on the total output amount, effectively creating a 'missing slippage protection' vulnerability.
+ ### Static Signals
+calculatedAmountThreshold = type(int256).min, no minAmountOut parameter in overload
+ ### Assets at Risk
+User funds
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: SlippageMissingOrInsufficient
+
+ ### Relevant Function/Location: Positions.withdraw
+
+ ### Title
+Positions withdrawal lacks minimum output parameters for slippage protection
+ ### Description/Code Snippet
+The `withdraw` function in `Positions.sol` accepts a `liquidity` amount to burn but does not provide parameters for `amount0Min` and `amount1Min`. It calculates the output amounts based on the current pool price and tick, then transfers them to the recipient. Without minimum output constraints, a user interacting directly with this contract (as implied by it being a top-level `BaseLocker`) is vulnerable to sandwich attacks or price manipulation, potentially receiving significantly fewer tokens than expected.
+ ### Static Signals
+no minAmountOut parameter, payout calculated at execution time without minimum bound
+ ### Assets at Risk
+user funds
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: StandardViolation
+
+ ### Relevant Function/Location: TokenWrapper.handleForwardData
+
+ ### Title
+TokenWrapper violates ERC20 standard by not updating balances on wrap
+ ### Description/Code Snippet
+The `TokenWrapper` contract implements `IERC20` but its wrapping mechanism (via `handleForwardData`) only updates `Core`'s internal `savedBalances` and the user's debt/credit in the `FlashAccountant`. It does not update the `_balanceOf` mapping in `TokenWrapper`. Consequently, a user who wraps tokens will see a `balanceOf` of 0 and cannot transfer them using standard ERC20 functions unless they perform a subsequent `withdraw` from the `FlashAccountant` in the same transaction to 'mint' the actual ERC20 balance. This breaks atomicity and composability expectations for ERC20 wrappers.
+ ### Static Signals
+no _mint, updates external accounting but not local balance
+ ### Assets at Risk
+User funds (integration confusion)
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: StandardViolation
+
+ ### Relevant Function/Location: TokenWrapper.handleForwardData
+
+ ### Title
+Potential Denial of Service in TokenWrapper due to strict calldata length check
+ ### Description/Code Snippet
+The `Core.updateDebt` function strictly enforces `msg.data.length == 20` to ensure safety. However, `TokenWrapper` calls this function via `FlashAccountantLib` using `CORE.updateDebt(SafeCastLib.toInt128(-amount))`. If `FlashAccountantLib` or the compiler uses standard ABI encoding (selector + 32-byte padded argument = 36 bytes), the call will revert inside `Core`, rendering the `TokenWrapper` non-functional for wrapping/unwrapping. This relies on the assumption that the library performs manual packing.
+ ### Static Signals
+msg.data.length != 20, abi.encodeCall
+ ### Assets at Risk
+user funds (locked in wrapper)
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 
 
@@ -225,16 +352,16 @@ liquidity
 
  ### Issue Type: FeeOnTransferAssumption
 
- ### Relevant Function/Location: BasePositions.handleLockData
+ ### Relevant Function/Location: Incentives.fund
 
  ### Title
-Incompatibility with Fee-On-Transfer tokens
+Incentives funding assumes 1:1 transfer and breaks with Fee-on-Transfer tokens
  ### Description/Code Snippet
-The `deposit` flow in `BasePositions.sol` (via `handleLockData` and `CORE.updatePosition`) relies on `FlashAccountant` to settle debts. When `CORE` updates a position, it records a debt equal to the liquidity delta amounts. `BasePositions` then calls `ACCOUNTANT.payTwoFrom` to transfer exactly these amounts from the user to the accountant. For Fee-On-Transfer (FoT) tokens, the actual balance increase in the Accountant will be less than the transfer amount. The `FlashAccountant` calculates debt reduction based on the actual balance change. Consequently, the debt will not be fully settled (debt > 0), causing the `lock` function to revert with `DebtsNotZeroed`. This makes the standard deposit flow unusable for FoT tokens.
+The `fund` function in `Incentives.sol` uses `SafeTransferLib.safeTransferFrom` to transfer the `minimum` amount from the caller to the contract, and then strictly updates `dropState.funded` by the same `minimum` amount. It does not check the actual balance increase of the contract. If a Fee-on-Transfer token is used, the contract will receive less than `minimum`, but the internal accounting will reflect the full amount. This discrepancy leads to insolvency when users attempt to `claim`, as the contract will eventually run out of tokens before all tracked claims are satisfied.
  ### Static Signals
-assumes transferFrom(amount) credits exactly amount, accounting based on transfer parameter, not actual balance change
+uses input amount instead of post-transfer delta, assumes transferFrom(amount) credits exactly amount
  ### Assets at Risk
-
+user rewards
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 
 
@@ -245,80 +372,12 @@ assumes transferFrom(amount) credits exactly amount, accounting based on transfe
  ### Relevant Function/Location: TWAMM._executeVirtualOrdersFromWithinLock
 
  ### Title
-DoS via Unbounded Loop in TWAMM Virtual Order Execution
+Unbounded iteration in TWAMM virtual order execution enables DoS
  ### Description/Code Snippet
-The `_executeVirtualOrdersFromWithinLock` function (and by extension `lockAndExecuteVirtualOrders`) iterates through time intervals from the last execution time up to `block.timestamp`. The step size is determined by `searchForNextInitializedTime`, which depends on the density of initialized orders in the time bitmap. An attacker can cost-effectively create orders with start/end times spaced by 1 second (or the minimum tick) to densely populate this bitmap. If the pool is left inactive for a period, the number of iterations required to process the backlog can exceed the block gas limit, causing the pool to permanently revert on all swaps and updates (Denial of Service). There is no mechanism to process the backlog in chunks.
+The `_executeVirtualOrdersFromWithinLock` function in `TWAMM.sol` iterates through initialized time slots between the last execution time and the current block timestamp. This loop processes virtual orders by performing heavy computations and potential Core swaps for each time interval. An attacker can mint numerous orders with distinct end times (e.g., every second), populating the `initializedTimesBitmap` with many set bits. This forces subsequent interactions (swaps/updates) to iterate through all these time slots, potentially exceeding the block gas limit and causing a Denial of Service (DoS) for the pool, as the state cannot be advanced.
  ### Static Signals
-loops over user-controlled arrays/sets, iteration count grows with contract state, no pagination or batching mechanism
+while (time != block.timestamp), CORE.swap
  ### Assets at Risk
-liquidity pool availability
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 
-
-
-
- ### Issue Type: StandardViolation
-
- ### Relevant Function/Location: BasePositions.burn
-
- ### Title
-Burning Position NFT permanently locks underlying liquidity
- ### Description/Code Snippet
-`BasePositions` inherits `burn` from `BaseNonfungibleToken`, which allows the owner to destroy the NFT. The contract does not override `burn` to withdraw liquidity from Core. Since `withdraw` and `collectFees` require authorization via `authorizedForNft(id)` (which checks ownership), burning the NFT removes the ability to access or withdraw the underlying liquidity and accrued fees, resulting in permanent stuck funds.
- ### Static Signals
-burn function exposed, no balance check before burn, access control depends on token ownership
- ### Assets at Risk
-user deposits, accrued fees
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
-
-
-
-
- ### Issue Type: FeeOnTransferAssumption
-
- ### Relevant Function/Location: BasePositions.deposit
-
- ### Title
-Incompatibility with Fee-on-Transfer Tokens
- ### Description/Code Snippet
-The `deposit` flow (via `handleLockData` in `BasePositions` and `FlashAccountant`) calculates the debt based on the `liquidity` minted (expecting 1:1 token amount). It then calls `ACCOUNTANT.payTwoFrom`, which transfers `amount` from the user. For Fee-on-Transfer tokens, the Core receives `amount - fee`. The `FlashAccountant` validates that the received balance delta exactly matches the debt. Since the received amount is less than the debt, the transaction reverts with `DebtsNotZeroed`. This makes the protocol effectively incompatible with Fee-on-Transfer tokens for standard deposits.
- ### Static Signals
-assumes transferFrom(amount) credits exactly amount, assumes 1:1 token transfers
- ### Assets at Risk
-protocol integration
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: UnsafeRecipient
-
- ### Relevant Function/Location: BasePositions.withdraw
-
- ### Title
-UnsafeRecipient in withdraw and collectFees
- ### Description/Code Snippet
-The `withdraw` and `collectFees` functions accept a `recipient` address argument and pass it directly to the `FlashAccountant` for token transfer without checking if `recipient` is `address(0)`. If a user mistakenly passes the zero address, the `FlashAccountant` will execute a transfer to the zero address. For many ERC20 tokens and specifically for native ETH (handled via `call`), this results in the permanent burning of the withdrawn funds.
- ### Static Signals
-no zero-address guard
- ### Assets at Risk
-withdrawn funds
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: SlippageMissingOrInsufficient
-
- ### Relevant Function/Location: BasePositions.withdraw
-
- ### Title
-Missing slippage protection and deadline in position withdrawal
- ### Description/Code Snippet
-The `withdraw` function in `BasePositions` burns a liquidity position to retrieve the underlying tokens. The amount of tokens returned depends on the current pool price (tick). The function signature lacks parameters for minimum output amounts (`amount0Min`, `amount1Min`) and a transaction `deadline`. This exposes users to sandwich attacks where an attacker manipulates the pool price prior to withdrawal to extract value, and allows miners to hold transactions until market conditions are unfavorable.
- ### Static Signals
-no minAmountOut parameter in liquidation/redemption, deadline omitted
- ### Assets at Risk
-User liquidity positions
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 

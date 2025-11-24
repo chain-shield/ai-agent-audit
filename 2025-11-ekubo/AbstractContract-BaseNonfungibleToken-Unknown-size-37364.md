@@ -141,36 +141,6 @@ abstract contract BaseNonfungibleToken is IBaseNonfungibleToken, Ownable, ERC721
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-/// @title Base Nonfungible Token Interface
-/// @notice Interface for the base NFT functionality used by Positions and Orders contracts
-/// @dev Defines the essential NFT functions needed by other contracts in the system
-interface IBaseNonfungibleToken {
-    function setMetadata(string memory newName, string memory newSymbol, string memory newBaseUrl) external;
-
-    // BaseNonfungibleToken specific functions
-    /// @notice Converts a minter address and salt to a token ID
-    /// @param minter The minter address
-    /// @param salt The salt value
-    /// @return result The resulting token ID
-    function saltToId(address minter, bytes32 salt) external view returns (uint256 result);
-
-    /// @notice Mints a new token with a random salt
-    /// @return id The minted token ID
-    function mint() external payable returns (uint256 id);
-
-    /// @notice Mints a new token with a specific salt
-    /// @param salt The salt for deterministic ID generation
-    /// @return id The minted token ID
-    function mint(bytes32 salt) external payable returns (uint256 id);
-
-    /// @notice Burns a token (only authorized addresses)
-    /// @param id The token ID to burn
-    function burn(uint256 id) external payable;
-}
-
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
@@ -450,6 +420,36 @@ abstract contract Ownable {
     }
 }
 
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+/// @title Base Nonfungible Token Interface
+/// @notice Interface for the base NFT functionality used by Positions and Orders contracts
+/// @dev Defines the essential NFT functions needed by other contracts in the system
+interface IBaseNonfungibleToken {
+    function setMetadata(string memory newName, string memory newSymbol, string memory newBaseUrl) external;
+
+    // BaseNonfungibleToken specific functions
+    /// @notice Converts a minter address and salt to a token ID
+    /// @param minter The minter address
+    /// @param salt The salt value
+    /// @return result The resulting token ID
+    function saltToId(address minter, bytes32 salt) external view returns (uint256 result);
+
+    /// @notice Mints a new token with a random salt
+    /// @return id The minted token ID
+    function mint() external payable returns (uint256 id);
+
+    /// @notice Mints a new token with a specific salt
+    /// @param salt The salt for deterministic ID generation
+    /// @return id The minted token ID
+    function mint(bytes32 salt) external payable returns (uint256 id);
+
+    /// @notice Burns a token (only authorized addresses)
+    /// @param id The token ID to burn
+    function burn(uint256 id) external payable;
+}
+
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
 // SPDX-License-Identifier: ekubo-license-v1.eth
@@ -625,769 +625,6 @@ contract Orders is IOrders, UsesCore, PayableMulticallable, BaseLocker, BaseNonf
             result = abi.encode(proceeds);
         } else {
             revert();
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {BaseLocker} from "./BaseLocker.sol";
-import {UsesCore} from "./UsesCore.sol";
-import {ICore} from "../interfaces/ICore.sol";
-import {IPositions} from "../interfaces/IPositions.sol";
-import {CoreLib} from "../libraries/CoreLib.sol";
-import {FlashAccountantLib} from "../libraries/FlashAccountantLib.sol";
-import {PoolKey} from "../types/poolKey.sol";
-import {PositionId, createPositionId} from "../types/positionId.sol";
-import {FeesPerLiquidity} from "../types/feesPerLiquidity.sol";
-import {Position} from "../types/position.sol";
-import {tickToSqrtRatio} from "../math/ticks.sol";
-import {maxLiquidity, liquidityDeltaToAmountDelta} from "../math/liquidity.sol";
-import {PayableMulticallable} from "./PayableMulticallable.sol";
-import {SqrtRatio} from "../types/sqrtRatio.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
-import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {BaseNonfungibleToken} from "./BaseNonfungibleToken.sol";
-import {NATIVE_TOKEN_ADDRESS} from "../math/constants.sol";
-import {PoolId} from "../types/poolId.sol";
-import {PoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
-
-/// @title Base Positions Contract
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Abstract base contract for tracking liquidity positions in Ekubo Protocol as NFTs
-/// @dev Provides core position management functionality with abstract protocol fee collection methods
-abstract contract BasePositions is IPositions, UsesCore, PayableMulticallable, BaseLocker, BaseNonfungibleToken {
-    using CoreLib for *;
-    using FlashAccountantLib for *;
-
-    /// @notice Constructs the BasePositions contract
-    /// @param core The core contract instance
-    /// @param owner The owner of the contract (for access control)
-    constructor(ICore core, address owner) BaseNonfungibleToken(owner) BaseLocker(core) UsesCore(core) {}
-
-    uint256 private constant CALL_TYPE_DEPOSIT = 0;
-    uint256 private constant CALL_TYPE_WITHDRAW = 1;
-    uint256 private constant CALL_TYPE_WITHDRAW_PROTOCOL_FEES = 2;
-
-    /// @inheritdoc IPositions
-    function getPositionFeesAndLiquidity(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
-        external
-        view
-        returns (uint128 liquidity, uint128 principal0, uint128 principal1, uint128 fees0, uint128 fees1)
-    {
-        PoolId poolId = poolKey.toPoolId();
-        SqrtRatio sqrtRatio = CORE.poolState(poolId).sqrtRatio();
-        PositionId positionId =
-            createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper});
-        Position memory position = CORE.poolPositions(poolId, address(this), positionId);
-
-        liquidity = position.liquidity;
-
-        // the sqrt ratio may be 0 (because the pool is uninitialized) but this is
-        // fine since amount0Delta isn't called with it in this case
-        (int128 delta0, int128 delta1) = liquidityDeltaToAmountDelta(
-            sqrtRatio, -SafeCastLib.toInt128(position.liquidity), tickToSqrtRatio(tickLower), tickToSqrtRatio(tickUpper)
-        );
-
-        (principal0, principal1) = (uint128(-delta0), uint128(-delta1));
-
-        FeesPerLiquidity memory feesPerLiquidityInside = poolKey.config.isFullRange()
-            ? CORE.getPoolFeesPerLiquidity(poolId)
-            : CORE.getPoolFeesPerLiquidityInside(poolId, tickLower, tickUpper);
-        (fees0, fees1) = position.fees(feesPerLiquidityInside);
-    }
-
-    /// @inheritdoc IPositions
-    function deposit(
-        uint256 id,
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 maxAmount0,
-        uint128 maxAmount1,
-        uint128 minLiquidity
-    ) public payable authorizedForNft(id) returns (uint128 liquidity, uint128 amount0, uint128 amount1) {
-        SqrtRatio sqrtRatio = CORE.poolState(poolKey.toPoolId()).sqrtRatio();
-
-        liquidity =
-            maxLiquidity(sqrtRatio, tickToSqrtRatio(tickLower), tickToSqrtRatio(tickUpper), maxAmount0, maxAmount1);
-
-        if (liquidity < minLiquidity) {
-            revert DepositFailedDueToSlippage(liquidity, minLiquidity);
-        }
-
-        if (liquidity > uint128(type(int128).max)) {
-            revert DepositOverflow();
-        }
-
-        (amount0, amount1) = abi.decode(
-            lock(abi.encode(CALL_TYPE_DEPOSIT, msg.sender, id, poolKey, tickLower, tickUpper, liquidity)),
-            (uint128, uint128)
-        );
-    }
-
-    /// @inheritdoc IPositions
-    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
-        public
-        payable
-        authorizedForNft(id)
-        returns (uint128 amount0, uint128 amount1)
-    {
-        (amount0, amount1) = collectFees(id, poolKey, tickLower, tickUpper, msg.sender);
-    }
-
-    /// @inheritdoc IPositions
-    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, address recipient)
-        public
-        payable
-        authorizedForNft(id)
-        returns (uint128 amount0, uint128 amount1)
-    {
-        (amount0, amount1) = withdraw(id, poolKey, tickLower, tickUpper, 0, recipient, true);
-    }
-
-    /// @inheritdoc IPositions
-    function withdraw(
-        uint256 id,
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 liquidity,
-        address recipient,
-        bool withFees
-    ) public payable authorizedForNft(id) returns (uint128 amount0, uint128 amount1) {
-        (amount0, amount1) = abi.decode(
-            lock(abi.encode(CALL_TYPE_WITHDRAW, id, poolKey, tickLower, tickUpper, liquidity, recipient, withFees)),
-            (uint128, uint128)
-        );
-    }
-
-    /// @inheritdoc IPositions
-    function withdraw(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, uint128 liquidity)
-        public
-        payable
-        returns (uint128 amount0, uint128 amount1)
-    {
-        (amount0, amount1) = withdraw(id, poolKey, tickLower, tickUpper, liquidity, address(msg.sender), true);
-    }
-
-    /// @inheritdoc IPositions
-    function maybeInitializePool(PoolKey memory poolKey, int32 tick)
-        external
-        payable
-        returns (bool initialized, SqrtRatio sqrtRatio)
-    {
-        // the before update position hook shouldn't be taken into account here
-        sqrtRatio = CORE.poolState(poolKey.toPoolId()).sqrtRatio();
-        if (sqrtRatio.isZero()) {
-            initialized = true;
-            sqrtRatio = CORE.initializePool(poolKey, tick);
-        }
-    }
-
-    /// @inheritdoc IPositions
-    function mintAndDeposit(
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 maxAmount0,
-        uint128 maxAmount1,
-        uint128 minLiquidity
-    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1) {
-        id = mint();
-        (liquidity, amount0, amount1) = deposit(id, poolKey, tickLower, tickUpper, maxAmount0, maxAmount1, minLiquidity);
-    }
-
-    /// @inheritdoc IPositions
-    function mintAndDepositWithSalt(
-        bytes32 salt,
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 maxAmount0,
-        uint128 maxAmount1,
-        uint128 minLiquidity
-    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1) {
-        id = mint(salt);
-        (liquidity, amount0, amount1) = deposit(id, poolKey, tickLower, tickUpper, maxAmount0, maxAmount1, minLiquidity);
-    }
-
-    /// @inheritdoc IPositions
-    function withdrawProtocolFees(address token0, address token1, uint128 amount0, uint128 amount1, address recipient)
-        external
-        payable
-        onlyOwner
-    {
-        lock(abi.encode(CALL_TYPE_WITHDRAW_PROTOCOL_FEES, token0, token1, amount0, amount1, recipient));
-    }
-
-    /// @inheritdoc IPositions
-    function getProtocolFees(address token0, address token1) external view returns (uint128 amount0, uint128 amount1) {
-        (amount0, amount1) = CORE.savedBalances(address(this), token0, token1, bytes32(0));
-    }
-
-    /// @notice Handles protocol fee collection during fee collection
-    /// @dev Abstract method that must be implemented by concrete contracts
-    /// @param poolKey The pool key for the position
-    /// @param amount0 The amount of token0 fees collected before protocol fee deduction
-    /// @param amount1 The amount of token1 fees collected before protocol fee deduction
-    /// @return protocolFee0 The amount of token0 protocol fees to collect
-    /// @return protocolFee1 The amount of token1 protocol fees to collect
-    function _computeSwapProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
-        internal
-        view
-        virtual
-        returns (uint128 protocolFee0, uint128 protocolFee1);
-
-    /// @notice Handles protocol fee collection during liquidity withdrawal
-    /// @dev Abstract method that must be implemented by concrete contracts
-    /// @param poolKey The pool key for the position
-    /// @param amount0 The amount of token0 being withdrawn before protocol fee deduction
-    /// @param amount1 The amount of token1 being withdrawn before protocol fee deduction
-    /// @return protocolFee0 The amount of token0 protocol fees to collect
-    /// @return protocolFee1 The amount of token1 protocol fees to collect
-    function _computeWithdrawalProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
-        internal
-        view
-        virtual
-        returns (uint128 protocolFee0, uint128 protocolFee1);
-
-    /// @notice Handles lock callback data for position operations
-    /// @dev Internal function that processes different types of position operations
-    /// @param data Encoded operation data
-    /// @return result Encoded result data
-    function handleLockData(uint256, bytes memory data) internal override returns (bytes memory result) {
-        uint256 callType = abi.decode(data, (uint256));
-
-        if (callType == CALL_TYPE_DEPOSIT) {
-            (
-                ,
-                address caller,
-                uint256 id,
-                PoolKey memory poolKey,
-                int32 tickLower,
-                int32 tickUpper,
-                uint128 liquidity
-            ) = abi.decode(data, (uint256, address, uint256, PoolKey, int32, int32, uint128));
-
-            PoolBalanceUpdate balanceUpdate = CORE.updatePosition(
-                poolKey,
-                createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper}),
-                int128(liquidity)
-            );
-
-            uint128 amount0 = uint128(balanceUpdate.delta0());
-            uint128 amount1 = uint128(balanceUpdate.delta1());
-
-            // Use multi-token payment for ERC20-only pools, fall back to individual payments for native token pools
-            if (poolKey.token0 != NATIVE_TOKEN_ADDRESS) {
-                ACCOUNTANT.payTwoFrom(caller, poolKey.token0, poolKey.token1, amount0, amount1);
-            } else {
-                if (amount0 != 0) {
-                    SafeTransferLib.safeTransferETH(address(ACCOUNTANT), amount0);
-                }
-                if (amount1 != 0) {
-                    ACCOUNTANT.payFrom(caller, poolKey.token1, amount1);
-                }
-            }
-
-            result = abi.encode(amount0, amount1);
-        } else if (callType == CALL_TYPE_WITHDRAW) {
-            (
-                ,
-                uint256 id,
-                PoolKey memory poolKey,
-                int32 tickLower,
-                int32 tickUpper,
-                uint128 liquidity,
-                address recipient,
-                bool withFees
-            ) = abi.decode(data, (uint256, uint256, PoolKey, int32, int32, uint128, address, bool));
-
-            if (liquidity > uint128(type(int128).max)) revert WithdrawOverflow();
-
-            uint128 amount0;
-            uint128 amount1;
-
-            // collect first in case we are withdrawing the entire amount
-            if (withFees) {
-                (amount0, amount1) = CORE.collectFees(
-                    poolKey,
-                    createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper})
-                );
-
-                // Collect swap protocol fees
-                (uint128 swapProtocolFee0, uint128 swapProtocolFee1) =
-                    _computeSwapProtocolFees(poolKey, amount0, amount1);
-
-                if (swapProtocolFee0 != 0 || swapProtocolFee1 != 0) {
-                    CORE.updateSavedBalances(
-                        poolKey.token0, poolKey.token1, bytes32(0), int128(swapProtocolFee0), int128(swapProtocolFee1)
-                    );
-
-                    amount0 -= swapProtocolFee0;
-                    amount1 -= swapProtocolFee1;
-                }
-            }
-
-            if (liquidity != 0) {
-                PoolBalanceUpdate balanceUpdate = CORE.updatePosition(
-                    poolKey,
-                    createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper}),
-                    -int128(liquidity)
-                );
-
-                uint128 withdrawnAmount0 = uint128(-balanceUpdate.delta0());
-                uint128 withdrawnAmount1 = uint128(-balanceUpdate.delta1());
-
-                // Collect withdrawal protocol fees
-                (uint128 withdrawalFee0, uint128 withdrawalFee1) =
-                    _computeWithdrawalProtocolFees(poolKey, withdrawnAmount0, withdrawnAmount1);
-
-                if (withdrawalFee0 != 0 || withdrawalFee1 != 0) {
-                    // we know cast won't overflow because delta0 and delta1 were originally int128
-                    CORE.updateSavedBalances(
-                        poolKey.token0, poolKey.token1, bytes32(0), int128(withdrawalFee0), int128(withdrawalFee1)
-                    );
-                }
-
-                amount0 += withdrawnAmount0 - withdrawalFee0;
-                amount1 += withdrawnAmount1 - withdrawalFee1;
-            }
-
-            ACCOUNTANT.withdrawTwo(poolKey.token0, poolKey.token1, recipient, amount0, amount1);
-
-            result = abi.encode(amount0, amount1);
-        } else if (callType == CALL_TYPE_WITHDRAW_PROTOCOL_FEES) {
-            (, address token0, address token1, uint128 amount0, uint128 amount1, address recipient) =
-                abi.decode(data, (uint256, address, address, uint128, uint128, address));
-
-            CORE.updateSavedBalances(token0, token1, bytes32(0), -int256(uint256(amount0)), -int256(uint256(amount1)));
-            ACCOUNTANT.withdrawTwo(token0, token1, recipient, amount0, amount1);
-        } else {
-            // Will never actually happen
-            revert();
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {OrderKey} from "../types/orderKey.sol";
-import {IBaseNonfungibleToken} from "./IBaseNonfungibleToken.sol";
-
-/// @title Orders Interface
-/// @notice Interface for managing TWAMM (Time-Weighted Average Market Maker) orders as NFTs
-/// @dev Defines the interface for creating, modifying, and collecting proceeds from long-term orders
-interface IOrders is IBaseNonfungibleToken {
-    /// @notice Thrown when trying to modify an order that has already ended
-    error OrderAlreadyEnded();
-
-    /// @notice Thrown when the calculated sale rate exceeds the maximum allowed
-    error MaxSaleRateExceeded();
-
-    /// @notice Mints a new NFT and creates a TWAMM order
-    /// @param orderKey Key identifying the order parameters
-    /// @param amount Amount of tokens to sell over the order duration
-    /// @param maxSaleRate Maximum acceptable sale rate (for slippage protection)
-    /// @return id The newly minted NFT token ID
-    /// @return saleRate The calculated sale rate for the order
-    function mintAndIncreaseSellAmount(OrderKey memory orderKey, uint112 amount, uint112 maxSaleRate)
-        external
-        payable
-        returns (uint256 id, uint112 saleRate);
-
-    /// @notice Increases the sell amount for an existing TWAMM order
-    /// @param id The NFT token ID representing the order
-    /// @param orderKey Key identifying the order parameters
-    /// @param amount Additional amount of tokens to sell
-    /// @param maxSaleRate Maximum acceptable sale rate (for slippage protection)
-    /// @return saleRate The calculated sale rate for the additional amount
-    function increaseSellAmount(uint256 id, OrderKey memory orderKey, uint128 amount, uint112 maxSaleRate)
-        external
-        payable
-        returns (uint112 saleRate);
-
-    /// @notice Decreases the sale rate for an existing TWAMM order
-    /// @param id The NFT token ID representing the order
-    /// @param orderKey Key identifying the order parameters
-    /// @param saleRateDecrease Amount to decrease the sale rate by
-    /// @param recipient Address to receive the refunded tokens
-    /// @return refund Amount of tokens refunded
-    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease, address recipient)
-        external
-        payable
-        returns (uint112 refund);
-
-    /// @notice Decreases the sale rate for an existing TWAMM order (refund to msg.sender)
-    /// @param id The NFT token ID representing the order
-    /// @param orderKey Key identifying the order parameters
-    /// @param saleRateDecrease Amount to decrease the sale rate by
-    /// @return refund Amount of tokens refunded
-    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease)
-        external
-        payable
-        returns (uint112 refund);
-
-    /// @notice Collects the proceeds from a TWAMM order
-    /// @param id The NFT token ID representing the order
-    /// @param orderKey Key identifying the order parameters
-    /// @param recipient Address to receive the proceeds
-    /// @return proceeds Amount of tokens collected as proceeds
-    function collectProceeds(uint256 id, OrderKey memory orderKey, address recipient)
-        external
-        payable
-        returns (uint128 proceeds);
-
-    /// @notice Collects the proceeds from a TWAMM order (to msg.sender)
-    /// @param id The NFT token ID representing the order
-    /// @param orderKey Key identifying the order parameters
-    /// @return proceeds Amount of tokens collected as proceeds
-    function collectProceeds(uint256 id, OrderKey memory orderKey) external payable returns (uint128 proceeds);
-
-    /// @notice Executes virtual orders and returns current order information
-    /// @dev Updates the order state by executing any pending virtual orders
-    /// @param id The NFT token ID representing the order
-    /// @param orderKey Key identifying the order parameters
-    /// @return saleRate Current sale rate of the order
-    /// @return amountSold Total amount sold so far
-    /// @return remainingSellAmount Amount remaining to be sold
-    /// @return purchasedAmount Amount of tokens purchased (proceeds available)
-    function executeVirtualOrdersAndGetCurrentOrderInfo(uint256 id, OrderKey memory orderKey)
-        external
-        returns (uint112 saleRate, uint256 amountSold, uint256 remainingSellAmount, uint128 purchasedAmount);
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {BasePositions} from "./base/BasePositions.sol";
-import {ICore} from "./interfaces/ICore.sol";
-import {PoolKey} from "./types/poolKey.sol";
-import {computeFee} from "./math/fee.sol";
-
-/// @title Ekubo Protocol Positions
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Tracks liquidity positions in Ekubo Protocol as NFTs
-/// @dev Manages liquidity positions, fee collection, and protocol fees
-contract Positions is BasePositions {
-    /// @notice Protocol fee rate for swaps (as a fraction of 2^64)
-    uint64 public immutable SWAP_PROTOCOL_FEE_X64;
-
-    /// @notice Denominator for withdrawal protocol fee calculation
-    uint64 public immutable WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR;
-
-    /// @notice Constructs the Positions contract
-    /// @param core The core contract instance
-    /// @param owner The owner of the contract (for access control)
-    /// @param _swapProtocolFeeX64 Protocol fee rate for swaps
-    /// @param _withdrawalProtocolFeeDenominator Denominator for withdrawal protocol fee
-    constructor(ICore core, address owner, uint64 _swapProtocolFeeX64, uint64 _withdrawalProtocolFeeDenominator)
-        BasePositions(core, owner)
-    {
-        SWAP_PROTOCOL_FEE_X64 = _swapProtocolFeeX64;
-        WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR = _withdrawalProtocolFeeDenominator;
-    }
-
-    /// @notice Handles protocol fee collection during fee collection
-    /// @dev Implements the abstract method from BasePositions
-    /// @param amount0 The amount of token0 fees collected before protocol fee deduction
-    /// @param amount1 The amount of token1 fees collected before protocol fee deduction
-    /// @return protocolFee0 The amount of token0 protocol fees to collect
-    /// @return protocolFee1 The amount of token1 protocol fees to collect
-    function _computeSwapProtocolFees(PoolKey memory, uint128 amount0, uint128 amount1)
-        internal
-        view
-        override
-        returns (uint128 protocolFee0, uint128 protocolFee1)
-    {
-        if (SWAP_PROTOCOL_FEE_X64 != 0) {
-            protocolFee0 = computeFee(amount0, SWAP_PROTOCOL_FEE_X64);
-            protocolFee1 = computeFee(amount1, SWAP_PROTOCOL_FEE_X64);
-        }
-    }
-
-    /// @notice Handles protocol fee collection during liquidity withdrawal
-    /// @dev Implements the abstract method from BasePositions
-    /// @param poolKey The pool key for the position
-    /// @param amount0 The amount of token0 being withdrawn before protocol fee deduction
-    /// @param amount1 The amount of token1 being withdrawn before protocol fee deduction
-    /// @return protocolFee0 The amount of token0 protocol fees to collect
-    /// @return protocolFee1 The amount of token1 protocol fees to collect
-    function _computeWithdrawalProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
-        internal
-        view
-        override
-        returns (uint128 protocolFee0, uint128 protocolFee1)
-    {
-        uint64 fee = poolKey.config.fee();
-        if (fee != 0 && WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR != 0) {
-            protocolFee0 = computeFee(amount0, fee / WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR);
-            protocolFee1 = computeFee(amount1, fee / WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR);
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity ^0.8.30;
-
-import {ICore, PoolKey, PositionId, CallPoints} from "../interfaces/ICore.sol";
-import {IMEVCapture} from "../interfaces/extensions/IMEVCapture.sol";
-import {IExtension} from "../interfaces/ICore.sol";
-import {BaseExtension} from "../base/BaseExtension.sol";
-import {BaseForwardee} from "../base/BaseForwardee.sol";
-import {amountBeforeFee, computeFee} from "../math/fee.sol";
-import {ExposedStorage} from "../base/ExposedStorage.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
-import {CoreLib} from "../libraries/CoreLib.sol";
-import {ExposedStorageLib} from "../libraries/ExposedStorageLib.sol";
-import {CoreStorageLayout} from "../libraries/CoreStorageLayout.sol";
-import {PoolState} from "../types/poolState.sol";
-import {MEVCapturePoolState, createMEVCapturePoolState} from "../types/mevCapturePoolState.sol";
-import {SwapParameters} from "../types/swapParameters.sol";
-import {PoolId} from "../types/poolId.sol";
-import {Locker} from "../types/locker.sol";
-import {StorageSlot} from "../types/storageSlot.sol";
-import {PoolBalanceUpdate, createPoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
-
-function mevCaptureCallPoints() pure returns (CallPoints memory) {
-    return CallPoints({
-        // to store the initial tick
-        beforeInitializePool: true,
-        afterInitializePool: false,
-        // so that we can prevent swaps that are not made via forward
-        beforeSwap: true,
-        afterSwap: false,
-        // in order to accumulate any collected fees
-        beforeUpdatePosition: true,
-        afterUpdatePosition: false,
-        // in order to accumulate any collected fees
-        beforeCollectFees: true,
-        afterCollectFees: false
-    });
-}
-
-/// @notice Charges additional fees based on the relative size of the priority fee
-contract MEVCapture is IMEVCapture, BaseExtension, BaseForwardee, ExposedStorage {
-    using CoreLib for *;
-    using ExposedStorageLib for *;
-
-    constructor(ICore core) BaseExtension(core) BaseForwardee(core) {}
-
-    function getPoolState(PoolId poolId) private view returns (MEVCapturePoolState state) {
-        assembly ("memory-safe") {
-            state := sload(poolId)
-        }
-    }
-
-    function setPoolState(PoolId poolId, MEVCapturePoolState state) private {
-        assembly ("memory-safe") {
-            sstore(poolId, state)
-        }
-    }
-
-    function getCallPoints() internal pure override returns (CallPoints memory) {
-        return mevCaptureCallPoints();
-    }
-
-    function beforeInitializePool(address, PoolKey memory poolKey, int32 tick)
-        external
-        override(BaseExtension, IExtension)
-        onlyCore
-    {
-        if (poolKey.config.isStableswap()) {
-            revert ConcentratedLiquidityPoolsOnly();
-        }
-        if (poolKey.config.fee() == 0) {
-            // nothing to multiply == no-op extension
-            revert NonzeroFeesOnly();
-        }
-
-        setPoolState({
-            poolId: poolKey.toPoolId(),
-            state: createMEVCapturePoolState({_lastUpdateTime: uint32(block.timestamp), _tickLast: tick})
-        });
-    }
-
-    /// @notice We only allow swapping via forward to this extension
-    function beforeSwap(Locker, PoolKey memory, SwapParameters) external pure override(BaseExtension, IExtension) {
-        revert SwapMustHappenThroughForward();
-    }
-
-    // Allows users to collect pending fees before the first swap in the block happens
-    function beforeCollectFees(Locker, PoolKey memory poolKey, PositionId)
-        external
-        override(BaseExtension, IExtension)
-    {
-        accumulatePoolFees(poolKey);
-    }
-
-    /// Prevents new liquidity from collecting on fees
-    function beforeUpdatePosition(Locker, PoolKey memory poolKey, PositionId, int128)
-        external
-        override(BaseExtension, IExtension)
-    {
-        accumulatePoolFees(poolKey);
-    }
-
-    /// @inheritdoc IMEVCapture
-    function accumulatePoolFees(PoolKey memory poolKey) public {
-        PoolId poolId = poolKey.toPoolId();
-        MEVCapturePoolState state = getPoolState(poolId);
-
-        // the only thing we lock for is accumulating fees when the pool has not been updated in this block
-        if (state.lastUpdateTime() != uint32(block.timestamp)) {
-            address target = address(CORE);
-            assembly ("memory-safe") {
-                let o := mload(0x40)
-                mstore(o, shl(224, 0xf83d08ba))
-                mcopy(add(o, 4), poolKey, 96)
-                mstore(add(o, 100), poolId)
-
-                // If the call failed, pass through the revert
-                if iszero(call(gas(), target, 0, o, 132, 0, 0)) {
-                    returndatacopy(o, 0, returndatasize())
-                    revert(o, returndatasize())
-                }
-            }
-        }
-    }
-
-    function locked_6416899205(uint256) external onlyCore {
-        PoolKey memory poolKey;
-        PoolId poolId;
-        assembly ("memory-safe") {
-            // copy the poolkey out of calldata
-            calldatacopy(poolKey, 36, 96)
-            poolId := calldataload(132)
-        }
-
-        (int32 tick, uint128 fees0, uint128 fees1) = loadCoreState(poolId, poolKey.token0, poolKey.token1);
-
-        if (fees0 != 0 || fees1 != 0) {
-            CORE.accumulateAsFees(poolKey, fees0, fees1);
-            unchecked {
-                CORE.updateSavedBalances(
-                    poolKey.token0,
-                    poolKey.token1,
-                    PoolId.unwrap(poolId),
-                    -int256(uint256(fees0)),
-                    -int256(uint256(fees1))
-                );
-            }
-        }
-
-        setPoolState({
-            poolId: poolId,
-            state: createMEVCapturePoolState({_lastUpdateTime: uint32(block.timestamp), _tickLast: tick})
-        });
-    }
-
-    function loadCoreState(PoolId poolId, address token0, address token1)
-        private
-        view
-        returns (int32 tick, uint128 fees0, uint128 fees1)
-    {
-        StorageSlot stateSlot = CoreStorageLayout.poolStateSlot(poolId);
-        StorageSlot feesSlot = CoreStorageLayout.savedBalancesSlot(address(this), token0, token1, PoolId.unwrap(poolId));
-
-        (bytes32 v0, bytes32 v1) = CORE.sload(stateSlot, feesSlot);
-        tick = PoolState.wrap(v0).tick();
-
-        assembly ("memory-safe") {
-            fees0 := shr(128, v1)
-            fees0 := sub(fees0, gt(fees0, 0))
-
-            fees1 := shr(128, shl(128, v1))
-            fees1 := sub(fees1, gt(fees1, 0))
-        }
-    }
-
-    function handleForwardData(Locker, bytes memory data) internal override returns (bytes memory result) {
-        unchecked {
-            (PoolKey memory poolKey, SwapParameters params) = abi.decode(data, (PoolKey, SwapParameters));
-
-            PoolId poolId = poolKey.toPoolId();
-            MEVCapturePoolState state = getPoolState(poolId);
-            uint32 lastUpdateTime = state.lastUpdateTime();
-            int32 tickLast = state.tickLast();
-
-            uint32 currentTime = uint32(block.timestamp);
-
-            int256 saveDelta0;
-            int256 saveDelta1;
-
-            if (lastUpdateTime != currentTime) {
-                (int32 tick, uint128 fees0, uint128 fees1) =
-                    loadCoreState({poolId: poolId, token0: poolKey.token0, token1: poolKey.token1});
-
-                if (fees0 != 0 || fees1 != 0) {
-                    CORE.accumulateAsFees(poolKey, fees0, fees1);
-                    // never overflows int256 container
-                    saveDelta0 -= int256(uint256(fees0));
-                    saveDelta1 -= int256(uint256(fees1));
-                }
-
-                tickLast = tick;
-                setPoolState({
-                    poolId: poolId,
-                    state: createMEVCapturePoolState({_lastUpdateTime: currentTime, _tickLast: tickLast})
-                });
-            }
-
-            (PoolBalanceUpdate balanceUpdate, PoolState stateAfter) = CORE.swap(0, poolKey, params);
-
-            // however many tick spacings were crossed is the fee multiplier
-            uint256 feeMultiplierX64 =
-                (FixedPointMathLib.abs(stateAfter.tick() - tickLast) << 64) / poolKey.config.concentratedTickSpacing();
-            uint64 poolFee = poolKey.config.fee();
-            uint64 additionalFee = uint64(FixedPointMathLib.min(type(uint64).max, (feeMultiplierX64 * poolFee) >> 64));
-
-            if (additionalFee != 0) {
-                if (params.isExactOut()) {
-                    // take an additional fee from the calculated input amount equal to the `additionalFee - poolFee`
-                    if (balanceUpdate.delta0() > 0) {
-                        uint128 inputAmount = uint128(uint256(int256(balanceUpdate.delta0())));
-                        // first remove the fee to get the original input amount before we compute the additional fee
-                        inputAmount -= computeFee(inputAmount, poolFee);
-                        int128 fee = SafeCastLib.toInt128(amountBeforeFee(inputAmount, additionalFee) - inputAmount);
-
-                        saveDelta0 += fee;
-                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0() + fee, balanceUpdate.delta1());
-                    } else if (balanceUpdate.delta1() > 0) {
-                        uint128 inputAmount = uint128(uint256(int256(balanceUpdate.delta1())));
-                        // first remove the fee to get the original input amount before we compute the additional fee
-                        inputAmount -= computeFee(inputAmount, poolFee);
-                        int128 fee = SafeCastLib.toInt128(amountBeforeFee(inputAmount, additionalFee) - inputAmount);
-
-                        saveDelta1 += fee;
-                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0(), balanceUpdate.delta1() + fee);
-                    }
-                } else {
-                    if (balanceUpdate.delta0() < 0) {
-                        uint128 outputAmount = uint128(uint256(-int256(balanceUpdate.delta0())));
-                        int128 fee = SafeCastLib.toInt128(computeFee(outputAmount, additionalFee));
-
-                        saveDelta0 += fee;
-                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0() + fee, balanceUpdate.delta1());
-                    } else if (balanceUpdate.delta1() < 0) {
-                        uint128 outputAmount = uint128(uint256(-int256(balanceUpdate.delta1())));
-                        int128 fee = SafeCastLib.toInt128(computeFee(outputAmount, additionalFee));
-
-                        saveDelta1 += fee;
-                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0(), balanceUpdate.delta1() + fee);
-                    }
-                }
-            }
-
-            if (saveDelta0 != 0 || saveDelta1 != 0) {
-                CORE.updateSavedBalances(poolKey.token0, poolKey.token1, PoolId.unwrap(poolId), saveDelta0, saveDelta1);
-            }
-
-            result = abi.encode(balanceUpdate, stateAfter);
         }
     }
 }
@@ -2251,423 +1488,405 @@ contract Core is ICore, FlashAccountant, ExposedStorage {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {CallPoints} from "../types/callPoints.sol";
-import {PoolKey, PoolConfig} from "../types/poolKey.sol";
-import {PositionId} from "../types/positionId.sol";
-import {ICore, IExtension} from "../interfaces/ICore.sol";
-import {IOracle} from "../interfaces/extensions/IOracle.sol";
-import {CoreLib} from "../libraries/CoreLib.sol";
-import {ExposedStorage} from "../base/ExposedStorage.sol";
-import {BaseExtension} from "../base/BaseExtension.sol";
-import {NATIVE_TOKEN_ADDRESS} from "../math/constants.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {Snapshot, createSnapshot} from "../types/snapshot.sol";
-import {Counts, createCounts} from "../types/counts.sol";
-import {Observation, createObservation} from "../types/observation.sol";
-import {PoolId} from "../types/poolId.sol";
-import {PoolState} from "../types/poolState.sol";
-import {SwapParameters} from "../types/swapParameters.sol";
-import {Locker} from "../types/locker.sol";
+import {OrderKey} from "../types/orderKey.sol";
+import {IBaseNonfungibleToken} from "./IBaseNonfungibleToken.sol";
 
-/// @notice Returns the call points configuration for the Oracle extension
-/// @dev Specifies which hooks the Oracle needs to capture price and liquidity data
-/// @return The call points configuration for Oracle functionality
-function oracleCallPoints() pure returns (CallPoints memory) {
-    return CallPoints({
-        beforeInitializePool: true,
-        afterInitializePool: false,
-        beforeUpdatePosition: true,
-        afterUpdatePosition: false,
-        beforeSwap: true,
-        afterSwap: false,
-        beforeCollectFees: false,
-        afterCollectFees: false
-    });
+/// @title Orders Interface
+/// @notice Interface for managing TWAMM (Time-Weighted Average Market Maker) orders as NFTs
+/// @dev Defines the interface for creating, modifying, and collecting proceeds from long-term orders
+interface IOrders is IBaseNonfungibleToken {
+    /// @notice Thrown when trying to modify an order that has already ended
+    error OrderAlreadyEnded();
+
+    /// @notice Thrown when the calculated sale rate exceeds the maximum allowed
+    error MaxSaleRateExceeded();
+
+    /// @notice Mints a new NFT and creates a TWAMM order
+    /// @param orderKey Key identifying the order parameters
+    /// @param amount Amount of tokens to sell over the order duration
+    /// @param maxSaleRate Maximum acceptable sale rate (for slippage protection)
+    /// @return id The newly minted NFT token ID
+    /// @return saleRate The calculated sale rate for the order
+    function mintAndIncreaseSellAmount(OrderKey memory orderKey, uint112 amount, uint112 maxSaleRate)
+        external
+        payable
+        returns (uint256 id, uint112 saleRate);
+
+    /// @notice Increases the sell amount for an existing TWAMM order
+    /// @param id The NFT token ID representing the order
+    /// @param orderKey Key identifying the order parameters
+    /// @param amount Additional amount of tokens to sell
+    /// @param maxSaleRate Maximum acceptable sale rate (for slippage protection)
+    /// @return saleRate The calculated sale rate for the additional amount
+    function increaseSellAmount(uint256 id, OrderKey memory orderKey, uint128 amount, uint112 maxSaleRate)
+        external
+        payable
+        returns (uint112 saleRate);
+
+    /// @notice Decreases the sale rate for an existing TWAMM order
+    /// @param id The NFT token ID representing the order
+    /// @param orderKey Key identifying the order parameters
+    /// @param saleRateDecrease Amount to decrease the sale rate by
+    /// @param recipient Address to receive the refunded tokens
+    /// @return refund Amount of tokens refunded
+    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease, address recipient)
+        external
+        payable
+        returns (uint112 refund);
+
+    /// @notice Decreases the sale rate for an existing TWAMM order (refund to msg.sender)
+    /// @param id The NFT token ID representing the order
+    /// @param orderKey Key identifying the order parameters
+    /// @param saleRateDecrease Amount to decrease the sale rate by
+    /// @return refund Amount of tokens refunded
+    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease)
+        external
+        payable
+        returns (uint112 refund);
+
+    /// @notice Collects the proceeds from a TWAMM order
+    /// @param id The NFT token ID representing the order
+    /// @param orderKey Key identifying the order parameters
+    /// @param recipient Address to receive the proceeds
+    /// @return proceeds Amount of tokens collected as proceeds
+    function collectProceeds(uint256 id, OrderKey memory orderKey, address recipient)
+        external
+        payable
+        returns (uint128 proceeds);
+
+    /// @notice Collects the proceeds from a TWAMM order (to msg.sender)
+    /// @param id The NFT token ID representing the order
+    /// @param orderKey Key identifying the order parameters
+    /// @return proceeds Amount of tokens collected as proceeds
+    function collectProceeds(uint256 id, OrderKey memory orderKey) external payable returns (uint128 proceeds);
+
+    /// @notice Executes virtual orders and returns current order information
+    /// @dev Updates the order state by executing any pending virtual orders
+    /// @param id The NFT token ID representing the order
+    /// @param orderKey Key identifying the order parameters
+    /// @return saleRate Current sale rate of the order
+    /// @return amountSold Total amount sold so far
+    /// @return remainingSellAmount Amount remaining to be sold
+    /// @return purchasedAmount Amount of tokens purchased (proceeds available)
+    function executeVirtualOrdersAndGetCurrentOrderInfo(uint256 id, OrderKey memory orderKey)
+        external
+        returns (uint112 saleRate, uint256 amountSold, uint256 remainingSellAmount, uint128 purchasedAmount);
 }
 
-/// @notice Converts a logical index to a storage index for circular snapshot array
-/// @dev Because the snapshots array is circular, the storage index of the most recently written snapshot can be any value in [0,c.count).
-///      To simplify the code, we operate on the logical indices, rather than the storage indices.
-///      For logical indices, the most recently written value is always at logicalIndex = c.count-1 and the earliest snapshot is always at logicalIndex = 0.
-/// @param index The index of the most recently written snapshot
-/// @param count The total number of snapshots that have been written
-/// @param logicalIndex The index of the snapshot for which to compute the storage index
-/// @return The storage index corresponding to the logical index
-function logicalIndexToStorageIndex(uint256 index, uint256 count, uint256 logicalIndex) pure returns (uint256) {
-    // We assume index < count and logicalIndex < count
-    unchecked {
-        return (index + 1 + logicalIndex) % count;
-    }
-}
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
 
-/// @title Ekubo Oracle Extension
+import {BasePositions} from "./base/BasePositions.sol";
+import {ICore} from "./interfaces/ICore.sol";
+import {PoolKey} from "./types/poolKey.sol";
+import {computeFee} from "./math/fee.sol";
+
+/// @title Ekubo Protocol Positions
 /// @author Moody Salem <moody@ekubo.org>
-/// @notice Records price and liquidity into accumulators enabling a separate contract to compute a manipulation resistant average price and liquidity
-contract Oracle is IOracle, ExposedStorage, BaseExtension {
-    using CoreLib for ICore;
+/// @notice Tracks liquidity positions in Ekubo Protocol as NFTs
+/// @dev Manages liquidity positions, fee collection, and protocol fees
+contract Positions is BasePositions {
+    /// @notice Protocol fee rate for swaps (as a fraction of 2^64)
+    uint64 public immutable SWAP_PROTOCOL_FEE_X64;
 
-    constructor(ICore core) BaseExtension(core) {}
+    /// @notice Denominator for withdrawal protocol fee calculation
+    uint64 public immutable WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR;
 
-    /// @notice Emits a snapshot event for off-chain indexing
-    /// @dev Uses assembly for gas-efficient event emission
-    /// @param token The token address for the snapshot
-    /// @param snapshot The snapshot that was just written
-    function _emitSnapshotEvent(address token, Snapshot snapshot) private {
-        unchecked {
-            assembly ("memory-safe") {
-                mstore(0, shl(96, token))
-                mstore(20, snapshot)
-                log0(0, 52)
-            }
-        }
-    }
-
-    /// @inheritdoc IOracle
-    function getPoolKey(address token) public view returns (PoolKey memory) {
-        PoolConfig config;
-        assembly ("memory-safe") {
-            config := shl(96, address())
-        }
-        return PoolKey({token0: NATIVE_TOKEN_ADDRESS, token1: token, config: config});
-    }
-
-    /// @notice Returns the call points configuration for this extension
-    /// @dev Overrides the base implementation to return Oracle-specific call points
-    /// @return The call points configuration
-    function getCallPoints() internal pure override returns (CallPoints memory) {
-        return oracleCallPoints();
-    }
-
-    /// @notice Inserts a new snapshot if enough time has passed since the last one
-    /// @dev Only inserts if block.timestamp > lastTimestamp to avoid duplicate snapshots
-    /// @param poolId The unique identifier for the pool
-    /// @param token The token address for the oracle data
-    function maybeInsertSnapshot(PoolId poolId, address token) private {
-        unchecked {
-            Counts c;
-            assembly ("memory-safe") {
-                c := sload(token)
-            }
-
-            uint32 timePassed = uint32(block.timestamp) - c.lastTimestamp();
-            if (timePassed == 0) return;
-
-            uint32 index = c.index();
-
-            // we know count is always g.t. 0 in the places this is called
-            Snapshot last;
-            assembly ("memory-safe") {
-                last := sload(or(shl(32, token), index))
-            }
-
-            PoolState state = CORE.poolState(poolId);
-
-            uint128 liquidity = state.liquidity();
-            uint256 nonZeroLiquidity;
-            assembly ("memory-safe") {
-                nonZeroLiquidity := add(liquidity, iszero(liquidity))
-            }
-
-            Snapshot snapshot = createSnapshot({
-                _timestamp: uint32(block.timestamp),
-                _secondsPerLiquidityCumulative: last.secondsPerLiquidityCumulative()
-                    + uint160(FixedPointMathLib.rawDiv(uint256(timePassed) << 128, nonZeroLiquidity)),
-                _tickCumulative: last.tickCumulative() + int64(uint64(timePassed)) * state.tick()
-            });
-
-            uint32 count = c.count();
-            uint32 capacity = c.capacity();
-
-            bool isLastIndex = index == count - 1;
-            bool incrementCount = isLastIndex && capacity > count;
-
-            if (incrementCount) count++;
-            index = (index + 1) % count;
-            uint32 lastTimestamp = uint32(block.timestamp);
-
-            c = createCounts({_index: index, _count: count, _capacity: capacity, _lastTimestamp: lastTimestamp});
-            assembly ("memory-safe") {
-                sstore(token, c)
-                sstore(or(shl(32, token), index), snapshot)
-            }
-
-            _emitSnapshotEvent(token, snapshot);
-        }
-    }
-
-    /// @notice Called before a pool is initialized to set up Oracle tracking
-    /// @dev Validates pool configuration and initializes the first snapshot
-    function beforeInitializePool(address, PoolKey calldata key, int32)
-        external
-        override(BaseExtension, IExtension)
-        onlyCore
+    /// @notice Constructs the Positions contract
+    /// @param core The core contract instance
+    /// @param owner The owner of the contract (for access control)
+    /// @param _swapProtocolFeeX64 Protocol fee rate for swaps
+    /// @param _withdrawalProtocolFeeDenominator Denominator for withdrawal protocol fee
+    constructor(ICore core, address owner, uint64 _swapProtocolFeeX64, uint64 _withdrawalProtocolFeeDenominator)
+        BasePositions(core, owner)
     {
-        if (key.token0 != NATIVE_TOKEN_ADDRESS) revert PairsWithNativeTokenOnly();
-        if (key.config.fee() != 0) revert FeeMustBeZero();
-        if (!key.config.isFullRange()) revert FullRangePoolOnly();
-
-        address token = key.token1;
-
-        // in case expandCapacity is called before the pool is initialized:
-        //  remember we have the capacity since the snapshot storage has been initialized
-        uint32 lastTimestamp = uint32(block.timestamp);
-
-        Counts c;
-        assembly ("memory-safe") {
-            c := sload(token)
-        }
-
-        c = createCounts({
-            _index: 0,
-            _count: 1,
-            _capacity: uint32(FixedPointMathLib.max(1, c.capacity())),
-            _lastTimestamp: lastTimestamp
-        });
-
-        Snapshot snapshot =
-            createSnapshot({_timestamp: lastTimestamp, _secondsPerLiquidityCumulative: 0, _tickCumulative: 0});
-
-        assembly ("memory-safe") {
-            sstore(token, c)
-            sstore(shl(32, token), snapshot)
-        }
-
-        _emitSnapshotEvent(token, snapshot);
+        SWAP_PROTOCOL_FEE_X64 = _swapProtocolFeeX64;
+        WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR = _withdrawalProtocolFeeDenominator;
     }
 
-    /// @notice Called before a position is updated to capture price/liquidity snapshot
-    /// @dev Inserts a new snapshot if liquidity is changing
-    function beforeUpdatePosition(Locker, PoolKey memory poolKey, PositionId, int128 liquidityDelta)
-        external
-        override(BaseExtension, IExtension)
-        onlyCore
-    {
-        if (liquidityDelta != 0) {
-            maybeInsertSnapshot(poolKey.toPoolId(), poolKey.token1);
-        }
-    }
-
-    /// @notice Called before a swap to capture price/liquidity snapshot
-    /// @dev Inserts a new snapshot if a swap is occurring
-    function beforeSwap(Locker, PoolKey memory poolKey, SwapParameters params)
-        external
-        override(BaseExtension, IExtension)
-        onlyCore
-    {
-        if (params.amount() != 0) {
-            maybeInsertSnapshot(poolKey.toPoolId(), poolKey.token1);
-        }
-    }
-
-    /// @inheritdoc IOracle
-    function expandCapacity(address token, uint32 minCapacity) external returns (uint32 capacity) {
-        Counts c;
-        assembly ("memory-safe") {
-            c := sload(token)
-        }
-
-        if (c.capacity() < minCapacity) {
-            for (uint256 i = c.capacity(); i < minCapacity; i++) {
-                assembly ("memory-safe") {
-                    // Simply initialize the slot, it will be overwritten when the index is reached
-                    sstore(or(shl(32, token), i), 1)
-                }
-            }
-            c = createCounts({
-                _index: c.index(), _count: c.count(), _capacity: minCapacity, _lastTimestamp: c.lastTimestamp()
-            });
-            assembly ("memory-safe") {
-                sstore(token, c)
-            }
-        }
-
-        capacity = c.capacity();
-    }
-
-    /// @notice Searches for the latest snapshot with timestamp <= time within a logical range
-    /// @dev Searches the logical range [min, maxExclusive) for the latest snapshot with timestamp <= time.
-    ///      See logicalIndexToStorageIndex for an explanation of logical indices.
-    ///      We make the assumption that all snapshots for the token were written within (2**32 - 1) seconds of the current block timestamp
-    /// @param c The counts containing metadata about the snapshots array
-    /// @param token The token address to search snapshots for
-    /// @param time The target timestamp to search for
-    /// @param logicalMin The minimum logical index to search from
-    /// @param logicalMaxExclusive The maximum logical index to search to (exclusive)
-    /// @return logicalIndex The logical index of the found snapshot
-    /// @return snapshot The snapshot data at the found index
-    function searchRangeForPrevious(
-        Counts c,
-        address token,
-        uint256 time,
-        uint256 logicalMin,
-        uint256 logicalMaxExclusive
-    ) private view returns (uint256 logicalIndex, Snapshot snapshot) {
-        unchecked {
-            if (logicalMin >= logicalMaxExclusive) {
-                revert NoPreviousSnapshotExists(token, time);
-            }
-
-            uint32 current = uint32(block.timestamp);
-            uint32 targetDiff = current - uint32(time);
-
-            uint256 left = logicalMin;
-            uint256 right = logicalMaxExclusive - 1;
-            while (left < right) {
-                uint256 mid = (left + right + 1) >> 1;
-                uint256 storageIndex = logicalIndexToStorageIndex(c.index(), c.count(), mid);
-                Snapshot midSnapshot;
-                assembly ("memory-safe") {
-                    midSnapshot := sload(or(shl(32, token), storageIndex))
-                }
-                if (current - midSnapshot.timestamp() >= targetDiff) {
-                    left = mid;
-                } else {
-                    right = mid - 1;
-                }
-            }
-
-            uint256 resultIndex = logicalIndexToStorageIndex(c.index(), c.count(), left);
-            assembly ("memory-safe") {
-                snapshot := sload(or(shl(32, token), resultIndex))
-            }
-            if (current - snapshot.timestamp() < targetDiff) {
-                revert NoPreviousSnapshotExists(token, time);
-            }
-            return (left, snapshot);
-        }
-    }
-
-    /// @inheritdoc IOracle
-    function findPreviousSnapshot(address token, uint256 time)
-        public
+    /// @notice Handles protocol fee collection during fee collection
+    /// @dev Implements the abstract method from BasePositions
+    /// @param amount0 The amount of token0 fees collected before protocol fee deduction
+    /// @param amount1 The amount of token1 fees collected before protocol fee deduction
+    /// @return protocolFee0 The amount of token0 protocol fees to collect
+    /// @return protocolFee1 The amount of token1 protocol fees to collect
+    function _computeSwapProtocolFees(PoolKey memory, uint128 amount0, uint128 amount1)
+        internal
         view
-        returns (uint256 count, uint256 logicalIndex, Snapshot snapshot)
+        override
+        returns (uint128 protocolFee0, uint128 protocolFee1)
     {
-        if (time > block.timestamp) revert FutureTime();
-
-        Counts c;
-        assembly ("memory-safe") {
-            c := sload(token)
-        }
-        count = c.count();
-        (logicalIndex, snapshot) = searchRangeForPrevious(c, token, time, 0, count);
-    }
-
-    /// @notice Computes cumulative values at a given time by extrapolating from a previous snapshot
-    /// @dev Uses linear interpolation between snapshots or current pool state for extrapolation
-    /// @param c The counts containing metadata about the snapshots array
-    /// @param token The token address to extrapolate for
-    /// @param atTime The timestamp to extrapolate to
-    /// @param logicalIndex The logical index of the base snapshot
-    /// @param snapshot The base snapshot to extrapolate from
-    /// @return secondsPerLiquidityCumulative The extrapolated seconds per liquidity cumulative
-    /// @return tickCumulative The extrapolated tick cumulative
-    function extrapolateSnapshotInternal(
-        Counts c,
-        address token,
-        uint256 atTime,
-        uint256 logicalIndex,
-        Snapshot snapshot
-    ) private view returns (uint160 secondsPerLiquidityCumulative, int64 tickCumulative) {
-        unchecked {
-            secondsPerLiquidityCumulative = snapshot.secondsPerLiquidityCumulative();
-            tickCumulative = snapshot.tickCumulative();
-            uint32 timePassed = uint32(atTime) - snapshot.timestamp();
-            if (timePassed != 0) {
-                if (logicalIndex == c.count() - 1) {
-                    // Use current pool state.
-                    PoolId poolId = getPoolKey(token).toPoolId();
-                    PoolState state = CORE.poolState(poolId);
-
-                    tickCumulative += int64(state.tick()) * int64(uint64(timePassed));
-                    secondsPerLiquidityCumulative += uint160(
-                        FixedPointMathLib.rawDiv(
-                            uint256(timePassed) << 128, FixedPointMathLib.max(1, state.liquidity())
-                        )
-                    );
-                } else {
-                    // Use the next snapshot.
-                    uint256 logicalIndexNext = logicalIndexToStorageIndex(c.index(), c.count(), logicalIndex + 1);
-                    Snapshot next;
-                    assembly ("memory-safe") {
-                        next := sload(or(shl(32, token), logicalIndexNext))
-                    }
-
-                    uint32 timestampDifference = next.timestamp() - snapshot.timestamp();
-
-                    tickCumulative += int64(
-                        FixedPointMathLib.rawSDiv(
-                            int256(uint256(timePassed)) * (next.tickCumulative() - snapshot.tickCumulative()),
-                            int256(uint256(timestampDifference))
-                        )
-                    );
-                    secondsPerLiquidityCumulative += uint160(
-                        (uint256(timePassed)
-                                * (next.secondsPerLiquidityCumulative() - snapshot.secondsPerLiquidityCumulative()))
-                            / timestampDifference
-                    );
-                }
-            }
+        if (SWAP_PROTOCOL_FEE_X64 != 0) {
+            protocolFee0 = computeFee(amount0, SWAP_PROTOCOL_FEE_X64);
+            protocolFee1 = computeFee(amount1, SWAP_PROTOCOL_FEE_X64);
         }
     }
 
-    /// @inheritdoc IOracle
-    function extrapolateSnapshot(address token, uint256 atTime)
-        public
+    /// @notice Handles protocol fee collection during liquidity withdrawal
+    /// @dev Implements the abstract method from BasePositions
+    /// @param poolKey The pool key for the position
+    /// @param amount0 The amount of token0 being withdrawn before protocol fee deduction
+    /// @param amount1 The amount of token1 being withdrawn before protocol fee deduction
+    /// @return protocolFee0 The amount of token0 protocol fees to collect
+    /// @return protocolFee1 The amount of token1 protocol fees to collect
+    function _computeWithdrawalProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
+        internal
         view
-        returns (uint160 secondsPerLiquidityCumulative, int64 tickCumulative)
+        override
+        returns (uint128 protocolFee0, uint128 protocolFee1)
     {
-        if (atTime > block.timestamp) revert FutureTime();
-
-        Counts c;
-        assembly ("memory-safe") {
-            c := sload(token)
+        uint64 fee = poolKey.config.fee();
+        if (fee != 0 && WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR != 0) {
+            protocolFee0 = computeFee(amount0, fee / WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR);
+            protocolFee1 = computeFee(amount1, fee / WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR);
         }
-        (uint256 logicalIndex, Snapshot snapshot) = searchRangeForPrevious(c, token, atTime, 0, c.count());
-        (secondsPerLiquidityCumulative, tickCumulative) =
-            extrapolateSnapshotInternal(c, token, atTime, logicalIndex, snapshot);
     }
+}
 
-    /// @inheritdoc IOracle
-    function getExtrapolatedSnapshotsForSortedTimestamps(address token, uint256[] memory timestamps)
-        public
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {PoolKey} from "../types/poolKey.sol";
+import {SqrtRatio} from "../types/sqrtRatio.sol";
+import {IBaseNonfungibleToken} from "./IBaseNonfungibleToken.sol";
+
+/// @title Positions Interface
+/// @notice Interface for managing liquidity positions as NFTs in Ekubo Protocol
+/// @dev Defines the interface for depositing, withdrawing, and collecting fees from liquidity positions
+interface IPositions is IBaseNonfungibleToken {
+    /// @notice Thrown when deposit fails due to insufficient liquidity for the given slippage tolerance
+    /// @param liquidity The actual liquidity that would be provided
+    /// @param minLiquidity The minimum liquidity required
+    error DepositFailedDueToSlippage(uint128 liquidity, uint128 minLiquidity);
+
+    /// @notice Thrown when deposit amount would cause overflow
+    error DepositOverflow();
+
+    /// @notice Thrown when the specified withdraw liquidity amount overflows type(int128).max
+    error WithdrawOverflow();
+
+    /// @notice Gets the liquidity, principal amounts, and accumulated fees for a position
+    /// @param id The NFT token ID representing the position
+    /// @param poolKey Pool key identifying the pool
+    /// @param tickLower Lower tick of the price range of the position
+    /// @param tickUpper Upper tick of the price range of the position
+    /// @return liquidity Current liquidity in the position
+    /// @return principal0 Principal amount of token0 in the position
+    /// @return principal1 Principal amount of token1 in the position
+    /// @return fees0 Accumulated fees in token0
+    /// @return fees1 Accumulated fees in token1
+    function getPositionFeesAndLiquidity(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
+        external
         view
-        returns (Observation[] memory observations)
-    {
-        unchecked {
-            if (timestamps.length == 0) revert ZeroTimestampsProvided();
-            uint256 startTime = timestamps[0];
-            uint256 endTime = timestamps[timestamps.length - 1];
-            if (endTime < startTime) revert EndTimeLessThanStartTime();
+        returns (uint128 liquidity, uint128 principal0, uint128 principal1, uint128 fees0, uint128 fees1);
 
-            Counts c;
-            assembly ("memory-safe") {
-                c := sload(token)
-            }
-            (uint256 indexFirst,) = searchRangeForPrevious(c, token, startTime, 0, c.count());
-            (uint256 indexLast,) = searchRangeForPrevious(c, token, endTime, indexFirst, c.count());
+    /// @notice Deposits tokens into a liquidity position
+    /// @param id The NFT token ID representing the position
+    /// @param poolKey Pool key identifying the pool
+    /// @param tickLower Lower tick of the price range of the position
+    /// @param tickUpper Upper tick of the price range of the position
+    /// @param maxAmount0 Maximum amount of token0 to deposit
+    /// @param maxAmount1 Maximum amount of token1 to deposit
+    /// @param minLiquidity Minimum liquidity to receive (for slippage protection)
+    /// @return liquidity Amount of liquidity added to the position
+    /// @return amount0 Actual amount of token0 deposited
+    /// @return amount1 Actual amount of token1 deposited
+    function deposit(
+        uint256 id,
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 maxAmount0,
+        uint128 maxAmount1,
+        uint128 minLiquidity
+    ) external payable returns (uint128 liquidity, uint128 amount0, uint128 amount1);
 
-            observations = new Observation[](timestamps.length);
-            uint256 lastTimestamp;
-            for (uint256 i = 0; i < timestamps.length; i++) {
-                uint256 timestamp = timestamps[i];
+    /// @notice Collects accumulated fees from a position to msg.sender
+    /// @param id The NFT token ID representing the position
+    /// @param poolKey Pool key identifying the pool
+    /// @param tickLower Lower tick of the price range of the position
+    /// @param tickUpper Upper tick of the price range of the position
+    /// @return amount0 Amount of token0 fees collected
+    /// @return amount1 Amount of token1 fees collected
+    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
+        external
+        payable
+        returns (uint128 amount0, uint128 amount1);
 
-                if (timestamp < lastTimestamp) {
-                    revert TimestampsNotSorted();
-                } else if (timestamp > block.timestamp) {
-                    revert FutureTime();
-                }
+    /// @notice Collects accumulated fees from a position to a specified recipient
+    /// @param id The NFT token ID representing the position
+    /// @param poolKey Pool key identifying the pool
+    /// @param tickLower Lower tick of the price range of the position
+    /// @param tickUpper Upper tick of the price range of the position
+    /// @param recipient Address to receive the collected fees
+    /// @return amount0 Amount of token0 fees collected
+    /// @return amount1 Amount of token1 fees collected
+    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, address recipient)
+        external
+        payable
+        returns (uint128 amount0, uint128 amount1);
 
-                (uint256 logicalIndex, Snapshot snapshot) =
-                    searchRangeForPrevious(c, token, timestamp, indexFirst, indexLast + 1);
-                (uint160 spcCumulative, int64 tcCumulative) =
-                    extrapolateSnapshotInternal(c, token, timestamp, logicalIndex, snapshot);
-                observations[i] = createObservation(spcCumulative, tcCumulative);
-                indexFirst = logicalIndex;
-                lastTimestamp = timestamp;
-            }
-        }
-    }
+    /// @notice Withdraws liquidity from a position
+    /// @param id The NFT token ID representing the position
+    /// @param poolKey Pool key identifying the pool
+    /// @param tickLower Lower tick of the price range of the position
+    /// @param tickUpper Upper tick of the price range of the position
+    /// @param liquidity Amount of liquidity to withdraw
+    /// @param recipient Address to receive the withdrawn tokens
+    /// @param withFees Whether to also collect accumulated fees
+    /// @return amount0 Amount of token0 withdrawn
+    /// @return amount1 Amount of token1 withdrawn
+    function withdraw(
+        uint256 id,
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 liquidity,
+        address recipient,
+        bool withFees
+    ) external payable returns (uint128 amount0, uint128 amount1);
+
+    /// @notice Withdraws liquidity from a position to msg.sender with fees
+    /// @param id The NFT token ID representing the position
+    /// @param poolKey Pool key identifying the pool
+    /// @param tickLower Lower tick of the price range of the position
+    /// @param tickUpper Upper tick of the price range of the position
+    /// @param liquidity Amount of liquidity to withdraw
+    /// @return amount0 Amount of token0 withdrawn
+    /// @return amount1 Amount of token1 withdrawn
+    function withdraw(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, uint128 liquidity)
+        external
+        payable
+        returns (uint128 amount0, uint128 amount1);
+
+    /// @notice Initializes a pool if it hasn't been initialized yet
+    /// @param poolKey Pool key identifying the pool
+    /// @param tick Initial tick for the pool if initialization is needed
+    /// @return initialized Whether the pool was initialized by this call
+    /// @return sqrtRatio The sqrt price ratio of the pool (existing or newly set)
+    function maybeInitializePool(PoolKey memory poolKey, int32 tick)
+        external
+        payable
+        returns (bool initialized, SqrtRatio sqrtRatio);
+
+    /// @notice Mints a new NFT and deposits liquidity into it
+    /// @param poolKey Pool key identifying the pool
+    /// @param tickLower Lower tick of the price range of the position
+    /// @param tickUpper Upper tick of the price range of the position
+    /// @param maxAmount0 Maximum amount of token0 to deposit
+    /// @param maxAmount1 Maximum amount of token1 to deposit
+    /// @param minLiquidity Minimum liquidity to receive (for slippage protection)
+    /// @return id The newly minted NFT token ID
+    /// @return liquidity Amount of liquidity added to the position
+    /// @return amount0 Actual amount of token0 deposited
+    /// @return amount1 Actual amount of token1 deposited
+    function mintAndDeposit(
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 maxAmount0,
+        uint128 maxAmount1,
+        uint128 minLiquidity
+    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1);
+
+    /// @notice Mints a new NFT with a specific salt and deposits liquidity into it
+    /// @param salt Salt for deterministic NFT ID generation
+    /// @param poolKey Pool key identifying the pool
+    /// @param tickLower Lower tick of the price range of the position
+    /// @param tickUpper Upper tick of the price range of the position
+    /// @param maxAmount0 Maximum amount of token0 to deposit
+    /// @param maxAmount1 Maximum amount of token1 to deposit
+    /// @param minLiquidity Minimum liquidity to receive (for slippage protection)
+    /// @return id The newly minted NFT token ID
+    /// @return liquidity Amount of liquidity added to the position
+    /// @return amount0 Actual amount of token0 deposited
+    /// @return amount1 Actual amount of token1 deposited
+    function mintAndDepositWithSalt(
+        bytes32 salt,
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 maxAmount0,
+        uint128 maxAmount1,
+        uint128 minLiquidity
+    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1);
+
+    /// @notice Withdraws accumulated protocol fees (only callable by owner)
+    /// @param token0 Address of token0
+    /// @param token1 Address of token1
+    /// @param amount0 Amount of token0 fees to withdraw
+    /// @param amount1 Amount of token1 fees to withdraw
+    /// @param recipient Address to receive the protocol fees
+    function withdrawProtocolFees(address token0, address token1, uint128 amount0, uint128 amount1, address recipient)
+        external
+        payable;
+
+    /// @notice Gets the accumulated protocol fees for a token pair
+    /// @param token0 Address of token0
+    /// @param token1 Address of token1
+    /// @return amount0 Amount of token0 protocol fees
+    /// @return amount1 Amount of token1 protocol fees
+    function getProtocolFees(address token0, address token1) external view returns (uint128 amount0, uint128 amount1);
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {ILocker, IForwardee} from "../IFlashAccountant.sol";
+import {IExtension} from "../ICore.sol";
+import {IExposedStorage} from "../IExposedStorage.sol";
+import {PoolKey} from "../../types/poolKey.sol";
+import {OrderKey} from "../../types/orderKey.sol";
+import {OrderConfig} from "../../types/orderConfig.sol";
+import {PoolId} from "../../types/poolId.sol";
+
+/// @title TWAMM Interface
+/// @notice Interface for the Ekubo TWAMM Extension
+/// @dev Extension for Ekubo Protocol that enables creation of DCA orders that are executed over time
+interface ITWAMM is IExposedStorage, IExtension, ILocker, IForwardee {
+    /// @notice Emitted when an order is updated
+    /// @param owner Address of the order owner
+    /// @param salt Unique salt for the order
+    /// @param orderKey Order key identifying the order
+    /// @param saleRateDelta Change in sale rate applied
+    event OrderUpdated(address owner, bytes32 salt, OrderKey orderKey, int112 saleRateDelta);
+
+    /// @notice Emitted when proceeds are withdrawn from an order
+    /// @param owner Address of the order owner
+    /// @param salt Unique salt for the order
+    /// @param orderKey Order key identifying the order
+    /// @param amount Amount of tokens withdrawn
+    event OrderProceedsWithdrawn(address owner, bytes32 salt, OrderKey orderKey, uint128 amount);
+
+    /// @notice Thrown when the number of orders at a time would overflow
+    error TimeNumOrdersOverflow();
+
+    /// @notice Thrown when tick spacing is not the maximum allowed value
+    error FullRangePoolOnly();
+
+    /// @notice Thrown when trying to modify an order that has already ended
+    error OrderAlreadyEnded();
+
+    /// @notice Thrown when order timestamps are invalid
+    error InvalidTimestamps();
+
+    /// @notice Thrown when sale rate delta exceeds maximum allowed value
+    error MaxSaleRateDeltaPerTime();
+
+    /// @notice Thrown when trying to operate on an uninitialized pool
+    error PoolNotInitialized();
+
+    /// @notice Gets the reward rate inside a time range for a specific token
+    /// @dev Used to calculate how much of the buy token an order has earned
+    /// @param poolId Unique identifier for the pool
+    /// @param config The order config that is being checked
+    /// @return result The reward rate inside the specified range
+    function getRewardRateInside(PoolId poolId, OrderConfig config) external view returns (uint256 result);
+
+    /// @notice Locks core and executes virtual orders for the given pool key
+    /// @dev The pool key must use this extension, which is checked in the locked callback
+    /// @param poolKey Pool key identifying the pool
+    function lockAndExecuteVirtualOrders(PoolKey memory poolKey) external;
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
@@ -3338,6 +2557,1033 @@ contract TWAMM is ITWAMM, ExposedStorage, BaseExtension, BaseForwardee {
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity ^0.8.30;
+
+import {ICore, PoolKey, PositionId, CallPoints} from "../interfaces/ICore.sol";
+import {IMEVCapture} from "../interfaces/extensions/IMEVCapture.sol";
+import {IExtension} from "../interfaces/ICore.sol";
+import {BaseExtension} from "../base/BaseExtension.sol";
+import {BaseForwardee} from "../base/BaseForwardee.sol";
+import {amountBeforeFee, computeFee} from "../math/fee.sol";
+import {ExposedStorage} from "../base/ExposedStorage.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+import {CoreLib} from "../libraries/CoreLib.sol";
+import {ExposedStorageLib} from "../libraries/ExposedStorageLib.sol";
+import {CoreStorageLayout} from "../libraries/CoreStorageLayout.sol";
+import {PoolState} from "../types/poolState.sol";
+import {MEVCapturePoolState, createMEVCapturePoolState} from "../types/mevCapturePoolState.sol";
+import {SwapParameters} from "../types/swapParameters.sol";
+import {PoolId} from "../types/poolId.sol";
+import {Locker} from "../types/locker.sol";
+import {StorageSlot} from "../types/storageSlot.sol";
+import {PoolBalanceUpdate, createPoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
+
+function mevCaptureCallPoints() pure returns (CallPoints memory) {
+    return CallPoints({
+        // to store the initial tick
+        beforeInitializePool: true,
+        afterInitializePool: false,
+        // so that we can prevent swaps that are not made via forward
+        beforeSwap: true,
+        afterSwap: false,
+        // in order to accumulate any collected fees
+        beforeUpdatePosition: true,
+        afterUpdatePosition: false,
+        // in order to accumulate any collected fees
+        beforeCollectFees: true,
+        afterCollectFees: false
+    });
+}
+
+/// @notice Charges additional fees based on the relative size of the priority fee
+contract MEVCapture is IMEVCapture, BaseExtension, BaseForwardee, ExposedStorage {
+    using CoreLib for *;
+    using ExposedStorageLib for *;
+
+    constructor(ICore core) BaseExtension(core) BaseForwardee(core) {}
+
+    function getPoolState(PoolId poolId) private view returns (MEVCapturePoolState state) {
+        assembly ("memory-safe") {
+            state := sload(poolId)
+        }
+    }
+
+    function setPoolState(PoolId poolId, MEVCapturePoolState state) private {
+        assembly ("memory-safe") {
+            sstore(poolId, state)
+        }
+    }
+
+    function getCallPoints() internal pure override returns (CallPoints memory) {
+        return mevCaptureCallPoints();
+    }
+
+    function beforeInitializePool(address, PoolKey memory poolKey, int32 tick)
+        external
+        override(BaseExtension, IExtension)
+        onlyCore
+    {
+        if (poolKey.config.isStableswap()) {
+            revert ConcentratedLiquidityPoolsOnly();
+        }
+        if (poolKey.config.fee() == 0) {
+            // nothing to multiply == no-op extension
+            revert NonzeroFeesOnly();
+        }
+
+        setPoolState({
+            poolId: poolKey.toPoolId(),
+            state: createMEVCapturePoolState({_lastUpdateTime: uint32(block.timestamp), _tickLast: tick})
+        });
+    }
+
+    /// @notice We only allow swapping via forward to this extension
+    function beforeSwap(Locker, PoolKey memory, SwapParameters) external pure override(BaseExtension, IExtension) {
+        revert SwapMustHappenThroughForward();
+    }
+
+    // Allows users to collect pending fees before the first swap in the block happens
+    function beforeCollectFees(Locker, PoolKey memory poolKey, PositionId)
+        external
+        override(BaseExtension, IExtension)
+    {
+        accumulatePoolFees(poolKey);
+    }
+
+    /// Prevents new liquidity from collecting on fees
+    function beforeUpdatePosition(Locker, PoolKey memory poolKey, PositionId, int128)
+        external
+        override(BaseExtension, IExtension)
+    {
+        accumulatePoolFees(poolKey);
+    }
+
+    /// @inheritdoc IMEVCapture
+    function accumulatePoolFees(PoolKey memory poolKey) public {
+        PoolId poolId = poolKey.toPoolId();
+        MEVCapturePoolState state = getPoolState(poolId);
+
+        // the only thing we lock for is accumulating fees when the pool has not been updated in this block
+        if (state.lastUpdateTime() != uint32(block.timestamp)) {
+            address target = address(CORE);
+            assembly ("memory-safe") {
+                let o := mload(0x40)
+                mstore(o, shl(224, 0xf83d08ba))
+                mcopy(add(o, 4), poolKey, 96)
+                mstore(add(o, 100), poolId)
+
+                // If the call failed, pass through the revert
+                if iszero(call(gas(), target, 0, o, 132, 0, 0)) {
+                    returndatacopy(o, 0, returndatasize())
+                    revert(o, returndatasize())
+                }
+            }
+        }
+    }
+
+    function locked_6416899205(uint256) external onlyCore {
+        PoolKey memory poolKey;
+        PoolId poolId;
+        assembly ("memory-safe") {
+            // copy the poolkey out of calldata
+            calldatacopy(poolKey, 36, 96)
+            poolId := calldataload(132)
+        }
+
+        (int32 tick, uint128 fees0, uint128 fees1) = loadCoreState(poolId, poolKey.token0, poolKey.token1);
+
+        if (fees0 != 0 || fees1 != 0) {
+            CORE.accumulateAsFees(poolKey, fees0, fees1);
+            unchecked {
+                CORE.updateSavedBalances(
+                    poolKey.token0,
+                    poolKey.token1,
+                    PoolId.unwrap(poolId),
+                    -int256(uint256(fees0)),
+                    -int256(uint256(fees1))
+                );
+            }
+        }
+
+        setPoolState({
+            poolId: poolId,
+            state: createMEVCapturePoolState({_lastUpdateTime: uint32(block.timestamp), _tickLast: tick})
+        });
+    }
+
+    function loadCoreState(PoolId poolId, address token0, address token1)
+        private
+        view
+        returns (int32 tick, uint128 fees0, uint128 fees1)
+    {
+        StorageSlot stateSlot = CoreStorageLayout.poolStateSlot(poolId);
+        StorageSlot feesSlot = CoreStorageLayout.savedBalancesSlot(address(this), token0, token1, PoolId.unwrap(poolId));
+
+        (bytes32 v0, bytes32 v1) = CORE.sload(stateSlot, feesSlot);
+        tick = PoolState.wrap(v0).tick();
+
+        assembly ("memory-safe") {
+            fees0 := shr(128, v1)
+            fees0 := sub(fees0, gt(fees0, 0))
+
+            fees1 := shr(128, shl(128, v1))
+            fees1 := sub(fees1, gt(fees1, 0))
+        }
+    }
+
+    function handleForwardData(Locker, bytes memory data) internal override returns (bytes memory result) {
+        unchecked {
+            (PoolKey memory poolKey, SwapParameters params) = abi.decode(data, (PoolKey, SwapParameters));
+
+            PoolId poolId = poolKey.toPoolId();
+            MEVCapturePoolState state = getPoolState(poolId);
+            uint32 lastUpdateTime = state.lastUpdateTime();
+            int32 tickLast = state.tickLast();
+
+            uint32 currentTime = uint32(block.timestamp);
+
+            int256 saveDelta0;
+            int256 saveDelta1;
+
+            if (lastUpdateTime != currentTime) {
+                (int32 tick, uint128 fees0, uint128 fees1) =
+                    loadCoreState({poolId: poolId, token0: poolKey.token0, token1: poolKey.token1});
+
+                if (fees0 != 0 || fees1 != 0) {
+                    CORE.accumulateAsFees(poolKey, fees0, fees1);
+                    // never overflows int256 container
+                    saveDelta0 -= int256(uint256(fees0));
+                    saveDelta1 -= int256(uint256(fees1));
+                }
+
+                tickLast = tick;
+                setPoolState({
+                    poolId: poolId,
+                    state: createMEVCapturePoolState({_lastUpdateTime: currentTime, _tickLast: tickLast})
+                });
+            }
+
+            (PoolBalanceUpdate balanceUpdate, PoolState stateAfter) = CORE.swap(0, poolKey, params);
+
+            // however many tick spacings were crossed is the fee multiplier
+            uint256 feeMultiplierX64 =
+                (FixedPointMathLib.abs(stateAfter.tick() - tickLast) << 64) / poolKey.config.concentratedTickSpacing();
+            uint64 poolFee = poolKey.config.fee();
+            uint64 additionalFee = uint64(FixedPointMathLib.min(type(uint64).max, (feeMultiplierX64 * poolFee) >> 64));
+
+            if (additionalFee != 0) {
+                if (params.isExactOut()) {
+                    // take an additional fee from the calculated input amount equal to the `additionalFee - poolFee`
+                    if (balanceUpdate.delta0() > 0) {
+                        uint128 inputAmount = uint128(uint256(int256(balanceUpdate.delta0())));
+                        // first remove the fee to get the original input amount before we compute the additional fee
+                        inputAmount -= computeFee(inputAmount, poolFee);
+                        int128 fee = SafeCastLib.toInt128(amountBeforeFee(inputAmount, additionalFee) - inputAmount);
+
+                        saveDelta0 += fee;
+                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0() + fee, balanceUpdate.delta1());
+                    } else if (balanceUpdate.delta1() > 0) {
+                        uint128 inputAmount = uint128(uint256(int256(balanceUpdate.delta1())));
+                        // first remove the fee to get the original input amount before we compute the additional fee
+                        inputAmount -= computeFee(inputAmount, poolFee);
+                        int128 fee = SafeCastLib.toInt128(amountBeforeFee(inputAmount, additionalFee) - inputAmount);
+
+                        saveDelta1 += fee;
+                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0(), balanceUpdate.delta1() + fee);
+                    }
+                } else {
+                    if (balanceUpdate.delta0() < 0) {
+                        uint128 outputAmount = uint128(uint256(-int256(balanceUpdate.delta0())));
+                        int128 fee = SafeCastLib.toInt128(computeFee(outputAmount, additionalFee));
+
+                        saveDelta0 += fee;
+                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0() + fee, balanceUpdate.delta1());
+                    } else if (balanceUpdate.delta1() < 0) {
+                        uint128 outputAmount = uint128(uint256(-int256(balanceUpdate.delta1())));
+                        int128 fee = SafeCastLib.toInt128(computeFee(outputAmount, additionalFee));
+
+                        saveDelta1 += fee;
+                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0(), balanceUpdate.delta1() + fee);
+                    }
+                }
+            }
+
+            if (saveDelta0 != 0 || saveDelta1 != 0) {
+                CORE.updateSavedBalances(poolKey.token0, poolKey.token1, PoolId.unwrap(poolId), saveDelta0, saveDelta1);
+            }
+
+            result = abi.encode(balanceUpdate, stateAfter);
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {CallPoints} from "../types/callPoints.sol";
+import {PoolKey, PoolConfig} from "../types/poolKey.sol";
+import {PositionId} from "../types/positionId.sol";
+import {ICore, IExtension} from "../interfaces/ICore.sol";
+import {IOracle} from "../interfaces/extensions/IOracle.sol";
+import {CoreLib} from "../libraries/CoreLib.sol";
+import {ExposedStorage} from "../base/ExposedStorage.sol";
+import {BaseExtension} from "../base/BaseExtension.sol";
+import {NATIVE_TOKEN_ADDRESS} from "../math/constants.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {Snapshot, createSnapshot} from "../types/snapshot.sol";
+import {Counts, createCounts} from "../types/counts.sol";
+import {Observation, createObservation} from "../types/observation.sol";
+import {PoolId} from "../types/poolId.sol";
+import {PoolState} from "../types/poolState.sol";
+import {SwapParameters} from "../types/swapParameters.sol";
+import {Locker} from "../types/locker.sol";
+
+/// @notice Returns the call points configuration for the Oracle extension
+/// @dev Specifies which hooks the Oracle needs to capture price and liquidity data
+/// @return The call points configuration for Oracle functionality
+function oracleCallPoints() pure returns (CallPoints memory) {
+    return CallPoints({
+        beforeInitializePool: true,
+        afterInitializePool: false,
+        beforeUpdatePosition: true,
+        afterUpdatePosition: false,
+        beforeSwap: true,
+        afterSwap: false,
+        beforeCollectFees: false,
+        afterCollectFees: false
+    });
+}
+
+/// @notice Converts a logical index to a storage index for circular snapshot array
+/// @dev Because the snapshots array is circular, the storage index of the most recently written snapshot can be any value in [0,c.count).
+///      To simplify the code, we operate on the logical indices, rather than the storage indices.
+///      For logical indices, the most recently written value is always at logicalIndex = c.count-1 and the earliest snapshot is always at logicalIndex = 0.
+/// @param index The index of the most recently written snapshot
+/// @param count The total number of snapshots that have been written
+/// @param logicalIndex The index of the snapshot for which to compute the storage index
+/// @return The storage index corresponding to the logical index
+function logicalIndexToStorageIndex(uint256 index, uint256 count, uint256 logicalIndex) pure returns (uint256) {
+    // We assume index < count and logicalIndex < count
+    unchecked {
+        return (index + 1 + logicalIndex) % count;
+    }
+}
+
+/// @title Ekubo Oracle Extension
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Records price and liquidity into accumulators enabling a separate contract to compute a manipulation resistant average price and liquidity
+contract Oracle is IOracle, ExposedStorage, BaseExtension {
+    using CoreLib for ICore;
+
+    constructor(ICore core) BaseExtension(core) {}
+
+    /// @notice Emits a snapshot event for off-chain indexing
+    /// @dev Uses assembly for gas-efficient event emission
+    /// @param token The token address for the snapshot
+    /// @param snapshot The snapshot that was just written
+    function _emitSnapshotEvent(address token, Snapshot snapshot) private {
+        unchecked {
+            assembly ("memory-safe") {
+                mstore(0, shl(96, token))
+                mstore(20, snapshot)
+                log0(0, 52)
+            }
+        }
+    }
+
+    /// @inheritdoc IOracle
+    function getPoolKey(address token) public view returns (PoolKey memory) {
+        PoolConfig config;
+        assembly ("memory-safe") {
+            config := shl(96, address())
+        }
+        return PoolKey({token0: NATIVE_TOKEN_ADDRESS, token1: token, config: config});
+    }
+
+    /// @notice Returns the call points configuration for this extension
+    /// @dev Overrides the base implementation to return Oracle-specific call points
+    /// @return The call points configuration
+    function getCallPoints() internal pure override returns (CallPoints memory) {
+        return oracleCallPoints();
+    }
+
+    /// @notice Inserts a new snapshot if enough time has passed since the last one
+    /// @dev Only inserts if block.timestamp > lastTimestamp to avoid duplicate snapshots
+    /// @param poolId The unique identifier for the pool
+    /// @param token The token address for the oracle data
+    function maybeInsertSnapshot(PoolId poolId, address token) private {
+        unchecked {
+            Counts c;
+            assembly ("memory-safe") {
+                c := sload(token)
+            }
+
+            uint32 timePassed = uint32(block.timestamp) - c.lastTimestamp();
+            if (timePassed == 0) return;
+
+            uint32 index = c.index();
+
+            // we know count is always g.t. 0 in the places this is called
+            Snapshot last;
+            assembly ("memory-safe") {
+                last := sload(or(shl(32, token), index))
+            }
+
+            PoolState state = CORE.poolState(poolId);
+
+            uint128 liquidity = state.liquidity();
+            uint256 nonZeroLiquidity;
+            assembly ("memory-safe") {
+                nonZeroLiquidity := add(liquidity, iszero(liquidity))
+            }
+
+            Snapshot snapshot = createSnapshot({
+                _timestamp: uint32(block.timestamp),
+                _secondsPerLiquidityCumulative: last.secondsPerLiquidityCumulative()
+                    + uint160(FixedPointMathLib.rawDiv(uint256(timePassed) << 128, nonZeroLiquidity)),
+                _tickCumulative: last.tickCumulative() + int64(uint64(timePassed)) * state.tick()
+            });
+
+            uint32 count = c.count();
+            uint32 capacity = c.capacity();
+
+            bool isLastIndex = index == count - 1;
+            bool incrementCount = isLastIndex && capacity > count;
+
+            if (incrementCount) count++;
+            index = (index + 1) % count;
+            uint32 lastTimestamp = uint32(block.timestamp);
+
+            c = createCounts({_index: index, _count: count, _capacity: capacity, _lastTimestamp: lastTimestamp});
+            assembly ("memory-safe") {
+                sstore(token, c)
+                sstore(or(shl(32, token), index), snapshot)
+            }
+
+            _emitSnapshotEvent(token, snapshot);
+        }
+    }
+
+    /// @notice Called before a pool is initialized to set up Oracle tracking
+    /// @dev Validates pool configuration and initializes the first snapshot
+    function beforeInitializePool(address, PoolKey calldata key, int32)
+        external
+        override(BaseExtension, IExtension)
+        onlyCore
+    {
+        if (key.token0 != NATIVE_TOKEN_ADDRESS) revert PairsWithNativeTokenOnly();
+        if (key.config.fee() != 0) revert FeeMustBeZero();
+        if (!key.config.isFullRange()) revert FullRangePoolOnly();
+
+        address token = key.token1;
+
+        // in case expandCapacity is called before the pool is initialized:
+        //  remember we have the capacity since the snapshot storage has been initialized
+        uint32 lastTimestamp = uint32(block.timestamp);
+
+        Counts c;
+        assembly ("memory-safe") {
+            c := sload(token)
+        }
+
+        c = createCounts({
+            _index: 0,
+            _count: 1,
+            _capacity: uint32(FixedPointMathLib.max(1, c.capacity())),
+            _lastTimestamp: lastTimestamp
+        });
+
+        Snapshot snapshot =
+            createSnapshot({_timestamp: lastTimestamp, _secondsPerLiquidityCumulative: 0, _tickCumulative: 0});
+
+        assembly ("memory-safe") {
+            sstore(token, c)
+            sstore(shl(32, token), snapshot)
+        }
+
+        _emitSnapshotEvent(token, snapshot);
+    }
+
+    /// @notice Called before a position is updated to capture price/liquidity snapshot
+    /// @dev Inserts a new snapshot if liquidity is changing
+    function beforeUpdatePosition(Locker, PoolKey memory poolKey, PositionId, int128 liquidityDelta)
+        external
+        override(BaseExtension, IExtension)
+        onlyCore
+    {
+        if (liquidityDelta != 0) {
+            maybeInsertSnapshot(poolKey.toPoolId(), poolKey.token1);
+        }
+    }
+
+    /// @notice Called before a swap to capture price/liquidity snapshot
+    /// @dev Inserts a new snapshot if a swap is occurring
+    function beforeSwap(Locker, PoolKey memory poolKey, SwapParameters params)
+        external
+        override(BaseExtension, IExtension)
+        onlyCore
+    {
+        if (params.amount() != 0) {
+            maybeInsertSnapshot(poolKey.toPoolId(), poolKey.token1);
+        }
+    }
+
+    /// @inheritdoc IOracle
+    function expandCapacity(address token, uint32 minCapacity) external returns (uint32 capacity) {
+        Counts c;
+        assembly ("memory-safe") {
+            c := sload(token)
+        }
+
+        if (c.capacity() < minCapacity) {
+            for (uint256 i = c.capacity(); i < minCapacity; i++) {
+                assembly ("memory-safe") {
+                    // Simply initialize the slot, it will be overwritten when the index is reached
+                    sstore(or(shl(32, token), i), 1)
+                }
+            }
+            c = createCounts({
+                _index: c.index(), _count: c.count(), _capacity: minCapacity, _lastTimestamp: c.lastTimestamp()
+            });
+            assembly ("memory-safe") {
+                sstore(token, c)
+            }
+        }
+
+        capacity = c.capacity();
+    }
+
+    /// @notice Searches for the latest snapshot with timestamp <= time within a logical range
+    /// @dev Searches the logical range [min, maxExclusive) for the latest snapshot with timestamp <= time.
+    ///      See logicalIndexToStorageIndex for an explanation of logical indices.
+    ///      We make the assumption that all snapshots for the token were written within (2**32 - 1) seconds of the current block timestamp
+    /// @param c The counts containing metadata about the snapshots array
+    /// @param token The token address to search snapshots for
+    /// @param time The target timestamp to search for
+    /// @param logicalMin The minimum logical index to search from
+    /// @param logicalMaxExclusive The maximum logical index to search to (exclusive)
+    /// @return logicalIndex The logical index of the found snapshot
+    /// @return snapshot The snapshot data at the found index
+    function searchRangeForPrevious(
+        Counts c,
+        address token,
+        uint256 time,
+        uint256 logicalMin,
+        uint256 logicalMaxExclusive
+    ) private view returns (uint256 logicalIndex, Snapshot snapshot) {
+        unchecked {
+            if (logicalMin >= logicalMaxExclusive) {
+                revert NoPreviousSnapshotExists(token, time);
+            }
+
+            uint32 current = uint32(block.timestamp);
+            uint32 targetDiff = current - uint32(time);
+
+            uint256 left = logicalMin;
+            uint256 right = logicalMaxExclusive - 1;
+            while (left < right) {
+                uint256 mid = (left + right + 1) >> 1;
+                uint256 storageIndex = logicalIndexToStorageIndex(c.index(), c.count(), mid);
+                Snapshot midSnapshot;
+                assembly ("memory-safe") {
+                    midSnapshot := sload(or(shl(32, token), storageIndex))
+                }
+                if (current - midSnapshot.timestamp() >= targetDiff) {
+                    left = mid;
+                } else {
+                    right = mid - 1;
+                }
+            }
+
+            uint256 resultIndex = logicalIndexToStorageIndex(c.index(), c.count(), left);
+            assembly ("memory-safe") {
+                snapshot := sload(or(shl(32, token), resultIndex))
+            }
+            if (current - snapshot.timestamp() < targetDiff) {
+                revert NoPreviousSnapshotExists(token, time);
+            }
+            return (left, snapshot);
+        }
+    }
+
+    /// @inheritdoc IOracle
+    function findPreviousSnapshot(address token, uint256 time)
+        public
+        view
+        returns (uint256 count, uint256 logicalIndex, Snapshot snapshot)
+    {
+        if (time > block.timestamp) revert FutureTime();
+
+        Counts c;
+        assembly ("memory-safe") {
+            c := sload(token)
+        }
+        count = c.count();
+        (logicalIndex, snapshot) = searchRangeForPrevious(c, token, time, 0, count);
+    }
+
+    /// @notice Computes cumulative values at a given time by extrapolating from a previous snapshot
+    /// @dev Uses linear interpolation between snapshots or current pool state for extrapolation
+    /// @param c The counts containing metadata about the snapshots array
+    /// @param token The token address to extrapolate for
+    /// @param atTime The timestamp to extrapolate to
+    /// @param logicalIndex The logical index of the base snapshot
+    /// @param snapshot The base snapshot to extrapolate from
+    /// @return secondsPerLiquidityCumulative The extrapolated seconds per liquidity cumulative
+    /// @return tickCumulative The extrapolated tick cumulative
+    function extrapolateSnapshotInternal(
+        Counts c,
+        address token,
+        uint256 atTime,
+        uint256 logicalIndex,
+        Snapshot snapshot
+    ) private view returns (uint160 secondsPerLiquidityCumulative, int64 tickCumulative) {
+        unchecked {
+            secondsPerLiquidityCumulative = snapshot.secondsPerLiquidityCumulative();
+            tickCumulative = snapshot.tickCumulative();
+            uint32 timePassed = uint32(atTime) - snapshot.timestamp();
+            if (timePassed != 0) {
+                if (logicalIndex == c.count() - 1) {
+                    // Use current pool state.
+                    PoolId poolId = getPoolKey(token).toPoolId();
+                    PoolState state = CORE.poolState(poolId);
+
+                    tickCumulative += int64(state.tick()) * int64(uint64(timePassed));
+                    secondsPerLiquidityCumulative += uint160(
+                        FixedPointMathLib.rawDiv(
+                            uint256(timePassed) << 128, FixedPointMathLib.max(1, state.liquidity())
+                        )
+                    );
+                } else {
+                    // Use the next snapshot.
+                    uint256 logicalIndexNext = logicalIndexToStorageIndex(c.index(), c.count(), logicalIndex + 1);
+                    Snapshot next;
+                    assembly ("memory-safe") {
+                        next := sload(or(shl(32, token), logicalIndexNext))
+                    }
+
+                    uint32 timestampDifference = next.timestamp() - snapshot.timestamp();
+
+                    tickCumulative += int64(
+                        FixedPointMathLib.rawSDiv(
+                            int256(uint256(timePassed)) * (next.tickCumulative() - snapshot.tickCumulative()),
+                            int256(uint256(timestampDifference))
+                        )
+                    );
+                    secondsPerLiquidityCumulative += uint160(
+                        (uint256(timePassed)
+                                * (next.secondsPerLiquidityCumulative() - snapshot.secondsPerLiquidityCumulative()))
+                            / timestampDifference
+                    );
+                }
+            }
+        }
+    }
+
+    /// @inheritdoc IOracle
+    function extrapolateSnapshot(address token, uint256 atTime)
+        public
+        view
+        returns (uint160 secondsPerLiquidityCumulative, int64 tickCumulative)
+    {
+        if (atTime > block.timestamp) revert FutureTime();
+
+        Counts c;
+        assembly ("memory-safe") {
+            c := sload(token)
+        }
+        (uint256 logicalIndex, Snapshot snapshot) = searchRangeForPrevious(c, token, atTime, 0, c.count());
+        (secondsPerLiquidityCumulative, tickCumulative) =
+            extrapolateSnapshotInternal(c, token, atTime, logicalIndex, snapshot);
+    }
+
+    /// @inheritdoc IOracle
+    function getExtrapolatedSnapshotsForSortedTimestamps(address token, uint256[] memory timestamps)
+        public
+        view
+        returns (Observation[] memory observations)
+    {
+        unchecked {
+            if (timestamps.length == 0) revert ZeroTimestampsProvided();
+            uint256 startTime = timestamps[0];
+            uint256 endTime = timestamps[timestamps.length - 1];
+            if (endTime < startTime) revert EndTimeLessThanStartTime();
+
+            Counts c;
+            assembly ("memory-safe") {
+                c := sload(token)
+            }
+            (uint256 indexFirst,) = searchRangeForPrevious(c, token, startTime, 0, c.count());
+            (uint256 indexLast,) = searchRangeForPrevious(c, token, endTime, indexFirst, c.count());
+
+            observations = new Observation[](timestamps.length);
+            uint256 lastTimestamp;
+            for (uint256 i = 0; i < timestamps.length; i++) {
+                uint256 timestamp = timestamps[i];
+
+                if (timestamp < lastTimestamp) {
+                    revert TimestampsNotSorted();
+                } else if (timestamp > block.timestamp) {
+                    revert FutureTime();
+                }
+
+                (uint256 logicalIndex, Snapshot snapshot) =
+                    searchRangeForPrevious(c, token, timestamp, indexFirst, indexLast + 1);
+                (uint160 spcCumulative, int64 tcCumulative) =
+                    extrapolateSnapshotInternal(c, token, timestamp, logicalIndex, snapshot);
+                observations[i] = createObservation(spcCumulative, tcCumulative);
+                indexFirst = logicalIndex;
+                lastTimestamp = timestamp;
+            }
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {BaseLocker} from "./BaseLocker.sol";
+import {UsesCore} from "./UsesCore.sol";
+import {ICore} from "../interfaces/ICore.sol";
+import {IPositions} from "../interfaces/IPositions.sol";
+import {CoreLib} from "../libraries/CoreLib.sol";
+import {FlashAccountantLib} from "../libraries/FlashAccountantLib.sol";
+import {PoolKey} from "../types/poolKey.sol";
+import {PositionId, createPositionId} from "../types/positionId.sol";
+import {FeesPerLiquidity} from "../types/feesPerLiquidity.sol";
+import {Position} from "../types/position.sol";
+import {tickToSqrtRatio} from "../math/ticks.sol";
+import {maxLiquidity, liquidityDeltaToAmountDelta} from "../math/liquidity.sol";
+import {PayableMulticallable} from "./PayableMulticallable.sol";
+import {SqrtRatio} from "../types/sqrtRatio.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {BaseNonfungibleToken} from "./BaseNonfungibleToken.sol";
+import {NATIVE_TOKEN_ADDRESS} from "../math/constants.sol";
+import {PoolId} from "../types/poolId.sol";
+import {PoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
+
+/// @title Base Positions Contract
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Abstract base contract for tracking liquidity positions in Ekubo Protocol as NFTs
+/// @dev Provides core position management functionality with abstract protocol fee collection methods
+abstract contract BasePositions is IPositions, UsesCore, PayableMulticallable, BaseLocker, BaseNonfungibleToken {
+    using CoreLib for *;
+    using FlashAccountantLib for *;
+
+    /// @notice Constructs the BasePositions contract
+    /// @param core The core contract instance
+    /// @param owner The owner of the contract (for access control)
+    constructor(ICore core, address owner) BaseNonfungibleToken(owner) BaseLocker(core) UsesCore(core) {}
+
+    uint256 private constant CALL_TYPE_DEPOSIT = 0;
+    uint256 private constant CALL_TYPE_WITHDRAW = 1;
+    uint256 private constant CALL_TYPE_WITHDRAW_PROTOCOL_FEES = 2;
+
+    /// @inheritdoc IPositions
+    function getPositionFeesAndLiquidity(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
+        external
+        view
+        returns (uint128 liquidity, uint128 principal0, uint128 principal1, uint128 fees0, uint128 fees1)
+    {
+        PoolId poolId = poolKey.toPoolId();
+        SqrtRatio sqrtRatio = CORE.poolState(poolId).sqrtRatio();
+        PositionId positionId =
+            createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper});
+        Position memory position = CORE.poolPositions(poolId, address(this), positionId);
+
+        liquidity = position.liquidity;
+
+        // the sqrt ratio may be 0 (because the pool is uninitialized) but this is
+        // fine since amount0Delta isn't called with it in this case
+        (int128 delta0, int128 delta1) = liquidityDeltaToAmountDelta(
+            sqrtRatio, -SafeCastLib.toInt128(position.liquidity), tickToSqrtRatio(tickLower), tickToSqrtRatio(tickUpper)
+        );
+
+        (principal0, principal1) = (uint128(-delta0), uint128(-delta1));
+
+        FeesPerLiquidity memory feesPerLiquidityInside = poolKey.config.isFullRange()
+            ? CORE.getPoolFeesPerLiquidity(poolId)
+            : CORE.getPoolFeesPerLiquidityInside(poolId, tickLower, tickUpper);
+        (fees0, fees1) = position.fees(feesPerLiquidityInside);
+    }
+
+    /// @inheritdoc IPositions
+    function deposit(
+        uint256 id,
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 maxAmount0,
+        uint128 maxAmount1,
+        uint128 minLiquidity
+    ) public payable authorizedForNft(id) returns (uint128 liquidity, uint128 amount0, uint128 amount1) {
+        SqrtRatio sqrtRatio = CORE.poolState(poolKey.toPoolId()).sqrtRatio();
+
+        liquidity =
+            maxLiquidity(sqrtRatio, tickToSqrtRatio(tickLower), tickToSqrtRatio(tickUpper), maxAmount0, maxAmount1);
+
+        if (liquidity < minLiquidity) {
+            revert DepositFailedDueToSlippage(liquidity, minLiquidity);
+        }
+
+        if (liquidity > uint128(type(int128).max)) {
+            revert DepositOverflow();
+        }
+
+        (amount0, amount1) = abi.decode(
+            lock(abi.encode(CALL_TYPE_DEPOSIT, msg.sender, id, poolKey, tickLower, tickUpper, liquidity)),
+            (uint128, uint128)
+        );
+    }
+
+    /// @inheritdoc IPositions
+    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
+        public
+        payable
+        authorizedForNft(id)
+        returns (uint128 amount0, uint128 amount1)
+    {
+        (amount0, amount1) = collectFees(id, poolKey, tickLower, tickUpper, msg.sender);
+    }
+
+    /// @inheritdoc IPositions
+    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, address recipient)
+        public
+        payable
+        authorizedForNft(id)
+        returns (uint128 amount0, uint128 amount1)
+    {
+        (amount0, amount1) = withdraw(id, poolKey, tickLower, tickUpper, 0, recipient, true);
+    }
+
+    /// @inheritdoc IPositions
+    function withdraw(
+        uint256 id,
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 liquidity,
+        address recipient,
+        bool withFees
+    ) public payable authorizedForNft(id) returns (uint128 amount0, uint128 amount1) {
+        (amount0, amount1) = abi.decode(
+            lock(abi.encode(CALL_TYPE_WITHDRAW, id, poolKey, tickLower, tickUpper, liquidity, recipient, withFees)),
+            (uint128, uint128)
+        );
+    }
+
+    /// @inheritdoc IPositions
+    function withdraw(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, uint128 liquidity)
+        public
+        payable
+        returns (uint128 amount0, uint128 amount1)
+    {
+        (amount0, amount1) = withdraw(id, poolKey, tickLower, tickUpper, liquidity, address(msg.sender), true);
+    }
+
+    /// @inheritdoc IPositions
+    function maybeInitializePool(PoolKey memory poolKey, int32 tick)
+        external
+        payable
+        returns (bool initialized, SqrtRatio sqrtRatio)
+    {
+        // the before update position hook shouldn't be taken into account here
+        sqrtRatio = CORE.poolState(poolKey.toPoolId()).sqrtRatio();
+        if (sqrtRatio.isZero()) {
+            initialized = true;
+            sqrtRatio = CORE.initializePool(poolKey, tick);
+        }
+    }
+
+    /// @inheritdoc IPositions
+    function mintAndDeposit(
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 maxAmount0,
+        uint128 maxAmount1,
+        uint128 minLiquidity
+    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1) {
+        id = mint();
+        (liquidity, amount0, amount1) = deposit(id, poolKey, tickLower, tickUpper, maxAmount0, maxAmount1, minLiquidity);
+    }
+
+    /// @inheritdoc IPositions
+    function mintAndDepositWithSalt(
+        bytes32 salt,
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 maxAmount0,
+        uint128 maxAmount1,
+        uint128 minLiquidity
+    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1) {
+        id = mint(salt);
+        (liquidity, amount0, amount1) = deposit(id, poolKey, tickLower, tickUpper, maxAmount0, maxAmount1, minLiquidity);
+    }
+
+    /// @inheritdoc IPositions
+    function withdrawProtocolFees(address token0, address token1, uint128 amount0, uint128 amount1, address recipient)
+        external
+        payable
+        onlyOwner
+    {
+        lock(abi.encode(CALL_TYPE_WITHDRAW_PROTOCOL_FEES, token0, token1, amount0, amount1, recipient));
+    }
+
+    /// @inheritdoc IPositions
+    function getProtocolFees(address token0, address token1) external view returns (uint128 amount0, uint128 amount1) {
+        (amount0, amount1) = CORE.savedBalances(address(this), token0, token1, bytes32(0));
+    }
+
+    /// @notice Handles protocol fee collection during fee collection
+    /// @dev Abstract method that must be implemented by concrete contracts
+    /// @param poolKey The pool key for the position
+    /// @param amount0 The amount of token0 fees collected before protocol fee deduction
+    /// @param amount1 The amount of token1 fees collected before protocol fee deduction
+    /// @return protocolFee0 The amount of token0 protocol fees to collect
+    /// @return protocolFee1 The amount of token1 protocol fees to collect
+    function _computeSwapProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
+        internal
+        view
+        virtual
+        returns (uint128 protocolFee0, uint128 protocolFee1);
+
+    /// @notice Handles protocol fee collection during liquidity withdrawal
+    /// @dev Abstract method that must be implemented by concrete contracts
+    /// @param poolKey The pool key for the position
+    /// @param amount0 The amount of token0 being withdrawn before protocol fee deduction
+    /// @param amount1 The amount of token1 being withdrawn before protocol fee deduction
+    /// @return protocolFee0 The amount of token0 protocol fees to collect
+    /// @return protocolFee1 The amount of token1 protocol fees to collect
+    function _computeWithdrawalProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
+        internal
+        view
+        virtual
+        returns (uint128 protocolFee0, uint128 protocolFee1);
+
+    /// @notice Handles lock callback data for position operations
+    /// @dev Internal function that processes different types of position operations
+    /// @param data Encoded operation data
+    /// @return result Encoded result data
+    function handleLockData(uint256, bytes memory data) internal override returns (bytes memory result) {
+        uint256 callType = abi.decode(data, (uint256));
+
+        if (callType == CALL_TYPE_DEPOSIT) {
+            (
+                ,
+                address caller,
+                uint256 id,
+                PoolKey memory poolKey,
+                int32 tickLower,
+                int32 tickUpper,
+                uint128 liquidity
+            ) = abi.decode(data, (uint256, address, uint256, PoolKey, int32, int32, uint128));
+
+            PoolBalanceUpdate balanceUpdate = CORE.updatePosition(
+                poolKey,
+                createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper}),
+                int128(liquidity)
+            );
+
+            uint128 amount0 = uint128(balanceUpdate.delta0());
+            uint128 amount1 = uint128(balanceUpdate.delta1());
+
+            // Use multi-token payment for ERC20-only pools, fall back to individual payments for native token pools
+            if (poolKey.token0 != NATIVE_TOKEN_ADDRESS) {
+                ACCOUNTANT.payTwoFrom(caller, poolKey.token0, poolKey.token1, amount0, amount1);
+            } else {
+                if (amount0 != 0) {
+                    SafeTransferLib.safeTransferETH(address(ACCOUNTANT), amount0);
+                }
+                if (amount1 != 0) {
+                    ACCOUNTANT.payFrom(caller, poolKey.token1, amount1);
+                }
+            }
+
+            result = abi.encode(amount0, amount1);
+        } else if (callType == CALL_TYPE_WITHDRAW) {
+            (
+                ,
+                uint256 id,
+                PoolKey memory poolKey,
+                int32 tickLower,
+                int32 tickUpper,
+                uint128 liquidity,
+                address recipient,
+                bool withFees
+            ) = abi.decode(data, (uint256, uint256, PoolKey, int32, int32, uint128, address, bool));
+
+            if (liquidity > uint128(type(int128).max)) revert WithdrawOverflow();
+
+            uint128 amount0;
+            uint128 amount1;
+
+            // collect first in case we are withdrawing the entire amount
+            if (withFees) {
+                (amount0, amount1) = CORE.collectFees(
+                    poolKey,
+                    createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper})
+                );
+
+                // Collect swap protocol fees
+                (uint128 swapProtocolFee0, uint128 swapProtocolFee1) =
+                    _computeSwapProtocolFees(poolKey, amount0, amount1);
+
+                if (swapProtocolFee0 != 0 || swapProtocolFee1 != 0) {
+                    CORE.updateSavedBalances(
+                        poolKey.token0, poolKey.token1, bytes32(0), int128(swapProtocolFee0), int128(swapProtocolFee1)
+                    );
+
+                    amount0 -= swapProtocolFee0;
+                    amount1 -= swapProtocolFee1;
+                }
+            }
+
+            if (liquidity != 0) {
+                PoolBalanceUpdate balanceUpdate = CORE.updatePosition(
+                    poolKey,
+                    createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper}),
+                    -int128(liquidity)
+                );
+
+                uint128 withdrawnAmount0 = uint128(-balanceUpdate.delta0());
+                uint128 withdrawnAmount1 = uint128(-balanceUpdate.delta1());
+
+                // Collect withdrawal protocol fees
+                (uint128 withdrawalFee0, uint128 withdrawalFee1) =
+                    _computeWithdrawalProtocolFees(poolKey, withdrawnAmount0, withdrawnAmount1);
+
+                if (withdrawalFee0 != 0 || withdrawalFee1 != 0) {
+                    // we know cast won't overflow because delta0 and delta1 were originally int128
+                    CORE.updateSavedBalances(
+                        poolKey.token0, poolKey.token1, bytes32(0), int128(withdrawalFee0), int128(withdrawalFee1)
+                    );
+                }
+
+                amount0 += withdrawnAmount0 - withdrawalFee0;
+                amount1 += withdrawnAmount1 - withdrawalFee1;
+            }
+
+            ACCOUNTANT.withdrawTwo(poolKey.token0, poolKey.token1, recipient, amount0, amount1);
+
+            result = abi.encode(amount0, amount1);
+        } else if (callType == CALL_TYPE_WITHDRAW_PROTOCOL_FEES) {
+            (, address token0, address token1, uint128 amount0, uint128 amount1, address recipient) =
+                abi.decode(data, (uint256, address, address, uint128, uint128, address));
+
+            CORE.updateSavedBalances(token0, token1, bytes32(0), -int256(uint256(amount0)), -int256(uint256(amount1)));
+            ACCOUNTANT.withdrawTwo(token0, token1, recipient, amount0, amount1);
+        } else {
+            // Will never actually happen
+            revert();
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
 import {ICore, IExtension} from "../interfaces/ICore.sol";
@@ -3425,6 +3671,37 @@ abstract contract BaseExtension is IExtension, UsesCore {
 pragma solidity >=0.8.30;
 
 import {PoolKey} from "../../types/poolKey.sol";
+import {ILocker, IForwardee} from "../IFlashAccountant.sol";
+import {IExtension} from "../ICore.sol";
+import {IExposedStorage} from "../IExposedStorage.sol";
+
+/// @title MEV Capture Interface
+/// @notice Interface for the Ekubo MEV Capture Extension
+/// @dev Extension that charges additional fees based on the relative size of the priority fee and tick movement during swaps
+interface IMEVCapture is IExposedStorage, ILocker, IForwardee, IExtension {
+    /// @notice Thrown when trying to use MEV capture on a full-range-only pool
+    /// @dev MEV capture only works with concentrated liquidity pools that have discrete tick spacing
+    error ConcentratedLiquidityPoolsOnly();
+
+    /// @notice Thrown when trying to use MEV capture on a pool with zero fees
+    /// @dev MEV capture multiplies the base fee, so a zero fee would result in no additional fees
+    error NonzeroFeesOnly();
+
+    /// @notice Thrown when attempting to swap directly without using the forward mechanism
+    /// @dev All swaps must go through the forward mechanism to ensure proper MEV fee calculation
+    error SwapMustHappenThroughForward();
+
+    /// @notice Accumulates any pending pool fees from past blocks
+    /// @dev This function can be called by anyone to trigger fee accumulation for a pool
+    /// @dev Fees are accumulated when the pool hasn't been updated in the current block
+    /// @param poolKey The pool key identifying the pool to accumulate fees for
+    function accumulatePoolFees(PoolKey memory poolKey) external;
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {PoolKey} from "../../types/poolKey.sol";
 import {IExtension} from "../ICore.sol";
 import {IExposedStorage} from "../IExposedStorage.sol";
 import {Snapshot} from "../../types/snapshot.sol";
@@ -3503,283 +3780,6 @@ interface IOracle is IExposedStorage, IExtension {
         external
         view
         returns (Observation[] memory observations);
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {PoolKey} from "../../types/poolKey.sol";
-import {ILocker, IForwardee} from "../IFlashAccountant.sol";
-import {IExtension} from "../ICore.sol";
-import {IExposedStorage} from "../IExposedStorage.sol";
-
-/// @title MEV Capture Interface
-/// @notice Interface for the Ekubo MEV Capture Extension
-/// @dev Extension that charges additional fees based on the relative size of the priority fee and tick movement during swaps
-interface IMEVCapture is IExposedStorage, ILocker, IForwardee, IExtension {
-    /// @notice Thrown when trying to use MEV capture on a full-range-only pool
-    /// @dev MEV capture only works with concentrated liquidity pools that have discrete tick spacing
-    error ConcentratedLiquidityPoolsOnly();
-
-    /// @notice Thrown when trying to use MEV capture on a pool with zero fees
-    /// @dev MEV capture multiplies the base fee, so a zero fee would result in no additional fees
-    error NonzeroFeesOnly();
-
-    /// @notice Thrown when attempting to swap directly without using the forward mechanism
-    /// @dev All swaps must go through the forward mechanism to ensure proper MEV fee calculation
-    error SwapMustHappenThroughForward();
-
-    /// @notice Accumulates any pending pool fees from past blocks
-    /// @dev This function can be called by anyone to trigger fee accumulation for a pool
-    /// @dev Fees are accumulated when the pool hasn't been updated in the current block
-    /// @param poolKey The pool key identifying the pool to accumulate fees for
-    function accumulatePoolFees(PoolKey memory poolKey) external;
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {ILocker, IForwardee} from "../IFlashAccountant.sol";
-import {IExtension} from "../ICore.sol";
-import {IExposedStorage} from "../IExposedStorage.sol";
-import {PoolKey} from "../../types/poolKey.sol";
-import {OrderKey} from "../../types/orderKey.sol";
-import {OrderConfig} from "../../types/orderConfig.sol";
-import {PoolId} from "../../types/poolId.sol";
-
-/// @title TWAMM Interface
-/// @notice Interface for the Ekubo TWAMM Extension
-/// @dev Extension for Ekubo Protocol that enables creation of DCA orders that are executed over time
-interface ITWAMM is IExposedStorage, IExtension, ILocker, IForwardee {
-    /// @notice Emitted when an order is updated
-    /// @param owner Address of the order owner
-    /// @param salt Unique salt for the order
-    /// @param orderKey Order key identifying the order
-    /// @param saleRateDelta Change in sale rate applied
-    event OrderUpdated(address owner, bytes32 salt, OrderKey orderKey, int112 saleRateDelta);
-
-    /// @notice Emitted when proceeds are withdrawn from an order
-    /// @param owner Address of the order owner
-    /// @param salt Unique salt for the order
-    /// @param orderKey Order key identifying the order
-    /// @param amount Amount of tokens withdrawn
-    event OrderProceedsWithdrawn(address owner, bytes32 salt, OrderKey orderKey, uint128 amount);
-
-    /// @notice Thrown when the number of orders at a time would overflow
-    error TimeNumOrdersOverflow();
-
-    /// @notice Thrown when tick spacing is not the maximum allowed value
-    error FullRangePoolOnly();
-
-    /// @notice Thrown when trying to modify an order that has already ended
-    error OrderAlreadyEnded();
-
-    /// @notice Thrown when order timestamps are invalid
-    error InvalidTimestamps();
-
-    /// @notice Thrown when sale rate delta exceeds maximum allowed value
-    error MaxSaleRateDeltaPerTime();
-
-    /// @notice Thrown when trying to operate on an uninitialized pool
-    error PoolNotInitialized();
-
-    /// @notice Gets the reward rate inside a time range for a specific token
-    /// @dev Used to calculate how much of the buy token an order has earned
-    /// @param poolId Unique identifier for the pool
-    /// @param config The order config that is being checked
-    /// @return result The reward rate inside the specified range
-    function getRewardRateInside(PoolId poolId, OrderConfig config) external view returns (uint256 result);
-
-    /// @notice Locks core and executes virtual orders for the given pool key
-    /// @dev The pool key must use this extension, which is checked in the locked callback
-    /// @param poolKey Pool key identifying the pool
-    function lockAndExecuteVirtualOrders(PoolKey memory poolKey) external;
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {PoolKey} from "../types/poolKey.sol";
-import {SqrtRatio} from "../types/sqrtRatio.sol";
-import {IBaseNonfungibleToken} from "./IBaseNonfungibleToken.sol";
-
-/// @title Positions Interface
-/// @notice Interface for managing liquidity positions as NFTs in Ekubo Protocol
-/// @dev Defines the interface for depositing, withdrawing, and collecting fees from liquidity positions
-interface IPositions is IBaseNonfungibleToken {
-    /// @notice Thrown when deposit fails due to insufficient liquidity for the given slippage tolerance
-    /// @param liquidity The actual liquidity that would be provided
-    /// @param minLiquidity The minimum liquidity required
-    error DepositFailedDueToSlippage(uint128 liquidity, uint128 minLiquidity);
-
-    /// @notice Thrown when deposit amount would cause overflow
-    error DepositOverflow();
-
-    /// @notice Thrown when the specified withdraw liquidity amount overflows type(int128).max
-    error WithdrawOverflow();
-
-    /// @notice Gets the liquidity, principal amounts, and accumulated fees for a position
-    /// @param id The NFT token ID representing the position
-    /// @param poolKey Pool key identifying the pool
-    /// @param tickLower Lower tick of the price range of the position
-    /// @param tickUpper Upper tick of the price range of the position
-    /// @return liquidity Current liquidity in the position
-    /// @return principal0 Principal amount of token0 in the position
-    /// @return principal1 Principal amount of token1 in the position
-    /// @return fees0 Accumulated fees in token0
-    /// @return fees1 Accumulated fees in token1
-    function getPositionFeesAndLiquidity(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
-        external
-        view
-        returns (uint128 liquidity, uint128 principal0, uint128 principal1, uint128 fees0, uint128 fees1);
-
-    /// @notice Deposits tokens into a liquidity position
-    /// @param id The NFT token ID representing the position
-    /// @param poolKey Pool key identifying the pool
-    /// @param tickLower Lower tick of the price range of the position
-    /// @param tickUpper Upper tick of the price range of the position
-    /// @param maxAmount0 Maximum amount of token0 to deposit
-    /// @param maxAmount1 Maximum amount of token1 to deposit
-    /// @param minLiquidity Minimum liquidity to receive (for slippage protection)
-    /// @return liquidity Amount of liquidity added to the position
-    /// @return amount0 Actual amount of token0 deposited
-    /// @return amount1 Actual amount of token1 deposited
-    function deposit(
-        uint256 id,
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 maxAmount0,
-        uint128 maxAmount1,
-        uint128 minLiquidity
-    ) external payable returns (uint128 liquidity, uint128 amount0, uint128 amount1);
-
-    /// @notice Collects accumulated fees from a position to msg.sender
-    /// @param id The NFT token ID representing the position
-    /// @param poolKey Pool key identifying the pool
-    /// @param tickLower Lower tick of the price range of the position
-    /// @param tickUpper Upper tick of the price range of the position
-    /// @return amount0 Amount of token0 fees collected
-    /// @return amount1 Amount of token1 fees collected
-    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
-        external
-        payable
-        returns (uint128 amount0, uint128 amount1);
-
-    /// @notice Collects accumulated fees from a position to a specified recipient
-    /// @param id The NFT token ID representing the position
-    /// @param poolKey Pool key identifying the pool
-    /// @param tickLower Lower tick of the price range of the position
-    /// @param tickUpper Upper tick of the price range of the position
-    /// @param recipient Address to receive the collected fees
-    /// @return amount0 Amount of token0 fees collected
-    /// @return amount1 Amount of token1 fees collected
-    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, address recipient)
-        external
-        payable
-        returns (uint128 amount0, uint128 amount1);
-
-    /// @notice Withdraws liquidity from a position
-    /// @param id The NFT token ID representing the position
-    /// @param poolKey Pool key identifying the pool
-    /// @param tickLower Lower tick of the price range of the position
-    /// @param tickUpper Upper tick of the price range of the position
-    /// @param liquidity Amount of liquidity to withdraw
-    /// @param recipient Address to receive the withdrawn tokens
-    /// @param withFees Whether to also collect accumulated fees
-    /// @return amount0 Amount of token0 withdrawn
-    /// @return amount1 Amount of token1 withdrawn
-    function withdraw(
-        uint256 id,
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 liquidity,
-        address recipient,
-        bool withFees
-    ) external payable returns (uint128 amount0, uint128 amount1);
-
-    /// @notice Withdraws liquidity from a position to msg.sender with fees
-    /// @param id The NFT token ID representing the position
-    /// @param poolKey Pool key identifying the pool
-    /// @param tickLower Lower tick of the price range of the position
-    /// @param tickUpper Upper tick of the price range of the position
-    /// @param liquidity Amount of liquidity to withdraw
-    /// @return amount0 Amount of token0 withdrawn
-    /// @return amount1 Amount of token1 withdrawn
-    function withdraw(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, uint128 liquidity)
-        external
-        payable
-        returns (uint128 amount0, uint128 amount1);
-
-    /// @notice Initializes a pool if it hasn't been initialized yet
-    /// @param poolKey Pool key identifying the pool
-    /// @param tick Initial tick for the pool if initialization is needed
-    /// @return initialized Whether the pool was initialized by this call
-    /// @return sqrtRatio The sqrt price ratio of the pool (existing or newly set)
-    function maybeInitializePool(PoolKey memory poolKey, int32 tick)
-        external
-        payable
-        returns (bool initialized, SqrtRatio sqrtRatio);
-
-    /// @notice Mints a new NFT and deposits liquidity into it
-    /// @param poolKey Pool key identifying the pool
-    /// @param tickLower Lower tick of the price range of the position
-    /// @param tickUpper Upper tick of the price range of the position
-    /// @param maxAmount0 Maximum amount of token0 to deposit
-    /// @param maxAmount1 Maximum amount of token1 to deposit
-    /// @param minLiquidity Minimum liquidity to receive (for slippage protection)
-    /// @return id The newly minted NFT token ID
-    /// @return liquidity Amount of liquidity added to the position
-    /// @return amount0 Actual amount of token0 deposited
-    /// @return amount1 Actual amount of token1 deposited
-    function mintAndDeposit(
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 maxAmount0,
-        uint128 maxAmount1,
-        uint128 minLiquidity
-    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1);
-
-    /// @notice Mints a new NFT with a specific salt and deposits liquidity into it
-    /// @param salt Salt for deterministic NFT ID generation
-    /// @param poolKey Pool key identifying the pool
-    /// @param tickLower Lower tick of the price range of the position
-    /// @param tickUpper Upper tick of the price range of the position
-    /// @param maxAmount0 Maximum amount of token0 to deposit
-    /// @param maxAmount1 Maximum amount of token1 to deposit
-    /// @param minLiquidity Minimum liquidity to receive (for slippage protection)
-    /// @return id The newly minted NFT token ID
-    /// @return liquidity Amount of liquidity added to the position
-    /// @return amount0 Actual amount of token0 deposited
-    /// @return amount1 Actual amount of token1 deposited
-    function mintAndDepositWithSalt(
-        bytes32 salt,
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 maxAmount0,
-        uint128 maxAmount1,
-        uint128 minLiquidity
-    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1);
-
-    /// @notice Withdraws accumulated protocol fees (only callable by owner)
-    /// @param token0 Address of token0
-    /// @param token1 Address of token1
-    /// @param amount0 Amount of token0 fees to withdraw
-    /// @param amount1 Amount of token1 fees to withdraw
-    /// @param recipient Address to receive the protocol fees
-    function withdrawProtocolFees(address token0, address token1, uint128 amount0, uint128 amount1, address recipient)
-        external
-        payable;
-
-    /// @notice Gets the accumulated protocol fees for a token pair
-    /// @param token0 Address of token0
-    /// @param token1 Address of token1
-    /// @return amount0 Amount of token0 protocol fees
-    /// @return amount1 Amount of token1 protocol fees
-    function getProtocolFees(address token0, address token1) external view returns (uint128 amount0, uint128 amount1);
 }
 
 
