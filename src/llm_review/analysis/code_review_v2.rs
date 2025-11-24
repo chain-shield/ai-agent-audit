@@ -1,6 +1,6 @@
 use crate::config::{
     ACTOR_RUNS, CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE,
-    SKIP_LIBRARIES,
+    SKIP_LIBRARIES, SKIP_PATTERN_RUNS,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
@@ -65,8 +65,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these failed
-    // let custom_scoped_contracts = Some(vec!["Calls".to_string()]);
-    let custom_scoped_contracts: Option<Vec<_>> = None;
+    let custom_scoped_contracts = Some(vec!["Calls".to_string()]);
+    // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
     let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -422,6 +422,11 @@ async fn process_patterns(
     ai_verify_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
+    // check flag
+    if SKIP_PATTERN_RUNS {
+        return Ok(Findings::default());
+    }
+
     let pattern_prompt = IssuePrompt::Pattern(pattern_categories);
 
     // Phase 1: Generate patterns
@@ -579,17 +584,26 @@ async fn process_actors(
         return Ok(Findings::default());
     };
 
+    let actor_discovery_config = AgentConfig::new(Some(repo.clone()))
+        .with_model("gpt-5.1")
+        .with_preamble("You are a world-class expert at smart contract auditing.")
+        .with_file_retrieval(false)
+        .with_openai_reasoning_effort("high");
+
+    let actor_discovery_agent =
+        Arc::new(AgentFactory::create_openai_agent(&actor_discovery_config)?);
+
     // Phase 1: Generate actors and their capabilities
     info!("PHASE 1: GENERATE ACTORS");
     let actors: Actors =
-        pattern_phases::generate_actors::execute(codeblock, actor_abuse_discovery_agent, repo)
-            .await?;
+        pattern_phases::generate_actors::execute(codeblock, &actor_discovery_agent, repo).await?;
 
     let actor_count = actors.actors.len();
     info!("total of {} Actors found!", actor_count);
     let actor_list = generate_formated_list_from_actor_data(&actors.actors);
     info!("{}", actor_list);
 
+    panic!("actor list display!");
     let actor_prompt = IssuePrompt::Actor(actors.actors);
 
     // Phase 2: Generate actor abuses (potential exploits for each actor capability)
