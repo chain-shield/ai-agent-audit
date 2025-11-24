@@ -1,6 +1,6 @@
 use crate::llm_review::{
     agent::agent_enums::{all_enum_variants, generate_enum_list},
-    threat_models::actors::{ACTOR_CENTRIC_VULN_PATTERNS, Actor, ActorAbuse, RoleType},
+    threat_models::actors::{Actor, ActorAbuse, RoleType, ACTOR_CENTRIC_VULN_PATTERNS},
 };
 
 pub fn generate_actors_prompt() -> String {
