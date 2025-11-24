@@ -3,6 +3,7 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
+    config::SKIP_PATTERN_VERIFICATION,
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
@@ -19,7 +20,7 @@ use crate::{
 use log::info;
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -124,13 +125,23 @@ where
 
     let mut handles = vec![];
     let deduped_patterns: Arc<T> = Arc::new(patterns.dedup().await?);
+    let dedup_pattern_count = deduped_patterns.issues().len();
+
+    if SKIP_PATTERN_VERIFICATION {
+        info!(
+            "Skipping verification: # of {} AFTER deduping => {}",
+            &deduped_patterns.issue_title(),
+            dedup_pattern_count,
+        );
+        return Ok((*deduped_patterns).clone());
+    }
+
     let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
     let arc_code_context = Arc::new(code_and_context);
 
-    let dedup_pattern_count = deduped_patterns.issues().len();
     let is_legit_pattern_vec: Arc<Mutex<Vec<bool>>> =
         Arc::new(Mutex::new(vec![true; dedup_pattern_count]));
 

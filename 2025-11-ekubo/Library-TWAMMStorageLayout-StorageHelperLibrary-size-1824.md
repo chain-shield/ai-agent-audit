@@ -102,6 +102,13 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
+/// @notice Unique identifier for a TWAMM order
+/// @dev Wraps bytes32 to provide type safety for order identifiers
+type OrderId is bytes32;
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
 type StorageSlot is bytes32;
 
 using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
@@ -152,13 +159,6 @@ pragma solidity >=0.8.30;
 /// @notice Unique identifier for a pool
 /// @dev Wraps bytes32 to provide type safety for pool identifiers
 type PoolId is bytes32;
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-/// @notice Unique identifier for a TWAMM order
-/// @dev Wraps bytes32 to provide type safety for order identifiers
-type OrderId is bytes32;
 
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS

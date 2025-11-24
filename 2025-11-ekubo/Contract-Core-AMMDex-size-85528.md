@@ -1701,27 +1701,6 @@ library CoreStorageLayout {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-/// @title IExposedStorage
-/// @notice Interface for exposing contract storage via view methods
-/// @dev This interface provides a way to access specific pieces of state in the inheriting contract.
-///      It serves as a workaround in the absence of EIP-2330 (https://eips.ethereum.org/EIPS/eip-2330)
-///      which would provide native support for exposing contract storage.
-interface IExposedStorage {
-    /// @notice Loads storage slots from the contract's persistent storage
-    /// @dev Reads each 32-byte slot specified in the calldata (after the function selector) from storage
-    ///      and returns all the loaded values concatenated together.
-    function sload() external view;
-
-    /// @notice Loads storage slots from the contract's transient storage
-    /// @dev Reads each 32-byte slot specified in the calldata (after the function selector) from transient storage
-    ///      and returns all the loaded values concatenated together. Transient storage is cleared at the end
-    ///      of each transaction.
-    function tload() external view;
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
 import {CallPoints} from "../types/callPoints.sol";
 import {PoolKey} from "../types/poolKey.sol";
 import {PositionId} from "../types/positionId.sol";
@@ -2078,118 +2057,487 @@ interface IFlashAccountant {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-type Locker is bytes32;
+/// @title IExposedStorage
+/// @notice Interface for exposing contract storage via view methods
+/// @dev This interface provides a way to access specific pieces of state in the inheriting contract.
+///      It serves as a workaround in the absence of EIP-2330 (https://eips.ethereum.org/EIPS/eip-2330)
+///      which would provide native support for exposing contract storage.
+interface IExposedStorage {
+    /// @notice Loads storage slots from the contract's persistent storage
+    /// @dev Reads each 32-byte slot specified in the calldata (after the function selector) from storage
+    ///      and returns all the loaded values concatenated together.
+    function sload() external view;
 
-using {id, addr, parse} for Locker global;
+    /// @notice Loads storage slots from the contract's transient storage
+    /// @dev Reads each 32-byte slot specified in the calldata (after the function selector) from transient storage
+    ///      and returns all the loaded values concatenated together. Transient storage is cleared at the end
+    ///      of each transaction.
+    function tload() external view;
+}
 
-function id(Locker locker) pure returns (uint256 v) {
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// A dynamic fixed point number (a la floating point) that stores a shifting 94 bit view of the underlying fixed point value,
+//  based on the most significant bits (mantissa)
+// If the most significant 2 bits are 11, it represents a 64.30
+// If the most significant 2 bits are 10, it represents a 32.62 number
+// If the most significant 2 bits are 01, it represents a 0.94 number
+// If the most significant 2 bits are 00, it represents a 0.126 number that is always less than 2**-32
+
+type SqrtRatio is uint96;
+
+uint96 constant MIN_SQRT_RATIO_RAW = 4611797791050542631;
+SqrtRatio constant MIN_SQRT_RATIO = SqrtRatio.wrap(MIN_SQRT_RATIO_RAW);
+uint96 constant MAX_SQRT_RATIO_RAW = 79227682466138141934206691491;
+SqrtRatio constant MAX_SQRT_RATIO = SqrtRatio.wrap(MAX_SQRT_RATIO_RAW);
+
+uint96 constant TWO_POW_95 = 0x800000000000000000000000;
+uint96 constant TWO_POW_94 = 0x400000000000000000000000;
+uint96 constant TWO_POW_62 = 0x4000000000000000;
+uint96 constant TWO_POW_62_MINUS_ONE = 0x3fffffffffffffff;
+uint96 constant BIT_MASK = 0xc00000000000000000000000; // TWO_POW_95 | TWO_POW_94
+
+SqrtRatio constant ONE = SqrtRatio.wrap((TWO_POW_95) + (1 << 62));
+
+using {
+    toFixed,
+    isValid,
+    ge as >=,
+    le as <=,
+    lt as <,
+    gt as >,
+    eq as ==,
+    neq as !=,
+    isZero,
+    min,
+    max
+} for SqrtRatio global;
+
+function isValid(SqrtRatio sqrtRatio) pure returns (bool r) {
     assembly ("memory-safe") {
-        v := sub(shr(160, locker), 1)
+        r := and(
+            // greater than or equal to TWO_POW_62, i.e. the whole number portion is nonzero
+            gt(and(sqrtRatio, not(BIT_MASK)), TWO_POW_62_MINUS_ONE),
+            // and between min/max sqrt ratio
+            and(iszero(lt(sqrtRatio, MIN_SQRT_RATIO_RAW)), iszero(gt(sqrtRatio, MAX_SQRT_RATIO_RAW)))
+        )
     }
 }
 
-function addr(Locker locker) pure returns (address v) {
+error ValueOverflowsSqrtRatioContainer();
+
+// If passing a value greater than this constant with roundUp = true, toSqrtRatio will overflow
+// For roundUp = false, the constant is type(uint192).max
+uint256 constant MAX_FIXED_VALUE_ROUND_UP =
+    0x1000000000000000000000000000000000000000000000000 - 0x4000000000000000000000000;
+
+// Converts a 64.128 value into the compact SqrtRatio representation
+function toSqrtRatio(uint256 sqrtRatio, bool roundUp) pure returns (SqrtRatio r) {
     assembly ("memory-safe") {
-        v := shr(96, shl(96, locker))
+        function compute(sr, ru) -> v {
+            // rup = 0x00...00 when false, 0xff...ff when true
+            let rup := sub(0, ru)
+
+            // Region: < 2**96  (shift = 2)
+            let addmask := and(0x3, rup) // (1<<s)-1 if ru
+            if lt(add(sr, addmask), shl(96, 1)) {
+                v := shr(2, add(sr, addmask))
+                leave
+            }
+
+            // Region: < 2**128 (shift = 34)  + set bit 94
+            addmask := and(0x3ffffffff, rup)
+            if lt(add(sr, addmask), shl(128, 1)) {
+                v := or(shl(94, 1), shr(34, add(sr, addmask)))
+                leave
+            }
+
+            // Region: < 2**160 (shift = 66)  + set bit 95
+            addmask := and(0x3ffffffffffffffff, rup)
+            if lt(add(sr, addmask), shl(160, 1)) {
+                v := or(shl(95, 1), shr(66, add(sr, addmask)))
+                leave
+            }
+
+            // Region: < 2**192 (shift = 98)  + set bits 95|94
+            addmask := and(0x3ffffffffffffffffffffffff, rup)
+            if lt(add(sr, addmask), shl(192, 1)) {
+                v := or(shl(94, 3), shr(98, add(sr, addmask))) // 3<<94 == bit95|bit94
+                leave
+            }
+
+            // cast sig "ValueOverflowsSqrtRatioContainer()"
+            mstore(0, shl(224, 0xa10459f4))
+            revert(0, 4)
+        }
+        r := compute(sqrtRatio, roundUp)
     }
 }
 
-function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
+// Returns the 64.128 representation of the given sqrt ratio
+function toFixed(SqrtRatio sqrtRatio) pure returns (uint256 r) {
     assembly ("memory-safe") {
-        lockerId := sub(shr(160, locker), 1)
-        lockerAddr := shr(96, shl(96, locker))
+        r := shl(add(2, shr(89, and(sqrtRatio, BIT_MASK))), and(sqrtRatio, not(BIT_MASK)))
+    }
+}
+
+// The below operators assume that the SqrtRatio is valid, i.e. SqrtRatio#isValid returns true
+
+function lt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) < SqrtRatio.unwrap(b);
+}
+
+function gt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) > SqrtRatio.unwrap(b);
+}
+
+function le(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) <= SqrtRatio.unwrap(b);
+}
+
+function ge(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) >= SqrtRatio.unwrap(b);
+}
+
+function eq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) == SqrtRatio.unwrap(b);
+}
+
+function neq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) != SqrtRatio.unwrap(b);
+}
+
+function isZero(SqrtRatio a) pure returns (bool r) {
+    assembly ("memory-safe") {
+        r := iszero(a)
+    }
+}
+
+function max(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := xor(a, mul(xor(a, b), gt(b, a)))
+    }
+}
+
+function min(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := xor(a, mul(xor(a, b), lt(b, a)))
     }
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-type TickInfo is bytes32;
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {LibBit} from "solady/utils/LibBit.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+import {amount0Delta, amount1Delta, sortAndConvertToFixedSqrtRatios} from "./delta.sol";
+import {SqrtRatio} from "../types/sqrtRatio.sol";
 
-using {liquidityDelta, liquidityNet, parse} for TickInfo global;
+// Liquidity Math Library
+// Contains functions for calculating liquidity-related amounts and conversions
+// Provides utilities for converting between liquidity changes and token amounts
 
-function liquidityDelta(TickInfo info) pure returns (int128 delta) {
-    assembly ("memory-safe") {
-        delta := signextend(15, info)
+/// @notice Returns the token0 and token1 delta owed for a given change in liquidity
+/// @dev Calculates the token amounts required or returned when liquidity is added or removed from a position
+/// @param sqrtRatio Current price (as a valid sqrt ratio)
+/// @param liquidityDelta Signed liquidity change; positive = added, negative = removed
+/// @param sqrtRatioLower The lower bound of the price range (as a valid sqrt ratio)
+/// @param sqrtRatioUpper The upper bound of the price range (as a valid sqrt ratio)
+/// @return delta0 The change in token0 amount
+/// @return delta1 The change in token1 amount
+function liquidityDeltaToAmountDelta(
+    SqrtRatio sqrtRatio,
+    int128 liquidityDelta,
+    SqrtRatio sqrtRatioLower,
+    SqrtRatio sqrtRatioUpper
+) pure returns (int128 delta0, int128 delta1) {
+    unchecked {
+        if (liquidityDelta == 0) {
+            return (0, 0);
+        }
+        bool isPositive = (liquidityDelta > 0);
+        int256 sign = -1 + 2 * int256(LibBit.rawToUint(isPositive));
+        // absolute value of a int128 always fits in a uint128
+        uint128 magnitude = uint128(FixedPointMathLib.abs(liquidityDelta));
+
+        if (sqrtRatio <= sqrtRatioLower) {
+            delta0 = SafeCastLib.toInt128(
+                sign * int256(uint256(amount0Delta(sqrtRatioLower, sqrtRatioUpper, magnitude, isPositive)))
+            );
+        } else if (sqrtRatio < sqrtRatioUpper) {
+            delta0 = SafeCastLib.toInt128(
+                sign * int256(uint256(amount0Delta(sqrtRatio, sqrtRatioUpper, magnitude, isPositive)))
+            );
+            delta1 = SafeCastLib.toInt128(
+                sign * int256(uint256(amount1Delta(sqrtRatioLower, sqrtRatio, magnitude, isPositive)))
+            );
+        } else {
+            delta1 = SafeCastLib.toInt128(
+                sign * int256(uint256(amount1Delta(sqrtRatioLower, sqrtRatioUpper, magnitude, isPositive)))
+            );
+        }
     }
 }
 
-function liquidityNet(TickInfo info) pure returns (uint128 net) {
-    assembly ("memory-safe") {
-        net := shr(128, info)
+/// @notice Calculates the maximum liquidity that can be provided with a given amount of token0
+/// @dev Used when the current price is below the position's range (only token0 is needed)
+/// @param sqrtRatioLower The lower sqrt price ratio of the position
+/// @param sqrtRatioUpper The upper sqrt price ratio of the position
+/// @param amount The amount of token0 available
+/// @return The maximum liquidity that can be provided
+function maxLiquidityForToken0(uint256 sqrtRatioLower, uint256 sqrtRatioUpper, uint128 amount) pure returns (uint256) {
+    unchecked {
+        uint256 numerator1 = FixedPointMathLib.fullMulDivN(sqrtRatioLower, sqrtRatioUpper, 128);
+
+        return FixedPointMathLib.fullMulDiv(amount, numerator1, (sqrtRatioUpper - sqrtRatioLower));
     }
 }
 
-function parse(TickInfo info) pure returns (int128 delta, uint128 net) {
-    assembly ("memory-safe") {
-        delta := signextend(15, info)
-        net := shr(128, info)
+/// @notice Calculates the maximum liquidity that can be provided with a given amount of token1
+/// @dev Used when the current price is above the position's range (only token1 is needed)
+/// @param sqrtRatioLower The lower sqrt price ratio of the position
+/// @param sqrtRatioUpper The upper sqrt price ratio of the position
+/// @param amount The amount of token1 available
+/// @return The maximum liquidity that can be provided
+function maxLiquidityForToken1(uint256 sqrtRatioLower, uint256 sqrtRatioUpper, uint128 amount) pure returns (uint256) {
+    unchecked {
+        return (uint256(amount) << 128) / (sqrtRatioUpper - sqrtRatioLower);
     }
 }
 
-function createTickInfo(int128 _liquidityDelta, uint128 _liquidityNet) pure returns (TickInfo info) {
-    assembly ("memory-safe") {
-        // info = (liquidityNet << 128) | liquidityDelta
-        info := or(shl(128, _liquidityNet), shr(128, shl(128, _liquidityDelta)))
-    }
-}
+/// @notice Calculates the maximum liquidity that can be provided given amounts of both tokens
+/// @dev Determines the limiting factor between token0 and token1 based on current price and position bounds
+/// @param _sqrtRatio Current sqrt price ratio
+/// @param sqrtRatioA One bound of the position (will be sorted with sqrtRatioB)
+/// @param sqrtRatioB Other bound of the position (will be sorted with sqrtRatioA)
+/// @param amount0 Available amount of token0
+/// @param amount1 Available amount of token1
+/// @return The maximum liquidity that can be provided with the given token amounts
+function maxLiquidity(
+    SqrtRatio _sqrtRatio,
+    SqrtRatio sqrtRatioA,
+    SqrtRatio sqrtRatioB,
+    uint128 amount0,
+    uint128 amount1
+) pure returns (uint128) {
+    uint256 sqrtRatio = _sqrtRatio.toFixed();
+    (uint256 sqrtRatioLower, uint256 sqrtRatioUpper) = sortAndConvertToFixedSqrtRatios(sqrtRatioA, sqrtRatioB);
 
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
-import {PoolConfig} from "./poolConfig.sol";
-
-type PositionId is bytes32;
-
-using {validate, salt, tickLower, tickUpper} for PositionId global;
-
-function salt(PositionId positionId) pure returns (bytes24 v) {
-    assembly ("memory-safe") {
-        v := shl(64, shr(64, positionId))
-    }
-}
-
-function tickLower(PositionId positionId) pure returns (int32 v) {
-    assembly ("memory-safe") {
-        // shift down, then signextend to 32 bits
-        v := signextend(3, shr(32, positionId))
-    }
-}
-
-function tickUpper(PositionId positionId) pure returns (int32 v) {
-    assembly ("memory-safe") {
-        // lowest 4 bytes, then signextend to 32 bits
-        v := signextend(3, positionId)
-    }
-}
-
-function createPositionId(bytes24 _salt, int32 _tickLower, int32 _tickUpper) pure returns (PositionId v) {
-    assembly ("memory-safe") {
-        // v = salt | (tickLower << 32) | tickUpper
-        v := or(shl(64, shr(64, _salt)), or(shl(32, and(_tickLower, 0xFFFFFFFF)), and(_tickUpper, 0xFFFFFFFF)))
-    }
-}
-
-/// @notice Thrown when the order of the position bounds is invalid, i.e. tickLower >= tickUpper
-error BoundsOrder();
-/// @notice Thrown when the bounds of the position are outside the pool's min/max tick range
-error MinMaxBounds();
-/// @notice Thrown when the ticks of the bounds do not align with tick spacing for concentrated pools
-error BoundsTickSpacing();
-/// @notice Thrown when stableswap pool positions are not at the min/max tick for the config
-error StableswapMustBeFullRange();
-
-function validate(PositionId positionId, PoolConfig config) pure {
-    if (config.isConcentrated()) {
-        if (positionId.tickLower() >= positionId.tickUpper()) revert BoundsOrder();
-        if (positionId.tickLower() < MIN_TICK || positionId.tickUpper() > MAX_TICK) revert MinMaxBounds();
-        int32 spacing = int32(config.concentratedTickSpacing());
-        if (positionId.tickLower() % spacing != 0 || positionId.tickUpper() % spacing != 0) revert BoundsTickSpacing();
+    if (sqrtRatio <= sqrtRatioLower) {
+        return uint128(
+            FixedPointMathLib.min(type(uint128).max, maxLiquidityForToken0(sqrtRatioLower, sqrtRatioUpper, amount0))
+        );
+    } else if (sqrtRatio < sqrtRatioUpper) {
+        return uint128(
+            FixedPointMathLib.min(
+                type(uint128).max,
+                FixedPointMathLib.min(
+                    maxLiquidityForToken0(sqrtRatio, sqrtRatioUpper, amount0),
+                    maxLiquidityForToken1(sqrtRatioLower, sqrtRatio, amount1)
+                )
+            )
+        );
     } else {
-        (int32 lower, int32 upper) = config.stableswapActiveLiquidityTickRange();
-        // For stableswap pools, positions must be exactly min/max tick
-        if (positionId.tickLower() != lower || positionId.tickUpper() != upper) revert StableswapMustBeFullRange();
+        return uint128(
+            FixedPointMathLib.min(type(uint128).max, maxLiquidityForToken1(sqrtRatioLower, sqrtRatioUpper, amount1))
+        );
+    }
+}
+
+/// @notice Thrown when a liquidity delta operation would cause overflow
+error LiquidityDeltaOverflow();
+
+/// @notice Safely adds a liquidity delta to a liquidity amount
+/// @dev Reverts if the operation would cause overflow or underflow
+/// @param liquidity The current liquidity amount
+/// @param liquidityDelta The change in liquidity (can be positive or negative)
+/// @return result The new liquidity amount after applying the delta
+function addLiquidityDelta(uint128 liquidity, int128 liquidityDelta) pure returns (uint128 result) {
+    assembly ("memory-safe") {
+        result := add(liquidity, liquidityDelta)
+        if and(result, shl(128, 0xffffffffffffffffffffffffffffffff)) {
+            mstore(0, shl(224, 0x6d862c50))
+            revert(0, 4)
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type PoolBalanceUpdate is bytes32;
+
+using {delta0, delta1} for PoolBalanceUpdate global;
+
+function delta0(PoolBalanceUpdate update) pure returns (int128 v) {
+    assembly ("memory-safe") {
+        v := signextend(15, shr(128, update))
+    }
+}
+
+function delta1(PoolBalanceUpdate update) pure returns (int128 v) {
+    assembly ("memory-safe") {
+        v := signextend(15, update)
+    }
+}
+
+function createPoolBalanceUpdate(int128 _delta0, int128 _delta1) pure returns (PoolBalanceUpdate update) {
+    assembly ("memory-safe") {
+        // update = (delta0 << 128) | delta1
+        update := or(shl(128, _delta0), and(_delta1, 0xffffffffffffffffffffffffffffffff))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// A dynamic fixed point number (a la floating point) that stores a shifting 94 bit view of the underlying fixed point value,
+//  based on the most significant bits (mantissa)
+// If the most significant 2 bits are 11, it represents a 64.30
+// If the most significant 2 bits are 10, it represents a 32.62 number
+// If the most significant 2 bits are 01, it represents a 0.94 number
+// If the most significant 2 bits are 00, it represents a 0.126 number that is always less than 2**-32
+
+type SqrtRatio is uint96;
+
+uint96 constant MIN_SQRT_RATIO_RAW = 4611797791050542631;
+SqrtRatio constant MIN_SQRT_RATIO = SqrtRatio.wrap(MIN_SQRT_RATIO_RAW);
+uint96 constant MAX_SQRT_RATIO_RAW = 79227682466138141934206691491;
+SqrtRatio constant MAX_SQRT_RATIO = SqrtRatio.wrap(MAX_SQRT_RATIO_RAW);
+
+uint96 constant TWO_POW_95 = 0x800000000000000000000000;
+uint96 constant TWO_POW_94 = 0x400000000000000000000000;
+uint96 constant TWO_POW_62 = 0x4000000000000000;
+uint96 constant TWO_POW_62_MINUS_ONE = 0x3fffffffffffffff;
+uint96 constant BIT_MASK = 0xc00000000000000000000000; // TWO_POW_95 | TWO_POW_94
+
+SqrtRatio constant ONE = SqrtRatio.wrap((TWO_POW_95) + (1 << 62));
+
+using {
+    toFixed,
+    isValid,
+    ge as >=,
+    le as <=,
+    lt as <,
+    gt as >,
+    eq as ==,
+    neq as !=,
+    isZero,
+    min,
+    max
+} for SqrtRatio global;
+
+function isValid(SqrtRatio sqrtRatio) pure returns (bool r) {
+    assembly ("memory-safe") {
+        r := and(
+            // greater than or equal to TWO_POW_62, i.e. the whole number portion is nonzero
+            gt(and(sqrtRatio, not(BIT_MASK)), TWO_POW_62_MINUS_ONE),
+            // and between min/max sqrt ratio
+            and(iszero(lt(sqrtRatio, MIN_SQRT_RATIO_RAW)), iszero(gt(sqrtRatio, MAX_SQRT_RATIO_RAW)))
+        )
+    }
+}
+
+error ValueOverflowsSqrtRatioContainer();
+
+// If passing a value greater than this constant with roundUp = true, toSqrtRatio will overflow
+// For roundUp = false, the constant is type(uint192).max
+uint256 constant MAX_FIXED_VALUE_ROUND_UP =
+    0x1000000000000000000000000000000000000000000000000 - 0x4000000000000000000000000;
+
+// Converts a 64.128 value into the compact SqrtRatio representation
+function toSqrtRatio(uint256 sqrtRatio, bool roundUp) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        function compute(sr, ru) -> v {
+            // rup = 0x00...00 when false, 0xff...ff when true
+            let rup := sub(0, ru)
+
+            // Region: < 2**96  (shift = 2)
+            let addmask := and(0x3, rup) // (1<<s)-1 if ru
+            if lt(add(sr, addmask), shl(96, 1)) {
+                v := shr(2, add(sr, addmask))
+                leave
+            }
+
+            // Region: < 2**128 (shift = 34)  + set bit 94
+            addmask := and(0x3ffffffff, rup)
+            if lt(add(sr, addmask), shl(128, 1)) {
+                v := or(shl(94, 1), shr(34, add(sr, addmask)))
+                leave
+            }
+
+            // Region: < 2**160 (shift = 66)  + set bit 95
+            addmask := and(0x3ffffffffffffffff, rup)
+            if lt(add(sr, addmask), shl(160, 1)) {
+                v := or(shl(95, 1), shr(66, add(sr, addmask)))
+                leave
+            }
+
+            // Region: < 2**192 (shift = 98)  + set bits 95|94
+            addmask := and(0x3ffffffffffffffffffffffff, rup)
+            if lt(add(sr, addmask), shl(192, 1)) {
+                v := or(shl(94, 3), shr(98, add(sr, addmask))) // 3<<94 == bit95|bit94
+                leave
+            }
+
+            // cast sig "ValueOverflowsSqrtRatioContainer()"
+            mstore(0, shl(224, 0xa10459f4))
+            revert(0, 4)
+        }
+        r := compute(sqrtRatio, roundUp)
+    }
+}
+
+// Returns the 64.128 representation of the given sqrt ratio
+function toFixed(SqrtRatio sqrtRatio) pure returns (uint256 r) {
+    assembly ("memory-safe") {
+        r := shl(add(2, shr(89, and(sqrtRatio, BIT_MASK))), and(sqrtRatio, not(BIT_MASK)))
+    }
+}
+
+// The below operators assume that the SqrtRatio is valid, i.e. SqrtRatio#isValid returns true
+
+function lt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) < SqrtRatio.unwrap(b);
+}
+
+function gt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) > SqrtRatio.unwrap(b);
+}
+
+function le(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) <= SqrtRatio.unwrap(b);
+}
+
+function ge(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) >= SqrtRatio.unwrap(b);
+}
+
+function eq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) == SqrtRatio.unwrap(b);
+}
+
+function neq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) != SqrtRatio.unwrap(b);
+}
+
+function isZero(SqrtRatio a) pure returns (bool r) {
+    assembly ("memory-safe") {
+        r := iszero(a)
+    }
+}
+
+function max(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := xor(a, mul(xor(a, b), gt(b, a)))
+    }
+}
+
+function min(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := xor(a, mul(xor(a, b), lt(b, a)))
     }
 }
 
@@ -2230,48 +2578,83 @@ type PoolId is bytes32;
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {SqrtRatio} from "./sqrtRatio.sol";
+import {SqrtRatio, MIN_SQRT_RATIO_RAW, MAX_SQRT_RATIO_RAW} from "./sqrtRatio.sol";
 
-type PoolState is bytes32;
+type SwapParameters is bytes32;
 
-using {sqrtRatio, tick, liquidity, isInitialized, parse} for PoolState global;
+using {
+    sqrtRatioLimit,
+    amount,
+    isToken1,
+    skipAhead,
+    isExactOut,
+    isPriceIncreasing,
+    withDefaultSqrtRatioLimit
+} for SwapParameters global;
 
-function sqrtRatio(PoolState state) pure returns (SqrtRatio r) {
+function sqrtRatioLimit(SwapParameters params) pure returns (SqrtRatio r) {
     assembly ("memory-safe") {
-        r := shr(160, state)
+        r := shr(160, params)
     }
 }
 
-function tick(PoolState state) pure returns (int32 t) {
+function amount(SwapParameters params) pure returns (int128 a) {
     assembly ("memory-safe") {
-        t := signextend(3, shr(128, state))
+        a := signextend(15, shr(32, params))
     }
 }
 
-function liquidity(PoolState state) pure returns (uint128 l) {
+function isToken1(SwapParameters params) pure returns (bool t) {
     assembly ("memory-safe") {
-        l := shr(128, shl(128, state))
+        t := and(shr(31, params), 1)
     }
 }
 
-function isInitialized(PoolState state) pure returns (bool yes) {
+function skipAhead(SwapParameters params) pure returns (uint256 s) {
     assembly ("memory-safe") {
-        yes := iszero(iszero(state))
+        s := and(params, 0x7fffffff)
     }
 }
 
-function parse(PoolState state) pure returns (SqrtRatio r, int32 t, uint128 l) {
+function createSwapParameters(SqrtRatio _sqrtRatioLimit, int128 _amount, bool _isToken1, uint256 _skipAhead)
+    pure
+    returns (SwapParameters p)
+{
     assembly ("memory-safe") {
-        r := shr(160, state)
-        t := signextend(3, shr(128, state))
-        l := shr(128, shl(128, state))
+        // p = (sqrtRatioLimit << 160) | (amount << 32) | (isToken1 << 31) | skipAhead
+        // Mask each field to ensure dirty bits don't interfere
+        // For isToken1, use iszero(iszero()) to convert any non-zero value to 1
+        p := or(
+            shl(160, _sqrtRatioLimit),
+            or(
+                shl(32, and(_amount, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)),
+                or(shl(31, iszero(iszero(_isToken1))), and(_skipAhead, 0x7fffffff))
+            )
+        )
     }
 }
 
-function createPoolState(SqrtRatio _sqrtRatio, int32 _tick, uint128 _liquidity) pure returns (PoolState s) {
+function isExactOut(SwapParameters params) pure returns (bool yes) {
     assembly ("memory-safe") {
-        // s = (sqrtRatio << 160) | (_tick << 128) | liquidity
-        s := or(shl(160, _sqrtRatio), or(shl(128, and(_tick, 0xFFFFFFFF)), shr(128, shl(128, _liquidity))))
+        yes := and(shr(159, params), 1)
+    }
+}
+
+function isPriceIncreasing(SwapParameters params) pure returns (bool yes) {
+    bool _isExactOut = params.isExactOut();
+    bool _isToken1 = params.isToken1();
+    assembly ("memory-safe") {
+        yes := xor(_isExactOut, _isToken1)
+    }
+}
+
+function withDefaultSqrtRatioLimit(SwapParameters params) pure returns (SwapParameters updated) {
+    bool increasing = params.isPriceIncreasing();
+    assembly ("memory-safe") {
+        let replace := iszero(shr(160, params))
+        let orMask :=
+            shl(160, mul(replace, or(mul(increasing, MAX_SQRT_RATIO_RAW), mul(iszero(increasing), MIN_SQRT_RATIO_RAW))))
+        updated := or(orMask, params)
     }
 }
 
@@ -2433,26 +2816,535 @@ function fees(Position memory position, FeesPerLiquidity memory feesPerLiquidity
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-type PoolBalanceUpdate is bytes32;
-
-using {delta0, delta1} for PoolBalanceUpdate global;
-
-function delta0(PoolBalanceUpdate update) pure returns (int128 v) {
+// Returns the fee to charge based on the amount, which is the fee (a 0.64 number) times the
+// amount, rounded up
+function computeFee(uint128 amount, uint64 fee) pure returns (uint128 result) {
     assembly ("memory-safe") {
-        v := signextend(15, shr(128, update))
+        result := shr(64, add(mul(amount, fee), 0xffffffffffffffff))
     }
 }
 
-function delta1(PoolBalanceUpdate update) pure returns (int128 v) {
+error AmountBeforeFeeOverflow();
+
+// Returns the amount before the fee is applied, which is the amount minus the fee, rounded up
+function amountBeforeFee(uint128 afterFee, uint64 fee) pure returns (uint128 result) {
     assembly ("memory-safe") {
-        v := signextend(15, update)
+        let v := shl(64, afterFee)
+        let d := sub(0x10000000000000000, fee)
+        result := add(iszero(iszero(mod(v, d))), div(v, d))
+        if shr(128, result) {
+            mstore(0, 0x0d88f526)
+            revert(0x1c, 0x04)
+        }
     }
 }
 
-function createPoolBalanceUpdate(int128 _delta0, int128 _delta1) pure returns (PoolBalanceUpdate update) {
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type Locker is bytes32;
+
+using {id, addr, parse} for Locker global;
+
+function id(Locker locker) pure returns (uint256 v) {
     assembly ("memory-safe") {
-        // update = (delta0 << 128) | delta1
-        update := or(shl(128, _delta0), and(_delta1, 0xffffffffffffffffffffffffffffffff))
+        v := sub(shr(160, locker), 1)
+    }
+}
+
+function addr(Locker locker) pure returns (address v) {
+    assembly ("memory-safe") {
+        v := shr(96, shl(96, locker))
+    }
+}
+
+function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
+    assembly ("memory-safe") {
+        lockerId := sub(shr(160, locker), 1)
+        lockerAddr := shr(96, shl(96, locker))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+struct CallPoints {
+    bool beforeInitializePool;
+    bool afterInitializePool;
+    bool beforeSwap;
+    bool afterSwap;
+    bool beforeUpdatePosition;
+    bool afterUpdatePosition;
+    bool beforeCollectFees;
+    bool afterCollectFees;
+}
+
+using {eq, isValid, toUint8} for CallPoints global;
+
+function eq(CallPoints memory a, CallPoints memory b) pure returns (bool) {
+    return (a.beforeInitializePool == b.beforeInitializePool && a.afterInitializePool == b.afterInitializePool
+            && a.beforeSwap == b.beforeSwap && a.afterSwap == b.afterSwap
+            && a.beforeUpdatePosition == b.beforeUpdatePosition && a.afterUpdatePosition == b.afterUpdatePosition
+            && a.beforeCollectFees == b.beforeCollectFees && a.afterCollectFees == b.afterCollectFees);
+}
+
+function isValid(CallPoints memory a) pure returns (bool) {
+    return (a.beforeInitializePool || a.afterInitializePool || a.beforeSwap || a.afterSwap || a.beforeUpdatePosition
+            || a.afterUpdatePosition || a.beforeCollectFees || a.afterCollectFees);
+}
+
+function toUint8(CallPoints memory callPoints) pure returns (uint8 b) {
+    assembly ("memory-safe") {
+        b := add(
+            add(
+                add(
+                    add(
+                        add(
+                            add(
+                                add(mload(callPoints), mul(128, mload(add(callPoints, 32)))),
+                                mul(64, mload(add(callPoints, 64)))
+                            ),
+                            mul(32, mload(add(callPoints, 96)))
+                        ),
+                        mul(16, mload(add(callPoints, 128)))
+                    ),
+                    mul(8, mload(add(callPoints, 160)))
+                ),
+                mul(4, mload(add(callPoints, 192)))
+            ),
+            mul(2, mload(add(callPoints, 224)))
+        )
+    }
+}
+
+function addressToCallPoints(address a) pure returns (CallPoints memory result) {
+    result = byteToCallPoints(uint8(uint160(a) >> 152));
+}
+
+function byteToCallPoints(uint8 b) pure returns (CallPoints memory result) {
+    // note the order of bytes does not match the struct order of elements because we are matching the cairo implementation
+    // which for legacy reasons has the fields in this order
+    result = CallPoints({
+        beforeInitializePool: (b & 1) != 0,
+        afterInitializePool: (b & 128) != 0,
+        beforeSwap: (b & 64) != 0,
+        afterSwap: (b & 32) != 0,
+        beforeUpdatePosition: (b & 16) != 0,
+        afterUpdatePosition: (b & 8) != 0,
+        beforeCollectFees: (b & 4) != 0,
+        afterCollectFees: (b & 2) != 0
+    });
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {SqrtRatio} from "../types/sqrtRatio.sol";
+
+error Amount0DeltaOverflow();
+error Amount1DeltaOverflow();
+
+function sortAndConvertToFixedSqrtRatios(SqrtRatio sqrtRatioA, SqrtRatio sqrtRatioB)
+    pure
+    returns (uint256 sqrtRatioLower, uint256 sqrtRatioUpper)
+{
+    sqrtRatioLower = sqrtRatioA.toFixed();
+    sqrtRatioUpper = sqrtRatioB.toFixed();
+    assembly ("memory-safe") {
+        let diff := mul(sub(sqrtRatioLower, sqrtRatioUpper), gt(sqrtRatioLower, sqrtRatioUpper))
+
+        sqrtRatioLower := sub(sqrtRatioLower, diff)
+        sqrtRatioUpper := add(sqrtRatioUpper, diff)
+    }
+}
+
+/// @dev Assumes that the sqrt ratios are valid
+function amount0Delta(SqrtRatio sqrtRatioA, SqrtRatio sqrtRatioB, uint128 liquidity, bool roundUp)
+    pure
+    returns (uint128 amount0)
+{
+    (uint256 sqrtRatioLower, uint256 sqrtRatioUpper) = sortAndConvertToFixedSqrtRatios(sqrtRatioA, sqrtRatioB);
+    amount0 = amount0DeltaSorted(sqrtRatioLower, sqrtRatioUpper, liquidity, roundUp);
+}
+
+/// @dev Assumes that the sqrt ratios are non-zero and sorted
+function amount0DeltaSorted(uint256 sqrtRatioLower, uint256 sqrtRatioUpper, uint128 liquidity, bool roundUp)
+    pure
+    returns (uint128 amount0)
+{
+    unchecked {
+        uint256 liquidityX128;
+        assembly ("memory-safe") {
+            liquidityX128 := shl(128, liquidity)
+        }
+        if (roundUp) {
+            uint256 result0 =
+                FixedPointMathLib.fullMulDivUp(liquidityX128, (sqrtRatioUpper - sqrtRatioLower), sqrtRatioUpper);
+            assembly ("memory-safe") {
+                let result := add(div(result0, sqrtRatioLower), iszero(iszero(mod(result0, sqrtRatioLower))))
+                if shr(128, result) {
+                    // cast sig "Amount0DeltaOverflow()"
+                    mstore(0, 0xb4ef2546)
+                    revert(0x1c, 0x04)
+                }
+                amount0 := result
+            }
+        } else {
+            uint256 result0 =
+                FixedPointMathLib.fullMulDivUnchecked(liquidityX128, (sqrtRatioUpper - sqrtRatioLower), sqrtRatioUpper);
+            uint256 result = FixedPointMathLib.rawDiv(result0, sqrtRatioLower);
+            assembly ("memory-safe") {
+                if shr(128, result) {
+                    // cast sig "Amount0DeltaOverflow()"
+                    mstore(0, 0xb4ef2546)
+                    revert(0x1c, 0x04)
+                }
+                amount0 := result
+            }
+        }
+    }
+}
+
+/// @dev Assumes that the sqrt ratios are valid
+function amount1Delta(SqrtRatio sqrtRatioA, SqrtRatio sqrtRatioB, uint128 liquidity, bool roundUp)
+    pure
+    returns (uint128 amount1)
+{
+    (uint256 sqrtRatioLower, uint256 sqrtRatioUpper) = sortAndConvertToFixedSqrtRatios(sqrtRatioA, sqrtRatioB);
+    amount1 = amount1DeltaSorted(sqrtRatioLower, sqrtRatioUpper, liquidity, roundUp);
+}
+
+function amount1DeltaSorted(uint256 sqrtRatioLower, uint256 sqrtRatioUpper, uint128 liquidity, bool roundUp)
+    pure
+    returns (uint128 amount1)
+{
+    unchecked {
+        uint256 difference = sqrtRatioUpper - sqrtRatioLower;
+        uint256 liquidityU256;
+        assembly ("memory-safe") {
+            liquidityU256 := liquidity
+        }
+
+        if (roundUp) {
+            uint256 result = FixedPointMathLib.fullMulDivN(difference, liquidityU256, 128);
+            assembly ("memory-safe") {
+                // addition is safe from overflow because the result of fullMulDivN will never equal type(uint256).max
+                result := add(
+                    result,
+                    iszero(iszero(mulmod(difference, liquidityU256, 0x100000000000000000000000000000000)))
+                )
+                if shr(128, result) {
+                    // cast sig "Amount1DeltaOverflow()"
+                    mstore(0, 0x59d2b24a)
+                    revert(0x1c, 0x04)
+                }
+                amount1 := result
+            }
+        } else {
+            uint256 result = FixedPointMathLib.fullMulDivN(difference, liquidityU256, 128);
+            assembly ("memory-safe") {
+                if shr(128, result) {
+                    // cast sig "Amount1DeltaOverflow()"
+                    mstore(0, 0x59d2b24a)
+                    revert(0x1c, 0x04)
+                }
+                amount1 := result
+            }
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
+import {PoolConfig} from "./poolConfig.sol";
+
+type PositionId is bytes32;
+
+using {validate, salt, tickLower, tickUpper} for PositionId global;
+
+function salt(PositionId positionId) pure returns (bytes24 v) {
+    assembly ("memory-safe") {
+        v := shl(64, shr(64, positionId))
+    }
+}
+
+function tickLower(PositionId positionId) pure returns (int32 v) {
+    assembly ("memory-safe") {
+        // shift down, then signextend to 32 bits
+        v := signextend(3, shr(32, positionId))
+    }
+}
+
+function tickUpper(PositionId positionId) pure returns (int32 v) {
+    assembly ("memory-safe") {
+        // lowest 4 bytes, then signextend to 32 bits
+        v := signextend(3, positionId)
+    }
+}
+
+function createPositionId(bytes24 _salt, int32 _tickLower, int32 _tickUpper) pure returns (PositionId v) {
+    assembly ("memory-safe") {
+        // v = salt | (tickLower << 32) | tickUpper
+        v := or(shl(64, shr(64, _salt)), or(shl(32, and(_tickLower, 0xFFFFFFFF)), and(_tickUpper, 0xFFFFFFFF)))
+    }
+}
+
+/// @notice Thrown when the order of the position bounds is invalid, i.e. tickLower >= tickUpper
+error BoundsOrder();
+/// @notice Thrown when the bounds of the position are outside the pool's min/max tick range
+error MinMaxBounds();
+/// @notice Thrown when the ticks of the bounds do not align with tick spacing for concentrated pools
+error BoundsTickSpacing();
+/// @notice Thrown when stableswap pool positions are not at the min/max tick for the config
+error StableswapMustBeFullRange();
+
+function validate(PositionId positionId, PoolConfig config) pure {
+    if (config.isConcentrated()) {
+        if (positionId.tickLower() >= positionId.tickUpper()) revert BoundsOrder();
+        if (positionId.tickLower() < MIN_TICK || positionId.tickUpper() > MAX_TICK) revert MinMaxBounds();
+        int32 spacing = int32(config.concentratedTickSpacing());
+        if (positionId.tickLower() % spacing != 0 || positionId.tickUpper() % spacing != 0) revert BoundsTickSpacing();
+    } else {
+        (int32 lower, int32 upper) = config.stableswapActiveLiquidityTickRange();
+        // For stableswap pools, positions must be exactly min/max tick
+        if (positionId.tickLower() != lower || positionId.tickUpper() != upper) revert StableswapMustBeFullRange();
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// Protocol Constants
+// Contains all constant values used throughout the Ekubo Protocol
+// These constants define the boundaries and special values for the protocol's operation
+
+// The minimum tick value supported by the protocol
+// Corresponds to the minimum possible price ratio in the protocol
+int32 constant MIN_TICK = -88722835;
+
+// The maximum tick value supported by the protocol
+// Corresponds to the maximum possible price ratio in the protocol
+int32 constant MAX_TICK = 88722835;
+
+// The maximum tick magnitude (absolute value of MAX_TICK)
+// Used for validation and bounds checking in tick-related calculations
+uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
+
+// The maximum allowed tick spacing for pools
+// Defines the upper limit for tick spacing configuration in pool creation
+uint32 constant MAX_TICK_SPACING = 698605;
+
+// Address used to represent the native token (ETH) within the protocol
+// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
+address constant NATIVE_TOKEN_ADDRESS = address(0);
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
+import {PoolConfig} from "./poolConfig.sol";
+
+type PositionId is bytes32;
+
+using {validate, salt, tickLower, tickUpper} for PositionId global;
+
+function salt(PositionId positionId) pure returns (bytes24 v) {
+    assembly ("memory-safe") {
+        v := shl(64, shr(64, positionId))
+    }
+}
+
+function tickLower(PositionId positionId) pure returns (int32 v) {
+    assembly ("memory-safe") {
+        // shift down, then signextend to 32 bits
+        v := signextend(3, shr(32, positionId))
+    }
+}
+
+function tickUpper(PositionId positionId) pure returns (int32 v) {
+    assembly ("memory-safe") {
+        // lowest 4 bytes, then signextend to 32 bits
+        v := signextend(3, positionId)
+    }
+}
+
+function createPositionId(bytes24 _salt, int32 _tickLower, int32 _tickUpper) pure returns (PositionId v) {
+    assembly ("memory-safe") {
+        // v = salt | (tickLower << 32) | tickUpper
+        v := or(shl(64, shr(64, _salt)), or(shl(32, and(_tickLower, 0xFFFFFFFF)), and(_tickUpper, 0xFFFFFFFF)))
+    }
+}
+
+/// @notice Thrown when the order of the position bounds is invalid, i.e. tickLower >= tickUpper
+error BoundsOrder();
+/// @notice Thrown when the bounds of the position are outside the pool's min/max tick range
+error MinMaxBounds();
+/// @notice Thrown when the ticks of the bounds do not align with tick spacing for concentrated pools
+error BoundsTickSpacing();
+/// @notice Thrown when stableswap pool positions are not at the min/max tick for the config
+error StableswapMustBeFullRange();
+
+function validate(PositionId positionId, PoolConfig config) pure {
+    if (config.isConcentrated()) {
+        if (positionId.tickLower() >= positionId.tickUpper()) revert BoundsOrder();
+        if (positionId.tickLower() < MIN_TICK || positionId.tickUpper() > MAX_TICK) revert MinMaxBounds();
+        int32 spacing = int32(config.concentratedTickSpacing());
+        if (positionId.tickLower() % spacing != 0 || positionId.tickUpper() % spacing != 0) revert BoundsTickSpacing();
+    } else {
+        (int32 lower, int32 upper) = config.stableswapActiveLiquidityTickRange();
+        // For stableswap pools, positions must be exactly min/max tick
+        if (positionId.tickLower() != lower || positionId.tickUpper() != upper) revert StableswapMustBeFullRange();
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// Protocol Constants
+// Contains all constant values used throughout the Ekubo Protocol
+// These constants define the boundaries and special values for the protocol's operation
+
+// The minimum tick value supported by the protocol
+// Corresponds to the minimum possible price ratio in the protocol
+int32 constant MIN_TICK = -88722835;
+
+// The maximum tick value supported by the protocol
+// Corresponds to the maximum possible price ratio in the protocol
+int32 constant MAX_TICK = 88722835;
+
+// The maximum tick magnitude (absolute value of MAX_TICK)
+// Used for validation and bounds checking in tick-related calculations
+uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
+
+// The maximum allowed tick spacing for pools
+// Defines the upper limit for tick spacing configuration in pool creation
+uint32 constant MAX_TICK_SPACING = 698605;
+
+// Address used to represent the native token (ETH) within the protocol
+// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
+address constant NATIVE_TOKEN_ADDRESS = address(0);
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {SqrtRatio} from "./sqrtRatio.sol";
+
+type PoolState is bytes32;
+
+using {sqrtRatio, tick, liquidity, isInitialized, parse} for PoolState global;
+
+function sqrtRatio(PoolState state) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := shr(160, state)
+    }
+}
+
+function tick(PoolState state) pure returns (int32 t) {
+    assembly ("memory-safe") {
+        t := signextend(3, shr(128, state))
+    }
+}
+
+function liquidity(PoolState state) pure returns (uint128 l) {
+    assembly ("memory-safe") {
+        l := shr(128, shl(128, state))
+    }
+}
+
+function isInitialized(PoolState state) pure returns (bool yes) {
+    assembly ("memory-safe") {
+        yes := iszero(iszero(state))
+    }
+}
+
+function parse(PoolState state) pure returns (SqrtRatio r, int32 t, uint128 l) {
+    assembly ("memory-safe") {
+        r := shr(160, state)
+        t := signextend(3, shr(128, state))
+        l := shr(128, shl(128, state))
+    }
+}
+
+function createPoolState(SqrtRatio _sqrtRatio, int32 _tick, uint128 _liquidity) pure returns (PoolState s) {
+    assembly ("memory-safe") {
+        // s = (sqrtRatio << 160) | (_tick << 128) | liquidity
+        s := or(shl(160, _sqrtRatio), or(shl(128, and(_tick, 0xFFFFFFFF)), shr(128, shl(128, _liquidity))))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type TickInfo is bytes32;
+
+using {liquidityDelta, liquidityNet, parse} for TickInfo global;
+
+function liquidityDelta(TickInfo info) pure returns (int128 delta) {
+    assembly ("memory-safe") {
+        delta := signextend(15, info)
+    }
+}
+
+function liquidityNet(TickInfo info) pure returns (uint128 net) {
+    assembly ("memory-safe") {
+        net := shr(128, info)
+    }
+}
+
+function parse(TickInfo info) pure returns (int128 delta, uint128 net) {
+    assembly ("memory-safe") {
+        delta := signextend(15, info)
+        net := shr(128, info)
+    }
+}
+
+function createTickInfo(int128 _liquidityDelta, uint128 _liquidityNet) pure returns (TickInfo info) {
+    assembly ("memory-safe") {
+        // info = (liquidityNet << 128) | liquidityDelta
+        info := or(shl(128, _liquidityNet), shr(128, shl(128, _liquidityDelta)))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {PoolId} from "./poolId.sol";
+import {PoolConfig} from "./poolConfig.sol";
+
+using {toPoolId, validate} for PoolKey global;
+
+/// @notice Unique identifier for a pool containing token addresses and configuration
+/// @dev Each pool has its own state associated with this key
+struct PoolKey {
+    /// @notice Address of token0 (must be < token1)
+    address token0;
+    /// @notice Address of token1 (must be > token0)
+    address token1;
+    /// @notice Packed configuration containing extension, fee, and tick spacing
+    PoolConfig config;
+}
+
+/// @notice Thrown when tokens are not properly sorted (token0 >= token1)
+error TokensMustBeSorted();
+
+/// @notice Validates that a pool key is valid
+/// @dev Checks that tokens are sorted and the config is valid
+/// @param key The pool key to validate
+function validate(PoolKey memory key) pure {
+    if (key.token0 >= key.token1) revert TokensMustBeSorted();
+    key.config.validate();
+}
+
+/// @notice Converts a pool key to a unique pool ID
+/// @param key The pool key
+/// @return result The unique pool ID (hash of the pool key)
+function toPoolId(PoolKey memory key) pure returns (PoolId result) {
+    assembly ("memory-safe") {
+        // it's already copied into memory
+        result := keccak256(key, 96)
     }
 }
 
@@ -2685,6 +3577,441 @@ function validate(PoolConfig config) pure {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
+type StorageSlot is bytes32;
+
+using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
+
+function load(StorageSlot slot) view returns (bytes32 value) {
+    assembly ("memory-safe") {
+        value := sload(slot)
+    }
+}
+
+function loadTwo(StorageSlot slot) view returns (bytes32 value0, bytes32 value1) {
+    value0 = slot.load();
+    value1 = slot.next().load();
+}
+
+function store(StorageSlot slot, bytes32 value) {
+    assembly ("memory-safe") {
+        sstore(slot, value)
+    }
+}
+
+function storeTwo(StorageSlot slot, bytes32 value0, bytes32 value1) {
+    slot.store(value0);
+    slot.next().store(value1);
+}
+
+function next(StorageSlot slot) pure returns (StorageSlot nextSlot) {
+    assembly ("memory-safe") {
+        nextSlot := add(slot, 1)
+    }
+}
+
+function add(StorageSlot slot, uint256 addend) pure returns (StorageSlot summedSlot) {
+    assembly ("memory-safe") {
+        summedSlot := add(slot, addend)
+    }
+}
+
+function sub(StorageSlot slot, uint256 subtrahend) pure returns (StorageSlot differenceSlot) {
+    assembly ("memory-safe") {
+        differenceSlot := sub(slot, subtrahend)
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+/// @notice Unique identifier for a pool
+/// @dev Wraps bytes32 to provide type safety for pool identifiers
+type PoolId is bytes32;
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type Locker is bytes32;
+
+using {id, addr, parse} for Locker global;
+
+function id(Locker locker) pure returns (uint256 v) {
+    assembly ("memory-safe") {
+        v := sub(shr(160, locker), 1)
+    }
+}
+
+function addr(Locker locker) pure returns (address v) {
+    assembly ("memory-safe") {
+        v := shr(96, shl(96, locker))
+    }
+}
+
+function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
+    assembly ("memory-safe") {
+        lockerId := sub(shr(160, locker), 1)
+        lockerAddr := shr(96, shl(96, locker))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// A dynamic fixed point number (a la floating point) that stores a shifting 94 bit view of the underlying fixed point value,
+//  based on the most significant bits (mantissa)
+// If the most significant 2 bits are 11, it represents a 64.30
+// If the most significant 2 bits are 10, it represents a 32.62 number
+// If the most significant 2 bits are 01, it represents a 0.94 number
+// If the most significant 2 bits are 00, it represents a 0.126 number that is always less than 2**-32
+
+type SqrtRatio is uint96;
+
+uint96 constant MIN_SQRT_RATIO_RAW = 4611797791050542631;
+SqrtRatio constant MIN_SQRT_RATIO = SqrtRatio.wrap(MIN_SQRT_RATIO_RAW);
+uint96 constant MAX_SQRT_RATIO_RAW = 79227682466138141934206691491;
+SqrtRatio constant MAX_SQRT_RATIO = SqrtRatio.wrap(MAX_SQRT_RATIO_RAW);
+
+uint96 constant TWO_POW_95 = 0x800000000000000000000000;
+uint96 constant TWO_POW_94 = 0x400000000000000000000000;
+uint96 constant TWO_POW_62 = 0x4000000000000000;
+uint96 constant TWO_POW_62_MINUS_ONE = 0x3fffffffffffffff;
+uint96 constant BIT_MASK = 0xc00000000000000000000000; // TWO_POW_95 | TWO_POW_94
+
+SqrtRatio constant ONE = SqrtRatio.wrap((TWO_POW_95) + (1 << 62));
+
+using {
+    toFixed,
+    isValid,
+    ge as >=,
+    le as <=,
+    lt as <,
+    gt as >,
+    eq as ==,
+    neq as !=,
+    isZero,
+    min,
+    max
+} for SqrtRatio global;
+
+function isValid(SqrtRatio sqrtRatio) pure returns (bool r) {
+    assembly ("memory-safe") {
+        r := and(
+            // greater than or equal to TWO_POW_62, i.e. the whole number portion is nonzero
+            gt(and(sqrtRatio, not(BIT_MASK)), TWO_POW_62_MINUS_ONE),
+            // and between min/max sqrt ratio
+            and(iszero(lt(sqrtRatio, MIN_SQRT_RATIO_RAW)), iszero(gt(sqrtRatio, MAX_SQRT_RATIO_RAW)))
+        )
+    }
+}
+
+error ValueOverflowsSqrtRatioContainer();
+
+// If passing a value greater than this constant with roundUp = true, toSqrtRatio will overflow
+// For roundUp = false, the constant is type(uint192).max
+uint256 constant MAX_FIXED_VALUE_ROUND_UP =
+    0x1000000000000000000000000000000000000000000000000 - 0x4000000000000000000000000;
+
+// Converts a 64.128 value into the compact SqrtRatio representation
+function toSqrtRatio(uint256 sqrtRatio, bool roundUp) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        function compute(sr, ru) -> v {
+            // rup = 0x00...00 when false, 0xff...ff when true
+            let rup := sub(0, ru)
+
+            // Region: < 2**96  (shift = 2)
+            let addmask := and(0x3, rup) // (1<<s)-1 if ru
+            if lt(add(sr, addmask), shl(96, 1)) {
+                v := shr(2, add(sr, addmask))
+                leave
+            }
+
+            // Region: < 2**128 (shift = 34)  + set bit 94
+            addmask := and(0x3ffffffff, rup)
+            if lt(add(sr, addmask), shl(128, 1)) {
+                v := or(shl(94, 1), shr(34, add(sr, addmask)))
+                leave
+            }
+
+            // Region: < 2**160 (shift = 66)  + set bit 95
+            addmask := and(0x3ffffffffffffffff, rup)
+            if lt(add(sr, addmask), shl(160, 1)) {
+                v := or(shl(95, 1), shr(66, add(sr, addmask)))
+                leave
+            }
+
+            // Region: < 2**192 (shift = 98)  + set bits 95|94
+            addmask := and(0x3ffffffffffffffffffffffff, rup)
+            if lt(add(sr, addmask), shl(192, 1)) {
+                v := or(shl(94, 3), shr(98, add(sr, addmask))) // 3<<94 == bit95|bit94
+                leave
+            }
+
+            // cast sig "ValueOverflowsSqrtRatioContainer()"
+            mstore(0, shl(224, 0xa10459f4))
+            revert(0, 4)
+        }
+        r := compute(sqrtRatio, roundUp)
+    }
+}
+
+// Returns the 64.128 representation of the given sqrt ratio
+function toFixed(SqrtRatio sqrtRatio) pure returns (uint256 r) {
+    assembly ("memory-safe") {
+        r := shl(add(2, shr(89, and(sqrtRatio, BIT_MASK))), and(sqrtRatio, not(BIT_MASK)))
+    }
+}
+
+// The below operators assume that the SqrtRatio is valid, i.e. SqrtRatio#isValid returns true
+
+function lt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) < SqrtRatio.unwrap(b);
+}
+
+function gt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) > SqrtRatio.unwrap(b);
+}
+
+function le(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) <= SqrtRatio.unwrap(b);
+}
+
+function ge(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) >= SqrtRatio.unwrap(b);
+}
+
+function eq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) == SqrtRatio.unwrap(b);
+}
+
+function neq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
+    r = SqrtRatio.unwrap(a) != SqrtRatio.unwrap(b);
+}
+
+function isZero(SqrtRatio a) pure returns (bool r) {
+    assembly ("memory-safe") {
+        r := iszero(a)
+    }
+}
+
+function max(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := xor(a, mul(xor(a, b), gt(b, a)))
+    }
+}
+
+function min(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := xor(a, mul(xor(a, b), lt(b, a)))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {SqrtRatio} from "./sqrtRatio.sol";
+
+type PoolState is bytes32;
+
+using {sqrtRatio, tick, liquidity, isInitialized, parse} for PoolState global;
+
+function sqrtRatio(PoolState state) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := shr(160, state)
+    }
+}
+
+function tick(PoolState state) pure returns (int32 t) {
+    assembly ("memory-safe") {
+        t := signextend(3, shr(128, state))
+    }
+}
+
+function liquidity(PoolState state) pure returns (uint128 l) {
+    assembly ("memory-safe") {
+        l := shr(128, shl(128, state))
+    }
+}
+
+function isInitialized(PoolState state) pure returns (bool yes) {
+    assembly ("memory-safe") {
+        yes := iszero(iszero(state))
+    }
+}
+
+function parse(PoolState state) pure returns (SqrtRatio r, int32 t, uint128 l) {
+    assembly ("memory-safe") {
+        r := shr(160, state)
+        t := signextend(3, shr(128, state))
+        l := shr(128, shl(128, state))
+    }
+}
+
+function createPoolState(SqrtRatio _sqrtRatio, int32 _tick, uint128 _liquidity) pure returns (PoolState s) {
+    assembly ("memory-safe") {
+        // s = (sqrtRatio << 160) | (_tick << 128) | liquidity
+        s := or(shl(160, _sqrtRatio), or(shl(128, and(_tick, 0xFFFFFFFF)), shr(128, shl(128, _liquidity))))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type Locker is bytes32;
+
+using {id, addr, parse} for Locker global;
+
+function id(Locker locker) pure returns (uint256 v) {
+    assembly ("memory-safe") {
+        v := sub(shr(160, locker), 1)
+    }
+}
+
+function addr(Locker locker) pure returns (address v) {
+    assembly ("memory-safe") {
+        v := shr(96, shl(96, locker))
+    }
+}
+
+function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
+    assembly ("memory-safe") {
+        lockerId := sub(shr(160, locker), 1)
+        lockerAddr := shr(96, shl(96, locker))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type StorageSlot is bytes32;
+
+using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
+
+function load(StorageSlot slot) view returns (bytes32 value) {
+    assembly ("memory-safe") {
+        value := sload(slot)
+    }
+}
+
+function loadTwo(StorageSlot slot) view returns (bytes32 value0, bytes32 value1) {
+    value0 = slot.load();
+    value1 = slot.next().load();
+}
+
+function store(StorageSlot slot, bytes32 value) {
+    assembly ("memory-safe") {
+        sstore(slot, value)
+    }
+}
+
+function storeTwo(StorageSlot slot, bytes32 value0, bytes32 value1) {
+    slot.store(value0);
+    slot.next().store(value1);
+}
+
+function next(StorageSlot slot) pure returns (StorageSlot nextSlot) {
+    assembly ("memory-safe") {
+        nextSlot := add(slot, 1)
+    }
+}
+
+function add(StorageSlot slot, uint256 addend) pure returns (StorageSlot summedSlot) {
+    assembly ("memory-safe") {
+        summedSlot := add(slot, addend)
+    }
+}
+
+function sub(StorageSlot slot, uint256 subtrahend) pure returns (StorageSlot differenceSlot) {
+    assembly ("memory-safe") {
+        differenceSlot := sub(slot, subtrahend)
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {SqrtRatio, MIN_SQRT_RATIO_RAW, MAX_SQRT_RATIO_RAW} from "./sqrtRatio.sol";
+
+type SwapParameters is bytes32;
+
+using {
+    sqrtRatioLimit,
+    amount,
+    isToken1,
+    skipAhead,
+    isExactOut,
+    isPriceIncreasing,
+    withDefaultSqrtRatioLimit
+} for SwapParameters global;
+
+function sqrtRatioLimit(SwapParameters params) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := shr(160, params)
+    }
+}
+
+function amount(SwapParameters params) pure returns (int128 a) {
+    assembly ("memory-safe") {
+        a := signextend(15, shr(32, params))
+    }
+}
+
+function isToken1(SwapParameters params) pure returns (bool t) {
+    assembly ("memory-safe") {
+        t := and(shr(31, params), 1)
+    }
+}
+
+function skipAhead(SwapParameters params) pure returns (uint256 s) {
+    assembly ("memory-safe") {
+        s := and(params, 0x7fffffff)
+    }
+}
+
+function createSwapParameters(SqrtRatio _sqrtRatioLimit, int128 _amount, bool _isToken1, uint256 _skipAhead)
+    pure
+    returns (SwapParameters p)
+{
+    assembly ("memory-safe") {
+        // p = (sqrtRatioLimit << 160) | (amount << 32) | (isToken1 << 31) | skipAhead
+        // Mask each field to ensure dirty bits don't interfere
+        // For isToken1, use iszero(iszero()) to convert any non-zero value to 1
+        p := or(
+            shl(160, _sqrtRatioLimit),
+            or(
+                shl(32, and(_amount, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)),
+                or(shl(31, iszero(iszero(_isToken1))), and(_skipAhead, 0x7fffffff))
+            )
+        )
+    }
+}
+
+function isExactOut(SwapParameters params) pure returns (bool yes) {
+    assembly ("memory-safe") {
+        yes := and(shr(159, params), 1)
+    }
+}
+
+function isPriceIncreasing(SwapParameters params) pure returns (bool yes) {
+    bool _isExactOut = params.isExactOut();
+    bool _isToken1 = params.isToken1();
+    assembly ("memory-safe") {
+        yes := xor(_isExactOut, _isToken1)
+    }
+}
+
+function withDefaultSqrtRatioLimit(SwapParameters params) pure returns (SwapParameters updated) {
+    bool increasing = params.isPriceIncreasing();
+    assembly ("memory-safe") {
+        let replace := iszero(shr(160, params))
+        let orMask :=
+            shl(160, mul(replace, or(mul(increasing, MAX_SQRT_RATIO_RAW), mul(iszero(increasing), MIN_SQRT_RATIO_RAW))))
+        updated := or(orMask, params)
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
 // The total fees per liquidity for each token.
 // Since these are always read together we put them in a struct, even though they cannot be packed.
 struct FeesPerLiquidity {
@@ -2714,151 +4041,26 @@ function feesPerLiquidityFromAmounts(uint128 amount0, uint128 amount1, uint128 l
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-// A dynamic fixed point number (a la floating point) that stores a shifting 94 bit view of the underlying fixed point value,
-//  based on the most significant bits (mantissa)
-// If the most significant 2 bits are 11, it represents a 64.30
-// If the most significant 2 bits are 10, it represents a 32.62 number
-// If the most significant 2 bits are 01, it represents a 0.94 number
-// If the most significant 2 bits are 00, it represents a 0.126 number that is always less than 2**-32
+type PoolBalanceUpdate is bytes32;
 
-type SqrtRatio is uint96;
+using {delta0, delta1} for PoolBalanceUpdate global;
 
-uint96 constant MIN_SQRT_RATIO_RAW = 4611797791050542631;
-SqrtRatio constant MIN_SQRT_RATIO = SqrtRatio.wrap(MIN_SQRT_RATIO_RAW);
-uint96 constant MAX_SQRT_RATIO_RAW = 79227682466138141934206691491;
-SqrtRatio constant MAX_SQRT_RATIO = SqrtRatio.wrap(MAX_SQRT_RATIO_RAW);
-
-uint96 constant TWO_POW_95 = 0x800000000000000000000000;
-uint96 constant TWO_POW_94 = 0x400000000000000000000000;
-uint96 constant TWO_POW_62 = 0x4000000000000000;
-uint96 constant TWO_POW_62_MINUS_ONE = 0x3fffffffffffffff;
-uint96 constant BIT_MASK = 0xc00000000000000000000000; // TWO_POW_95 | TWO_POW_94
-
-SqrtRatio constant ONE = SqrtRatio.wrap((TWO_POW_95) + (1 << 62));
-
-using {
-    toFixed,
-    isValid,
-    ge as >=,
-    le as <=,
-    lt as <,
-    gt as >,
-    eq as ==,
-    neq as !=,
-    isZero,
-    min,
-    max
-} for SqrtRatio global;
-
-function isValid(SqrtRatio sqrtRatio) pure returns (bool r) {
+function delta0(PoolBalanceUpdate update) pure returns (int128 v) {
     assembly ("memory-safe") {
-        r := and(
-            // greater than or equal to TWO_POW_62, i.e. the whole number portion is nonzero
-            gt(and(sqrtRatio, not(BIT_MASK)), TWO_POW_62_MINUS_ONE),
-            // and between min/max sqrt ratio
-            and(iszero(lt(sqrtRatio, MIN_SQRT_RATIO_RAW)), iszero(gt(sqrtRatio, MAX_SQRT_RATIO_RAW)))
-        )
+        v := signextend(15, shr(128, update))
     }
 }
 
-error ValueOverflowsSqrtRatioContainer();
-
-// If passing a value greater than this constant with roundUp = true, toSqrtRatio will overflow
-// For roundUp = false, the constant is type(uint192).max
-uint256 constant MAX_FIXED_VALUE_ROUND_UP =
-    0x1000000000000000000000000000000000000000000000000 - 0x4000000000000000000000000;
-
-// Converts a 64.128 value into the compact SqrtRatio representation
-function toSqrtRatio(uint256 sqrtRatio, bool roundUp) pure returns (SqrtRatio r) {
+function delta1(PoolBalanceUpdate update) pure returns (int128 v) {
     assembly ("memory-safe") {
-        function compute(sr, ru) -> v {
-            // rup = 0x00...00 when false, 0xff...ff when true
-            let rup := sub(0, ru)
-
-            // Region: < 2**96  (shift = 2)
-            let addmask := and(0x3, rup) // (1<<s)-1 if ru
-            if lt(add(sr, addmask), shl(96, 1)) {
-                v := shr(2, add(sr, addmask))
-                leave
-            }
-
-            // Region: < 2**128 (shift = 34)  + set bit 94
-            addmask := and(0x3ffffffff, rup)
-            if lt(add(sr, addmask), shl(128, 1)) {
-                v := or(shl(94, 1), shr(34, add(sr, addmask)))
-                leave
-            }
-
-            // Region: < 2**160 (shift = 66)  + set bit 95
-            addmask := and(0x3ffffffffffffffff, rup)
-            if lt(add(sr, addmask), shl(160, 1)) {
-                v := or(shl(95, 1), shr(66, add(sr, addmask)))
-                leave
-            }
-
-            // Region: < 2**192 (shift = 98)  + set bits 95|94
-            addmask := and(0x3ffffffffffffffffffffffff, rup)
-            if lt(add(sr, addmask), shl(192, 1)) {
-                v := or(shl(94, 3), shr(98, add(sr, addmask))) // 3<<94 == bit95|bit94
-                leave
-            }
-
-            // cast sig "ValueOverflowsSqrtRatioContainer()"
-            mstore(0, shl(224, 0xa10459f4))
-            revert(0, 4)
-        }
-        r := compute(sqrtRatio, roundUp)
+        v := signextend(15, update)
     }
 }
 
-// Returns the 64.128 representation of the given sqrt ratio
-function toFixed(SqrtRatio sqrtRatio) pure returns (uint256 r) {
+function createPoolBalanceUpdate(int128 _delta0, int128 _delta1) pure returns (PoolBalanceUpdate update) {
     assembly ("memory-safe") {
-        r := shl(add(2, shr(89, and(sqrtRatio, BIT_MASK))), and(sqrtRatio, not(BIT_MASK)))
-    }
-}
-
-// The below operators assume that the SqrtRatio is valid, i.e. SqrtRatio#isValid returns true
-
-function lt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) < SqrtRatio.unwrap(b);
-}
-
-function gt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) > SqrtRatio.unwrap(b);
-}
-
-function le(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) <= SqrtRatio.unwrap(b);
-}
-
-function ge(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) >= SqrtRatio.unwrap(b);
-}
-
-function eq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) == SqrtRatio.unwrap(b);
-}
-
-function neq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) != SqrtRatio.unwrap(b);
-}
-
-function isZero(SqrtRatio a) pure returns (bool r) {
-    assembly ("memory-safe") {
-        r := iszero(a)
-    }
-}
-
-function max(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := xor(a, mul(xor(a, b), gt(b, a)))
-    }
-}
-
-function min(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := xor(a, mul(xor(a, b), lt(b, a)))
+        // update = (delta0 << 128) | delta1
+        update := or(shl(128, _delta0), and(_delta1, 0xffffffffffffffffffffffffffffffff))
     }
 }
 
@@ -3010,6 +4212,783 @@ function max(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
 function min(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
     assembly ("memory-safe") {
         r := xor(a, mul(xor(a, b), lt(b, a)))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {SqrtRatio} from "./sqrtRatio.sol";
+
+type PoolState is bytes32;
+
+using {sqrtRatio, tick, liquidity, isInitialized, parse} for PoolState global;
+
+function sqrtRatio(PoolState state) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := shr(160, state)
+    }
+}
+
+function tick(PoolState state) pure returns (int32 t) {
+    assembly ("memory-safe") {
+        t := signextend(3, shr(128, state))
+    }
+}
+
+function liquidity(PoolState state) pure returns (uint128 l) {
+    assembly ("memory-safe") {
+        l := shr(128, shl(128, state))
+    }
+}
+
+function isInitialized(PoolState state) pure returns (bool yes) {
+    assembly ("memory-safe") {
+        yes := iszero(iszero(state))
+    }
+}
+
+function parse(PoolState state) pure returns (SqrtRatio r, int32 t, uint128 l) {
+    assembly ("memory-safe") {
+        r := shr(160, state)
+        t := signextend(3, shr(128, state))
+        l := shr(128, shl(128, state))
+    }
+}
+
+function createPoolState(SqrtRatio _sqrtRatio, int32 _tick, uint128 _liquidity) pure returns (PoolState s) {
+    assembly ("memory-safe") {
+        // s = (sqrtRatio << 160) | (_tick << 128) | liquidity
+        s := or(shl(160, _sqrtRatio), or(shl(128, and(_tick, 0xFFFFFFFF)), shr(128, shl(128, _liquidity))))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type StorageSlot is bytes32;
+
+using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
+
+function load(StorageSlot slot) view returns (bytes32 value) {
+    assembly ("memory-safe") {
+        value := sload(slot)
+    }
+}
+
+function loadTwo(StorageSlot slot) view returns (bytes32 value0, bytes32 value1) {
+    value0 = slot.load();
+    value1 = slot.next().load();
+}
+
+function store(StorageSlot slot, bytes32 value) {
+    assembly ("memory-safe") {
+        sstore(slot, value)
+    }
+}
+
+function storeTwo(StorageSlot slot, bytes32 value0, bytes32 value1) {
+    slot.store(value0);
+    slot.next().store(value1);
+}
+
+function next(StorageSlot slot) pure returns (StorageSlot nextSlot) {
+    assembly ("memory-safe") {
+        nextSlot := add(slot, 1)
+    }
+}
+
+function add(StorageSlot slot, uint256 addend) pure returns (StorageSlot summedSlot) {
+    assembly ("memory-safe") {
+        summedSlot := add(slot, addend)
+    }
+}
+
+function sub(StorageSlot slot, uint256 subtrahend) pure returns (StorageSlot differenceSlot) {
+    assembly ("memory-safe") {
+        differenceSlot := sub(slot, subtrahend)
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+/**
+ * @title Bitmap (256-bit)
+ * @notice Lightweight helpers for treating a `uint256` as a 256-bit bitmap.
+ * @dev
+ * - Bit indices are in the range [0, 255].
+ * - All operations are O(1) and implemented with memory-safe assembly.
+ * - For search helpers `leSetBit` and `geSetBit`, the return value is
+ *   one-based: it returns `index + 1` of the matching set bit, or `0` if none.
+ *   This convention avoids the need for sentinels outside the 0..255 range.
+ */
+type Bitmap is uint256;
+
+using {toggle, isSet, leSetBit, geSetBit} for Bitmap global;
+
+/**
+ * @notice Toggle (flip) the bit at `index` in `bitmap`.
+ * @param bitmap The current bitmap value.
+ * @param index  Bit position to toggle, in [0, 255].
+ * @return result A new bitmap with the bit at `index` flipped.
+ */
+function toggle(Bitmap bitmap, uint8 index) pure returns (Bitmap result) {
+    assembly ("memory-safe") {
+        result := xor(bitmap, shl(index, 1))
+    }
+}
+
+/**
+ * @notice Check whether the bit at `index` is set.
+ * @param bitmap The bitmap to read.
+ * @param index  Bit position to test, in [0, 255].
+ * @return yes True if the bit is 1, false otherwise.
+ */
+function isSet(Bitmap bitmap, uint8 index) pure returns (bool yes) {
+    assembly ("memory-safe") {
+        yes := and(shr(index, bitmap), 1)
+    }
+}
+
+/**
+ * @notice Find the most significant set bit at or below `index`.
+ * @dev Returns one-based position: `pos = bitIndex + 1`, or `0` if none.
+ *      Example: if bit 9 is set and `index >= 9`, returns `10`.
+ *      For `index == 255`, the mask spans all bits (wraparound yields `2^256-1`).
+ * @param bitmap The bitmap to search.
+ * @param index  Upper bound (inclusive) for the search, in [0, 255].
+ * @return v One-based position of MSB found (bitIndex + 1), or 0 if none.
+ */
+function leSetBit(Bitmap bitmap, uint8 index) pure returns (uint256 v) {
+    unchecked {
+        assembly ("memory-safe") {
+            let masked := and(bitmap, sub(shl(add(index, 1), 1), 1))
+            v := sub(256, clz(masked))
+        }
+    }
+}
+
+/**
+ * @notice Find the least significant set bit at or above `index`.
+ * @dev Returns one-based position: `pos = bitIndex + 1`, or `0` if none.
+ *      Example: if bit 9 is set and `index <= 9`, returns `10`.
+ * @param bitmap The bitmap to search.
+ * @param index  Lower bound (inclusive) for the search, in [0, 255].
+ * @return v One-based position of LSB found (bitIndex + 1), or 0 if none.
+ */
+function geSetBit(Bitmap bitmap, uint8 index) pure returns (uint256 v) {
+    assembly ("memory-safe") {
+        let masked := and(bitmap, not(sub(shl(index, 1), 1)))
+        v := sub(256, clz(and(masked, sub(0, masked))))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {MAX_TICK_MAGNITUDE} from "./constants.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {LibBit} from "solady/utils/LibBit.sol";
+import {SqrtRatio, toSqrtRatio} from "../types/sqrtRatio.sol";
+
+// Tick Math Library
+// Contains functions for converting between ticks and sqrt price ratios
+// Ticks represent discrete price points, while sqrt ratios represent the actual prices
+// The relationship is: sqrtRatio = sqrt(1.000001^tick)
+
+/// @notice Thrown when a tick value is outside the valid range
+/// @param tick The invalid tick value
+error InvalidTick(int32 tick);
+
+/// @notice Converts a tick to its corresponding sqrt price ratio
+/// @dev Uses bit manipulation and precomputed constants for gas efficiency
+/// @param tick The tick to convert (must be within MIN_TICK and MAX_TICK)
+/// @return r The sqrt price ratio corresponding to the tick
+function tickToSqrtRatio(int32 tick) pure returns (SqrtRatio r) {
+    unchecked {
+        uint256 t = FixedPointMathLib.abs(tick);
+        if (t > MAX_TICK_MAGNITUDE) revert InvalidTick(tick);
+
+        uint256 ratio;
+        assembly ("memory-safe") {
+            // bit 0 is handled with a single conditional subtract from 2^128
+            ratio := sub(0x100000000000000000000000000000000, mul(and(t, 0x1), 0x8637b66cd638344daef276cd7c5))
+
+            // -------- Gate 1: bits 1..7 (mask 0xFE) --------
+            if and(t, 0xFE) {
+                if and(t, 0x2) { ratio := shr(128, mul(ratio, 0xffffef390978c398134b4ff3764fe410)) }
+                if and(t, 0x4) { ratio := shr(128, mul(ratio, 0xffffde72140b00a354bd3dc828e976c9)) }
+                if and(t, 0x8) { ratio := shr(128, mul(ratio, 0xffffbce42c7be6c998ad6318193c0b18)) }
+                if and(t, 0x10) { ratio := shr(128, mul(ratio, 0xffff79c86a8f6150a32d9778eceef97c)) }
+                if and(t, 0x20) { ratio := shr(128, mul(ratio, 0xfffef3911b7cff24ba1b3dbb5f8f5974)) }
+                if and(t, 0x40) { ratio := shr(128, mul(ratio, 0xfffde72350725cc4ea8feece3b5f13c8)) }
+                if and(t, 0x80) { ratio := shr(128, mul(ratio, 0xfffbce4b06c196e9247ac87695d53c60)) }
+            }
+
+            // -------- Gate 2: bits 8..14 (mask 0x7F00) --------
+            if and(t, 0x7F00) {
+                if and(t, 0x100) { ratio := shr(128, mul(ratio, 0xfff79ca7a4d1bf1ee8556cea23cdbaa5)) }
+                if and(t, 0x200) { ratio := shr(128, mul(ratio, 0xffef3995a5b6a6267530f207142a5764)) }
+                if and(t, 0x400) { ratio := shr(128, mul(ratio, 0xffde7444b28145508125d10077ba83b8)) }
+                if and(t, 0x800) { ratio := shr(128, mul(ratio, 0xffbceceeb791747f10df216f2e53ec57)) }
+                if and(t, 0x1000) { ratio := shr(128, mul(ratio, 0xff79eb706b9a64c6431d76e63531e929)) }
+                if and(t, 0x2000) { ratio := shr(128, mul(ratio, 0xfef41d1a5f2ae3a20676bec6f7f9459a)) }
+                if and(t, 0x4000) { ratio := shr(128, mul(ratio, 0xfde95287d26d81bea159c37073122c73)) }
+            }
+
+            // -------- Gate 3: bits 15..20 (mask 0x1F8000) --------
+            if and(t, 0x1F8000) {
+                if and(t, 0x8000) { ratio := shr(128, mul(ratio, 0xfbd701c7cbc4c8a6bb81efd232d1e4e7)) }
+                if and(t, 0x10000) { ratio := shr(128, mul(ratio, 0xf7bf5211c72f5185f372aeb1d48f937e)) }
+                if and(t, 0x20000) { ratio := shr(128, mul(ratio, 0xefc2bf59df33ecc28125cf78ec4f167f)) }
+                if and(t, 0x40000) { ratio := shr(128, mul(ratio, 0xe08d35706200796273f0b3a981d90cfd)) }
+                if and(t, 0x80000) { ratio := shr(128, mul(ratio, 0xc4f76b68947482dc198a48a54348c4ed)) }
+                if and(t, 0x100000) { ratio := shr(128, mul(ratio, 0x978bcb9894317807e5fa4498eee7c0fa)) }
+            }
+
+            // -------- Gate 4: bits 21..26 (mask 0x7E00000) --------
+            if and(t, 0x7E00000) {
+                if and(t, 0x200000) { ratio := shr(128, mul(ratio, 0x59b63684b86e9f486ec54727371ba6ca)) }
+                if and(t, 0x400000) { ratio := shr(128, mul(ratio, 0x1f703399d88f6aa83a28b22d4a1f56e3)) }
+                if and(t, 0x800000) { ratio := shr(128, mul(ratio, 0x3dc5dac7376e20fc8679758d1bcdcfc)) }
+                if and(t, 0x1000000) { ratio := shr(128, mul(ratio, 0xee7e32d61fdb0a5e622b820f681d0)) }
+                if and(t, 0x2000000) { ratio := shr(128, mul(ratio, 0xde2ee4bc381afa7089aa84bb66)) }
+                if and(t, 0x4000000) { ratio := shr(128, mul(ratio, 0xc0d55d4d7152c25fb139)) }
+            }
+
+            // If original tick > 0, invert: ratio = maxUint / ratio
+            if sgt(tick, 0) { ratio := div(not(0), ratio) }
+        }
+
+        r = toSqrtRatio(ratio, false);
+    }
+}
+
+uint256 constant ONE_Q127 = 1 << 127;
+
+// Convert ln(m) series to log2(m):  log2(m) = (2 / ln 2) * s.
+// Precompute K = round((2 / ln 2) * 2^64) as a uint (Q64 scalar).
+// K = 53226052391377289966  (≈ 0x2e2a8eca5705fc2ee)
+uint256 constant K_2_OVER_LN2_X64 = 53226052391377289966;
+
+// 2^64 / log2(sqrt(1.000001)) for converting from log base 2 in X64 to log base tick
+int256 constant INV_LB_X64 = 25572630076711825471857579;
+
+// Error bounds of the tick computation based on the number of iterations ~= +-0.002 ticks
+int256 constant ERROR_BOUNDS_X128 = int256((uint256(1) << 128) / 485);
+
+/// @notice Converts a sqrt price ratio to its corresponding tick
+/// @dev Computes log2 via one normalization + atanh series (no per-bit squaring loop)
+/// @param sqrtRatio The valid sqrt price ratio to convert
+/// @return tick The tick corresponding to the sqrt ratio
+function sqrtRatioToTick(SqrtRatio sqrtRatio) pure returns (int32 tick) {
+    unchecked {
+        uint256 sqrtRatioFixed = sqrtRatio.toFixed();
+
+        // Normalize sign via reciprocal if < 1. Keep this branch-free.
+        bool negative;
+        uint256 x;
+        uint256 hi;
+        assembly ("memory-safe") {
+            negative := iszero(shr(128, sqrtRatioFixed))
+            // x = negative ? (type(uint256).max / R) : R
+            x := add(div(sub(0, negative), sqrtRatioFixed), mul(iszero(negative), sqrtRatioFixed))
+            // We know (x >> 128) != 0 because we reciprocated sqrtRatioFixed
+            hi := shr(128, x)
+        }
+
+        // Integer part of log2 via CLZ: floor(log2(hi)) = 255 - clz(hi)
+        uint256 msbHigh;
+        assembly ("memory-safe") {
+            msbHigh := sub(255, clz(hi))
+        }
+
+        // Reduce once so X ∈ [2^127, 2^128)  (Q1.127 mantissa)
+        x = x >> (msbHigh + 1);
+
+        // Fractional log2 using atanh on y = (m-1)/(m+1), m = X/2^127 ∈ [1,2)
+        uint256 a = x - ONE_Q127; // (m - 1) * 2^127
+        uint256 b = x + ONE_Q127; // (m + 1) * 2^127
+        uint256 yQ = FixedPointMathLib.rawDiv(a << 127, b); // y in Q1.127
+
+        // Build odd powers via y^2 ladder
+        uint256 y2 = (yQ * yQ) >> 127; // y^2
+        uint256 y3 = (yQ * y2) >> 127; // y^3
+        uint256 y5 = (y3 * y2) >> 127; // y^5
+        uint256 y7 = (y5 * y2) >> 127; // y^7
+        uint256 y9 = (y7 * y2) >> 127; // y^9
+        uint256 y11 = (y9 * y2) >> 127; // y^11
+        uint256 y13 = (y11 * y2) >> 127; // y^13
+        uint256 y15 = (y13 * y2) >> 127; // y^15
+
+        // s = y + y^3/3 + y^5/5 + ... + y^15/15  (Q1.127)
+        uint256 s = yQ + (y3 / 3) + (y5 / 5) + (y7 / 7) + (y9 / 9) + (y11 / 11) + (y13 / 13) + (y15 / 15);
+
+        // fracX64 = ((2/ln2) * s) in Q64.64  =>  (s * K) >> 127
+        uint256 fracX64 = (s * K_2_OVER_LN2_X64) >> 127;
+
+        // Unsigned log2 in Q64.64
+        uint256 log2Unsigned = (msbHigh << 64) + fracX64;
+
+        // Map log2 to tick-space X128
+        int256 base = negative ? -int256(log2Unsigned) : int256(log2Unsigned);
+
+        int256 logBaseTickSizeX128 = base * INV_LB_X64;
+
+        // Add error bounds to the computed logarithm
+        int32 tickLow = int32((logBaseTickSizeX128 - ERROR_BOUNDS_X128) >> 128);
+        tick = int32((logBaseTickSizeX128 + ERROR_BOUNDS_X128) >> 128);
+
+        if (tick != tickLow) {
+            // tickHigh overshoots
+            if (tickToSqrtRatio(tick) > sqrtRatio) {
+                tick = tickLow;
+            }
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {PoolId} from "./poolId.sol";
+import {PoolConfig} from "./poolConfig.sol";
+
+using {toPoolId, validate} for PoolKey global;
+
+/// @notice Unique identifier for a pool containing token addresses and configuration
+/// @dev Each pool has its own state associated with this key
+struct PoolKey {
+    /// @notice Address of token0 (must be < token1)
+    address token0;
+    /// @notice Address of token1 (must be > token0)
+    address token1;
+    /// @notice Packed configuration containing extension, fee, and tick spacing
+    PoolConfig config;
+}
+
+/// @notice Thrown when tokens are not properly sorted (token0 >= token1)
+error TokensMustBeSorted();
+
+/// @notice Validates that a pool key is valid
+/// @dev Checks that tokens are sorted and the config is valid
+/// @param key The pool key to validate
+function validate(PoolKey memory key) pure {
+    if (key.token0 >= key.token1) revert TokensMustBeSorted();
+    key.config.validate();
+}
+
+/// @notice Converts a pool key to a unique pool ID
+/// @param key The pool key
+/// @return result The unique pool ID (hash of the pool key)
+function toPoolId(PoolKey memory key) pure returns (PoolId result) {
+    assembly ("memory-safe") {
+        // it's already copied into memory
+        result := keccak256(key, 96)
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// Protocol Constants
+// Contains all constant values used throughout the Ekubo Protocol
+// These constants define the boundaries and special values for the protocol's operation
+
+// The minimum tick value supported by the protocol
+// Corresponds to the minimum possible price ratio in the protocol
+int32 constant MIN_TICK = -88722835;
+
+// The maximum tick value supported by the protocol
+// Corresponds to the maximum possible price ratio in the protocol
+int32 constant MAX_TICK = 88722835;
+
+// The maximum tick magnitude (absolute value of MAX_TICK)
+// Used for validation and bounds checking in tick-related calculations
+uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
+
+// The maximum allowed tick spacing for pools
+// Defines the upper limit for tick spacing configuration in pool creation
+uint32 constant MAX_TICK_SPACING = 698605;
+
+// Address used to represent the native token (ETH) within the protocol
+// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
+address constant NATIVE_TOKEN_ADDRESS = address(0);
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type PoolBalanceUpdate is bytes32;
+
+using {delta0, delta1} for PoolBalanceUpdate global;
+
+function delta0(PoolBalanceUpdate update) pure returns (int128 v) {
+    assembly ("memory-safe") {
+        v := signextend(15, shr(128, update))
+    }
+}
+
+function delta1(PoolBalanceUpdate update) pure returns (int128 v) {
+    assembly ("memory-safe") {
+        v := signextend(15, update)
+    }
+}
+
+function createPoolBalanceUpdate(int128 _delta0, int128 _delta1) pure returns (PoolBalanceUpdate update) {
+    assembly ("memory-safe") {
+        // update = (delta0 << 128) | delta1
+        update := or(shl(128, _delta0), and(_delta1, 0xffffffffffffffffffffffffffffffff))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+struct CallPoints {
+    bool beforeInitializePool;
+    bool afterInitializePool;
+    bool beforeSwap;
+    bool afterSwap;
+    bool beforeUpdatePosition;
+    bool afterUpdatePosition;
+    bool beforeCollectFees;
+    bool afterCollectFees;
+}
+
+using {eq, isValid, toUint8} for CallPoints global;
+
+function eq(CallPoints memory a, CallPoints memory b) pure returns (bool) {
+    return (a.beforeInitializePool == b.beforeInitializePool && a.afterInitializePool == b.afterInitializePool
+            && a.beforeSwap == b.beforeSwap && a.afterSwap == b.afterSwap
+            && a.beforeUpdatePosition == b.beforeUpdatePosition && a.afterUpdatePosition == b.afterUpdatePosition
+            && a.beforeCollectFees == b.beforeCollectFees && a.afterCollectFees == b.afterCollectFees);
+}
+
+function isValid(CallPoints memory a) pure returns (bool) {
+    return (a.beforeInitializePool || a.afterInitializePool || a.beforeSwap || a.afterSwap || a.beforeUpdatePosition
+            || a.afterUpdatePosition || a.beforeCollectFees || a.afterCollectFees);
+}
+
+function toUint8(CallPoints memory callPoints) pure returns (uint8 b) {
+    assembly ("memory-safe") {
+        b := add(
+            add(
+                add(
+                    add(
+                        add(
+                            add(
+                                add(mload(callPoints), mul(128, mload(add(callPoints, 32)))),
+                                mul(64, mload(add(callPoints, 64)))
+                            ),
+                            mul(32, mload(add(callPoints, 96)))
+                        ),
+                        mul(16, mload(add(callPoints, 128)))
+                    ),
+                    mul(8, mload(add(callPoints, 160)))
+                ),
+                mul(4, mload(add(callPoints, 192)))
+            ),
+            mul(2, mload(add(callPoints, 224)))
+        )
+    }
+}
+
+function addressToCallPoints(address a) pure returns (CallPoints memory result) {
+    result = byteToCallPoints(uint8(uint160(a) >> 152));
+}
+
+function byteToCallPoints(uint8 b) pure returns (CallPoints memory result) {
+    // note the order of bytes does not match the struct order of elements because we are matching the cairo implementation
+    // which for legacy reasons has the fields in this order
+    result = CallPoints({
+        beforeInitializePool: (b & 1) != 0,
+        afterInitializePool: (b & 128) != 0,
+        beforeSwap: (b & 64) != 0,
+        afterSwap: (b & 32) != 0,
+        beforeUpdatePosition: (b & 16) != 0,
+        afterUpdatePosition: (b & 8) != 0,
+        beforeCollectFees: (b & 4) != 0,
+        afterCollectFees: (b & 2) != 0
+    });
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// Protocol Constants
+// Contains all constant values used throughout the Ekubo Protocol
+// These constants define the boundaries and special values for the protocol's operation
+
+// The minimum tick value supported by the protocol
+// Corresponds to the minimum possible price ratio in the protocol
+int32 constant MIN_TICK = -88722835;
+
+// The maximum tick value supported by the protocol
+// Corresponds to the maximum possible price ratio in the protocol
+int32 constant MAX_TICK = 88722835;
+
+// The maximum tick magnitude (absolute value of MAX_TICK)
+// Used for validation and bounds checking in tick-related calculations
+uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
+
+// The maximum allowed tick spacing for pools
+// Defines the upper limit for tick spacing configuration in pool creation
+uint32 constant MAX_TICK_SPACING = 698605;
+
+// Address used to represent the native token (ETH) within the protocol
+// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
+address constant NATIVE_TOKEN_ADDRESS = address(0);
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type Locker is bytes32;
+
+using {id, addr, parse} for Locker global;
+
+function id(Locker locker) pure returns (uint256 v) {
+    assembly ("memory-safe") {
+        v := sub(shr(160, locker), 1)
+    }
+}
+
+function addr(Locker locker) pure returns (address v) {
+    assembly ("memory-safe") {
+        v := shr(96, shl(96, locker))
+    }
+}
+
+function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
+    assembly ("memory-safe") {
+        lockerId := sub(shr(160, locker), 1)
+        lockerAddr := shr(96, shl(96, locker))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {MIN_TICK, MAX_TICK, MAX_TICK_SPACING} from "../math/constants.sol";
+
+/// @notice Pool configuration packed into a single bytes32
+/// @dev Contains extension address (20 bytes), fee (8 bytes), and pool type config (4 bytes)
+/// Pool type config (32 bits):
+///   - Bit 31: discriminator (1 = concentrated, 0 = stableswap)
+///   - For concentrated (bit 31 = 1): bits 30-0 are tick spacing
+///   - For stableswap (bit 31 = 0): bits 30-24 are amplification factor, bits 23-0 are center tick
+type PoolConfig is bytes32;
+
+using {
+    fee,
+    extension,
+    isConcentrated,
+    isStableswap,
+    isFullRange,
+    concentratedTickSpacing,
+    stableswapAmplification,
+    stableswapCenterTick,
+    stableswapActiveLiquidityTickRange,
+    stableswapLiquidityWidth,
+    validate,
+    concentratedMaxLiquidityPerTick
+} for PoolConfig global;
+
+/// @notice Extracts the fee from a pool config
+/// @param config The pool config
+/// @return r The fee
+function fee(PoolConfig config) pure returns (uint64 r) {
+    assembly ("memory-safe") {
+        r := and(shr(32, config), 0xffffffffffffffff)
+    }
+}
+
+/// @notice Extracts the extension address from a pool config
+/// @param config The pool config
+/// @return r The extension address
+function extension(PoolConfig config) pure returns (address r) {
+    assembly ("memory-safe") {
+        r := shr(96, config)
+    }
+}
+
+/// @notice Checks if this is a concentrated liquidity pool
+/// @param config The pool config
+/// @return r True if the pool is concentrated liquidity
+function isConcentrated(PoolConfig config) pure returns (bool r) {
+    r = !config.isStableswap();
+}
+
+/// @notice Extracts the tick spacing from a concentrated liquidity pool config
+/// @dev Only valid for concentrated liquidity pools (isConcentrated() == true)
+/// @param config The pool config
+/// @return r The tick spacing
+function concentratedTickSpacing(PoolConfig config) pure returns (uint32 r) {
+    assembly ("memory-safe") {
+        // Extract lower 31 bits (bits 30-0)
+        r := and(config, 0x7fffffff)
+    }
+}
+
+/// @notice Checks if this is a stableswap pool
+/// @param config The pool config
+/// @return r True if the pool is stableswap
+function isStableswap(PoolConfig config) pure returns (bool r) {
+    assembly ("memory-safe") {
+        // = iff bit 31 is not set
+        r := iszero(and(0x80000000, config))
+    }
+}
+
+/// @notice Determines if this pool is full range (special case of stableswap with amplification=0 and center=0)
+/// @dev Full range can be slightly optimized in that we don't need to compute the sqrt ratio at the tick boundaries
+/// @param config The pool config
+/// @return r True if the pool is full range
+function isFullRange(PoolConfig config) pure returns (bool r) {
+    assembly ("memory-safe") {
+        // Full range when all 32 bits are 0 (discriminator=0, amplification=0, center=0)
+        r := iszero(and(config, 0xffffffff))
+    }
+}
+
+/// @notice Extracts the amplification factor from a stableswap pool config
+/// @dev Only valid for stableswap pools (isStableswap() == true)
+/// @param config The pool config
+/// @return r The amplification factor (0-127)
+function stableswapAmplification(PoolConfig config) pure returns (uint8 r) {
+    assembly ("memory-safe") {
+        // Extract bits 30-24
+        r := and(shr(24, config), 0x7f)
+    }
+}
+
+/// @notice Extracts the center tick from a stableswap pool config
+/// @dev Only valid for stableswap pools (isStableswap() == true)
+/// @dev The 24-bit center tick is scaled by 16 to get the actual tick
+/// @param config The pool config
+/// @return r The center tick
+function stableswapCenterTick(PoolConfig config) pure returns (int32 r) {
+    assembly ("memory-safe") {
+        // Extract bits 23-0 and sign extend to 32 bits (24-bit signed integer)
+        // Then multiply by 16, since the value does not have full precision
+        r := mul(signextend(2, and(config, 0xffffff)), 16)
+    }
+}
+
+/// @notice Returns the width of the liquidity range
+function stableswapLiquidityWidth(PoolConfig config) pure returns (uint256 width) {
+    uint8 amp = config.stableswapAmplification();
+
+    assembly ("memory-safe") {
+        width := shr(amp, MAX_TICK)
+    }
+}
+
+/// @notice Computes the tick range where liquidity is active for stableswap pools
+/// @param config The pool config
+/// @return lower The lower tick of the bounds
+/// @return upper The upper tick of the bounds
+function stableswapActiveLiquidityTickRange(PoolConfig config) pure returns (int32 lower, int32 upper) {
+    int32 center = config.stableswapCenterTick();
+    uint256 width = config.stableswapLiquidityWidth();
+
+    assembly ("memory-safe") {
+        lower := sub(center, width)
+        lower := add(lower, mul(sgt(MIN_TICK, lower), sub(MIN_TICK, lower)))
+
+        upper := add(center, width)
+        upper := sub(upper, mul(sgt(upper, MAX_TICK), sub(upper, MAX_TICK)))
+    }
+}
+
+/// @notice Creates a PoolConfig for a concentrated liquidity pool
+/// @param _fee The fee for the pool
+/// @param _tickSpacing The tick spacing for the pool
+/// @param _extension The extension address for the pool
+/// @return c The packed configuration
+function createConcentratedPoolConfig(uint64 _fee, uint32 _tickSpacing, address _extension)
+    pure
+    returns (PoolConfig c)
+{
+    assembly ("memory-safe") {
+        // Set bit 31 to 1 for concentrated liquidity, then OR with tick spacing (bits 30-0)
+        let typeConfig := or(0x80000000, and(_tickSpacing, 0x7fffffff))
+        c := or(or(shl(96, _extension), shl(32, and(_fee, 0xffffffffffffffff))), typeConfig)
+    }
+}
+
+/// @notice Creates a PoolConfig for a stableswap pool
+/// @param _fee The fee for the pool
+/// @param _amplification The amplification factor (0-127)
+/// @param _centerTick The center tick (will be divided by 16 and stored as 24-bit value)
+/// @param _extension The extension address for the pool
+/// @return c The packed configuration
+function createStableswapPoolConfig(uint64 _fee, uint8 _amplification, int32 _centerTick, address _extension)
+    pure
+    returns (PoolConfig c)
+{
+    assembly ("memory-safe") {
+        // Divide center tick by 16 to get 24-bit representation
+        let stableswapCenterTick24 := sdiv(_centerTick, 16)
+        // Pack: bit 31 = 0 (stableswap), bits 30-24 = amplification, bits 23-0 = center tick
+        let typeConfig := or(shl(24, and(_amplification, 0x7f)), and(stableswapCenterTick24, 0xffffff))
+        c := or(or(shl(96, _extension), shl(32, and(_fee, 0xffffffffffffffff))), typeConfig)
+    }
+}
+
+/// @notice Creates a PoolConfig for a full range pool (stableswap with amplification=0, center=0)
+/// @param _fee The fee for the pool
+/// @param _extension The extension address for the pool
+/// @return c The packed configuration
+function createFullRangePoolConfig(uint64 _fee, address _extension) pure returns (PoolConfig c) {
+    assembly ("memory-safe") {
+        // All 32 bits of type config are 0 (discriminator=0, amplification=0, center=0)
+        c := or(shl(96, _extension), shl(32, and(_fee, 0xffffffffffffffff)))
+    }
+}
+
+/// @notice Computes the maximum liquidity per tick for a given concentrated liquidity pool configuration.
+/// @dev Only valid for concentrated liquidity pools. Stableswap pools don't use ticks.
+/// @dev Calculated as type(uint128).max / (1 + (MAX_TICK_MAGNITUDE / tickSpacing) * 2)
+/// @param config The concentrated liquidity pool configuration
+/// @return maxLiquidity The maximum liquidity allowed to reference each tick
+function concentratedMaxLiquidityPerTick(PoolConfig config) pure returns (uint128 maxLiquidity) {
+    uint32 _tickSpacing = config.concentratedTickSpacing();
+
+    assembly ("memory-safe") {
+        // Calculate total number of usable ticks: 1 + (MAX_TICK_MAGNITUDE / tickSpacing) * 2
+        // This represents all ticks from -MAX_TICK_MAGNITUDE to +MAX_TICK_MAGNITUDE, and tick 0
+        let numTicks := add(1, mul(div(MAX_TICK, _tickSpacing), 2))
+
+        maxLiquidity := div(sub(shl(128, 1), 1), numTicks)
+    }
+}
+
+/// @notice Thrown when tick spacing exceeds the maximum allowed value
+error InvalidTickSpacing();
+
+/// @notice Thrown when amplification factor exceeds the maximum allowed value
+error InvalidStableswapAmplification();
+
+/// @notice Thrown when center tick is not between min and max tick
+error InvalidCenterTick();
+
+/// @notice Validates that a pool config is properly formatted
+/// @param config The config to validate
+function validate(PoolConfig config) pure {
+    if (config.isConcentrated()) {
+        if (config.concentratedTickSpacing() > MAX_TICK_SPACING || config.concentratedTickSpacing() == 0) {
+            revert InvalidTickSpacing();
+        }
+    } else {
+        // Stableswap pool: validate amplification factor <= 26
+        if (config.stableswapAmplification() > 26) {
+            revert InvalidStableswapAmplification();
+        }
+        int32 centerTick = config.stableswapCenterTick();
+        if (centerTick < MIN_TICK || centerTick > MAX_TICK) {
+            revert InvalidCenterTick();
+        }
     }
 }
 
@@ -3218,553 +5197,6 @@ function findPrevInitializedTick(StorageSlot slot, int32 fromTick, uint32 tickSp
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-type StorageSlot is bytes32;
-
-using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
-
-function load(StorageSlot slot) view returns (bytes32 value) {
-    assembly ("memory-safe") {
-        value := sload(slot)
-    }
-}
-
-function loadTwo(StorageSlot slot) view returns (bytes32 value0, bytes32 value1) {
-    value0 = slot.load();
-    value1 = slot.next().load();
-}
-
-function store(StorageSlot slot, bytes32 value) {
-    assembly ("memory-safe") {
-        sstore(slot, value)
-    }
-}
-
-function storeTwo(StorageSlot slot, bytes32 value0, bytes32 value1) {
-    slot.store(value0);
-    slot.next().store(value1);
-}
-
-function next(StorageSlot slot) pure returns (StorageSlot nextSlot) {
-    assembly ("memory-safe") {
-        nextSlot := add(slot, 1)
-    }
-}
-
-function add(StorageSlot slot, uint256 addend) pure returns (StorageSlot summedSlot) {
-    assembly ("memory-safe") {
-        summedSlot := add(slot, addend)
-    }
-}
-
-function sub(StorageSlot slot, uint256 subtrahend) pure returns (StorageSlot differenceSlot) {
-    assembly ("memory-safe") {
-        differenceSlot := sub(slot, subtrahend)
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type Locker is bytes32;
-
-using {id, addr, parse} for Locker global;
-
-function id(Locker locker) pure returns (uint256 v) {
-    assembly ("memory-safe") {
-        v := sub(shr(160, locker), 1)
-    }
-}
-
-function addr(Locker locker) pure returns (address v) {
-    assembly ("memory-safe") {
-        v := shr(96, shl(96, locker))
-    }
-}
-
-function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
-    assembly ("memory-safe") {
-        lockerId := sub(shr(160, locker), 1)
-        lockerAddr := shr(96, shl(96, locker))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-/// @notice Unique identifier for a pool
-/// @dev Wraps bytes32 to provide type safety for pool identifiers
-type PoolId is bytes32;
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-// Protocol Constants
-// Contains all constant values used throughout the Ekubo Protocol
-// These constants define the boundaries and special values for the protocol's operation
-
-// The minimum tick value supported by the protocol
-// Corresponds to the minimum possible price ratio in the protocol
-int32 constant MIN_TICK = -88722835;
-
-// The maximum tick value supported by the protocol
-// Corresponds to the maximum possible price ratio in the protocol
-int32 constant MAX_TICK = 88722835;
-
-// The maximum tick magnitude (absolute value of MAX_TICK)
-// Used for validation and bounds checking in tick-related calculations
-uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
-
-// The maximum allowed tick spacing for pools
-// Defines the upper limit for tick spacing configuration in pool creation
-uint32 constant MAX_TICK_SPACING = 698605;
-
-// Address used to represent the native token (ETH) within the protocol
-// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
-address constant NATIVE_TOKEN_ADDRESS = address(0);
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {SqrtRatio} from "./sqrtRatio.sol";
-
-type PoolState is bytes32;
-
-using {sqrtRatio, tick, liquidity, isInitialized, parse} for PoolState global;
-
-function sqrtRatio(PoolState state) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := shr(160, state)
-    }
-}
-
-function tick(PoolState state) pure returns (int32 t) {
-    assembly ("memory-safe") {
-        t := signextend(3, shr(128, state))
-    }
-}
-
-function liquidity(PoolState state) pure returns (uint128 l) {
-    assembly ("memory-safe") {
-        l := shr(128, shl(128, state))
-    }
-}
-
-function isInitialized(PoolState state) pure returns (bool yes) {
-    assembly ("memory-safe") {
-        yes := iszero(iszero(state))
-    }
-}
-
-function parse(PoolState state) pure returns (SqrtRatio r, int32 t, uint128 l) {
-    assembly ("memory-safe") {
-        r := shr(160, state)
-        t := signextend(3, shr(128, state))
-        l := shr(128, shl(128, state))
-    }
-}
-
-function createPoolState(SqrtRatio _sqrtRatio, int32 _tick, uint128 _liquidity) pure returns (PoolState s) {
-    assembly ("memory-safe") {
-        // s = (sqrtRatio << 160) | (_tick << 128) | liquidity
-        s := or(shl(160, _sqrtRatio), or(shl(128, and(_tick, 0xFFFFFFFF)), shr(128, shl(128, _liquidity))))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-/**
- * @title Bitmap (256-bit)
- * @notice Lightweight helpers for treating a `uint256` as a 256-bit bitmap.
- * @dev
- * - Bit indices are in the range [0, 255].
- * - All operations are O(1) and implemented with memory-safe assembly.
- * - For search helpers `leSetBit` and `geSetBit`, the return value is
- *   one-based: it returns `index + 1` of the matching set bit, or `0` if none.
- *   This convention avoids the need for sentinels outside the 0..255 range.
- */
-type Bitmap is uint256;
-
-using {toggle, isSet, leSetBit, geSetBit} for Bitmap global;
-
-/**
- * @notice Toggle (flip) the bit at `index` in `bitmap`.
- * @param bitmap The current bitmap value.
- * @param index  Bit position to toggle, in [0, 255].
- * @return result A new bitmap with the bit at `index` flipped.
- */
-function toggle(Bitmap bitmap, uint8 index) pure returns (Bitmap result) {
-    assembly ("memory-safe") {
-        result := xor(bitmap, shl(index, 1))
-    }
-}
-
-/**
- * @notice Check whether the bit at `index` is set.
- * @param bitmap The bitmap to read.
- * @param index  Bit position to test, in [0, 255].
- * @return yes True if the bit is 1, false otherwise.
- */
-function isSet(Bitmap bitmap, uint8 index) pure returns (bool yes) {
-    assembly ("memory-safe") {
-        yes := and(shr(index, bitmap), 1)
-    }
-}
-
-/**
- * @notice Find the most significant set bit at or below `index`.
- * @dev Returns one-based position: `pos = bitIndex + 1`, or `0` if none.
- *      Example: if bit 9 is set and `index >= 9`, returns `10`.
- *      For `index == 255`, the mask spans all bits (wraparound yields `2^256-1`).
- * @param bitmap The bitmap to search.
- * @param index  Upper bound (inclusive) for the search, in [0, 255].
- * @return v One-based position of MSB found (bitIndex + 1), or 0 if none.
- */
-function leSetBit(Bitmap bitmap, uint8 index) pure returns (uint256 v) {
-    unchecked {
-        assembly ("memory-safe") {
-            let masked := and(bitmap, sub(shl(add(index, 1), 1), 1))
-            v := sub(256, clz(masked))
-        }
-    }
-}
-
-/**
- * @notice Find the least significant set bit at or above `index`.
- * @dev Returns one-based position: `pos = bitIndex + 1`, or `0` if none.
- *      Example: if bit 9 is set and `index <= 9`, returns `10`.
- * @param bitmap The bitmap to search.
- * @param index  Lower bound (inclusive) for the search, in [0, 255].
- * @return v One-based position of LSB found (bitIndex + 1), or 0 if none.
- */
-function geSetBit(Bitmap bitmap, uint8 index) pure returns (uint256 v) {
-    assembly ("memory-safe") {
-        let masked := and(bitmap, not(sub(shl(index, 1), 1)))
-        v := sub(256, clz(and(masked, sub(0, masked))))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {PoolId} from "./poolId.sol";
-import {PoolConfig} from "./poolConfig.sol";
-
-using {toPoolId, validate} for PoolKey global;
-
-/// @notice Unique identifier for a pool containing token addresses and configuration
-/// @dev Each pool has its own state associated with this key
-struct PoolKey {
-    /// @notice Address of token0 (must be < token1)
-    address token0;
-    /// @notice Address of token1 (must be > token0)
-    address token1;
-    /// @notice Packed configuration containing extension, fee, and tick spacing
-    PoolConfig config;
-}
-
-/// @notice Thrown when tokens are not properly sorted (token0 >= token1)
-error TokensMustBeSorted();
-
-/// @notice Validates that a pool key is valid
-/// @dev Checks that tokens are sorted and the config is valid
-/// @param key The pool key to validate
-function validate(PoolKey memory key) pure {
-    if (key.token0 >= key.token1) revert TokensMustBeSorted();
-    key.config.validate();
-}
-
-/// @notice Converts a pool key to a unique pool ID
-/// @param key The pool key
-/// @return result The unique pool ID (hash of the pool key)
-function toPoolId(PoolKey memory key) pure returns (PoolId result) {
-    assembly ("memory-safe") {
-        // it's already copied into memory
-        result := keccak256(key, 96)
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type Locker is bytes32;
-
-using {id, addr, parse} for Locker global;
-
-function id(Locker locker) pure returns (uint256 v) {
-    assembly ("memory-safe") {
-        v := sub(shr(160, locker), 1)
-    }
-}
-
-function addr(Locker locker) pure returns (address v) {
-    assembly ("memory-safe") {
-        v := shr(96, shl(96, locker))
-    }
-}
-
-function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
-    assembly ("memory-safe") {
-        lockerId := sub(shr(160, locker), 1)
-        lockerAddr := shr(96, shl(96, locker))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {MIN_TICK, MAX_TICK, MAX_TICK_SPACING} from "../math/constants.sol";
-
-/// @notice Pool configuration packed into a single bytes32
-/// @dev Contains extension address (20 bytes), fee (8 bytes), and pool type config (4 bytes)
-/// Pool type config (32 bits):
-///   - Bit 31: discriminator (1 = concentrated, 0 = stableswap)
-///   - For concentrated (bit 31 = 1): bits 30-0 are tick spacing
-///   - For stableswap (bit 31 = 0): bits 30-24 are amplification factor, bits 23-0 are center tick
-type PoolConfig is bytes32;
-
-using {
-    fee,
-    extension,
-    isConcentrated,
-    isStableswap,
-    isFullRange,
-    concentratedTickSpacing,
-    stableswapAmplification,
-    stableswapCenterTick,
-    stableswapActiveLiquidityTickRange,
-    stableswapLiquidityWidth,
-    validate,
-    concentratedMaxLiquidityPerTick
-} for PoolConfig global;
-
-/// @notice Extracts the fee from a pool config
-/// @param config The pool config
-/// @return r The fee
-function fee(PoolConfig config) pure returns (uint64 r) {
-    assembly ("memory-safe") {
-        r := and(shr(32, config), 0xffffffffffffffff)
-    }
-}
-
-/// @notice Extracts the extension address from a pool config
-/// @param config The pool config
-/// @return r The extension address
-function extension(PoolConfig config) pure returns (address r) {
-    assembly ("memory-safe") {
-        r := shr(96, config)
-    }
-}
-
-/// @notice Checks if this is a concentrated liquidity pool
-/// @param config The pool config
-/// @return r True if the pool is concentrated liquidity
-function isConcentrated(PoolConfig config) pure returns (bool r) {
-    r = !config.isStableswap();
-}
-
-/// @notice Extracts the tick spacing from a concentrated liquidity pool config
-/// @dev Only valid for concentrated liquidity pools (isConcentrated() == true)
-/// @param config The pool config
-/// @return r The tick spacing
-function concentratedTickSpacing(PoolConfig config) pure returns (uint32 r) {
-    assembly ("memory-safe") {
-        // Extract lower 31 bits (bits 30-0)
-        r := and(config, 0x7fffffff)
-    }
-}
-
-/// @notice Checks if this is a stableswap pool
-/// @param config The pool config
-/// @return r True if the pool is stableswap
-function isStableswap(PoolConfig config) pure returns (bool r) {
-    assembly ("memory-safe") {
-        // = iff bit 31 is not set
-        r := iszero(and(0x80000000, config))
-    }
-}
-
-/// @notice Determines if this pool is full range (special case of stableswap with amplification=0 and center=0)
-/// @dev Full range can be slightly optimized in that we don't need to compute the sqrt ratio at the tick boundaries
-/// @param config The pool config
-/// @return r True if the pool is full range
-function isFullRange(PoolConfig config) pure returns (bool r) {
-    assembly ("memory-safe") {
-        // Full range when all 32 bits are 0 (discriminator=0, amplification=0, center=0)
-        r := iszero(and(config, 0xffffffff))
-    }
-}
-
-/// @notice Extracts the amplification factor from a stableswap pool config
-/// @dev Only valid for stableswap pools (isStableswap() == true)
-/// @param config The pool config
-/// @return r The amplification factor (0-127)
-function stableswapAmplification(PoolConfig config) pure returns (uint8 r) {
-    assembly ("memory-safe") {
-        // Extract bits 30-24
-        r := and(shr(24, config), 0x7f)
-    }
-}
-
-/// @notice Extracts the center tick from a stableswap pool config
-/// @dev Only valid for stableswap pools (isStableswap() == true)
-/// @dev The 24-bit center tick is scaled by 16 to get the actual tick
-/// @param config The pool config
-/// @return r The center tick
-function stableswapCenterTick(PoolConfig config) pure returns (int32 r) {
-    assembly ("memory-safe") {
-        // Extract bits 23-0 and sign extend to 32 bits (24-bit signed integer)
-        // Then multiply by 16, since the value does not have full precision
-        r := mul(signextend(2, and(config, 0xffffff)), 16)
-    }
-}
-
-/// @notice Returns the width of the liquidity range
-function stableswapLiquidityWidth(PoolConfig config) pure returns (uint256 width) {
-    uint8 amp = config.stableswapAmplification();
-
-    assembly ("memory-safe") {
-        width := shr(amp, MAX_TICK)
-    }
-}
-
-/// @notice Computes the tick range where liquidity is active for stableswap pools
-/// @param config The pool config
-/// @return lower The lower tick of the bounds
-/// @return upper The upper tick of the bounds
-function stableswapActiveLiquidityTickRange(PoolConfig config) pure returns (int32 lower, int32 upper) {
-    int32 center = config.stableswapCenterTick();
-    uint256 width = config.stableswapLiquidityWidth();
-
-    assembly ("memory-safe") {
-        lower := sub(center, width)
-        lower := add(lower, mul(sgt(MIN_TICK, lower), sub(MIN_TICK, lower)))
-
-        upper := add(center, width)
-        upper := sub(upper, mul(sgt(upper, MAX_TICK), sub(upper, MAX_TICK)))
-    }
-}
-
-/// @notice Creates a PoolConfig for a concentrated liquidity pool
-/// @param _fee The fee for the pool
-/// @param _tickSpacing The tick spacing for the pool
-/// @param _extension The extension address for the pool
-/// @return c The packed configuration
-function createConcentratedPoolConfig(uint64 _fee, uint32 _tickSpacing, address _extension)
-    pure
-    returns (PoolConfig c)
-{
-    assembly ("memory-safe") {
-        // Set bit 31 to 1 for concentrated liquidity, then OR with tick spacing (bits 30-0)
-        let typeConfig := or(0x80000000, and(_tickSpacing, 0x7fffffff))
-        c := or(or(shl(96, _extension), shl(32, and(_fee, 0xffffffffffffffff))), typeConfig)
-    }
-}
-
-/// @notice Creates a PoolConfig for a stableswap pool
-/// @param _fee The fee for the pool
-/// @param _amplification The amplification factor (0-127)
-/// @param _centerTick The center tick (will be divided by 16 and stored as 24-bit value)
-/// @param _extension The extension address for the pool
-/// @return c The packed configuration
-function createStableswapPoolConfig(uint64 _fee, uint8 _amplification, int32 _centerTick, address _extension)
-    pure
-    returns (PoolConfig c)
-{
-    assembly ("memory-safe") {
-        // Divide center tick by 16 to get 24-bit representation
-        let stableswapCenterTick24 := sdiv(_centerTick, 16)
-        // Pack: bit 31 = 0 (stableswap), bits 30-24 = amplification, bits 23-0 = center tick
-        let typeConfig := or(shl(24, and(_amplification, 0x7f)), and(stableswapCenterTick24, 0xffffff))
-        c := or(or(shl(96, _extension), shl(32, and(_fee, 0xffffffffffffffff))), typeConfig)
-    }
-}
-
-/// @notice Creates a PoolConfig for a full range pool (stableswap with amplification=0, center=0)
-/// @param _fee The fee for the pool
-/// @param _extension The extension address for the pool
-/// @return c The packed configuration
-function createFullRangePoolConfig(uint64 _fee, address _extension) pure returns (PoolConfig c) {
-    assembly ("memory-safe") {
-        // All 32 bits of type config are 0 (discriminator=0, amplification=0, center=0)
-        c := or(shl(96, _extension), shl(32, and(_fee, 0xffffffffffffffff)))
-    }
-}
-
-/// @notice Computes the maximum liquidity per tick for a given concentrated liquidity pool configuration.
-/// @dev Only valid for concentrated liquidity pools. Stableswap pools don't use ticks.
-/// @dev Calculated as type(uint128).max / (1 + (MAX_TICK_MAGNITUDE / tickSpacing) * 2)
-/// @param config The concentrated liquidity pool configuration
-/// @return maxLiquidity The maximum liquidity allowed to reference each tick
-function concentratedMaxLiquidityPerTick(PoolConfig config) pure returns (uint128 maxLiquidity) {
-    uint32 _tickSpacing = config.concentratedTickSpacing();
-
-    assembly ("memory-safe") {
-        // Calculate total number of usable ticks: 1 + (MAX_TICK_MAGNITUDE / tickSpacing) * 2
-        // This represents all ticks from -MAX_TICK_MAGNITUDE to +MAX_TICK_MAGNITUDE, and tick 0
-        let numTicks := add(1, mul(div(MAX_TICK, _tickSpacing), 2))
-
-        maxLiquidity := div(sub(shl(128, 1), 1), numTicks)
-    }
-}
-
-/// @notice Thrown when tick spacing exceeds the maximum allowed value
-error InvalidTickSpacing();
-
-/// @notice Thrown when amplification factor exceeds the maximum allowed value
-error InvalidStableswapAmplification();
-
-/// @notice Thrown when center tick is not between min and max tick
-error InvalidCenterTick();
-
-/// @notice Validates that a pool config is properly formatted
-/// @param config The config to validate
-function validate(PoolConfig config) pure {
-    if (config.isConcentrated()) {
-        if (config.concentratedTickSpacing() > MAX_TICK_SPACING || config.concentratedTickSpacing() == 0) {
-            revert InvalidTickSpacing();
-        }
-    } else {
-        // Stableswap pool: validate amplification factor <= 26
-        if (config.stableswapAmplification() > 26) {
-            revert InvalidStableswapAmplification();
-        }
-        int32 centerTick = config.stableswapCenterTick();
-        if (centerTick < MIN_TICK || centerTick > MAX_TICK) {
-            revert InvalidCenterTick();
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type PoolBalanceUpdate is bytes32;
-
-using {delta0, delta1} for PoolBalanceUpdate global;
-
-function delta0(PoolBalanceUpdate update) pure returns (int128 v) {
-    assembly ("memory-safe") {
-        v := signextend(15, shr(128, update))
-    }
-}
-
-function delta1(PoolBalanceUpdate update) pure returns (int128 v) {
-    assembly ("memory-safe") {
-        v := signextend(15, update)
-    }
-}
-
-function createPoolBalanceUpdate(int128 _delta0, int128 _delta1) pure returns (PoolBalanceUpdate update) {
-    assembly ("memory-safe") {
-        // update = (delta0 << 128) | delta1
-        update := or(shl(128, _delta0), and(_delta1, 0xffffffffffffffffffffffffffffffff))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
 import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
 import {PoolConfig} from "./poolConfig.sol";
 
@@ -3818,59 +5250,6 @@ function validate(PositionId positionId, PoolConfig config) pure {
         (int32 lower, int32 upper) = config.stableswapActiveLiquidityTickRange();
         // For stableswap pools, positions must be exactly min/max tick
         if (positionId.tickLower() != lower || positionId.tickUpper() != upper) revert StableswapMustBeFullRange();
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-// Protocol Constants
-// Contains all constant values used throughout the Ekubo Protocol
-// These constants define the boundaries and special values for the protocol's operation
-
-// The minimum tick value supported by the protocol
-// Corresponds to the minimum possible price ratio in the protocol
-int32 constant MIN_TICK = -88722835;
-
-// The maximum tick value supported by the protocol
-// Corresponds to the maximum possible price ratio in the protocol
-int32 constant MAX_TICK = 88722835;
-
-// The maximum tick magnitude (absolute value of MAX_TICK)
-// Used for validation and bounds checking in tick-related calculations
-uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
-
-// The maximum allowed tick spacing for pools
-// Defines the upper limit for tick spacing configuration in pool creation
-uint32 constant MAX_TICK_SPACING = 698605;
-
-// Address used to represent the native token (ETH) within the protocol
-// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
-address constant NATIVE_TOKEN_ADDRESS = address(0);
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-// Returns the fee to charge based on the amount, which is the fee (a 0.64 number) times the
-// amount, rounded up
-function computeFee(uint128 amount, uint64 fee) pure returns (uint128 result) {
-    assembly ("memory-safe") {
-        result := shr(64, add(mul(amount, fee), 0xffffffffffffffff))
-    }
-}
-
-error AmountBeforeFeeOverflow();
-
-// Returns the amount before the fee is applied, which is the amount minus the fee, rounded up
-function amountBeforeFee(uint128 afterFee, uint64 fee) pure returns (uint128 result) {
-    assembly ("memory-safe") {
-        let v := shl(64, afterFee)
-        let d := sub(0x10000000000000000, fee)
-        result := add(iszero(iszero(mod(v, d))), div(v, d))
-        if shr(128, result) {
-            mstore(0, 0x0d88f526)
-            revert(0x1c, 0x04)
-        }
     }
 }
 
@@ -3906,238 +5285,6 @@ function feesPerLiquidityFromAmounts(uint128 amount0, uint128 amount1, uint128 l
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {PoolId} from "./poolId.sol";
-import {PoolConfig} from "./poolConfig.sol";
-
-using {toPoolId, validate} for PoolKey global;
-
-/// @notice Unique identifier for a pool containing token addresses and configuration
-/// @dev Each pool has its own state associated with this key
-struct PoolKey {
-    /// @notice Address of token0 (must be < token1)
-    address token0;
-    /// @notice Address of token1 (must be > token0)
-    address token1;
-    /// @notice Packed configuration containing extension, fee, and tick spacing
-    PoolConfig config;
-}
-
-/// @notice Thrown when tokens are not properly sorted (token0 >= token1)
-error TokensMustBeSorted();
-
-/// @notice Validates that a pool key is valid
-/// @dev Checks that tokens are sorted and the config is valid
-/// @param key The pool key to validate
-function validate(PoolKey memory key) pure {
-    if (key.token0 >= key.token1) revert TokensMustBeSorted();
-    key.config.validate();
-}
-
-/// @notice Converts a pool key to a unique pool ID
-/// @param key The pool key
-/// @return result The unique pool ID (hash of the pool key)
-function toPoolId(PoolKey memory key) pure returns (PoolId result) {
-    assembly ("memory-safe") {
-        // it's already copied into memory
-        result := keccak256(key, 96)
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-// Protocol Constants
-// Contains all constant values used throughout the Ekubo Protocol
-// These constants define the boundaries and special values for the protocol's operation
-
-// The minimum tick value supported by the protocol
-// Corresponds to the minimum possible price ratio in the protocol
-int32 constant MIN_TICK = -88722835;
-
-// The maximum tick value supported by the protocol
-// Corresponds to the maximum possible price ratio in the protocol
-int32 constant MAX_TICK = 88722835;
-
-// The maximum tick magnitude (absolute value of MAX_TICK)
-// Used for validation and bounds checking in tick-related calculations
-uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
-
-// The maximum allowed tick spacing for pools
-// Defines the upper limit for tick spacing configuration in pool creation
-uint32 constant MAX_TICK_SPACING = 698605;
-
-// Address used to represent the native token (ETH) within the protocol
-// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
-address constant NATIVE_TOKEN_ADDRESS = address(0);
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {MAX_TICK_MAGNITUDE} from "./constants.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {LibBit} from "solady/utils/LibBit.sol";
-import {SqrtRatio, toSqrtRatio} from "../types/sqrtRatio.sol";
-
-// Tick Math Library
-// Contains functions for converting between ticks and sqrt price ratios
-// Ticks represent discrete price points, while sqrt ratios represent the actual prices
-// The relationship is: sqrtRatio = sqrt(1.000001^tick)
-
-/// @notice Thrown when a tick value is outside the valid range
-/// @param tick The invalid tick value
-error InvalidTick(int32 tick);
-
-/// @notice Converts a tick to its corresponding sqrt price ratio
-/// @dev Uses bit manipulation and precomputed constants for gas efficiency
-/// @param tick The tick to convert (must be within MIN_TICK and MAX_TICK)
-/// @return r The sqrt price ratio corresponding to the tick
-function tickToSqrtRatio(int32 tick) pure returns (SqrtRatio r) {
-    unchecked {
-        uint256 t = FixedPointMathLib.abs(tick);
-        if (t > MAX_TICK_MAGNITUDE) revert InvalidTick(tick);
-
-        uint256 ratio;
-        assembly ("memory-safe") {
-            // bit 0 is handled with a single conditional subtract from 2^128
-            ratio := sub(0x100000000000000000000000000000000, mul(and(t, 0x1), 0x8637b66cd638344daef276cd7c5))
-
-            // -------- Gate 1: bits 1..7 (mask 0xFE) --------
-            if and(t, 0xFE) {
-                if and(t, 0x2) { ratio := shr(128, mul(ratio, 0xffffef390978c398134b4ff3764fe410)) }
-                if and(t, 0x4) { ratio := shr(128, mul(ratio, 0xffffde72140b00a354bd3dc828e976c9)) }
-                if and(t, 0x8) { ratio := shr(128, mul(ratio, 0xffffbce42c7be6c998ad6318193c0b18)) }
-                if and(t, 0x10) { ratio := shr(128, mul(ratio, 0xffff79c86a8f6150a32d9778eceef97c)) }
-                if and(t, 0x20) { ratio := shr(128, mul(ratio, 0xfffef3911b7cff24ba1b3dbb5f8f5974)) }
-                if and(t, 0x40) { ratio := shr(128, mul(ratio, 0xfffde72350725cc4ea8feece3b5f13c8)) }
-                if and(t, 0x80) { ratio := shr(128, mul(ratio, 0xfffbce4b06c196e9247ac87695d53c60)) }
-            }
-
-            // -------- Gate 2: bits 8..14 (mask 0x7F00) --------
-            if and(t, 0x7F00) {
-                if and(t, 0x100) { ratio := shr(128, mul(ratio, 0xfff79ca7a4d1bf1ee8556cea23cdbaa5)) }
-                if and(t, 0x200) { ratio := shr(128, mul(ratio, 0xffef3995a5b6a6267530f207142a5764)) }
-                if and(t, 0x400) { ratio := shr(128, mul(ratio, 0xffde7444b28145508125d10077ba83b8)) }
-                if and(t, 0x800) { ratio := shr(128, mul(ratio, 0xffbceceeb791747f10df216f2e53ec57)) }
-                if and(t, 0x1000) { ratio := shr(128, mul(ratio, 0xff79eb706b9a64c6431d76e63531e929)) }
-                if and(t, 0x2000) { ratio := shr(128, mul(ratio, 0xfef41d1a5f2ae3a20676bec6f7f9459a)) }
-                if and(t, 0x4000) { ratio := shr(128, mul(ratio, 0xfde95287d26d81bea159c37073122c73)) }
-            }
-
-            // -------- Gate 3: bits 15..20 (mask 0x1F8000) --------
-            if and(t, 0x1F8000) {
-                if and(t, 0x8000) { ratio := shr(128, mul(ratio, 0xfbd701c7cbc4c8a6bb81efd232d1e4e7)) }
-                if and(t, 0x10000) { ratio := shr(128, mul(ratio, 0xf7bf5211c72f5185f372aeb1d48f937e)) }
-                if and(t, 0x20000) { ratio := shr(128, mul(ratio, 0xefc2bf59df33ecc28125cf78ec4f167f)) }
-                if and(t, 0x40000) { ratio := shr(128, mul(ratio, 0xe08d35706200796273f0b3a981d90cfd)) }
-                if and(t, 0x80000) { ratio := shr(128, mul(ratio, 0xc4f76b68947482dc198a48a54348c4ed)) }
-                if and(t, 0x100000) { ratio := shr(128, mul(ratio, 0x978bcb9894317807e5fa4498eee7c0fa)) }
-            }
-
-            // -------- Gate 4: bits 21..26 (mask 0x7E00000) --------
-            if and(t, 0x7E00000) {
-                if and(t, 0x200000) { ratio := shr(128, mul(ratio, 0x59b63684b86e9f486ec54727371ba6ca)) }
-                if and(t, 0x400000) { ratio := shr(128, mul(ratio, 0x1f703399d88f6aa83a28b22d4a1f56e3)) }
-                if and(t, 0x800000) { ratio := shr(128, mul(ratio, 0x3dc5dac7376e20fc8679758d1bcdcfc)) }
-                if and(t, 0x1000000) { ratio := shr(128, mul(ratio, 0xee7e32d61fdb0a5e622b820f681d0)) }
-                if and(t, 0x2000000) { ratio := shr(128, mul(ratio, 0xde2ee4bc381afa7089aa84bb66)) }
-                if and(t, 0x4000000) { ratio := shr(128, mul(ratio, 0xc0d55d4d7152c25fb139)) }
-            }
-
-            // If original tick > 0, invert: ratio = maxUint / ratio
-            if sgt(tick, 0) { ratio := div(not(0), ratio) }
-        }
-
-        r = toSqrtRatio(ratio, false);
-    }
-}
-
-uint256 constant ONE_Q127 = 1 << 127;
-
-// Convert ln(m) series to log2(m):  log2(m) = (2 / ln 2) * s.
-// Precompute K = round((2 / ln 2) * 2^64) as a uint (Q64 scalar).
-// K = 53226052391377289966  (≈ 0x2e2a8eca5705fc2ee)
-uint256 constant K_2_OVER_LN2_X64 = 53226052391377289966;
-
-// 2^64 / log2(sqrt(1.000001)) for converting from log base 2 in X64 to log base tick
-int256 constant INV_LB_X64 = 25572630076711825471857579;
-
-// Error bounds of the tick computation based on the number of iterations ~= +-0.002 ticks
-int256 constant ERROR_BOUNDS_X128 = int256((uint256(1) << 128) / 485);
-
-/// @notice Converts a sqrt price ratio to its corresponding tick
-/// @dev Computes log2 via one normalization + atanh series (no per-bit squaring loop)
-/// @param sqrtRatio The valid sqrt price ratio to convert
-/// @return tick The tick corresponding to the sqrt ratio
-function sqrtRatioToTick(SqrtRatio sqrtRatio) pure returns (int32 tick) {
-    unchecked {
-        uint256 sqrtRatioFixed = sqrtRatio.toFixed();
-
-        // Normalize sign via reciprocal if < 1. Keep this branch-free.
-        bool negative;
-        uint256 x;
-        uint256 hi;
-        assembly ("memory-safe") {
-            negative := iszero(shr(128, sqrtRatioFixed))
-            // x = negative ? (type(uint256).max / R) : R
-            x := add(div(sub(0, negative), sqrtRatioFixed), mul(iszero(negative), sqrtRatioFixed))
-            // We know (x >> 128) != 0 because we reciprocated sqrtRatioFixed
-            hi := shr(128, x)
-        }
-
-        // Integer part of log2 via CLZ: floor(log2(hi)) = 255 - clz(hi)
-        uint256 msbHigh;
-        assembly ("memory-safe") {
-            msbHigh := sub(255, clz(hi))
-        }
-
-        // Reduce once so X ∈ [2^127, 2^128)  (Q1.127 mantissa)
-        x = x >> (msbHigh + 1);
-
-        // Fractional log2 using atanh on y = (m-1)/(m+1), m = X/2^127 ∈ [1,2)
-        uint256 a = x - ONE_Q127; // (m - 1) * 2^127
-        uint256 b = x + ONE_Q127; // (m + 1) * 2^127
-        uint256 yQ = FixedPointMathLib.rawDiv(a << 127, b); // y in Q1.127
-
-        // Build odd powers via y^2 ladder
-        uint256 y2 = (yQ * yQ) >> 127; // y^2
-        uint256 y3 = (yQ * y2) >> 127; // y^3
-        uint256 y5 = (y3 * y2) >> 127; // y^5
-        uint256 y7 = (y5 * y2) >> 127; // y^7
-        uint256 y9 = (y7 * y2) >> 127; // y^9
-        uint256 y11 = (y9 * y2) >> 127; // y^11
-        uint256 y13 = (y11 * y2) >> 127; // y^13
-        uint256 y15 = (y13 * y2) >> 127; // y^15
-
-        // s = y + y^3/3 + y^5/5 + ... + y^15/15  (Q1.127)
-        uint256 s = yQ + (y3 / 3) + (y5 / 5) + (y7 / 7) + (y9 / 9) + (y11 / 11) + (y13 / 13) + (y15 / 15);
-
-        // fracX64 = ((2/ln2) * s) in Q64.64  =>  (s * K) >> 127
-        uint256 fracX64 = (s * K_2_OVER_LN2_X64) >> 127;
-
-        // Unsigned log2 in Q64.64
-        uint256 log2Unsigned = (msbHigh << 64) + fracX64;
-
-        // Map log2 to tick-space X128
-        int256 base = negative ? -int256(log2Unsigned) : int256(log2Unsigned);
-
-        int256 logBaseTickSizeX128 = base * INV_LB_X64;
-
-        // Add error bounds to the computed logarithm
-        int32 tickLow = int32((logBaseTickSizeX128 - ERROR_BOUNDS_X128) >> 128);
-        tick = int32((logBaseTickSizeX128 + ERROR_BOUNDS_X128) >> 128);
-
-        if (tick != tickLow) {
-            // tickHigh overshoots
-            if (tickToSqrtRatio(tick) > sqrtRatio) {
-                tick = tickLow;
-            }
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
 /// @notice Unique identifier for a pool
 /// @dev Wraps bytes32 to provide type safety for pool identifiers
 type PoolId is bytes32;
@@ -4145,606 +5292,6 @@ type PoolId is bytes32;
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-type PoolBalanceUpdate is bytes32;
-
-using {delta0, delta1} for PoolBalanceUpdate global;
-
-function delta0(PoolBalanceUpdate update) pure returns (int128 v) {
-    assembly ("memory-safe") {
-        v := signextend(15, shr(128, update))
-    }
-}
-
-function delta1(PoolBalanceUpdate update) pure returns (int128 v) {
-    assembly ("memory-safe") {
-        v := signextend(15, update)
-    }
-}
-
-function createPoolBalanceUpdate(int128 _delta0, int128 _delta1) pure returns (PoolBalanceUpdate update) {
-    assembly ("memory-safe") {
-        // update = (delta0 << 128) | delta1
-        update := or(shl(128, _delta0), and(_delta1, 0xffffffffffffffffffffffffffffffff))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {LibBit} from "solady/utils/LibBit.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
-import {amount0Delta, amount1Delta, sortAndConvertToFixedSqrtRatios} from "./delta.sol";
-import {SqrtRatio} from "../types/sqrtRatio.sol";
-
-// Liquidity Math Library
-// Contains functions for calculating liquidity-related amounts and conversions
-// Provides utilities for converting between liquidity changes and token amounts
-
-/// @notice Returns the token0 and token1 delta owed for a given change in liquidity
-/// @dev Calculates the token amounts required or returned when liquidity is added or removed from a position
-/// @param sqrtRatio Current price (as a valid sqrt ratio)
-/// @param liquidityDelta Signed liquidity change; positive = added, negative = removed
-/// @param sqrtRatioLower The lower bound of the price range (as a valid sqrt ratio)
-/// @param sqrtRatioUpper The upper bound of the price range (as a valid sqrt ratio)
-/// @return delta0 The change in token0 amount
-/// @return delta1 The change in token1 amount
-function liquidityDeltaToAmountDelta(
-    SqrtRatio sqrtRatio,
-    int128 liquidityDelta,
-    SqrtRatio sqrtRatioLower,
-    SqrtRatio sqrtRatioUpper
-) pure returns (int128 delta0, int128 delta1) {
-    unchecked {
-        if (liquidityDelta == 0) {
-            return (0, 0);
-        }
-        bool isPositive = (liquidityDelta > 0);
-        int256 sign = -1 + 2 * int256(LibBit.rawToUint(isPositive));
-        // absolute value of a int128 always fits in a uint128
-        uint128 magnitude = uint128(FixedPointMathLib.abs(liquidityDelta));
-
-        if (sqrtRatio <= sqrtRatioLower) {
-            delta0 = SafeCastLib.toInt128(
-                sign * int256(uint256(amount0Delta(sqrtRatioLower, sqrtRatioUpper, magnitude, isPositive)))
-            );
-        } else if (sqrtRatio < sqrtRatioUpper) {
-            delta0 = SafeCastLib.toInt128(
-                sign * int256(uint256(amount0Delta(sqrtRatio, sqrtRatioUpper, magnitude, isPositive)))
-            );
-            delta1 = SafeCastLib.toInt128(
-                sign * int256(uint256(amount1Delta(sqrtRatioLower, sqrtRatio, magnitude, isPositive)))
-            );
-        } else {
-            delta1 = SafeCastLib.toInt128(
-                sign * int256(uint256(amount1Delta(sqrtRatioLower, sqrtRatioUpper, magnitude, isPositive)))
-            );
-        }
-    }
-}
-
-/// @notice Calculates the maximum liquidity that can be provided with a given amount of token0
-/// @dev Used when the current price is below the position's range (only token0 is needed)
-/// @param sqrtRatioLower The lower sqrt price ratio of the position
-/// @param sqrtRatioUpper The upper sqrt price ratio of the position
-/// @param amount The amount of token0 available
-/// @return The maximum liquidity that can be provided
-function maxLiquidityForToken0(uint256 sqrtRatioLower, uint256 sqrtRatioUpper, uint128 amount) pure returns (uint256) {
-    unchecked {
-        uint256 numerator1 = FixedPointMathLib.fullMulDivN(sqrtRatioLower, sqrtRatioUpper, 128);
-
-        return FixedPointMathLib.fullMulDiv(amount, numerator1, (sqrtRatioUpper - sqrtRatioLower));
-    }
-}
-
-/// @notice Calculates the maximum liquidity that can be provided with a given amount of token1
-/// @dev Used when the current price is above the position's range (only token1 is needed)
-/// @param sqrtRatioLower The lower sqrt price ratio of the position
-/// @param sqrtRatioUpper The upper sqrt price ratio of the position
-/// @param amount The amount of token1 available
-/// @return The maximum liquidity that can be provided
-function maxLiquidityForToken1(uint256 sqrtRatioLower, uint256 sqrtRatioUpper, uint128 amount) pure returns (uint256) {
-    unchecked {
-        return (uint256(amount) << 128) / (sqrtRatioUpper - sqrtRatioLower);
-    }
-}
-
-/// @notice Calculates the maximum liquidity that can be provided given amounts of both tokens
-/// @dev Determines the limiting factor between token0 and token1 based on current price and position bounds
-/// @param _sqrtRatio Current sqrt price ratio
-/// @param sqrtRatioA One bound of the position (will be sorted with sqrtRatioB)
-/// @param sqrtRatioB Other bound of the position (will be sorted with sqrtRatioA)
-/// @param amount0 Available amount of token0
-/// @param amount1 Available amount of token1
-/// @return The maximum liquidity that can be provided with the given token amounts
-function maxLiquidity(
-    SqrtRatio _sqrtRatio,
-    SqrtRatio sqrtRatioA,
-    SqrtRatio sqrtRatioB,
-    uint128 amount0,
-    uint128 amount1
-) pure returns (uint128) {
-    uint256 sqrtRatio = _sqrtRatio.toFixed();
-    (uint256 sqrtRatioLower, uint256 sqrtRatioUpper) = sortAndConvertToFixedSqrtRatios(sqrtRatioA, sqrtRatioB);
-
-    if (sqrtRatio <= sqrtRatioLower) {
-        return uint128(
-            FixedPointMathLib.min(type(uint128).max, maxLiquidityForToken0(sqrtRatioLower, sqrtRatioUpper, amount0))
-        );
-    } else if (sqrtRatio < sqrtRatioUpper) {
-        return uint128(
-            FixedPointMathLib.min(
-                type(uint128).max,
-                FixedPointMathLib.min(
-                    maxLiquidityForToken0(sqrtRatio, sqrtRatioUpper, amount0),
-                    maxLiquidityForToken1(sqrtRatioLower, sqrtRatio, amount1)
-                )
-            )
-        );
-    } else {
-        return uint128(
-            FixedPointMathLib.min(type(uint128).max, maxLiquidityForToken1(sqrtRatioLower, sqrtRatioUpper, amount1))
-        );
-    }
-}
-
-/// @notice Thrown when a liquidity delta operation would cause overflow
-error LiquidityDeltaOverflow();
-
-/// @notice Safely adds a liquidity delta to a liquidity amount
-/// @dev Reverts if the operation would cause overflow or underflow
-/// @param liquidity The current liquidity amount
-/// @param liquidityDelta The change in liquidity (can be positive or negative)
-/// @return result The new liquidity amount after applying the delta
-function addLiquidityDelta(uint128 liquidity, int128 liquidityDelta) pure returns (uint128 result) {
-    assembly ("memory-safe") {
-        result := add(liquidity, liquidityDelta)
-        if and(result, shl(128, 0xffffffffffffffffffffffffffffffff)) {
-            mstore(0, shl(224, 0x6d862c50))
-            revert(0, 4)
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {SqrtRatio} from "./sqrtRatio.sol";
-
-type PoolState is bytes32;
-
-using {sqrtRatio, tick, liquidity, isInitialized, parse} for PoolState global;
-
-function sqrtRatio(PoolState state) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := shr(160, state)
-    }
-}
-
-function tick(PoolState state) pure returns (int32 t) {
-    assembly ("memory-safe") {
-        t := signextend(3, shr(128, state))
-    }
-}
-
-function liquidity(PoolState state) pure returns (uint128 l) {
-    assembly ("memory-safe") {
-        l := shr(128, shl(128, state))
-    }
-}
-
-function isInitialized(PoolState state) pure returns (bool yes) {
-    assembly ("memory-safe") {
-        yes := iszero(iszero(state))
-    }
-}
-
-function parse(PoolState state) pure returns (SqrtRatio r, int32 t, uint128 l) {
-    assembly ("memory-safe") {
-        r := shr(160, state)
-        t := signextend(3, shr(128, state))
-        l := shr(128, shl(128, state))
-    }
-}
-
-function createPoolState(SqrtRatio _sqrtRatio, int32 _tick, uint128 _liquidity) pure returns (PoolState s) {
-    assembly ("memory-safe") {
-        // s = (sqrtRatio << 160) | (_tick << 128) | liquidity
-        s := or(shl(160, _sqrtRatio), or(shl(128, and(_tick, 0xFFFFFFFF)), shr(128, shl(128, _liquidity))))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-// A dynamic fixed point number (a la floating point) that stores a shifting 94 bit view of the underlying fixed point value,
-//  based on the most significant bits (mantissa)
-// If the most significant 2 bits are 11, it represents a 64.30
-// If the most significant 2 bits are 10, it represents a 32.62 number
-// If the most significant 2 bits are 01, it represents a 0.94 number
-// If the most significant 2 bits are 00, it represents a 0.126 number that is always less than 2**-32
-
-type SqrtRatio is uint96;
-
-uint96 constant MIN_SQRT_RATIO_RAW = 4611797791050542631;
-SqrtRatio constant MIN_SQRT_RATIO = SqrtRatio.wrap(MIN_SQRT_RATIO_RAW);
-uint96 constant MAX_SQRT_RATIO_RAW = 79227682466138141934206691491;
-SqrtRatio constant MAX_SQRT_RATIO = SqrtRatio.wrap(MAX_SQRT_RATIO_RAW);
-
-uint96 constant TWO_POW_95 = 0x800000000000000000000000;
-uint96 constant TWO_POW_94 = 0x400000000000000000000000;
-uint96 constant TWO_POW_62 = 0x4000000000000000;
-uint96 constant TWO_POW_62_MINUS_ONE = 0x3fffffffffffffff;
-uint96 constant BIT_MASK = 0xc00000000000000000000000; // TWO_POW_95 | TWO_POW_94
-
-SqrtRatio constant ONE = SqrtRatio.wrap((TWO_POW_95) + (1 << 62));
-
-using {
-    toFixed,
-    isValid,
-    ge as >=,
-    le as <=,
-    lt as <,
-    gt as >,
-    eq as ==,
-    neq as !=,
-    isZero,
-    min,
-    max
-} for SqrtRatio global;
-
-function isValid(SqrtRatio sqrtRatio) pure returns (bool r) {
-    assembly ("memory-safe") {
-        r := and(
-            // greater than or equal to TWO_POW_62, i.e. the whole number portion is nonzero
-            gt(and(sqrtRatio, not(BIT_MASK)), TWO_POW_62_MINUS_ONE),
-            // and between min/max sqrt ratio
-            and(iszero(lt(sqrtRatio, MIN_SQRT_RATIO_RAW)), iszero(gt(sqrtRatio, MAX_SQRT_RATIO_RAW)))
-        )
-    }
-}
-
-error ValueOverflowsSqrtRatioContainer();
-
-// If passing a value greater than this constant with roundUp = true, toSqrtRatio will overflow
-// For roundUp = false, the constant is type(uint192).max
-uint256 constant MAX_FIXED_VALUE_ROUND_UP =
-    0x1000000000000000000000000000000000000000000000000 - 0x4000000000000000000000000;
-
-// Converts a 64.128 value into the compact SqrtRatio representation
-function toSqrtRatio(uint256 sqrtRatio, bool roundUp) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        function compute(sr, ru) -> v {
-            // rup = 0x00...00 when false, 0xff...ff when true
-            let rup := sub(0, ru)
-
-            // Region: < 2**96  (shift = 2)
-            let addmask := and(0x3, rup) // (1<<s)-1 if ru
-            if lt(add(sr, addmask), shl(96, 1)) {
-                v := shr(2, add(sr, addmask))
-                leave
-            }
-
-            // Region: < 2**128 (shift = 34)  + set bit 94
-            addmask := and(0x3ffffffff, rup)
-            if lt(add(sr, addmask), shl(128, 1)) {
-                v := or(shl(94, 1), shr(34, add(sr, addmask)))
-                leave
-            }
-
-            // Region: < 2**160 (shift = 66)  + set bit 95
-            addmask := and(0x3ffffffffffffffff, rup)
-            if lt(add(sr, addmask), shl(160, 1)) {
-                v := or(shl(95, 1), shr(66, add(sr, addmask)))
-                leave
-            }
-
-            // Region: < 2**192 (shift = 98)  + set bits 95|94
-            addmask := and(0x3ffffffffffffffffffffffff, rup)
-            if lt(add(sr, addmask), shl(192, 1)) {
-                v := or(shl(94, 3), shr(98, add(sr, addmask))) // 3<<94 == bit95|bit94
-                leave
-            }
-
-            // cast sig "ValueOverflowsSqrtRatioContainer()"
-            mstore(0, shl(224, 0xa10459f4))
-            revert(0, 4)
-        }
-        r := compute(sqrtRatio, roundUp)
-    }
-}
-
-// Returns the 64.128 representation of the given sqrt ratio
-function toFixed(SqrtRatio sqrtRatio) pure returns (uint256 r) {
-    assembly ("memory-safe") {
-        r := shl(add(2, shr(89, and(sqrtRatio, BIT_MASK))), and(sqrtRatio, not(BIT_MASK)))
-    }
-}
-
-// The below operators assume that the SqrtRatio is valid, i.e. SqrtRatio#isValid returns true
-
-function lt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) < SqrtRatio.unwrap(b);
-}
-
-function gt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) > SqrtRatio.unwrap(b);
-}
-
-function le(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) <= SqrtRatio.unwrap(b);
-}
-
-function ge(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) >= SqrtRatio.unwrap(b);
-}
-
-function eq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) == SqrtRatio.unwrap(b);
-}
-
-function neq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) != SqrtRatio.unwrap(b);
-}
-
-function isZero(SqrtRatio a) pure returns (bool r) {
-    assembly ("memory-safe") {
-        r := iszero(a)
-    }
-}
-
-function max(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := xor(a, mul(xor(a, b), gt(b, a)))
-    }
-}
-
-function min(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := xor(a, mul(xor(a, b), lt(b, a)))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {SqrtRatio} from "../types/sqrtRatio.sol";
-
-error Amount0DeltaOverflow();
-error Amount1DeltaOverflow();
-
-function sortAndConvertToFixedSqrtRatios(SqrtRatio sqrtRatioA, SqrtRatio sqrtRatioB)
-    pure
-    returns (uint256 sqrtRatioLower, uint256 sqrtRatioUpper)
-{
-    sqrtRatioLower = sqrtRatioA.toFixed();
-    sqrtRatioUpper = sqrtRatioB.toFixed();
-    assembly ("memory-safe") {
-        let diff := mul(sub(sqrtRatioLower, sqrtRatioUpper), gt(sqrtRatioLower, sqrtRatioUpper))
-
-        sqrtRatioLower := sub(sqrtRatioLower, diff)
-        sqrtRatioUpper := add(sqrtRatioUpper, diff)
-    }
-}
-
-/// @dev Assumes that the sqrt ratios are valid
-function amount0Delta(SqrtRatio sqrtRatioA, SqrtRatio sqrtRatioB, uint128 liquidity, bool roundUp)
-    pure
-    returns (uint128 amount0)
-{
-    (uint256 sqrtRatioLower, uint256 sqrtRatioUpper) = sortAndConvertToFixedSqrtRatios(sqrtRatioA, sqrtRatioB);
-    amount0 = amount0DeltaSorted(sqrtRatioLower, sqrtRatioUpper, liquidity, roundUp);
-}
-
-/// @dev Assumes that the sqrt ratios are non-zero and sorted
-function amount0DeltaSorted(uint256 sqrtRatioLower, uint256 sqrtRatioUpper, uint128 liquidity, bool roundUp)
-    pure
-    returns (uint128 amount0)
-{
-    unchecked {
-        uint256 liquidityX128;
-        assembly ("memory-safe") {
-            liquidityX128 := shl(128, liquidity)
-        }
-        if (roundUp) {
-            uint256 result0 =
-                FixedPointMathLib.fullMulDivUp(liquidityX128, (sqrtRatioUpper - sqrtRatioLower), sqrtRatioUpper);
-            assembly ("memory-safe") {
-                let result := add(div(result0, sqrtRatioLower), iszero(iszero(mod(result0, sqrtRatioLower))))
-                if shr(128, result) {
-                    // cast sig "Amount0DeltaOverflow()"
-                    mstore(0, 0xb4ef2546)
-                    revert(0x1c, 0x04)
-                }
-                amount0 := result
-            }
-        } else {
-            uint256 result0 =
-                FixedPointMathLib.fullMulDivUnchecked(liquidityX128, (sqrtRatioUpper - sqrtRatioLower), sqrtRatioUpper);
-            uint256 result = FixedPointMathLib.rawDiv(result0, sqrtRatioLower);
-            assembly ("memory-safe") {
-                if shr(128, result) {
-                    // cast sig "Amount0DeltaOverflow()"
-                    mstore(0, 0xb4ef2546)
-                    revert(0x1c, 0x04)
-                }
-                amount0 := result
-            }
-        }
-    }
-}
-
-/// @dev Assumes that the sqrt ratios are valid
-function amount1Delta(SqrtRatio sqrtRatioA, SqrtRatio sqrtRatioB, uint128 liquidity, bool roundUp)
-    pure
-    returns (uint128 amount1)
-{
-    (uint256 sqrtRatioLower, uint256 sqrtRatioUpper) = sortAndConvertToFixedSqrtRatios(sqrtRatioA, sqrtRatioB);
-    amount1 = amount1DeltaSorted(sqrtRatioLower, sqrtRatioUpper, liquidity, roundUp);
-}
-
-function amount1DeltaSorted(uint256 sqrtRatioLower, uint256 sqrtRatioUpper, uint128 liquidity, bool roundUp)
-    pure
-    returns (uint128 amount1)
-{
-    unchecked {
-        uint256 difference = sqrtRatioUpper - sqrtRatioLower;
-        uint256 liquidityU256;
-        assembly ("memory-safe") {
-            liquidityU256 := liquidity
-        }
-
-        if (roundUp) {
-            uint256 result = FixedPointMathLib.fullMulDivN(difference, liquidityU256, 128);
-            assembly ("memory-safe") {
-                // addition is safe from overflow because the result of fullMulDivN will never equal type(uint256).max
-                result := add(
-                    result,
-                    iszero(iszero(mulmod(difference, liquidityU256, 0x100000000000000000000000000000000)))
-                )
-                if shr(128, result) {
-                    // cast sig "Amount1DeltaOverflow()"
-                    mstore(0, 0x59d2b24a)
-                    revert(0x1c, 0x04)
-                }
-                amount1 := result
-            }
-        } else {
-            uint256 result = FixedPointMathLib.fullMulDivN(difference, liquidityU256, 128);
-            assembly ("memory-safe") {
-                if shr(128, result) {
-                    // cast sig "Amount1DeltaOverflow()"
-                    mstore(0, 0x59d2b24a)
-                    revert(0x1c, 0x04)
-                }
-                amount1 := result
-            }
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type StorageSlot is bytes32;
-
-using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
-
-function load(StorageSlot slot) view returns (bytes32 value) {
-    assembly ("memory-safe") {
-        value := sload(slot)
-    }
-}
-
-function loadTwo(StorageSlot slot) view returns (bytes32 value0, bytes32 value1) {
-    value0 = slot.load();
-    value1 = slot.next().load();
-}
-
-function store(StorageSlot slot, bytes32 value) {
-    assembly ("memory-safe") {
-        sstore(slot, value)
-    }
-}
-
-function storeTwo(StorageSlot slot, bytes32 value0, bytes32 value1) {
-    slot.store(value0);
-    slot.next().store(value1);
-}
-
-function next(StorageSlot slot) pure returns (StorageSlot nextSlot) {
-    assembly ("memory-safe") {
-        nextSlot := add(slot, 1)
-    }
-}
-
-function add(StorageSlot slot, uint256 addend) pure returns (StorageSlot summedSlot) {
-    assembly ("memory-safe") {
-        summedSlot := add(slot, addend)
-    }
-}
-
-function sub(StorageSlot slot, uint256 subtrahend) pure returns (StorageSlot differenceSlot) {
-    assembly ("memory-safe") {
-        differenceSlot := sub(slot, subtrahend)
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-struct CallPoints {
-    bool beforeInitializePool;
-    bool afterInitializePool;
-    bool beforeSwap;
-    bool afterSwap;
-    bool beforeUpdatePosition;
-    bool afterUpdatePosition;
-    bool beforeCollectFees;
-    bool afterCollectFees;
-}
-
-using {eq, isValid, toUint8} for CallPoints global;
-
-function eq(CallPoints memory a, CallPoints memory b) pure returns (bool) {
-    return (a.beforeInitializePool == b.beforeInitializePool && a.afterInitializePool == b.afterInitializePool
-            && a.beforeSwap == b.beforeSwap && a.afterSwap == b.afterSwap
-            && a.beforeUpdatePosition == b.beforeUpdatePosition && a.afterUpdatePosition == b.afterUpdatePosition
-            && a.beforeCollectFees == b.beforeCollectFees && a.afterCollectFees == b.afterCollectFees);
-}
-
-function isValid(CallPoints memory a) pure returns (bool) {
-    return (a.beforeInitializePool || a.afterInitializePool || a.beforeSwap || a.afterSwap || a.beforeUpdatePosition
-            || a.afterUpdatePosition || a.beforeCollectFees || a.afterCollectFees);
-}
-
-function toUint8(CallPoints memory callPoints) pure returns (uint8 b) {
-    assembly ("memory-safe") {
-        b := add(
-            add(
-                add(
-                    add(
-                        add(
-                            add(
-                                add(mload(callPoints), mul(128, mload(add(callPoints, 32)))),
-                                mul(64, mload(add(callPoints, 64)))
-                            ),
-                            mul(32, mload(add(callPoints, 96)))
-                        ),
-                        mul(16, mload(add(callPoints, 128)))
-                    ),
-                    mul(8, mload(add(callPoints, 160)))
-                ),
-                mul(4, mload(add(callPoints, 192)))
-            ),
-            mul(2, mload(add(callPoints, 224)))
-        )
-    }
-}
-
-function addressToCallPoints(address a) pure returns (CallPoints memory result) {
-    result = byteToCallPoints(uint8(uint160(a) >> 152));
-}
-
-function byteToCallPoints(uint8 b) pure returns (CallPoints memory result) {
-    // note the order of bytes does not match the struct order of elements because we are matching the cairo implementation
-    // which for legacy reasons has the fields in this order
-    result = CallPoints({
-        beforeInitializePool: (b & 1) != 0,
-        afterInitializePool: (b & 128) != 0,
-        beforeSwap: (b & 64) != 0,
-        afterSwap: (b & 32) != 0,
-        beforeUpdatePosition: (b & 16) != 0,
-        afterUpdatePosition: (b & 8) != 0,
-        beforeCollectFees: (b & 4) != 0,
-        afterCollectFees: (b & 2) != 0
-    });
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
 import {PoolId} from "./poolId.sol";
 import {PoolConfig} from "./poolConfig.sol";
 
@@ -4782,555 +5329,836 @@ function toPoolId(PoolKey memory key) pure returns (PoolId result) {
     }
 }
 
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {SqrtRatio, MIN_SQRT_RATIO_RAW, MAX_SQRT_RATIO_RAW} from "./sqrtRatio.sol";
-
-type SwapParameters is bytes32;
-
-using {
-    sqrtRatioLimit,
-    amount,
-    isToken1,
-    skipAhead,
-    isExactOut,
-    isPriceIncreasing,
-    withDefaultSqrtRatioLimit
-} for SwapParameters global;
-
-function sqrtRatioLimit(SwapParameters params) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := shr(160, params)
-    }
-}
-
-function amount(SwapParameters params) pure returns (int128 a) {
-    assembly ("memory-safe") {
-        a := signextend(15, shr(32, params))
-    }
-}
-
-function isToken1(SwapParameters params) pure returns (bool t) {
-    assembly ("memory-safe") {
-        t := and(shr(31, params), 1)
-    }
-}
-
-function skipAhead(SwapParameters params) pure returns (uint256 s) {
-    assembly ("memory-safe") {
-        s := and(params, 0x7fffffff)
-    }
-}
-
-function createSwapParameters(SqrtRatio _sqrtRatioLimit, int128 _amount, bool _isToken1, uint256 _skipAhead)
-    pure
-    returns (SwapParameters p)
-{
-    assembly ("memory-safe") {
-        // p = (sqrtRatioLimit << 160) | (amount << 32) | (isToken1 << 31) | skipAhead
-        // Mask each field to ensure dirty bits don't interfere
-        // For isToken1, use iszero(iszero()) to convert any non-zero value to 1
-        p := or(
-            shl(160, _sqrtRatioLimit),
-            or(
-                shl(32, and(_amount, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)),
-                or(shl(31, iszero(iszero(_isToken1))), and(_skipAhead, 0x7fffffff))
-            )
-        )
-    }
-}
-
-function isExactOut(SwapParameters params) pure returns (bool yes) {
-    assembly ("memory-safe") {
-        yes := and(shr(159, params), 1)
-    }
-}
-
-function isPriceIncreasing(SwapParameters params) pure returns (bool yes) {
-    bool _isExactOut = params.isExactOut();
-    bool _isToken1 = params.isToken1();
-    assembly ("memory-safe") {
-        yes := xor(_isExactOut, _isToken1)
-    }
-}
-
-function withDefaultSqrtRatioLimit(SwapParameters params) pure returns (SwapParameters updated) {
-    bool increasing = params.isPriceIncreasing();
-    assembly ("memory-safe") {
-        let replace := iszero(shr(160, params))
-        let orMask :=
-            shl(160, mul(replace, or(mul(increasing, MAX_SQRT_RATIO_RAW), mul(iszero(increasing), MIN_SQRT_RATIO_RAW))))
-        updated := or(orMask, params)
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {SqrtRatio, MIN_SQRT_RATIO_RAW, MAX_SQRT_RATIO_RAW} from "./sqrtRatio.sol";
-
-type SwapParameters is bytes32;
-
-using {
-    sqrtRatioLimit,
-    amount,
-    isToken1,
-    skipAhead,
-    isExactOut,
-    isPriceIncreasing,
-    withDefaultSqrtRatioLimit
-} for SwapParameters global;
-
-function sqrtRatioLimit(SwapParameters params) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := shr(160, params)
-    }
-}
-
-function amount(SwapParameters params) pure returns (int128 a) {
-    assembly ("memory-safe") {
-        a := signextend(15, shr(32, params))
-    }
-}
-
-function isToken1(SwapParameters params) pure returns (bool t) {
-    assembly ("memory-safe") {
-        t := and(shr(31, params), 1)
-    }
-}
-
-function skipAhead(SwapParameters params) pure returns (uint256 s) {
-    assembly ("memory-safe") {
-        s := and(params, 0x7fffffff)
-    }
-}
-
-function createSwapParameters(SqrtRatio _sqrtRatioLimit, int128 _amount, bool _isToken1, uint256 _skipAhead)
-    pure
-    returns (SwapParameters p)
-{
-    assembly ("memory-safe") {
-        // p = (sqrtRatioLimit << 160) | (amount << 32) | (isToken1 << 31) | skipAhead
-        // Mask each field to ensure dirty bits don't interfere
-        // For isToken1, use iszero(iszero()) to convert any non-zero value to 1
-        p := or(
-            shl(160, _sqrtRatioLimit),
-            or(
-                shl(32, and(_amount, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)),
-                or(shl(31, iszero(iszero(_isToken1))), and(_skipAhead, 0x7fffffff))
-            )
-        )
-    }
-}
-
-function isExactOut(SwapParameters params) pure returns (bool yes) {
-    assembly ("memory-safe") {
-        yes := and(shr(159, params), 1)
-    }
-}
-
-function isPriceIncreasing(SwapParameters params) pure returns (bool yes) {
-    bool _isExactOut = params.isExactOut();
-    bool _isToken1 = params.isToken1();
-    assembly ("memory-safe") {
-        yes := xor(_isExactOut, _isToken1)
-    }
-}
-
-function withDefaultSqrtRatioLimit(SwapParameters params) pure returns (SwapParameters updated) {
-    bool increasing = params.isPriceIncreasing();
-    assembly ("memory-safe") {
-        let replace := iszero(shr(160, params))
-        let orMask :=
-            shl(160, mul(replace, or(mul(increasing, MAX_SQRT_RATIO_RAW), mul(iszero(increasing), MIN_SQRT_RATIO_RAW))))
-        updated := or(orMask, params)
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type Locker is bytes32;
-
-using {id, addr, parse} for Locker global;
-
-function id(Locker locker) pure returns (uint256 v) {
-    assembly ("memory-safe") {
-        v := sub(shr(160, locker), 1)
-    }
-}
-
-function addr(Locker locker) pure returns (address v) {
-    assembly ("memory-safe") {
-        v := shr(96, shl(96, locker))
-    }
-}
-
-function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
-    assembly ("memory-safe") {
-        lockerId := sub(shr(160, locker), 1)
-        lockerAddr := shr(96, shl(96, locker))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-struct CallPoints {
-    bool beforeInitializePool;
-    bool afterInitializePool;
-    bool beforeSwap;
-    bool afterSwap;
-    bool beforeUpdatePosition;
-    bool afterUpdatePosition;
-    bool beforeCollectFees;
-    bool afterCollectFees;
-}
-
-using {eq, isValid, toUint8} for CallPoints global;
-
-function eq(CallPoints memory a, CallPoints memory b) pure returns (bool) {
-    return (a.beforeInitializePool == b.beforeInitializePool && a.afterInitializePool == b.afterInitializePool
-            && a.beforeSwap == b.beforeSwap && a.afterSwap == b.afterSwap
-            && a.beforeUpdatePosition == b.beforeUpdatePosition && a.afterUpdatePosition == b.afterUpdatePosition
-            && a.beforeCollectFees == b.beforeCollectFees && a.afterCollectFees == b.afterCollectFees);
-}
-
-function isValid(CallPoints memory a) pure returns (bool) {
-    return (a.beforeInitializePool || a.afterInitializePool || a.beforeSwap || a.afterSwap || a.beforeUpdatePosition
-            || a.afterUpdatePosition || a.beforeCollectFees || a.afterCollectFees);
-}
-
-function toUint8(CallPoints memory callPoints) pure returns (uint8 b) {
-    assembly ("memory-safe") {
-        b := add(
-            add(
-                add(
-                    add(
-                        add(
-                            add(
-                                add(mload(callPoints), mul(128, mload(add(callPoints, 32)))),
-                                mul(64, mload(add(callPoints, 64)))
-                            ),
-                            mul(32, mload(add(callPoints, 96)))
-                        ),
-                        mul(16, mload(add(callPoints, 128)))
-                    ),
-                    mul(8, mload(add(callPoints, 160)))
-                ),
-                mul(4, mload(add(callPoints, 192)))
-            ),
-            mul(2, mload(add(callPoints, 224)))
-        )
-    }
-}
-
-function addressToCallPoints(address a) pure returns (CallPoints memory result) {
-    result = byteToCallPoints(uint8(uint160(a) >> 152));
-}
-
-function byteToCallPoints(uint8 b) pure returns (CallPoints memory result) {
-    // note the order of bytes does not match the struct order of elements because we are matching the cairo implementation
-    // which for legacy reasons has the fields in this order
-    result = CallPoints({
-        beforeInitializePool: (b & 1) != 0,
-        afterInitializePool: (b & 128) != 0,
-        beforeSwap: (b & 64) != 0,
-        afterSwap: (b & 32) != 0,
-        beforeUpdatePosition: (b & 16) != 0,
-        afterUpdatePosition: (b & 8) != 0,
-        beforeCollectFees: (b & 4) != 0,
-        afterCollectFees: (b & 2) != 0
-    });
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-// Protocol Constants
-// Contains all constant values used throughout the Ekubo Protocol
-// These constants define the boundaries and special values for the protocol's operation
-
-// The minimum tick value supported by the protocol
-// Corresponds to the minimum possible price ratio in the protocol
-int32 constant MIN_TICK = -88722835;
-
-// The maximum tick value supported by the protocol
-// Corresponds to the maximum possible price ratio in the protocol
-int32 constant MAX_TICK = 88722835;
-
-// The maximum tick magnitude (absolute value of MAX_TICK)
-// Used for validation and bounds checking in tick-related calculations
-uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
-
-// The maximum allowed tick spacing for pools
-// Defines the upper limit for tick spacing configuration in pool creation
-uint32 constant MAX_TICK_SPACING = 698605;
-
-// Address used to represent the native token (ETH) within the protocol
-// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
-address constant NATIVE_TOKEN_ADDRESS = address(0);
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
-import {PoolConfig} from "./poolConfig.sol";
-
-type PositionId is bytes32;
-
-using {validate, salt, tickLower, tickUpper} for PositionId global;
-
-function salt(PositionId positionId) pure returns (bytes24 v) {
-    assembly ("memory-safe") {
-        v := shl(64, shr(64, positionId))
-    }
-}
-
-function tickLower(PositionId positionId) pure returns (int32 v) {
-    assembly ("memory-safe") {
-        // shift down, then signextend to 32 bits
-        v := signextend(3, shr(32, positionId))
-    }
-}
-
-function tickUpper(PositionId positionId) pure returns (int32 v) {
-    assembly ("memory-safe") {
-        // lowest 4 bytes, then signextend to 32 bits
-        v := signextend(3, positionId)
-    }
-}
-
-function createPositionId(bytes24 _salt, int32 _tickLower, int32 _tickUpper) pure returns (PositionId v) {
-    assembly ("memory-safe") {
-        // v = salt | (tickLower << 32) | tickUpper
-        v := or(shl(64, shr(64, _salt)), or(shl(32, and(_tickLower, 0xFFFFFFFF)), and(_tickUpper, 0xFFFFFFFF)))
-    }
-}
-
-/// @notice Thrown when the order of the position bounds is invalid, i.e. tickLower >= tickUpper
-error BoundsOrder();
-/// @notice Thrown when the bounds of the position are outside the pool's min/max tick range
-error MinMaxBounds();
-/// @notice Thrown when the ticks of the bounds do not align with tick spacing for concentrated pools
-error BoundsTickSpacing();
-/// @notice Thrown when stableswap pool positions are not at the min/max tick for the config
-error StableswapMustBeFullRange();
-
-function validate(PositionId positionId, PoolConfig config) pure {
-    if (config.isConcentrated()) {
-        if (positionId.tickLower() >= positionId.tickUpper()) revert BoundsOrder();
-        if (positionId.tickLower() < MIN_TICK || positionId.tickUpper() > MAX_TICK) revert MinMaxBounds();
-        int32 spacing = int32(config.concentratedTickSpacing());
-        if (positionId.tickLower() % spacing != 0 || positionId.tickUpper() % spacing != 0) revert BoundsTickSpacing();
-    } else {
-        (int32 lower, int32 upper) = config.stableswapActiveLiquidityTickRange();
-        // For stableswap pools, positions must be exactly min/max tick
-        if (positionId.tickLower() != lower || positionId.tickUpper() != upper) revert StableswapMustBeFullRange();
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-// A dynamic fixed point number (a la floating point) that stores a shifting 94 bit view of the underlying fixed point value,
-//  based on the most significant bits (mantissa)
-// If the most significant 2 bits are 11, it represents a 64.30
-// If the most significant 2 bits are 10, it represents a 32.62 number
-// If the most significant 2 bits are 01, it represents a 0.94 number
-// If the most significant 2 bits are 00, it represents a 0.126 number that is always less than 2**-32
-
-type SqrtRatio is uint96;
-
-uint96 constant MIN_SQRT_RATIO_RAW = 4611797791050542631;
-SqrtRatio constant MIN_SQRT_RATIO = SqrtRatio.wrap(MIN_SQRT_RATIO_RAW);
-uint96 constant MAX_SQRT_RATIO_RAW = 79227682466138141934206691491;
-SqrtRatio constant MAX_SQRT_RATIO = SqrtRatio.wrap(MAX_SQRT_RATIO_RAW);
-
-uint96 constant TWO_POW_95 = 0x800000000000000000000000;
-uint96 constant TWO_POW_94 = 0x400000000000000000000000;
-uint96 constant TWO_POW_62 = 0x4000000000000000;
-uint96 constant TWO_POW_62_MINUS_ONE = 0x3fffffffffffffff;
-uint96 constant BIT_MASK = 0xc00000000000000000000000; // TWO_POW_95 | TWO_POW_94
-
-SqrtRatio constant ONE = SqrtRatio.wrap((TWO_POW_95) + (1 << 62));
-
-using {
-    toFixed,
-    isValid,
-    ge as >=,
-    le as <=,
-    lt as <,
-    gt as >,
-    eq as ==,
-    neq as !=,
-    isZero,
-    min,
-    max
-} for SqrtRatio global;
-
-function isValid(SqrtRatio sqrtRatio) pure returns (bool r) {
-    assembly ("memory-safe") {
-        r := and(
-            // greater than or equal to TWO_POW_62, i.e. the whole number portion is nonzero
-            gt(and(sqrtRatio, not(BIT_MASK)), TWO_POW_62_MINUS_ONE),
-            // and between min/max sqrt ratio
-            and(iszero(lt(sqrtRatio, MIN_SQRT_RATIO_RAW)), iszero(gt(sqrtRatio, MAX_SQRT_RATIO_RAW)))
-        )
-    }
-}
-
-error ValueOverflowsSqrtRatioContainer();
-
-// If passing a value greater than this constant with roundUp = true, toSqrtRatio will overflow
-// For roundUp = false, the constant is type(uint192).max
-uint256 constant MAX_FIXED_VALUE_ROUND_UP =
-    0x1000000000000000000000000000000000000000000000000 - 0x4000000000000000000000000;
-
-// Converts a 64.128 value into the compact SqrtRatio representation
-function toSqrtRatio(uint256 sqrtRatio, bool roundUp) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        function compute(sr, ru) -> v {
-            // rup = 0x00...00 when false, 0xff...ff when true
-            let rup := sub(0, ru)
-
-            // Region: < 2**96  (shift = 2)
-            let addmask := and(0x3, rup) // (1<<s)-1 if ru
-            if lt(add(sr, addmask), shl(96, 1)) {
-                v := shr(2, add(sr, addmask))
-                leave
-            }
-
-            // Region: < 2**128 (shift = 34)  + set bit 94
-            addmask := and(0x3ffffffff, rup)
-            if lt(add(sr, addmask), shl(128, 1)) {
-                v := or(shl(94, 1), shr(34, add(sr, addmask)))
-                leave
-            }
-
-            // Region: < 2**160 (shift = 66)  + set bit 95
-            addmask := and(0x3ffffffffffffffff, rup)
-            if lt(add(sr, addmask), shl(160, 1)) {
-                v := or(shl(95, 1), shr(66, add(sr, addmask)))
-                leave
-            }
-
-            // Region: < 2**192 (shift = 98)  + set bits 95|94
-            addmask := and(0x3ffffffffffffffffffffffff, rup)
-            if lt(add(sr, addmask), shl(192, 1)) {
-                v := or(shl(94, 3), shr(98, add(sr, addmask))) // 3<<94 == bit95|bit94
-                leave
-            }
-
-            // cast sig "ValueOverflowsSqrtRatioContainer()"
-            mstore(0, shl(224, 0xa10459f4))
-            revert(0, 4)
-        }
-        r := compute(sqrtRatio, roundUp)
-    }
-}
-
-// Returns the 64.128 representation of the given sqrt ratio
-function toFixed(SqrtRatio sqrtRatio) pure returns (uint256 r) {
-    assembly ("memory-safe") {
-        r := shl(add(2, shr(89, and(sqrtRatio, BIT_MASK))), and(sqrtRatio, not(BIT_MASK)))
-    }
-}
-
-// The below operators assume that the SqrtRatio is valid, i.e. SqrtRatio#isValid returns true
-
-function lt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) < SqrtRatio.unwrap(b);
-}
-
-function gt(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) > SqrtRatio.unwrap(b);
-}
-
-function le(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) <= SqrtRatio.unwrap(b);
-}
-
-function ge(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) >= SqrtRatio.unwrap(b);
-}
-
-function eq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) == SqrtRatio.unwrap(b);
-}
-
-function neq(SqrtRatio a, SqrtRatio b) pure returns (bool r) {
-    r = SqrtRatio.unwrap(a) != SqrtRatio.unwrap(b);
-}
-
-function isZero(SqrtRatio a) pure returns (bool r) {
-    assembly ("memory-safe") {
-        r := iszero(a)
-    }
-}
-
-function max(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := xor(a, mul(xor(a, b), gt(b, a)))
-    }
-}
-
-function min(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := xor(a, mul(xor(a, b), lt(b, a)))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type StorageSlot is bytes32;
-
-using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
-
-function load(StorageSlot slot) view returns (bytes32 value) {
-    assembly ("memory-safe") {
-        value := sload(slot)
-    }
-}
-
-function loadTwo(StorageSlot slot) view returns (bytes32 value0, bytes32 value1) {
-    value0 = slot.load();
-    value1 = slot.next().load();
-}
-
-function store(StorageSlot slot, bytes32 value) {
-    assembly ("memory-safe") {
-        sstore(slot, value)
-    }
-}
-
-function storeTwo(StorageSlot slot, bytes32 value0, bytes32 value1) {
-    slot.store(value0);
-    slot.next().store(value1);
-}
-
-function next(StorageSlot slot) pure returns (StorageSlot nextSlot) {
-    assembly ("memory-safe") {
-        nextSlot := add(slot, 1)
-    }
-}
-
-function add(StorageSlot slot, uint256 addend) pure returns (StorageSlot summedSlot) {
-    assembly ("memory-safe") {
-        summedSlot := add(slot, addend)
-    }
-}
-
-function sub(StorageSlot slot, uint256 subtrahend) pure returns (StorageSlot differenceSlot) {
-    assembly ("memory-safe") {
-        differenceSlot := sub(slot, subtrahend)
-    }
-}
-
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {IERC20} from "forge-std/interfaces/IERC20.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+
+import {BaseForwardee} from "./base/BaseForwardee.sol";
+import {UsesCore} from "./base/UsesCore.sol";
+import {ICore} from "./interfaces/ICore.sol";
+import {toDate, toQuarter} from "./libraries/TimeDescriptor.sol";
+import {CoreLib} from "./libraries/CoreLib.sol";
+import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
+import {Locker} from "./types/locker.sol";
+
+/// @title Time-locked Token Wrapper
+/// @author Ekubo Protocol
+/// @notice Wraps tokens that can only be unwrapped after a specific unlock time
+/// @dev Wrapping and unwrapping happens via Ekubo Core#forward. Implements full ERC20 functionality
+contract TokenWrapper is UsesCore, IERC20, BaseForwardee {
+    using CoreLib for *;
+    using FlashAccountantLib for *;
+
+    /// @notice Thrown when trying to unwrap the token before the token has unlocked
+    error TooEarly();
+
+    /// @notice Thrown when attempting to transfer an amount greater than the balance
+    error InsufficientBalance();
+
+    /// @notice Thrown when calling transferFrom with an insufficient allowance
+    error InsufficientAllowance();
+
+    /// @notice The underlying token that is wrapped by this contract
+    IERC20 public immutable UNDERLYING_TOKEN;
+
+    /// @notice The timestamp after which the token may be unwrapped
+    uint256 public immutable UNLOCK_TIME;
+
+    /// @notice Constructs a new TokenWrapper
+    /// @param core The Ekubo Core contract
+    /// @param _underlyingToken The token to be wrapped
+    /// @param _unlockTime The timestamp after which tokens can be unwrapped
+    constructor(ICore core, IERC20 _underlyingToken, uint256 _unlockTime) UsesCore(core) BaseForwardee(core) {
+        UNDERLYING_TOKEN = _underlyingToken;
+        UNLOCK_TIME = _unlockTime;
+    }
+
+    /// @inheritdoc IERC20
+    mapping(address owner => mapping(address spender => uint256)) public override allowance;
+
+    /// @notice Mapping of account balances (not public because we use coreBalance for Core)
+    /// @dev Private mapping to track individual account balances
+    mapping(address account => uint256) private _balanceOf;
+
+    /// @notice Transient balance for the Core contract
+    /// @dev Core never actually holds a real balance of this token, we just use this transient balance to enable low cost payments to core
+    uint256 private transient coreBalance;
+
+    /// @inheritdoc IERC20
+    /// @dev Returns the transient balance for Core contract, otherwise returns stored balance
+    function balanceOf(address account) external view returns (uint256) {
+        if (account == address(CORE)) return coreBalance;
+        return _balanceOf[account];
+    }
+
+    /// @inheritdoc IERC20
+    /// @dev Total supply is tracked in Core's saved balances
+    function totalSupply() external view override returns (uint256) {
+        (uint128 supply,) = CORE.savedBalances({
+            owner: address(this),
+            token0: address(UNDERLYING_TOKEN),
+            token1: address(type(uint160).max),
+            salt: bytes32(0)
+        });
+
+        return supply;
+    }
+
+    /// @inheritdoc IERC20
+    /// @dev Combines underlying token name with unlock date
+    function name() external view returns (string memory) {
+        return string.concat(UNDERLYING_TOKEN.name(), " ", toDate(UNLOCK_TIME));
+    }
+
+    /// @inheritdoc IERC20
+    /// @dev Combines "g" prefix with underlying token symbol and quarter
+    function symbol() external view returns (string memory) {
+        return string.concat("g", UNDERLYING_TOKEN.symbol(), "-", toQuarter(UNLOCK_TIME));
+    }
+
+    /// @inheritdoc IERC20
+    function decimals() external view returns (uint8) {
+        return UNDERLYING_TOKEN.decimals();
+    }
+
+    /// @inheritdoc IERC20
+    function transfer(address to, uint256 amount) external returns (bool) {
+        // note we do not need to check that core balance is sufficient as the sender
+        // even if the caller gets core to withdraw to itself, as part of a payment, it will net to 0 with the Core#withdraw call
+        if (msg.sender != address(CORE)) {
+            uint256 balance = _balanceOf[msg.sender];
+            if (balance < amount) {
+                revert InsufficientBalance();
+            }
+            // since we already checked balance >= amount
+            unchecked {
+                _balanceOf[msg.sender] = balance - amount;
+            }
+        }
+        if (to == address(CORE)) {
+            coreBalance += amount;
+        } else if (to != address(0)) {
+            // we save storage writes on burn by checking to != address(0)
+            _balanceOf[to] += amount;
+        }
+        emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+
+    /// @inheritdoc IERC20
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    /// @inheritdoc IERC20
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        uint256 allowanceCurrent = allowance[from][msg.sender];
+        if (allowanceCurrent != type(uint256).max) {
+            if (allowanceCurrent < amount) revert InsufficientAllowance();
+            // since we already checked allowanceCurrent >= amount
+            unchecked {
+                allowance[from][msg.sender] = allowanceCurrent - amount;
+            }
+        }
+
+        // we know `from` at this point will never be address(core) for amount > 0, since Core will never give an allowance to any address
+
+        uint256 balance = _balanceOf[from];
+        if (balance < amount) {
+            revert InsufficientBalance();
+        }
+        // since we already checked balance >= amount
+        unchecked {
+            _balanceOf[from] = balance - amount;
+        }
+
+        if (to == address(CORE)) {
+            coreBalance += amount;
+        } else {
+            _balanceOf[to] += amount;
+        }
+        emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+
+    /// @notice Handles wrap/unwrap operations forwarded from Core
+    /// @dev Encode (int256 delta) in the forwarded data, where a positive amount means wrapping and a negative amount means unwrapping
+    /// For wrap: the specified amount of this wrapper token will be credited to the locker and the same amount of underlying will be debited
+    /// For unwrap: the specified amount of the underlying will be credited to the locker and the same amount of this wrapper token will be debited, iff block.timestamp > unlockTime and at least that much token has been wrapped
+    /// @param data Encoded int256 delta (positive for wrap, negative for unwrap)
+    /// @return Empty bytes (no return data needed)
+    function handleForwardData(Locker, bytes memory data) internal override returns (bytes memory) {
+        (int256 amount) = abi.decode(data, (int256));
+
+        // unwrap
+        if (amount < 0) {
+            if (block.timestamp < UNLOCK_TIME) revert TooEarly();
+        }
+
+        CORE.updateSavedBalances({
+            token0: address(UNDERLYING_TOKEN),
+            token1: address(type(uint160).max),
+            salt: bytes32(0),
+            delta0: amount,
+            delta1: 0
+        });
+
+        CORE.updateDebt(SafeCastLib.toInt128(-amount));
+
+        return bytes("");
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+
+import {Router} from "./Router.sol";
+import {ICore, PoolKey} from "./interfaces/ICore.sol";
+import {PoolState} from "./types/poolState.sol";
+import {PoolBalanceUpdate} from "./types/poolBalanceUpdate.sol";
+import {SwapParameters} from "./types/swapParameters.sol";
+import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
+import {CoreLib} from "./libraries/CoreLib.sol";
+
+/// @title Ekubo MEV Capture Router
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Enables swapping and quoting against pools in Ekubo Protocol including the MEV capture extension pools
+contract MEVCaptureRouter is Router {
+    using FlashAccountantLib for *;
+    using CoreLib for *;
+
+    address public immutable MEV_CAPTURE;
+
+    constructor(ICore core, address _mevCapture) Router(core) {
+        MEV_CAPTURE = _mevCapture;
+    }
+
+    function _swap(uint256 value, PoolKey memory poolKey, SwapParameters params)
+        internal
+        override
+        returns (PoolBalanceUpdate balanceUpdate, PoolState stateAfter)
+    {
+        if (poolKey.config.extension() != MEV_CAPTURE) {
+            (balanceUpdate, stateAfter) = CORE.swap(value, poolKey, params.withDefaultSqrtRatioLimit());
+        } else {
+            (balanceUpdate, stateAfter) = abi.decode(
+                CORE.forward(MEV_CAPTURE, abi.encode(poolKey, params.withDefaultSqrtRatioLimit())),
+                (PoolBalanceUpdate, PoolState)
+            );
+            if (value != 0) {
+                SafeTransferLib.safeTransferETH(address(CORE), value);
+            }
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {ILocker, IFlashAccountant} from "../interfaces/IFlashAccountant.sol";
+
+/// @title Base Locker
+/// @notice Abstract base contract for contracts that need to interact with the flash accountant
+/// @dev Provides locking functionality and token transfer utilities
+abstract contract BaseLocker is ILocker {
+    /// @notice Thrown when a function is called by an address other than the accountant
+    error BaseLockerAccountantOnly();
+
+    /// @notice The flash accountant contract that manages locks and token transfers
+    IFlashAccountant internal immutable ACCOUNTANT;
+
+    /// @notice Constructs the BaseLocker with a flash accountant
+    /// @param _accountant The flash accountant contract
+    constructor(IFlashAccountant _accountant) {
+        ACCOUNTANT = _accountant;
+    }
+
+    /// CALLBACK HANDLERS
+
+    /// @inheritdoc ILocker
+    function locked_6416899205(uint256 id) external {
+        if (msg.sender != address(ACCOUNTANT)) revert BaseLockerAccountantOnly();
+
+        bytes memory data = msg.data[36:];
+
+        bytes memory result = handleLockData(id, data);
+
+        assembly ("memory-safe") {
+            // raw return whatever the handler sent
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    /// INTERNAL FUNCTIONS
+
+    /// @notice Acquires a lock and executes the provided data
+    /// @dev Internal function that calls the accountant's lock function
+    /// @param data The data to execute within the lock
+    /// @return result The result of the lock execution
+    function lock(bytes memory data) internal returns (bytes memory result) {
+        address target = address(ACCOUNTANT);
+
+        assembly ("memory-safe") {
+            // We will store result where the free memory pointer is now, ...
+            result := mload(0x40)
+
+            // But first use it to store the calldata
+
+            // Selector of lock()
+            mstore(result, shl(224, 0xf83d08ba))
+
+            // We only copy the data, not the length, because the length is read from the calldata size
+            let len := mload(data)
+            mcopy(add(result, 4), add(data, 32), len)
+
+            // If the call failed, pass through the revert
+            if iszero(call(gas(), target, 0, result, add(len, 4), 0, 0)) {
+                returndatacopy(result, 0, returndatasize())
+                revert(result, returndatasize())
+            }
+
+            // Copy the entire return data into the space where the result is pointing
+            mstore(result, returndatasize())
+            returndatacopy(add(result, 32), 0, returndatasize())
+
+            // Update the free memory pointer to be after the end of the data, aligned to the next 32 byte word
+            mstore(0x40, and(add(add(result, add(32, returndatasize())), 31), not(31)))
+        }
+    }
+
+    /// @notice Thrown when a lock was expected to revert but didn't
+    error ExpectedRevertWithinLock();
+
+    /// @notice Acquires a lock expecting it to revert and returns the revert data
+    /// @dev Used for quote functions that use reverts to return data
+    /// @param data The data to execute within the lock
+    /// @return result The revert data from the lock execution
+    function lockAndExpectRevert(bytes memory data) internal returns (bytes memory result) {
+        address target = address(ACCOUNTANT);
+
+        assembly ("memory-safe") {
+            // We will store result where the free memory pointer is now, ...
+            result := mload(0x40)
+
+            // But first use it to store the calldata
+
+            // Selector of lock()
+            mstore(result, shl(224, 0xf83d08ba))
+
+            // We only copy the data, not the length, because the length is read from the calldata size
+            let len := mload(data)
+            mcopy(add(result, 4), add(data, 32), len)
+
+            // If the call succeeded, revert with ExpectedRevertWithinLock.selector
+            if call(gas(), target, 0, result, add(len, 4), 0, 0) {
+                mstore(0, shl(224, 0x4c816e2b))
+                revert(0, 4)
+            }
+
+            // Copy the entire revert data into the space where the result is pointing
+            mstore(result, returndatasize())
+            returndatacopy(add(result, 32), 0, returndatasize())
+
+            // Update the free memory pointer to be after the end of the data, aligned to the next 32 byte word
+            mstore(0x40, and(add(add(result, add(32, returndatasize())), 31), not(31)))
+        }
+    }
+
+    /// @notice Handles the execution of lock data
+    /// @dev Must be implemented by derived contracts to define lock behavior
+    /// @param id The lock ID
+    /// @param data The data to process within the lock
+    /// @return result The result of processing the lock data
+    function handleLockData(uint256 id, bytes memory data) internal virtual returns (bytes memory result);
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {IForwardee, IFlashAccountant} from "../interfaces/IFlashAccountant.sol";
+import {Locker} from "../types/locker.sol";
+
+/// @title Base Forwardee
+/// @notice Abstract base contract for contracts that need to receive forwarded calls from the flash accountant
+/// @dev Provides the forwarding mechanism and delegates actual data handling to implementing contracts
+abstract contract BaseForwardee is IForwardee {
+    /// @notice Thrown when a function is called by an address other than the accountant
+    error BaseForwardeeAccountantOnly();
+
+    /// @notice The flash accountant contract that can forward calls to this contract
+    IFlashAccountant private immutable ACCOUNTANT;
+
+    /// @notice Constructs the BaseForwardee with a flash accountant
+    /// @param _accountant The flash accountant contract that will forward calls
+    constructor(IFlashAccountant _accountant) {
+        ACCOUNTANT = _accountant;
+    }
+
+    /// CALLBACK HANDLERS
+
+    /// @inheritdoc IForwardee
+    /// @dev Extracts the forwarded data from calldata and delegates to handleForwardData
+    /// The first 68 bytes of calldata contain the function selector (4 bytes), id (32 bytes), and originalLocker (32 bytes)
+    /// All remaining calldata is treated as the forwarded data
+    /// Return data from handleForwardData is returned exactly as is, with no additional encoding or decoding
+    /// Reverts are also bubbled up
+    function forwarded_2374103877(Locker original) external {
+        if (msg.sender != address(ACCOUNTANT)) revert BaseForwardeeAccountantOnly();
+
+        bytes memory data = msg.data[36:];
+
+        bytes memory result = handleForwardData(original, data);
+
+        assembly ("memory-safe") {
+            // raw return whatever the handler sent
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    /// INTERNAL FUNCTIONS
+
+    /// @notice Handles the execution of forwarded data
+    /// @dev Must be implemented by derived contracts to define forwarding behavior
+    /// @param original The original locker that called forward
+    /// @param data The forwarded data to process
+    /// @return result The result of processing the forwarded data
+    function handleForwardData(Locker original, bytes memory data) internal virtual returns (bytes memory result);
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {ILocker, IForwardee} from "../IFlashAccountant.sol";
+import {IExtension} from "../ICore.sol";
+import {IExposedStorage} from "../IExposedStorage.sol";
+import {PoolKey} from "../../types/poolKey.sol";
+import {OrderKey} from "../../types/orderKey.sol";
+import {OrderConfig} from "../../types/orderConfig.sol";
+import {PoolId} from "../../types/poolId.sol";
+
+/// @title TWAMM Interface
+/// @notice Interface for the Ekubo TWAMM Extension
+/// @dev Extension for Ekubo Protocol that enables creation of DCA orders that are executed over time
+interface ITWAMM is IExposedStorage, IExtension, ILocker, IForwardee {
+    /// @notice Emitted when an order is updated
+    /// @param owner Address of the order owner
+    /// @param salt Unique salt for the order
+    /// @param orderKey Order key identifying the order
+    /// @param saleRateDelta Change in sale rate applied
+    event OrderUpdated(address owner, bytes32 salt, OrderKey orderKey, int112 saleRateDelta);
+
+    /// @notice Emitted when proceeds are withdrawn from an order
+    /// @param owner Address of the order owner
+    /// @param salt Unique salt for the order
+    /// @param orderKey Order key identifying the order
+    /// @param amount Amount of tokens withdrawn
+    event OrderProceedsWithdrawn(address owner, bytes32 salt, OrderKey orderKey, uint128 amount);
+
+    /// @notice Thrown when the number of orders at a time would overflow
+    error TimeNumOrdersOverflow();
+
+    /// @notice Thrown when tick spacing is not the maximum allowed value
+    error FullRangePoolOnly();
+
+    /// @notice Thrown when trying to modify an order that has already ended
+    error OrderAlreadyEnded();
+
+    /// @notice Thrown when order timestamps are invalid
+    error InvalidTimestamps();
+
+    /// @notice Thrown when sale rate delta exceeds maximum allowed value
+    error MaxSaleRateDeltaPerTime();
+
+    /// @notice Thrown when trying to operate on an uninitialized pool
+    error PoolNotInitialized();
+
+    /// @notice Gets the reward rate inside a time range for a specific token
+    /// @dev Used to calculate how much of the buy token an order has earned
+    /// @param poolId Unique identifier for the pool
+    /// @param config The order config that is being checked
+    /// @return result The reward rate inside the specified range
+    function getRewardRateInside(PoolId poolId, OrderConfig config) external view returns (uint256 result);
+
+    /// @notice Locks core and executes virtual orders for the given pool key
+    /// @dev The pool key must use this extension, which is checked in the locked callback
+    /// @param poolKey Pool key identifying the pool
+    function lockAndExecuteVirtualOrders(PoolKey memory poolKey) external;
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {PoolKey} from "../../types/poolKey.sol";
+import {ILocker, IForwardee} from "../IFlashAccountant.sol";
+import {IExtension} from "../ICore.sol";
+import {IExposedStorage} from "../IExposedStorage.sol";
+
+/// @title MEV Capture Interface
+/// @notice Interface for the Ekubo MEV Capture Extension
+/// @dev Extension that charges additional fees based on the relative size of the priority fee and tick movement during swaps
+interface IMEVCapture is IExposedStorage, ILocker, IForwardee, IExtension {
+    /// @notice Thrown when trying to use MEV capture on a full-range-only pool
+    /// @dev MEV capture only works with concentrated liquidity pools that have discrete tick spacing
+    error ConcentratedLiquidityPoolsOnly();
+
+    /// @notice Thrown when trying to use MEV capture on a pool with zero fees
+    /// @dev MEV capture multiplies the base fee, so a zero fee would result in no additional fees
+    error NonzeroFeesOnly();
+
+    /// @notice Thrown when attempting to swap directly without using the forward mechanism
+    /// @dev All swaps must go through the forward mechanism to ensure proper MEV fee calculation
+    error SwapMustHappenThroughForward();
+
+    /// @notice Accumulates any pending pool fees from past blocks
+    /// @dev This function can be called by anyone to trigger fee accumulation for a pool
+    /// @dev Fees are accumulated when the pool hasn't been updated in the current block
+    /// @param poolKey The pool key identifying the pool to accumulate fees for
+    function accumulatePoolFees(PoolKey memory poolKey) external;
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {IOrders} from "./IOrders.sol";
+import {BuybacksState} from "../types/buybacksState.sol";
+import {IExposedStorage} from "./IExposedStorage.sol";
+
+/// @title Revenue Buybacks Interface
+/// @notice Interface for automated revenue buyback orders using TWAMM (Time-Weighted Average Market Maker)
+/// @dev Defines the interface for managing buyback orders for protocol revenue
+interface IRevenueBuybacks is IExposedStorage {
+    /// @notice Thrown when minimum order duration exceeds target order duration
+    /// @dev This would prevent order creation since the condition order duration >= min order duration would not always be met
+    error MinOrderDurationGreaterThanTargetOrderDuration();
+
+    /// @notice Thrown when minimum order duration is set to zero
+    /// @dev Orders cannot have zero duration, so this prevents invalid configurations
+    error MinOrderDurationMustBeGreaterThanZero();
+
+    /// @notice Thrown when roll is called and a token is not configured
+    error TokenNotConfigured(address token);
+
+    /// @notice Emitted when a token's buyback configuration is updated
+    /// @param token The token being configured for buybacks
+    /// @param state The state after configuring the token
+    event Configured(address token, BuybacksState state);
+
+    /// @notice The Orders contract used to create and manage TWAMM orders
+    /// @dev All buyback orders are created through this contract
+    function ORDERS() external view returns (IOrders);
+
+    /// @notice The NFT token ID that represents all buyback orders created by this contract
+    /// @dev A single NFT is minted and reused for all buyback orders to simplify management
+    function NFT_ID() external view returns (uint256);
+
+    /// @notice The token that is purchased with collected revenue
+    /// @dev This is typically the protocol's governance or utility token
+    function BUY_TOKEN() external view returns (address);
+
+    /// @notice Approves the Orders contract to spend unlimited amounts of a token
+    /// @dev Must be called at least once for each revenue token before creating buyback orders
+    /// @param token The token to approve for spending by the Orders contract
+    function approveMax(address token) external;
+
+    /// @notice Withdraws leftover tokens from the contract (only callable by owner)
+    /// @dev Used to recover tokens that may be stuck in the contract or to withdraw excess funds
+    /// @param token The address of the token to withdraw
+    /// @param amount The amount of tokens to withdraw
+    function take(address token, uint256 amount) external;
+
+    /// @notice Collects the proceeds from a completed buyback order
+    /// @dev Can be called by anyone at any time to collect proceeds from orders that have finished
+    /// @param token The revenue token that was sold in the order
+    /// @param fee The fee tier of the pool where the order was executed
+    /// @param endTime The end time of the order to collect proceeds from
+    /// @return proceeds The amount of buyToken received from the completed order
+    function collect(address token, uint64 fee, uint64 endTime) external returns (uint128 proceeds);
+
+    /// @notice Creates a new buyback order or extends an existing one with available revenue
+    /// @dev Can be called by anyone to trigger the creation of buyback orders using collected revenue
+    /// This function will either extend the current order (if conditions are met) or create a new order
+    /// @param token The revenue token to use for creating the buyback order
+    /// @return endTime The end time of the order that was created or extended
+    /// @return saleRate The sale rate of the order (amount of token sold per second)
+    function roll(address token) external returns (uint64 endTime, uint112 saleRate);
+
+    /// @notice Configures buyback parameters for a revenue token (only callable by owner)
+    /// @dev Sets the timing and fee parameters for automated buyback order creation
+    /// @param token The revenue token to configure
+    /// @param targetOrderDuration The target duration for new orders (in seconds)
+    /// @param minOrderDuration The minimum duration threshold for creating new orders (in seconds)
+    /// @param fee The fee tier for the buyback pool
+    function configure(address token, uint32 targetOrderDuration, uint32 minOrderDuration, uint64 fee) external;
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {Ownable} from "solady/auth/Ownable.sol";
+import {Multicallable} from "solady/utils/Multicallable.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+
+import {nextValidTime} from "./math/time.sol";
+import {IOrders} from "./interfaces/IOrders.sol";
+import {IRevenueBuybacks} from "./interfaces/IRevenueBuybacks.sol";
+import {BuybacksState, createBuybacksState} from "./types/buybacksState.sol";
+import {OrderKey} from "./types/orderKey.sol";
+import {createOrderConfig} from "./types/orderConfig.sol";
+import {ExposedStorage} from "./base/ExposedStorage.sol";
+import {NATIVE_TOKEN_ADDRESS} from "./math/constants.sol";
+
+/// @title Revenue Buybacks
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Creates automated revenue buyback orders using TWAMM (Time-Weighted Average Market Maker)
+/// @dev Final contract that manages the creation and execution of buyback orders for protocol revenue
+/// This contract automatically creates TWAMM orders to buy back a specified token using collected revenue
+contract RevenueBuybacks is IRevenueBuybacks, ExposedStorage, Ownable, Multicallable {
+    /// @notice The Orders contract used to create and manage TWAMM orders
+    /// @dev All buyback orders are created through this contract
+    IOrders public immutable ORDERS;
+
+    /// @notice The NFT token ID that represents all buyback orders created by this contract
+    /// @dev A single NFT is minted and reused for all buyback orders to simplify management
+    uint256 public immutable NFT_ID;
+
+    /// @notice The token that is purchased with collected revenue
+    /// @dev This is typically the protocol's governance or utility token
+    address public immutable BUY_TOKEN;
+
+    /// @notice Constructs the RevenueBuybacks contract
+    /// @param owner The address that will own this contract and have administrative privileges
+    /// @param _orders The Orders contract instance for creating TWAMM orders
+    /// @param _buyToken The token that will be purchased with collected revenue
+    constructor(address owner, IOrders _orders, address _buyToken) {
+        _initializeOwner(owner);
+        ORDERS = _orders;
+        BUY_TOKEN = _buyToken;
+        NFT_ID = ORDERS.mint();
+    }
+
+    /// @notice Approves the Orders contract to spend unlimited amounts of a token
+    /// @dev Must be called at least once for each revenue token before creating buyback orders
+    /// @param token The token to approve for spending by the Orders contract
+    function approveMax(address token) external {
+        SafeTransferLib.safeApproveWithRetry(token, address(ORDERS), type(uint256).max);
+    }
+
+    /// @notice Withdraws leftover tokens from the contract (only callable by owner)
+    /// @dev Used to recover tokens that may be stuck in the contract
+    /// @param token The address of the token to withdraw
+    /// @param amount The amount of tokens to withdraw
+    function take(address token, uint256 amount) external onlyOwner {
+        // Transfer to msg.sender since only the owner can call this function
+        SafeTransferLib.safeTransfer(token, msg.sender, amount);
+    }
+
+    /// @notice Withdraws native tokens held by this contract
+    /// @dev Used to recover native tokens that may be stuck in the contract
+    /// @param amount The amount of native tokens to withdraw
+    function takeNative(uint256 amount) external onlyOwner {
+        // Transfer to msg.sender since only the owner can call this function
+        SafeTransferLib.safeTransferETH(msg.sender, amount);
+    }
+
+    /// @notice Collects the proceeds from a completed buyback order
+    /// @dev Can be called by anyone at any time to collect proceeds from orders that have finished
+    /// @param token The revenue token that was sold in the order
+    /// @param fee The fee tier of the pool where the order was executed
+    /// @param endTime The end time of the order to collect proceeds from
+    /// @return proceeds The amount of buyToken received from the completed order
+    function collect(address token, uint64 fee, uint64 endTime) external returns (uint128 proceeds) {
+        proceeds = ORDERS.collectProceeds(NFT_ID, _createOrderKey(token, fee, 0, endTime), owner());
+    }
+
+    /// @notice Allows the contract to receive ETH revenue
+    /// @dev Required to accept ETH payments when ETH is used as a revenue token
+    receive() external payable {}
+
+    /// @notice Creates a new buyback order or extends an existing one with available revenue
+    /// @dev Can be called by anyone to trigger the creation of buyback orders using collected revenue
+    /// This function will either extend the current order (if conditions are met) or create a new order
+    /// @param token The revenue token to use for creating the buyback order, or NATIVE_TOKEN_ADDRESS
+    /// @return endTime The end time of the order that was created or extended
+    /// @return saleRate The sale rate of the order (amount of token sold per second)
+    function roll(address token) public returns (uint64 endTime, uint112 saleRate) {
+        unchecked {
+            BuybacksState state;
+            assembly ("memory-safe") {
+                state := sload(token)
+            }
+
+            if (!state.isConfigured()) {
+                revert TokenNotConfigured(token);
+            }
+
+            // minOrderDuration == 0 indicates the token is not configured
+            bool isEth = token == NATIVE_TOKEN_ADDRESS;
+            uint256 amountToSpend = isEth ? address(this).balance : SafeTransferLib.balanceOf(token, address(this));
+
+            uint32 timeRemaining = state.lastEndTime() - uint32(block.timestamp);
+            // if the fee changed, or the amount of time exceeds the min order duration
+            // note the time remaining can underflow if the last order has ended. in this case time remaining will be greater than min order duration,
+            // but also greater than last order duration, so it will not be re-used.
+            if (
+                state.fee() == state.lastFee() && timeRemaining >= state.minOrderDuration()
+                    && timeRemaining <= state.lastOrderDuration()
+            ) {
+                // handles overflow
+                endTime = uint64(block.timestamp + timeRemaining);
+            } else {
+                endTime =
+                    uint64(nextValidTime(block.timestamp, block.timestamp + uint256(state.targetOrderDuration()) - 1));
+
+                state = createBuybacksState({
+                    _targetOrderDuration: state.targetOrderDuration(),
+                    _minOrderDuration: state.minOrderDuration(),
+                    _fee: state.fee(),
+                    _lastEndTime: uint32(endTime),
+                    _lastOrderDuration: uint32(endTime - block.timestamp),
+                    _lastFee: state.fee()
+                });
+
+                assembly ("memory-safe") {
+                    sstore(token, state)
+                }
+            }
+
+            if (amountToSpend != 0) {
+                saleRate = ORDERS.increaseSellAmount{value: isEth ? amountToSpend : 0}(
+                    NFT_ID, _createOrderKey(token, state.fee(), 0, endTime), uint128(amountToSpend), type(uint112).max
+                );
+            }
+        }
+    }
+
+    /// @notice Configures buyback parameters for a revenue token (only callable by owner)
+    /// @dev Sets the timing and fee parameters for automated buyback order creation
+    /// @param token The revenue token to configure
+    /// @param targetOrderDuration The target duration for new orders (in seconds)
+    /// @param minOrderDuration The minimum duration threshold for creating new orders (in seconds)
+    /// @param fee The fee tier for the buyback pool
+    function configure(address token, uint32 targetOrderDuration, uint32 minOrderDuration, uint64 fee)
+        external
+        onlyOwner
+    {
+        if (minOrderDuration > targetOrderDuration) revert MinOrderDurationGreaterThanTargetOrderDuration();
+        if (minOrderDuration == 0 && targetOrderDuration != 0) {
+            revert MinOrderDurationMustBeGreaterThanZero();
+        }
+
+        BuybacksState state;
+        assembly ("memory-safe") {
+            state := sload(token)
+        }
+        state = createBuybacksState({
+            _targetOrderDuration: targetOrderDuration,
+            _minOrderDuration: minOrderDuration,
+            _fee: fee,
+            _lastEndTime: state.lastEndTime(),
+            _lastOrderDuration: state.lastOrderDuration(),
+            _lastFee: state.lastFee()
+        });
+        assembly ("memory-safe") {
+            sstore(token, state)
+        }
+
+        emit Configured(token, state);
+    }
+
+    function _createOrderKey(address token, uint64 fee, uint64 startTime, uint64 endTime)
+        internal
+        view
+        returns (OrderKey memory key)
+    {
+        bool isToken1 = token > BUY_TOKEN;
+        address buyToken = BUY_TOKEN;
+        assembly ("memory-safe") {
+            mstore(add(key, mul(isToken1, 32)), token)
+            mstore(add(key, mul(iszero(isToken1), 32)), buyToken)
+        }
+
+        key.config = createOrderConfig({_fee: fee, _isToken1: isToken1, _startTime: startTime, _endTime: endTime});
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {BasePositions} from "./base/BasePositions.sol";
+import {ICore} from "./interfaces/ICore.sol";
+import {PoolKey} from "./types/poolKey.sol";
+import {computeFee} from "./math/fee.sol";
+
+/// @title Ekubo Protocol Positions
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Tracks liquidity positions in Ekubo Protocol as NFTs
+/// @dev Manages liquidity positions, fee collection, and protocol fees
+contract Positions is BasePositions {
+    /// @notice Protocol fee rate for swaps (as a fraction of 2^64)
+    uint64 public immutable SWAP_PROTOCOL_FEE_X64;
+
+    /// @notice Denominator for withdrawal protocol fee calculation
+    uint64 public immutable WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR;
+
+    /// @notice Constructs the Positions contract
+    /// @param core The core contract instance
+    /// @param owner The owner of the contract (for access control)
+    /// @param _swapProtocolFeeX64 Protocol fee rate for swaps
+    /// @param _withdrawalProtocolFeeDenominator Denominator for withdrawal protocol fee
+    constructor(ICore core, address owner, uint64 _swapProtocolFeeX64, uint64 _withdrawalProtocolFeeDenominator)
+        BasePositions(core, owner)
+    {
+        SWAP_PROTOCOL_FEE_X64 = _swapProtocolFeeX64;
+        WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR = _withdrawalProtocolFeeDenominator;
+    }
+
+    /// @notice Handles protocol fee collection during fee collection
+    /// @dev Implements the abstract method from BasePositions
+    /// @param amount0 The amount of token0 fees collected before protocol fee deduction
+    /// @param amount1 The amount of token1 fees collected before protocol fee deduction
+    /// @return protocolFee0 The amount of token0 protocol fees to collect
+    /// @return protocolFee1 The amount of token1 protocol fees to collect
+    function _computeSwapProtocolFees(PoolKey memory, uint128 amount0, uint128 amount1)
+        internal
+        view
+        override
+        returns (uint128 protocolFee0, uint128 protocolFee1)
+    {
+        if (SWAP_PROTOCOL_FEE_X64 != 0) {
+            protocolFee0 = computeFee(amount0, SWAP_PROTOCOL_FEE_X64);
+            protocolFee1 = computeFee(amount1, SWAP_PROTOCOL_FEE_X64);
+        }
+    }
+
+    /// @notice Handles protocol fee collection during liquidity withdrawal
+    /// @dev Implements the abstract method from BasePositions
+    /// @param poolKey The pool key for the position
+    /// @param amount0 The amount of token0 being withdrawn before protocol fee deduction
+    /// @param amount1 The amount of token1 being withdrawn before protocol fee deduction
+    /// @return protocolFee0 The amount of token0 protocol fees to collect
+    /// @return protocolFee1 The amount of token1 protocol fees to collect
+    function _computeWithdrawalProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
+        internal
+        view
+        override
+        returns (uint128 protocolFee0, uint128 protocolFee1)
+    {
+        uint64 fee = poolKey.config.fee();
+        if (fee != 0 && WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR != 0) {
+            protocolFee0 = computeFee(amount0, fee / WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR);
+            protocolFee1 = computeFee(amount1, fee / WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR);
+        }
+    }
+}
+
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
@@ -5754,46 +6582,263 @@ contract Oracle is IOracle, ExposedStorage, BaseExtension {
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
+pragma solidity ^0.8.30;
 
-import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {ICore, PoolKey, PositionId, CallPoints} from "../interfaces/ICore.sol";
+import {IMEVCapture} from "../interfaces/extensions/IMEVCapture.sol";
+import {IExtension} from "../interfaces/ICore.sol";
+import {BaseExtension} from "../base/BaseExtension.sol";
+import {BaseForwardee} from "../base/BaseForwardee.sol";
+import {amountBeforeFee, computeFee} from "../math/fee.sol";
+import {ExposedStorage} from "../base/ExposedStorage.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+import {CoreLib} from "../libraries/CoreLib.sol";
+import {ExposedStorageLib} from "../libraries/ExposedStorageLib.sol";
+import {CoreStorageLayout} from "../libraries/CoreStorageLayout.sol";
+import {PoolState} from "../types/poolState.sol";
+import {MEVCapturePoolState, createMEVCapturePoolState} from "../types/mevCapturePoolState.sol";
+import {SwapParameters} from "../types/swapParameters.sol";
+import {PoolId} from "../types/poolId.sol";
+import {Locker} from "../types/locker.sol";
+import {StorageSlot} from "../types/storageSlot.sol";
+import {PoolBalanceUpdate, createPoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
 
-import {Router} from "./Router.sol";
-import {ICore, PoolKey} from "./interfaces/ICore.sol";
-import {PoolState} from "./types/poolState.sol";
-import {PoolBalanceUpdate} from "./types/poolBalanceUpdate.sol";
-import {SwapParameters} from "./types/swapParameters.sol";
-import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
-import {CoreLib} from "./libraries/CoreLib.sol";
+function mevCaptureCallPoints() pure returns (CallPoints memory) {
+    return CallPoints({
+        // to store the initial tick
+        beforeInitializePool: true,
+        afterInitializePool: false,
+        // so that we can prevent swaps that are not made via forward
+        beforeSwap: true,
+        afterSwap: false,
+        // in order to accumulate any collected fees
+        beforeUpdatePosition: true,
+        afterUpdatePosition: false,
+        // in order to accumulate any collected fees
+        beforeCollectFees: true,
+        afterCollectFees: false
+    });
+}
 
-/// @title Ekubo MEV Capture Router
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Enables swapping and quoting against pools in Ekubo Protocol including the MEV capture extension pools
-contract MEVCaptureRouter is Router {
-    using FlashAccountantLib for *;
+/// @notice Charges additional fees based on the relative size of the priority fee
+contract MEVCapture is IMEVCapture, BaseExtension, BaseForwardee, ExposedStorage {
     using CoreLib for *;
+    using ExposedStorageLib for *;
 
-    address public immutable MEV_CAPTURE;
+    constructor(ICore core) BaseExtension(core) BaseForwardee(core) {}
 
-    constructor(ICore core, address _mevCapture) Router(core) {
-        MEV_CAPTURE = _mevCapture;
+    function getPoolState(PoolId poolId) private view returns (MEVCapturePoolState state) {
+        assembly ("memory-safe") {
+            state := sload(poolId)
+        }
     }
 
-    function _swap(uint256 value, PoolKey memory poolKey, SwapParameters params)
-        internal
-        override
-        returns (PoolBalanceUpdate balanceUpdate, PoolState stateAfter)
+    function setPoolState(PoolId poolId, MEVCapturePoolState state) private {
+        assembly ("memory-safe") {
+            sstore(poolId, state)
+        }
+    }
+
+    function getCallPoints() internal pure override returns (CallPoints memory) {
+        return mevCaptureCallPoints();
+    }
+
+    function beforeInitializePool(address, PoolKey memory poolKey, int32 tick)
+        external
+        override(BaseExtension, IExtension)
+        onlyCore
     {
-        if (poolKey.config.extension() != MEV_CAPTURE) {
-            (balanceUpdate, stateAfter) = CORE.swap(value, poolKey, params.withDefaultSqrtRatioLimit());
-        } else {
-            (balanceUpdate, stateAfter) = abi.decode(
-                CORE.forward(MEV_CAPTURE, abi.encode(poolKey, params.withDefaultSqrtRatioLimit())),
-                (PoolBalanceUpdate, PoolState)
-            );
-            if (value != 0) {
-                SafeTransferLib.safeTransferETH(address(CORE), value);
+        if (poolKey.config.isStableswap()) {
+            revert ConcentratedLiquidityPoolsOnly();
+        }
+        if (poolKey.config.fee() == 0) {
+            // nothing to multiply == no-op extension
+            revert NonzeroFeesOnly();
+        }
+
+        setPoolState({
+            poolId: poolKey.toPoolId(),
+            state: createMEVCapturePoolState({_lastUpdateTime: uint32(block.timestamp), _tickLast: tick})
+        });
+    }
+
+    /// @notice We only allow swapping via forward to this extension
+    function beforeSwap(Locker, PoolKey memory, SwapParameters) external pure override(BaseExtension, IExtension) {
+        revert SwapMustHappenThroughForward();
+    }
+
+    // Allows users to collect pending fees before the first swap in the block happens
+    function beforeCollectFees(Locker, PoolKey memory poolKey, PositionId)
+        external
+        override(BaseExtension, IExtension)
+    {
+        accumulatePoolFees(poolKey);
+    }
+
+    /// Prevents new liquidity from collecting on fees
+    function beforeUpdatePosition(Locker, PoolKey memory poolKey, PositionId, int128)
+        external
+        override(BaseExtension, IExtension)
+    {
+        accumulatePoolFees(poolKey);
+    }
+
+    /// @inheritdoc IMEVCapture
+    function accumulatePoolFees(PoolKey memory poolKey) public {
+        PoolId poolId = poolKey.toPoolId();
+        MEVCapturePoolState state = getPoolState(poolId);
+
+        // the only thing we lock for is accumulating fees when the pool has not been updated in this block
+        if (state.lastUpdateTime() != uint32(block.timestamp)) {
+            address target = address(CORE);
+            assembly ("memory-safe") {
+                let o := mload(0x40)
+                mstore(o, shl(224, 0xf83d08ba))
+                mcopy(add(o, 4), poolKey, 96)
+                mstore(add(o, 100), poolId)
+
+                // If the call failed, pass through the revert
+                if iszero(call(gas(), target, 0, o, 132, 0, 0)) {
+                    returndatacopy(o, 0, returndatasize())
+                    revert(o, returndatasize())
+                }
             }
+        }
+    }
+
+    function locked_6416899205(uint256) external onlyCore {
+        PoolKey memory poolKey;
+        PoolId poolId;
+        assembly ("memory-safe") {
+            // copy the poolkey out of calldata
+            calldatacopy(poolKey, 36, 96)
+            poolId := calldataload(132)
+        }
+
+        (int32 tick, uint128 fees0, uint128 fees1) = loadCoreState(poolId, poolKey.token0, poolKey.token1);
+
+        if (fees0 != 0 || fees1 != 0) {
+            CORE.accumulateAsFees(poolKey, fees0, fees1);
+            unchecked {
+                CORE.updateSavedBalances(
+                    poolKey.token0,
+                    poolKey.token1,
+                    PoolId.unwrap(poolId),
+                    -int256(uint256(fees0)),
+                    -int256(uint256(fees1))
+                );
+            }
+        }
+
+        setPoolState({
+            poolId: poolId,
+            state: createMEVCapturePoolState({_lastUpdateTime: uint32(block.timestamp), _tickLast: tick})
+        });
+    }
+
+    function loadCoreState(PoolId poolId, address token0, address token1)
+        private
+        view
+        returns (int32 tick, uint128 fees0, uint128 fees1)
+    {
+        StorageSlot stateSlot = CoreStorageLayout.poolStateSlot(poolId);
+        StorageSlot feesSlot = CoreStorageLayout.savedBalancesSlot(address(this), token0, token1, PoolId.unwrap(poolId));
+
+        (bytes32 v0, bytes32 v1) = CORE.sload(stateSlot, feesSlot);
+        tick = PoolState.wrap(v0).tick();
+
+        assembly ("memory-safe") {
+            fees0 := shr(128, v1)
+            fees0 := sub(fees0, gt(fees0, 0))
+
+            fees1 := shr(128, shl(128, v1))
+            fees1 := sub(fees1, gt(fees1, 0))
+        }
+    }
+
+    function handleForwardData(Locker, bytes memory data) internal override returns (bytes memory result) {
+        unchecked {
+            (PoolKey memory poolKey, SwapParameters params) = abi.decode(data, (PoolKey, SwapParameters));
+
+            PoolId poolId = poolKey.toPoolId();
+            MEVCapturePoolState state = getPoolState(poolId);
+            uint32 lastUpdateTime = state.lastUpdateTime();
+            int32 tickLast = state.tickLast();
+
+            uint32 currentTime = uint32(block.timestamp);
+
+            int256 saveDelta0;
+            int256 saveDelta1;
+
+            if (lastUpdateTime != currentTime) {
+                (int32 tick, uint128 fees0, uint128 fees1) =
+                    loadCoreState({poolId: poolId, token0: poolKey.token0, token1: poolKey.token1});
+
+                if (fees0 != 0 || fees1 != 0) {
+                    CORE.accumulateAsFees(poolKey, fees0, fees1);
+                    // never overflows int256 container
+                    saveDelta0 -= int256(uint256(fees0));
+                    saveDelta1 -= int256(uint256(fees1));
+                }
+
+                tickLast = tick;
+                setPoolState({
+                    poolId: poolId,
+                    state: createMEVCapturePoolState({_lastUpdateTime: currentTime, _tickLast: tickLast})
+                });
+            }
+
+            (PoolBalanceUpdate balanceUpdate, PoolState stateAfter) = CORE.swap(0, poolKey, params);
+
+            // however many tick spacings were crossed is the fee multiplier
+            uint256 feeMultiplierX64 =
+                (FixedPointMathLib.abs(stateAfter.tick() - tickLast) << 64) / poolKey.config.concentratedTickSpacing();
+            uint64 poolFee = poolKey.config.fee();
+            uint64 additionalFee = uint64(FixedPointMathLib.min(type(uint64).max, (feeMultiplierX64 * poolFee) >> 64));
+
+            if (additionalFee != 0) {
+                if (params.isExactOut()) {
+                    // take an additional fee from the calculated input amount equal to the `additionalFee - poolFee`
+                    if (balanceUpdate.delta0() > 0) {
+                        uint128 inputAmount = uint128(uint256(int256(balanceUpdate.delta0())));
+                        // first remove the fee to get the original input amount before we compute the additional fee
+                        inputAmount -= computeFee(inputAmount, poolFee);
+                        int128 fee = SafeCastLib.toInt128(amountBeforeFee(inputAmount, additionalFee) - inputAmount);
+
+                        saveDelta0 += fee;
+                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0() + fee, balanceUpdate.delta1());
+                    } else if (balanceUpdate.delta1() > 0) {
+                        uint128 inputAmount = uint128(uint256(int256(balanceUpdate.delta1())));
+                        // first remove the fee to get the original input amount before we compute the additional fee
+                        inputAmount -= computeFee(inputAmount, poolFee);
+                        int128 fee = SafeCastLib.toInt128(amountBeforeFee(inputAmount, additionalFee) - inputAmount);
+
+                        saveDelta1 += fee;
+                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0(), balanceUpdate.delta1() + fee);
+                    }
+                } else {
+                    if (balanceUpdate.delta0() < 0) {
+                        uint128 outputAmount = uint128(uint256(-int256(balanceUpdate.delta0())));
+                        int128 fee = SafeCastLib.toInt128(computeFee(outputAmount, additionalFee));
+
+                        saveDelta0 += fee;
+                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0() + fee, balanceUpdate.delta1());
+                    } else if (balanceUpdate.delta1() < 0) {
+                        uint128 outputAmount = uint128(uint256(-int256(balanceUpdate.delta1())));
+                        int128 fee = SafeCastLib.toInt128(computeFee(outputAmount, additionalFee));
+
+                        saveDelta1 += fee;
+                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0(), balanceUpdate.delta1() + fee);
+                    }
+                }
+            }
+
+            if (saveDelta0 != 0 || saveDelta1 != 0) {
+                CORE.updateSavedBalances(poolKey.token0, poolKey.token1, PoolId.unwrap(poolId), saveDelta0, saveDelta1);
+            }
+
+            result = abi.encode(balanceUpdate, stateAfter);
         }
     }
 }
@@ -6468,322 +7513,85 @@ contract TWAMM is ITWAMM, ExposedStorage, BaseExtension, BaseForwardee {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {BaseLocker} from "./base/BaseLocker.sol";
-import {UsesCore} from "./base/UsesCore.sol";
-import {ICore} from "./interfaces/ICore.sol";
-import {IOrders} from "./interfaces/IOrders.sol";
-import {PayableMulticallable} from "./base/PayableMulticallable.sol";
-import {TWAMMLib} from "./libraries/TWAMMLib.sol";
-import {ITWAMM} from "./interfaces/extensions/ITWAMM.sol";
-import {OrderKey} from "./types/orderKey.sol";
-import {computeSaleRate} from "./math/twamm.sol";
-import {BaseNonfungibleToken} from "./base/BaseNonfungibleToken.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
-import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {NATIVE_TOKEN_ADDRESS} from "./math/constants.sol";
-import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
-
-/// @title Ekubo Protocol Orders
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Tracks TWAMM (Time-Weighted Average Market Maker) orders in Ekubo Protocol as NFTs
-/// @dev Manages long-term orders that execute over time through the TWAMM extension
-contract Orders is IOrders, UsesCore, PayableMulticallable, BaseLocker, BaseNonfungibleToken {
-    using TWAMMLib for *;
-    using FlashAccountantLib for *;
-
-    uint256 private constant CALL_TYPE_CHANGE_SALE_RATE = 0;
-    uint256 private constant CALL_TYPE_COLLECT_PROCEEDS = 1;
-
-    /// @notice The TWAMM extension contract that handles order execution
-    ITWAMM public immutable TWAMM_EXTENSION;
-
-    /// @notice Constructs the Orders contract
-    /// @param core The core contract instance
-    /// @param _twamm The TWAMM extension contract
-    /// @param owner The owner of the contract (for access control)
-    constructor(ICore core, ITWAMM _twamm, address owner) BaseNonfungibleToken(owner) BaseLocker(core) UsesCore(core) {
-        TWAMM_EXTENSION = _twamm;
-    }
-
-    /// @inheritdoc IOrders
-    function mintAndIncreaseSellAmount(OrderKey memory orderKey, uint112 amount, uint112 maxSaleRate)
-        public
-        payable
-        returns (uint256 id, uint112 saleRate)
-    {
-        id = mint();
-        saleRate = increaseSellAmount(id, orderKey, amount, maxSaleRate);
-    }
-
-    /// @inheritdoc IOrders
-    function increaseSellAmount(uint256 id, OrderKey memory orderKey, uint128 amount, uint112 maxSaleRate)
-        public
-        payable
-        authorizedForNft(id)
-        returns (uint112 saleRate)
-    {
-        uint256 realStart = FixedPointMathLib.max(block.timestamp, orderKey.config.startTime());
-
-        unchecked {
-            if (orderKey.config.endTime() <= realStart) {
-                revert OrderAlreadyEnded();
-            }
-
-            saleRate = uint112(computeSaleRate(amount, uint32(orderKey.config.endTime() - realStart)));
-
-            if (saleRate > maxSaleRate) {
-                revert MaxSaleRateExceeded();
-            }
-        }
-
-        lock(abi.encode(CALL_TYPE_CHANGE_SALE_RATE, msg.sender, id, orderKey, saleRate));
-    }
-
-    /// @inheritdoc IOrders
-    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease, address recipient)
-        public
-        payable
-        authorizedForNft(id)
-        returns (uint112 refund)
-    {
-        refund = uint112(
-            uint256(
-                -abi.decode(
-                    lock(
-                        abi.encode(
-                            CALL_TYPE_CHANGE_SALE_RATE, recipient, id, orderKey, -int256(uint256(saleRateDecrease))
-                        )
-                    ),
-                    (int256)
-                )
-            )
-        );
-    }
-
-    /// @inheritdoc IOrders
-    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease)
-        external
-        payable
-        returns (uint112 refund)
-    {
-        refund = decreaseSaleRate(id, orderKey, saleRateDecrease, msg.sender);
-    }
-
-    /// @inheritdoc IOrders
-    function collectProceeds(uint256 id, OrderKey memory orderKey, address recipient)
-        public
-        payable
-        authorizedForNft(id)
-        returns (uint128 proceeds)
-    {
-        proceeds = abi.decode(lock(abi.encode(CALL_TYPE_COLLECT_PROCEEDS, id, orderKey, recipient)), (uint128));
-    }
-
-    /// @inheritdoc IOrders
-    function collectProceeds(uint256 id, OrderKey memory orderKey) external payable returns (uint128 proceeds) {
-        proceeds = collectProceeds(id, orderKey, msg.sender);
-    }
-
-    /// @inheritdoc IOrders
-    function executeVirtualOrdersAndGetCurrentOrderInfo(uint256 id, OrderKey memory orderKey)
-        external
-        returns (uint112 saleRate, uint256 amountSold, uint256 remainingSellAmount, uint128 purchasedAmount)
-    {
-        (saleRate, amountSold, remainingSellAmount, purchasedAmount) =
-            TWAMM_EXTENSION.executeVirtualOrdersAndGetCurrentOrderInfo(address(this), bytes32(id), orderKey);
-    }
-
-    /// @notice Handles lock callback data for order operations
-    /// @dev Internal function that processes different types of order operations
-    /// @param data Encoded operation data
-    /// @return result Encoded result data
-    function handleLockData(uint256, bytes memory data) internal override returns (bytes memory result) {
-        uint256 callType = abi.decode(data, (uint256));
-
-        if (callType == CALL_TYPE_CHANGE_SALE_RATE) {
-            (, address recipientOrPayer, uint256 id, OrderKey memory orderKey, int256 saleRateDelta) =
-                abi.decode(data, (uint256, address, uint256, OrderKey, int256));
-
-            int256 amount =
-                CORE.updateSaleRate(TWAMM_EXTENSION, bytes32(id), orderKey, SafeCastLib.toInt112(saleRateDelta));
-
-            if (amount != 0) {
-                address sellToken = orderKey.sellToken();
-                if (saleRateDelta > 0) {
-                    if (sellToken == NATIVE_TOKEN_ADDRESS) {
-                        SafeTransferLib.safeTransferETH(address(ACCOUNTANT), uint256(amount));
-                    } else {
-                        ACCOUNTANT.payFrom(recipientOrPayer, sellToken, uint256(amount));
-                    }
-                } else {
-                    unchecked {
-                        // we know amount will never exceed the uint128 type because of limitations on sale rate (fixed point 80.32) and duration (uint32)
-                        ACCOUNTANT.withdraw(sellToken, recipientOrPayer, uint128(uint256(-amount)));
-                    }
-                }
-            }
-
-            result = abi.encode(amount);
-        } else if (callType == CALL_TYPE_COLLECT_PROCEEDS) {
-            (, uint256 id, OrderKey memory orderKey, address recipient) =
-                abi.decode(data, (uint256, uint256, OrderKey, address));
-
-            uint128 proceeds = CORE.collectProceeds(TWAMM_EXTENSION, bytes32(id), orderKey);
-
-            if (proceeds != 0) {
-                ACCOUNTANT.withdraw(orderKey.buyToken(), recipient, proceeds);
-            }
-
-            result = abi.encode(proceeds);
-        } else {
-            revert();
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {IForwardee, IFlashAccountant} from "../interfaces/IFlashAccountant.sol";
+import {ICore, IExtension} from "../interfaces/ICore.sol";
+import {CallPoints} from "../types/callPoints.sol";
+import {PoolKey} from "../types/poolKey.sol";
+import {PositionId} from "../types/positionId.sol";
+import {SqrtRatio} from "../types/sqrtRatio.sol";
+import {PoolState} from "../types/poolState.sol";
+import {SwapParameters} from "../types/swapParameters.sol";
+import {UsesCore} from "./UsesCore.sol";
 import {Locker} from "../types/locker.sol";
+import {PoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
 
-/// @title Base Forwardee
-/// @notice Abstract base contract for contracts that need to receive forwarded calls from the flash accountant
-/// @dev Provides the forwarding mechanism and delegates actual data handling to implementing contracts
-abstract contract BaseForwardee is IForwardee {
-    /// @notice Thrown when a function is called by an address other than the accountant
-    error BaseForwardeeAccountantOnly();
+/// @title Base Extension
+/// @notice Abstract base contract for creating extensions to the Ekubo Protocol
+/// @dev Extensions can hook into various pool operations to add custom functionality
+///      Derived contracts must implement getCallPoints() and the specific hook functions they want to use
+abstract contract BaseExtension is IExtension, UsesCore {
+    /// @notice Thrown when a call point is not implemented by the extension
+    error CallPointNotImplemented();
 
-    /// @notice The flash accountant contract that can forward calls to this contract
-    IFlashAccountant private immutable ACCOUNTANT;
-
-    /// @notice Constructs the BaseForwardee with a flash accountant
-    /// @param _accountant The flash accountant contract that will forward calls
-    constructor(IFlashAccountant _accountant) {
-        ACCOUNTANT = _accountant;
+    /// @notice Constructs the BaseExtension and optionally registers it with the core
+    /// @param core The core contract instance
+    constructor(ICore core) UsesCore(core) {
+        if (_registerInConstructor()) core.registerExtension(getCallPoints());
     }
 
-    /// CALLBACK HANDLERS
-
-    /// @inheritdoc IForwardee
-    /// @dev Extracts the forwarded data from calldata and delegates to handleForwardData
-    /// The first 68 bytes of calldata contain the function selector (4 bytes), id (32 bytes), and originalLocker (32 bytes)
-    /// All remaining calldata is treated as the forwarded data
-    /// Return data from handleForwardData is returned exactly as is, with no additional encoding or decoding
-    /// Reverts are also bubbled up
-    function forwarded_2374103877(Locker original) external {
-        if (msg.sender != address(ACCOUNTANT)) revert BaseForwardeeAccountantOnly();
-
-        bytes memory data = msg.data[36:];
-
-        bytes memory result = handleForwardData(original, data);
-
-        assembly ("memory-safe") {
-            // raw return whatever the handler sent
-            return(add(result, 32), mload(result))
-        }
+    /// @notice Determines whether the extension should register itself in the constructor
+    /// @dev Can be overridden by derived contracts to control registration timing
+    /// @return True if the extension should register in the constructor
+    function _registerInConstructor() internal pure virtual returns (bool) {
+        return true;
     }
 
-    /// INTERNAL FUNCTIONS
+    /// @notice Returns the call points configuration for this extension
+    /// @dev Must be implemented by derived contracts to specify which hooks they use
+    /// @return The call points configuration
+    function getCallPoints() internal virtual returns (CallPoints memory);
 
-    /// @notice Handles the execution of forwarded data
-    /// @dev Must be implemented by derived contracts to define forwarding behavior
-    /// @param original The original locker that called forward
-    /// @param data The forwarded data to process
-    /// @return result The result of processing the forwarded data
-    function handleForwardData(Locker original, bytes memory data) internal virtual returns (bytes memory result);
-}
+    /// @inheritdoc IExtension
+    function beforeInitializePool(address, PoolKey calldata, int32) external virtual {
+        revert CallPointNotImplemented();
+    }
 
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
+    /// @inheritdoc IExtension
+    function afterInitializePool(address, PoolKey calldata, int32, SqrtRatio) external virtual {
+        revert CallPointNotImplemented();
+    }
 
-import {PoolKey} from "../../types/poolKey.sol";
-import {ILocker, IForwardee} from "../IFlashAccountant.sol";
-import {IExtension} from "../ICore.sol";
-import {IExposedStorage} from "../IExposedStorage.sol";
+    /// @inheritdoc IExtension
+    function beforeUpdatePosition(Locker, PoolKey memory, PositionId, int128) external virtual {
+        revert CallPointNotImplemented();
+    }
 
-/// @title MEV Capture Interface
-/// @notice Interface for the Ekubo MEV Capture Extension
-/// @dev Extension that charges additional fees based on the relative size of the priority fee and tick movement during swaps
-interface IMEVCapture is IExposedStorage, ILocker, IForwardee, IExtension {
-    /// @notice Thrown when trying to use MEV capture on a full-range-only pool
-    /// @dev MEV capture only works with concentrated liquidity pools that have discrete tick spacing
-    error ConcentratedLiquidityPoolsOnly();
+    /// @inheritdoc IExtension
+    function afterUpdatePosition(Locker, PoolKey memory, PositionId, int128, PoolBalanceUpdate, PoolState)
+        external
+        virtual
+    {
+        revert CallPointNotImplemented();
+    }
 
-    /// @notice Thrown when trying to use MEV capture on a pool with zero fees
-    /// @dev MEV capture multiplies the base fee, so a zero fee would result in no additional fees
-    error NonzeroFeesOnly();
+    /// @inheritdoc IExtension
+    function beforeSwap(Locker, PoolKey memory, SwapParameters) external virtual {
+        revert CallPointNotImplemented();
+    }
 
-    /// @notice Thrown when attempting to swap directly without using the forward mechanism
-    /// @dev All swaps must go through the forward mechanism to ensure proper MEV fee calculation
-    error SwapMustHappenThroughForward();
+    /// @inheritdoc IExtension
+    function afterSwap(Locker, PoolKey memory, SwapParameters, PoolBalanceUpdate, PoolState) external virtual {
+        revert CallPointNotImplemented();
+    }
 
-    /// @notice Accumulates any pending pool fees from past blocks
-    /// @dev This function can be called by anyone to trigger fee accumulation for a pool
-    /// @dev Fees are accumulated when the pool hasn't been updated in the current block
-    /// @param poolKey The pool key identifying the pool to accumulate fees for
-    function accumulatePoolFees(PoolKey memory poolKey) external;
-}
+    /// @inheritdoc IExtension
+    function beforeCollectFees(Locker, PoolKey memory, PositionId) external virtual {
+        revert CallPointNotImplemented();
+    }
 
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {ILocker, IForwardee} from "../IFlashAccountant.sol";
-import {IExtension} from "../ICore.sol";
-import {IExposedStorage} from "../IExposedStorage.sol";
-import {PoolKey} from "../../types/poolKey.sol";
-import {OrderKey} from "../../types/orderKey.sol";
-import {OrderConfig} from "../../types/orderConfig.sol";
-import {PoolId} from "../../types/poolId.sol";
-
-/// @title TWAMM Interface
-/// @notice Interface for the Ekubo TWAMM Extension
-/// @dev Extension for Ekubo Protocol that enables creation of DCA orders that are executed over time
-interface ITWAMM is IExposedStorage, IExtension, ILocker, IForwardee {
-    /// @notice Emitted when an order is updated
-    /// @param owner Address of the order owner
-    /// @param salt Unique salt for the order
-    /// @param orderKey Order key identifying the order
-    /// @param saleRateDelta Change in sale rate applied
-    event OrderUpdated(address owner, bytes32 salt, OrderKey orderKey, int112 saleRateDelta);
-
-    /// @notice Emitted when proceeds are withdrawn from an order
-    /// @param owner Address of the order owner
-    /// @param salt Unique salt for the order
-    /// @param orderKey Order key identifying the order
-    /// @param amount Amount of tokens withdrawn
-    event OrderProceedsWithdrawn(address owner, bytes32 salt, OrderKey orderKey, uint128 amount);
-
-    /// @notice Thrown when the number of orders at a time would overflow
-    error TimeNumOrdersOverflow();
-
-    /// @notice Thrown when tick spacing is not the maximum allowed value
-    error FullRangePoolOnly();
-
-    /// @notice Thrown when trying to modify an order that has already ended
-    error OrderAlreadyEnded();
-
-    /// @notice Thrown when order timestamps are invalid
-    error InvalidTimestamps();
-
-    /// @notice Thrown when sale rate delta exceeds maximum allowed value
-    error MaxSaleRateDeltaPerTime();
-
-    /// @notice Thrown when trying to operate on an uninitialized pool
-    error PoolNotInitialized();
-
-    /// @notice Gets the reward rate inside a time range for a specific token
-    /// @dev Used to calculate how much of the buy token an order has earned
-    /// @param poolId Unique identifier for the pool
-    /// @param config The order config that is being checked
-    /// @return result The reward rate inside the specified range
-    function getRewardRateInside(PoolId poolId, OrderConfig config) external view returns (uint256 result);
-
-    /// @notice Locks core and executes virtual orders for the given pool key
-    /// @dev The pool key must use this extension, which is checked in the locked callback
-    /// @param poolKey Pool key identifying the pool
-    function lockAndExecuteVirtualOrders(PoolKey memory poolKey) external;
+    /// @inheritdoc IExtension
+    function afterCollectFees(Locker, PoolKey memory, PositionId, uint128, uint128) external virtual {
+        revert CallPointNotImplemented();
+    }
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
@@ -6903,201 +7711,6 @@ contract Incentives is IIncentives, ExposedStorage, Multicallable {
 
         SafeTransferLib.safeTransfer(key.token, c.account, c.amount);
     }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {IOrders} from "./IOrders.sol";
-import {BuybacksState} from "../types/buybacksState.sol";
-import {IExposedStorage} from "./IExposedStorage.sol";
-
-/// @title Revenue Buybacks Interface
-/// @notice Interface for automated revenue buyback orders using TWAMM (Time-Weighted Average Market Maker)
-/// @dev Defines the interface for managing buyback orders for protocol revenue
-interface IRevenueBuybacks is IExposedStorage {
-    /// @notice Thrown when minimum order duration exceeds target order duration
-    /// @dev This would prevent order creation since the condition order duration >= min order duration would not always be met
-    error MinOrderDurationGreaterThanTargetOrderDuration();
-
-    /// @notice Thrown when minimum order duration is set to zero
-    /// @dev Orders cannot have zero duration, so this prevents invalid configurations
-    error MinOrderDurationMustBeGreaterThanZero();
-
-    /// @notice Thrown when roll is called and a token is not configured
-    error TokenNotConfigured(address token);
-
-    /// @notice Emitted when a token's buyback configuration is updated
-    /// @param token The token being configured for buybacks
-    /// @param state The state after configuring the token
-    event Configured(address token, BuybacksState state);
-
-    /// @notice The Orders contract used to create and manage TWAMM orders
-    /// @dev All buyback orders are created through this contract
-    function ORDERS() external view returns (IOrders);
-
-    /// @notice The NFT token ID that represents all buyback orders created by this contract
-    /// @dev A single NFT is minted and reused for all buyback orders to simplify management
-    function NFT_ID() external view returns (uint256);
-
-    /// @notice The token that is purchased with collected revenue
-    /// @dev This is typically the protocol's governance or utility token
-    function BUY_TOKEN() external view returns (address);
-
-    /// @notice Approves the Orders contract to spend unlimited amounts of a token
-    /// @dev Must be called at least once for each revenue token before creating buyback orders
-    /// @param token The token to approve for spending by the Orders contract
-    function approveMax(address token) external;
-
-    /// @notice Withdraws leftover tokens from the contract (only callable by owner)
-    /// @dev Used to recover tokens that may be stuck in the contract or to withdraw excess funds
-    /// @param token The address of the token to withdraw
-    /// @param amount The amount of tokens to withdraw
-    function take(address token, uint256 amount) external;
-
-    /// @notice Collects the proceeds from a completed buyback order
-    /// @dev Can be called by anyone at any time to collect proceeds from orders that have finished
-    /// @param token The revenue token that was sold in the order
-    /// @param fee The fee tier of the pool where the order was executed
-    /// @param endTime The end time of the order to collect proceeds from
-    /// @return proceeds The amount of buyToken received from the completed order
-    function collect(address token, uint64 fee, uint64 endTime) external returns (uint128 proceeds);
-
-    /// @notice Creates a new buyback order or extends an existing one with available revenue
-    /// @dev Can be called by anyone to trigger the creation of buyback orders using collected revenue
-    /// This function will either extend the current order (if conditions are met) or create a new order
-    /// @param token The revenue token to use for creating the buyback order
-    /// @return endTime The end time of the order that was created or extended
-    /// @return saleRate The sale rate of the order (amount of token sold per second)
-    function roll(address token) external returns (uint64 endTime, uint112 saleRate);
-
-    /// @notice Configures buyback parameters for a revenue token (only callable by owner)
-    /// @dev Sets the timing and fee parameters for automated buyback order creation
-    /// @param token The revenue token to configure
-    /// @param targetOrderDuration The target duration for new orders (in seconds)
-    /// @param minOrderDuration The minimum duration threshold for creating new orders (in seconds)
-    /// @param fee The fee tier for the buyback pool
-    function configure(address token, uint32 targetOrderDuration, uint32 minOrderDuration, uint64 fee) external;
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {ILocker, IFlashAccountant} from "../interfaces/IFlashAccountant.sol";
-
-/// @title Base Locker
-/// @notice Abstract base contract for contracts that need to interact with the flash accountant
-/// @dev Provides locking functionality and token transfer utilities
-abstract contract BaseLocker is ILocker {
-    /// @notice Thrown when a function is called by an address other than the accountant
-    error BaseLockerAccountantOnly();
-
-    /// @notice The flash accountant contract that manages locks and token transfers
-    IFlashAccountant internal immutable ACCOUNTANT;
-
-    /// @notice Constructs the BaseLocker with a flash accountant
-    /// @param _accountant The flash accountant contract
-    constructor(IFlashAccountant _accountant) {
-        ACCOUNTANT = _accountant;
-    }
-
-    /// CALLBACK HANDLERS
-
-    /// @inheritdoc ILocker
-    function locked_6416899205(uint256 id) external {
-        if (msg.sender != address(ACCOUNTANT)) revert BaseLockerAccountantOnly();
-
-        bytes memory data = msg.data[36:];
-
-        bytes memory result = handleLockData(id, data);
-
-        assembly ("memory-safe") {
-            // raw return whatever the handler sent
-            return(add(result, 32), mload(result))
-        }
-    }
-
-    /// INTERNAL FUNCTIONS
-
-    /// @notice Acquires a lock and executes the provided data
-    /// @dev Internal function that calls the accountant's lock function
-    /// @param data The data to execute within the lock
-    /// @return result The result of the lock execution
-    function lock(bytes memory data) internal returns (bytes memory result) {
-        address target = address(ACCOUNTANT);
-
-        assembly ("memory-safe") {
-            // We will store result where the free memory pointer is now, ...
-            result := mload(0x40)
-
-            // But first use it to store the calldata
-
-            // Selector of lock()
-            mstore(result, shl(224, 0xf83d08ba))
-
-            // We only copy the data, not the length, because the length is read from the calldata size
-            let len := mload(data)
-            mcopy(add(result, 4), add(data, 32), len)
-
-            // If the call failed, pass through the revert
-            if iszero(call(gas(), target, 0, result, add(len, 4), 0, 0)) {
-                returndatacopy(result, 0, returndatasize())
-                revert(result, returndatasize())
-            }
-
-            // Copy the entire return data into the space where the result is pointing
-            mstore(result, returndatasize())
-            returndatacopy(add(result, 32), 0, returndatasize())
-
-            // Update the free memory pointer to be after the end of the data, aligned to the next 32 byte word
-            mstore(0x40, and(add(add(result, add(32, returndatasize())), 31), not(31)))
-        }
-    }
-
-    /// @notice Thrown when a lock was expected to revert but didn't
-    error ExpectedRevertWithinLock();
-
-    /// @notice Acquires a lock expecting it to revert and returns the revert data
-    /// @dev Used for quote functions that use reverts to return data
-    /// @param data The data to execute within the lock
-    /// @return result The revert data from the lock execution
-    function lockAndExpectRevert(bytes memory data) internal returns (bytes memory result) {
-        address target = address(ACCOUNTANT);
-
-        assembly ("memory-safe") {
-            // We will store result where the free memory pointer is now, ...
-            result := mload(0x40)
-
-            // But first use it to store the calldata
-
-            // Selector of lock()
-            mstore(result, shl(224, 0xf83d08ba))
-
-            // We only copy the data, not the length, because the length is read from the calldata size
-            let len := mload(data)
-            mcopy(add(result, 4), add(data, 32), len)
-
-            // If the call succeeded, revert with ExpectedRevertWithinLock.selector
-            if call(gas(), target, 0, result, add(len, 4), 0, 0) {
-                mstore(0, shl(224, 0x4c816e2b))
-                revert(0, 4)
-            }
-
-            // Copy the entire revert data into the space where the result is pointing
-            mstore(result, returndatasize())
-            returndatacopy(add(result, 32), 0, returndatasize())
-
-            // Update the free memory pointer to be after the end of the data, aligned to the next 32 byte word
-            mstore(0x40, and(add(add(result, add(32, returndatasize())), 31), not(31)))
-        }
-    }
-
-    /// @notice Handles the execution of lock data
-    /// @dev Must be implemented by derived contracts to define lock behavior
-    /// @param id The lock ID
-    /// @param data The data to process within the lock
-    /// @return result The result of processing the lock data
-    function handleLockData(uint256 id, bytes memory data) internal virtual returns (bytes memory result);
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
@@ -7444,709 +8057,54 @@ abstract contract BasePositions is IPositions, UsesCore, PayableMulticallable, B
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity ^0.8.30;
-
-import {ICore, PoolKey, PositionId, CallPoints} from "../interfaces/ICore.sol";
-import {IMEVCapture} from "../interfaces/extensions/IMEVCapture.sol";
-import {IExtension} from "../interfaces/ICore.sol";
-import {BaseExtension} from "../base/BaseExtension.sol";
-import {BaseForwardee} from "../base/BaseForwardee.sol";
-import {amountBeforeFee, computeFee} from "../math/fee.sol";
-import {ExposedStorage} from "../base/ExposedStorage.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
-import {CoreLib} from "../libraries/CoreLib.sol";
-import {ExposedStorageLib} from "../libraries/ExposedStorageLib.sol";
-import {CoreStorageLayout} from "../libraries/CoreStorageLayout.sol";
-import {PoolState} from "../types/poolState.sol";
-import {MEVCapturePoolState, createMEVCapturePoolState} from "../types/mevCapturePoolState.sol";
-import {SwapParameters} from "../types/swapParameters.sol";
-import {PoolId} from "../types/poolId.sol";
-import {Locker} from "../types/locker.sol";
-import {StorageSlot} from "../types/storageSlot.sol";
-import {PoolBalanceUpdate, createPoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
-
-function mevCaptureCallPoints() pure returns (CallPoints memory) {
-    return CallPoints({
-        // to store the initial tick
-        beforeInitializePool: true,
-        afterInitializePool: false,
-        // so that we can prevent swaps that are not made via forward
-        beforeSwap: true,
-        afterSwap: false,
-        // in order to accumulate any collected fees
-        beforeUpdatePosition: true,
-        afterUpdatePosition: false,
-        // in order to accumulate any collected fees
-        beforeCollectFees: true,
-        afterCollectFees: false
-    });
-}
-
-/// @notice Charges additional fees based on the relative size of the priority fee
-contract MEVCapture is IMEVCapture, BaseExtension, BaseForwardee, ExposedStorage {
-    using CoreLib for *;
-    using ExposedStorageLib for *;
-
-    constructor(ICore core) BaseExtension(core) BaseForwardee(core) {}
-
-    function getPoolState(PoolId poolId) private view returns (MEVCapturePoolState state) {
-        assembly ("memory-safe") {
-            state := sload(poolId)
-        }
-    }
-
-    function setPoolState(PoolId poolId, MEVCapturePoolState state) private {
-        assembly ("memory-safe") {
-            sstore(poolId, state)
-        }
-    }
-
-    function getCallPoints() internal pure override returns (CallPoints memory) {
-        return mevCaptureCallPoints();
-    }
-
-    function beforeInitializePool(address, PoolKey memory poolKey, int32 tick)
-        external
-        override(BaseExtension, IExtension)
-        onlyCore
-    {
-        if (poolKey.config.isStableswap()) {
-            revert ConcentratedLiquidityPoolsOnly();
-        }
-        if (poolKey.config.fee() == 0) {
-            // nothing to multiply == no-op extension
-            revert NonzeroFeesOnly();
-        }
-
-        setPoolState({
-            poolId: poolKey.toPoolId(),
-            state: createMEVCapturePoolState({_lastUpdateTime: uint32(block.timestamp), _tickLast: tick})
-        });
-    }
-
-    /// @notice We only allow swapping via forward to this extension
-    function beforeSwap(Locker, PoolKey memory, SwapParameters) external pure override(BaseExtension, IExtension) {
-        revert SwapMustHappenThroughForward();
-    }
-
-    // Allows users to collect pending fees before the first swap in the block happens
-    function beforeCollectFees(Locker, PoolKey memory poolKey, PositionId)
-        external
-        override(BaseExtension, IExtension)
-    {
-        accumulatePoolFees(poolKey);
-    }
-
-    /// Prevents new liquidity from collecting on fees
-    function beforeUpdatePosition(Locker, PoolKey memory poolKey, PositionId, int128)
-        external
-        override(BaseExtension, IExtension)
-    {
-        accumulatePoolFees(poolKey);
-    }
-
-    /// @inheritdoc IMEVCapture
-    function accumulatePoolFees(PoolKey memory poolKey) public {
-        PoolId poolId = poolKey.toPoolId();
-        MEVCapturePoolState state = getPoolState(poolId);
-
-        // the only thing we lock for is accumulating fees when the pool has not been updated in this block
-        if (state.lastUpdateTime() != uint32(block.timestamp)) {
-            address target = address(CORE);
-            assembly ("memory-safe") {
-                let o := mload(0x40)
-                mstore(o, shl(224, 0xf83d08ba))
-                mcopy(add(o, 4), poolKey, 96)
-                mstore(add(o, 100), poolId)
-
-                // If the call failed, pass through the revert
-                if iszero(call(gas(), target, 0, o, 132, 0, 0)) {
-                    returndatacopy(o, 0, returndatasize())
-                    revert(o, returndatasize())
-                }
-            }
-        }
-    }
-
-    function locked_6416899205(uint256) external onlyCore {
-        PoolKey memory poolKey;
-        PoolId poolId;
-        assembly ("memory-safe") {
-            // copy the poolkey out of calldata
-            calldatacopy(poolKey, 36, 96)
-            poolId := calldataload(132)
-        }
-
-        (int32 tick, uint128 fees0, uint128 fees1) = loadCoreState(poolId, poolKey.token0, poolKey.token1);
-
-        if (fees0 != 0 || fees1 != 0) {
-            CORE.accumulateAsFees(poolKey, fees0, fees1);
-            unchecked {
-                CORE.updateSavedBalances(
-                    poolKey.token0,
-                    poolKey.token1,
-                    PoolId.unwrap(poolId),
-                    -int256(uint256(fees0)),
-                    -int256(uint256(fees1))
-                );
-            }
-        }
-
-        setPoolState({
-            poolId: poolId,
-            state: createMEVCapturePoolState({_lastUpdateTime: uint32(block.timestamp), _tickLast: tick})
-        });
-    }
-
-    function loadCoreState(PoolId poolId, address token0, address token1)
-        private
-        view
-        returns (int32 tick, uint128 fees0, uint128 fees1)
-    {
-        StorageSlot stateSlot = CoreStorageLayout.poolStateSlot(poolId);
-        StorageSlot feesSlot = CoreStorageLayout.savedBalancesSlot(address(this), token0, token1, PoolId.unwrap(poolId));
-
-        (bytes32 v0, bytes32 v1) = CORE.sload(stateSlot, feesSlot);
-        tick = PoolState.wrap(v0).tick();
-
-        assembly ("memory-safe") {
-            fees0 := shr(128, v1)
-            fees0 := sub(fees0, gt(fees0, 0))
-
-            fees1 := shr(128, shl(128, v1))
-            fees1 := sub(fees1, gt(fees1, 0))
-        }
-    }
-
-    function handleForwardData(Locker, bytes memory data) internal override returns (bytes memory result) {
-        unchecked {
-            (PoolKey memory poolKey, SwapParameters params) = abi.decode(data, (PoolKey, SwapParameters));
-
-            PoolId poolId = poolKey.toPoolId();
-            MEVCapturePoolState state = getPoolState(poolId);
-            uint32 lastUpdateTime = state.lastUpdateTime();
-            int32 tickLast = state.tickLast();
-
-            uint32 currentTime = uint32(block.timestamp);
-
-            int256 saveDelta0;
-            int256 saveDelta1;
-
-            if (lastUpdateTime != currentTime) {
-                (int32 tick, uint128 fees0, uint128 fees1) =
-                    loadCoreState({poolId: poolId, token0: poolKey.token0, token1: poolKey.token1});
-
-                if (fees0 != 0 || fees1 != 0) {
-                    CORE.accumulateAsFees(poolKey, fees0, fees1);
-                    // never overflows int256 container
-                    saveDelta0 -= int256(uint256(fees0));
-                    saveDelta1 -= int256(uint256(fees1));
-                }
-
-                tickLast = tick;
-                setPoolState({
-                    poolId: poolId,
-                    state: createMEVCapturePoolState({_lastUpdateTime: currentTime, _tickLast: tickLast})
-                });
-            }
-
-            (PoolBalanceUpdate balanceUpdate, PoolState stateAfter) = CORE.swap(0, poolKey, params);
-
-            // however many tick spacings were crossed is the fee multiplier
-            uint256 feeMultiplierX64 =
-                (FixedPointMathLib.abs(stateAfter.tick() - tickLast) << 64) / poolKey.config.concentratedTickSpacing();
-            uint64 poolFee = poolKey.config.fee();
-            uint64 additionalFee = uint64(FixedPointMathLib.min(type(uint64).max, (feeMultiplierX64 * poolFee) >> 64));
-
-            if (additionalFee != 0) {
-                if (params.isExactOut()) {
-                    // take an additional fee from the calculated input amount equal to the `additionalFee - poolFee`
-                    if (balanceUpdate.delta0() > 0) {
-                        uint128 inputAmount = uint128(uint256(int256(balanceUpdate.delta0())));
-                        // first remove the fee to get the original input amount before we compute the additional fee
-                        inputAmount -= computeFee(inputAmount, poolFee);
-                        int128 fee = SafeCastLib.toInt128(amountBeforeFee(inputAmount, additionalFee) - inputAmount);
-
-                        saveDelta0 += fee;
-                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0() + fee, balanceUpdate.delta1());
-                    } else if (balanceUpdate.delta1() > 0) {
-                        uint128 inputAmount = uint128(uint256(int256(balanceUpdate.delta1())));
-                        // first remove the fee to get the original input amount before we compute the additional fee
-                        inputAmount -= computeFee(inputAmount, poolFee);
-                        int128 fee = SafeCastLib.toInt128(amountBeforeFee(inputAmount, additionalFee) - inputAmount);
-
-                        saveDelta1 += fee;
-                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0(), balanceUpdate.delta1() + fee);
-                    }
-                } else {
-                    if (balanceUpdate.delta0() < 0) {
-                        uint128 outputAmount = uint128(uint256(-int256(balanceUpdate.delta0())));
-                        int128 fee = SafeCastLib.toInt128(computeFee(outputAmount, additionalFee));
-
-                        saveDelta0 += fee;
-                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0() + fee, balanceUpdate.delta1());
-                    } else if (balanceUpdate.delta1() < 0) {
-                        uint128 outputAmount = uint128(uint256(-int256(balanceUpdate.delta1())));
-                        int128 fee = SafeCastLib.toInt128(computeFee(outputAmount, additionalFee));
-
-                        saveDelta1 += fee;
-                        balanceUpdate = createPoolBalanceUpdate(balanceUpdate.delta0(), balanceUpdate.delta1() + fee);
-                    }
-                }
-            }
-
-            if (saveDelta0 != 0 || saveDelta1 != 0) {
-                CORE.updateSavedBalances(poolKey.token0, poolKey.token1, PoolId.unwrap(poolId), saveDelta0, saveDelta1);
-            }
-
-            result = abi.encode(balanceUpdate, stateAfter);
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {Ownable} from "solady/auth/Ownable.sol";
-import {Multicallable} from "solady/utils/Multicallable.sol";
-import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {DropKey} from "../types/dropKey.sol";
+import {ClaimKey} from "../types/claimKey.sol";
+import {IExposedStorage} from "./IExposedStorage.sol";
 
-import {nextValidTime} from "./math/time.sol";
-import {IOrders} from "./interfaces/IOrders.sol";
-import {IRevenueBuybacks} from "./interfaces/IRevenueBuybacks.sol";
-import {BuybacksState, createBuybacksState} from "./types/buybacksState.sol";
-import {OrderKey} from "./types/orderKey.sol";
-import {createOrderConfig} from "./types/orderConfig.sol";
-import {ExposedStorage} from "./base/ExposedStorage.sol";
-import {NATIVE_TOKEN_ADDRESS} from "./math/constants.sol";
+/// @title Incentives Interface
+/// @notice Interface for the Incentives contract that manages airdrops
+/// @dev Inherits from IExposedStorage to allow direct storage access
+interface IIncentives is IExposedStorage {
+    /// @notice Emitted when a drop is funded
+    /// @param key The drop key that was funded
+    /// @param amountNext The new total funded amount
+    event Funded(DropKey key, uint128 amountNext);
 
-/// @title Revenue Buybacks
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Creates automated revenue buyback orders using TWAMM (Time-Weighted Average Market Maker)
-/// @dev Final contract that manages the creation and execution of buyback orders for protocol revenue
-/// This contract automatically creates TWAMM orders to buy back a specified token using collected revenue
-contract RevenueBuybacks is IRevenueBuybacks, ExposedStorage, Ownable, Multicallable {
-    /// @notice The Orders contract used to create and manage TWAMM orders
-    /// @dev All buyback orders are created through this contract
-    IOrders public immutable ORDERS;
+    /// @notice Emitted when a drop is refunded
+    /// @param key The drop key that was refunded
+    /// @param refundAmount The amount that was refunded
+    event Refunded(DropKey key, uint128 refundAmount);
 
-    /// @notice The NFT token ID that represents all buyback orders created by this contract
-    /// @dev A single NFT is minted and reused for all buyback orders to simplify management
-    uint256 public immutable NFT_ID;
+    /// @notice Thrown if the claim has already happened for this drop
+    error AlreadyClaimed();
 
-    /// @notice The token that is purchased with collected revenue
-    /// @dev This is typically the protocol's governance or utility token
-    address public immutable BUY_TOKEN;
+    /// @notice Thrown if the merkle proof does not correspond to the root
+    error InvalidProof();
 
-    /// @notice Constructs the RevenueBuybacks contract
-    /// @param owner The address that will own this contract and have administrative privileges
-    /// @param _orders The Orders contract instance for creating TWAMM orders
-    /// @param _buyToken The token that will be purchased with collected revenue
-    constructor(address owner, IOrders _orders, address _buyToken) {
-        _initializeOwner(owner);
-        ORDERS = _orders;
-        BUY_TOKEN = _buyToken;
-        NFT_ID = ORDERS.mint();
-    }
+    /// @notice Thrown if the drop is not sufficiently funded for the claim
+    error InsufficientFunds();
 
-    /// @notice Approves the Orders contract to spend unlimited amounts of a token
-    /// @dev Must be called at least once for each revenue token before creating buyback orders
-    /// @param token The token to approve for spending by the Orders contract
-    function approveMax(address token) external {
-        SafeTransferLib.safeApproveWithRetry(token, address(ORDERS), type(uint256).max);
-    }
+    /// @notice Only the drop owner may call this function
+    error DropOwnerOnly();
 
-    /// @notice Withdraws leftover tokens from the contract (only callable by owner)
-    /// @dev Used to recover tokens that may be stuck in the contract
-    /// @param token The address of the token to withdraw
-    /// @param amount The amount of tokens to withdraw
-    function take(address token, uint256 amount) external onlyOwner {
-        // Transfer to msg.sender since only the owner can call this function
-        SafeTransferLib.safeTransfer(token, msg.sender, amount);
-    }
+    /// @notice Funds a drop to a minimum amount
+    /// @param key The drop key to fund
+    /// @param minimum The minimum amount to fund to
+    /// @return fundedAmount The amount that was actually funded
+    function fund(DropKey memory key, uint128 minimum) external returns (uint128 fundedAmount);
 
-    /// @notice Withdraws native tokens held by this contract
-    /// @dev Used to recover native tokens that may be stuck in the contract
-    /// @param amount The amount of native tokens to withdraw
-    function takeNative(uint256 amount) external onlyOwner {
-        // Transfer to msg.sender since only the owner can call this function
-        SafeTransferLib.safeTransferETH(msg.sender, amount);
-    }
+    /// @notice Refunds the remaining amount from a drop to the owner
+    /// @param key The drop key to refund
+    /// @return refundAmount The amount that was refunded
+    function refund(DropKey memory key) external returns (uint128 refundAmount);
 
-    /// @notice Collects the proceeds from a completed buyback order
-    /// @dev Can be called by anyone at any time to collect proceeds from orders that have finished
-    /// @param token The revenue token that was sold in the order
-    /// @param fee The fee tier of the pool where the order was executed
-    /// @param endTime The end time of the order to collect proceeds from
-    /// @return proceeds The amount of buyToken received from the completed order
-    function collect(address token, uint64 fee, uint64 endTime) external returns (uint128 proceeds) {
-        proceeds = ORDERS.collectProceeds(NFT_ID, _createOrderKey(token, fee, 0, endTime), owner());
-    }
-
-    /// @notice Allows the contract to receive ETH revenue
-    /// @dev Required to accept ETH payments when ETH is used as a revenue token
-    receive() external payable {}
-
-    /// @notice Creates a new buyback order or extends an existing one with available revenue
-    /// @dev Can be called by anyone to trigger the creation of buyback orders using collected revenue
-    /// This function will either extend the current order (if conditions are met) or create a new order
-    /// @param token The revenue token to use for creating the buyback order, or NATIVE_TOKEN_ADDRESS
-    /// @return endTime The end time of the order that was created or extended
-    /// @return saleRate The sale rate of the order (amount of token sold per second)
-    function roll(address token) public returns (uint64 endTime, uint112 saleRate) {
-        unchecked {
-            BuybacksState state;
-            assembly ("memory-safe") {
-                state := sload(token)
-            }
-
-            if (!state.isConfigured()) {
-                revert TokenNotConfigured(token);
-            }
-
-            // minOrderDuration == 0 indicates the token is not configured
-            bool isEth = token == NATIVE_TOKEN_ADDRESS;
-            uint256 amountToSpend = isEth ? address(this).balance : SafeTransferLib.balanceOf(token, address(this));
-
-            uint32 timeRemaining = state.lastEndTime() - uint32(block.timestamp);
-            // if the fee changed, or the amount of time exceeds the min order duration
-            // note the time remaining can underflow if the last order has ended. in this case time remaining will be greater than min order duration,
-            // but also greater than last order duration, so it will not be re-used.
-            if (
-                state.fee() == state.lastFee() && timeRemaining >= state.minOrderDuration()
-                    && timeRemaining <= state.lastOrderDuration()
-            ) {
-                // handles overflow
-                endTime = uint64(block.timestamp + timeRemaining);
-            } else {
-                endTime =
-                    uint64(nextValidTime(block.timestamp, block.timestamp + uint256(state.targetOrderDuration()) - 1));
-
-                state = createBuybacksState({
-                    _targetOrderDuration: state.targetOrderDuration(),
-                    _minOrderDuration: state.minOrderDuration(),
-                    _fee: state.fee(),
-                    _lastEndTime: uint32(endTime),
-                    _lastOrderDuration: uint32(endTime - block.timestamp),
-                    _lastFee: state.fee()
-                });
-
-                assembly ("memory-safe") {
-                    sstore(token, state)
-                }
-            }
-
-            if (amountToSpend != 0) {
-                saleRate = ORDERS.increaseSellAmount{value: isEth ? amountToSpend : 0}(
-                    NFT_ID, _createOrderKey(token, state.fee(), 0, endTime), uint128(amountToSpend), type(uint112).max
-                );
-            }
-        }
-    }
-
-    /// @notice Configures buyback parameters for a revenue token (only callable by owner)
-    /// @dev Sets the timing and fee parameters for automated buyback order creation
-    /// @param token The revenue token to configure
-    /// @param targetOrderDuration The target duration for new orders (in seconds)
-    /// @param minOrderDuration The minimum duration threshold for creating new orders (in seconds)
-    /// @param fee The fee tier for the buyback pool
-    function configure(address token, uint32 targetOrderDuration, uint32 minOrderDuration, uint64 fee)
-        external
-        onlyOwner
-    {
-        if (minOrderDuration > targetOrderDuration) revert MinOrderDurationGreaterThanTargetOrderDuration();
-        if (minOrderDuration == 0 && targetOrderDuration != 0) {
-            revert MinOrderDurationMustBeGreaterThanZero();
-        }
-
-        BuybacksState state;
-        assembly ("memory-safe") {
-            state := sload(token)
-        }
-        state = createBuybacksState({
-            _targetOrderDuration: targetOrderDuration,
-            _minOrderDuration: minOrderDuration,
-            _fee: fee,
-            _lastEndTime: state.lastEndTime(),
-            _lastOrderDuration: state.lastOrderDuration(),
-            _lastFee: state.lastFee()
-        });
-        assembly ("memory-safe") {
-            sstore(token, state)
-        }
-
-        emit Configured(token, state);
-    }
-
-    function _createOrderKey(address token, uint64 fee, uint64 startTime, uint64 endTime)
-        internal
-        view
-        returns (OrderKey memory key)
-    {
-        bool isToken1 = token > BUY_TOKEN;
-        address buyToken = BUY_TOKEN;
-        assembly ("memory-safe") {
-            mstore(add(key, mul(isToken1, 32)), token)
-            mstore(add(key, mul(iszero(isToken1), 32)), buyToken)
-        }
-
-        key.config = createOrderConfig({_fee: fee, _isToken1: isToken1, _startTime: startTime, _endTime: endTime});
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {IERC20} from "forge-std/interfaces/IERC20.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
-
-import {BaseForwardee} from "./base/BaseForwardee.sol";
-import {UsesCore} from "./base/UsesCore.sol";
-import {ICore} from "./interfaces/ICore.sol";
-import {toDate, toQuarter} from "./libraries/TimeDescriptor.sol";
-import {CoreLib} from "./libraries/CoreLib.sol";
-import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
-import {Locker} from "./types/locker.sol";
-
-/// @title Time-locked Token Wrapper
-/// @author Ekubo Protocol
-/// @notice Wraps tokens that can only be unwrapped after a specific unlock time
-/// @dev Wrapping and unwrapping happens via Ekubo Core#forward. Implements full ERC20 functionality
-contract TokenWrapper is UsesCore, IERC20, BaseForwardee {
-    using CoreLib for *;
-    using FlashAccountantLib for *;
-
-    /// @notice Thrown when trying to unwrap the token before the token has unlocked
-    error TooEarly();
-
-    /// @notice Thrown when attempting to transfer an amount greater than the balance
-    error InsufficientBalance();
-
-    /// @notice Thrown when calling transferFrom with an insufficient allowance
-    error InsufficientAllowance();
-
-    /// @notice The underlying token that is wrapped by this contract
-    IERC20 public immutable UNDERLYING_TOKEN;
-
-    /// @notice The timestamp after which the token may be unwrapped
-    uint256 public immutable UNLOCK_TIME;
-
-    /// @notice Constructs a new TokenWrapper
-    /// @param core The Ekubo Core contract
-    /// @param _underlyingToken The token to be wrapped
-    /// @param _unlockTime The timestamp after which tokens can be unwrapped
-    constructor(ICore core, IERC20 _underlyingToken, uint256 _unlockTime) UsesCore(core) BaseForwardee(core) {
-        UNDERLYING_TOKEN = _underlyingToken;
-        UNLOCK_TIME = _unlockTime;
-    }
-
-    /// @inheritdoc IERC20
-    mapping(address owner => mapping(address spender => uint256)) public override allowance;
-
-    /// @notice Mapping of account balances (not public because we use coreBalance for Core)
-    /// @dev Private mapping to track individual account balances
-    mapping(address account => uint256) private _balanceOf;
-
-    /// @notice Transient balance for the Core contract
-    /// @dev Core never actually holds a real balance of this token, we just use this transient balance to enable low cost payments to core
-    uint256 private transient coreBalance;
-
-    /// @inheritdoc IERC20
-    /// @dev Returns the transient balance for Core contract, otherwise returns stored balance
-    function balanceOf(address account) external view returns (uint256) {
-        if (account == address(CORE)) return coreBalance;
-        return _balanceOf[account];
-    }
-
-    /// @inheritdoc IERC20
-    /// @dev Total supply is tracked in Core's saved balances
-    function totalSupply() external view override returns (uint256) {
-        (uint128 supply,) = CORE.savedBalances({
-            owner: address(this),
-            token0: address(UNDERLYING_TOKEN),
-            token1: address(type(uint160).max),
-            salt: bytes32(0)
-        });
-
-        return supply;
-    }
-
-    /// @inheritdoc IERC20
-    /// @dev Combines underlying token name with unlock date
-    function name() external view returns (string memory) {
-        return string.concat(UNDERLYING_TOKEN.name(), " ", toDate(UNLOCK_TIME));
-    }
-
-    /// @inheritdoc IERC20
-    /// @dev Combines "g" prefix with underlying token symbol and quarter
-    function symbol() external view returns (string memory) {
-        return string.concat("g", UNDERLYING_TOKEN.symbol(), "-", toQuarter(UNLOCK_TIME));
-    }
-
-    /// @inheritdoc IERC20
-    function decimals() external view returns (uint8) {
-        return UNDERLYING_TOKEN.decimals();
-    }
-
-    /// @inheritdoc IERC20
-    function transfer(address to, uint256 amount) external returns (bool) {
-        // note we do not need to check that core balance is sufficient as the sender
-        // even if the caller gets core to withdraw to itself, as part of a payment, it will net to 0 with the Core#withdraw call
-        if (msg.sender != address(CORE)) {
-            uint256 balance = _balanceOf[msg.sender];
-            if (balance < amount) {
-                revert InsufficientBalance();
-            }
-            // since we already checked balance >= amount
-            unchecked {
-                _balanceOf[msg.sender] = balance - amount;
-            }
-        }
-        if (to == address(CORE)) {
-            coreBalance += amount;
-        } else if (to != address(0)) {
-            // we save storage writes on burn by checking to != address(0)
-            _balanceOf[to] += amount;
-        }
-        emit Transfer(msg.sender, to, amount);
-        return true;
-    }
-
-    /// @inheritdoc IERC20
-    function approve(address spender, uint256 amount) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
-    }
-
-    /// @inheritdoc IERC20
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        uint256 allowanceCurrent = allowance[from][msg.sender];
-        if (allowanceCurrent != type(uint256).max) {
-            if (allowanceCurrent < amount) revert InsufficientAllowance();
-            // since we already checked allowanceCurrent >= amount
-            unchecked {
-                allowance[from][msg.sender] = allowanceCurrent - amount;
-            }
-        }
-
-        // we know `from` at this point will never be address(core) for amount > 0, since Core will never give an allowance to any address
-
-        uint256 balance = _balanceOf[from];
-        if (balance < amount) {
-            revert InsufficientBalance();
-        }
-        // since we already checked balance >= amount
-        unchecked {
-            _balanceOf[from] = balance - amount;
-        }
-
-        if (to == address(CORE)) {
-            coreBalance += amount;
-        } else {
-            _balanceOf[to] += amount;
-        }
-        emit Transfer(msg.sender, to, amount);
-        return true;
-    }
-
-    /// @notice Handles wrap/unwrap operations forwarded from Core
-    /// @dev Encode (int256 delta) in the forwarded data, where a positive amount means wrapping and a negative amount means unwrapping
-    /// For wrap: the specified amount of this wrapper token will be credited to the locker and the same amount of underlying will be debited
-    /// For unwrap: the specified amount of the underlying will be credited to the locker and the same amount of this wrapper token will be debited, iff block.timestamp > unlockTime and at least that much token has been wrapped
-    /// @param data Encoded int256 delta (positive for wrap, negative for unwrap)
-    /// @return Empty bytes (no return data needed)
-    function handleForwardData(Locker, bytes memory data) internal override returns (bytes memory) {
-        (int256 amount) = abi.decode(data, (int256));
-
-        // unwrap
-        if (amount < 0) {
-            if (block.timestamp < UNLOCK_TIME) revert TooEarly();
-        }
-
-        CORE.updateSavedBalances({
-            token0: address(UNDERLYING_TOKEN),
-            token1: address(type(uint160).max),
-            salt: bytes32(0),
-            delta0: amount,
-            delta1: 0
-        });
-
-        CORE.updateDebt(SafeCastLib.toInt128(-amount));
-
-        return bytes("");
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {BasePositions} from "./base/BasePositions.sol";
-import {ICore} from "./interfaces/ICore.sol";
-import {PoolKey} from "./types/poolKey.sol";
-import {computeFee} from "./math/fee.sol";
-
-/// @title Ekubo Protocol Positions
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Tracks liquidity positions in Ekubo Protocol as NFTs
-/// @dev Manages liquidity positions, fee collection, and protocol fees
-contract Positions is BasePositions {
-    /// @notice Protocol fee rate for swaps (as a fraction of 2^64)
-    uint64 public immutable SWAP_PROTOCOL_FEE_X64;
-
-    /// @notice Denominator for withdrawal protocol fee calculation
-    uint64 public immutable WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR;
-
-    /// @notice Constructs the Positions contract
-    /// @param core The core contract instance
-    /// @param owner The owner of the contract (for access control)
-    /// @param _swapProtocolFeeX64 Protocol fee rate for swaps
-    /// @param _withdrawalProtocolFeeDenominator Denominator for withdrawal protocol fee
-    constructor(ICore core, address owner, uint64 _swapProtocolFeeX64, uint64 _withdrawalProtocolFeeDenominator)
-        BasePositions(core, owner)
-    {
-        SWAP_PROTOCOL_FEE_X64 = _swapProtocolFeeX64;
-        WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR = _withdrawalProtocolFeeDenominator;
-    }
-
-    /// @notice Handles protocol fee collection during fee collection
-    /// @dev Implements the abstract method from BasePositions
-    /// @param amount0 The amount of token0 fees collected before protocol fee deduction
-    /// @param amount1 The amount of token1 fees collected before protocol fee deduction
-    /// @return protocolFee0 The amount of token0 protocol fees to collect
-    /// @return protocolFee1 The amount of token1 protocol fees to collect
-    function _computeSwapProtocolFees(PoolKey memory, uint128 amount0, uint128 amount1)
-        internal
-        view
-        override
-        returns (uint128 protocolFee0, uint128 protocolFee1)
-    {
-        if (SWAP_PROTOCOL_FEE_X64 != 0) {
-            protocolFee0 = computeFee(amount0, SWAP_PROTOCOL_FEE_X64);
-            protocolFee1 = computeFee(amount1, SWAP_PROTOCOL_FEE_X64);
-        }
-    }
-
-    /// @notice Handles protocol fee collection during liquidity withdrawal
-    /// @dev Implements the abstract method from BasePositions
-    /// @param poolKey The pool key for the position
-    /// @param amount0 The amount of token0 being withdrawn before protocol fee deduction
-    /// @param amount1 The amount of token1 being withdrawn before protocol fee deduction
-    /// @return protocolFee0 The amount of token0 protocol fees to collect
-    /// @return protocolFee1 The amount of token1 protocol fees to collect
-    function _computeWithdrawalProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
-        internal
-        view
-        override
-        returns (uint128 protocolFee0, uint128 protocolFee1)
-    {
-        uint64 fee = poolKey.config.fee();
-        if (fee != 0 && WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR != 0) {
-            protocolFee0 = computeFee(amount0, fee / WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR);
-            protocolFee1 = computeFee(amount1, fee / WITHDRAWAL_PROTOCOL_FEE_DENOMINATOR);
-        }
-    }
+    /// @notice Claims tokens from a drop using a merkle proof
+    /// @param key The drop key to claim from
+    /// @param c The claim details
+    /// @param proof The merkle proof for the claim
+    function claim(DropKey memory key, ClaimKey memory c, bytes32[] calldata proof) external;
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
@@ -8687,135 +8645,177 @@ interface IOracle is IExposedStorage, IExtension {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {DropKey} from "../types/dropKey.sol";
-import {ClaimKey} from "../types/claimKey.sol";
-import {IExposedStorage} from "./IExposedStorage.sol";
+import {BaseLocker} from "./base/BaseLocker.sol";
+import {UsesCore} from "./base/UsesCore.sol";
+import {ICore} from "./interfaces/ICore.sol";
+import {IOrders} from "./interfaces/IOrders.sol";
+import {PayableMulticallable} from "./base/PayableMulticallable.sol";
+import {TWAMMLib} from "./libraries/TWAMMLib.sol";
+import {ITWAMM} from "./interfaces/extensions/ITWAMM.sol";
+import {OrderKey} from "./types/orderKey.sol";
+import {computeSaleRate} from "./math/twamm.sol";
+import {BaseNonfungibleToken} from "./base/BaseNonfungibleToken.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {NATIVE_TOKEN_ADDRESS} from "./math/constants.sol";
+import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
 
-/// @title Incentives Interface
-/// @notice Interface for the Incentives contract that manages airdrops
-/// @dev Inherits from IExposedStorage to allow direct storage access
-interface IIncentives is IExposedStorage {
-    /// @notice Emitted when a drop is funded
-    /// @param key The drop key that was funded
-    /// @param amountNext The new total funded amount
-    event Funded(DropKey key, uint128 amountNext);
+/// @title Ekubo Protocol Orders
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Tracks TWAMM (Time-Weighted Average Market Maker) orders in Ekubo Protocol as NFTs
+/// @dev Manages long-term orders that execute over time through the TWAMM extension
+contract Orders is IOrders, UsesCore, PayableMulticallable, BaseLocker, BaseNonfungibleToken {
+    using TWAMMLib for *;
+    using FlashAccountantLib for *;
 
-    /// @notice Emitted when a drop is refunded
-    /// @param key The drop key that was refunded
-    /// @param refundAmount The amount that was refunded
-    event Refunded(DropKey key, uint128 refundAmount);
+    uint256 private constant CALL_TYPE_CHANGE_SALE_RATE = 0;
+    uint256 private constant CALL_TYPE_COLLECT_PROCEEDS = 1;
 
-    /// @notice Thrown if the claim has already happened for this drop
-    error AlreadyClaimed();
+    /// @notice The TWAMM extension contract that handles order execution
+    ITWAMM public immutable TWAMM_EXTENSION;
 
-    /// @notice Thrown if the merkle proof does not correspond to the root
-    error InvalidProof();
-
-    /// @notice Thrown if the drop is not sufficiently funded for the claim
-    error InsufficientFunds();
-
-    /// @notice Only the drop owner may call this function
-    error DropOwnerOnly();
-
-    /// @notice Funds a drop to a minimum amount
-    /// @param key The drop key to fund
-    /// @param minimum The minimum amount to fund to
-    /// @return fundedAmount The amount that was actually funded
-    function fund(DropKey memory key, uint128 minimum) external returns (uint128 fundedAmount);
-
-    /// @notice Refunds the remaining amount from a drop to the owner
-    /// @param key The drop key to refund
-    /// @return refundAmount The amount that was refunded
-    function refund(DropKey memory key) external returns (uint128 refundAmount);
-
-    /// @notice Claims tokens from a drop using a merkle proof
-    /// @param key The drop key to claim from
-    /// @param c The claim details
-    /// @param proof The merkle proof for the claim
-    function claim(DropKey memory key, ClaimKey memory c, bytes32[] calldata proof) external;
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {ICore, IExtension} from "../interfaces/ICore.sol";
-import {CallPoints} from "../types/callPoints.sol";
-import {PoolKey} from "../types/poolKey.sol";
-import {PositionId} from "../types/positionId.sol";
-import {SqrtRatio} from "../types/sqrtRatio.sol";
-import {PoolState} from "../types/poolState.sol";
-import {SwapParameters} from "../types/swapParameters.sol";
-import {UsesCore} from "./UsesCore.sol";
-import {Locker} from "../types/locker.sol";
-import {PoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
-
-/// @title Base Extension
-/// @notice Abstract base contract for creating extensions to the Ekubo Protocol
-/// @dev Extensions can hook into various pool operations to add custom functionality
-///      Derived contracts must implement getCallPoints() and the specific hook functions they want to use
-abstract contract BaseExtension is IExtension, UsesCore {
-    /// @notice Thrown when a call point is not implemented by the extension
-    error CallPointNotImplemented();
-
-    /// @notice Constructs the BaseExtension and optionally registers it with the core
+    /// @notice Constructs the Orders contract
     /// @param core The core contract instance
-    constructor(ICore core) UsesCore(core) {
-        if (_registerInConstructor()) core.registerExtension(getCallPoints());
+    /// @param _twamm The TWAMM extension contract
+    /// @param owner The owner of the contract (for access control)
+    constructor(ICore core, ITWAMM _twamm, address owner) BaseNonfungibleToken(owner) BaseLocker(core) UsesCore(core) {
+        TWAMM_EXTENSION = _twamm;
     }
 
-    /// @notice Determines whether the extension should register itself in the constructor
-    /// @dev Can be overridden by derived contracts to control registration timing
-    /// @return True if the extension should register in the constructor
-    function _registerInConstructor() internal pure virtual returns (bool) {
-        return true;
-    }
-
-    /// @notice Returns the call points configuration for this extension
-    /// @dev Must be implemented by derived contracts to specify which hooks they use
-    /// @return The call points configuration
-    function getCallPoints() internal virtual returns (CallPoints memory);
-
-    /// @inheritdoc IExtension
-    function beforeInitializePool(address, PoolKey calldata, int32) external virtual {
-        revert CallPointNotImplemented();
-    }
-
-    /// @inheritdoc IExtension
-    function afterInitializePool(address, PoolKey calldata, int32, SqrtRatio) external virtual {
-        revert CallPointNotImplemented();
-    }
-
-    /// @inheritdoc IExtension
-    function beforeUpdatePosition(Locker, PoolKey memory, PositionId, int128) external virtual {
-        revert CallPointNotImplemented();
-    }
-
-    /// @inheritdoc IExtension
-    function afterUpdatePosition(Locker, PoolKey memory, PositionId, int128, PoolBalanceUpdate, PoolState)
-        external
-        virtual
+    /// @inheritdoc IOrders
+    function mintAndIncreaseSellAmount(OrderKey memory orderKey, uint112 amount, uint112 maxSaleRate)
+        public
+        payable
+        returns (uint256 id, uint112 saleRate)
     {
-        revert CallPointNotImplemented();
+        id = mint();
+        saleRate = increaseSellAmount(id, orderKey, amount, maxSaleRate);
     }
 
-    /// @inheritdoc IExtension
-    function beforeSwap(Locker, PoolKey memory, SwapParameters) external virtual {
-        revert CallPointNotImplemented();
+    /// @inheritdoc IOrders
+    function increaseSellAmount(uint256 id, OrderKey memory orderKey, uint128 amount, uint112 maxSaleRate)
+        public
+        payable
+        authorizedForNft(id)
+        returns (uint112 saleRate)
+    {
+        uint256 realStart = FixedPointMathLib.max(block.timestamp, orderKey.config.startTime());
+
+        unchecked {
+            if (orderKey.config.endTime() <= realStart) {
+                revert OrderAlreadyEnded();
+            }
+
+            saleRate = uint112(computeSaleRate(amount, uint32(orderKey.config.endTime() - realStart)));
+
+            if (saleRate > maxSaleRate) {
+                revert MaxSaleRateExceeded();
+            }
+        }
+
+        lock(abi.encode(CALL_TYPE_CHANGE_SALE_RATE, msg.sender, id, orderKey, saleRate));
     }
 
-    /// @inheritdoc IExtension
-    function afterSwap(Locker, PoolKey memory, SwapParameters, PoolBalanceUpdate, PoolState) external virtual {
-        revert CallPointNotImplemented();
+    /// @inheritdoc IOrders
+    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease, address recipient)
+        public
+        payable
+        authorizedForNft(id)
+        returns (uint112 refund)
+    {
+        refund = uint112(
+            uint256(
+                -abi.decode(
+                    lock(
+                        abi.encode(
+                            CALL_TYPE_CHANGE_SALE_RATE, recipient, id, orderKey, -int256(uint256(saleRateDecrease))
+                        )
+                    ),
+                    (int256)
+                )
+            )
+        );
     }
 
-    /// @inheritdoc IExtension
-    function beforeCollectFees(Locker, PoolKey memory, PositionId) external virtual {
-        revert CallPointNotImplemented();
+    /// @inheritdoc IOrders
+    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease)
+        external
+        payable
+        returns (uint112 refund)
+    {
+        refund = decreaseSaleRate(id, orderKey, saleRateDecrease, msg.sender);
     }
 
-    /// @inheritdoc IExtension
-    function afterCollectFees(Locker, PoolKey memory, PositionId, uint128, uint128) external virtual {
-        revert CallPointNotImplemented();
+    /// @inheritdoc IOrders
+    function collectProceeds(uint256 id, OrderKey memory orderKey, address recipient)
+        public
+        payable
+        authorizedForNft(id)
+        returns (uint128 proceeds)
+    {
+        proceeds = abi.decode(lock(abi.encode(CALL_TYPE_COLLECT_PROCEEDS, id, orderKey, recipient)), (uint128));
+    }
+
+    /// @inheritdoc IOrders
+    function collectProceeds(uint256 id, OrderKey memory orderKey) external payable returns (uint128 proceeds) {
+        proceeds = collectProceeds(id, orderKey, msg.sender);
+    }
+
+    /// @inheritdoc IOrders
+    function executeVirtualOrdersAndGetCurrentOrderInfo(uint256 id, OrderKey memory orderKey)
+        external
+        returns (uint112 saleRate, uint256 amountSold, uint256 remainingSellAmount, uint128 purchasedAmount)
+    {
+        (saleRate, amountSold, remainingSellAmount, purchasedAmount) =
+            TWAMM_EXTENSION.executeVirtualOrdersAndGetCurrentOrderInfo(address(this), bytes32(id), orderKey);
+    }
+
+    /// @notice Handles lock callback data for order operations
+    /// @dev Internal function that processes different types of order operations
+    /// @param data Encoded operation data
+    /// @return result Encoded result data
+    function handleLockData(uint256, bytes memory data) internal override returns (bytes memory result) {
+        uint256 callType = abi.decode(data, (uint256));
+
+        if (callType == CALL_TYPE_CHANGE_SALE_RATE) {
+            (, address recipientOrPayer, uint256 id, OrderKey memory orderKey, int256 saleRateDelta) =
+                abi.decode(data, (uint256, address, uint256, OrderKey, int256));
+
+            int256 amount =
+                CORE.updateSaleRate(TWAMM_EXTENSION, bytes32(id), orderKey, SafeCastLib.toInt112(saleRateDelta));
+
+            if (amount != 0) {
+                address sellToken = orderKey.sellToken();
+                if (saleRateDelta > 0) {
+                    if (sellToken == NATIVE_TOKEN_ADDRESS) {
+                        SafeTransferLib.safeTransferETH(address(ACCOUNTANT), uint256(amount));
+                    } else {
+                        ACCOUNTANT.payFrom(recipientOrPayer, sellToken, uint256(amount));
+                    }
+                } else {
+                    unchecked {
+                        // we know amount will never exceed the uint128 type because of limitations on sale rate (fixed point 80.32) and duration (uint32)
+                        ACCOUNTANT.withdraw(sellToken, recipientOrPayer, uint128(uint256(-amount)));
+                    }
+                }
+            }
+
+            result = abi.encode(amount);
+        } else if (callType == CALL_TYPE_COLLECT_PROCEEDS) {
+            (, uint256 id, OrderKey memory orderKey, address recipient) =
+                abi.decode(data, (uint256, uint256, OrderKey, address));
+
+            uint128 proceeds = CORE.collectProceeds(TWAMM_EXTENSION, bytes32(id), orderKey);
+
+            if (proceeds != 0) {
+                ACCOUNTANT.withdraw(orderKey.buyToken(), recipient, proceeds);
+            }
+
+            result = abi.encode(proceeds);
+        } else {
+            revert();
+        }
     }
 }
 

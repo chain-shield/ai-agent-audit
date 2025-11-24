@@ -1,5 +1,5 @@
 use crate::config::{
-    CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE,
+    ACTOR_RUNS, CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE,
     SKIP_LIBRARIES,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
@@ -9,6 +9,9 @@ use crate::llm_review::contract::contract_category::{
     get_contract_spec_from_category, ContractCategory,
 };
 use crate::llm_review::contract::contract_file_map::ContractType;
+use crate::llm_review::dynamic_prompts::actors::{
+    generate_formated_list_from_actor_data, generate_formatted_actor_abuse_list,
+};
 use crate::llm_review::findings::findings::CLAUDE_4_5_SONNET;
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::llm_review::{agent::agent_enums::AIAgent, phases};
@@ -62,11 +65,18 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these failed
-    // let custom_scoped_contracts = Some(vec![
-    //     "GTELaunchpadV2Pair".to_string(),
-    //     "Distributor".to_string(),
-    // ]);
+    // let custom_scoped_contracts = Some(vec!["Calls".to_string()]);
     let custom_scoped_contracts: Option<Vec<_>> = None;
+
+    // skip these contracts
+    let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
+        "Core".to_string(),
+        "FlashAccountant".to_string(),
+        "TWAMM".to_string(),
+        "BasePositions".to_string(),
+        "MEVCapture".to_string(),
+    ]);
+    // let custom_out_of_scoped_contracts: Option<Vec<String>> = None;
 
     let (
         ai_verify_agent,
@@ -84,7 +94,14 @@ pub async fn review_codebase_for_security_issues_v2(
 
         if let Some(scoped_contracts) = &custom_scoped_contracts {
             if !scoped_contracts.contains(&contract) {
-                info!("contract {} is NOT in scope", contract);
+                info!("contract {} is NOT in custom scope", contract);
+                continue;
+            }
+        }
+
+        if let Some(out_of_scope) = &custom_out_of_scoped_contracts {
+            if out_of_scope.contains(&contract) {
+                info!("contract {} is NOT in custom scope", contract);
                 continue;
             }
         }
@@ -557,6 +574,11 @@ async fn process_actors(
     ai_verify_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
+    // check if actor thread analysis is enabled
+    if ACTOR_RUNS == 0 {
+        return Ok(Findings::default());
+    };
+
     // Phase 1: Generate actors and their capabilities
     info!("PHASE 1: GENERATE ACTORS");
     let actors: Actors =
@@ -565,6 +587,8 @@ async fn process_actors(
 
     let actor_count = actors.actors.len();
     info!("total of {} Actors found!", actor_count);
+    let actor_list = generate_formated_list_from_actor_data(&actors.actors);
+    info!("{}", actor_list);
 
     let actor_prompt = IssuePrompt::Actor(actors.actors);
 
@@ -595,6 +619,9 @@ async fn process_actors(
     } else {
         ActorAbuses::default()
     };
+
+    let abuses = generate_formatted_actor_abuse_list(&verified_abuses.abuses);
+    info!("{}", abuses);
 
     // Phase 4: Convert verified actor abuses into detailed security findings
     info!("PHASE 4: GENERATE FINDINGS FROM ACTOR ABUSES");
