@@ -22,7 +22,7 @@ fn any_llm_key_present() -> bool {
 ///  - init_config()?
 ///  - env_logger::init()  (we use try_init() to avoid panics when tests run in parallel)
 ///  - init_llm_clients()? (first time should succeed)
-///  - init_llm_clients()? (second time should fail with already-initialized error)
+///  - init_llm_clients()? (second time should also succeed - idempotent)
 #[test]
 fn test_main_style_startup_double_init_llm_clients() {
     // Load env
@@ -45,20 +45,11 @@ fn test_main_style_startup_double_init_llm_clients() {
     // Initialize LLM clients - first call should succeed
     init_llm_clients().expect("first init_llm_clients() should succeed");
 
-    // Initialize LLM clients - second call should fail due to OnceLock already set
+    // Initialize LLM clients - second call should also succeed (idempotent behavior)
+    // The implementation checks if clients are already initialized and skips them
     let second = init_llm_clients();
     assert!(
-        second.is_err(),
-        "second init_llm_clients() should return Err"
-    );
-
-    let err = second.err().unwrap();
-    let msg = format!("{}", err);
-
-    // The error should indicate the client was already initialized (for the first available provider)
-    assert!(
-        msg.to_lowercase().contains("already initialized"),
-        "expected an 'already initialized' style error, got: {}",
-        msg
+        second.is_ok(),
+        "second init_llm_clients() should succeed (idempotent)"
     );
 }

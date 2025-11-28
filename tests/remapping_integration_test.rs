@@ -81,7 +81,7 @@ solmate/=lib/solmate/src/
     println!("1. Parsing remappings.txt...");
     let count = parse_and_store_remappings(&remapping_file, project_id).unwrap();
     println!("   Parsed {} remappings\n", count);
-    assert_eq!(count, 6); // Only @ prefixed remappings
+    assert_eq!(count, 9); // All remappings (@ prefixed and non-@ prefixed)
 
     // Get all remappings
     println!("2. Retrieving all remappings...");
@@ -91,7 +91,7 @@ solmate/=lib/solmate/src/
         println!("   {} -> {}", prefix, target);
     }
     println!();
-    assert_eq!(all_remappings.len(), 6);
+    assert_eq!(all_remappings.len(), 9);
 
     // Test individual remapping retrieval via get_all_remappings
     println!("3. Testing individual remapping retrieval...");
@@ -132,7 +132,7 @@ solmate/=lib/solmate/src/
         ),
         (
             "forge-std/Test.sol",
-            None, // Non-@ remapping, should not be stored
+            Some("lib/forge-std/src/Test.sol"), // Non-@ remappings are now included
         ),
     ];
 
@@ -293,9 +293,9 @@ forge-std/=lib/forge-std/src/
     let chainlink_target = remappings.get("@chainlink/contracts/").unwrap();
     assert_eq!(chainlink_target, "lib/chainlink/");
 
-    // Verify non-@ remappings are ignored
-    assert!(!remappings.contains_key("solmate/"));
-    assert!(!remappings.contains_key("forge-std/"));
+    // Verify non-@ remappings are now included (implementation changed)
+    assert!(remappings.contains_key("solmate/"));
+    assert!(remappings.contains_key("forge-std/"));
 
     // Verify commented lines are ignored
     assert!(!remappings.contains_key("@commented/out/"));

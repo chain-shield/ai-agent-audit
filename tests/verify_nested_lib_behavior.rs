@@ -99,7 +99,8 @@ fn test_verify_segment_counting_behavior() {
     // Case 6: root/node_modules/lib/package.json
     // Path components: root -> node_modules -> lib -> package.json
     // Segments matching: 1 (just "lib")
-    // Expected: ACCEPT (count == 1)
+    // Expected: REJECT - paths with BOTH node_modules AND lib are rejected
+    // This prevents false positives like node_modules/ethers/lib/package.json
     let case6 = root.join("node_modules").join("lib");
     fs::create_dir_all(&case6).unwrap();
     let case6_pkg = case6.join("package.json");
@@ -109,8 +110,8 @@ fn test_verify_segment_counting_behavior() {
     println!("  Segments: lib");
     println!("  Count: 1");
     let result6 = is_library_package_json(&case6_pkg, root);
-    println!("  Result: {} (expected: true)\n", result6);
-    assert!(result6);
+    println!("  Result: {} (expected: false)\n", result6);
+    assert!(!result6);
 
     // Case 7: root/src/package.json
     // Path components: root -> src -> package.json

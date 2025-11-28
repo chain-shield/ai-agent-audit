@@ -3,7 +3,7 @@
 /// This module provides a secure interface to Slither static analysis tool,
 /// running all operations in Docker containers for security. Handles extraction
 /// of IR, call graphs, inheritance data, and storage layouts with caching.
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::info;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -218,6 +218,7 @@ pub fn build_slither_args(
     printer: Option<&str>,
     subfolder: Option<PathBuf>,
     json_output: bool,
+    use_ignore_compile: bool,
 ) -> Vec<String> {
     // Determine the actual target directory for Slither analysis
     let target_path = if let Some(ref folder) = subfolder {
@@ -251,16 +252,17 @@ pub fn build_slither_args(
     // Add project-specific arguments (collect flags first; add target last)
     match project_type {
         ProjectType::Foundry | ProjectType::FoundryYarn => {
-            // Skip recompilation and use existing build artifacts
-            // This is critical for projects using custom/pre-release solc versions
-            // that may not be available in Slither's Docker container
-            if target_path.join("out").exists() {
+            // Try to use existing build artifacts if requested and available
+            // This is faster but may fail with newer Foundry versions
+            if use_ignore_compile && target_path.join("out").exists() {
                 args.extend([
                     "--foundry-ignore-compile".to_string(),
                     "--foundry-out-directory".to_string(),
                     "out".to_string(),
                 ]);
-                log::debug!("Foundry project detected. Using existing build artifacts from out/");
+                log::debug!(
+                    "Foundry project detected. Attempting to use existing build artifacts from out/"
+                );
             } else {
                 log::debug!("Foundry project detected. Slither will handle compilation.");
             }
@@ -352,7 +354,7 @@ pub async fn run_slither_detector(repo: &RepoPaths) -> Result<String> {
     }
 
     log::info!("Running Slither detector");
-    let mut args = build_slither_args(repo, None, None, false);
+    let mut args = build_slither_args(repo, None, None, false, false);
     // Add detector-specific arguments
     args.push("--exclude-dependencies".to_string());
 
@@ -402,7 +404,7 @@ pub async fn run_printer(
 
     log::info!("Running Slither printer: {}", printer);
 
-    let args = build_slither_args(repo, Some(printer), subfolder, false);
+    let args = build_slither_args(repo, Some(printer), subfolder, false, false);
     let output = Command::new("docker")
         .args(&args)
         .stdout(Stdio::piped()) // Capture printer text from stdout
@@ -505,7 +507,7 @@ pub async fn run_printer_json_inheritance(
     log::info!("Running Slither inheritance printer with standard library filtering");
 
     // Build base args without the target directory
-    let mut args = build_slither_args(repo, Some(printer), subfolder.clone(), true);
+    let mut args = build_slither_args(repo, Some(printer), subfolder.clone(), true, false);
 
     // Remove the last argument (target directory) temporarily
     let target_dir = args
@@ -587,33 +589,93 @@ pub async fn run_printer_json(
 
     // log::info!("Running Slither printer: {}", printer);
 
-    let args = build_slither_args(repo, Some(printer), subfolder.clone(), true);
+    // Try with --foundry-ignore-compile first (faster if artifacts are compatible)
+    let args = build_slither_args(repo, Some(printer), subfolder.clone(), true, true);
 
     // Log the full docker command for debugging
     // log::info!("Docker command: docker {}", args.join(" "));
 
     let out = Command::new("docker").args(&args).output()?;
 
-    if !out.status.success() {
+    let text = if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let stdout = String::from_utf8_lossy(&out.stdout);
-        log::error!(
-            "Slither {} failed with exit code: {:?}",
-            printer,
-            out.status.code()
-        );
-        log::error!("Stdout: {}", stdout);
-        log::error!("Stderr: {}", stderr);
-        anyhow::bail!(
-            "slither {} failed with exit code {:?}\nStdout: {}\nStderr: {}",
-            printer,
-            out.status.code(),
-            stdout,
-            stderr
-        );
-    }
 
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        // Debug: log what we captured
+        log::debug!(
+            "Slither {} failed. Stderr length: {}, Stdout length: {}",
+            printer,
+            stderr.len(),
+            stdout.len()
+        );
+        log::debug!(
+            "Stderr preview: {}",
+            &stderr.chars().take(500).collect::<String>()
+        );
+        log::debug!(
+            "Stdout preview: {}",
+            &stdout.chars().take(500).collect::<String>()
+        );
+
+        // Check if failure is due to incompatible build artifacts
+        // Empty output with exit code 1 often indicates compilation failure with --foundry-ignore-compile
+        let is_artifact_error = stderr.contains("KeyError: 'output'")
+            || stderr.contains("hardhat_like_parsing")
+            || stdout.contains("KeyError: 'output'")
+            || stdout.contains("hardhat_like_parsing")
+            || (stderr.is_empty() && stdout.is_empty()); // Empty output suggests early compilation failure
+
+        if is_artifact_error {
+            log::warn!(
+                "Slither {} failed with artifact parsing error. Retrying without --foundry-ignore-compile...",
+                printer
+            );
+
+            // Retry without --foundry-ignore-compile
+            let args_no_ignore =
+                build_slither_args(repo, Some(printer), subfolder.clone(), true, false);
+            let out_retry = Command::new("docker").args(&args_no_ignore).output()?;
+
+            if !out_retry.status.success() {
+                let stderr_retry = String::from_utf8_lossy(&out_retry.stderr);
+                let stdout_retry = String::from_utf8_lossy(&out_retry.stdout);
+                log::error!(
+                    "Slither {} failed even after retry with exit code: {:?}",
+                    printer,
+                    out_retry.status.code()
+                );
+                log::error!("Stdout: {}", stdout_retry);
+                log::error!("Stderr: {}", stderr_retry);
+                anyhow::bail!(
+                    "slither {} failed with exit code {:?}\nStdout: {}\nStderr: {}",
+                    printer,
+                    out_retry.status.code(),
+                    stdout_retry,
+                    stderr_retry
+                );
+            }
+
+            String::from_utf8_lossy(&out_retry.stdout).into_owned()
+        } else {
+            // Different error, fail immediately
+            log::error!(
+                "Slither {} failed with exit code: {:?}",
+                printer,
+                out.status.code()
+            );
+            log::error!("Stdout: {}", stdout);
+            log::error!("Stderr: {}", stderr);
+            anyhow::bail!(
+                "slither {} failed with exit code {:?}\nStdout: {}\nStderr: {}",
+                printer,
+                out.status.code(),
+                stdout,
+                stderr
+            );
+        }
+    } else {
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
 
     // Save to cache and return
     info!(
