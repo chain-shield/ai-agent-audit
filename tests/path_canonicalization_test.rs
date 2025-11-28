@@ -92,16 +92,14 @@ contract Token is IToken {
         .await
         .expect("Failed to insert inheritance edge");
 
-    // Query using the canonicalized path (which might have /private/ prefix on macOS)
-    let canonical_contract_file = contract_file
-        .canonicalize()
-        .expect("Failed to canonicalize contract file");
-
-    let parents = get_parents_with_file("Token", &canonical_contract_file, &repo)
+    // Query using the same path (no canonicalization)
+    // NOTE: The inheritance map no longer canonicalizes paths to avoid symlink resolution
+    // issues on macOS (/tmp -> /private/tmp). Paths are stored and queried as-is.
+    let parents = get_parents_with_file("Token", &contract_file, &repo)
         .await
         .expect("Failed to get parents");
 
-    // Verify that we found the parent even though the paths might differ
+    // Verify that we found the parent
     assert_eq!(
         parents.len(),
         1,
@@ -124,10 +122,9 @@ contract Token is IToken {
         "Expected parent to be IToken"
     );
 
-    println!("✅ Path canonicalization test passed!");
-    println!("   Original path: {}", contract_file.display());
-    println!("   Canonical path: {}", canonical_contract_file.display());
-    println!("   Both paths correctly resolved to the same inheritance data");
+    println!("✅ Path test passed!");
+    println!("   Contract file: {}", contract_file.display());
+    println!("   Successfully retrieved inheritance data");
 }
 
 #[tokio::test]
@@ -209,33 +206,20 @@ contract Jackpot is IJackpot {
         .await
         .expect("Failed to insert inheritance edge");
 
-    // Test with various path representations
-    let paths_to_test = vec![
-        contract_file.clone(),
-        contract_file
-            .canonicalize()
-            .unwrap_or_else(|_| contract_file.clone()),
-    ];
+    // Test with the original path (no canonicalization)
+    // NOTE: The inheritance map no longer canonicalizes paths to avoid symlink resolution
+    // issues on macOS (/tmp -> /private/tmp). Paths must match exactly as stored.
+    let parents = get_parents_with_file("Jackpot", &contract_file, &repo)
+        .await
+        .expect("Failed to get parents");
 
-    for (i, path) in paths_to_test.iter().enumerate() {
-        let parents = get_parents_with_file("Jackpot", path, &repo)
-            .await
-            .expect("Failed to get parents");
+    assert_eq!(
+        parents.len(),
+        1,
+        "Expected to find 1 parent for Jackpot contract"
+    );
+    assert_eq!(parents[0].0, "IJackpot", "Expected parent to be IJackpot");
 
-        assert_eq!(
-            parents.len(),
-            1,
-            "Test variant {}: Expected to find 1 parent for Jackpot contract",
-            i
-        );
-        assert_eq!(
-            parents[0].0, "IJackpot",
-            "Test variant {}: Expected parent to be IJackpot",
-            i
-        );
-
-        println!("✅ Test variant {} passed with path: {}", i, path.display());
-    }
-
-    println!("✅ All path variation tests passed!");
+    println!("✅ Test passed with path: {}", contract_file.display());
+    println!("✅ Successfully retrieved inheritance data");
 }

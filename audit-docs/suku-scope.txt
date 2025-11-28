@@ -1,0 +1,6 @@
+./src/DecimalConstants.sol
+./src/ERC7575VaultUpgradeable.sol
+./src/SafeTokenTransfers.sol
+./src/ShareTokenUpgradeable.sol
+./src/WERC7575ShareToken.sol
+./src/WERC7575Vault.sol

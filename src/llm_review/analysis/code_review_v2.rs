@@ -65,18 +65,18 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these failed
-    let custom_scoped_contracts = Some(vec!["Calls".to_string()]);
-    // let custom_scoped_contracts: Option<Vec<_>> = None;
+    // let custom_scoped_contracts = Some(vec!["Calls".to_string()]);
+    let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
-    let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
-        "Core".to_string(),
-        "FlashAccountant".to_string(),
-        "TWAMM".to_string(),
-        "BasePositions".to_string(),
-        "MEVCapture".to_string(),
-    ]);
-    // let custom_out_of_scoped_contracts: Option<Vec<String>> = None;
+    // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
+    //     "Core".to_string(),
+    //     "FlashAccountant".to_string(),
+    //     "TWAMM".to_string(),
+    //     "BasePositions".to_string(),
+    //     "MEVCapture".to_string(),
+    // ]);
+    let custom_out_of_scoped_contracts: Option<Vec<String>> = None;
 
     let (
         ai_verify_agent,
@@ -584,6 +584,7 @@ async fn process_actors(
         return Ok(Findings::default());
     };
 
+    // custom agent for digging up list of actors
     let actor_discovery_config = AgentConfig::new(Some(repo.clone()))
         .with_model("gpt-5.1")
         .with_preamble("You are a world-class expert at smart contract auditing.")
@@ -603,7 +604,6 @@ async fn process_actors(
     let actor_list = generate_formated_list_from_actor_data(&actors.actors);
     info!("{}", actor_list);
 
-    panic!("actor list display!");
     let actor_prompt = IssuePrompt::Actor(actors.actors);
 
     // Phase 2: Generate actor abuses (potential exploits for each actor capability)
