@@ -7,84 +7,164 @@ pub fn generate_actors_prompt() -> String {
     let role_types = generate_enum_list(&all_enum_variants::<RoleType>());
     format!(
         r#"
-        Your job is to **propose 3-7 actors** for the target contract and its role in the wider protocol.
+            Your task: Identify ALL actors who can interact with or influence the target contract, 
+            including adversarial actors who may exploit edge cases, race conditions, or unintended 
+            interactions.
 
-        ## Task
+            ## SYSTEMATIC ACTOR DISCOVERY PROCESS
 
-        1. **Identify 3-7 distinct actors** who interact with or can influence the target contract
-        2. **For EACH actor, enumerate ALL exploitable capabilities** - focus on what could be abused for profit or to harm others
-        3. **CRITICAL**: Always consider what happens when transactions FAIL or REVERT - are signatures still valid? Can state be exploited?
-        4. **CRITICAL**: Always include mempool observers / MEV searchers as potential actors if the contract involves signatures, multi-call, or valuable operations
+            Follow this 5-step process to ensure comprehensive coverage:
 
-        ## What to Look For When Identifying Actors
+            ### STEP 1: Map All Entry Points
 
-        Consider these actor types and their potential capabilities:
+            Identify every way the contract can be called or influenced:
 
-        ### Direct Protocol Users
-        - **UnprivilegedUser**: Can they manipulate deposit/withdrawal timing, amounts, or recipients?
-        - **LiquidityProvider**: Can they exploit deposit/withdrawal mechanics, share price calculations, or first depositor advantages?
-        - **TraderOrArbitrageur**: Can they exploit price calculations, slippage, MEV opportunities, or order execution?
-        - **Liquidator**: Can they manipulate collateral ratios, liquidation triggers, or auction mechanics?
-        - **LargeHolder**: Can they use large positions to manipulate markets, governance, or protocol state?
+            1. **Direct Function Calls**:
+            - List all external and public functions
+            - Who can call each function? (anyone, specific roles, only self)
+            - What parameters do they accept?
 
-        ### Privileged or Special Actors
-        - **SignerOrKeyHolder**: Can they abuse delegated permissions, replay signatures, or exploit session key mechanics?
-        - **ModuleOrPlugin**: Can they inject malicious logic via delegatecall, callbacks, or untrusted extensions?
-        - **RelayerOrKeeper**: Can they manipulate transaction ordering, timing, execution, or censor transactions?
-        - **OracleOrPriceFeed**: Can they provide stale, manipulated, or sandwichable price data?
-        - **SmartAccountOrWallet**: Can they exploit wallet-specific logic, signature validation, or multi-call mechanics?
+            2. **Callback/Hook Mechanisms**:
+            - Does the contract call external contracts?
+            - Are there before/after hooks or callbacks?
+            - Can external contracts influence execution flow?
 
-        ### Adversarial External Actors (ALWAYS CONSIDER THESE!)
-        - **TraderOrArbitrageur** (as MEV searcher / mempool observer): Can they monitor mempool, frontrun, sandwich, or extract MEV from pending transactions?
-        - **TraderOrArbitrageur** (as signature extractor): Can they extract valid signatures from FAILED transactions and replay them?
-        - **UnprivilegedUser** (as flash loan attacker): Can they manipulate state with borrowed capital and revert?
-        - **ExternalDefiProtocol** (as malicious contract): Can they exploit callbacks, reentrancy, or cross-contract interactions?
-        - **UnprivilegedUser** (as first interactor): Can they exploit uninitialized state or inflate share prices?
+            3. **Delegatecall Targets**:
+            - Does the contract delegatecall to other contracts?
+            - What storage can delegatecall targets access?
+            - Can delegatecall targets bypass access controls?
 
-        ### Cross-Protocol Actors
-        - **ExternalDefiProtocol**: Can they be manipulated to affect this contract (AMMs, lending markets, yield farms)?
-        - **TokenContract**: Can they use hooks, callbacks, rebasing, or non-standard behavior to exploit?
-        - **BridgeOrMessenger**: Can they replay messages, spoof cross-chain data, or exploit finality assumptions?
-        - **RouterOrAggregator**: Can they route calls maliciously or exploit multicall/batching mechanics?
-        - **VaultOrPool**: Can they manipulate share prices, exchange rates, or accounting invariants?
-        - **ChainInfrastructure**: Can sequencers/validators reorder or censor transactions for profit?
-        - **OffchainService**: Can off-chain services provide malicious payloads, signatures, or proofs?
+            4. **Event Listeners**:
+            - What events does the contract emit?
+            - Who might listen to these events off-chain?
+            - Can event data be used to front-run or exploit?
 
-        ## How to Enumerate Exploitable Capabilities
+            5. **Storage Dependencies**:
+            - Does the contract read from other contracts' storage?
+            - Does it depend on oracles, price feeds, or external state?
+            - Who controls those dependencies?
 
-        For each actor, list capabilities that could be **weaponized for profit or harm**:
+            ---
 
-        ### On-Chain Capabilities
-        - **Function calls**: Which functions can they call? With what parameters?
-        - **Timing control**: Can they choose when to execute (frontrun, delay, sandwich)?
-        - **Amount control**: Can they choose amounts to maximize impact (dust, huge, zero)?
-        - **Recipient control**: Can they redirect funds or benefits to arbitrary addresses?
-        - **State manipulation**: Can they force specific state transitions or bypass checks?
+            ### STEP 2: Identify Role-Based Actors
 
-        ### Off-Chain Capabilities (CRITICAL FOR MEMPOOL ATTACKS!)
-        - **Mempool monitoring**: Can they monitor pending transactions and extract information (signatures, calldata, parameters)?
-        - **Signature extraction from FAILED transactions**: Can they extract valid signatures from transactions that reverted but didn't consume nonces?
-        - **Partial signature replay**: Can they replay extracted signatures with only a subset of the original calls?
-        - **Frontrunning with extracted data**: Can they frontrun original transactions using extracted signatures or calldata?
-        - **Data manipulation**: Can they provide malicious calldata, signatures, or proofs?
+            For each role or privilege level in the contract:
 
-        ### Cross-Contract Capabilities
-        - **External contract influence**: Which external contracts can they control or manipulate?
-        - **Token manipulation**: Can they manipulate token balances, prices, or approvals?
-        - **Oracle manipulation**: Can they influence price feeds or data sources?
-        - **Callback exploitation**: Can they inject malicious logic via callbacks or hooks?
+            1. **Primary Roles**:
+            - Owner, admin, governance
+            - Authorized signers or operators
+            - Token holders or stakers
 
-        ### Economic Capabilities
-        - **Flash loans**: Can they borrow large amounts to manipulate state temporarily?
-        - **Donation attacks**: Can they donate assets to manipulate calculations?
-        - **Liquidity manipulation**: Can they drain or inject liquidity to affect prices?
+            2. **Delegated Roles**:
+            - Session keys or restricted signers
+            - Guardians or recovery agents
+            - Relayers or keepers
 
-        ### Failure & Revert Scenarios (CRITICAL - ALWAYS ANALYZE!)
-        - **Signature validity after revert**: If a transaction reverts, is the signature still valid for replay?
-        - **Nonce consumption on failure**: Are nonces consumed before or after execution? Can failed txs be replayed?
-        - **Partial execution before revert**: Can actor benefit from state changes that occurred before the revert?
-        - **Multi-call atomicity**: If a multi-call transaction fails, can individual calls be extracted and replayed separately?
-        - **Error handling behavior**: Does REVERT_ON_ERROR vs CONTINUE_ON_ERROR affect signature validity or nonce consumption?
+            3. **Implicit Roles**:
+            - Any caller (permissionless functions)
+            - Contract itself (self-calls)
+            - Zero address or special addresses
+
+            For each role, ask:
+            - What can they do directly?
+            - What can they do by combining multiple actions?
+            - What happens if they're malicious or compromised?
+            - What happens if they're removed but retain some access?
+
+            ---
+
+            ### STEP 3: Identify Interaction-Based Actors
+
+            For each external interaction:
+
+            1. **External Contracts Called**:
+            - DeFi protocols (AMMs, lending, bridges)
+            - Token contracts (ERC20, ERC721, ERC1155)
+            - Oracles or price feeds
+            - Other protocol components
+
+            2. **External Contracts Calling In**:
+            - Who can trigger callbacks?
+            - Who can call public functions?
+            - Who can send ETH or tokens?
+
+            3. **Cross-Contract Interactions**:
+            - Can external contracts reenter?
+            - Can they manipulate state between calls?
+            - Can they grief or DoS operations?
+
+            For each external actor, ask:
+            - Can they revert to influence execution flow?
+            - Can they return malicious data?
+            - Can they consume gas to DoS?
+            - Can they donate assets to manipulate logic?
+
+            ---
+
+            ### STEP 4: Identify Temporal/MEV Actors
+
+            For each transaction or operation:
+
+            1. **Mempool Observers**:
+            - Who can see pending transactions?
+            - What information is leaked before execution?
+            - Can they front-run, back-run, or sandwich?
+
+            2. **Failed Transaction Exploiters**:
+            - What happens when transactions revert?
+            - Is state consumed before or after execution?
+            - Can signatures/nonces be reused after revert?
+
+            3. **Cross-Chain Actors**:
+            - Can operations be replayed on other chains?
+            - Are there chain-specific protections?
+            - Can cross-chain state be manipulated?
+
+            4. **Time-Based Actors**:
+            - Who benefits from delays or timelocks?
+            - Can timelocks be bypassed or extended?
+            - Can operations be front-run before expiry?
+
+            ---
+
+            ### STEP 5: Identify Missing Actors Checklist
+
+            Review this checklist to catch commonly missed actors:
+
+            **Storage Manipulation Actors**:
+            - [ ] Delegatecall targets that can write arbitrary storage
+            - [ ] Contracts that can manipulate shared storage slots
+            - [ ] Actors who can corrupt storage via reentrancy
+
+            **Persistence Actors**:
+            - [ ] Actors whose permissions persist after revocation
+            - [ ] Actors who can use old/stale authorizations
+            - [ ] Actors who benefit from missing cleanup logic
+
+            **Race Condition Actors**:
+            - [ ] Actors who can submit concurrent transactions
+            - [ ] Actors who can exploit check-then-act patterns
+            - [ ] Actors who can manipulate state between check and use
+
+            **Callback/Hook Actors**:
+            - [ ] Contracts receiving before/after execution hooks
+            - [ ] Contracts called during critical operations
+            - [ ] Contracts that can revert to grief or manipulate flow
+
+            **Partial Execution Actors**:
+            - [ ] Actors who can extract partial operations from batches
+            - [ ] Actors who benefit from partial success/failure
+            - [ ] Actors who can manipulate error handling flags
+
+            **Off-Chain Actors**:
+            - [ ] Services providing proofs or attestations
+            - [ ] Relayers or bundlers submitting transactions
+            - [ ] Indexers or watchers monitoring events
+
+            **Griefing Actors**:
+            - [ ] Actors who can DoS at low cost
+            - [ ] Actors who can block others' operations
+            - [ ] Actors who profit from causing failures
 
         ## Deliverables
 
