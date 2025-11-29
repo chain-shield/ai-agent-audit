@@ -1,15 +1,13 @@
 
 ## Issue => Proof Steps
 
-Follow these steps, please
+For : H-2 in dedup-audit-r1.md
 
-Honest Assessment:
-1. is the bug IN SCOPE per client scope? see covenant-scope.md 
-2. make sure this bug is not already covered in V12 findings: 
+Deep Dive Assessment:
+1. Do a deep dive: is the bug IN SCOPE per client scope? see brix-scope.md,brix-scope.txt, and brix-docs.md.
+2. If the bug is in scope, then Go through checklist in verify-checklist.md, list each step and why it passes or fails.  If any step fails, stop and report if Bug is INVALID or OUT OF SCOPE. If all steps pass, then label the bug as VALID and assign severity.  
+3. Save valid bugs to verified-findings.md
 
-if its in scope then...
-2. honest assessment: is bug legit? 
-Go through checklist in verify-checklist.md, list each step and why it passes or fails.
 
 
 2. is the severity level accurately stated? where severity levels are:  High | Medium | Low | informational ?
