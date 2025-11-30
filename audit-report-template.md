@@ -11,6 +11,8 @@ Use the following template for each **High** or **Medium** severity issue you su
 * No icons, no fluff, no background sections.
 * Only **two sections**: Finding Description + Impact & Mitigation. Note sub sections like root cause, exploit path, impact justification will be merged into finding description and impact section.
 * Use GitHub links to **full function blocks**, not individual lines.
+* No need to literally include format hints such as(3–6 concise steps), (1–4 bullets), etc ... in final report.
+* NO augment_code_snippet tags
 
 ### Main Title (One line, high-signal)
 **Format:** *Actionable + specific consequence + key condition*
