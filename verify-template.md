@@ -39,9 +39,11 @@ NOTE: do NOT alter the TestBase files.  make all changes in either PoCLuanchpad.
 If PoC tests confirmes issue then...
 
 5. ->
-Please write up full Poc report following poc-proof/readme.md guidelines. 
-Please include FULL runnable PoC we created in this step , as C4 judges will run it.
-Also include full OUTPUT for test 
+For: 
+Please write up full audit report following audit-report-template.md.  
+
+**NOTE**: please follow template STRICTLY. 
+Word count (excluding code and github links) MUST be under 300 words.
 
 
 ------------------------------------------------------------------
