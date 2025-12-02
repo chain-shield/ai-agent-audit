@@ -82,196 +82,6 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title LibOptim
-/// @author Agustin Aguilar
-/// @notice Library for optimized EVM operations
-library LibOptim {
-
-  /**
-   * @notice Computes the keccak256 hash of two 32-byte inputs.
-   * @dev It uses only scratch memory space.
-   * @param _a The first 32 bytes of the hash.
-   * @param _b The second 32 bytes of the hash.
-   * @return c The keccak256 hash of the two 32-byte inputs.
-   */
-  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
-    assembly {
-      mstore(0, _a)
-      mstore(32, _b)
-      c := keccak256(0, 64)
-    }
-  }
-
-  /**
-   * @notice Returns the return data from the last call.
-   * @return r The return data from the last call.
-   */
-  function returnData() internal pure returns (bytes memory r) {
-    assembly {
-      let size := returndatasize()
-      r := mload(0x40)
-      let start := add(r, 32)
-      mstore(0x40, add(start, size))
-      mstore(r, size)
-      returndatacopy(start, 0, size)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _val The value to send to the contract.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-  /**
-   * @notice Calls another contract with the given parameters, using delegatecall.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
-    }
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title Library for reading data from bytes arrays
-/// @author Agustin Aguilar (aa@horizon.io), Michael Standen (mstan@horizon.io)
-/// @notice This library contains functions for reading data from bytes arrays.
-/// @dev These functions do not check if the input index is within the bounds of the data array.
-/// @dev Reading out of bounds may return dirty values.
-library LibBytes {
-
-  function readFirstUint8(
-    bytes calldata _data
-  ) internal pure returns (uint8 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(_data.offset)
-      a := shr(248, word)
-      newPointer := 1
-    }
-  }
-
-  function readUint8(bytes calldata _data, uint256 _index) internal pure returns (uint8 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(248, word)
-      newPointer := add(_index, 1)
-    }
-  }
-
-  function readUint16(bytes calldata _data, uint256 _index) internal pure returns (uint16 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(240, word)
-      newPointer := add(_index, 2)
-    }
-  }
-
-  function readUint24(bytes calldata _data, uint256 _index) internal pure returns (uint24 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(232, word)
-      newPointer := add(_index, 3)
-    }
-  }
-
-  function readUint64(bytes calldata _data, uint256 _index) internal pure returns (uint64 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(192, word)
-      newPointer := add(_index, 8)
-    }
-  }
-
-  function readUint160(bytes calldata _data, uint256 _index) internal pure returns (uint160 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(96, word)
-      newPointer := add(_index, 20)
-    }
-  }
-
-  function readUint256(bytes calldata _data, uint256 _index) internal pure returns (uint256 a, uint256 newPointer) {
-    assembly {
-      a := calldataload(add(_index, _data.offset))
-      newPointer := add(_index, 32)
-    }
-  }
-
-  function readUintX(
-    bytes calldata _data,
-    uint256 _index,
-    uint256 _length
-  ) internal pure returns (uint256 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      let shift := sub(256, mul(_length, 8))
-      a := and(shr(shift, word), sub(shl(mul(8, _length), 1), 1))
-      newPointer := add(_index, _length)
-    }
-  }
-
-  function readBytes4(bytes calldata _data, uint256 _pointer) internal pure returns (bytes4 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_pointer, _data.offset))
-      a := and(word, 0xffffffff00000000000000000000000000000000000000000000000000000000)
-      newPointer := add(_pointer, 4)
-    }
-  }
-
-  function readBytes32(bytes calldata _data, uint256 _pointer) internal pure returns (bytes32 a, uint256 newPointer) {
-    assembly {
-      a := calldataload(add(_pointer, _data.offset))
-      newPointer := add(_pointer, 32)
-    }
-  }
-
-  function readAddress(bytes calldata _data, uint256 _index) internal pure returns (address a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := and(shr(96, word), 0xffffffffffffffffffffffffffffffffffffffff)
-      newPointer := add(_index, 20)
-    }
-  }
-
-  /// @dev ERC-2098 Compact Signature
-  function readRSVCompact(
-    bytes calldata _data,
-    uint256 _index
-  ) internal pure returns (bytes32 r, bytes32 s, uint8 v, uint256 newPointer) {
-    uint256 yParityAndS;
-    assembly {
-      r := calldataload(add(_index, _data.offset))
-      yParityAndS := calldataload(add(_index, add(_data.offset, 32)))
-      newPointer := add(_index, 64)
-    }
-    uint256 yParity = uint256(yParityAndS >> 255);
-    s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
-    v = uint8(yParity) + 27;
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
 import { LibBytes } from "../utils/LibBytes.sol";
@@ -550,41 +360,192 @@ library Payload {
 
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
 
-import { Storage } from "./Storage.sol";
+/// @title Library for reading data from bytes arrays
+/// @author Agustin Aguilar (aa@horizon.io), Michael Standen (mstan@horizon.io)
+/// @notice This library contains functions for reading data from bytes arrays.
+/// @dev These functions do not check if the input index is within the bounds of the data array.
+/// @dev Reading out of bounds may return dirty values.
+library LibBytes {
 
-abstract contract ReentrancyGuard {
-
-  bytes32 private constant _INITIAL_VALUE = bytes32(0);
-  bytes32 private constant _NOT_ENTERED = bytes32(uint256(1));
-  bytes32 private constant _ENTERED = bytes32(uint256(2));
-
-  /// @dev keccak256("org.sequence.module.reentrancyguard.status")
-  bytes32 private constant STATUS_KEY = bytes32(0xfc6e07e3992c7c3694a921dc9e412b6cfe475380556756a19805a9e3ddfe2fde);
-
-  /// @notice Error thrown when a reentrant call is detected
-  error ReentrantCall();
-
-  /// @notice Prevents a contract from calling itself, directly or indirectly
-  modifier nonReentrant() {
-    // On the first call to nonReentrant
-    // _status will be _NOT_ENTERED or _INITIAL_VALUE
-    if (Storage.readBytes32(STATUS_KEY) == _ENTERED) {
-      revert ReentrantCall();
+  function readFirstUint8(
+    bytes calldata _data
+  ) internal pure returns (uint8 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(_data.offset)
+      a := shr(248, word)
+      newPointer := 1
     }
+  }
 
-    // Any calls to nonReentrant after this point will fail
-    Storage.writeBytes32(STATUS_KEY, _ENTERED);
+  function readUint8(bytes calldata _data, uint256 _index) internal pure returns (uint8 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(248, word)
+      newPointer := add(_index, 1)
+    }
+  }
 
-    _;
+  function readUint16(bytes calldata _data, uint256 _index) internal pure returns (uint16 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(240, word)
+      newPointer := add(_index, 2)
+    }
+  }
 
-    // By storing the original value once again, a refund is triggered (see
-    // https://eips.ethereum.org/EIPS/eip-2200)
-    // Notice that because constructors are not available
-    // we always start with _INITIAL_VALUE, not _NOT_ENTERED
-    Storage.writeBytes32(STATUS_KEY, _NOT_ENTERED);
+  function readUint24(bytes calldata _data, uint256 _index) internal pure returns (uint24 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(232, word)
+      newPointer := add(_index, 3)
+    }
+  }
+
+  function readUint64(bytes calldata _data, uint256 _index) internal pure returns (uint64 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(192, word)
+      newPointer := add(_index, 8)
+    }
+  }
+
+  function readUint160(bytes calldata _data, uint256 _index) internal pure returns (uint160 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(96, word)
+      newPointer := add(_index, 20)
+    }
+  }
+
+  function readUint256(bytes calldata _data, uint256 _index) internal pure returns (uint256 a, uint256 newPointer) {
+    assembly {
+      a := calldataload(add(_index, _data.offset))
+      newPointer := add(_index, 32)
+    }
+  }
+
+  function readUintX(
+    bytes calldata _data,
+    uint256 _index,
+    uint256 _length
+  ) internal pure returns (uint256 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      let shift := sub(256, mul(_length, 8))
+      a := and(shr(shift, word), sub(shl(mul(8, _length), 1), 1))
+      newPointer := add(_index, _length)
+    }
+  }
+
+  function readBytes4(bytes calldata _data, uint256 _pointer) internal pure returns (bytes4 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_pointer, _data.offset))
+      a := and(word, 0xffffffff00000000000000000000000000000000000000000000000000000000)
+      newPointer := add(_pointer, 4)
+    }
+  }
+
+  function readBytes32(bytes calldata _data, uint256 _pointer) internal pure returns (bytes32 a, uint256 newPointer) {
+    assembly {
+      a := calldataload(add(_pointer, _data.offset))
+      newPointer := add(_pointer, 32)
+    }
+  }
+
+  function readAddress(bytes calldata _data, uint256 _index) internal pure returns (address a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := and(shr(96, word), 0xffffffffffffffffffffffffffffffffffffffff)
+      newPointer := add(_index, 20)
+    }
+  }
+
+  /// @dev ERC-2098 Compact Signature
+  function readRSVCompact(
+    bytes calldata _data,
+    uint256 _index
+  ) internal pure returns (bytes32 r, bytes32 s, uint8 v, uint256 newPointer) {
+    uint256 yParityAndS;
+    assembly {
+      r := calldataload(add(_index, _data.offset))
+      yParityAndS := calldataload(add(_index, add(_data.offset, 32)))
+      newPointer := add(_index, 64)
+    }
+    uint256 yParity = uint256(yParityAndS >> 255);
+    s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
+    v = uint8(yParity) + 27;
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title LibOptim
+/// @author Agustin Aguilar
+/// @notice Library for optimized EVM operations
+library LibOptim {
+
+  /**
+   * @notice Computes the keccak256 hash of two 32-byte inputs.
+   * @dev It uses only scratch memory space.
+   * @param _a The first 32 bytes of the hash.
+   * @param _b The second 32 bytes of the hash.
+   * @return c The keccak256 hash of the two 32-byte inputs.
+   */
+  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
+    assembly {
+      mstore(0, _a)
+      mstore(32, _b)
+      c := keccak256(0, 64)
+    }
+  }
+
+  /**
+   * @notice Returns the return data from the last call.
+   * @return r The return data from the last call.
+   */
+  function returnData() internal pure returns (bytes memory r) {
+    assembly {
+      let size := returndatasize()
+      r := mload(0x40)
+      let start := add(r, 32)
+      mstore(0x40, add(start, size))
+      mstore(r, size)
+      returndatacopy(start, 0, size)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _val The value to send to the contract.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters, using delegatecall.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
+    }
   }
 
 }
@@ -711,6 +672,81 @@ abstract contract Calls is ReentrancyGuard, BaseAuth, Nonce {
       emit CallSucceeded(_opHash, i);
     }
   }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Storage } from "./Storage.sol";
+
+/// @title Nonce
+/// @author Agustin Aguilar
+/// @notice Manages the nonce of the wallet
+contract Nonce {
+
+  /// @notice Emitted when the nonce is changed
+  event NonceChange(uint256 _space, uint256 _newNonce);
+
+  /// @notice Error thrown when the nonce is bad
+  error BadNonce(uint256 _space, uint256 _provided, uint256 _current);
+
+  /// @dev keccak256("org.arcadeum.module.calls.nonce")
+  bytes32 private constant NONCE_KEY = bytes32(0x8d0bf1fd623d628c741362c1289948e57b3e2905218c676d3e69abee36d6ae2e);
+
+  /// @notice Read the nonce
+  /// @param _space The space
+  /// @return nonce The nonce
+  function readNonce(
+    uint256 _space
+  ) public view virtual returns (uint256) {
+    return uint256(Storage.readBytes32Map(NONCE_KEY, bytes32(_space)));
+  }
+
+  function _writeNonce(uint256 _space, uint256 _nonce) internal {
+    Storage.writeBytes32Map(NONCE_KEY, bytes32(_space), bytes32(_nonce));
+  }
+
+  function _consumeNonce(uint256 _space, uint256 _nonce) internal {
+    uint256 currentNonce = readNonce(_space);
+    if (currentNonce != _nonce) {
+      revert BadNonce(_space, _nonce, currentNonce);
+    }
+
+    unchecked {
+      uint256 newNonce = _nonce + 1;
+
+      _writeNonce(_space, newNonce);
+      emit NonceChange(_space, newNonce);
+      return;
+    }
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+/// @title IDelegatedExtension
+/// @author Agustin Aguilar
+/// @notice Interface for the delegated extension module
+interface IDelegatedExtension {
+
+  /// @notice Handle a sequence delegate call
+  /// @param _opHash The operation hash
+  /// @param _startingGas The starting gas
+  /// @param _index The index
+  /// @param _numCalls The number of calls
+  /// @param _space The space
+  /// @param _data The data
+  function handleSequenceDelegateCall(
+    bytes32 _opHash,
+    uint256 _startingGas,
+    uint256 _index,
+    uint256 _numCalls,
+    uint256 _space,
+    bytes calldata _data
+  ) external;
 
 }
 
@@ -889,78 +925,42 @@ abstract contract BaseAuth is IAuth, IPartialAuth, ISapient, IERC1271, SelfAuth 
 
 }
 
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
 import { Storage } from "./Storage.sol";
 
-/// @title Nonce
-/// @author Agustin Aguilar
-/// @notice Manages the nonce of the wallet
-contract Nonce {
+abstract contract ReentrancyGuard {
 
-  /// @notice Emitted when the nonce is changed
-  event NonceChange(uint256 _space, uint256 _newNonce);
+  bytes32 private constant _INITIAL_VALUE = bytes32(0);
+  bytes32 private constant _NOT_ENTERED = bytes32(uint256(1));
+  bytes32 private constant _ENTERED = bytes32(uint256(2));
 
-  /// @notice Error thrown when the nonce is bad
-  error BadNonce(uint256 _space, uint256 _provided, uint256 _current);
+  /// @dev keccak256("org.sequence.module.reentrancyguard.status")
+  bytes32 private constant STATUS_KEY = bytes32(0xfc6e07e3992c7c3694a921dc9e412b6cfe475380556756a19805a9e3ddfe2fde);
 
-  /// @dev keccak256("org.arcadeum.module.calls.nonce")
-  bytes32 private constant NONCE_KEY = bytes32(0x8d0bf1fd623d628c741362c1289948e57b3e2905218c676d3e69abee36d6ae2e);
+  /// @notice Error thrown when a reentrant call is detected
+  error ReentrantCall();
 
-  /// @notice Read the nonce
-  /// @param _space The space
-  /// @return nonce The nonce
-  function readNonce(
-    uint256 _space
-  ) public view virtual returns (uint256) {
-    return uint256(Storage.readBytes32Map(NONCE_KEY, bytes32(_space)));
-  }
-
-  function _writeNonce(uint256 _space, uint256 _nonce) internal {
-    Storage.writeBytes32Map(NONCE_KEY, bytes32(_space), bytes32(_nonce));
-  }
-
-  function _consumeNonce(uint256 _space, uint256 _nonce) internal {
-    uint256 currentNonce = readNonce(_space);
-    if (currentNonce != _nonce) {
-      revert BadNonce(_space, _nonce, currentNonce);
+  /// @notice Prevents a contract from calling itself, directly or indirectly
+  modifier nonReentrant() {
+    // On the first call to nonReentrant
+    // _status will be _NOT_ENTERED or _INITIAL_VALUE
+    if (Storage.readBytes32(STATUS_KEY) == _ENTERED) {
+      revert ReentrantCall();
     }
 
-    unchecked {
-      uint256 newNonce = _nonce + 1;
+    // Any calls to nonReentrant after this point will fail
+    Storage.writeBytes32(STATUS_KEY, _ENTERED);
 
-      _writeNonce(_space, newNonce);
-      emit NonceChange(_space, newNonce);
-      return;
-    }
+    _;
+
+    // By storing the original value once again, a refund is triggered (see
+    // https://eips.ethereum.org/EIPS/eip-2200)
+    // Notice that because constructors are not available
+    // we always start with _INITIAL_VALUE, not _NOT_ENTERED
+    Storage.writeBytes32(STATUS_KEY, _NOT_ENTERED);
   }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-/// @title IDelegatedExtension
-/// @author Agustin Aguilar
-/// @notice Interface for the delegated extension module
-interface IDelegatedExtension {
-
-  /// @notice Handle a sequence delegate call
-  /// @param _opHash The operation hash
-  /// @param _startingGas The starting gas
-  /// @param _index The index
-  /// @param _numCalls The number of calls
-  /// @param _space The space
-  /// @param _data The data
-  function handleSequenceDelegateCall(
-    bytes32 _opHash,
-    uint256 _startingGas,
-    uint256 _index,
-    uint256 _numCalls,
-    uint256 _space,
-    bytes calldata _data
-  ) external;
 
 }
 

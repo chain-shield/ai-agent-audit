@@ -1,7 +1,7 @@
 use std::fs;
 
 use crate::{
-    llm_review::contract_file_map::{get_file_from_contract, ContractType},
+    llm_review::contract::contract_file_map::{ContractType, get_file_from_contract},
     prepare_code::git_clone::RepoPaths,
     utils::contract_name_check::has_non_mock_contract,
 };

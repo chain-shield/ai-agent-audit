@@ -88,50 +88,179 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 
 "#;
 
-pub const CODE4RENA_SEVERITY_RUBRIC_OLD: &str = r#"
+pub const PRIVATE_CLIENT_SEVERITY_RUBRIC: &str = r#"
 
- Severity       | Typical Impact 
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **High**       | **Direct, permissionless monetary or control loss**:  
-- Permanent theft/drain of funds (vault, pool, treasury)  
-- Inflation/mint exploits (share inflation, reward overclaim with immediate cashout, unbounded mint)  
-- **Reward redirection/distortion with immediate extractable value** (e.g., unauthorized validator/score/delegation that increases attacker’s payouts or diverts others’ rewards; governance/voting-power hijack that changes payout policy)  
-- Permanent freezing/bricking of funds (withdrawals impossible)  
-- Oracle/price manipulation enabling profitable trades or draining reserves  
-- Arbitrary code execution / delegatecall takeover  
-- Governance capture or voting-power theft  
-- Critical ERC standard violation that enables theft or loss of redeemability (e.g., burn bypass that desynchronizes balances vs. totalSupply in a way that lets attacker cash out) |
-    
-| **Medium**     | **Convincing, repeatable permissionless exploit that needs admin intervention to fix**:  
-- Temporary DoS of core user flows (deposits/withdrawals paused or blocked)  
-- **Reward distortion that is bounded/temporary or needs admin repair** (e.g., mis-weighted rewards that don’t allow immediate cashout or are limited to a small window until config is fixed)  
-- Oracle/math skew that misprices swaps, collateral, or rewards with $$ impact but not a direct drain  
-- Accounting errors causing balance mismatches, temporary fund lockups, or reversible asset misallocation  
-- Token assumption breaks (fee-on-transfer/rebase/decimals) causing stuck funds or under/overpayment but fixable by admin/state repair  
-- Unbounded gas growth that blocks execution until admin cleanup |
+# PRIVATE_CLIENT – Severity Classifications
 
-| **Low**        | **Griefing / minor safety issues**:  
-- Edge-case DoS (requires attacker to burn gas, little systemic impact)  
-- Mild precision drift (rounding pennies, no extractable gain)  
-- Best-practice deviations (reentrancy guard missing but no impact, unchecked SafeERC20 return that only causes revert)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-- User mistake: avoidable self-loss with no attacker profit or protocol risk (e.g., sending ETH to non-productive path with no refund), mitigable via pre-checks or documented constraints.
+This rubric defines how vulnerabilities are classified during a private audit engagement with PRIVATE_CLIENT.  
+Unlike competitive audit platforms (e.g., Code4rena), PRIVATE_CLIENT uses a **broader and more realistic threat model**, where governance and admin compromise **are valid attack surfaces** unless explicitly declared otherwise.
 
-| **Gas / Info** | **Non-payable noise**:  
-- Gas optimizations  
-- NatSpec, comments, documentation errors  
-- Style/clarity issues                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-"#;
+---
 
-pub const DEFAULT_SEVERITY_RUBRIC: &str = r#"
+# Core Concepts
 
-| Severity     | Typical impact examples                                                                                                                                                                                                            | What it signals to the team               |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| **Critical** | - Direct theft of any funds - Permanent, **total** loss or control of all user or protocol funds - Arbitrary code execution                                                                                                  | “Drop everything—patch immediately.”      |
-| **High**     | - **Permanent freezing** or bricking of user or protocol funds (can’t be reversed without privileged migration) - Loss of governance control - Logic that lets an attacker mint/ burn / drain but under specific constraints | “Must fix before next release / upgrade.” |
-| **Medium**   | - Temporary loss (funds stuck until admin action) - Convincing grief / DoS that makes the protocol unusable - Oracle or math bugs that skew accounting but don’t directly drain value                                        | “Important, schedule a patch.”            |
-| **Low**      | - Minor economic grief (extra gas, incorrect event data) - Edge-case DoS that requires unusual conditions - Best-practice deviations with limited real-world impact                                                          | “Fix in regular development cycle.”       |
-| **Insight**  | Code cleanliness, documentation issues, minor style or test suggestions                                                                                                                                                            | “Nice-to-have, no security impact.”       |
+**Assets** = user or protocol funds, NFTs, protocol value/ownership, positions, authorization rights, confidential data, and governance power.
 
+**Privileged Roles** = owner, admin, governor, guardian, multisig signers, upgrade executors, or any role with meaningful authority.
+
+**Threat Model**  
+Privileged roles are **not automatically trusted**. They are trusted **only if PRIVATE_CLIENT explicitly declares them trusted.**  
+Otherwise, admin compromise, governance capture, or malicious privileged actions are considered valid threats.
+
+---
+
+# Severity Levels
+
+## High (3)
+
+A finding is **High** if:
+
+- Assets, user positions, or protocol control/governance can be *stolen, frozen, seized, destroyed,* or *arbitrarily modified* through a valid attack path, including:
+  - **Malicious admin / governance actions** enabled by poor design (e.g., no timelock, upgrade without checks, unrestricted sweeping).
+  - **Admin error** (misconfig) that can cause catastrophic, irreversible loss.
+  - **Governance capture** due to arithmetic mistakes, low quorum, or unsafe voting logic.
+  - **Critical user-error pathways** that arise from unsafe contract design (not “stupid users,” but foreseeable normal actions causing catastrophic loss).
+
+High = direct or systemic loss of funds or control.
+
+---
+
+## Medium (2)
+
+A finding is **Medium** if:
+
+- It cannot directly steal all assets but can significantly:
+  - disrupt protocol operation,
+  - block core features,
+  - cause partial asset loss,
+  - inflict serious griefing or DoS,
+  - misconfigure governance,
+  - or create meaningful economic risk.
+
+Includes:
+
+- Governance risks that can cause protocol-wide malfunction.
+- User-facing issues where a typical user may lose funds due to unclear/ambiguous parameterization enabled by contract design.
+- Loss of **unmatured yield** or long-tail exploit conditions.
+
+Medium = meaningful but not existential risk.
+
+---
+
+## QA / Low
+
+A finding is **Low (QA)** if:
+
+- It has no meaningful asset risk.
+- It reflects minor state issues, UI/readability, spec mismatches, or stylistic problems.
+- It relates exclusively to **purely social risk**:
+  - “Admin could rug because they’re admin”
+  - “Token voters might act irrationally”
+- It requires clearly **unreasonable user behavior**.
+- It stems from external non-standard token behavior unless PRIVATE_CLIENT explicitly supports such tokens.
+- It concerns view-only functions or event cosmetics without functional impact.
+
+Low = no material security or economic impact.
+
+---
+
+# Detailed Rules
+
+## Loss of Assets
+
+- **Real asset loss** → High or Medium based on exploit conditions.
+- **Dust-level discrepancies** or rounding errors → Low.
+
+---
+
+## Yield Loss
+
+- **Matured yield** (already-earned rewards) = High/Medium depending on conditions.
+- **Dust yield loss** = Low.
+- **Unmatured/in-motion yield** = capped at Medium.
+
+---
+
+# Governance & Privileged Roles
+
+PRIVATE_CLIENT audits treat governance/privileged roles **as part of the attack surface** unless the client explicitly marks them as trusted.
+
+### Valid High / Medium Governance Findings
+- Missing or bypassable timelocks.
+- Upgrades that allow arbitrary logic replacement without safe delays.
+- Privilege escalation or unintended authority gain.
+- Ability for compromised admin key to drain or freeze funds due to missing safeguards.
+- Governance arithmetic bugs enabling vote manipulation or takeover.
+- Admin misconfiguration routes that can brick, drain, or disrupt protocol.
+
+### QA / Low Governance Findings
+- “Admin could rug because they are admin.”
+- “Governance token holders may vote poorly.”
+- Issues only reachable through *reckless* or *malicious* admin misuse **when admin is explicitly marked trusted**.
+
+---
+
+# User Mistake vs. User-Induced Design Failure
+
+### Valid H/M (Design Failure)
+User loss occurs through:
+- Expected UI flow,
+- Typical transaction parameters,
+- Reasonable usage assumptions,
+- OR lack of guardrails where common mistakes lead to catastrophic outcomes.
+
+Examples:
+- Setting slippage to 0 causes guaranteed fund loss due to contract design.
+- Signing a permit with no nonce/deadline protection enables replay and fund theft.
+
+### Low/QA (User Fault)
+- Pure phishing,
+- Signing arbitrary data from unknown websites,
+- Sending tokens to the wrong address,
+- Ignoring explicit warnings.
+
+---
+
+# Non-Standard / Fee-on-Transfer Tokens
+
+- Out of scope **unless** PRIVATE_CLIENT declares explicit support.
+- USDT and other widely-used non-standard tokens may be treated as in-scope if the protocol interacts with them.
+
+---
+
+# View Functions
+
+- Unused or non-critical view functions = Low.
+- View functions feeding critical off-chain automation = severity matches the impact of the dependent process.
+
+---
+
+# Out-of-Scope Libraries
+
+- Root cause in a 3rd-party dependency = OOS.
+- Incorrect usage of the dependency inside in-scope code = Valid.
+
+---
+
+# Speculation on Future Code
+
+- Must be tied to a real root cause in current code.
+- Severity depends on realism of the scenario and the impact if triggered.
+
+---
+
+# Event-Related Impacts
+
+- Events used in bridging/proofs/automation: severity = impact of the affected process.
+- Non-compliance with standard event formats = severity based on functional impact.
+- Cosmetic or readability issues = Low.
+
+---
+
+# Approve Race Condition
+
+- The classic `approve` front-run issue is not a valid vulnerability on its own.
+- Using `approve` / `increaseAllowance` / `safeApprove` is not, by itself, a bug.
 
 "#;
 

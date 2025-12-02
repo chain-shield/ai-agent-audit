@@ -24,13 +24,15 @@ use crate::{
     },
     cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::{
-        contract_category::{generate_formated_list_of_contract_categories, ContractCategory},
-        enums::{all_enum_variants, generate_enum_list, AgentMetadata},
+        agent::agent_enums::{all_enum_variants, generate_enum_list, AgentMetadata},
+        contract::contract_category::{
+            generate_formated_list_of_contract_categories, ContractCategory,
+        },
     },
     prepare_code::git_clone::RepoPaths,
     utils::{contract_name_check::has_non_mock_contract, extract_retry::extractor_with_retry},
 };
-use crate::{llm_review::context_state, utils::check_folder_name::is_script_file};
+use crate::{llm_review::analysis::context_state, utils::check_folder_name::is_script_file};
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumString, strum_macros::Display)]
 pub enum FileSummaryType {
@@ -69,7 +71,7 @@ pub async fn summarize_src_files(
     repo: &RepoPaths,
     semantics_path: &Path,
 ) -> Result<Vec<SrcFileSummary>> {
-    summarize_src_files_with_model(repo, semantics_path, "gpt-5-mini").await
+    summarize_src_files_with_model(repo, semantics_path, "gpt-5").await
 }
 
 pub async fn summarize_src_files_with_model(

@@ -427,124 +427,122 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
+pragma solidity ^0.8.18;
 
-import { LibBytes } from "../../../utils/LibBytes.sol";
-import { ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX } from "./ISignalsImplicitMode.sol";
+/// @title Library for reading data from bytes arrays
+/// @author Agustin Aguilar (aa@horizon.io), Michael Standen (mstan@horizon.io)
+/// @notice This library contains functions for reading data from bytes arrays.
+/// @dev These functions do not check if the input index is within the bounds of the data array.
+/// @dev Reading out of bounds may return dirty values.
+library LibBytes {
 
-using LibBytes for bytes;
-
-/// @notice Attestation for a specific session
-/// @param approvedSigner Address of the approved signer
-/// @param identityType Identity type
-/// @param issuerHash Hash of the issuer
-/// @param audienceHash Hash of the audience
-/// @param applicationData Unspecified application data
-/// @param authData Auth data
-struct Attestation {
-  address approvedSigner;
-  bytes4 identityType;
-  bytes32 issuerHash;
-  bytes32 audienceHash;
-  bytes applicationData;
-  AuthData authData;
-}
-
-/// @notice Auth data for an attestation
-/// @param redirectUrl Authorization redirect URL
-/// @param issuedAt Timestamp of the attestation issuance
-struct AuthData {
-  string redirectUrl;
-  uint64 issuedAt;
-}
-
-/// @title LibAttestation
-/// @author Michael Standen
-/// @notice Library for attestation management
-library LibAttestation {
-
-  /// @notice Hashes an attestation
-  function toHash(
-    Attestation memory attestation
-  ) internal pure returns (bytes32) {
-    return keccak256(toPacked(attestation));
+  function readFirstUint8(
+    bytes calldata _data
+  ) internal pure returns (uint8 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(_data.offset)
+      a := shr(248, word)
+      newPointer := 1
+    }
   }
 
-  /// @notice Decodes an attestation from a packed bytes array
-  /// @param encoded The packed bytes array
-  /// @param pointer The pointer to the start of the attestation
-  /// @return attestation The decoded attestation
-  /// @return newPointer The new pointer to the end of the attestation
-  function fromPacked(
-    bytes calldata encoded,
-    uint256 pointer
-  ) internal pure returns (Attestation memory attestation, uint256 newPointer) {
-    newPointer = pointer;
-    (attestation.approvedSigner, newPointer) = encoded.readAddress(newPointer);
-    (attestation.identityType, newPointer) = encoded.readBytes4(newPointer);
-    (attestation.issuerHash, newPointer) = encoded.readBytes32(newPointer);
-    (attestation.audienceHash, newPointer) = encoded.readBytes32(newPointer);
-    // Application data (arbitrary bytes)
-    uint256 dataSize;
-    (dataSize, newPointer) = encoded.readUint24(newPointer);
-    attestation.applicationData = encoded[newPointer:newPointer + dataSize];
-    newPointer += dataSize;
-    // Auth data
-    (attestation.authData, newPointer) = fromPackedAuthData(encoded, newPointer);
-    return (attestation, newPointer);
+  function readUint8(bytes calldata _data, uint256 _index) internal pure returns (uint8 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(248, word)
+      newPointer := add(_index, 1)
+    }
   }
 
-  /// @notice Decodes the auth data from a packed bytes
-  /// @param encoded The packed bytes containing the auth data
-  /// @param pointer The pointer to the start of the auth data within the encoded data
-  /// @return authData The decoded auth data
-  /// @return newPointer The pointer to the end of the auth data within the encoded data
-  function fromPackedAuthData(
-    bytes calldata encoded,
-    uint256 pointer
-  ) internal pure returns (AuthData memory authData, uint256 newPointer) {
-    uint24 redirectUrlLength;
-    (redirectUrlLength, pointer) = encoded.readUint24(pointer);
-    authData.redirectUrl = string(encoded[pointer:pointer + redirectUrlLength]);
-    pointer += redirectUrlLength;
-    (authData.issuedAt, pointer) = encoded.readUint64(pointer);
-    return (authData, pointer);
+  function readUint16(bytes calldata _data, uint256 _index) internal pure returns (uint16 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(240, word)
+      newPointer := add(_index, 2)
+    }
   }
 
-  /// @notice Encodes an attestation into a packed bytes array
-  /// @param attestation The attestation to encode
-  /// @return encoded The packed bytes array
-  function toPacked(
-    Attestation memory attestation
-  ) internal pure returns (bytes memory encoded) {
-    return abi.encodePacked(
-      attestation.approvedSigner,
-      attestation.identityType,
-      attestation.issuerHash,
-      attestation.audienceHash,
-      uint24(attestation.applicationData.length),
-      attestation.applicationData,
-      toPackAuthData(attestation.authData)
-    );
+  function readUint24(bytes calldata _data, uint256 _index) internal pure returns (uint24 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(232, word)
+      newPointer := add(_index, 3)
+    }
   }
 
-  /// @notice Encodes the auth data into a packed bytes array
-  /// @param authData The auth data to encode
-  /// @return encoded The packed bytes array
-  function toPackAuthData(
-    AuthData memory authData
-  ) internal pure returns (bytes memory encoded) {
-    return abi.encodePacked(uint24(bytes(authData.redirectUrl).length), bytes(authData.redirectUrl), authData.issuedAt);
+  function readUint64(bytes calldata _data, uint256 _index) internal pure returns (uint64 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(192, word)
+      newPointer := add(_index, 8)
+    }
   }
 
-  /// @notice Generates the implicit request magic return value
-  /// @param attestation The attestation
-  /// @param wallet The wallet
-  /// @return magic The expected implicit request magic
-  function generateImplicitRequestMagic(Attestation memory attestation, address wallet) internal pure returns (bytes32) {
-    return keccak256(
-      abi.encodePacked(ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX, wallet, attestation.audienceHash, attestation.issuerHash)
-    );
+  function readUint160(bytes calldata _data, uint256 _index) internal pure returns (uint160 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := shr(96, word)
+      newPointer := add(_index, 20)
+    }
+  }
+
+  function readUint256(bytes calldata _data, uint256 _index) internal pure returns (uint256 a, uint256 newPointer) {
+    assembly {
+      a := calldataload(add(_index, _data.offset))
+      newPointer := add(_index, 32)
+    }
+  }
+
+  function readUintX(
+    bytes calldata _data,
+    uint256 _index,
+    uint256 _length
+  ) internal pure returns (uint256 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      let shift := sub(256, mul(_length, 8))
+      a := and(shr(shift, word), sub(shl(mul(8, _length), 1), 1))
+      newPointer := add(_index, _length)
+    }
+  }
+
+  function readBytes4(bytes calldata _data, uint256 _pointer) internal pure returns (bytes4 a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_pointer, _data.offset))
+      a := and(word, 0xffffffff00000000000000000000000000000000000000000000000000000000)
+      newPointer := add(_pointer, 4)
+    }
+  }
+
+  function readBytes32(bytes calldata _data, uint256 _pointer) internal pure returns (bytes32 a, uint256 newPointer) {
+    assembly {
+      a := calldataload(add(_pointer, _data.offset))
+      newPointer := add(_pointer, 32)
+    }
+  }
+
+  function readAddress(bytes calldata _data, uint256 _index) internal pure returns (address a, uint256 newPointer) {
+    assembly {
+      let word := calldataload(add(_index, _data.offset))
+      a := and(shr(96, word), 0xffffffffffffffffffffffffffffffffffffffff)
+      newPointer := add(_index, 20)
+    }
+  }
+
+  /// @dev ERC-2098 Compact Signature
+  function readRSVCompact(
+    bytes calldata _data,
+    uint256 _index
+  ) internal pure returns (bytes32 r, bytes32 s, uint8 v, uint256 newPointer) {
+    uint256 yParityAndS;
+    assembly {
+      r := calldataload(add(_index, _data.offset))
+      yParityAndS := calldataload(add(_index, add(_data.offset, 32)))
+      newPointer := add(_index, 64)
+    }
+    uint256 yParity = uint256(yParityAndS >> 255);
+    s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
+    v = uint8(yParity) + 27;
   }
 
 }
@@ -658,6 +656,75 @@ library LibPermission {
     uint8 operationCumulative = (uint8(rule.operation) << 1) | (rule.cumulative ? 1 : 0);
 
     return abi.encodePacked(operationCumulative, rule.value, rule.offset, rule.mask);
+  }
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title LibOptim
+/// @author Agustin Aguilar
+/// @notice Library for optimized EVM operations
+library LibOptim {
+
+  /**
+   * @notice Computes the keccak256 hash of two 32-byte inputs.
+   * @dev It uses only scratch memory space.
+   * @param _a The first 32 bytes of the hash.
+   * @param _b The second 32 bytes of the hash.
+   * @return c The keccak256 hash of the two 32-byte inputs.
+   */
+  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
+    assembly {
+      mstore(0, _a)
+      mstore(32, _b)
+      c := keccak256(0, 64)
+    }
+  }
+
+  /**
+   * @notice Returns the return data from the last call.
+   * @return r The return data from the last call.
+   */
+  function returnData() internal pure returns (bytes memory r) {
+    assembly {
+      let size := returndatasize()
+      r := mload(0x40)
+      let start := add(r, 32)
+      mstore(0x40, add(start, size))
+      mstore(r, size)
+      returndatacopy(start, 0, size)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _val The value to send to the contract.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
+    }
+  }
+
+  /**
+   * @notice Calls another contract with the given parameters, using delegatecall.
+   * @dev This method doesn't increase the memory pointer.
+   * @param _to The address of the contract to call.
+   * @param _gas The amount of gas to provide for the call.
+   * @param _data The data to send to the contract.
+   * @return r The success status of the call.
+   */
+  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
+    assembly {
+      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
+    }
   }
 
 }
@@ -942,192 +1009,152 @@ library Payload {
 }
 
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
+pragma solidity ^0.8.27;
 
-/// @title LibOptim
-/// @author Agustin Aguilar
-/// @notice Library for optimized EVM operations
-library LibOptim {
+import { LibBytes } from "../../../utils/LibBytes.sol";
+import { ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX } from "./ISignalsImplicitMode.sol";
 
-  /**
-   * @notice Computes the keccak256 hash of two 32-byte inputs.
-   * @dev It uses only scratch memory space.
-   * @param _a The first 32 bytes of the hash.
-   * @param _b The second 32 bytes of the hash.
-   * @return c The keccak256 hash of the two 32-byte inputs.
-   */
-  function fkeccak256(bytes32 _a, bytes32 _b) internal pure returns (bytes32 c) {
-    assembly {
-      mstore(0, _a)
-      mstore(32, _b)
-      c := keccak256(0, 64)
-    }
+using LibBytes for bytes;
+
+/// @notice Attestation for a specific session
+/// @param approvedSigner Address of the approved signer
+/// @param identityType Identity type
+/// @param issuerHash Hash of the issuer
+/// @param audienceHash Hash of the audience
+/// @param applicationData Unspecified application data
+/// @param authData Auth data
+struct Attestation {
+  address approvedSigner;
+  bytes4 identityType;
+  bytes32 issuerHash;
+  bytes32 audienceHash;
+  bytes applicationData;
+  AuthData authData;
+}
+
+/// @notice Auth data for an attestation
+/// @param redirectUrl Authorization redirect URL
+/// @param issuedAt Timestamp of the attestation issuance
+struct AuthData {
+  string redirectUrl;
+  uint64 issuedAt;
+}
+
+/// @title LibAttestation
+/// @author Michael Standen
+/// @notice Library for attestation management
+library LibAttestation {
+
+  /// @notice Hashes an attestation
+  function toHash(
+    Attestation memory attestation
+  ) internal pure returns (bytes32) {
+    return keccak256(toPacked(attestation));
   }
 
-  /**
-   * @notice Returns the return data from the last call.
-   * @return r The return data from the last call.
-   */
-  function returnData() internal pure returns (bytes memory r) {
-    assembly {
-      let size := returndatasize()
-      r := mload(0x40)
-      let start := add(r, 32)
-      mstore(0x40, add(start, size))
-      mstore(r, size)
-      returndatacopy(start, 0, size)
-    }
+  /// @notice Decodes an attestation from a packed bytes array
+  /// @param encoded The packed bytes array
+  /// @param pointer The pointer to the start of the attestation
+  /// @return attestation The decoded attestation
+  /// @return newPointer The new pointer to the end of the attestation
+  function fromPacked(
+    bytes calldata encoded,
+    uint256 pointer
+  ) internal pure returns (Attestation memory attestation, uint256 newPointer) {
+    newPointer = pointer;
+    (attestation.approvedSigner, newPointer) = encoded.readAddress(newPointer);
+    (attestation.identityType, newPointer) = encoded.readBytes4(newPointer);
+    (attestation.issuerHash, newPointer) = encoded.readBytes32(newPointer);
+    (attestation.audienceHash, newPointer) = encoded.readBytes32(newPointer);
+    // Application data (arbitrary bytes)
+    uint256 dataSize;
+    (dataSize, newPointer) = encoded.readUint24(newPointer);
+    attestation.applicationData = encoded[newPointer:newPointer + dataSize];
+    newPointer += dataSize;
+    // Auth data
+    (attestation.authData, newPointer) = fromPackedAuthData(encoded, newPointer);
+    return (attestation, newPointer);
   }
 
-  /**
-   * @notice Calls another contract with the given parameters.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _val The value to send to the contract.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function call(address _to, uint256 _val, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := call(_gas, _to, _val, add(_data, 32), mload(_data), 0, 0)
-    }
+  /// @notice Decodes the auth data from a packed bytes
+  /// @param encoded The packed bytes containing the auth data
+  /// @param pointer The pointer to the start of the auth data within the encoded data
+  /// @return authData The decoded auth data
+  /// @return newPointer The pointer to the end of the auth data within the encoded data
+  function fromPackedAuthData(
+    bytes calldata encoded,
+    uint256 pointer
+  ) internal pure returns (AuthData memory authData, uint256 newPointer) {
+    uint24 redirectUrlLength;
+    (redirectUrlLength, pointer) = encoded.readUint24(pointer);
+    authData.redirectUrl = string(encoded[pointer:pointer + redirectUrlLength]);
+    pointer += redirectUrlLength;
+    (authData.issuedAt, pointer) = encoded.readUint64(pointer);
+    return (authData, pointer);
   }
 
-  /**
-   * @notice Calls another contract with the given parameters, using delegatecall.
-   * @dev This method doesn't increase the memory pointer.
-   * @param _to The address of the contract to call.
-   * @param _gas The amount of gas to provide for the call.
-   * @param _data The data to send to the contract.
-   * @return r The success status of the call.
-   */
-  function delegatecall(address _to, uint256 _gas, bytes memory _data) internal returns (bool r) {
-    assembly {
-      r := delegatecall(_gas, _to, add(_data, 32), mload(_data), 0, 0)
-    }
+  /// @notice Encodes an attestation into a packed bytes array
+  /// @param attestation The attestation to encode
+  /// @return encoded The packed bytes array
+  function toPacked(
+    Attestation memory attestation
+  ) internal pure returns (bytes memory encoded) {
+    return abi.encodePacked(
+      attestation.approvedSigner,
+      attestation.identityType,
+      attestation.issuerHash,
+      attestation.audienceHash,
+      uint24(attestation.applicationData.length),
+      attestation.applicationData,
+      toPackAuthData(attestation.authData)
+    );
+  }
+
+  /// @notice Encodes the auth data into a packed bytes array
+  /// @param authData The auth data to encode
+  /// @return encoded The packed bytes array
+  function toPackAuthData(
+    AuthData memory authData
+  ) internal pure returns (bytes memory encoded) {
+    return abi.encodePacked(uint24(bytes(authData.redirectUrl).length), bytes(authData.redirectUrl), authData.issuedAt);
+  }
+
+  /// @notice Generates the implicit request magic return value
+  /// @param attestation The attestation
+  /// @param wallet The wallet
+  /// @return magic The expected implicit request magic
+  function generateImplicitRequestMagic(Attestation memory attestation, address wallet) internal pure returns (bytes32) {
+    return keccak256(
+      abi.encodePacked(ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX, wallet, attestation.audienceHash, attestation.issuerHash)
+    );
   }
 
 }
 
 // SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
+pragma solidity ^0.8.27;
 
-/// @title Library for reading data from bytes arrays
-/// @author Agustin Aguilar (aa@horizon.io), Michael Standen (mstan@horizon.io)
-/// @notice This library contains functions for reading data from bytes arrays.
-/// @dev These functions do not check if the input index is within the bounds of the data array.
-/// @dev Reading out of bounds may return dirty values.
-library LibBytes {
+import { Payload } from "../../../modules/Payload.sol";
+import { Attestation } from "./Attestation.sol";
 
-  function readFirstUint8(
-    bytes calldata _data
-  ) internal pure returns (uint8 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(_data.offset)
-      a := shr(248, word)
-      newPointer := 1
-    }
-  }
+/// @dev Magic prefix for the implicit request
+bytes32 constant ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX = keccak256(abi.encodePacked("acceptImplicitRequest"));
 
-  function readUint8(bytes calldata _data, uint256 _index) internal pure returns (uint8 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(248, word)
-      newPointer := add(_index, 1)
-    }
-  }
+/// @title ISignalsImplicitMode
+/// @author Agustin Aguilar, Michael Standen
+/// @notice Interface for the contracts that support implicit mode validation
+interface ISignalsImplicitMode {
 
-  function readUint16(bytes calldata _data, uint256 _index) internal pure returns (uint16 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(240, word)
-      newPointer := add(_index, 2)
-    }
-  }
-
-  function readUint24(bytes calldata _data, uint256 _index) internal pure returns (uint24 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(232, word)
-      newPointer := add(_index, 3)
-    }
-  }
-
-  function readUint64(bytes calldata _data, uint256 _index) internal pure returns (uint64 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(192, word)
-      newPointer := add(_index, 8)
-    }
-  }
-
-  function readUint160(bytes calldata _data, uint256 _index) internal pure returns (uint160 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := shr(96, word)
-      newPointer := add(_index, 20)
-    }
-  }
-
-  function readUint256(bytes calldata _data, uint256 _index) internal pure returns (uint256 a, uint256 newPointer) {
-    assembly {
-      a := calldataload(add(_index, _data.offset))
-      newPointer := add(_index, 32)
-    }
-  }
-
-  function readUintX(
-    bytes calldata _data,
-    uint256 _index,
-    uint256 _length
-  ) internal pure returns (uint256 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      let shift := sub(256, mul(_length, 8))
-      a := and(shr(shift, word), sub(shl(mul(8, _length), 1), 1))
-      newPointer := add(_index, _length)
-    }
-  }
-
-  function readBytes4(bytes calldata _data, uint256 _pointer) internal pure returns (bytes4 a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_pointer, _data.offset))
-      a := and(word, 0xffffffff00000000000000000000000000000000000000000000000000000000)
-      newPointer := add(_pointer, 4)
-    }
-  }
-
-  function readBytes32(bytes calldata _data, uint256 _pointer) internal pure returns (bytes32 a, uint256 newPointer) {
-    assembly {
-      a := calldataload(add(_pointer, _data.offset))
-      newPointer := add(_pointer, 32)
-    }
-  }
-
-  function readAddress(bytes calldata _data, uint256 _index) internal pure returns (address a, uint256 newPointer) {
-    assembly {
-      let word := calldataload(add(_index, _data.offset))
-      a := and(shr(96, word), 0xffffffffffffffffffffffffffffffffffffffff)
-      newPointer := add(_index, 20)
-    }
-  }
-
-  /// @dev ERC-2098 Compact Signature
-  function readRSVCompact(
-    bytes calldata _data,
-    uint256 _index
-  ) internal pure returns (bytes32 r, bytes32 s, uint8 v, uint256 newPointer) {
-    uint256 yParityAndS;
-    assembly {
-      r := calldataload(add(_index, _data.offset))
-      yParityAndS := calldataload(add(_index, add(_data.offset, 32)))
-      newPointer := add(_index, 64)
-    }
-    uint256 yParity = uint256(yParityAndS >> 255);
-    s = bytes32(uint256(yParityAndS) & ((1 << 255) - 1));
-    v = uint8(yParity) + 27;
-  }
+  /// @notice Determines if an implicit request is valid
+  /// @param wallet The wallet's address
+  /// @param attestation The attestation data
+  /// @param call The call to validate
+  /// @return magic The hash of the implicit request if valid
+  function acceptImplicitRequest(
+    address wallet,
+    Attestation calldata attestation,
+    Payload.Call calldata call
+  ) external view returns (bytes32 magic);
 
 }
 
@@ -1185,33 +1212,6 @@ library SessionErrors {
   error InvalidAttestation();
   /// @notice The blacklist was not sorted
   error InvalidBlacklistUnsorted();
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Payload } from "../../../modules/Payload.sol";
-import { Attestation } from "./Attestation.sol";
-
-/// @dev Magic prefix for the implicit request
-bytes32 constant ACCEPT_IMPLICIT_REQUEST_MAGIC_PREFIX = keccak256(abi.encodePacked("acceptImplicitRequest"));
-
-/// @title ISignalsImplicitMode
-/// @author Agustin Aguilar, Michael Standen
-/// @notice Interface for the contracts that support implicit mode validation
-interface ISignalsImplicitMode {
-
-  /// @notice Determines if an implicit request is valid
-  /// @param wallet The wallet's address
-  /// @param attestation The attestation data
-  /// @param call The call to validate
-  /// @return magic The hash of the implicit request if valid
-  function acceptImplicitRequest(
-    address wallet,
-    Attestation calldata attestation,
-    Payload.Call calldata call
-  ) external view returns (bytes32 magic);
 
 }
 

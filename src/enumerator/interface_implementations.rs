@@ -75,7 +75,7 @@ fn find_all_interfaces_recursive<'a>(
 ) -> Pin<Box<dyn Future<Output = Result<Vec<(String, PathBuf)>>> + Send + 'a>> {
     use crate::build_brain::inheritance_map::get_parents_with_file;
     use crate::enumerator::parse_solidity::get_contract_type;
-    use crate::llm_review::contract_file_map::ContractType;
+    use crate::llm_review::contract::contract_file_map::ContractType;
 
     Box::pin(async move {
         let mut interfaces = Vec::new();

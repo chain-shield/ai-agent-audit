@@ -10,6 +10,12 @@
 #4 MEDIUM - M-9 (M-25 (r1) dup) - pick best to demo 
 #5 MEDIUM - M-11 (M-27 (r1) dup) - pick best to demo 
 
+## Locations
+GTELaunchpadV2Pair.mint
+MarketLib.liquidate
+GTELaunchpadV2PairFactory.createPair
+Distributor.createRewardsPair
+LaunchToken.unlock
 
  **Derived From** : IERC20(token0).balanceOf(address/(this)) == uint256(reserve0) + uint256(accruedLaunchpadFee0) && IERC20(token1).balanceOf(address(this)) == uint256(reserve1) + uint256(accruedLaunchpadFee1)
 

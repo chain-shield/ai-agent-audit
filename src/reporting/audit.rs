@@ -4,8 +4,10 @@ use std::sync::OnceLock;
 use crate::{
     config::CREATE_TESTS,
     llm_review::{
-        enums::Severity,
-        findings::{Finding, Findings},
+        findings::{
+            finding_enums::Severity,
+            findings::{Finding, Findings},
+        },
         phases::verify_findings::{FindingConfidence, FindingStatus},
         utils::prompt_context::{self, FindingReportType},
     },

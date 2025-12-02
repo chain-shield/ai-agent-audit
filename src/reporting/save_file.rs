@@ -36,6 +36,7 @@ pub fn save_file_locally(content: &str, filename: &Path) -> anyhow::Result<()> {
     }
 
     let mut file = File::create(filename)?;
+    // log::info!("saving {}\n", filename.display());
     file.write_all(content.as_bytes())?;
 
     Ok(())

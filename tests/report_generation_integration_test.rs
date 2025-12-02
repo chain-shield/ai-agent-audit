@@ -1,9 +1,11 @@
 use ai_agent_audit::{
-    config::{init_config, AuditType},
+    config::{AuditType, init_config},
     llm_review::{
-        agent_factory::{init_llm_clients, AgentConfig, AgentFactory},
-        enums::{Severity, VulnerabilityType},
-        findings::{Finding, Findings, PrivilegeLevel},
+        agent::agent_factory::{AgentConfig, AgentFactory, init_llm_clients},
+        findings::{
+            finding_enums::{Severity, VulnerabilityType},
+            findings::{Finding, Findings, PrivilegeLevel},
+        },
         phases::{
             add_poc_findings::PocStatus,
             create_report,

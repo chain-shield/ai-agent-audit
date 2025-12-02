@@ -36,8 +36,8 @@ use crate::providers::gemini::completion::gemini_api_types::{
 use crate::providers::gemini::streaming::StreamingCompletionResponse;
 use crate::telemetry::SpanCombinator;
 use crate::{
-    OneOrMany,
     completion::{self, CompletionError, CompletionRequest},
+    OneOrMany,
 };
 use gemini_api_types::{
     Content, FunctionDeclaration, GenerateContentRequest, GenerateContentResponse, Part, PartKind,
@@ -196,9 +196,12 @@ pub(crate) fn create_request_body(
         .unwrap_or_else(|| Value::Object(Map::new()));
 
     let AdditionalParameters {
-        mut generation_config,
+        generation_config,
+        safety_settings,
         additional_params,
     } = serde_json::from_value::<AdditionalParameters>(additional_params)?;
+
+    let mut generation_config = generation_config.unwrap_or_default();
 
     if let Some(temp) = completion_request.temperature {
         generation_config.temperature = Some(temp);
@@ -236,7 +239,7 @@ pub(crate) fn create_request_body(
             })
             .collect::<Result<Vec<_>, _>>()?,
         generation_config: Some(generation_config),
-        safety_settings: None,
+        safety_settings,
         tools,
         tool_config,
         system_instruction,
@@ -313,7 +316,12 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
             CompletionError::ResponseError("No response candidates in response".into())
         })?;
 
-        let content = candidate
+        // Log finish reason for debugging
+        if let Some(_reason) = &candidate.finish_reason {
+            // eprintln!("🔍 Gemini finish_reason: {:?}", reason);
+        }
+
+        let content = &candidate
             .content
             .as_ref()
             .ok_or_else(|| {
@@ -326,13 +334,29 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
                     .finish_message
                     .as_deref()
                     .unwrap_or("no finish message provided");
+
+                // Log safety ratings if available
+                if let Some(safety_ratings) = &candidate.safety_ratings {
+                    eprintln!(
+                        "⚠️ Gemini SAFETY BLOCKED - safety_ratings: {:?}",
+                        safety_ratings
+                    );
+                }
+
                 CompletionError::ResponseError(format!(
                     "Gemini candidate missing content ({reason}, finish_message={message})"
                 ))
             })?
-            .parts
+            .parts;
+
+        // eprintln!("🔍 Gemini response has {} parts", content.len());
+
+        let parsed_content = content
             .iter()
             .map(|Part { thought, part, .. }| {
+                // Log part type for debugging
+                // eprintln!("🔍 Gemini part type: {:?}", std::mem::discriminant(part));
+
                 Ok(match part {
                     PartKind::Text(text) => {
                         if let Some(thought) = thought
@@ -350,16 +374,45 @@ impl TryFrom<GenerateContentResponse> for completion::CompletionResponse<Generat
                             function_call.args.clone(),
                         )
                     }
-                    _ => {
+                    PartKind::InlineData(_) => {
+                        // Skip inline data (images, etc.) - not supported in text responses
                         return Err(CompletionError::ResponseError(
-                            "Response did not contain a message or tool call".into(),
+                            "Response contained inline data (not supported)".into(),
+                        ));
+                    }
+                    PartKind::FunctionResponse(_) => {
+                        // Skip function responses - not expected in assistant messages
+                        return Err(CompletionError::ResponseError(
+                            "Response contained function response (not expected)".into(),
+                        ));
+                    }
+                    PartKind::FileData(_) => {
+                        // Skip file data - not supported in text responses
+                        return Err(CompletionError::ResponseError(
+                            "Response contained file data (not supported)".into(),
+                        ));
+                    }
+                    PartKind::ExecutableCode(_) => {
+                        // Skip executable code - not supported in text responses
+                        return Err(CompletionError::ResponseError(
+                            "Response contained executable code (not supported)".into(),
+                        ));
+                    }
+                    PartKind::CodeExecutionResult(_) => {
+                        // Skip code execution results - not supported in text responses
+                        return Err(CompletionError::ResponseError(
+                            "Response contained code execution result (not supported)".into(),
                         ));
                     }
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let choice = OneOrMany::many(content).map_err(|_| {
+        if parsed_content.is_empty() {
+            eprintln!("⚠️ Gemini response has ZERO valid parts after parsing!");
+        }
+
+        let choice = OneOrMany::many(parsed_content).map_err(|_| {
             CompletionError::ResponseError(
                 "Response contained no message or tool call (empty)".to_owned(),
             )
@@ -391,22 +444,26 @@ pub mod gemini_api_types {
     // Gemini API Types
     // =================================================================
     use serde::{Deserialize, Serialize};
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     use crate::completion::GetTokenUsage;
     use crate::message::{DocumentSourceKind, ImageMediaType, MessageError, MimeType};
     use crate::{
-        OneOrMany,
         completion::CompletionError,
         message::{self, Reasoning, Text},
         providers::gemini::gemini_api_types::{CodeExecutionResult, ExecutableCode},
+        OneOrMany,
     };
 
     #[derive(Debug, Deserialize, Serialize, Default)]
     #[serde(rename_all = "camelCase")]
     pub struct AdditionalParameters {
         /// Change your Gemini request configuration.
-        pub generation_config: GenerationConfig,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub generation_config: Option<GenerationConfig>,
+        /// Safety settings for content filtering.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub safety_settings: Option<Vec<SafetySetting>>,
         /// Any additional parameters that you want.
         #[serde(flatten, skip_serializing_if = "Option::is_none")]
         pub additional_params: Option<serde_json::Value>,
@@ -414,7 +471,12 @@ pub mod gemini_api_types {
 
     impl AdditionalParameters {
         pub fn with_config(mut self, cfg: GenerationConfig) -> Self {
-            self.generation_config = cfg;
+            self.generation_config = Some(cfg);
+            self
+        }
+
+        pub fn with_safety_settings(mut self, settings: Vec<SafetySetting>) -> Self {
+            self.safety_settings = Some(settings);
             self
         }
 
@@ -488,7 +550,11 @@ pub mod gemini_api_types {
                 .collect::<Vec<String>>()
                 .join("\n");
 
-            if str.is_empty() { None } else { Some(str) }
+            if str.is_empty() {
+                None
+            } else {
+                Some(str)
+            }
         }
 
         fn get_usage(&self) -> Option<Self::Usage> {
@@ -1732,14 +1798,14 @@ pub mod gemini_api_types {
     #[derive(Debug, Serialize)]
     pub struct CodeExecution {}
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize, Clone)]
     #[serde(rename_all = "camelCase")]
     pub struct SafetySetting {
         pub category: HarmCategory,
         pub threshold: HarmBlockThreshold,
     }
 
-    #[derive(Debug, Serialize)]
+    #[derive(Debug, Serialize, Deserialize, Clone)]
     #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
     pub enum HarmBlockThreshold {
         HarmBlockThresholdUnspecified,

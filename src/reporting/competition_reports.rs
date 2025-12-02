@@ -2,7 +2,7 @@ use log::info;
 
 use crate::{
     llm_review::{
-        findings::{Finding, Findings},
+        findings::findings::{Finding, Findings},
         phases::create_report::CompetitionReport,
     },
     prepare_code::git_clone::RepoPaths,

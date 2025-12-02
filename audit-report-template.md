@@ -1,121 +1,106 @@
-
 # Code4rena High/Medium Severity Finding Report Template
 
 Use the following template for each **High** or **Medium** severity issue you submit.
-This format is aligned with what judges look for in **primary findings**, including all necessary details.
 
-## General Guidelines
-- be concise and to the point, while still providing all necessary details.
-- professional presentation, no icons.
-- No more than 600 words in length, **not counting code snippets** (most top C4 submission are ~200 words)
-- do NOT add additional sections (proof of code etc), strictly follow template below.
+# **Code4rena High/Medium Severity Finding Report Template (Ultra-Concise, Primary-Optimized)**
 
-## Descriptive Issue Title
+## **General Guidelines**
 
-**Severity:** High (or Medium)
-**Affected Contracts and Lines of Code:** Provide actual links to effected code snippets. i.g. https://github.com/code-423n4/2025-10-covenant/blob/7cd409f4b6ad7134e8926feeafb15eb811d2503c/src/curators/oracles/CrossAdapter.sol#L88-L109 
-*(points to the contracts and locations where the issue occurs, do not link to single lines preferable a readable block of code of entire function.)*
+* Be **extremely concise** — judges reward brevity and clarity.
+* Target **≈200-300 words** (excluding code snippets).
+* No icons, no fluff, no background sections.
+* Only **two sections**: Finding Description + Impact & Mitigation. Note sub sections like root cause, exploit path, impact justification will be merged into finding description and impact section.
+* Use GitHub links to **full function blocks**, not individual lines.
+* No need to literally include format hints such as(3–6 concise steps), (1–4 bullets), etc ... in final report.
+* NO augment_code_snippet tags
 
-## Summary
+### Main Title (One line, high-signal)
+**Format:** *Actionable + specific consequence + key condition*
+Examples:
+* “`withdraw()` allows repeated claims via missing state update (reentrancy)”
+* “Share mint uses wrong rounding → first depositor can steal yield via donation attack”
 
-A brief summary of the vulnerability and its impact. State the **core problem** in 1–3 sentences.
-
-> Example:
-> “Lack of input validation in `vulnerableFunction()` allows an attacker to withdraw all funds from the contract without authorization.”
-
-This section should quickly answer:
-
-* What is the bug?
-* Why does it matter?
+**Severity:** High / Medium
+**Affected Contracts:**
+Link to readable function-level code block (example):
+`Contract.sol::withdraw()` — [https://github.com/.../Contract.sol#L88-L109](https://github.com/.../Contract.sol#L88-L109)
 
 
-## Description
+# **1) Finding Description and Impact**
 
-Provide a detailed description of the vulnerability, explaining **how it works** and **why it arises**.
+(*Contains: bug → root cause → exploit path → minimal evidence*)
+**NOTE** -> **Judge-first rule:** If the judge can’t understand **bug → root cause → exploit path → impact → mitigation** in **60–120 seconds**, your report is too long.
 
-**NOTE**: Description MUST include relevant code snippets wrapped in: ```solidity ... ```
-ALSO please include actual github links to code where relevant, instead of just listing line numbers.
+### **Bug (1–2 sentences)**
 
-### Root Cause Analysis
+State what breaks and why it matters.
 
-Identify the **exact root cause** in the code.
-
-> Example:
-> “The contract does not check that `msg.sender == owner` before executing critical function `X`, which means anyone can call it.”
-
-Quote relevant code snippets or link to line numbers if possible to support your explanation.
-This proves you’ve pinpointed the bug.
-
-### Exploit Scenario
-
-Describe step-by-step how an attacker or user can exploit this issue.
-
-**Example format:**
-
-1. **Step 1:** State initial conditions
-   e.g. “Attacker acquires 1 ETH of the token and calls `approve()` on the victim contract…”
-2. **Step 2:** Describe the malicious action
-   e.g. “Attacker calls `vulnerableFunction(1 ETH)` which, due to missing check, transfers funds…”
-3. **Step 3:** Describe the outcome
-   e.g. “The contract transfers the attacker’s token plus all other users’ tokens to the attacker.”
-
-This step-by-step explanation from root cause to impact is **exactly what judges look for** in a high-quality report.
-
-### Relevant Context
-
-If needed, mention any contextual details:
-
-* “This issue is only possible after the initialization period.”
-* “It’s similar to a known vulnerability pattern.”
-
-Keep it focused on helping the reader understand the bug.
-By the end of this section, the reader (and judge) should **fully grasp how the bug works and why it exists.**
-
-
-## Impact
-
-Explain the **impact and severity** of the vulnerability.
-
-Be explicit about what could happen in the worst case:
-
-> **High:** An attacker can drain all deposits from the protocol, leading to total loss of user funds.
-> **Medium:** DoS of a feature, partial loss, or incorrect accounting limited to certain funds.
-
-This section should **justify** why you chose the severity level in terms of potential harm.
-
-Tips:
-
-* Quantify impact if possible (percentage of funds at risk, users affected).
-* Describe the **worst credible scenario**, not just the minimal case.
-
-## Recommended Mitigation
-
-Suggest a **clear, specific fix** for the issue.
+### **Root Cause (1–3 bullets)**
 
 Examples:
 
-* “Add `require(msg.sender == owner)` at the start of `vulnerableFunction` to restrict access.”
-* “Use OpenZeppelin’s `SafeERC20` to handle token transfers safely.”
-* “Implement a cap on maximum deposits to avoid integer overflow.”
+* Missing check / wrong execution order
+* Unsafe token/oracle assumptions
+* Incorrect math / rounding / overflow
 
-Be as **concrete** as possible:
+> **Template:**
+> “`X` fails to `Y`, allowing attacker to `Z` under condition `C`. This enables `impact` (loss/lock/DoS/incorrect accounting) for `who`.”
 
-* Point out the **exact place in code** (e.g. `ContractName.sol#L123`).
-* Ensure your fix addresses the **root cause**, not just symptoms.
+### **Code Evidence (~1–3 codeblocks)**
 
-High-quality (primary) reports have strong remediation suggestions — weak reports often skip this or suggest incomplete fixes.
+```solidity
+// Only include relevant code sections that directly show the root cause. Don't show single lines, must have readable block of code for clariy. 
+```
 
-## References (Optional)
+### **Exploit Path (3–6 concise steps)**
 
-If relevant, include supporting references:
+1. Preconditions.
+2. Attacker calls `X`.
+3. Protocol uses unsafe assumption or miscomputes.
+4. Attacker extracts value / drains funds / breaks invariant.
+5. (Optional) Attack can repeat or scale.
 
-* Similar vulnerabilities in past audits.
-* Blog posts or documentation.
-* Ethereum or OpenZeppelin references.
+---
 
-> Example:
-> “This issue is similar to the XYZ exploit in [ProjectName Audit Report].”
-> “See [Ethereum Reentrancy Docs](https://docs.code4rena.com) for why state updates should happen before external calls.”
 
-Include references only if they **add clarity or credibility**.
+### **Impact (1–4 bullets)**
 
+* What the attacker gains (drain, steal, lock, misprice, force liquidation).
+* Who is affected (users, LPs, vault, protocol solvency).
+* Worst credible case (full loss / permanent lock / systemic insolvency).
+* Scope or constraints (if any).
+
+### **Impact Justification (1 sentence)**
+
+A crisp, direct statement explaining **why the issue is High or Medium**.
+Example: *“Because this leads to a realistic and repeatable loss of user funds, this issue warrants a High severity.”*
+
+### **2) Recommended Mitigation Steps (1–5 bullets)**
+
+* Specific, actionable fix that addresses the **root cause**.
+* Reference exact location (contract/function + GitHub link).
+* Prefer safe defaults (state updates before external calls, sane bounds, correct rounding).
+
+# **Concision Rules (How to Stay Short but Lethal)**
+
+### **MAX impact / MIN words**
+
+* No repetition — every line must add new signal.
+* No background sections.
+* Use bullets over paragraphs.
+* One finding = one isolated vulnerability.
+
+### **Compression patterns**
+
+* “Because `X`, attacker can `Y`, resulting in `Z`.”
+* “Invariant violated: `A` should equal `B`, but becomes `A < B`.”
+* “Protocol assumes `transfer()` moves exact `amount`; this fails for FOT tokens.”
+
+### **Hard Caps**
+
+* Bug: 1–2 sentences
+* Root cause: ≤3 bullets
+* Exploit path: 3–6 short steps
+* Impact: ≤4 bullets
+* Mitigation: 1–5 bullets
+* **Total prose: ≤200–300 words** (excluding code)

@@ -3,17 +3,19 @@
 /// This phase orchestrates parallel security analysis using multiple AI agents
 /// to discover potential vulnerabilities in smart contracts.
 use crate::{
-    config::INVARIANT_RUNS,
+    config::{ACTOR_RUNS, INVARIANT_RUNS},
     error::Result,
     llm_review::{
-        context_state::get_metadata_context,
+        agent::agent_enums::AIAgent,
+        analysis::context_state::{generate_audit_scope, get_metadata_context},
         dynamic_prompts::{
             self,
             invariants::{generate_invariant_prompt, get_invariant_json},
         },
-        enums::AIAgent,
-        issues::{IssuePrompt, IssueStructTrait},
-        pattern_category::get_category_library_spec,
+        threat_models::{
+            issues::{IssuePrompt, IssueStructTrait},
+            pattern_category::get_category_library_spec,
+        },
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -38,6 +40,7 @@ where
     let issue_title = match issue_prompt {
         IssuePrompt::Pattern(_) => "vulnerability patterns",
         IssuePrompt::Invariant(_) => "invariants",
+        IssuePrompt::Actor(_) => "actor",
     };
     info!(
         "🔍 Phase 1: Generating {} from contract codebase...",
@@ -51,9 +54,17 @@ where
         .await
         .expect("could not extract context");
 
+    let audit_scope = generate_audit_scope(repo).await?;
+
+    let combined_context = if audit_scope.is_empty() {
+        context
+    } else {
+        format!("{context}\n\n## AUDIT SCOPE AND KEY INVARIANTS\n\n{audit_scope}")
+    };
+
     let codeblock = Arc::new(code.to_string());
 
-    let added_content_from_brain = Arc::new(context.to_string());
+    let added_content_from_brain = Arc::new(combined_context);
     let code_plus_context =
         generate_content_plus_context_block(&codeblock, &added_content_from_brain);
 
@@ -91,6 +102,18 @@ where
                 for run in 0..category_spec.runs {
                     spawn_run(Arc::clone(&prompt), (run + 1) * (i + 1));
                 }
+            }
+        }
+        IssuePrompt::Actor(actors) => {
+            // construct prompt
+            let instruction_prompt = dynamic_prompts::actors::generate_actor_abuses_prompt(&actors);
+            let json_requirement_prompt = dynamic_prompts::actors::get_actor_abuse_json();
+            let prompt = Arc::new(format!(
+                "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
+            ));
+
+            for run in 0..ACTOR_RUNS {
+                spawn_run(Arc::clone(&prompt), run + 1);
             }
         }
         IssuePrompt::Invariant(invariants) => {

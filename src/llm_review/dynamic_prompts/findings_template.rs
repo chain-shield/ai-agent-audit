@@ -3,11 +3,13 @@ use std::collections::HashSet;
 use crate::{
     config::AuditType,
     llm_review::{
-        enums::{
-            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData, Severity,
-            VulnerabilityType,
+        agent::agent_enums::{
+            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
         },
-        findings::PrivilegeLevel,
+        findings::{
+            finding_enums::{Severity, VulnerabilityType},
+            findings::PrivilegeLevel,
+        },
         prompt_support::severity_rubics::{
             CANTINA_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
         },
@@ -32,40 +34,59 @@ pub fn generate_findings_prompt<T: EnumData + std::fmt::Display>(
     };
 
     format!(
-        r#"Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
+        r#"Your job is to take the previously discovered **{issue_type}** and turn them into **concrete, in-scope & valid findings**.
 
-        ## Rules
-        - Only report exploits tied to the below {pattern_name} {pattern_type}.
-        - Prefer **unprivileged EOAs**; consider untrusted roles if in audit scope.
-        - Present-state only (fixture state). No deployment/upgrade-only windows unless reopenable permissionlessly.
-        - Valid exploit: High/Medium severity, reproducible Foundry test, clear profit or state break. No log-only PoCs.
-        - If nothing qualifies, return: `{{"findings":[]}}`.
+## **Persist until you've thoroughly anlyzed ALL possible exploits from provided pattern**
+   - Do **not** stop at the first interesting exploit.
+   - Your goal is **maximum coverage** – unearth every valid finding.
 
-        ## Severity rubric
-        {rubric}
+## Rules
 
-        ## Exploit guidelines
-        - Severity priority: Theft > DoS > accounting mismatch.
-        - Bigger blast radius and simpler execution are more valuable.
-        - Assert with `assertGt` / `assertEq`, not logs.
-        - Proof must be a compilable Foundry test (`forge-std`, `vm.prank(attacker)`).
+- Only report exploits **directly tied** to the provided {issue_type}, **not** unrelated issues.
+- Only analyze code **actually present** in the codebase. 
+- Prefer exploits accessible to **unprivileged EOAs**; if an exploit requires a trusted role, make that clear via the `"privilege"` field (as specified in the JSON instructions).
+- Focus on **present-state** bugs in the current code. Ignore one-time deployment/upgrade windows unless the same condition can be recreated or abused permissionlessly later.
+- A valid finding must be:
+  - In-scope,
+  - Backed by a credible exploit path,
+  - And clearly Valid finding according to the rubric.
+- If nothing meets these criteria, return `{{"findings":[]}}`.
 
-        ## {pattern_type} Overview
-        - Type: {pattern_name}
-        - Definition: {pattern_def}
+---
 
-        ### Common Exploits
-        {exploit_bullets}
+## Severity rubric
 
-        ## {title_all_caps} TO ANALYZE
-        {full_spec}
+{severity_rubic}
+
+---
+
+## Exploit guidelines
+
+- Severity priority: **Theft > DoS > accounting mismatch**.
+- Bigger **blast radius** and simpler execution are more valuable.
+- Assert conditions using `assertGt` / `assertEq`, not just logs.
+- For `"proof_of_code"`, the PoC should correspond to a **compilable Foundry test** (for example using `forge-std`, `vm.prank(attacker)`, etc.), as required by the JSON schema that follows.
+
+---
+
+## {issue_type} Overview
+
+- Type: {pattern_name}
+- Definition: {issue_definition}
+
+### Common Exploits
+
+{exploit_bullets}
+
+---
+
+## {title_all_caps} TO ANALYZE
+
+{issue_full_spec}
+
+---
         "#,
-        pattern_type = issue_type,
-        rubric = severity_rubic,
         pattern_name = issue_enum.to_string(),
-        pattern_def = issue_definition,
-        exploit_bullets = exploit_bullets,
-        full_spec = issue_full_spec,
         title_all_caps = issue_type.to_uppercase()
     )
 }
@@ -93,29 +114,51 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
     format!(
         r#"Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
 
-        ## Rules
-        - Only report exploits tied to the below {pattern_type}.
-        - Prefer **unprivileged EOAs**; consider untrusted roles if in audit scope.
-        - Present-state only (fixture state). No deployment/upgrade-only windows unless reopenable permissionlessly.
-        - Valid exploit: High/Medium severity, reproducible Foundry test, clear profit or state break. No log-only PoCs.
-        - If nothing qualifies, return: `{{"findings":[]}}`.
+## **Persist until all patterns are considered**
+   - Do **not** stop at the first interesting exploit.
+   - Your goal is **maximum coverage** – find every valid finding.
+   - Systematically go through **every** candidate block in "{title_all_caps} TO ANALYZE" and decide:
+     - "Real in-scope vulnerability keep as a finding"
 
-        ## Severity rubric
-        {rubric}
+## Rules
 
-        ## Exploit guidelines
-        - Severity priority: Theft > DoS > accounting mismatch.
-        - Bigger blast radius and simpler execution are more valuable.
-        - Assert with `assertGt` / `assertEq`, not logs.
-        - Proof must be a compilable Foundry test (`forge-std`, `vm.prank(attacker)`).
+- Only report exploits **directly tied** to the provided {pattern_type} (patterns or invariants), **not** unrelated issues.
+- Only analyze code **actually present** in the codebase. 
+- Prefer exploits accessible to **unprivileged EOAs**; if an exploit requires a trusted role, make that clear via the `"privilege"` field (as specified in the JSON instructions).
+- Focus on **present-state** bugs in the current code. Ignore one-time deployment/upgrade windows unless the same condition can be recreated or abused permissionlessly later.
+- A valid finding must be:
+  - In-scope,
+  - Backed by a credible exploit path,
+  - And clearly severity according to the rubric.
+- If nothing meets these criteria, return `{{"findings":[]}}`.
 
-        ## {pattern_type} Overview
+## Severity rubric
 
-        ### Common Exploits
-        {exploit_bullets}
+{rubric}
 
-        ## {title_all_caps} TO ANALYZE
-        {full_spec}
+
+## Exploit guidelines
+
+- Severity priority: **Theft > DoS > accounting mismatch**.
+- Bigger **blast radius** and simpler execution are more valuable.
+- Assert conditions using `assertGt` / `assertEq`, not just logs.
+- For `"proof_of_code"`, the PoC should correspond to a **compilable Foundry test** (for example using `forge-std`, `vm.prank(attacker)`, etc.), as required by the JSON schema that follows.
+
+---
+
+## {pattern_type} Overview
+
+### Common Exploits
+
+{exploit_bullets}
+
+---
+
+## {title_all_caps} TO ANALYZE
+
+{full_spec}
+
+---
         "#,
         pattern_type = issue_type,
         rubric = severity_rubic,
@@ -246,6 +289,7 @@ where
 
         - Keep "derived_from" exactly as shown
         - *privilege* -> least privilege to trigger vulnerability
+        - for "exploit_type" please select from one of the listed types: {issue_list}
         - If no vulnerabilities are found, return: 
 
         {{

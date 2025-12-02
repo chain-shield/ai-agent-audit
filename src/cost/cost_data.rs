@@ -1,5 +1,5 @@
 use crate::{
-    llm_review::enums::{AIAgent, AgentMetadata},
+    llm_review::agent::agent_enums::{AIAgent, AgentMetadata},
     utils::bpe::get_bpe,
 };
 /// Cost tracking and calculation for LLM inference across multiple providers.
@@ -90,6 +90,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // Gemini models
             "gemini-2.5-pro" | "gemini-2-5-pro" => 1.25,
             "gemini-pro" => 1.25,
+            "gemini-3-pro-preview" => 2.00,
 
             // DeepSeek models
             "deepseek-chat" => 0.07,
@@ -122,6 +123,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             // Gemini models
             "gemini-2.5-pro" | "gemini-2-5-pro" => 10.00,
             "gemini-pro" => 10.00,
+            "gemini-3-pro-preview" => 12.00,
 
             // DeepSeek models
             "deepseek-chat" => 1.10,
