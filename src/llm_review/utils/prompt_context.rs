@@ -1,6 +1,5 @@
 use crate::llm_review::{
     findings::findings::Finding,
-    phases::verify_findings::{FindingConfidence, FindingStatus},
     threat_models::{invariants::InvariantFinding, patterns::Pattern},
 };
 
@@ -188,10 +187,6 @@ pub fn get_finding_report(
             finding.title
         ));
     }
-    findings_report.push_str(&format!(
-        "### Finding Severity Justification: {}\n",
-        finding.severity_justification.clone().unwrap_or_default()
-    ));
 
     //derived from
     findings_report.push_str("## Derived From Pattern/Invariant\n");
@@ -213,25 +208,10 @@ pub fn get_finding_report(
             "## Finding Status: {}\n",
             finding.status.unwrap_or_default().to_string()
         ));
-        if finding.status == Some(FindingStatus::NeedsMoreInfo) {
-            findings_report.push_str(&format!(
-                "### Finding Status Justification: {}\n",
-                finding.status_justification.clone().unwrap_or_default()
-            ));
-        }
         findings_report.push_str(&format!(
-            "## Status Confidence: {}\n",
-            finding.status_confidence.unwrap_or_default().to_string()
+            "### Finding Status Justification: {}\n",
+            finding.status_justification.clone().unwrap_or_default()
         ));
-        if finding.status_confidence == Some(FindingConfidence::SomeWhatConfident) {
-            findings_report.push_str(&format!(
-                "### Finding Confidence Justification: {}\n",
-                finding
-                    .status_confidence_justification
-                    .clone()
-                    .unwrap_or_default()
-            ));
-        }
         findings_report.push_str(&format!(
             "### Finding Complexity: {}\n",
             finding.finding_complexity.unwrap_or_default()

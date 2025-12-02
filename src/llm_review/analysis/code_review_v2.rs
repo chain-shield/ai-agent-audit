@@ -321,12 +321,12 @@ pub async fn generate_ai_agents(
         .with_preamble(verify_preamble)
         .with_file_picker(false); // Disabled to avoid rate limits
 
-    let verify_config_gemini = AgentConfig::new(Some(repo.clone()))
+    let _verify_config_gemini = AgentConfig::new(Some(repo.clone()))
         .with_temperature(1.0)
         .with_model("gemini-3-pro-preview")
         .with_preamble(verify_preamble);
 
-    let _finding_verify_config = AgentConfig::new(Some(repo.clone()))
+    let finding_verify_config = AgentConfig::new(Some(repo.clone()))
         .with_temperature(0.2)
         .with_model(CLAUDE_4_5_SONNET)
         .with_max_tokens(64_000)
@@ -335,11 +335,11 @@ pub async fn generate_ai_agents(
         .with_file_retrieval(false);
 
     // let ai_finding_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
-    let ai_pattern_verify_agent =
-        Arc::new(AgentFactory::create_gemini_agent(&verify_config_gemini)?);
-    // let _finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
-    //     &finding_verify_config,
-    // )?);
+    // let ai_pattern_verify_agent =
+    //     Arc::new(AgentFactory::create_gemini_agent(&verify_config_gemini)?);
+    let finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
+        &finding_verify_config,
+    )?);
 
     // Enhanced preamble for discovery agents
     let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases. You consistently land valid solo High and Medium findings in competitive audit contests.";
@@ -379,9 +379,9 @@ pub async fn generate_ai_agents(
     // )?);
 
     Ok((
-        ai_pattern_verify_agent.clone(),
+        finding_ai_verify_agent.clone(),
         pattern_discovery_gemini_agent.clone(),
-        ai_pattern_verify_agent,
+        finding_ai_verify_agent,
         pattern_discovery_gemini_agent,
     ))
 }
