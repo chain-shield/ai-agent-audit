@@ -10,12 +10,9 @@ use crate::{
             context_state::{generate_audit_scope, get_metadata_context},
             semaphore::GENERAL_SEM,
         },
-        findings::{
-            finding_enums::Severity,
-            findings::{Finding, Findings},
-        },
+        findings::findings::{Finding, Findings},
         prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
-        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
+        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -31,7 +28,6 @@ use crate::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
-use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tokio::sync::Mutex;
 
@@ -51,44 +47,28 @@ use tokio::sync::Mutex;
     strum_macros::Display,
 )]
 pub enum FindingStatus {
+    #[default]
     Valid,
-    #[default]
-    Invalid,
-    OutOfScope,
+    InvalidBugDoesNotExist,
+    InvalidOutOfScope,
+    InvalidUserErrorOrMistake,
+    InvalidGoveranaceRisk,
+    InvalidERC20EdgeCase,
+    InvalidNotExploitable,
+    InvalidFutureSpeculation,
+    InvalidByDesign,
+    InvalidSafeGuardInPlace,
+    LowSeverityDueToLowImpact,
+    LowSeverityDueToRareLikelihood,
+    InvalidOtherReason,
     NeedsMoreInfo,
-}
-
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    EnumIter,
-    JsonSchema,
-    strum_macros::EnumString,
-    strum_macros::Display,
-)]
-pub enum FindingConfidence {
-    VeryConfident,
-    Confident,
-    #[default]
-    SomeWhatConfident,
 }
 
 /// Verification result for a potential vulnerability
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LegitVulnerability {
-    pub severity: Option<Severity>,
-    pub severity_justification: Option<String>,
     pub status: FindingStatus,
     pub status_justification: Option<String>,
-    pub status_confidence: FindingConfidence,
-    pub status_confidence_justification: Option<String>,
     #[serde(deserialize_with = "deserialize_finding_complexity")]
     pub finding_complexity: u8,
 }
@@ -161,7 +141,6 @@ pub async fn execute(
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
     let arc_code_context = Arc::new(code_and_context);
-    let arc_repo = Arc::new(repo.clone());
 
     let dedup_finding_count = deduped_findings.findings.len();
     let is_legit_finding_vec: Arc<Mutex<Vec<LegitVulnerability>>> = Arc::new(Mutex::new(vec![
@@ -190,7 +169,6 @@ pub async fn execute(
         let codeblock_plus_context = Arc::clone(&arc_code_context);
         let arc_findings = Arc::clone(&deduped_findings);
         let arc_agent = Arc::clone(&agent);
-        let repo_clone = Arc::clone(&arc_repo);
         let arc_legit_findings_vec = Arc::clone(&is_legit_finding_vec);
         let verify_prompt_and_scope = Arc::clone(&updated_verify_prompt);
         let sem = Arc::clone(&GENERAL_SEM);
@@ -199,7 +177,7 @@ pub async fn execute(
             // ── acquire permit ────────────────────────
             let _permit = sem.acquire_owned().await.expect("semaphore closed");
             let result: Result<()> = async {
-                let post_verify_json = generate_post_verify_json_requirement(&repo_clone);
+                let post_verify_json = generate_post_verify_json_requirement();
                 let instruction_prompt = generate_prompt_for_issue_check(
                     &codeblock_plus_context,
                     &arc_findings.findings[i],
@@ -250,19 +228,16 @@ pub async fn execute(
         .findings
         .iter()
         .enumerate()
-        .filter(|(idx, _)| {
-            legit_findings_vec[*idx].status == FindingStatus::Valid
-                || legit_findings_vec[*idx].status == FindingStatus::NeedsMoreInfo
-        })
+        // NOTE: no longer filtering out non-valids, instead separating by status
+        // .filter(|(idx, _)| {
+        //     legit_findings_vec[*idx].status == FindingStatus::Valid
+        //         || legit_findings_vec[*idx].status == FindingStatus::NeedsMoreInfo
+        // })
         .map(|(idx, f)| {
             let legit_findings = legit_findings_vec[idx].clone();
             let enriched_finding = Finding {
-                severity: legit_findings.severity.unwrap_or(f.severity),
-                severity_justification: legit_findings.severity_justification,
                 status: Some(legit_findings.status),
                 status_justification: legit_findings.status_justification,
-                status_confidence: Some(legit_findings.status_confidence),
-                status_confidence_justification: legit_findings.status_confidence_justification,
                 finding_complexity: Some(legit_findings.finding_complexity),
                 ..f.clone()
             };
@@ -298,35 +273,6 @@ pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str)
     code_plus_context
 }
 
-struct VerifyEnumLists {
-    severity_list: String,           //  High | Medium | Low | Info | Invalid
-    finding_status_list: String,     // Valid | Invalid | OutOfScope | NeedsMoreInfo
-    finding_confidence_list: String, // VeryConfident | Confident | SomeWhatConfident
-}
-
-fn generate_verify_enum_lists(repo: &RepoPaths) -> VerifyEnumLists {
-    let severity_enums_standard: Vec<Severity> = Severity::iter()
-        .filter(|s| *s != Severity::Critical)
-        .collect();
-    let severity_enums_list_standard = generate_enum_list(severity_enums_standard.as_slice());
-    let severity_list = match repo.audit_type {
-        AuditType::Code4rena => severity_enums_list_standard,
-        AuditType::Sherlock => severity_enums_list_standard,
-        AuditType::Cantina => severity_enums_list_standard,
-        _ => generate_enum_list(all_enum_variants::<Severity>().as_slice()),
-    };
-
-    let finding_status_list = generate_enum_list(all_enum_variants::<FindingStatus>().as_slice());
-    let finding_confidence_list =
-        generate_enum_list(all_enum_variants::<FindingConfidence>().as_slice());
-
-    VerifyEnumLists {
-        severity_list,
-        finding_status_list,
-        finding_confidence_list,
-    }
-}
-
 pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
     let (_, contest) = match repo.audit_type {
         AuditType::Code4rena => (CODE4RENA_SEVERITY_RUBRIC, "Code4rena"),
@@ -335,13 +281,8 @@ pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
         _ => (CODE4RENA_SEVERITY_RUBRIC, "Private Audit"),
     };
 
-    let VerifyEnumLists {
-        severity_list,
-        finding_status_list,
-        finding_confidence_list,
-    } = generate_verify_enum_lists(repo);
-
-    let pre_verify_json = generate_pre_verify_json_requirement(repo);
+    let pre_verify_json = generate_pre_verify_json_requirement();
+    let finding_status_list = generate_enum_list(all_enum_variants::<FindingStatus>().as_slice());
 
     format!(
         r#"
@@ -532,33 +473,20 @@ pub fn generate_verify_prompt(repo: &RepoPaths) -> String {
     - "Oracle manipulation" → Search for TWAP, multiple oracles, price validation
     - "Front-running" → Search for `deadline`, `minAmountOut`, slippage checks
 
-    ---
-
-    ## WHEN IN DOUBT → VALID + SomeWhatConfident
-
-    **Lean toward VALID if:** Realistic user loss, matches historical patterns, missing standard protections
-    **Mark INVALID if:** Assumes future bugs (GATE 7), requires governance mistake (GATE 5), requires user error (GATE 2), safeguards exist (GATE 11), bug doesn't exist (PRE-GATE)
-
-    ---
-
     # OUTPUT REQUIREMENTS
 
     Based on your assessment please provided the following:
 
-    *Severity:* {severity_list}
-    *Finding Severity Justification:* Explain why you assigned this severity. Reference which gates passed/failed.
-    *Finding Status:* {finding_status_list}
-    *Status Justification:* If invalid, out of scope, or needs more info, please explain why. **MUST cite specific gate failures (e.g., "GATE 7 FAIL: Assumes future Distributor bug").**
-    *Finding Status Confidence:* {finding_confidence_list}
-    *Finding Status Confidence Justification:* If Somewhat Confident, please explain why.
+    *Finding Status (pick best fit):* {finding_status_list}
+    *Status Justification:* If invalid, or low/qa. please provide detailed Justification (under 400 words - format with bullets and linebreaks). **MUST cite specific gate failures (e.g., "GATE 7 FAIL: Assumes future Distributor bug").**
     *Finding Complexity:* How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty.
 
 "#
     )
 }
 
-pub fn generate_post_verify_json_requirement(repo: &RepoPaths) -> String {
-    let json = generate_verify_json(repo);
+pub fn generate_post_verify_json_requirement() -> String {
+    let json = generate_verify_json();
 
     format!(
         r#"
@@ -574,8 +502,8 @@ pub fn generate_post_verify_json_requirement(repo: &RepoPaths) -> String {
     )
 }
 
-pub fn generate_pre_verify_json_requirement(repo: &RepoPaths) -> String {
-    let json = generate_verify_json(repo);
+pub fn generate_pre_verify_json_requirement() -> String {
+    let json = generate_verify_json();
 
     format!(
         r#"
@@ -592,519 +520,15 @@ Before instructions are provided on the task please note required output format:
     )
 }
 
-fn generate_verify_json(repo: &RepoPaths) -> String {
-    let VerifyEnumLists {
-        severity_list,
-        finding_status_list,
-        finding_confidence_list,
-    } = generate_verify_enum_lists(repo);
-
+fn generate_verify_json() -> String {
+    let finding_status_list = generate_enum_list(all_enum_variants::<FindingStatus>().as_slice());
     format!(
         r#"
 {{
-    "severity": "{severity_list}",
-    "severity_justification": "Explain why you assigned this severity",
     "status": "{finding_status_list}",
-    "status_justification": "if invalid, out of scope, or needs more info, please explain why",
-    "status_confidence": "{finding_confidence_list}",
-    "status_confidence_justification": "if Somewhat Confident, please explain why",
+    "status_justification": "If invalid, or low/qa. please provide detailed Justification (under 200 words). **MUST cite specific gate failures (e.g., "GATE 7 FAIL: Assumes future Distributor bug").",
     "finding_complexity": How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty. This value is a number (NOT a string)
 }}
 "#
     )
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Test serialization of LegitVulnerability with all fields populated
-    #[test]
-    fn test_legit_vulnerability_serialization_complete() {
-        let vuln = LegitVulnerability {
-            severity: Some(Severity::High),
-            severity_justification: Some("Direct fund loss possible".to_string()),
-            status: FindingStatus::Valid,
-            status_justification: Some("Confirmed vulnerability".to_string()),
-            status_confidence: FindingConfidence::VeryConfident,
-            status_confidence_justification: Some("Clear attack path demonstrated".to_string()),
-            finding_complexity: 8,
-        };
-
-        let json = serde_json::to_string(&vuln).expect("Failed to serialize");
-        assert!(json.contains(r#""severity":"High"#));
-        assert!(json.contains(r#""status":"Valid"#));
-        assert!(json.contains(r#""status_confidence":"VeryConfident"#));
-        assert!(json.contains(r#""finding_complexity":8"#));
-    }
-
-    /// Test serialization with minimal fields (using defaults and None)
-    #[test]
-    fn test_legit_vulnerability_serialization_minimal() {
-        let vuln = LegitVulnerability {
-            severity: Some(Severity::Info),
-            severity_justification: None,
-            status: FindingStatus::Invalid,
-            status_justification: None,
-            status_confidence: FindingConfidence::SomeWhatConfident,
-            status_confidence_justification: None,
-            finding_complexity: 1,
-        };
-
-        let json = serde_json::to_string(&vuln).expect("Failed to serialize");
-        assert!(json.contains(r#""severity":"Info"#));
-        assert!(json.contains(r#""status":"Invalid"#));
-        assert!(json.contains(r#""finding_complexity":1"#));
-    }
-
-    /// Test deserialization of clean, well-formed JSON
-    #[test]
-    fn test_legit_vulnerability_deserialization_clean() {
-        let json = r#"{
-            "severity": "High",
-            "severity_justification": "Direct fund loss",
-            "status": "Valid",
-            "status_justification": "Confirmed",
-            "status_confidence": "VeryConfident",
-            "status_confidence_justification": "Clear path",
-            "finding_complexity": 7
-        }"#;
-
-        let vuln: LegitVulnerability = serde_json::from_str(json).expect("Failed to deserialize");
-        assert_eq!(vuln.severity, Some(Severity::High));
-        assert_eq!(vuln.status, FindingStatus::Valid);
-        assert_eq!(vuln.status_confidence, FindingConfidence::VeryConfident);
-        assert_eq!(vuln.finding_complexity, 7);
-    }
-
-    /// Test deserialization with finding_complexity as string (common LLM mistake)
-    #[test]
-    fn test_legit_vulnerability_deserialization_complexity_as_string() {
-        let json = r#"{
-            "severity": "Medium",
-            "severity_justification": null,
-            "status": "Valid",
-            "status_justification": null,
-            "status_confidence": "Confident",
-            "status_confidence_justification": "Good evidence",
-            "finding_complexity": "5"
-        }"#;
-
-        let vuln: LegitVulnerability = serde_json::from_str(json).expect("Failed to deserialize");
-        assert_eq!(vuln.finding_complexity, 5);
-    }
-
-    /// Test deserialization with out-of-range finding_complexity (should clamp)
-    #[test]
-    fn test_legit_vulnerability_deserialization_complexity_out_of_range() {
-        // Test value > 10
-        let json_high = r#"{
-            "severity": "Low",
-            "severity_justification": null,
-            "status": "Valid",
-            "status_justification": null,
-            "status_confidence": "SomeWhatConfident",
-            "status_confidence_justification": "",
-            "finding_complexity": 15
-        }"#;
-
-        let vuln: LegitVulnerability =
-            serde_json::from_str(json_high).expect("Failed to deserialize");
-        assert_eq!(vuln.finding_complexity, 10); // Should clamp to 10
-
-        // Test value < 1
-        let json_low = r#"{
-            "severity": "Low",
-            "severity_justification": null,
-            "status": "Valid",
-            "status_justification": null,
-            "status_confidence": "SomeWhatConfident",
-            "status_confidence_justification": "",
-            "finding_complexity": 0
-        }"#;
-
-        let vuln: LegitVulnerability =
-            serde_json::from_str(json_low).expect("Failed to deserialize");
-        assert_eq!(vuln.finding_complexity, 1); // Should clamp to 1
-    }
-
-    /// Test all Severity enum variants (exact PascalCase as LLMs are instructed)
-    #[test]
-    fn test_severity_enum_deserialization_all_variants() {
-        let test_cases = vec![
-            (r#"{"severity": "Critical"}"#, Severity::Critical),
-            (r#"{"severity": "High"}"#, Severity::High),
-            (r#"{"severity": "Medium"}"#, Severity::Medium),
-            (r#"{"severity": "Low"}"#, Severity::Low),
-            (r#"{"severity": "Info"}"#, Severity::Info),
-        ];
-
-        for (json, expected) in test_cases {
-            #[derive(Deserialize)]
-            struct TestSeverity {
-                severity: Severity,
-            }
-            let result: TestSeverity = serde_json::from_str(json)
-                .unwrap_or_else(|_| panic!("Failed to deserialize: {}", json));
-            assert_eq!(result.severity, expected, "Failed for JSON: {}", json);
-        }
-    }
-
-    /// Test all FindingStatus enum variants
-    #[test]
-    fn test_finding_status_enum_all_variants() {
-        let test_cases = vec![
-            (r#"{"status": "Valid"}"#, FindingStatus::Valid),
-            (r#"{"status": "Invalid"}"#, FindingStatus::Invalid),
-            (r#"{"status": "OutOfScope"}"#, FindingStatus::OutOfScope),
-            (
-                r#"{"status": "NeedsMoreInfo"}"#,
-                FindingStatus::NeedsMoreInfo,
-            ),
-        ];
-
-        for (json, expected) in test_cases {
-            #[derive(Deserialize)]
-            struct TestStatus {
-                status: FindingStatus,
-            }
-            let result: TestStatus = serde_json::from_str(json)
-                .unwrap_or_else(|_| panic!("Failed to deserialize: {}", json));
-            assert_eq!(result.status, expected, "Failed for JSON: {}", json);
-        }
-    }
-
-    /// Test all FindingConfidence enum variants
-    #[test]
-    fn test_finding_confidence_enum_all_variants() {
-        let test_cases = vec![
-            (
-                r#"{"confidence": "VeryConfident"}"#,
-                FindingConfidence::VeryConfident,
-            ),
-            (
-                r#"{"confidence": "Confident"}"#,
-                FindingConfidence::Confident,
-            ),
-            (
-                r#"{"confidence": "SomeWhatConfident"}"#,
-                FindingConfidence::SomeWhatConfident,
-            ),
-        ];
-
-        for (json, expected) in test_cases {
-            #[derive(Deserialize)]
-            struct TestConfidence {
-                confidence: FindingConfidence,
-            }
-            let result: TestConfidence = serde_json::from_str(json)
-                .unwrap_or_else(|_| panic!("Failed to deserialize: {}", json));
-            assert_eq!(result.confidence, expected, "Failed for JSON: {}", json);
-        }
-    }
-
-    /// Test serialization of all enum variants
-    #[test]
-    fn test_enum_serialization() {
-        // Test Severity
-        assert_eq!(
-            serde_json::to_string(&Severity::Critical).unwrap(),
-            r#""Critical""#
-        );
-        assert_eq!(serde_json::to_string(&Severity::High).unwrap(), r#""High""#);
-        assert_eq!(
-            serde_json::to_string(&Severity::Medium).unwrap(),
-            r#""Medium""#
-        );
-        assert_eq!(serde_json::to_string(&Severity::Low).unwrap(), r#""Low""#);
-        assert_eq!(serde_json::to_string(&Severity::Info).unwrap(), r#""Info""#);
-
-        // Test FindingStatus
-        assert_eq!(
-            serde_json::to_string(&FindingStatus::Valid).unwrap(),
-            r#""Valid""#
-        );
-        assert_eq!(
-            serde_json::to_string(&FindingStatus::Invalid).unwrap(),
-            r#""Invalid""#
-        );
-        assert_eq!(
-            serde_json::to_string(&FindingStatus::OutOfScope).unwrap(),
-            r#""OutOfScope""#
-        );
-        assert_eq!(
-            serde_json::to_string(&FindingStatus::NeedsMoreInfo).unwrap(),
-            r#""NeedsMoreInfo""#
-        );
-
-        // Test FindingConfidence
-        assert_eq!(
-            serde_json::to_string(&FindingConfidence::VeryConfident).unwrap(),
-            r#""VeryConfident""#
-        );
-        assert_eq!(
-            serde_json::to_string(&FindingConfidence::Confident).unwrap(),
-            r#""Confident""#
-        );
-        assert_eq!(
-            serde_json::to_string(&FindingConfidence::SomeWhatConfident).unwrap(),
-            r#""SomeWhatConfident""#
-        );
-    }
-
-    /// Test messy LLM output: extra whitespace, mixed formatting
-    #[test]
-    fn test_legit_vulnerability_messy_llm_output_whitespace() {
-        let json = r#"
-        {
-            "severity"  :  "High"  ,
-            "severity_justification"  :  "Direct fund loss"  ,
-            "status"  :  "Valid"  ,
-            "status_justification"  :  "Confirmed"  ,
-            "status_confidence"  :  "VeryConfident"  ,
-            "status_confidence_justification"  :  "Clear path"  ,
-            "finding_complexity"  :  7
-        }
-        "#;
-
-        let vuln: LegitVulnerability = serde_json::from_str(json).expect("Failed to deserialize");
-        assert_eq!(vuln.severity, Some(Severity::High));
-        assert_eq!(vuln.status, FindingStatus::Valid);
-        assert_eq!(vuln.finding_complexity, 7);
-    }
-
-    /// Test messy LLM output: finding_complexity as string with whitespace
-    #[test]
-    fn test_legit_vulnerability_messy_complexity_string_whitespace() {
-        let json = r#"{
-            "severity": "Medium",
-            "severity_justification": null,
-            "status": "Valid",
-            "status_justification": null,
-            "status_confidence": "Confident",
-            "status_confidence_justification": "Good",
-            "finding_complexity": " 6 "
-        }"#;
-
-        // Note: This will fail because serde doesn't trim strings before parsing
-        // This is expected behavior - the clean_json_string in findings.rs should handle this
-        let result: std::result::Result<LegitVulnerability, _> = serde_json::from_str(json);
-        assert!(
-            result.is_err(),
-            "Should fail with whitespace in numeric string"
-        );
-    }
-
-    /// Test LLM output with informational severity (alternative spelling)
-    #[test]
-    fn test_legit_vulnerability_informational_severity() {
-        // Note: "informational" is mentioned in prompts but Severity enum only has "Info"
-        let json = r#"{
-            "severity": "Info",
-            "severity_justification": "Best practice",
-            "status": "Valid",
-            "status_justification": null,
-            "status_confidence": "Confident",
-            "status_confidence_justification": "Standard pattern",
-            "finding_complexity": 2
-        }"#;
-
-        let vuln: LegitVulnerability = serde_json::from_str(json).expect("Failed to deserialize");
-        assert_eq!(vuln.severity, Some(Severity::Info));
-    }
-
-    /// Test round-trip serialization/deserialization
-    #[test]
-    fn test_legit_vulnerability_round_trip() {
-        let original = LegitVulnerability {
-            severity: Some(Severity::Critical),
-            severity_justification: Some("Complete protocol takeover".to_string()),
-            status: FindingStatus::Valid,
-            status_justification: Some("Exploit confirmed in tests".to_string()),
-            status_confidence: FindingConfidence::VeryConfident,
-            status_confidence_justification: Some("PoC provided".to_string()),
-            finding_complexity: 9,
-        };
-
-        // Serialize
-        let json = serde_json::to_string(&original).expect("Failed to serialize");
-
-        // Deserialize
-        let deserialized: LegitVulnerability =
-            serde_json::from_str(&json).expect("Failed to deserialize");
-
-        // Compare
-        assert_eq!(deserialized.severity, original.severity);
-        assert_eq!(
-            deserialized.severity_justification,
-            original.severity_justification
-        );
-        assert_eq!(deserialized.status, original.status);
-        assert_eq!(
-            deserialized.status_justification,
-            original.status_justification
-        );
-        assert_eq!(deserialized.status_confidence, original.status_confidence);
-        assert_eq!(
-            deserialized.status_confidence_justification,
-            original.status_confidence_justification
-        );
-        assert_eq!(deserialized.finding_complexity, original.finding_complexity);
-    }
-
-    /// Test default values
-    #[test]
-    fn test_legit_vulnerability_defaults() {
-        let vuln = LegitVulnerability::default();
-        assert_eq!(vuln.severity, None); // Option<Severity> defaults to None
-        assert_eq!(vuln.status, FindingStatus::Invalid); // Default from FindingStatus enum
-        assert_eq!(vuln.status_confidence, FindingConfidence::SomeWhatConfident); // Default from FindingConfidence enum
-        assert_eq!(vuln.finding_complexity, 0); // Default u8
-    }
-
-    /// Test prompt generation for all audit types
-    #[test]
-    fn test_verify_prompt_generation_all_audit_types() {
-        use crate::config::AuditType;
-        use crate::prepare_code::git_clone::PocConfig;
-        use std::path::PathBuf;
-
-        println!("\n{}", "=".repeat(80));
-        println!("VERIFY FINDINGS PROMPT GENERATION TEST");
-        println!("{}\n", "=".repeat(80));
-
-        let audit_types = vec![
-            AuditType::Code4rena,
-            AuditType::Sherlock,
-            AuditType::Cantina,
-            AuditType::Client,
-        ];
-
-        for audit_type in audit_types {
-            println!("\n{}", "-".repeat(80));
-            println!("AUDIT TYPE: {:?}", audit_type);
-            println!("{}\n", "-".repeat(80));
-
-            let repo = RepoPaths {
-                github_url: "https://github.com/test/repo".to_string(),
-                project_id: "test-project".to_string(),
-                root: PathBuf::from("/tmp"),
-                sol_files: vec![],
-                test_files: vec![],
-                script_files: vec![],
-                config_files: vec![],
-                lib_config_files: vec![],
-                source_code_folders: vec![],
-                docs: vec![],
-                repo_name: "test-repo".to_string(),
-                audit_scope: None,
-                excluded_folders: None,
-                scoped_files: None,
-                monorepo_folders: None,
-                commit_hash: "abc123".to_string(),
-                audit_type,
-                poc: PocConfig::default(),
-            };
-
-            // Test 1: Pre-verify JSON requirement
-            println!("📋 PRE-VERIFY JSON REQUIREMENT:");
-            println!("{}", "-".repeat(80));
-            let pre_json = generate_pre_verify_json_requirement(&repo);
-            println!("{}", pre_json);
-
-            // Test 2: Main verify prompt
-            println!("\n📝 MAIN VERIFY PROMPT:");
-            println!("{}", "-".repeat(80));
-            let verify_prompt = generate_verify_prompt(&repo);
-            println!("{}", verify_prompt);
-
-            // Test 3: Post-verify JSON requirement
-            println!("\n📋 POST-VERIFY JSON REQUIREMENT:");
-            println!("{}", "-".repeat(80));
-            let post_json = generate_post_verify_json_requirement(&repo);
-            println!("{}", post_json);
-
-            // Test 4: Verify JSON structure
-            println!("\n🔧 VERIFY JSON STRUCTURE:");
-            println!("{}", "-".repeat(80));
-            let json_structure = generate_verify_json(&repo);
-            println!("{}", json_structure);
-
-            println!("\n");
-        }
-
-        println!("\n{}", "=".repeat(80));
-        println!("END OF VERIFY FINDINGS PROMPT GENERATION TEST");
-        println!("{}\n", "=".repeat(80));
-    }
-
-    /// Test boundary values for finding_complexity
-    #[test]
-    fn test_finding_complexity_boundary_values() {
-        // Test minimum valid value
-        let json_min = r#"{
-            "severity": "Low",
-            "severity_justification": null,
-            "status": "Valid",
-            "status_justification": null,
-            "status_confidence": "Confident",
-            "status_confidence_justification": "",
-            "finding_complexity": 1
-        }"#;
-        let vuln: LegitVulnerability =
-            serde_json::from_str(json_min).expect("Failed to deserialize");
-        assert_eq!(vuln.finding_complexity, 1);
-
-        // Test maximum valid value
-        let json_max = r#"{
-            "severity": "Low",
-            "severity_justification": null,
-            "status": "Valid",
-            "status_justification": null,
-            "status_confidence": "Confident",
-            "status_confidence_justification": "",
-            "finding_complexity": 10
-        }"#;
-        let vuln: LegitVulnerability =
-            serde_json::from_str(json_max).expect("Failed to deserialize");
-        assert_eq!(vuln.finding_complexity, 10);
-    }
-
-    /// Test OutOfScope status
-    #[test]
-    fn test_legit_vulnerability_out_of_scope() {
-        let json = r#"{
-            "severity": "High",
-            "severity_justification": "Would be high if in scope",
-            "status": "OutOfScope",
-            "status_justification": "Finding is in external library",
-            "status_confidence": "VeryConfident",
-            "status_confidence_justification": "Clearly out of audit scope",
-            "finding_complexity": 5
-        }"#;
-
-        let vuln: LegitVulnerability = serde_json::from_str(json).expect("Failed to deserialize");
-        assert_eq!(vuln.status, FindingStatus::OutOfScope);
-        assert_eq!(
-            vuln.status_justification,
-            Some("Finding is in external library".to_string())
-        );
-    }
-
-    /// Test NeedsMoreInfo status
-    #[test]
-    fn test_legit_vulnerability_needs_more_info() {
-        let json = r#"{
-            "severity": "Medium",
-            "severity_justification": "Potential impact unclear",
-            "status": "NeedsMoreInfo",
-            "status_justification": "Cannot determine if external dependency is vulnerable",
-            "status_confidence": "SomeWhatConfident",
-            "status_confidence_justification": "Missing context about external system",
-            "finding_complexity": 4
-        }"#;
-
-        let vuln: LegitVulnerability = serde_json::from_str(json).expect("Failed to deserialize");
-        assert_eq!(vuln.status, FindingStatus::NeedsMoreInfo);
-        assert_eq!(vuln.status_confidence, FindingConfidence::SomeWhatConfident);
-    }
 }
