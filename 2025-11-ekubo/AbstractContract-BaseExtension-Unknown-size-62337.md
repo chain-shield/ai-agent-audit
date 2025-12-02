@@ -394,6 +394,96 @@ interface ICore is IFlashAccountant, IExposedStorage {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
+import {SqrtRatio, MIN_SQRT_RATIO_RAW, MAX_SQRT_RATIO_RAW} from "./sqrtRatio.sol";
+
+type SwapParameters is bytes32;
+
+using {
+    sqrtRatioLimit,
+    amount,
+    isToken1,
+    skipAhead,
+    isExactOut,
+    isPriceIncreasing,
+    withDefaultSqrtRatioLimit
+} for SwapParameters global;
+
+function sqrtRatioLimit(SwapParameters params) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := shr(160, params)
+    }
+}
+
+function amount(SwapParameters params) pure returns (int128 a) {
+    assembly ("memory-safe") {
+        a := signextend(15, shr(32, params))
+    }
+}
+
+function isToken1(SwapParameters params) pure returns (bool t) {
+    assembly ("memory-safe") {
+        t := and(shr(31, params), 1)
+    }
+}
+
+function skipAhead(SwapParameters params) pure returns (uint256 s) {
+    assembly ("memory-safe") {
+        s := and(params, 0x7fffffff)
+    }
+}
+
+function createSwapParameters(SqrtRatio _sqrtRatioLimit, int128 _amount, bool _isToken1, uint256 _skipAhead)
+    pure
+    returns (SwapParameters p)
+{
+    assembly ("memory-safe") {
+        // p = (sqrtRatioLimit << 160) | (amount << 32) | (isToken1 << 31) | skipAhead
+        // Mask each field to ensure dirty bits don't interfere
+        // For isToken1, use iszero(iszero()) to convert any non-zero value to 1
+        p := or(
+            shl(160, _sqrtRatioLimit),
+            or(
+                shl(32, and(_amount, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)),
+                or(shl(31, iszero(iszero(_isToken1))), and(_skipAhead, 0x7fffffff))
+            )
+        )
+    }
+}
+
+function isExactOut(SwapParameters params) pure returns (bool yes) {
+    assembly ("memory-safe") {
+        yes := and(shr(159, params), 1)
+    }
+}
+
+function isPriceIncreasing(SwapParameters params) pure returns (bool yes) {
+    bool _isExactOut = params.isExactOut();
+    bool _isToken1 = params.isToken1();
+    assembly ("memory-safe") {
+        yes := xor(_isExactOut, _isToken1)
+    }
+}
+
+function withDefaultSqrtRatioLimit(SwapParameters params) pure returns (SwapParameters updated) {
+    bool increasing = params.isPriceIncreasing();
+    assembly ("memory-safe") {
+        let replace := iszero(shr(160, params))
+        let orMask :=
+            shl(160, mul(replace, or(mul(increasing, MAX_SQRT_RATIO_RAW), mul(iszero(increasing), MIN_SQRT_RATIO_RAW))))
+        updated := or(orMask, params)
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+/// @notice Unique identifier for a pool
+/// @dev Wraps bytes32 to provide type safety for pool identifiers
+type PoolId is bytes32;
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
 import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
 import {PoolConfig} from "./poolConfig.sol";
 
@@ -449,257 +539,6 @@ function validate(PositionId positionId, PoolConfig config) pure {
         if (positionId.tickLower() != lower || positionId.tickUpper() != upper) revert StableswapMustBeFullRange();
     }
 }
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-struct CallPoints {
-    bool beforeInitializePool;
-    bool afterInitializePool;
-    bool beforeSwap;
-    bool afterSwap;
-    bool beforeUpdatePosition;
-    bool afterUpdatePosition;
-    bool beforeCollectFees;
-    bool afterCollectFees;
-}
-
-using {eq, isValid, toUint8} for CallPoints global;
-
-function eq(CallPoints memory a, CallPoints memory b) pure returns (bool) {
-    return (a.beforeInitializePool == b.beforeInitializePool && a.afterInitializePool == b.afterInitializePool
-            && a.beforeSwap == b.beforeSwap && a.afterSwap == b.afterSwap
-            && a.beforeUpdatePosition == b.beforeUpdatePosition && a.afterUpdatePosition == b.afterUpdatePosition
-            && a.beforeCollectFees == b.beforeCollectFees && a.afterCollectFees == b.afterCollectFees);
-}
-
-function isValid(CallPoints memory a) pure returns (bool) {
-    return (a.beforeInitializePool || a.afterInitializePool || a.beforeSwap || a.afterSwap || a.beforeUpdatePosition
-            || a.afterUpdatePosition || a.beforeCollectFees || a.afterCollectFees);
-}
-
-function toUint8(CallPoints memory callPoints) pure returns (uint8 b) {
-    assembly ("memory-safe") {
-        b := add(
-            add(
-                add(
-                    add(
-                        add(
-                            add(
-                                add(mload(callPoints), mul(128, mload(add(callPoints, 32)))),
-                                mul(64, mload(add(callPoints, 64)))
-                            ),
-                            mul(32, mload(add(callPoints, 96)))
-                        ),
-                        mul(16, mload(add(callPoints, 128)))
-                    ),
-                    mul(8, mload(add(callPoints, 160)))
-                ),
-                mul(4, mload(add(callPoints, 192)))
-            ),
-            mul(2, mload(add(callPoints, 224)))
-        )
-    }
-}
-
-function addressToCallPoints(address a) pure returns (CallPoints memory result) {
-    result = byteToCallPoints(uint8(uint160(a) >> 152));
-}
-
-function byteToCallPoints(uint8 b) pure returns (CallPoints memory result) {
-    // note the order of bytes does not match the struct order of elements because we are matching the cairo implementation
-    // which for legacy reasons has the fields in this order
-    result = CallPoints({
-        beforeInitializePool: (b & 1) != 0,
-        afterInitializePool: (b & 128) != 0,
-        beforeSwap: (b & 64) != 0,
-        afterSwap: (b & 32) != 0,
-        beforeUpdatePosition: (b & 16) != 0,
-        afterUpdatePosition: (b & 8) != 0,
-        beforeCollectFees: (b & 4) != 0,
-        afterCollectFees: (b & 2) != 0
-    });
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-struct CallPoints {
-    bool beforeInitializePool;
-    bool afterInitializePool;
-    bool beforeSwap;
-    bool afterSwap;
-    bool beforeUpdatePosition;
-    bool afterUpdatePosition;
-    bool beforeCollectFees;
-    bool afterCollectFees;
-}
-
-using {eq, isValid, toUint8} for CallPoints global;
-
-function eq(CallPoints memory a, CallPoints memory b) pure returns (bool) {
-    return (a.beforeInitializePool == b.beforeInitializePool && a.afterInitializePool == b.afterInitializePool
-            && a.beforeSwap == b.beforeSwap && a.afterSwap == b.afterSwap
-            && a.beforeUpdatePosition == b.beforeUpdatePosition && a.afterUpdatePosition == b.afterUpdatePosition
-            && a.beforeCollectFees == b.beforeCollectFees && a.afterCollectFees == b.afterCollectFees);
-}
-
-function isValid(CallPoints memory a) pure returns (bool) {
-    return (a.beforeInitializePool || a.afterInitializePool || a.beforeSwap || a.afterSwap || a.beforeUpdatePosition
-            || a.afterUpdatePosition || a.beforeCollectFees || a.afterCollectFees);
-}
-
-function toUint8(CallPoints memory callPoints) pure returns (uint8 b) {
-    assembly ("memory-safe") {
-        b := add(
-            add(
-                add(
-                    add(
-                        add(
-                            add(
-                                add(mload(callPoints), mul(128, mload(add(callPoints, 32)))),
-                                mul(64, mload(add(callPoints, 64)))
-                            ),
-                            mul(32, mload(add(callPoints, 96)))
-                        ),
-                        mul(16, mload(add(callPoints, 128)))
-                    ),
-                    mul(8, mload(add(callPoints, 160)))
-                ),
-                mul(4, mload(add(callPoints, 192)))
-            ),
-            mul(2, mload(add(callPoints, 224)))
-        )
-    }
-}
-
-function addressToCallPoints(address a) pure returns (CallPoints memory result) {
-    result = byteToCallPoints(uint8(uint160(a) >> 152));
-}
-
-function byteToCallPoints(uint8 b) pure returns (CallPoints memory result) {
-    // note the order of bytes does not match the struct order of elements because we are matching the cairo implementation
-    // which for legacy reasons has the fields in this order
-    result = CallPoints({
-        beforeInitializePool: (b & 1) != 0,
-        afterInitializePool: (b & 128) != 0,
-        beforeSwap: (b & 64) != 0,
-        afterSwap: (b & 32) != 0,
-        beforeUpdatePosition: (b & 16) != 0,
-        afterUpdatePosition: (b & 8) != 0,
-        beforeCollectFees: (b & 4) != 0,
-        afterCollectFees: (b & 2) != 0
-    });
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {Locker} from "../types/locker.sol";
-
-interface ILocker {
-    function locked_6416899205(uint256 id) external;
-}
-
-interface IForwardee {
-    function forwarded_2374103877(Locker original) external;
-}
-
-/// @title IFlashAccountant
-/// @notice Interface for flash loan accounting functionality using transient storage
-/// @dev This interface manages debt tracking for flash loans, allowing users to borrow tokens temporarily
-///      and ensuring all debts are settled before the transaction completes. Uses transient storage
-///      for gas-efficient temporary state management within a single transaction.
-interface IFlashAccountant {
-    /// @notice Thrown when an operation is made that affects debts without an active lock
-    error NotLocked();
-    /// @notice Thrown when a method is called by an address other than the current locker
-    error LockerOnly();
-    /// @notice Thrown when the lock callback returns without clearing all the debts either via withdrawing from or paying to the accountant
-    error DebtsNotZeroed(uint256 id);
-    /// @notice Thrown if the contract receives a payment that exceeds type(uint128).max
-    error PaymentOverflow();
-    /// @notice Thrown if the contract receives a call to updateDebt that has a data length != 20
-    error UpdateDebtMessageLength();
-
-    /// @notice Creates a lock context and calls back to the caller's locked function
-    /// @dev The entrypoint for all operations on the core contract. Any data passed after the
-    ///      function signature is passed through back to the caller after the locked function
-    ///      signature and data, with no additional encoding. Any data returned from ILocker#locked
-    ///      is also returned from this function exactly as is. Reverts are bubbled up.
-    ///      Ensures all debts are zeroed before completing the lock.
-    function lock() external;
-
-    /// @notice Forwards the lock context to another actor, allowing them to act on the original locker's debt
-    /// @dev Temporarily changes the locker to the forwarded address for the duration of the forwarded call.
-    ///      Any additional calldata is passed through to the forwardee with no additional encoding.
-    ///      Any data returned from IForwardee#forwarded is returned exactly as is. Reverts are bubbled up.
-    /// @param to The address to forward the lock context to
-    function forward(address to) external;
-
-    /// @notice Initiates a payment operation by recording current token balances
-    /// @dev To make a payment to core, you must first call startPayments with all the tokens you'd like to send.
-    ///      All the tokens that will be paid must be ABI-encoded immediately after the 4 byte function selector.
-    ///      This function stores the current balance + 1 for each token to distinguish between zero balance
-    ///      and uninitialized state. Returns the current balances of all specified tokens as ABI-encoded
-    ///      raw bytes via assembly (no explicit Solidity return type).
-    function startPayments() external;
-
-    /// @notice Completes a payment operation by calculating and crediting token payments
-    /// @dev After tokens have been transferred, call completePayments to be credited for the tokens
-    ///      that have been paid to core. The credit goes to the current locker. Compares current
-    ///      balances with those recorded in startPayments to determine payment amounts.
-    ///      The computed payments are applied to the current locker's debt.
-    ///      Returns packed uint128 payment amounts (16 bytes each) in the same order as the tokens.
-    function completePayments() external;
-
-    /// @notice Withdraws tokens from the accountant to recipients using packed calldata
-    /// @dev The contract must be locked, as it tracks withdrawn amounts against the current locker's debt.
-    ///      Calldata format: each withdrawal is 56 bytes: token (20) + recipient (20) + amount (16)
-    ///      For native tokens, uses the NATIVE_TOKEN_ADDRESS constant and transfers ETH directly.
-    function withdraw() external;
-
-    /// @notice Updates debt for the current locker and for the token at the calling address
-    /// @dev This is for deeply-integrated tokens that allow flash operations via the accountant.
-    ///      The calling address is treated as the token address.
-    /// @dev The debt change argument is an int128 encoded immediately after the selector.
-    /// @dev The calldata length must be exactly 20 bytes in order to avoid this being called unintentionally.
-    function updateDebt() external;
-
-    /// @notice Receives ETH payments and credits them against the current locker's native token debt
-    /// @dev This contract can receive ETH as a payment. The received amount is credited as a negative
-    ///      debt change for the native token. Note: because we use msg.value here, this contract can
-    ///      never be multicallable, i.e. it should never expose the ability to delegatecall itself
-    ///      more than once in a single call.
-    receive() external payable;
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-// Protocol Constants
-// Contains all constant values used throughout the Ekubo Protocol
-// These constants define the boundaries and special values for the protocol's operation
-
-// The minimum tick value supported by the protocol
-// Corresponds to the minimum possible price ratio in the protocol
-int32 constant MIN_TICK = -88722835;
-
-// The maximum tick value supported by the protocol
-// Corresponds to the maximum possible price ratio in the protocol
-int32 constant MAX_TICK = 88722835;
-
-// The maximum tick magnitude (absolute value of MAX_TICK)
-// Used for validation and bounds checking in tick-related calculations
-uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
-
-// The maximum allowed tick spacing for pools
-// Defines the upper limit for tick spacing configuration in pool creation
-uint32 constant MAX_TICK_SPACING = 698605;
-
-// Address used to represent the native token (ETH) within the protocol
-// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
-address constant NATIVE_TOKEN_ADDRESS = address(0);
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
@@ -849,314 +688,6 @@ function max(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
 function min(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
     assembly ("memory-safe") {
         r := xor(a, mul(xor(a, b), lt(b, a)))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type PoolBalanceUpdate is bytes32;
-
-using {delta0, delta1} for PoolBalanceUpdate global;
-
-function delta0(PoolBalanceUpdate update) pure returns (int128 v) {
-    assembly ("memory-safe") {
-        v := signextend(15, shr(128, update))
-    }
-}
-
-function delta1(PoolBalanceUpdate update) pure returns (int128 v) {
-    assembly ("memory-safe") {
-        v := signextend(15, update)
-    }
-}
-
-function createPoolBalanceUpdate(int128 _delta0, int128 _delta1) pure returns (PoolBalanceUpdate update) {
-    assembly ("memory-safe") {
-        // update = (delta0 << 128) | delta1
-        update := or(shl(128, _delta0), and(_delta1, 0xffffffffffffffffffffffffffffffff))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
-import {PoolConfig} from "./poolConfig.sol";
-
-type PositionId is bytes32;
-
-using {validate, salt, tickLower, tickUpper} for PositionId global;
-
-function salt(PositionId positionId) pure returns (bytes24 v) {
-    assembly ("memory-safe") {
-        v := shl(64, shr(64, positionId))
-    }
-}
-
-function tickLower(PositionId positionId) pure returns (int32 v) {
-    assembly ("memory-safe") {
-        // shift down, then signextend to 32 bits
-        v := signextend(3, shr(32, positionId))
-    }
-}
-
-function tickUpper(PositionId positionId) pure returns (int32 v) {
-    assembly ("memory-safe") {
-        // lowest 4 bytes, then signextend to 32 bits
-        v := signextend(3, positionId)
-    }
-}
-
-function createPositionId(bytes24 _salt, int32 _tickLower, int32 _tickUpper) pure returns (PositionId v) {
-    assembly ("memory-safe") {
-        // v = salt | (tickLower << 32) | tickUpper
-        v := or(shl(64, shr(64, _salt)), or(shl(32, and(_tickLower, 0xFFFFFFFF)), and(_tickUpper, 0xFFFFFFFF)))
-    }
-}
-
-/// @notice Thrown when the order of the position bounds is invalid, i.e. tickLower >= tickUpper
-error BoundsOrder();
-/// @notice Thrown when the bounds of the position are outside the pool's min/max tick range
-error MinMaxBounds();
-/// @notice Thrown when the ticks of the bounds do not align with tick spacing for concentrated pools
-error BoundsTickSpacing();
-/// @notice Thrown when stableswap pool positions are not at the min/max tick for the config
-error StableswapMustBeFullRange();
-
-function validate(PositionId positionId, PoolConfig config) pure {
-    if (config.isConcentrated()) {
-        if (positionId.tickLower() >= positionId.tickUpper()) revert BoundsOrder();
-        if (positionId.tickLower() < MIN_TICK || positionId.tickUpper() > MAX_TICK) revert MinMaxBounds();
-        int32 spacing = int32(config.concentratedTickSpacing());
-        if (positionId.tickLower() % spacing != 0 || positionId.tickUpper() % spacing != 0) revert BoundsTickSpacing();
-    } else {
-        (int32 lower, int32 upper) = config.stableswapActiveLiquidityTickRange();
-        // For stableswap pools, positions must be exactly min/max tick
-        if (positionId.tickLower() != lower || positionId.tickUpper() != upper) revert StableswapMustBeFullRange();
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type PoolBalanceUpdate is bytes32;
-
-using {delta0, delta1} for PoolBalanceUpdate global;
-
-function delta0(PoolBalanceUpdate update) pure returns (int128 v) {
-    assembly ("memory-safe") {
-        v := signextend(15, shr(128, update))
-    }
-}
-
-function delta1(PoolBalanceUpdate update) pure returns (int128 v) {
-    assembly ("memory-safe") {
-        v := signextend(15, update)
-    }
-}
-
-function createPoolBalanceUpdate(int128 _delta0, int128 _delta1) pure returns (PoolBalanceUpdate update) {
-    assembly ("memory-safe") {
-        // update = (delta0 << 128) | delta1
-        update := or(shl(128, _delta0), and(_delta1, 0xffffffffffffffffffffffffffffffff))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-/// @notice Unique identifier for a pool
-/// @dev Wraps bytes32 to provide type safety for pool identifiers
-type PoolId is bytes32;
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-// The total fees per liquidity for each token.
-// Since these are always read together we put them in a struct, even though they cannot be packed.
-struct FeesPerLiquidity {
-    uint256 value0;
-    uint256 value1;
-}
-
-using {sub} for FeesPerLiquidity global;
-
-function sub(FeesPerLiquidity memory a, FeesPerLiquidity memory b) pure returns (FeesPerLiquidity memory result) {
-    assembly ("memory-safe") {
-        mstore(result, sub(mload(a), mload(b)))
-        mstore(add(result, 32), sub(mload(add(a, 32)), mload(add(b, 32))))
-    }
-}
-
-function feesPerLiquidityFromAmounts(uint128 amount0, uint128 amount1, uint128 liquidity)
-    pure
-    returns (FeesPerLiquidity memory result)
-{
-    assembly ("memory-safe") {
-        mstore(result, div(shl(128, amount0), liquidity))
-        mstore(add(result, 32), div(shl(128, amount1), liquidity))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-/// @title IExposedStorage
-/// @notice Interface for exposing contract storage via view methods
-/// @dev This interface provides a way to access specific pieces of state in the inheriting contract.
-///      It serves as a workaround in the absence of EIP-2330 (https://eips.ethereum.org/EIPS/eip-2330)
-///      which would provide native support for exposing contract storage.
-interface IExposedStorage {
-    /// @notice Loads storage slots from the contract's persistent storage
-    /// @dev Reads each 32-byte slot specified in the calldata (after the function selector) from storage
-    ///      and returns all the loaded values concatenated together.
-    function sload() external view;
-
-    /// @notice Loads storage slots from the contract's transient storage
-    /// @dev Reads each 32-byte slot specified in the calldata (after the function selector) from transient storage
-    ///      and returns all the loaded values concatenated together. Transient storage is cleared at the end
-    ///      of each transaction.
-    function tload() external view;
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type Locker is bytes32;
-
-using {id, addr, parse} for Locker global;
-
-function id(Locker locker) pure returns (uint256 v) {
-    assembly ("memory-safe") {
-        v := sub(shr(160, locker), 1)
-    }
-}
-
-function addr(Locker locker) pure returns (address v) {
-    assembly ("memory-safe") {
-        v := shr(96, shl(96, locker))
-    }
-}
-
-function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
-    assembly ("memory-safe") {
-        lockerId := sub(shr(160, locker), 1)
-        lockerAddr := shr(96, shl(96, locker))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type Locker is bytes32;
-
-using {id, addr, parse} for Locker global;
-
-function id(Locker locker) pure returns (uint256 v) {
-    assembly ("memory-safe") {
-        v := sub(shr(160, locker), 1)
-    }
-}
-
-function addr(Locker locker) pure returns (address v) {
-    assembly ("memory-safe") {
-        v := shr(96, shl(96, locker))
-    }
-}
-
-function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
-    assembly ("memory-safe") {
-        lockerId := sub(shr(160, locker), 1)
-        lockerAddr := shr(96, shl(96, locker))
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {PoolId} from "./poolId.sol";
-import {PoolConfig} from "./poolConfig.sol";
-
-using {toPoolId, validate} for PoolKey global;
-
-/// @notice Unique identifier for a pool containing token addresses and configuration
-/// @dev Each pool has its own state associated with this key
-struct PoolKey {
-    /// @notice Address of token0 (must be < token1)
-    address token0;
-    /// @notice Address of token1 (must be > token0)
-    address token1;
-    /// @notice Packed configuration containing extension, fee, and tick spacing
-    PoolConfig config;
-}
-
-/// @notice Thrown when tokens are not properly sorted (token0 >= token1)
-error TokensMustBeSorted();
-
-/// @notice Validates that a pool key is valid
-/// @dev Checks that tokens are sorted and the config is valid
-/// @param key The pool key to validate
-function validate(PoolKey memory key) pure {
-    if (key.token0 >= key.token1) revert TokensMustBeSorted();
-    key.config.validate();
-}
-
-/// @notice Converts a pool key to a unique pool ID
-/// @param key The pool key
-/// @return result The unique pool ID (hash of the pool key)
-function toPoolId(PoolKey memory key) pure returns (PoolId result) {
-    assembly ("memory-safe") {
-        // it's already copied into memory
-        result := keccak256(key, 96)
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {SqrtRatio} from "./sqrtRatio.sol";
-
-type PoolState is bytes32;
-
-using {sqrtRatio, tick, liquidity, isInitialized, parse} for PoolState global;
-
-function sqrtRatio(PoolState state) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := shr(160, state)
-    }
-}
-
-function tick(PoolState state) pure returns (int32 t) {
-    assembly ("memory-safe") {
-        t := signextend(3, shr(128, state))
-    }
-}
-
-function liquidity(PoolState state) pure returns (uint128 l) {
-    assembly ("memory-safe") {
-        l := shr(128, shl(128, state))
-    }
-}
-
-function isInitialized(PoolState state) pure returns (bool yes) {
-    assembly ("memory-safe") {
-        yes := iszero(iszero(state))
-    }
-}
-
-function parse(PoolState state) pure returns (SqrtRatio r, int32 t, uint128 l) {
-    assembly ("memory-safe") {
-        r := shr(160, state)
-        t := signextend(3, shr(128, state))
-        l := shr(128, shl(128, state))
-    }
-}
-
-function createPoolState(SqrtRatio _sqrtRatio, int32 _tick, uint128 _liquidity) pure returns (PoolState s) {
-    assembly ("memory-safe") {
-        // s = (sqrtRatio << 160) | (_tick << 128) | liquidity
-        s := or(shl(160, _sqrtRatio), or(shl(128, and(_tick, 0xFFFFFFFF)), shr(128, shl(128, _liquidity))))
     }
 }
 
@@ -1437,89 +968,6 @@ function validate(PoolConfig config) pure {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {SqrtRatio, MIN_SQRT_RATIO_RAW, MAX_SQRT_RATIO_RAW} from "./sqrtRatio.sol";
-
-type SwapParameters is bytes32;
-
-using {
-    sqrtRatioLimit,
-    amount,
-    isToken1,
-    skipAhead,
-    isExactOut,
-    isPriceIncreasing,
-    withDefaultSqrtRatioLimit
-} for SwapParameters global;
-
-function sqrtRatioLimit(SwapParameters params) pure returns (SqrtRatio r) {
-    assembly ("memory-safe") {
-        r := shr(160, params)
-    }
-}
-
-function amount(SwapParameters params) pure returns (int128 a) {
-    assembly ("memory-safe") {
-        a := signextend(15, shr(32, params))
-    }
-}
-
-function isToken1(SwapParameters params) pure returns (bool t) {
-    assembly ("memory-safe") {
-        t := and(shr(31, params), 1)
-    }
-}
-
-function skipAhead(SwapParameters params) pure returns (uint256 s) {
-    assembly ("memory-safe") {
-        s := and(params, 0x7fffffff)
-    }
-}
-
-function createSwapParameters(SqrtRatio _sqrtRatioLimit, int128 _amount, bool _isToken1, uint256 _skipAhead)
-    pure
-    returns (SwapParameters p)
-{
-    assembly ("memory-safe") {
-        // p = (sqrtRatioLimit << 160) | (amount << 32) | (isToken1 << 31) | skipAhead
-        // Mask each field to ensure dirty bits don't interfere
-        // For isToken1, use iszero(iszero()) to convert any non-zero value to 1
-        p := or(
-            shl(160, _sqrtRatioLimit),
-            or(
-                shl(32, and(_amount, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)),
-                or(shl(31, iszero(iszero(_isToken1))), and(_skipAhead, 0x7fffffff))
-            )
-        )
-    }
-}
-
-function isExactOut(SwapParameters params) pure returns (bool yes) {
-    assembly ("memory-safe") {
-        yes := and(shr(159, params), 1)
-    }
-}
-
-function isPriceIncreasing(SwapParameters params) pure returns (bool yes) {
-    bool _isExactOut = params.isExactOut();
-    bool _isToken1 = params.isToken1();
-    assembly ("memory-safe") {
-        yes := xor(_isExactOut, _isToken1)
-    }
-}
-
-function withDefaultSqrtRatioLimit(SwapParameters params) pure returns (SwapParameters updated) {
-    bool increasing = params.isPriceIncreasing();
-    assembly ("memory-safe") {
-        let replace := iszero(shr(160, params))
-        let orMask :=
-            shl(160, mul(replace, or(mul(increasing, MAX_SQRT_RATIO_RAW), mul(iszero(increasing), MIN_SQRT_RATIO_RAW))))
-        updated := or(orMask, params)
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
 // A dynamic fixed point number (a la floating point) that stores a shifting 94 bit view of the underlying fixed point value,
 //  based on the most significant bits (mantissa)
 // If the most significant 2 bits are 11, it represents a 64.30
@@ -1671,6 +1119,307 @@ function min(SqrtRatio a, SqrtRatio b) pure returns (SqrtRatio r) {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
+struct CallPoints {
+    bool beforeInitializePool;
+    bool afterInitializePool;
+    bool beforeSwap;
+    bool afterSwap;
+    bool beforeUpdatePosition;
+    bool afterUpdatePosition;
+    bool beforeCollectFees;
+    bool afterCollectFees;
+}
+
+using {eq, isValid, toUint8} for CallPoints global;
+
+function eq(CallPoints memory a, CallPoints memory b) pure returns (bool) {
+    return (a.beforeInitializePool == b.beforeInitializePool && a.afterInitializePool == b.afterInitializePool
+            && a.beforeSwap == b.beforeSwap && a.afterSwap == b.afterSwap
+            && a.beforeUpdatePosition == b.beforeUpdatePosition && a.afterUpdatePosition == b.afterUpdatePosition
+            && a.beforeCollectFees == b.beforeCollectFees && a.afterCollectFees == b.afterCollectFees);
+}
+
+function isValid(CallPoints memory a) pure returns (bool) {
+    return (a.beforeInitializePool || a.afterInitializePool || a.beforeSwap || a.afterSwap || a.beforeUpdatePosition
+            || a.afterUpdatePosition || a.beforeCollectFees || a.afterCollectFees);
+}
+
+function toUint8(CallPoints memory callPoints) pure returns (uint8 b) {
+    assembly ("memory-safe") {
+        b := add(
+            add(
+                add(
+                    add(
+                        add(
+                            add(
+                                add(mload(callPoints), mul(128, mload(add(callPoints, 32)))),
+                                mul(64, mload(add(callPoints, 64)))
+                            ),
+                            mul(32, mload(add(callPoints, 96)))
+                        ),
+                        mul(16, mload(add(callPoints, 128)))
+                    ),
+                    mul(8, mload(add(callPoints, 160)))
+                ),
+                mul(4, mload(add(callPoints, 192)))
+            ),
+            mul(2, mload(add(callPoints, 224)))
+        )
+    }
+}
+
+function addressToCallPoints(address a) pure returns (CallPoints memory result) {
+    result = byteToCallPoints(uint8(uint160(a) >> 152));
+}
+
+function byteToCallPoints(uint8 b) pure returns (CallPoints memory result) {
+    // note the order of bytes does not match the struct order of elements because we are matching the cairo implementation
+    // which for legacy reasons has the fields in this order
+    result = CallPoints({
+        beforeInitializePool: (b & 1) != 0,
+        afterInitializePool: (b & 128) != 0,
+        beforeSwap: (b & 64) != 0,
+        afterSwap: (b & 32) != 0,
+        beforeUpdatePosition: (b & 16) != 0,
+        afterUpdatePosition: (b & 8) != 0,
+        beforeCollectFees: (b & 4) != 0,
+        afterCollectFees: (b & 2) != 0
+    });
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {PoolId} from "./poolId.sol";
+import {PoolConfig} from "./poolConfig.sol";
+
+using {toPoolId, validate} for PoolKey global;
+
+/// @notice Unique identifier for a pool containing token addresses and configuration
+/// @dev Each pool has its own state associated with this key
+struct PoolKey {
+    /// @notice Address of token0 (must be < token1)
+    address token0;
+    /// @notice Address of token1 (must be > token0)
+    address token1;
+    /// @notice Packed configuration containing extension, fee, and tick spacing
+    PoolConfig config;
+}
+
+/// @notice Thrown when tokens are not properly sorted (token0 >= token1)
+error TokensMustBeSorted();
+
+/// @notice Validates that a pool key is valid
+/// @dev Checks that tokens are sorted and the config is valid
+/// @param key The pool key to validate
+function validate(PoolKey memory key) pure {
+    if (key.token0 >= key.token1) revert TokensMustBeSorted();
+    key.config.validate();
+}
+
+/// @notice Converts a pool key to a unique pool ID
+/// @param key The pool key
+/// @return result The unique pool ID (hash of the pool key)
+function toPoolId(PoolKey memory key) pure returns (PoolId result) {
+    assembly ("memory-safe") {
+        // it's already copied into memory
+        result := keccak256(key, 96)
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type PoolBalanceUpdate is bytes32;
+
+using {delta0, delta1} for PoolBalanceUpdate global;
+
+function delta0(PoolBalanceUpdate update) pure returns (int128 v) {
+    assembly ("memory-safe") {
+        v := signextend(15, shr(128, update))
+    }
+}
+
+function delta1(PoolBalanceUpdate update) pure returns (int128 v) {
+    assembly ("memory-safe") {
+        v := signextend(15, update)
+    }
+}
+
+function createPoolBalanceUpdate(int128 _delta0, int128 _delta1) pure returns (PoolBalanceUpdate update) {
+    assembly ("memory-safe") {
+        // update = (delta0 << 128) | delta1
+        update := or(shl(128, _delta0), and(_delta1, 0xffffffffffffffffffffffffffffffff))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// Protocol Constants
+// Contains all constant values used throughout the Ekubo Protocol
+// These constants define the boundaries and special values for the protocol's operation
+
+// The minimum tick value supported by the protocol
+// Corresponds to the minimum possible price ratio in the protocol
+int32 constant MIN_TICK = -88722835;
+
+// The maximum tick value supported by the protocol
+// Corresponds to the maximum possible price ratio in the protocol
+int32 constant MAX_TICK = 88722835;
+
+// The maximum tick magnitude (absolute value of MAX_TICK)
+// Used for validation and bounds checking in tick-related calculations
+uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
+
+// The maximum allowed tick spacing for pools
+// Defines the upper limit for tick spacing configuration in pool creation
+uint32 constant MAX_TICK_SPACING = 698605;
+
+// Address used to represent the native token (ETH) within the protocol
+// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
+address constant NATIVE_TOKEN_ADDRESS = address(0);
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+/// @notice Unique identifier for a pool
+/// @dev Wraps bytes32 to provide type safety for pool identifiers
+type PoolId is bytes32;
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {SqrtRatio} from "./sqrtRatio.sol";
+
+type PoolState is bytes32;
+
+using {sqrtRatio, tick, liquidity, isInitialized, parse} for PoolState global;
+
+function sqrtRatio(PoolState state) pure returns (SqrtRatio r) {
+    assembly ("memory-safe") {
+        r := shr(160, state)
+    }
+}
+
+function tick(PoolState state) pure returns (int32 t) {
+    assembly ("memory-safe") {
+        t := signextend(3, shr(128, state))
+    }
+}
+
+function liquidity(PoolState state) pure returns (uint128 l) {
+    assembly ("memory-safe") {
+        l := shr(128, shl(128, state))
+    }
+}
+
+function isInitialized(PoolState state) pure returns (bool yes) {
+    assembly ("memory-safe") {
+        yes := iszero(iszero(state))
+    }
+}
+
+function parse(PoolState state) pure returns (SqrtRatio r, int32 t, uint128 l) {
+    assembly ("memory-safe") {
+        r := shr(160, state)
+        t := signextend(3, shr(128, state))
+        l := shr(128, shl(128, state))
+    }
+}
+
+function createPoolState(SqrtRatio _sqrtRatio, int32 _tick, uint128 _liquidity) pure returns (PoolState s) {
+    assembly ("memory-safe") {
+        // s = (sqrtRatio << 160) | (_tick << 128) | liquidity
+        s := or(shl(160, _sqrtRatio), or(shl(128, and(_tick, 0xFFFFFFFF)), shr(128, shl(128, _liquidity))))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {Locker} from "../types/locker.sol";
+
+interface ILocker {
+    function locked_6416899205(uint256 id) external;
+}
+
+interface IForwardee {
+    function forwarded_2374103877(Locker original) external;
+}
+
+/// @title IFlashAccountant
+/// @notice Interface for flash loan accounting functionality using transient storage
+/// @dev This interface manages debt tracking for flash loans, allowing users to borrow tokens temporarily
+///      and ensuring all debts are settled before the transaction completes. Uses transient storage
+///      for gas-efficient temporary state management within a single transaction.
+interface IFlashAccountant {
+    /// @notice Thrown when an operation is made that affects debts without an active lock
+    error NotLocked();
+    /// @notice Thrown when a method is called by an address other than the current locker
+    error LockerOnly();
+    /// @notice Thrown when the lock callback returns without clearing all the debts either via withdrawing from or paying to the accountant
+    error DebtsNotZeroed(uint256 id);
+    /// @notice Thrown if the contract receives a payment that exceeds type(uint128).max
+    error PaymentOverflow();
+    /// @notice Thrown if the contract receives a call to updateDebt that has a data length != 20
+    error UpdateDebtMessageLength();
+
+    /// @notice Creates a lock context and calls back to the caller's locked function
+    /// @dev The entrypoint for all operations on the core contract. Any data passed after the
+    ///      function signature is passed through back to the caller after the locked function
+    ///      signature and data, with no additional encoding. Any data returned from ILocker#locked
+    ///      is also returned from this function exactly as is. Reverts are bubbled up.
+    ///      Ensures all debts are zeroed before completing the lock.
+    function lock() external;
+
+    /// @notice Forwards the lock context to another actor, allowing them to act on the original locker's debt
+    /// @dev Temporarily changes the locker to the forwarded address for the duration of the forwarded call.
+    ///      Any additional calldata is passed through to the forwardee with no additional encoding.
+    ///      Any data returned from IForwardee#forwarded is returned exactly as is. Reverts are bubbled up.
+    /// @param to The address to forward the lock context to
+    function forward(address to) external;
+
+    /// @notice Initiates a payment operation by recording current token balances
+    /// @dev To make a payment to core, you must first call startPayments with all the tokens you'd like to send.
+    ///      All the tokens that will be paid must be ABI-encoded immediately after the 4 byte function selector.
+    ///      This function stores the current balance + 1 for each token to distinguish between zero balance
+    ///      and uninitialized state. Returns the current balances of all specified tokens as ABI-encoded
+    ///      raw bytes via assembly (no explicit Solidity return type).
+    function startPayments() external;
+
+    /// @notice Completes a payment operation by calculating and crediting token payments
+    /// @dev After tokens have been transferred, call completePayments to be credited for the tokens
+    ///      that have been paid to core. The credit goes to the current locker. Compares current
+    ///      balances with those recorded in startPayments to determine payment amounts.
+    ///      The computed payments are applied to the current locker's debt.
+    ///      Returns packed uint128 payment amounts (16 bytes each) in the same order as the tokens.
+    function completePayments() external;
+
+    /// @notice Withdraws tokens from the accountant to recipients using packed calldata
+    /// @dev The contract must be locked, as it tracks withdrawn amounts against the current locker's debt.
+    ///      Calldata format: each withdrawal is 56 bytes: token (20) + recipient (20) + amount (16)
+    ///      For native tokens, uses the NATIVE_TOKEN_ADDRESS constant and transfers ETH directly.
+    function withdraw() external;
+
+    /// @notice Updates debt for the current locker and for the token at the calling address
+    /// @dev This is for deeply-integrated tokens that allow flash operations via the accountant.
+    ///      The calling address is treated as the token address.
+    /// @dev The debt change argument is an int128 encoded immediately after the selector.
+    /// @dev The calldata length must be exactly 20 bytes in order to avoid this being called unintentionally.
+    function updateDebt() external;
+
+    /// @notice Receives ETH payments and credits them against the current locker's native token debt
+    /// @dev This contract can receive ETH as a payment. The received amount is credited as a negative
+    ///      debt change for the native token. Note: because we use msg.value here, this contract can
+    ///      never be multicallable, i.e. it should never expose the ability to delegatecall itself
+    ///      more than once in a single call.
+    receive() external payable;
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
 import {SqrtRatio, MIN_SQRT_RATIO_RAW, MAX_SQRT_RATIO_RAW} from "./sqrtRatio.sol";
 
 type SwapParameters is bytes32;
@@ -1754,6 +1503,243 @@ function withDefaultSqrtRatioLimit(SwapParameters params) pure returns (SwapPara
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
+type Locker is bytes32;
+
+using {id, addr, parse} for Locker global;
+
+function id(Locker locker) pure returns (uint256 v) {
+    assembly ("memory-safe") {
+        v := sub(shr(160, locker), 1)
+    }
+}
+
+function addr(Locker locker) pure returns (address v) {
+    assembly ("memory-safe") {
+        v := shr(96, shl(96, locker))
+    }
+}
+
+function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
+    assembly ("memory-safe") {
+        lockerId := sub(shr(160, locker), 1)
+        lockerAddr := shr(96, shl(96, locker))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
+import {PoolConfig} from "./poolConfig.sol";
+
+type PositionId is bytes32;
+
+using {validate, salt, tickLower, tickUpper} for PositionId global;
+
+function salt(PositionId positionId) pure returns (bytes24 v) {
+    assembly ("memory-safe") {
+        v := shl(64, shr(64, positionId))
+    }
+}
+
+function tickLower(PositionId positionId) pure returns (int32 v) {
+    assembly ("memory-safe") {
+        // shift down, then signextend to 32 bits
+        v := signextend(3, shr(32, positionId))
+    }
+}
+
+function tickUpper(PositionId positionId) pure returns (int32 v) {
+    assembly ("memory-safe") {
+        // lowest 4 bytes, then signextend to 32 bits
+        v := signextend(3, positionId)
+    }
+}
+
+function createPositionId(bytes24 _salt, int32 _tickLower, int32 _tickUpper) pure returns (PositionId v) {
+    assembly ("memory-safe") {
+        // v = salt | (tickLower << 32) | tickUpper
+        v := or(shl(64, shr(64, _salt)), or(shl(32, and(_tickLower, 0xFFFFFFFF)), and(_tickUpper, 0xFFFFFFFF)))
+    }
+}
+
+/// @notice Thrown when the order of the position bounds is invalid, i.e. tickLower >= tickUpper
+error BoundsOrder();
+/// @notice Thrown when the bounds of the position are outside the pool's min/max tick range
+error MinMaxBounds();
+/// @notice Thrown when the ticks of the bounds do not align with tick spacing for concentrated pools
+error BoundsTickSpacing();
+/// @notice Thrown when stableswap pool positions are not at the min/max tick for the config
+error StableswapMustBeFullRange();
+
+function validate(PositionId positionId, PoolConfig config) pure {
+    if (config.isConcentrated()) {
+        if (positionId.tickLower() >= positionId.tickUpper()) revert BoundsOrder();
+        if (positionId.tickLower() < MIN_TICK || positionId.tickUpper() > MAX_TICK) revert MinMaxBounds();
+        int32 spacing = int32(config.concentratedTickSpacing());
+        if (positionId.tickLower() % spacing != 0 || positionId.tickUpper() % spacing != 0) revert BoundsTickSpacing();
+    } else {
+        (int32 lower, int32 upper) = config.stableswapActiveLiquidityTickRange();
+        // For stableswap pools, positions must be exactly min/max tick
+        if (positionId.tickLower() != lower || positionId.tickUpper() != upper) revert StableswapMustBeFullRange();
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// The total fees per liquidity for each token.
+// Since these are always read together we put them in a struct, even though they cannot be packed.
+struct FeesPerLiquidity {
+    uint256 value0;
+    uint256 value1;
+}
+
+using {sub} for FeesPerLiquidity global;
+
+function sub(FeesPerLiquidity memory a, FeesPerLiquidity memory b) pure returns (FeesPerLiquidity memory result) {
+    assembly ("memory-safe") {
+        mstore(result, sub(mload(a), mload(b)))
+        mstore(add(result, 32), sub(mload(add(a, 32)), mload(add(b, 32))))
+    }
+}
+
+function feesPerLiquidityFromAmounts(uint128 amount0, uint128 amount1, uint128 liquidity)
+    pure
+    returns (FeesPerLiquidity memory result)
+{
+    assembly ("memory-safe") {
+        mstore(result, div(shl(128, amount0), liquidity))
+        mstore(add(result, 32), div(shl(128, amount1), liquidity))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type Locker is bytes32;
+
+using {id, addr, parse} for Locker global;
+
+function id(Locker locker) pure returns (uint256 v) {
+    assembly ("memory-safe") {
+        v := sub(shr(160, locker), 1)
+    }
+}
+
+function addr(Locker locker) pure returns (address v) {
+    assembly ("memory-safe") {
+        v := shr(96, shl(96, locker))
+    }
+}
+
+function parse(Locker locker) pure returns (uint256 lockerId, address lockerAddr) {
+    assembly ("memory-safe") {
+        lockerId := sub(shr(160, locker), 1)
+        lockerAddr := shr(96, shl(96, locker))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+struct CallPoints {
+    bool beforeInitializePool;
+    bool afterInitializePool;
+    bool beforeSwap;
+    bool afterSwap;
+    bool beforeUpdatePosition;
+    bool afterUpdatePosition;
+    bool beforeCollectFees;
+    bool afterCollectFees;
+}
+
+using {eq, isValid, toUint8} for CallPoints global;
+
+function eq(CallPoints memory a, CallPoints memory b) pure returns (bool) {
+    return (a.beforeInitializePool == b.beforeInitializePool && a.afterInitializePool == b.afterInitializePool
+            && a.beforeSwap == b.beforeSwap && a.afterSwap == b.afterSwap
+            && a.beforeUpdatePosition == b.beforeUpdatePosition && a.afterUpdatePosition == b.afterUpdatePosition
+            && a.beforeCollectFees == b.beforeCollectFees && a.afterCollectFees == b.afterCollectFees);
+}
+
+function isValid(CallPoints memory a) pure returns (bool) {
+    return (a.beforeInitializePool || a.afterInitializePool || a.beforeSwap || a.afterSwap || a.beforeUpdatePosition
+            || a.afterUpdatePosition || a.beforeCollectFees || a.afterCollectFees);
+}
+
+function toUint8(CallPoints memory callPoints) pure returns (uint8 b) {
+    assembly ("memory-safe") {
+        b := add(
+            add(
+                add(
+                    add(
+                        add(
+                            add(
+                                add(mload(callPoints), mul(128, mload(add(callPoints, 32)))),
+                                mul(64, mload(add(callPoints, 64)))
+                            ),
+                            mul(32, mload(add(callPoints, 96)))
+                        ),
+                        mul(16, mload(add(callPoints, 128)))
+                    ),
+                    mul(8, mload(add(callPoints, 160)))
+                ),
+                mul(4, mload(add(callPoints, 192)))
+            ),
+            mul(2, mload(add(callPoints, 224)))
+        )
+    }
+}
+
+function addressToCallPoints(address a) pure returns (CallPoints memory result) {
+    result = byteToCallPoints(uint8(uint160(a) >> 152));
+}
+
+function byteToCallPoints(uint8 b) pure returns (CallPoints memory result) {
+    // note the order of bytes does not match the struct order of elements because we are matching the cairo implementation
+    // which for legacy reasons has the fields in this order
+    result = CallPoints({
+        beforeInitializePool: (b & 1) != 0,
+        afterInitializePool: (b & 128) != 0,
+        beforeSwap: (b & 64) != 0,
+        afterSwap: (b & 32) != 0,
+        beforeUpdatePosition: (b & 16) != 0,
+        afterUpdatePosition: (b & 8) != 0,
+        beforeCollectFees: (b & 4) != 0,
+        afterCollectFees: (b & 2) != 0
+    });
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+type PoolBalanceUpdate is bytes32;
+
+using {delta0, delta1} for PoolBalanceUpdate global;
+
+function delta0(PoolBalanceUpdate update) pure returns (int128 v) {
+    assembly ("memory-safe") {
+        v := signextend(15, shr(128, update))
+    }
+}
+
+function delta1(PoolBalanceUpdate update) pure returns (int128 v) {
+    assembly ("memory-safe") {
+        v := signextend(15, update)
+    }
+}
+
+function createPoolBalanceUpdate(int128 _delta0, int128 _delta1) pure returns (PoolBalanceUpdate update) {
+    assembly ("memory-safe") {
+        // update = (delta0 << 128) | delta1
+        update := or(shl(128, _delta0), and(_delta1, 0xffffffffffffffffffffffffffffffff))
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
 import {PoolId} from "./poolId.sol";
 import {PoolConfig} from "./poolConfig.sol";
 
@@ -1794,70 +1780,756 @@ function toPoolId(PoolKey memory key) pure returns (PoolId result) {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-/// @notice Unique identifier for a pool
-/// @dev Wraps bytes32 to provide type safety for pool identifiers
-type PoolId is bytes32;
+/// @title IExposedStorage
+/// @notice Interface for exposing contract storage via view methods
+/// @dev This interface provides a way to access specific pieces of state in the inheriting contract.
+///      It serves as a workaround in the absence of EIP-2330 (https://eips.ethereum.org/EIPS/eip-2330)
+///      which would provide native support for exposing contract storage.
+interface IExposedStorage {
+    /// @notice Loads storage slots from the contract's persistent storage
+    /// @dev Reads each 32-byte slot specified in the calldata (after the function selector) from storage
+    ///      and returns all the loaded values concatenated together.
+    function sload() external view;
+
+    /// @notice Loads storage slots from the contract's transient storage
+    /// @dev Reads each 32-byte slot specified in the calldata (after the function selector) from transient storage
+    ///      and returns all the loaded values concatenated together. Transient storage is cleared at the end
+    ///      of each transaction.
+    function tload() external view;
+}
 
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
+import {PoolKey} from "../../types/poolKey.sol";
 import {ILocker, IForwardee} from "../IFlashAccountant.sol";
 import {IExtension} from "../ICore.sol";
 import {IExposedStorage} from "../IExposedStorage.sol";
+
+/// @title MEV Capture Interface
+/// @notice Interface for the Ekubo MEV Capture Extension
+/// @dev Extension that charges additional fees based on the relative size of the priority fee and tick movement during swaps
+interface IMEVCapture is IExposedStorage, ILocker, IForwardee, IExtension {
+    /// @notice Thrown when trying to use MEV capture on a full-range-only pool
+    /// @dev MEV capture only works with concentrated liquidity pools that have discrete tick spacing
+    error ConcentratedLiquidityPoolsOnly();
+
+    /// @notice Thrown when trying to use MEV capture on a pool with zero fees
+    /// @dev MEV capture multiplies the base fee, so a zero fee would result in no additional fees
+    error NonzeroFeesOnly();
+
+    /// @notice Thrown when attempting to swap directly without using the forward mechanism
+    /// @dev All swaps must go through the forward mechanism to ensure proper MEV fee calculation
+    error SwapMustHappenThroughForward();
+
+    /// @notice Accumulates any pending pool fees from past blocks
+    /// @dev This function can be called by anyone to trigger fee accumulation for a pool
+    /// @dev Fees are accumulated when the pool hasn't been updated in the current block
+    /// @param poolKey The pool key identifying the pool to accumulate fees for
+    function accumulatePoolFees(PoolKey memory poolKey) external;
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {BaseLocker} from "./base/BaseLocker.sol";
+import {UsesCore} from "./base/UsesCore.sol";
+import {ICore} from "./interfaces/ICore.sol";
+import {IOrders} from "./interfaces/IOrders.sol";
+import {PayableMulticallable} from "./base/PayableMulticallable.sol";
+import {TWAMMLib} from "./libraries/TWAMMLib.sol";
+import {ITWAMM} from "./interfaces/extensions/ITWAMM.sol";
+import {OrderKey} from "./types/orderKey.sol";
+import {computeSaleRate} from "./math/twamm.sol";
+import {BaseNonfungibleToken} from "./base/BaseNonfungibleToken.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {NATIVE_TOKEN_ADDRESS} from "./math/constants.sol";
+import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
+
+/// @title Ekubo Protocol Orders
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Tracks TWAMM (Time-Weighted Average Market Maker) orders in Ekubo Protocol as NFTs
+/// @dev Manages long-term orders that execute over time through the TWAMM extension
+contract Orders is IOrders, UsesCore, PayableMulticallable, BaseLocker, BaseNonfungibleToken {
+    using TWAMMLib for *;
+    using FlashAccountantLib for *;
+
+    uint256 private constant CALL_TYPE_CHANGE_SALE_RATE = 0;
+    uint256 private constant CALL_TYPE_COLLECT_PROCEEDS = 1;
+
+    /// @notice The TWAMM extension contract that handles order execution
+    ITWAMM public immutable TWAMM_EXTENSION;
+
+    /// @notice Constructs the Orders contract
+    /// @param core The core contract instance
+    /// @param _twamm The TWAMM extension contract
+    /// @param owner The owner of the contract (for access control)
+    constructor(ICore core, ITWAMM _twamm, address owner) BaseNonfungibleToken(owner) BaseLocker(core) UsesCore(core) {
+        TWAMM_EXTENSION = _twamm;
+    }
+
+    /// @inheritdoc IOrders
+    function mintAndIncreaseSellAmount(OrderKey memory orderKey, uint112 amount, uint112 maxSaleRate)
+        public
+        payable
+        returns (uint256 id, uint112 saleRate)
+    {
+        id = mint();
+        saleRate = increaseSellAmount(id, orderKey, amount, maxSaleRate);
+    }
+
+    /// @inheritdoc IOrders
+    function increaseSellAmount(uint256 id, OrderKey memory orderKey, uint128 amount, uint112 maxSaleRate)
+        public
+        payable
+        authorizedForNft(id)
+        returns (uint112 saleRate)
+    {
+        uint256 realStart = FixedPointMathLib.max(block.timestamp, orderKey.config.startTime());
+
+        unchecked {
+            if (orderKey.config.endTime() <= realStart) {
+                revert OrderAlreadyEnded();
+            }
+
+            saleRate = uint112(computeSaleRate(amount, uint32(orderKey.config.endTime() - realStart)));
+
+            if (saleRate > maxSaleRate) {
+                revert MaxSaleRateExceeded();
+            }
+        }
+
+        lock(abi.encode(CALL_TYPE_CHANGE_SALE_RATE, msg.sender, id, orderKey, saleRate));
+    }
+
+    /// @inheritdoc IOrders
+    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease, address recipient)
+        public
+        payable
+        authorizedForNft(id)
+        returns (uint112 refund)
+    {
+        refund = uint112(
+            uint256(
+                -abi.decode(
+                    lock(
+                        abi.encode(
+                            CALL_TYPE_CHANGE_SALE_RATE, recipient, id, orderKey, -int256(uint256(saleRateDecrease))
+                        )
+                    ),
+                    (int256)
+                )
+            )
+        );
+    }
+
+    /// @inheritdoc IOrders
+    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease)
+        external
+        payable
+        returns (uint112 refund)
+    {
+        refund = decreaseSaleRate(id, orderKey, saleRateDecrease, msg.sender);
+    }
+
+    /// @inheritdoc IOrders
+    function collectProceeds(uint256 id, OrderKey memory orderKey, address recipient)
+        public
+        payable
+        authorizedForNft(id)
+        returns (uint128 proceeds)
+    {
+        proceeds = abi.decode(lock(abi.encode(CALL_TYPE_COLLECT_PROCEEDS, id, orderKey, recipient)), (uint128));
+    }
+
+    /// @inheritdoc IOrders
+    function collectProceeds(uint256 id, OrderKey memory orderKey) external payable returns (uint128 proceeds) {
+        proceeds = collectProceeds(id, orderKey, msg.sender);
+    }
+
+    /// @inheritdoc IOrders
+    function executeVirtualOrdersAndGetCurrentOrderInfo(uint256 id, OrderKey memory orderKey)
+        external
+        returns (uint112 saleRate, uint256 amountSold, uint256 remainingSellAmount, uint128 purchasedAmount)
+    {
+        (saleRate, amountSold, remainingSellAmount, purchasedAmount) =
+            TWAMM_EXTENSION.executeVirtualOrdersAndGetCurrentOrderInfo(address(this), bytes32(id), orderKey);
+    }
+
+    /// @notice Handles lock callback data for order operations
+    /// @dev Internal function that processes different types of order operations
+    /// @param data Encoded operation data
+    /// @return result Encoded result data
+    function handleLockData(uint256, bytes memory data) internal override returns (bytes memory result) {
+        uint256 callType = abi.decode(data, (uint256));
+
+        if (callType == CALL_TYPE_CHANGE_SALE_RATE) {
+            (, address recipientOrPayer, uint256 id, OrderKey memory orderKey, int256 saleRateDelta) =
+                abi.decode(data, (uint256, address, uint256, OrderKey, int256));
+
+            int256 amount =
+                CORE.updateSaleRate(TWAMM_EXTENSION, bytes32(id), orderKey, SafeCastLib.toInt112(saleRateDelta));
+
+            if (amount != 0) {
+                address sellToken = orderKey.sellToken();
+                if (saleRateDelta > 0) {
+                    if (sellToken == NATIVE_TOKEN_ADDRESS) {
+                        SafeTransferLib.safeTransferETH(address(ACCOUNTANT), uint256(amount));
+                    } else {
+                        ACCOUNTANT.payFrom(recipientOrPayer, sellToken, uint256(amount));
+                    }
+                } else {
+                    unchecked {
+                        // we know amount will never exceed the uint128 type because of limitations on sale rate (fixed point 80.32) and duration (uint32)
+                        ACCOUNTANT.withdraw(sellToken, recipientOrPayer, uint128(uint256(-amount)));
+                    }
+                }
+            }
+
+            result = abi.encode(amount);
+        } else if (callType == CALL_TYPE_COLLECT_PROCEEDS) {
+            (, uint256 id, OrderKey memory orderKey, address recipient) =
+                abi.decode(data, (uint256, uint256, OrderKey, address));
+
+            uint128 proceeds = CORE.collectProceeds(TWAMM_EXTENSION, bytes32(id), orderKey);
+
+            if (proceeds != 0) {
+                ACCOUNTANT.withdraw(orderKey.buyToken(), recipient, proceeds);
+            }
+
+            result = abi.encode(proceeds);
+        } else {
+            revert();
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {NATIVE_TOKEN_ADDRESS} from "../math/constants.sol";
+import {IFlashAccountant} from "../interfaces/IFlashAccountant.sol";
+import {Locker} from "../types/locker.sol";
+
+/// @title FlashAccountant
+/// @notice Abstract contract that provides flash loan accounting functionality using transient storage
+/// @dev This contract manages debt tracking for flash loans, allowing users to borrow tokens temporarily
+///      and ensuring all debts are settled before the transaction completes. Uses transient storage
+///      for gas-efficient temporary state management within a single transaction.
+abstract contract FlashAccountant is IFlashAccountant {
+    // These offsets are selected so that they do not accidentally overlap with any other base contract's use of transient storage
+
+    /// @dev Transient storage slot for tracking the current locker ID and address
+    /// @dev The stored ID is kept as id + 1 to facilitate the NotLocked check (zero means unlocked)
+    /// @dev Generated using: cast keccak "FlashAccountant#CURRENT_LOCKER_SLOT"
+    uint256 private constant _CURRENT_LOCKER_SLOT = 0x07cc7f5195d862f505d6b095c82f92e00cfc1766f5bca4383c28dc5fca1555fd;
+
+    /// @dev Transient storage offset for tracking token debts for each locker
+    /// @dev Generated using: cast keccak "FlashAccountant#_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET"
+    uint256 private constant _DEBT_LOCKER_TOKEN_ADDRESS_OFFSET =
+        0x753dfe4b4dfb3ff6c11bbf6a97f3c094e91c003ce904a55cc5662fbad220f599;
+
+    /// @dev Transient storage offset for tracking the count of tokens with non-zero debt for each locker
+    /// @dev Generated using: cast keccak "FlashAccountant#NONZERO_DEBT_COUNT_OFFSET"
+    uint256 private constant _NONZERO_DEBT_COUNT_OFFSET =
+        0x7772acfd7e0f66ebb20a058830296c3dc1301b111d23348e1c961d324223190d;
+
+    /// @dev Transient storage offset for tracking token balances during payment operations
+    /// @dev Generated using: cast keccak "FlashAccountant#_PAYMENT_TOKEN_ADDRESS_OFFSET"
+    uint256 private constant _PAYMENT_TOKEN_ADDRESS_OFFSET =
+        0x6747da56dbd05b26a7ecd2a0106781585141cf07098ad54c0e049e4e86dccb8c;
+
+    /// @notice Gets the current locker information from transient storage
+    /// @dev Reverts with NotLocked() if no lock is currently active
+    /// @return locker The current locker containing both id and address
+    function _getLocker() internal view returns (Locker locker) {
+        assembly ("memory-safe") {
+            locker := tload(_CURRENT_LOCKER_SLOT)
+
+            if iszero(locker) {
+                // cast sig "NotLocked()"
+                mstore(0, shl(224, 0x1834e265))
+                revert(0, 4)
+            }
+        }
+    }
+
+    /// @notice Gets the current locker information and ensures the caller is the locker
+    /// @dev Reverts with LockerOnly() if the caller is not the current locker
+    /// @return locker The current locker containing both id and address (address must be msg.sender)
+    function _requireLocker() internal view returns (Locker locker) {
+        locker = _getLocker();
+        if (locker.addr() != msg.sender) revert LockerOnly();
+    }
+
+    /// @notice Updates the debt tracking for a specific locker and token
+    /// @dev We assume debtChange cannot exceed a 128 bits value, even though it uses a int256 container.
+    ///      This must be enforced at the places it is called for this contract's safety.
+    ///      Negative values erase debt, positive values add debt.
+    ///      Updates the non-zero debt count when debt transitions between zero and non-zero states.
+    /// @param id The locker ID to update debt for
+    /// @param token The token address to update debt for
+    /// @param debtChange The change in debt (negative to reduce, positive to increase)
+    function _accountDebt(uint256 id, address token, int256 debtChange) internal {
+        assembly ("memory-safe") {
+            let deltaSlot := add(_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET, add(shl(160, id), token))
+            let current := tload(deltaSlot)
+
+            // we know this never overflows because debtChange is only ever derived from 128 bit values in inheriting contracts
+            let next := add(current, debtChange)
+
+            let countChange := sub(iszero(current), iszero(next))
+
+            if countChange {
+                let nzdCountSlot := add(id, _NONZERO_DEBT_COUNT_OFFSET)
+                tstore(nzdCountSlot, add(tload(nzdCountSlot), countChange))
+            }
+
+            tstore(deltaSlot, next)
+        }
+    }
+
+    /// @notice Updates the debt tracking for a specific locker and pair of tokens in a single operation
+    /// @dev Optimized version that updates both tokens' debts and performs a single tload/tstore on the non-zero debt count.
+    ///      Individual token debt slots are still updated separately, but the non-zero debt count is only loaded/stored once.
+    ///      We assume debtChange values cannot exceed 128 bits. This must be enforced at the places it is called for this contract's safety.
+    ///      Negative values erase debt, positive values add debt.
+    /// @param id The locker ID to update debt for
+    /// @param tokenA The first token address
+    /// @param tokenB The second token address
+    /// @param debtChangeA The change in debt for tokenA (negative to reduce, positive to increase)
+    /// @param debtChangeB The change in debt for tokenB (negative to reduce, positive to increase)
+    function _updatePairDebt(uint256 id, address tokenA, address tokenB, int256 debtChangeA, int256 debtChangeB)
+        internal
+    {
+        assembly ("memory-safe") {
+            let nzdCountChange := 0
+
+            // Update token0 debt if there's a change
+            if debtChangeA {
+                let deltaSlotA := add(_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET, add(shl(160, id), tokenA))
+                let currentA := tload(deltaSlotA)
+                let nextA := add(currentA, debtChangeA)
+
+                nzdCountChange := sub(iszero(currentA), iszero(nextA))
+
+                tstore(deltaSlotA, nextA)
+            }
+
+            if debtChangeB {
+                let deltaSlotB := add(_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET, add(shl(160, id), tokenB))
+                let currentB := tload(deltaSlotB)
+                let nextB := add(currentB, debtChangeB)
+
+                nzdCountChange := add(nzdCountChange, sub(iszero(currentB), iszero(nextB)))
+
+                tstore(deltaSlotB, nextB)
+            }
+
+            // Update non-zero debt count only if it changed
+            if nzdCountChange {
+                let nzdCountSlot := add(id, _NONZERO_DEBT_COUNT_OFFSET)
+                tstore(nzdCountSlot, add(tload(nzdCountSlot), nzdCountChange))
+            }
+        }
+    }
+
+    /// @inheritdoc IFlashAccountant
+    function updateDebt() external {
+        if (msg.data.length != 20) {
+            revert UpdateDebtMessageLength();
+        }
+
+        uint256 id = _getLocker().id();
+        int256 delta;
+        assembly ("memory-safe") {
+            delta := signextend(15, shr(128, calldataload(4)))
+        }
+        _accountDebt(id, msg.sender, delta);
+    }
+
+    /// @inheritdoc IFlashAccountant
+    function lock() external {
+        assembly ("memory-safe") {
+            let current := tload(_CURRENT_LOCKER_SLOT)
+
+            let id := shr(160, current)
+
+            // store the count
+            tstore(_CURRENT_LOCKER_SLOT, or(shl(160, add(id, 1)), caller()))
+
+            let free := mload(0x40)
+            // Prepare call to locked_(uint256) -> selector 0
+            mstore(free, 0)
+            mstore(add(free, 4), id) // ID argument
+
+            calldatacopy(add(free, 36), 4, sub(calldatasize(), 4))
+
+            // Call the original caller with the packed data
+            let success := call(gas(), caller(), 0, free, add(calldatasize(), 32), 0, 0)
+
+            // Pass through the error on failure
+            if iszero(success) {
+                returndatacopy(free, 0, returndatasize())
+                revert(free, returndatasize())
+            }
+
+            // Undo the "locker" state changes
+            tstore(_CURRENT_LOCKER_SLOT, current)
+
+            // Check if something is nonzero
+            let nonzeroDebtCount := tload(add(_NONZERO_DEBT_COUNT_OFFSET, id))
+            if nonzeroDebtCount {
+                // cast sig "DebtsNotZeroed(uint256)"
+                mstore(0x00, 0x9731ba37)
+                mstore(0x20, id)
+                revert(0x1c, 0x24)
+            }
+
+            // Directly return whatever the subcall returned
+            returndatacopy(free, 0, returndatasize())
+            return(free, returndatasize())
+        }
+    }
+
+    /// @inheritdoc IFlashAccountant
+    function forward(address to) external {
+        Locker locker = _requireLocker();
+
+        // update this lock's locker to the forwarded address for the duration of the forwarded
+        // call, meaning only the forwarded address can update state
+        assembly ("memory-safe") {
+            tstore(_CURRENT_LOCKER_SLOT, or(shl(160, shr(160, locker)), to))
+
+            let free := mload(0x40)
+
+            // Prepare call to forwarded_2374103877(bytes32) -> selector 0x01
+            mstore(free, shl(224, 1))
+            mstore(add(free, 4), locker)
+
+            calldatacopy(add(free, 36), 36, sub(calldatasize(), 36))
+
+            // Call the forwardee with the packed data
+            let success := call(gas(), to, 0, free, calldatasize(), 0, 0)
+
+            // Pass through the error on failure
+            if iszero(success) {
+                returndatacopy(free, 0, returndatasize())
+                revert(free, returndatasize())
+            }
+
+            tstore(_CURRENT_LOCKER_SLOT, locker)
+
+            // Directly return whatever the subcall returned
+            returndatacopy(free, 0, returndatasize())
+            return(free, returndatasize())
+        }
+    }
+
+    /// @inheritdoc IFlashAccountant
+    function startPayments() external {
+        assembly ("memory-safe") {
+            // 0-52 are used for the balanceOf calldata
+            mstore(20, address()) // Store the `account` argument.
+            mstore(0, 0x70a08231000000000000000000000000) // `balanceOf(address)`.
+
+            let free := mload(0x40)
+
+            for { let i := 4 } lt(i, calldatasize()) { i := add(i, 32) } {
+                // clean upper 96 bits of the token argument at i
+                let token := shr(96, shl(96, calldataload(i)))
+
+                let returnLocation := add(free, sub(i, 4))
+
+                let success := staticcall(gas(), token, 0x10, 0x24, returnLocation, 0x20)
+
+                let tokenBalance :=
+                    mul(
+                        mload(returnLocation),
+                        and(
+                            gt(returndatasize(), 0x1f), // At least 32 bytes returned.
+                            success
+                        )
+                    )
+
+                tstore(add(_PAYMENT_TOKEN_ADDRESS_OFFSET, token), add(tokenBalance, success))
+            }
+
+            return(free, sub(calldatasize(), 4))
+        }
+    }
+
+    /// @inheritdoc IFlashAccountant
+    function completePayments() external {
+        uint256 id = _getLocker().id();
+
+        assembly ("memory-safe") {
+            let paymentAmounts := mload(0x40)
+            let nzdCountChange := 0
+
+            for { let i := 4 } lt(i, calldatasize()) { i := add(i, 32) } {
+                let token := shr(96, shl(96, calldataload(i)))
+
+                let offset := add(_PAYMENT_TOKEN_ADDRESS_OFFSET, token)
+                let lastBalance := tload(offset)
+                tstore(offset, 0)
+
+                mstore(20, address()) // Store the `account` argument.
+                mstore(0, 0x70a08231000000000000000000000000) // `balanceOf(address)`.
+
+                let currentBalance :=
+                    mul( // The arguments of `mul` are evaluated from right to left.
+                        mload(0),
+                        and( // The arguments of `and` are evaluated from right to left.
+                            gt(returndatasize(), 0x1f), // At least 32 bytes returned.
+                            staticcall(gas(), token, 0x10, 0x24, 0, 0x20)
+                        )
+                    )
+
+                let payment :=
+                    mul(
+                        and(gt(lastBalance, 0), not(lt(currentBalance, lastBalance))),
+                        sub(currentBalance, sub(lastBalance, 1))
+                    )
+
+                // We never expect tokens to have this much total supply
+                if shr(128, payment) {
+                    // cast sig "PaymentOverflow()"
+                    mstore(0x00, 0x9cac58ca)
+                    revert(0x1c, 4)
+                }
+
+                mstore(add(paymentAmounts, mul(16, div(i, 32))), shl(128, payment))
+
+                if payment {
+                    let deltaSlot := add(_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET, add(shl(160, id), token))
+                    let current := tload(deltaSlot)
+
+                    // never overflows because of the payment overflow check that bounds payment to 128 bits
+                    let next := sub(current, payment)
+
+                    nzdCountChange := add(nzdCountChange, sub(iszero(current), iszero(next)))
+
+                    tstore(deltaSlot, next)
+                }
+            }
+
+            // Update nzdCountSlot only once if there were any changes
+            if nzdCountChange {
+                let nzdCountSlot := add(id, _NONZERO_DEBT_COUNT_OFFSET)
+                tstore(nzdCountSlot, add(tload(nzdCountSlot), nzdCountChange))
+            }
+
+            return(paymentAmounts, mul(16, div(calldatasize(), 32)))
+        }
+    }
+
+    /// @inheritdoc IFlashAccountant
+    function withdraw() external {
+        uint256 id = _requireLocker().id();
+
+        assembly ("memory-safe") {
+            let nzdCountChange := 0
+
+            // Process each withdrawal entry
+            for { let i := 4 } lt(i, calldatasize()) { i := add(i, 56) } {
+                let token := shr(96, calldataload(i))
+                let recipient := shr(96, calldataload(add(i, 20)))
+                let amount := shr(128, calldataload(add(i, 40)))
+
+                if amount {
+                    // Update debt tracking without updating nzdCountSlot yet
+                    let deltaSlot := add(_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET, add(shl(160, id), token))
+                    let current := tload(deltaSlot)
+                    let next := add(current, amount)
+
+                    nzdCountChange := add(nzdCountChange, sub(iszero(current), iszero(next)))
+
+                    tstore(deltaSlot, next)
+
+                    // Perform the transfer of the withdrawn asset
+                    // Note that these calls can re-enter and even relock with the same ID
+                    // However the nzdCountChange is always applied as a delta at the end, meaning we load the latest value before updating it,
+                    // so it's safe from re-entry
+                    switch token
+                    case 0 {
+                        let success := call(gas(), recipient, amount, 0, 0, 0, 0)
+                        if iszero(success) {
+                            // cast sig "ETHTransferFailed()"
+                            mstore(0x00, 0xb12d13eb)
+                            revert(0x1c, 4)
+                        }
+                    }
+                    default {
+                        mstore(0x14, recipient)
+                        mstore(0x34, amount)
+                        mstore(0x00, 0xa9059cbb000000000000000000000000)
+                        let success := call(gas(), token, 0, 0x10, 0x44, 0x00, 0x20)
+                        if iszero(and(eq(mload(0x00), 1), success)) {
+                            if iszero(lt(or(iszero(extcodesize(token)), returndatasize()), success)) {
+                                mstore(0x00, 0x90b8ec18) // `TransferFailed()`.
+                                revert(0x1c, 0x04)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Update nzdCountSlot only once if there were any changes
+            if nzdCountChange {
+                let nzdCountSlot := add(id, _NONZERO_DEBT_COUNT_OFFSET)
+                tstore(nzdCountSlot, add(tload(nzdCountSlot), nzdCountChange))
+            }
+
+            // we return from assembly so as to prevent solidity from accessing the free memory pointer after we have written into it
+            return(0, 0)
+        }
+    }
+
+    /// @inheritdoc IFlashAccountant
+    receive() external payable {
+        uint256 id = _getLocker().id();
+
+        // Note because we use msg.value here, this contract can never be multicallable, i.e. it should never expose the ability
+        //      to delegatecall itself more than once in a single call
+        unchecked {
+            // We assume msg.value will never exceed type(uint128).max, so this should never cause an overflow/underflow of debt
+            _accountDebt(id, NATIVE_TOKEN_ADDRESS, -int256(msg.value));
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
 import {PoolKey} from "../../types/poolKey.sol";
-import {OrderKey} from "../../types/orderKey.sol";
-import {OrderConfig} from "../../types/orderConfig.sol";
-import {PoolId} from "../../types/poolId.sol";
+import {IExtension} from "../ICore.sol";
+import {IExposedStorage} from "../IExposedStorage.sol";
+import {Snapshot} from "../../types/snapshot.sol";
+import {Observation} from "../../types/observation.sol";
 
-/// @title TWAMM Interface
-/// @notice Interface for the Ekubo TWAMM Extension
-/// @dev Extension for Ekubo Protocol that enables creation of DCA orders that are executed over time
-interface ITWAMM is IExposedStorage, IExtension, ILocker, IForwardee {
-    /// @notice Emitted when an order is updated
-    /// @param owner Address of the order owner
-    /// @param salt Unique salt for the order
-    /// @param orderKey Order key identifying the order
-    /// @param saleRateDelta Change in sale rate applied
-    event OrderUpdated(address owner, bytes32 salt, OrderKey orderKey, int112 saleRateDelta);
+/// @title Oracle Interface
+/// @notice Interface for the Ekubo Oracle Extension
+/// @dev Records price and liquidity into accumulators enabling a separate contract to compute a manipulation resistant average price and liquidity
+interface IOracle is IExposedStorage, IExtension {
+    /// @notice Thrown when trying to create a pool that doesn't pair with the native token
+    error PairsWithNativeTokenOnly();
 
-    /// @notice Emitted when proceeds are withdrawn from an order
-    /// @param owner Address of the order owner
-    /// @param salt Unique salt for the order
-    /// @param orderKey Order key identifying the order
-    /// @param amount Amount of tokens withdrawn
-    event OrderProceedsWithdrawn(address owner, bytes32 salt, OrderKey orderKey, uint128 amount);
+    /// @notice Thrown when the pool fee is not zero
+    error FeeMustBeZero();
 
-    /// @notice Thrown when the number of orders at a time would overflow
-    error TimeNumOrdersOverflow();
-
-    /// @notice Thrown when tick spacing is not the maximum allowed value
+    /// @notice Thrown when the tick spacing is not the maximum allowed value
     error FullRangePoolOnly();
 
-    /// @notice Thrown when trying to modify an order that has already ended
-    error OrderAlreadyEnded();
+    /// @notice Thrown when querying data for a future timestamp
+    error FutureTime();
 
-    /// @notice Thrown when order timestamps are invalid
-    error InvalidTimestamps();
+    /// @notice Thrown when no previous snapshot exists for the given time
+    /// @param token The token address
+    /// @param time The requested timestamp
+    error NoPreviousSnapshotExists(address token, uint256 time);
 
-    /// @notice Thrown when sale rate delta exceeds maximum allowed value
-    error MaxSaleRateDeltaPerTime();
+    /// @notice Thrown when the end time is less than the start time
+    error EndTimeLessThanStartTime();
 
-    /// @notice Thrown when trying to operate on an uninitialized pool
-    error PoolNotInitialized();
+    /// @notice Thrown when timestamps are not provided in sorted order
+    error TimestampsNotSorted();
 
-    /// @notice Gets the reward rate inside a time range for a specific token
-    /// @dev Used to calculate how much of the buy token an order has earned
-    /// @param poolId Unique identifier for the pool
-    /// @param config The order config that is being checked
-    /// @return result The reward rate inside the specified range
-    function getRewardRateInside(PoolId poolId, OrderConfig config) external view returns (uint256 result);
+    /// @notice Thrown when zero timestamps are provided to a function that requires at least one
+    error ZeroTimestampsProvided();
 
-    /// @notice Locks core and executes virtual orders for the given pool key
-    /// @dev The pool key must use this extension, which is checked in the locked callback
-    /// @param poolKey Pool key identifying the pool
-    function lockAndExecuteVirtualOrders(PoolKey memory poolKey) external;
+    /// @notice Gets the pool key for the given token
+    /// @dev The only allowed pool key for the given token pairs with the native token
+    /// @param token The token address
+    /// @return The pool key for the token paired with native token
+    function getPoolKey(address token) external view returns (PoolKey memory);
+
+    /// @notice Expands the capacity of the list of snapshots for the given token
+    /// @param token The token address
+    /// @param minCapacity The minimum capacity required
+    /// @return capacity The actual capacity after expansion
+    function expandCapacity(address token, uint32 minCapacity) external returns (uint32 capacity);
+
+    /// @notice Finds the snapshot with the greatest timestamp ≤ the given time
+    /// @param token The token address
+    /// @param time The target timestamp
+    /// @return count The total number of snapshots for the token
+    /// @return logicalIndex The logical index of the found snapshot
+    /// @return snapshot The snapshot data
+    function findPreviousSnapshot(address token, uint256 time)
+        external
+        view
+        returns (uint256 count, uint256 logicalIndex, Snapshot snapshot);
+
+    /// @notice Returns cumulative snapshot values at a specific time
+    /// @dev Extrapolates values from the most recent snapshot before the given time
+    /// @param token The token address
+    /// @param atTime The target timestamp
+    /// @return secondsPerLiquidityCumulative The cumulative seconds per liquidity at the target time
+    /// @return tickCumulative The cumulative tick value at the target time
+    function extrapolateSnapshot(address token, uint256 atTime)
+        external
+        view
+        returns (uint160 secondsPerLiquidityCumulative, int64 tickCumulative);
+
+    /// @notice Returns extrapolated snapshots at each of the provided sorted timestamps
+    /// @dev Efficiently computes observations for multiple timestamps in a single call
+    /// @param token The token address
+    /// @param timestamps Array of timestamps in ascending order
+    /// @return observations Array of observations corresponding to each timestamp
+    function getExtrapolatedSnapshotsForSortedTimestamps(address token, uint256[] memory timestamps)
+        external
+        view
+        returns (Observation[] memory observations);
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+
+import {Router} from "./Router.sol";
+import {ICore, PoolKey} from "./interfaces/ICore.sol";
+import {PoolState} from "./types/poolState.sol";
+import {PoolBalanceUpdate} from "./types/poolBalanceUpdate.sol";
+import {SwapParameters} from "./types/swapParameters.sol";
+import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
+import {CoreLib} from "./libraries/CoreLib.sol";
+
+/// @title Ekubo MEV Capture Router
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Enables swapping and quoting against pools in Ekubo Protocol including the MEV capture extension pools
+contract MEVCaptureRouter is Router {
+    using FlashAccountantLib for *;
+    using CoreLib for *;
+
+    address public immutable MEV_CAPTURE;
+
+    constructor(ICore core, address _mevCapture) Router(core) {
+        MEV_CAPTURE = _mevCapture;
+    }
+
+    function _swap(uint256 value, PoolKey memory poolKey, SwapParameters params)
+        internal
+        override
+        returns (PoolBalanceUpdate balanceUpdate, PoolState stateAfter)
+    {
+        if (poolKey.config.extension() != MEV_CAPTURE) {
+            (balanceUpdate, stateAfter) = CORE.swap(value, poolKey, params.withDefaultSqrtRatioLimit());
+        } else {
+            (balanceUpdate, stateAfter) = abi.decode(
+                CORE.forward(MEV_CAPTURE, abi.encode(poolKey, params.withDefaultSqrtRatioLimit())),
+                (PoolBalanceUpdate, PoolState)
+            );
+            if (value != 0) {
+                SafeTransferLib.safeTransferETH(address(CORE), value);
+            }
+        }
+    }
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
@@ -1983,84 +2655,76 @@ abstract contract BaseLocker is ILocker {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {IExposedStorage} from "../interfaces/IExposedStorage.sol";
-
-/// @title ExposedStorage
-/// @notice Abstract contract that implements storage exposure functionality
-/// @dev This contract provides the implementation for the IExposedStorage interface,
-///      allowing inheriting contracts to expose their storage slots via view functions.
-///      Uses inline assembly for efficient storage access.
-abstract contract ExposedStorage is IExposedStorage {
-    /// @inheritdoc IExposedStorage
-    /// @dev Uses inline assembly to efficiently read multiple storage slots specified in calldata.
-    ///      Each slot value is loaded using the SLOAD opcode and stored in memory.
-    function sload() external view {
-        assembly ("memory-safe") {
-            for { let i := 4 } lt(i, calldatasize()) { i := add(i, 32) } { mstore(sub(i, 4), sload(calldataload(i))) }
-            return(0, sub(calldatasize(), 4))
-        }
-    }
-
-    /// @inheritdoc IExposedStorage
-    /// @dev Uses inline assembly to efficiently read multiple transient storage slots specified in calldata.
-    ///      Each slot value is loaded using the TLOAD opcode and stored in memory.
-    function tload() external view {
-        assembly ("memory-safe") {
-            for { let i := 4 } lt(i, calldatasize()) { i := add(i, 32) } { mstore(sub(i, 4), tload(calldataload(i))) }
-            return(0, sub(calldatasize(), 4))
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {DropKey} from "../types/dropKey.sol";
-import {ClaimKey} from "../types/claimKey.sol";
+import {IOrders} from "./IOrders.sol";
+import {BuybacksState} from "../types/buybacksState.sol";
 import {IExposedStorage} from "./IExposedStorage.sol";
 
-/// @title Incentives Interface
-/// @notice Interface for the Incentives contract that manages airdrops
-/// @dev Inherits from IExposedStorage to allow direct storage access
-interface IIncentives is IExposedStorage {
-    /// @notice Emitted when a drop is funded
-    /// @param key The drop key that was funded
-    /// @param amountNext The new total funded amount
-    event Funded(DropKey key, uint128 amountNext);
+/// @title Revenue Buybacks Interface
+/// @notice Interface for automated revenue buyback orders using TWAMM (Time-Weighted Average Market Maker)
+/// @dev Defines the interface for managing buyback orders for protocol revenue
+interface IRevenueBuybacks is IExposedStorage {
+    /// @notice Thrown when minimum order duration exceeds target order duration
+    /// @dev This would prevent order creation since the condition order duration >= min order duration would not always be met
+    error MinOrderDurationGreaterThanTargetOrderDuration();
 
-    /// @notice Emitted when a drop is refunded
-    /// @param key The drop key that was refunded
-    /// @param refundAmount The amount that was refunded
-    event Refunded(DropKey key, uint128 refundAmount);
+    /// @notice Thrown when minimum order duration is set to zero
+    /// @dev Orders cannot have zero duration, so this prevents invalid configurations
+    error MinOrderDurationMustBeGreaterThanZero();
 
-    /// @notice Thrown if the claim has already happened for this drop
-    error AlreadyClaimed();
+    /// @notice Thrown when roll is called and a token is not configured
+    error TokenNotConfigured(address token);
 
-    /// @notice Thrown if the merkle proof does not correspond to the root
-    error InvalidProof();
+    /// @notice Emitted when a token's buyback configuration is updated
+    /// @param token The token being configured for buybacks
+    /// @param state The state after configuring the token
+    event Configured(address token, BuybacksState state);
 
-    /// @notice Thrown if the drop is not sufficiently funded for the claim
-    error InsufficientFunds();
+    /// @notice The Orders contract used to create and manage TWAMM orders
+    /// @dev All buyback orders are created through this contract
+    function ORDERS() external view returns (IOrders);
 
-    /// @notice Only the drop owner may call this function
-    error DropOwnerOnly();
+    /// @notice The NFT token ID that represents all buyback orders created by this contract
+    /// @dev A single NFT is minted and reused for all buyback orders to simplify management
+    function NFT_ID() external view returns (uint256);
 
-    /// @notice Funds a drop to a minimum amount
-    /// @param key The drop key to fund
-    /// @param minimum The minimum amount to fund to
-    /// @return fundedAmount The amount that was actually funded
-    function fund(DropKey memory key, uint128 minimum) external returns (uint128 fundedAmount);
+    /// @notice The token that is purchased with collected revenue
+    /// @dev This is typically the protocol's governance or utility token
+    function BUY_TOKEN() external view returns (address);
 
-    /// @notice Refunds the remaining amount from a drop to the owner
-    /// @param key The drop key to refund
-    /// @return refundAmount The amount that was refunded
-    function refund(DropKey memory key) external returns (uint128 refundAmount);
+    /// @notice Approves the Orders contract to spend unlimited amounts of a token
+    /// @dev Must be called at least once for each revenue token before creating buyback orders
+    /// @param token The token to approve for spending by the Orders contract
+    function approveMax(address token) external;
 
-    /// @notice Claims tokens from a drop using a merkle proof
-    /// @param key The drop key to claim from
-    /// @param c The claim details
-    /// @param proof The merkle proof for the claim
-    function claim(DropKey memory key, ClaimKey memory c, bytes32[] calldata proof) external;
+    /// @notice Withdraws leftover tokens from the contract (only callable by owner)
+    /// @dev Used to recover tokens that may be stuck in the contract or to withdraw excess funds
+    /// @param token The address of the token to withdraw
+    /// @param amount The amount of tokens to withdraw
+    function take(address token, uint256 amount) external;
+
+    /// @notice Collects the proceeds from a completed buyback order
+    /// @dev Can be called by anyone at any time to collect proceeds from orders that have finished
+    /// @param token The revenue token that was sold in the order
+    /// @param fee The fee tier of the pool where the order was executed
+    /// @param endTime The end time of the order to collect proceeds from
+    /// @return proceeds The amount of buyToken received from the completed order
+    function collect(address token, uint64 fee, uint64 endTime) external returns (uint128 proceeds);
+
+    /// @notice Creates a new buyback order or extends an existing one with available revenue
+    /// @dev Can be called by anyone to trigger the creation of buyback orders using collected revenue
+    /// This function will either extend the current order (if conditions are met) or create a new order
+    /// @param token The revenue token to use for creating the buyback order
+    /// @return endTime The end time of the order that was created or extended
+    /// @return saleRate The sale rate of the order (amount of token sold per second)
+    function roll(address token) external returns (uint64 endTime, uint112 saleRate);
+
+    /// @notice Configures buyback parameters for a revenue token (only callable by owner)
+    /// @dev Sets the timing and fee parameters for automated buyback order creation
+    /// @param token The revenue token to configure
+    /// @param targetOrderDuration The target duration for new orders (in seconds)
+    /// @param minOrderDuration The minimum duration threshold for creating new orders (in seconds)
+    /// @param fee The fee tier for the buyback pool
+    function configure(address token, uint32 targetOrderDuration, uint32 minOrderDuration, uint64 fee) external;
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
@@ -2321,6 +2985,402 @@ contract MEVCapture is IMEVCapture, BaseExtension, BaseForwardee, ExposedStorage
             }
 
             result = abi.encode(balanceUpdate, stateAfter);
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {IForwardee, IFlashAccountant} from "../interfaces/IFlashAccountant.sol";
+import {Locker} from "../types/locker.sol";
+
+/// @title Base Forwardee
+/// @notice Abstract base contract for contracts that need to receive forwarded calls from the flash accountant
+/// @dev Provides the forwarding mechanism and delegates actual data handling to implementing contracts
+abstract contract BaseForwardee is IForwardee {
+    /// @notice Thrown when a function is called by an address other than the accountant
+    error BaseForwardeeAccountantOnly();
+
+    /// @notice The flash accountant contract that can forward calls to this contract
+    IFlashAccountant private immutable ACCOUNTANT;
+
+    /// @notice Constructs the BaseForwardee with a flash accountant
+    /// @param _accountant The flash accountant contract that will forward calls
+    constructor(IFlashAccountant _accountant) {
+        ACCOUNTANT = _accountant;
+    }
+
+    /// CALLBACK HANDLERS
+
+    /// @inheritdoc IForwardee
+    /// @dev Extracts the forwarded data from calldata and delegates to handleForwardData
+    /// The first 68 bytes of calldata contain the function selector (4 bytes), id (32 bytes), and originalLocker (32 bytes)
+    /// All remaining calldata is treated as the forwarded data
+    /// Return data from handleForwardData is returned exactly as is, with no additional encoding or decoding
+    /// Reverts are also bubbled up
+    function forwarded_2374103877(Locker original) external {
+        if (msg.sender != address(ACCOUNTANT)) revert BaseForwardeeAccountantOnly();
+
+        bytes memory data = msg.data[36:];
+
+        bytes memory result = handleForwardData(original, data);
+
+        assembly ("memory-safe") {
+            // raw return whatever the handler sent
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    /// INTERNAL FUNCTIONS
+
+    /// @notice Handles the execution of forwarded data
+    /// @dev Must be implemented by derived contracts to define forwarding behavior
+    /// @param original The original locker that called forward
+    /// @param data The forwarded data to process
+    /// @return result The result of processing the forwarded data
+    function handleForwardData(Locker original, bytes memory data) internal virtual returns (bytes memory result);
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {BaseLocker} from "./BaseLocker.sol";
+import {UsesCore} from "./UsesCore.sol";
+import {ICore} from "../interfaces/ICore.sol";
+import {IPositions} from "../interfaces/IPositions.sol";
+import {CoreLib} from "../libraries/CoreLib.sol";
+import {FlashAccountantLib} from "../libraries/FlashAccountantLib.sol";
+import {PoolKey} from "../types/poolKey.sol";
+import {PositionId, createPositionId} from "../types/positionId.sol";
+import {FeesPerLiquidity} from "../types/feesPerLiquidity.sol";
+import {Position} from "../types/position.sol";
+import {tickToSqrtRatio} from "../math/ticks.sol";
+import {maxLiquidity, liquidityDeltaToAmountDelta} from "../math/liquidity.sol";
+import {PayableMulticallable} from "./PayableMulticallable.sol";
+import {SqrtRatio} from "../types/sqrtRatio.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {BaseNonfungibleToken} from "./BaseNonfungibleToken.sol";
+import {NATIVE_TOKEN_ADDRESS} from "../math/constants.sol";
+import {PoolId} from "../types/poolId.sol";
+import {PoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
+
+/// @title Base Positions Contract
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Abstract base contract for tracking liquidity positions in Ekubo Protocol as NFTs
+/// @dev Provides core position management functionality with abstract protocol fee collection methods
+abstract contract BasePositions is IPositions, UsesCore, PayableMulticallable, BaseLocker, BaseNonfungibleToken {
+    using CoreLib for *;
+    using FlashAccountantLib for *;
+
+    /// @notice Constructs the BasePositions contract
+    /// @param core The core contract instance
+    /// @param owner The owner of the contract (for access control)
+    constructor(ICore core, address owner) BaseNonfungibleToken(owner) BaseLocker(core) UsesCore(core) {}
+
+    uint256 private constant CALL_TYPE_DEPOSIT = 0;
+    uint256 private constant CALL_TYPE_WITHDRAW = 1;
+    uint256 private constant CALL_TYPE_WITHDRAW_PROTOCOL_FEES = 2;
+
+    /// @inheritdoc IPositions
+    function getPositionFeesAndLiquidity(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
+        external
+        view
+        returns (uint128 liquidity, uint128 principal0, uint128 principal1, uint128 fees0, uint128 fees1)
+    {
+        PoolId poolId = poolKey.toPoolId();
+        SqrtRatio sqrtRatio = CORE.poolState(poolId).sqrtRatio();
+        PositionId positionId =
+            createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper});
+        Position memory position = CORE.poolPositions(poolId, address(this), positionId);
+
+        liquidity = position.liquidity;
+
+        // the sqrt ratio may be 0 (because the pool is uninitialized) but this is
+        // fine since amount0Delta isn't called with it in this case
+        (int128 delta0, int128 delta1) = liquidityDeltaToAmountDelta(
+            sqrtRatio, -SafeCastLib.toInt128(position.liquidity), tickToSqrtRatio(tickLower), tickToSqrtRatio(tickUpper)
+        );
+
+        (principal0, principal1) = (uint128(-delta0), uint128(-delta1));
+
+        FeesPerLiquidity memory feesPerLiquidityInside = poolKey.config.isFullRange()
+            ? CORE.getPoolFeesPerLiquidity(poolId)
+            : CORE.getPoolFeesPerLiquidityInside(poolId, tickLower, tickUpper);
+        (fees0, fees1) = position.fees(feesPerLiquidityInside);
+    }
+
+    /// @inheritdoc IPositions
+    function deposit(
+        uint256 id,
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 maxAmount0,
+        uint128 maxAmount1,
+        uint128 minLiquidity
+    ) public payable authorizedForNft(id) returns (uint128 liquidity, uint128 amount0, uint128 amount1) {
+        SqrtRatio sqrtRatio = CORE.poolState(poolKey.toPoolId()).sqrtRatio();
+
+        liquidity =
+            maxLiquidity(sqrtRatio, tickToSqrtRatio(tickLower), tickToSqrtRatio(tickUpper), maxAmount0, maxAmount1);
+
+        if (liquidity < minLiquidity) {
+            revert DepositFailedDueToSlippage(liquidity, minLiquidity);
+        }
+
+        if (liquidity > uint128(type(int128).max)) {
+            revert DepositOverflow();
+        }
+
+        (amount0, amount1) = abi.decode(
+            lock(abi.encode(CALL_TYPE_DEPOSIT, msg.sender, id, poolKey, tickLower, tickUpper, liquidity)),
+            (uint128, uint128)
+        );
+    }
+
+    /// @inheritdoc IPositions
+    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
+        public
+        payable
+        authorizedForNft(id)
+        returns (uint128 amount0, uint128 amount1)
+    {
+        (amount0, amount1) = collectFees(id, poolKey, tickLower, tickUpper, msg.sender);
+    }
+
+    /// @inheritdoc IPositions
+    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, address recipient)
+        public
+        payable
+        authorizedForNft(id)
+        returns (uint128 amount0, uint128 amount1)
+    {
+        (amount0, amount1) = withdraw(id, poolKey, tickLower, tickUpper, 0, recipient, true);
+    }
+
+    /// @inheritdoc IPositions
+    function withdraw(
+        uint256 id,
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 liquidity,
+        address recipient,
+        bool withFees
+    ) public payable authorizedForNft(id) returns (uint128 amount0, uint128 amount1) {
+        (amount0, amount1) = abi.decode(
+            lock(abi.encode(CALL_TYPE_WITHDRAW, id, poolKey, tickLower, tickUpper, liquidity, recipient, withFees)),
+            (uint128, uint128)
+        );
+    }
+
+    /// @inheritdoc IPositions
+    function withdraw(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, uint128 liquidity)
+        public
+        payable
+        returns (uint128 amount0, uint128 amount1)
+    {
+        (amount0, amount1) = withdraw(id, poolKey, tickLower, tickUpper, liquidity, address(msg.sender), true);
+    }
+
+    /// @inheritdoc IPositions
+    function maybeInitializePool(PoolKey memory poolKey, int32 tick)
+        external
+        payable
+        returns (bool initialized, SqrtRatio sqrtRatio)
+    {
+        // the before update position hook shouldn't be taken into account here
+        sqrtRatio = CORE.poolState(poolKey.toPoolId()).sqrtRatio();
+        if (sqrtRatio.isZero()) {
+            initialized = true;
+            sqrtRatio = CORE.initializePool(poolKey, tick);
+        }
+    }
+
+    /// @inheritdoc IPositions
+    function mintAndDeposit(
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 maxAmount0,
+        uint128 maxAmount1,
+        uint128 minLiquidity
+    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1) {
+        id = mint();
+        (liquidity, amount0, amount1) = deposit(id, poolKey, tickLower, tickUpper, maxAmount0, maxAmount1, minLiquidity);
+    }
+
+    /// @inheritdoc IPositions
+    function mintAndDepositWithSalt(
+        bytes32 salt,
+        PoolKey memory poolKey,
+        int32 tickLower,
+        int32 tickUpper,
+        uint128 maxAmount0,
+        uint128 maxAmount1,
+        uint128 minLiquidity
+    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1) {
+        id = mint(salt);
+        (liquidity, amount0, amount1) = deposit(id, poolKey, tickLower, tickUpper, maxAmount0, maxAmount1, minLiquidity);
+    }
+
+    /// @inheritdoc IPositions
+    function withdrawProtocolFees(address token0, address token1, uint128 amount0, uint128 amount1, address recipient)
+        external
+        payable
+        onlyOwner
+    {
+        lock(abi.encode(CALL_TYPE_WITHDRAW_PROTOCOL_FEES, token0, token1, amount0, amount1, recipient));
+    }
+
+    /// @inheritdoc IPositions
+    function getProtocolFees(address token0, address token1) external view returns (uint128 amount0, uint128 amount1) {
+        (amount0, amount1) = CORE.savedBalances(address(this), token0, token1, bytes32(0));
+    }
+
+    /// @notice Handles protocol fee collection during fee collection
+    /// @dev Abstract method that must be implemented by concrete contracts
+    /// @param poolKey The pool key for the position
+    /// @param amount0 The amount of token0 fees collected before protocol fee deduction
+    /// @param amount1 The amount of token1 fees collected before protocol fee deduction
+    /// @return protocolFee0 The amount of token0 protocol fees to collect
+    /// @return protocolFee1 The amount of token1 protocol fees to collect
+    function _computeSwapProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
+        internal
+        view
+        virtual
+        returns (uint128 protocolFee0, uint128 protocolFee1);
+
+    /// @notice Handles protocol fee collection during liquidity withdrawal
+    /// @dev Abstract method that must be implemented by concrete contracts
+    /// @param poolKey The pool key for the position
+    /// @param amount0 The amount of token0 being withdrawn before protocol fee deduction
+    /// @param amount1 The amount of token1 being withdrawn before protocol fee deduction
+    /// @return protocolFee0 The amount of token0 protocol fees to collect
+    /// @return protocolFee1 The amount of token1 protocol fees to collect
+    function _computeWithdrawalProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
+        internal
+        view
+        virtual
+        returns (uint128 protocolFee0, uint128 protocolFee1);
+
+    /// @notice Handles lock callback data for position operations
+    /// @dev Internal function that processes different types of position operations
+    /// @param data Encoded operation data
+    /// @return result Encoded result data
+    function handleLockData(uint256, bytes memory data) internal override returns (bytes memory result) {
+        uint256 callType = abi.decode(data, (uint256));
+
+        if (callType == CALL_TYPE_DEPOSIT) {
+            (
+                ,
+                address caller,
+                uint256 id,
+                PoolKey memory poolKey,
+                int32 tickLower,
+                int32 tickUpper,
+                uint128 liquidity
+            ) = abi.decode(data, (uint256, address, uint256, PoolKey, int32, int32, uint128));
+
+            PoolBalanceUpdate balanceUpdate = CORE.updatePosition(
+                poolKey,
+                createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper}),
+                int128(liquidity)
+            );
+
+            uint128 amount0 = uint128(balanceUpdate.delta0());
+            uint128 amount1 = uint128(balanceUpdate.delta1());
+
+            // Use multi-token payment for ERC20-only pools, fall back to individual payments for native token pools
+            if (poolKey.token0 != NATIVE_TOKEN_ADDRESS) {
+                ACCOUNTANT.payTwoFrom(caller, poolKey.token0, poolKey.token1, amount0, amount1);
+            } else {
+                if (amount0 != 0) {
+                    SafeTransferLib.safeTransferETH(address(ACCOUNTANT), amount0);
+                }
+                if (amount1 != 0) {
+                    ACCOUNTANT.payFrom(caller, poolKey.token1, amount1);
+                }
+            }
+
+            result = abi.encode(amount0, amount1);
+        } else if (callType == CALL_TYPE_WITHDRAW) {
+            (
+                ,
+                uint256 id,
+                PoolKey memory poolKey,
+                int32 tickLower,
+                int32 tickUpper,
+                uint128 liquidity,
+                address recipient,
+                bool withFees
+            ) = abi.decode(data, (uint256, uint256, PoolKey, int32, int32, uint128, address, bool));
+
+            if (liquidity > uint128(type(int128).max)) revert WithdrawOverflow();
+
+            uint128 amount0;
+            uint128 amount1;
+
+            // collect first in case we are withdrawing the entire amount
+            if (withFees) {
+                (amount0, amount1) = CORE.collectFees(
+                    poolKey,
+                    createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper})
+                );
+
+                // Collect swap protocol fees
+                (uint128 swapProtocolFee0, uint128 swapProtocolFee1) =
+                    _computeSwapProtocolFees(poolKey, amount0, amount1);
+
+                if (swapProtocolFee0 != 0 || swapProtocolFee1 != 0) {
+                    CORE.updateSavedBalances(
+                        poolKey.token0, poolKey.token1, bytes32(0), int128(swapProtocolFee0), int128(swapProtocolFee1)
+                    );
+
+                    amount0 -= swapProtocolFee0;
+                    amount1 -= swapProtocolFee1;
+                }
+            }
+
+            if (liquidity != 0) {
+                PoolBalanceUpdate balanceUpdate = CORE.updatePosition(
+                    poolKey,
+                    createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper}),
+                    -int128(liquidity)
+                );
+
+                uint128 withdrawnAmount0 = uint128(-balanceUpdate.delta0());
+                uint128 withdrawnAmount1 = uint128(-balanceUpdate.delta1());
+
+                // Collect withdrawal protocol fees
+                (uint128 withdrawalFee0, uint128 withdrawalFee1) =
+                    _computeWithdrawalProtocolFees(poolKey, withdrawnAmount0, withdrawnAmount1);
+
+                if (withdrawalFee0 != 0 || withdrawalFee1 != 0) {
+                    // we know cast won't overflow because delta0 and delta1 were originally int128
+                    CORE.updateSavedBalances(
+                        poolKey.token0, poolKey.token1, bytes32(0), int128(withdrawalFee0), int128(withdrawalFee1)
+                    );
+                }
+
+                amount0 += withdrawnAmount0 - withdrawalFee0;
+                amount1 += withdrawnAmount1 - withdrawalFee1;
+            }
+
+            ACCOUNTANT.withdrawTwo(poolKey.token0, poolKey.token1, recipient, amount0, amount1);
+
+            result = abi.encode(amount0, amount1);
+        } else if (callType == CALL_TYPE_WITHDRAW_PROTOCOL_FEES) {
+            (, address token0, address token1, uint128 amount0, uint128 amount1, address recipient) =
+                abi.decode(data, (uint256, address, address, uint128, uint128, address));
+
+            CORE.updateSavedBalances(token0, token1, bytes32(0), -int256(uint256(amount0)), -int256(uint256(amount1)));
+            ACCOUNTANT.withdrawTwo(token0, token1, recipient, amount0, amount1);
+        } else {
+            // Will never actually happen
+            revert();
         }
     }
 }
@@ -2750,933 +3810,6 @@ contract Oracle is IOracle, ExposedStorage, BaseExtension {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {PoolKey} from "../../types/poolKey.sol";
-import {ILocker, IForwardee} from "../IFlashAccountant.sol";
-import {IExtension} from "../ICore.sol";
-import {IExposedStorage} from "../IExposedStorage.sol";
-
-/// @title MEV Capture Interface
-/// @notice Interface for the Ekubo MEV Capture Extension
-/// @dev Extension that charges additional fees based on the relative size of the priority fee and tick movement during swaps
-interface IMEVCapture is IExposedStorage, ILocker, IForwardee, IExtension {
-    /// @notice Thrown when trying to use MEV capture on a full-range-only pool
-    /// @dev MEV capture only works with concentrated liquidity pools that have discrete tick spacing
-    error ConcentratedLiquidityPoolsOnly();
-
-    /// @notice Thrown when trying to use MEV capture on a pool with zero fees
-    /// @dev MEV capture multiplies the base fee, so a zero fee would result in no additional fees
-    error NonzeroFeesOnly();
-
-    /// @notice Thrown when attempting to swap directly without using the forward mechanism
-    /// @dev All swaps must go through the forward mechanism to ensure proper MEV fee calculation
-    error SwapMustHappenThroughForward();
-
-    /// @notice Accumulates any pending pool fees from past blocks
-    /// @dev This function can be called by anyone to trigger fee accumulation for a pool
-    /// @dev Fees are accumulated when the pool hasn't been updated in the current block
-    /// @param poolKey The pool key identifying the pool to accumulate fees for
-    function accumulatePoolFees(PoolKey memory poolKey) external;
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-
-import {Router} from "./Router.sol";
-import {ICore, PoolKey} from "./interfaces/ICore.sol";
-import {PoolState} from "./types/poolState.sol";
-import {PoolBalanceUpdate} from "./types/poolBalanceUpdate.sol";
-import {SwapParameters} from "./types/swapParameters.sol";
-import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
-import {CoreLib} from "./libraries/CoreLib.sol";
-
-/// @title Ekubo MEV Capture Router
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Enables swapping and quoting against pools in Ekubo Protocol including the MEV capture extension pools
-contract MEVCaptureRouter is Router {
-    using FlashAccountantLib for *;
-    using CoreLib for *;
-
-    address public immutable MEV_CAPTURE;
-
-    constructor(ICore core, address _mevCapture) Router(core) {
-        MEV_CAPTURE = _mevCapture;
-    }
-
-    function _swap(uint256 value, PoolKey memory poolKey, SwapParameters params)
-        internal
-        override
-        returns (PoolBalanceUpdate balanceUpdate, PoolState stateAfter)
-    {
-        if (poolKey.config.extension() != MEV_CAPTURE) {
-            (balanceUpdate, stateAfter) = CORE.swap(value, poolKey, params.withDefaultSqrtRatioLimit());
-        } else {
-            (balanceUpdate, stateAfter) = abi.decode(
-                CORE.forward(MEV_CAPTURE, abi.encode(poolKey, params.withDefaultSqrtRatioLimit())),
-                (PoolBalanceUpdate, PoolState)
-            );
-            if (value != 0) {
-                SafeTransferLib.safeTransferETH(address(CORE), value);
-            }
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {CallPoints} from "../types/callPoints.sol";
-import {PoolKey} from "../types/poolKey.sol";
-import {PositionId} from "../types/positionId.sol";
-import {SqrtRatio, MIN_SQRT_RATIO, MAX_SQRT_RATIO} from "../types/sqrtRatio.sol";
-import {ICore, IExtension} from "../interfaces/ICore.sol";
-import {ITWAMM} from "../interfaces/extensions/ITWAMM.sol";
-import {TimeInfo, createTimeInfo} from "../types/timeInfo.sol";
-import {CoreLib} from "../libraries/CoreLib.sol";
-import {ExposedStorage} from "../base/ExposedStorage.sol";
-import {TWAMMStorageLayout} from "../libraries/TWAMMStorageLayout.sol";
-import {StorageSlot} from "../types/storageSlot.sol";
-import {BaseExtension} from "../base/BaseExtension.sol";
-import {BaseForwardee} from "../base/BaseForwardee.sol";
-import {PoolState} from "../types/poolState.sol";
-import {PoolBalanceUpdate, createPoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
-import {TwammPoolState, createTwammPoolState} from "../types/twammPoolState.sol";
-import {OrderKey} from "../types/orderKey.sol";
-import {OrderConfig} from "../types/orderConfig.sol";
-import {OrderState, createOrderState} from "../types/orderState.sol";
-import {searchForNextInitializedTime, flipTime} from "../math/timeBitmap.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {FeesPerLiquidity} from "../types/feesPerLiquidity.sol";
-import {computeFee} from "../math/fee.sol";
-import {
-    computeNextSqrtRatio,
-    computeAmountFromSaleRate,
-    computeRewardAmount,
-    addSaleRateDelta
-} from "../math/twamm.sol";
-import {isTimeValid, MAX_ABS_VALUE_SALE_RATE_DELTA} from "../math/time.sol";
-import {PoolId} from "../types/poolId.sol";
-import {OrderId} from "../types/orderId.sol";
-import {SwapParameters, createSwapParameters} from "../types/swapParameters.sol";
-import {Locker} from "../types/locker.sol";
-import {LibBit} from "solady/utils/LibBit.sol";
-
-/// @notice Returns the call points configuration for the TWAMM extension
-/// @dev Specifies which hooks TWAMM needs to execute virtual orders and manage DCA functionality
-/// @return The call points configuration for TWAMM functionality
-function twammCallPoints() pure returns (CallPoints memory) {
-    return CallPoints({
-        beforeInitializePool: false,
-        afterInitializePool: true,
-        beforeUpdatePosition: true,
-        afterUpdatePosition: false,
-        beforeSwap: true,
-        afterSwap: false,
-        beforeCollectFees: true,
-        afterCollectFees: false
-    });
-}
-
-/// @title Ekubo TWAMM (Time-Weighted Average Market Maker)
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Extension for Ekubo Protocol that enables creation of DCA (Dollar Cost Averaging) orders that are executed over time
-/// @dev Implements virtual order execution that spreads trades over time periods to reduce price impact and provide better execution
-contract TWAMM is ITWAMM, ExposedStorage, BaseExtension, BaseForwardee {
-    using CoreLib for *;
-
-    constructor(ICore core) BaseExtension(core) BaseForwardee(core) {}
-
-    /// @notice Emits an event for virtual order execution
-    /// @dev Emits an event for the virtual order execution. Assumes that saleRateToken0 and saleRateToken1 are <= type(uint112).max
-    /// @param poolId The unique identifier for the pool
-    /// @param saleRateToken0 The sale rate for token0 orders
-    /// @param saleRateToken1 The sale rate for token1 orders
-    function _emitVirtualOrdersExecuted(PoolId poolId, uint256 saleRateToken0, uint256 saleRateToken1) internal {
-        assembly ("memory-safe") {
-            // by writing it backwards, we overwrite only the empty bits with each subsequent write
-            // 28-60, only 46-60 can be non-zero
-            mstore(28, saleRateToken1)
-            // 14-46, only 32-46 can be non-zero
-            mstore(14, saleRateToken0)
-            mstore(0, poolId)
-
-            log0(0, 60)
-        }
-    }
-
-    /// @inheritdoc ITWAMM
-    function getRewardRateInside(PoolId poolId, OrderConfig config) public view returns (uint256 result) {
-        if (block.timestamp >= config.endTime()) {
-            uint256 offset = LibBit.rawToUint(!config.isToken1());
-            uint256 rewardRateStart =
-                uint256(TWAMMStorageLayout.poolRewardRatesBeforeSlot(poolId, config.startTime()).add(offset).load());
-
-            uint256 rewardRateEnd =
-                uint256(TWAMMStorageLayout.poolRewardRatesBeforeSlot(poolId, config.endTime()).add(offset).load());
-
-            unchecked {
-                result = rewardRateEnd - rewardRateStart;
-            }
-        } else if (block.timestamp > config.startTime()) {
-            uint256 offset = LibBit.rawToUint(!config.isToken1());
-
-            //  note that we check gt because if it's equal to start time, then the reward rate inside is necessarily 0
-            uint256 rewardRateStart =
-                uint256(TWAMMStorageLayout.poolRewardRatesBeforeSlot(poolId, config.startTime()).add(offset).load());
-            uint256 rewardRateCurrent = uint256(TWAMMStorageLayout.poolRewardRatesSlot(poolId).add(offset).load());
-
-            unchecked {
-                result = rewardRateCurrent - rewardRateStart;
-            }
-        } else {
-            // less than or equal to start time
-            // returns 0
-        }
-    }
-
-    /// @notice Safely adds a change to a sale rate delta with overflow protection
-    /// @dev Ensures the resulting sale rate delta doesn't exceed the maximum allowed value
-    /// @param saleRateDelta The current sale rate delta
-    /// @param saleRateDeltaChange The change to apply to the sale rate delta
-    /// @return saleRateDeltaNext The new sale rate delta after applying the change
-    function _addConstrainSaleRateDelta(int112 saleRateDelta, int256 saleRateDeltaChange)
-        internal
-        pure
-        returns (int112 saleRateDeltaNext)
-    {
-        int256 result = int256(saleRateDelta) + saleRateDeltaChange;
-
-        // checked addition, no overflow of int112 type
-        if (FixedPointMathLib.abs(result) > MAX_ABS_VALUE_SALE_RATE_DELTA) {
-            revert MaxSaleRateDeltaPerTime();
-        }
-
-        // we know cast is safe because abs(result) is less than MAX_ABS_VALUE_SALE_RATE_DELTA which fits in a int112
-        saleRateDeltaNext = int112(result);
-    }
-
-    /// @notice Updates time-specific information for TWAMM orders
-    /// @dev Manages the sale rate deltas and order counts for a specific time point
-    /// @param poolId The unique identifier for the pool
-    /// @param time The timestamp to update
-    /// @param saleRateDelta The change in sale rate for this time
-    /// @param isToken1 True if updating token1 sale rate, false for token0
-    /// @param numOrdersChange The change in number of orders referencing this time
-    function _updateTime(PoolId poolId, uint256 time, int256 saleRateDelta, bool isToken1, int256 numOrdersChange)
-        internal
-    {
-        TimeInfo timeInfo = TimeInfo.wrap(TWAMMStorageLayout.poolTimeInfosSlot(poolId, time).load());
-        (uint32 numOrders, int112 saleRateDeltaToken0, int112 saleRateDeltaToken1) = timeInfo.parse();
-
-        // note we assume this will never overflow, since it would require 2**32 separate orders to be placed
-        uint32 numOrdersNext;
-        assembly ("memory-safe") {
-            numOrdersNext := add(numOrders, numOrdersChange)
-            if gt(numOrdersNext, 0xffffffff) {
-                // cast sig "TimeNumOrdersOverflow()"
-                mstore(0, shl(224, 0x6916a952))
-                revert(0, 4)
-            }
-        }
-
-        bool flip = (numOrders == 0) != (numOrdersNext == 0);
-
-        // write the poolRewardRatesBefore[poolId][time] = (1,1) if any orders still reference the time, or write (0,0) otherwise
-        // we assume `_updateTime` is being called only for times that are greater than block.timestamp, i.e. have not been crossed yet
-        // this reduces the cost of crossing that timestamp to a warm write instead of a cold write
-        if (flip) {
-            bytes32 zeroNumOrders = bytes32(LibBit.rawToUint(numOrders == 0));
-
-            TWAMMStorageLayout.poolRewardRatesBeforeSlot(poolId, time).storeTwo(zeroNumOrders, zeroNumOrders);
-
-            flipTime(TWAMMStorageLayout.poolInitializedTimesBitmapSlot(poolId), time);
-        }
-
-        if (isToken1) {
-            saleRateDeltaToken1 = _addConstrainSaleRateDelta(saleRateDeltaToken1, saleRateDelta);
-        } else {
-            saleRateDeltaToken0 = _addConstrainSaleRateDelta(saleRateDeltaToken0, saleRateDelta);
-        }
-
-        TWAMMStorageLayout.poolTimeInfosSlot(poolId, time)
-            .store(TimeInfo.unwrap(createTimeInfo(numOrdersNext, saleRateDeltaToken0, saleRateDeltaToken1)));
-    }
-
-    /// @notice Returns the call points configuration for this extension
-    /// @dev Overrides the base implementation to return TWAMM-specific call points
-    /// @return The call points configuration
-    function getCallPoints() internal pure override returns (CallPoints memory) {
-        return twammCallPoints();
-    }
-
-    ///////////////////////// Callbacks /////////////////////////
-
-    function handleForwardData(Locker original, bytes memory data) internal override returns (bytes memory result) {
-        unchecked {
-            uint256 callType = abi.decode(data, (uint256));
-            address owner = original.addr();
-
-            if (callType == 0) {
-                (, bytes32 salt, OrderKey memory orderKey, int112 saleRateDelta) =
-                    abi.decode(data, (uint256, bytes32, OrderKey, int112));
-
-                (uint64 startTime, uint64 endTime) = (orderKey.config.startTime(), orderKey.config.endTime());
-
-                if (endTime <= block.timestamp) revert OrderAlreadyEnded();
-
-                if (
-                    !isTimeValid(block.timestamp, startTime) || !isTimeValid(block.timestamp, endTime)
-                        || startTime >= endTime
-                ) {
-                    revert InvalidTimestamps();
-                }
-
-                PoolKey memory poolKey = orderKey.toPoolKey(address(this));
-                PoolId poolId = poolKey.toPoolId();
-                _executeVirtualOrdersFromWithinLock(poolKey, poolId);
-
-                OrderId orderId = orderKey.toOrderId();
-
-                StorageSlot orderStateSlot =
-                    TWAMMStorageLayout.orderStateSlotFollowedByOrderRewardRateSnapshotSlot(owner, salt, orderId);
-
-                StorageSlot orderRewardRateSnapshotSlot = orderStateSlot.next();
-
-                OrderState order = OrderState.wrap(orderStateSlot.load());
-                uint256 rewardRateSnapshot = uint256(orderRewardRateSnapshotSlot.load());
-
-                uint256 rewardRateInside = getRewardRateInside(poolId, orderKey.config);
-
-                (uint32 lastUpdateTime, uint112 saleRate, uint112 amountSold) = order.parse();
-
-                uint256 purchasedAmount = computeRewardAmount(rewardRateInside - rewardRateSnapshot, saleRate);
-
-                uint256 saleRateNext = addSaleRateDelta(saleRate, saleRateDelta);
-
-                uint256 rewardRateSnapshotAdjusted;
-                int256 numOrdersChange;
-                assembly ("memory-safe") {
-                    rewardRateSnapshotAdjusted := mul(
-                        sub(rewardRateInside, div(shl(128, purchasedAmount), saleRateNext)),
-                        // if saleRateNext is zero, write 0 for the reward rate snapshot adjusted
-                        iszero(iszero(saleRateNext))
-                    )
-
-                    // if current is zero, and next is zero, then 1-1 = 0
-                    // if current is nonzero, and next is nonzero, then 0-0 = 0
-                    // if current is zero, and next is nonzero, then we get 1-0 = 1
-                    // if current is nonzero, and next is zero, then we get 0-1 = -1 = (type(uint256).max)
-                    numOrdersChange := sub(iszero(saleRate), iszero(saleRateNext))
-                }
-
-                orderStateSlot.store(
-                    OrderState.unwrap(
-                        createOrderState({
-                            _lastUpdateTime: uint32(block.timestamp),
-                            _saleRate: uint112(saleRateNext),
-                            _amountSold: uint112(
-                                amountSold
-                                    + computeAmountFromSaleRate({
-                                        saleRate: saleRate,
-                                        duration: FixedPointMathLib.min(
-                                            uint32(block.timestamp) - lastUpdateTime,
-                                            uint32(uint64(block.timestamp) - startTime)
-                                        ),
-                                        roundUp: false
-                                    })
-                            )
-                        })
-                    )
-                );
-                orderRewardRateSnapshotSlot.store(bytes32(rewardRateSnapshotAdjusted));
-
-                bool isToken1 = orderKey.config.isToken1();
-
-                if (block.timestamp < startTime) {
-                    _updateTime(poolId, startTime, saleRateDelta, isToken1, numOrdersChange);
-                    _updateTime(poolId, endTime, -int256(saleRateDelta), isToken1, numOrdersChange);
-                } else {
-                    // we know block.timestamp < orderKey.endTime because we validate that first
-                    // and we know the order is active, so we have to apply its delta to the current pool state
-                    StorageSlot currentStateSlot = TWAMMStorageLayout.twammPoolStateSlot(poolId);
-                    TwammPoolState currentState = TwammPoolState.wrap(currentStateSlot.load());
-                    (uint32 lastTime, uint112 rate0, uint112 rate1) = currentState.parse();
-
-                    if (isToken1) {
-                        currentState = createTwammPoolState({
-                            _lastVirtualOrderExecutionTime: lastTime,
-                            _saleRateToken0: rate0,
-                            _saleRateToken1: uint112(addSaleRateDelta(rate1, saleRateDelta))
-                        });
-                    } else {
-                        currentState = createTwammPoolState({
-                            _lastVirtualOrderExecutionTime: lastTime,
-                            _saleRateToken0: uint112(addSaleRateDelta(rate0, saleRateDelta)),
-                            _saleRateToken1: rate1
-                        });
-                    }
-
-                    currentStateSlot.store(TwammPoolState.unwrap(currentState));
-
-                    // only update the end time
-                    _updateTime(poolId, endTime, -int256(saleRateDelta), isToken1, numOrdersChange);
-                }
-
-                // we know this will fit in a uint32 because otherwise isValidTime would fail for the end time
-                uint256 durationRemaining = endTime - FixedPointMathLib.max(block.timestamp, startTime);
-
-                // the amount required for executing at the next sale rate for the remaining duration of the order
-                uint256 amountRequired =
-                    computeAmountFromSaleRate({saleRate: saleRateNext, duration: durationRemaining, roundUp: true});
-
-                // subtract the remaining sell amount to get the delta
-                int256 amountDelta;
-
-                uint256 remainingSellAmount =
-                    computeAmountFromSaleRate({saleRate: saleRate, duration: durationRemaining, roundUp: true});
-
-                assembly ("memory-safe") {
-                    amountDelta := sub(amountRequired, remainingSellAmount)
-                }
-
-                // user is withdrawing tokens, so they need to pay a fee to the liquidity providers
-                if (amountDelta < 0) {
-                    // negation and downcast will never overflow, since max sale rate times max duration is at most type(uint112).max
-                    uint128 fee = computeFee(uint128(uint256(-amountDelta)), poolKey.config.fee());
-                    if (isToken1) {
-                        CORE.accumulateAsFees(poolKey, 0, fee);
-                        CORE.updateSavedBalances(poolKey.token0, poolKey.token1, bytes32(0), 0, amountDelta);
-                    } else {
-                        CORE.accumulateAsFees(poolKey, fee, 0);
-                        CORE.updateSavedBalances(poolKey.token0, poolKey.token1, bytes32(0), amountDelta, 0);
-                    }
-
-                    amountDelta += int128(fee);
-                } else {
-                    if (isToken1) {
-                        CORE.updateSavedBalances(poolKey.token0, poolKey.token1, bytes32(0), 0, amountDelta);
-                    } else {
-                        CORE.updateSavedBalances(poolKey.token0, poolKey.token1, bytes32(0), amountDelta, 0);
-                    }
-                }
-
-                emit OrderUpdated(owner, salt, orderKey, saleRateDelta);
-
-                result = abi.encode(amountDelta);
-            } else if (callType == 1) {
-                (, bytes32 salt, OrderKey memory orderKey) = abi.decode(data, (uint256, bytes32, OrderKey));
-
-                PoolKey memory poolKey = orderKey.toPoolKey(address(this));
-                PoolId poolId = poolKey.toPoolId();
-                _executeVirtualOrdersFromWithinLock(poolKey, poolId);
-
-                OrderId orderId = orderKey.toOrderId();
-
-                StorageSlot orderStateSlot =
-                    TWAMMStorageLayout.orderStateSlotFollowedByOrderRewardRateSnapshotSlot(owner, salt, orderId);
-
-                StorageSlot orderRewardRateSnapshotSlot = orderStateSlot.next();
-
-                OrderState order = OrderState.wrap(orderStateSlot.load());
-                uint256 rewardRateSnapshot = uint256(orderRewardRateSnapshotSlot.load());
-
-                uint256 rewardRateInside = getRewardRateInside(poolId, orderKey.config);
-
-                uint256 purchasedAmount = computeRewardAmount(rewardRateInside - rewardRateSnapshot, order.saleRate());
-
-                orderRewardRateSnapshotSlot.store(bytes32(rewardRateInside));
-
-                if (purchasedAmount != 0) {
-                    if (orderKey.config.isToken1()) {
-                        CORE.updateSavedBalances(
-                            poolKey.token0, poolKey.token1, bytes32(0), -int256(purchasedAmount), 0
-                        );
-                    } else {
-                        CORE.updateSavedBalances(
-                            poolKey.token0, poolKey.token1, bytes32(0), 0, -int256(purchasedAmount)
-                        );
-                    }
-                }
-
-                emit OrderProceedsWithdrawn(original.addr(), salt, orderKey, uint128(purchasedAmount));
-
-                result = abi.encode(purchasedAmount);
-            } else {
-                revert();
-            }
-        }
-    }
-
-    function _executeVirtualOrdersFromWithinLock(PoolKey memory poolKey, PoolId poolId) internal {
-        unchecked {
-            StorageSlot stateSlot = TWAMMStorageLayout.twammPoolStateSlot(poolId);
-            TwammPoolState state = TwammPoolState.wrap(stateSlot.load());
-
-            // we only conditionally load this if the state is coincidentally zero,
-            // in order to not lock the pool if state is 0 but the pool _is_ initialized
-            // this can only happen iff a pool has zero sale rates **and** an execution of virtual orders
-            // happens on the uint32 boundary
-            if (TwammPoolState.unwrap(state) == bytes32(0)) {
-                if (poolKey.config.extension() != address(this) || !CORE.poolState(poolId).isInitialized()) {
-                    revert PoolNotInitialized();
-                }
-            }
-
-            uint256 realLastVirtualOrderExecutionTime = state.realLastVirtualOrderExecutionTime();
-
-            // no-op if already executed in this block
-            if (realLastVirtualOrderExecutionTime != block.timestamp) {
-                // initialize the values that are handled once per execution
-                FeesPerLiquidity memory rewardRates;
-
-                // 0 = not loaded & not updated, 1 = loaded & not updated, 2 = loaded & updated
-                uint256 rewardRate0Access;
-                uint256 rewardRate1Access;
-
-                int256 saveDelta0;
-                int256 saveDelta1;
-                PoolState corePoolState;
-                uint256 time = realLastVirtualOrderExecutionTime;
-
-                while (time != block.timestamp) {
-                    StorageSlot initializedTimesBitmapSlot = TWAMMStorageLayout.poolInitializedTimesBitmapSlot(poolId);
-
-                    (uint256 nextTime, bool initialized) = searchForNextInitializedTime({
-                        slot: initializedTimesBitmapSlot,
-                        lastVirtualOrderExecutionTime: realLastVirtualOrderExecutionTime,
-                        fromTime: time,
-                        untilTime: block.timestamp
-                    });
-
-                    // it is assumed that this will never return a value greater than type(uint32).max
-                    uint256 timeElapsed = nextTime - time;
-
-                    uint256 amount0 = computeAmountFromSaleRate({
-                        saleRate: state.saleRateToken0(), duration: timeElapsed, roundUp: false
-                    });
-
-                    uint256 amount1 = computeAmountFromSaleRate({
-                        saleRate: state.saleRateToken1(), duration: timeElapsed, roundUp: false
-                    });
-
-                    int256 rewardDelta0;
-                    int256 rewardDelta1;
-                    // if both sale rates are non-zero but amounts are zero, we will end up doing the math for no reason since we swap 0
-                    if (amount0 != 0 && amount1 != 0) {
-                        if (!corePoolState.isInitialized()) {
-                            corePoolState = CORE.poolState(poolId);
-                        }
-                        SqrtRatio sqrtRatioNext = computeNextSqrtRatio({
-                            sqrtRatio: corePoolState.sqrtRatio(),
-                            liquidity: corePoolState.liquidity(),
-                            saleRateToken0: state.saleRateToken0(),
-                            saleRateToken1: state.saleRateToken1(),
-                            timeElapsed: timeElapsed,
-                            fee: poolKey.config.fee()
-                        });
-
-                        PoolBalanceUpdate swapBalanceUpdate;
-                        if (sqrtRatioNext > corePoolState.sqrtRatio()) {
-                            (swapBalanceUpdate, corePoolState) = CORE.swap(
-                                0,
-                                poolKey,
-                                createSwapParameters({
-                                    _sqrtRatioLimit: sqrtRatioNext,
-                                    _amount: int128(uint128(amount1)),
-                                    _isToken1: true,
-                                    _skipAhead: 0
-                                })
-                            );
-                        } else if (sqrtRatioNext < corePoolState.sqrtRatio()) {
-                            (swapBalanceUpdate, corePoolState) = CORE.swap(
-                                0,
-                                poolKey,
-                                createSwapParameters({
-                                    _sqrtRatioLimit: sqrtRatioNext,
-                                    _amount: int128(uint128(amount0)),
-                                    _isToken1: false,
-                                    _skipAhead: 0
-                                })
-                            );
-                        }
-
-                        saveDelta0 -= swapBalanceUpdate.delta0();
-                        saveDelta1 -= swapBalanceUpdate.delta1();
-
-                        // this cannot overflow or underflow because swapDelta0 is constrained to int128,
-                        // and amounts computed from uint112 sale rates cannot exceed uint112.max
-                        rewardDelta0 = swapBalanceUpdate.delta0() - int256(uint256(amount0));
-                        rewardDelta1 = swapBalanceUpdate.delta1() - int256(uint256(amount1));
-                    } else if (amount0 != 0 || amount1 != 0) {
-                        PoolBalanceUpdate swapBalanceUpdate;
-                        if (amount0 != 0) {
-                            (swapBalanceUpdate, corePoolState) = CORE.swap(
-                                0,
-                                poolKey,
-                                createSwapParameters({
-                                    _sqrtRatioLimit: MIN_SQRT_RATIO,
-                                    _amount: int128(uint128(amount0)),
-                                    _isToken1: false,
-                                    _skipAhead: 0
-                                })
-                            );
-                        } else {
-                            (swapBalanceUpdate, corePoolState) = CORE.swap(
-                                0,
-                                poolKey,
-                                createSwapParameters({
-                                    _sqrtRatioLimit: MAX_SQRT_RATIO,
-                                    _amount: int128(uint128(amount1)),
-                                    _isToken1: true,
-                                    _skipAhead: 0
-                                })
-                            );
-                        }
-
-                        (rewardDelta0, rewardDelta1) = (swapBalanceUpdate.delta0(), swapBalanceUpdate.delta1());
-                        saveDelta0 -= rewardDelta0;
-                        saveDelta1 -= rewardDelta1;
-                    }
-
-                    if (rewardDelta0 < 0) {
-                        if (rewardRate0Access == 0) {
-                            rewardRates.value0 = uint256(TWAMMStorageLayout.poolRewardRatesSlot(poolId).load());
-                        }
-                        rewardRate0Access = 2;
-                        rewardRates.value0 += FixedPointMathLib.rawDiv(
-                            uint256(-rewardDelta0) << 128, state.saleRateToken1()
-                        );
-                    }
-
-                    if (rewardDelta1 < 0) {
-                        if (rewardRate1Access == 0) {
-                            rewardRates.value1 = uint256(TWAMMStorageLayout.poolRewardRatesSlot(poolId).next().load());
-                        }
-                        rewardRate1Access = 2;
-                        rewardRates.value1 += FixedPointMathLib.rawDiv(
-                            uint256(-rewardDelta1) << 128, state.saleRateToken0()
-                        );
-                    }
-
-                    if (initialized) {
-                        if (rewardRate0Access == 0) {
-                            rewardRates.value0 = uint256(TWAMMStorageLayout.poolRewardRatesSlot(poolId).load());
-                            rewardRate0Access = 1;
-                        }
-                        if (rewardRate1Access == 0) {
-                            rewardRates.value1 = uint256(TWAMMStorageLayout.poolRewardRatesSlot(poolId).next().load());
-                            rewardRate1Access = 1;
-                        }
-
-                        TWAMMStorageLayout.poolRewardRatesBeforeSlot(poolId, nextTime)
-                            .storeTwo(bytes32(rewardRates.value0), bytes32(rewardRates.value1));
-
-                        StorageSlot timeInfoSlot = TWAMMStorageLayout.poolTimeInfosSlot(poolId, nextTime);
-                        (, int112 saleRateDeltaToken0, int112 saleRateDeltaToken1) =
-                            TimeInfo.wrap(timeInfoSlot.load()).parse();
-
-                        state = createTwammPoolState({
-                            _lastVirtualOrderExecutionTime: uint32(nextTime),
-                            _saleRateToken0: uint112(addSaleRateDelta(state.saleRateToken0(), saleRateDeltaToken0)),
-                            _saleRateToken1: uint112(addSaleRateDelta(state.saleRateToken1(), saleRateDeltaToken1))
-                        });
-
-                        // this time is _consumed_, will never be crossed again, so we delete the info we no longer need.
-                        // this helps reduce the cost of executing virtual orders.
-                        timeInfoSlot.store(0);
-
-                        flipTime(initializedTimesBitmapSlot, nextTime);
-                    } else {
-                        state = createTwammPoolState({
-                            _lastVirtualOrderExecutionTime: uint32(nextTime),
-                            _saleRateToken0: state.saleRateToken0(),
-                            _saleRateToken1: state.saleRateToken1()
-                        });
-                    }
-
-                    time = nextTime;
-                }
-
-                if (saveDelta0 != 0 || saveDelta1 != 0) {
-                    CORE.updateSavedBalances(poolKey.token0, poolKey.token1, bytes32(0), saveDelta0, saveDelta1);
-                }
-
-                if (rewardRate0Access == 2) {
-                    TWAMMStorageLayout.poolRewardRatesSlot(poolId).store(bytes32(rewardRates.value0));
-                }
-                if (rewardRate1Access == 2) {
-                    TWAMMStorageLayout.poolRewardRatesSlot(poolId).next().store(bytes32(rewardRates.value1));
-                }
-
-                stateSlot.store(TwammPoolState.unwrap(state));
-
-                _emitVirtualOrdersExecuted(poolId, state.saleRateToken0(), state.saleRateToken1());
-            }
-        }
-    }
-
-    // Executes virtual orders for the specified initialized pool key. Protected because it is only called by core.
-    function locked_6416899205(uint256) external override onlyCore {
-        PoolKey memory poolKey;
-        assembly ("memory-safe") {
-            // copy the poolkey out of calldata at the solidity-allocated address
-            calldatacopy(poolKey, 36, 96)
-        }
-        _executeVirtualOrdersFromWithinLock(poolKey, poolKey.toPoolId());
-    }
-
-    /// @inheritdoc ITWAMM
-    function lockAndExecuteVirtualOrders(PoolKey memory poolKey) public {
-        // the only thing we lock for is executing virtual orders, so all we need to encode is the pool key
-        // so we call lock on the core contract with the pool key after it
-        address target = address(CORE);
-        assembly ("memory-safe") {
-            let o := mload(0x40)
-            mstore(o, shl(224, 0xf83d08ba))
-            mcopy(add(o, 4), poolKey, 96)
-
-            // If the call failed, pass through the revert
-            if iszero(call(gas(), target, 0, o, 100, 0, 0)) {
-                returndatacopy(o, 0, returndatasize())
-                revert(o, returndatasize())
-            }
-        }
-    }
-
-    ///////////////////////// Extension call points /////////////////////////
-
-    // This method must be protected because it sets state directly
-    function afterInitializePool(address, PoolKey memory key, int32, SqrtRatio)
-        external
-        override(BaseExtension, IExtension)
-        onlyCore
-    {
-        if (!key.config.isFullRange()) revert FullRangePoolOnly();
-
-        PoolId poolId = key.toPoolId();
-
-        TWAMMStorageLayout.twammPoolStateSlot(poolId)
-            .store(
-                TwammPoolState.unwrap(
-                    createTwammPoolState({
-                        _lastVirtualOrderExecutionTime: uint32(block.timestamp), _saleRateToken0: 0, _saleRateToken1: 0
-                    })
-                )
-            );
-
-        _emitVirtualOrdersExecuted({poolId: poolId, saleRateToken0: 0, saleRateToken1: 0});
-    }
-
-    // Since anyone can call the method `#lockAndExecuteVirtualOrders`, the method is not protected
-    function beforeSwap(Locker, PoolKey memory poolKey, SwapParameters) external override(BaseExtension, IExtension) {
-        lockAndExecuteVirtualOrders(poolKey);
-    }
-
-    // Since anyone can call the method `#lockAndExecuteVirtualOrders`, the method is not protected
-    function beforeUpdatePosition(Locker, PoolKey memory poolKey, PositionId, int128)
-        external
-        override(BaseExtension, IExtension)
-    {
-        lockAndExecuteVirtualOrders(poolKey);
-    }
-
-    // Since anyone can call the method `#lockAndExecuteVirtualOrders`, the method is not protected
-    function beforeCollectFees(Locker, PoolKey memory poolKey, PositionId)
-        external
-        override(BaseExtension, IExtension)
-    {
-        lockAndExecuteVirtualOrders(poolKey);
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {IERC20} from "forge-std/interfaces/IERC20.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
-
-import {BaseForwardee} from "./base/BaseForwardee.sol";
-import {UsesCore} from "./base/UsesCore.sol";
-import {ICore} from "./interfaces/ICore.sol";
-import {toDate, toQuarter} from "./libraries/TimeDescriptor.sol";
-import {CoreLib} from "./libraries/CoreLib.sol";
-import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
-import {Locker} from "./types/locker.sol";
-
-/// @title Time-locked Token Wrapper
-/// @author Ekubo Protocol
-/// @notice Wraps tokens that can only be unwrapped after a specific unlock time
-/// @dev Wrapping and unwrapping happens via Ekubo Core#forward. Implements full ERC20 functionality
-contract TokenWrapper is UsesCore, IERC20, BaseForwardee {
-    using CoreLib for *;
-    using FlashAccountantLib for *;
-
-    /// @notice Thrown when trying to unwrap the token before the token has unlocked
-    error TooEarly();
-
-    /// @notice Thrown when attempting to transfer an amount greater than the balance
-    error InsufficientBalance();
-
-    /// @notice Thrown when calling transferFrom with an insufficient allowance
-    error InsufficientAllowance();
-
-    /// @notice The underlying token that is wrapped by this contract
-    IERC20 public immutable UNDERLYING_TOKEN;
-
-    /// @notice The timestamp after which the token may be unwrapped
-    uint256 public immutable UNLOCK_TIME;
-
-    /// @notice Constructs a new TokenWrapper
-    /// @param core The Ekubo Core contract
-    /// @param _underlyingToken The token to be wrapped
-    /// @param _unlockTime The timestamp after which tokens can be unwrapped
-    constructor(ICore core, IERC20 _underlyingToken, uint256 _unlockTime) UsesCore(core) BaseForwardee(core) {
-        UNDERLYING_TOKEN = _underlyingToken;
-        UNLOCK_TIME = _unlockTime;
-    }
-
-    /// @inheritdoc IERC20
-    mapping(address owner => mapping(address spender => uint256)) public override allowance;
-
-    /// @notice Mapping of account balances (not public because we use coreBalance for Core)
-    /// @dev Private mapping to track individual account balances
-    mapping(address account => uint256) private _balanceOf;
-
-    /// @notice Transient balance for the Core contract
-    /// @dev Core never actually holds a real balance of this token, we just use this transient balance to enable low cost payments to core
-    uint256 private transient coreBalance;
-
-    /// @inheritdoc IERC20
-    /// @dev Returns the transient balance for Core contract, otherwise returns stored balance
-    function balanceOf(address account) external view returns (uint256) {
-        if (account == address(CORE)) return coreBalance;
-        return _balanceOf[account];
-    }
-
-    /// @inheritdoc IERC20
-    /// @dev Total supply is tracked in Core's saved balances
-    function totalSupply() external view override returns (uint256) {
-        (uint128 supply,) = CORE.savedBalances({
-            owner: address(this),
-            token0: address(UNDERLYING_TOKEN),
-            token1: address(type(uint160).max),
-            salt: bytes32(0)
-        });
-
-        return supply;
-    }
-
-    /// @inheritdoc IERC20
-    /// @dev Combines underlying token name with unlock date
-    function name() external view returns (string memory) {
-        return string.concat(UNDERLYING_TOKEN.name(), " ", toDate(UNLOCK_TIME));
-    }
-
-    /// @inheritdoc IERC20
-    /// @dev Combines "g" prefix with underlying token symbol and quarter
-    function symbol() external view returns (string memory) {
-        return string.concat("g", UNDERLYING_TOKEN.symbol(), "-", toQuarter(UNLOCK_TIME));
-    }
-
-    /// @inheritdoc IERC20
-    function decimals() external view returns (uint8) {
-        return UNDERLYING_TOKEN.decimals();
-    }
-
-    /// @inheritdoc IERC20
-    function transfer(address to, uint256 amount) external returns (bool) {
-        // note we do not need to check that core balance is sufficient as the sender
-        // even if the caller gets core to withdraw to itself, as part of a payment, it will net to 0 with the Core#withdraw call
-        if (msg.sender != address(CORE)) {
-            uint256 balance = _balanceOf[msg.sender];
-            if (balance < amount) {
-                revert InsufficientBalance();
-            }
-            // since we already checked balance >= amount
-            unchecked {
-                _balanceOf[msg.sender] = balance - amount;
-            }
-        }
-        if (to == address(CORE)) {
-            coreBalance += amount;
-        } else if (to != address(0)) {
-            // we save storage writes on burn by checking to != address(0)
-            _balanceOf[to] += amount;
-        }
-        emit Transfer(msg.sender, to, amount);
-        return true;
-    }
-
-    /// @inheritdoc IERC20
-    function approve(address spender, uint256 amount) external returns (bool) {
-        allowance[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
-    }
-
-    /// @inheritdoc IERC20
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        uint256 allowanceCurrent = allowance[from][msg.sender];
-        if (allowanceCurrent != type(uint256).max) {
-            if (allowanceCurrent < amount) revert InsufficientAllowance();
-            // since we already checked allowanceCurrent >= amount
-            unchecked {
-                allowance[from][msg.sender] = allowanceCurrent - amount;
-            }
-        }
-
-        // we know `from` at this point will never be address(core) for amount > 0, since Core will never give an allowance to any address
-
-        uint256 balance = _balanceOf[from];
-        if (balance < amount) {
-            revert InsufficientBalance();
-        }
-        // since we already checked balance >= amount
-        unchecked {
-            _balanceOf[from] = balance - amount;
-        }
-
-        if (to == address(CORE)) {
-            coreBalance += amount;
-        } else {
-            _balanceOf[to] += amount;
-        }
-        emit Transfer(msg.sender, to, amount);
-        return true;
-    }
-
-    /// @notice Handles wrap/unwrap operations forwarded from Core
-    /// @dev Encode (int256 delta) in the forwarded data, where a positive amount means wrapping and a negative amount means unwrapping
-    /// For wrap: the specified amount of this wrapper token will be credited to the locker and the same amount of underlying will be debited
-    /// For unwrap: the specified amount of the underlying will be credited to the locker and the same amount of this wrapper token will be debited, iff block.timestamp > unlockTime and at least that much token has been wrapped
-    /// @param data Encoded int256 delta (positive for wrap, negative for unwrap)
-    /// @return Empty bytes (no return data needed)
-    function handleForwardData(Locker, bytes memory data) internal override returns (bytes memory) {
-        (int256 amount) = abi.decode(data, (int256));
-
-        // unwrap
-        if (amount < 0) {
-            if (block.timestamp < UNLOCK_TIME) revert TooEarly();
-        }
-
-        CORE.updateSavedBalances({
-            token0: address(UNDERLYING_TOKEN),
-            token1: address(type(uint160).max),
-            salt: bytes32(0),
-            delta0: amount,
-            delta1: 0
-        });
-
-        CORE.updateDebt(SafeCastLib.toInt128(-amount));
-
-        return bytes("");
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
 import {BasePositions} from "./base/BasePositions.sol";
 import {ICore} from "./interfaces/ICore.sol";
 import {PoolKey} from "./types/poolKey.sol";
@@ -3747,450 +3880,31 @@ contract Positions is BasePositions {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {PayableMulticallable} from "./base/PayableMulticallable.sol";
-import {BaseLocker} from "./base/BaseLocker.sol";
-import {UsesCore} from "./base/UsesCore.sol";
-import {ICore} from "./interfaces/ICore.sol";
-import {PoolKey} from "./types/poolKey.sol";
-import {NATIVE_TOKEN_ADDRESS} from "./math/constants.sol";
-import {SqrtRatio} from "./types/sqrtRatio.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
-import {CoreLib} from "./libraries/CoreLib.sol";
-import {PoolState} from "./types/poolState.sol";
-import {PoolBalanceUpdate, createPoolBalanceUpdate} from "./types/poolBalanceUpdate.sol";
-import {SwapParameters, createSwapParameters} from "./types/swapParameters.sol";
+import {IExposedStorage} from "../interfaces/IExposedStorage.sol";
 
-/// @notice Represents a single hop in a multi-hop swap route
-/// @dev Contains pool information and swap parameters for one step
-struct RouteNode {
-    /// @notice Pool key identifying the pool for this hop
-    PoolKey poolKey;
-    /// @notice Price limit for this hop (0 for no limit)
-    SqrtRatio sqrtRatioLimit;
-    /// @notice Number of ticks to skip ahead for gas optimization
-    uint256 skipAhead;
-}
-
-/// @notice Represents a token and amount pair
-/// @dev Used to specify input/output tokens and amounts in swaps
-struct TokenAmount {
-    /// @notice Address of the token
-    address token;
-    /// @notice Amount of the token (positive or negative)
-    int128 amount;
-}
-
-/// @notice Represents a multi-hop swap with route and initial token amount
-/// @dev Contains the complete path and starting point for a swap
-struct Swap {
-    /// @notice Array of route nodes defining the swap path
-    RouteNode[] route;
-    /// @notice Initial token and amount for the swap
-    TokenAmount tokenAmount;
-}
-
-/// @title Ekubo Protocol Router
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Enables swapping and quoting against pools in Ekubo Protocol
-/// @dev Provides high-level swap functionality including single-hop, multi-hop, and batch swaps
-contract Router is UsesCore, PayableMulticallable, BaseLocker {
-    using FlashAccountantLib for *;
-    using CoreLib for *;
-
-    uint256 private constant CALL_TYPE_SINGLE_SWAP = 0;
-    uint256 private constant CALL_TYPE_MULTIHOP_SWAP = 1;
-    uint256 private constant CALL_TYPE_MULTI_MULTIHOP_SWAP = 3; // == 1 | 2
-    uint256 private constant CALL_TYPE_QUOTE = 4;
-
-    /// @notice Thrown when a swap doesn't consume the full input amount
-    error PartialSwapsDisallowed();
-
-    /// @notice Thrown when the calculated amount doesn't meet the minimum threshold
-    /// @param expectedAmount The minimum expected amount
-    /// @param calculatedAmount The actual calculated amount
-    error SlippageCheckFailed(int256 expectedAmount, int256 calculatedAmount);
-
-    /// @notice Thrown when tokens don't match across multiple swaps
-    /// @param index The index of the mismatched swap
-    error TokensMismatch(uint256 index);
-
-    /// @notice Constructs the Router contract
-    /// @param core The core contract instance
-    constructor(ICore core) BaseLocker(core) UsesCore(core) {}
-
-    /// @notice Internal function to execute a swap against the core contract
-    /// @dev Virtual function that can be overridden by derived contracts
-    /// @param value Native token value to send with the swap
-    /// @param poolKey Pool key identifying the pool
-    /// @param params The parameters of the swap to make
-    /// @return balanceUpdate Change in token0 and token1 balances of the pool
-    function _swap(uint256 value, PoolKey memory poolKey, SwapParameters params)
-        internal
-        virtual
-        returns (PoolBalanceUpdate balanceUpdate, PoolState stateAfter)
-    {
-        (balanceUpdate, stateAfter) = CORE.swap(value, poolKey, params.withDefaultSqrtRatioLimit());
-    }
-
-    function handleLockData(uint256, bytes memory data) internal override returns (bytes memory result) {
-        uint256 callType = abi.decode(data, (uint256));
-
-        if (callType == CALL_TYPE_SINGLE_SWAP) {
-            // swap
-            (
-                ,
-                address swapper,
-                PoolKey memory poolKey,
-                SwapParameters params,
-                int256 calculatedAmountThreshold,
-                address recipient
-            ) = abi.decode(data, (uint256, address, PoolKey, SwapParameters, int256, address));
-
-            unchecked {
-                uint256 value = FixedPointMathLib.ternary(
-                    !params.isToken1() && !params.isExactOut() && poolKey.token0 == NATIVE_TOKEN_ADDRESS,
-                    uint128(params.amount()),
-                    0
-                );
-
-                bool increasing = params.isPriceIncreasing();
-
-                (PoolBalanceUpdate balanceUpdate,) = _swap(value, poolKey, params);
-
-                int128 amountCalculated = params.isToken1() ? -balanceUpdate.delta0() : -balanceUpdate.delta1();
-                if (amountCalculated < calculatedAmountThreshold) {
-                    revert SlippageCheckFailed(calculatedAmountThreshold, amountCalculated);
-                }
-
-                if (increasing) {
-                    if (balanceUpdate.delta0() != 0) {
-                        ACCOUNTANT.withdraw(poolKey.token0, recipient, uint128(-balanceUpdate.delta0()));
-                    }
-                    if (balanceUpdate.delta1() != 0) {
-                        ACCOUNTANT.payFrom(swapper, poolKey.token1, uint128(balanceUpdate.delta1()));
-                    }
-                } else {
-                    if (balanceUpdate.delta1() != 0) {
-                        ACCOUNTANT.withdraw(poolKey.token1, recipient, uint128(-balanceUpdate.delta1()));
-                    }
-
-                    if (balanceUpdate.delta0() != 0) {
-                        if (poolKey.token0 == NATIVE_TOKEN_ADDRESS) {
-                            int256 valueDifference = int256(value) - int256(balanceUpdate.delta0());
-
-                            // refund the overpaid ETH to the swapper
-                            if (valueDifference > 0) {
-                                ACCOUNTANT.withdraw(NATIVE_TOKEN_ADDRESS, swapper, uint128(uint256(valueDifference)));
-                            } else if (valueDifference < 0) {
-                                SafeTransferLib.safeTransferETH(address(ACCOUNTANT), uint128(uint256(-valueDifference)));
-                            }
-                        } else {
-                            ACCOUNTANT.payFrom(swapper, poolKey.token0, uint128(balanceUpdate.delta0()));
-                        }
-                    }
-                }
-
-                result = abi.encode(balanceUpdate);
-            }
-        } else if ((callType & CALL_TYPE_MULTIHOP_SWAP) != 0) {
-            address swapper;
-            Swap[] memory swaps;
-            int256 calculatedAmountThreshold;
-
-            if (callType == CALL_TYPE_MULTIHOP_SWAP) {
-                Swap memory s;
-                // multihopSwap
-                (, swapper, s, calculatedAmountThreshold) = abi.decode(data, (uint256, address, Swap, int256));
-
-                swaps = new Swap[](1);
-                swaps[0] = s;
-            } else {
-                // multiMultihopSwap
-                (, swapper, swaps, calculatedAmountThreshold) = abi.decode(data, (uint256, address, Swap[], int256));
-            }
-
-            PoolBalanceUpdate[][] memory results = new PoolBalanceUpdate[][](swaps.length);
-
-            unchecked {
-                int256 totalCalculated;
-                int256 totalSpecified;
-                address specifiedToken;
-                address calculatedToken;
-
-                for (uint256 i = 0; i < swaps.length; i++) {
-                    Swap memory s = swaps[i];
-                    results[i] = new PoolBalanceUpdate[](s.route.length);
-
-                    TokenAmount memory tokenAmount = s.tokenAmount;
-                    totalSpecified += tokenAmount.amount;
-
-                    for (uint256 j = 0; j < s.route.length; j++) {
-                        RouteNode memory node = s.route[j];
-
-                        bool isToken1 = tokenAmount.token == node.poolKey.token1;
-                        require(isToken1 || tokenAmount.token == node.poolKey.token0);
-
-                        (PoolBalanceUpdate update,) = _swap(
-                            0,
-                            node.poolKey,
-                            createSwapParameters({
-                                _amount: tokenAmount.amount,
-                                _isToken1: isToken1,
-                                _sqrtRatioLimit: node.sqrtRatioLimit,
-                                _skipAhead: node.skipAhead
-                            })
-                        );
-                        results[i][j] = update;
-
-                        if (isToken1) {
-                            if (update.delta1() != tokenAmount.amount) revert PartialSwapsDisallowed();
-                            tokenAmount = TokenAmount({token: node.poolKey.token0, amount: -update.delta0()});
-                        } else {
-                            if (update.delta0() != tokenAmount.amount) revert PartialSwapsDisallowed();
-                            tokenAmount = TokenAmount({token: node.poolKey.token1, amount: -update.delta1()});
-                        }
-                    }
-
-                    totalCalculated += tokenAmount.amount;
-
-                    if (i == 0) {
-                        specifiedToken = s.tokenAmount.token;
-                        calculatedToken = tokenAmount.token;
-                    } else {
-                        if (specifiedToken != s.tokenAmount.token || calculatedToken != tokenAmount.token) {
-                            revert TokensMismatch(i);
-                        }
-                    }
-                }
-
-                if (totalCalculated < calculatedAmountThreshold) {
-                    revert SlippageCheckFailed(calculatedAmountThreshold, totalCalculated);
-                }
-
-                if (totalSpecified < 0) {
-                    ACCOUNTANT.withdraw(specifiedToken, swapper, uint128(uint256(-totalSpecified)));
-                } else if (totalSpecified > 0) {
-                    if (specifiedToken == NATIVE_TOKEN_ADDRESS) {
-                        SafeTransferLib.safeTransferETH(address(ACCOUNTANT), uint128(uint256(totalSpecified)));
-                    } else {
-                        ACCOUNTANT.payFrom(swapper, specifiedToken, uint128(uint256(totalSpecified)));
-                    }
-                }
-
-                if (totalCalculated > 0) {
-                    ACCOUNTANT.withdraw(calculatedToken, swapper, uint128(uint256(totalCalculated)));
-                } else if (totalCalculated < 0) {
-                    if (calculatedToken == NATIVE_TOKEN_ADDRESS) {
-                        SafeTransferLib.safeTransferETH(address(ACCOUNTANT), uint128(uint256(-totalCalculated)));
-                    } else {
-                        ACCOUNTANT.payFrom(swapper, calculatedToken, uint128(uint256(-totalCalculated)));
-                    }
-                }
-            }
-
-            if (callType == CALL_TYPE_MULTIHOP_SWAP) {
-                result = abi.encode(results[0]);
-            } else {
-                result = abi.encode(results);
-            }
-        } else if (callType == CALL_TYPE_QUOTE) {
-            (, PoolKey memory poolKey, SwapParameters params) = abi.decode(data, (uint256, PoolKey, SwapParameters));
-
-            (PoolBalanceUpdate balanceUpdate, PoolState stateAfter) = _swap(0, poolKey, params);
-
-            revert QuoteReturnValue(balanceUpdate, stateAfter);
-        }
-    }
-
-    /// @notice Executes a single-hop swap with a specified recipient
-    /// @param poolKey Pool key identifying the pool to swap against
-    /// @param params The swap parameters to execute
-    /// @param calculatedAmountThreshold Minimum amount to receive (for slippage protection)
-    /// @return balanceUpdate Change in token0 and token1 balance of the pool
-    function swap(PoolKey memory poolKey, SwapParameters params, int256 calculatedAmountThreshold)
-        public
-        payable
-        returns (PoolBalanceUpdate balanceUpdate)
-    {
-        balanceUpdate = swap(poolKey, params, calculatedAmountThreshold, msg.sender);
-    }
-
-    /// @notice Executes a single-hop swap with a specified recipient
-    /// @param poolKey Pool key identifying the pool to swap against
-    /// @param params The swap parameters to execute
-    /// @param calculatedAmountThreshold Minimum amount to receive (for slippage protection)
-    /// @param recipient Address to receive the output tokens
-    /// @return balanceUpdate Change in token0 and token1 balance of the pool
-    function swap(PoolKey memory poolKey, SwapParameters params, int256 calculatedAmountThreshold, address recipient)
-        public
-        payable
-        returns (PoolBalanceUpdate balanceUpdate)
-    {
-        (balanceUpdate) = abi.decode(
-            lock(abi.encode(CALL_TYPE_SINGLE_SWAP, msg.sender, poolKey, params, calculatedAmountThreshold, recipient)),
-            (PoolBalanceUpdate)
-        );
-    }
-
-    /// @notice Executes a single-hop swap with a specified recipient
-    /// @param poolKey Pool key identifying the pool to swap against
-    /// @param isToken1 True if swapping token1, false if swapping token0
-    /// @param amount Amount to swap (positive for exact input, negative for exact output)
-    /// @param sqrtRatioLimit Price limit for the swap (0 for no limit)
-    /// @param skipAhead Number of ticks to skip ahead for gas optimization
-    /// @param calculatedAmountThreshold Minimum amount to receive (for slippage protection)
-    /// @param recipient Address to receive the output tokens
-    /// @return balanceUpdate Change in token0 and token1 balance of the pool
-    function swap(
-        PoolKey memory poolKey,
-        bool isToken1,
-        int128 amount,
-        SqrtRatio sqrtRatioLimit,
-        uint256 skipAhead,
-        int256 calculatedAmountThreshold,
-        address recipient
-    ) public payable returns (PoolBalanceUpdate balanceUpdate) {
-        balanceUpdate = swap(
-            poolKey,
-            createSwapParameters({
-                _isToken1: isToken1, _amount: amount, _sqrtRatioLimit: sqrtRatioLimit, _skipAhead: skipAhead
-            }),
-            calculatedAmountThreshold,
-            recipient
-        );
-    }
-
-    /// @notice Executes a single-hop swap with msg.sender as recipient
-    /// @param poolKey Pool key identifying the pool to swap against
-    /// @param isToken1 True if swapping token1, false if swapping token0
-    /// @param amount Amount to swap (positive for exact input, negative for exact output)
-    /// @param sqrtRatioLimit Price limit for the swap (0 for no limit)
-    /// @param skipAhead Number of ticks to skip ahead for gas optimization
-    /// @param calculatedAmountThreshold Minimum amount to receive (for slippage protection)
-    /// @return balanceUpdate Change in token0 and token1 balance of the pool
-    function swap(
-        PoolKey memory poolKey,
-        bool isToken1,
-        int128 amount,
-        SqrtRatio sqrtRatioLimit,
-        uint256 skipAhead,
-        int256 calculatedAmountThreshold
-    ) external payable returns (PoolBalanceUpdate balanceUpdate) {
-        balanceUpdate = swap(
-            poolKey, isToken1, amount, sqrtRatioLimit, skipAhead, calculatedAmountThreshold, msg.sender
-        );
-    }
-
-    /// @notice Executes a single-hop swap with no slippage protection
-    /// @param poolKey Pool key identifying the pool to swap against
-    /// @param isToken1 True if swapping token1, false if swapping token0
-    /// @param amount Amount to swap (positive for exact input, negative for exact output)
-    /// @param sqrtRatioLimit Price limit for the swap (0 for no limit)
-    /// @param skipAhead Number of ticks to skip ahead for gas optimization
-    /// @return balanceUpdate Change in token0 and token1 balance of the pool
-    function swap(PoolKey memory poolKey, bool isToken1, int128 amount, SqrtRatio sqrtRatioLimit, uint256 skipAhead)
-        external
-        payable
-        returns (PoolBalanceUpdate balanceUpdate)
-    {
-        balanceUpdate = swap(poolKey, isToken1, amount, sqrtRatioLimit, skipAhead, type(int256).min, msg.sender);
-    }
-
-    /// @notice Executes a single-hop swap using RouteNode and TokenAmount structs
-    /// @param node Route node containing pool and swap parameters
-    /// @param tokenAmount Token and amount to swap
-    /// @param calculatedAmountThreshold Minimum amount to receive (for slippage protection)
-    /// @return balanceUpdate Change in token0 and token1 balance of the pool
-    function swap(RouteNode memory node, TokenAmount memory tokenAmount, int256 calculatedAmountThreshold)
-        public
-        payable
-        returns (PoolBalanceUpdate balanceUpdate)
-    {
-        balanceUpdate = swap(
-            node.poolKey,
-            node.poolKey.token1 == tokenAmount.token,
-            tokenAmount.amount,
-            node.sqrtRatioLimit,
-            node.skipAhead,
-            calculatedAmountThreshold,
-            msg.sender
-        );
-    }
-
-    /// @notice Executes a multi-hop swap through multiple pools
-    /// @param s Swap struct containing the route and initial token amount
-    /// @param calculatedAmountThreshold Minimum final amount to receive (for slippage protection)
-    /// @return result Array of deltas for each hop in the swap
-    function multihopSwap(Swap memory s, int256 calculatedAmountThreshold)
-        external
-        payable
-        returns (PoolBalanceUpdate[] memory result)
-    {
-        result = abi.decode(
-            lock(abi.encode(CALL_TYPE_MULTIHOP_SWAP, msg.sender, s, calculatedAmountThreshold)), (PoolBalanceUpdate[])
-        );
-    }
-
-    /// @notice Executes multiple multi-hop swaps in a single transaction
-    /// @param swaps Array of swap structs, each containing a route and initial token amount
-    /// @param calculatedAmountThreshold Minimum total final amount to receive (for slippage protection)
-    /// @return results Array of delta arrays, one for each swap
-    function multiMultihopSwap(Swap[] memory swaps, int256 calculatedAmountThreshold)
-        external
-        payable
-        returns (PoolBalanceUpdate[][] memory results)
-    {
-        results = abi.decode(
-            lock(abi.encode(CALL_TYPE_MULTI_MULTIHOP_SWAP, msg.sender, swaps, calculatedAmountThreshold)),
-            (PoolBalanceUpdate[][])
-        );
-    }
-
-    /// @notice Error used to return quote values from the quote function
-    /// @param balanceUpdate Change in token0 and token1 balance of the pool
-    /// @param poolState The state after the swap
-    error QuoteReturnValue(PoolBalanceUpdate balanceUpdate, PoolState poolState);
-
-    /// @notice Quotes the result of a swap without executing it
-    /// @dev Uses a revert-based mechanism to return the quote without state changes
-    /// @param poolKey Pool key identifying the pool to quote against
-    /// @param isToken1 True if swapping token1, false if swapping token0
-    /// @param amount Amount to swap (positive for exact input, negative for exact output)
-    /// @param sqrtRatioLimit Price limit for the swap (0 for no limit)
-    /// @param skipAhead Number of ticks to skip ahead for gas optimization
-    /// @return balanceUpdate The change in pool balances resulting from the swap
-    /// @return stateAfter The state of the pool after the swap is complete
-    function quote(PoolKey memory poolKey, bool isToken1, int128 amount, SqrtRatio sqrtRatioLimit, uint256 skipAhead)
-        external
-        returns (PoolBalanceUpdate balanceUpdate, PoolState stateAfter)
-    {
-        bytes memory revertData = lockAndExpectRevert(
-            abi.encode(
-                CALL_TYPE_QUOTE,
-                poolKey,
-                createSwapParameters({
-                    _isToken1: isToken1, _amount: amount, _sqrtRatioLimit: sqrtRatioLimit, _skipAhead: skipAhead
-                })
-            )
-        );
-
-        // check that the sig matches the error data
-
-        bytes4 sig;
+/// @title ExposedStorage
+/// @notice Abstract contract that implements storage exposure functionality
+/// @dev This contract provides the implementation for the IExposedStorage interface,
+///      allowing inheriting contracts to expose their storage slots via view functions.
+///      Uses inline assembly for efficient storage access.
+abstract contract ExposedStorage is IExposedStorage {
+    /// @inheritdoc IExposedStorage
+    /// @dev Uses inline assembly to efficiently read multiple storage slots specified in calldata.
+    ///      Each slot value is loaded using the SLOAD opcode and stored in memory.
+    function sload() external view {
         assembly ("memory-safe") {
-            sig := mload(add(revertData, 32))
+            for { let i := 4 } lt(i, calldatasize()) { i := add(i, 32) } { mstore(sub(i, 4), sload(calldataload(i))) }
+            return(0, sub(calldatasize(), 4))
         }
-        if (sig == QuoteReturnValue.selector && revertData.length == 68) {
-            assembly ("memory-safe") {
-                balanceUpdate := mload(add(revertData, 36))
-                stateAfter := mload(add(revertData, 68))
-            }
-        } else {
-            assembly ("memory-safe") {
-                revert(add(revertData, 32), mload(revertData))
-            }
+    }
+
+    /// @inheritdoc IExposedStorage
+    /// @dev Uses inline assembly to efficiently read multiple transient storage slots specified in calldata.
+    ///      Each slot value is loaded using the TLOAD opcode and stored in memory.
+    function tload() external view {
+        assembly ("memory-safe") {
+            for { let i := 4 } lt(i, calldatasize()) { i := add(i, 32) } { mstore(sub(i, 4), tload(calldataload(i))) }
+            return(0, sub(calldatasize(), 4))
         }
     }
 }
@@ -4198,85 +3912,191 @@ contract Router is UsesCore, PayableMulticallable, BaseLocker {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {PoolKey} from "../../types/poolKey.sol";
-import {IExtension} from "../ICore.sol";
-import {IExposedStorage} from "../IExposedStorage.sol";
-import {Snapshot} from "../../types/snapshot.sol";
-import {Observation} from "../../types/observation.sol";
+import {Ownable} from "solady/auth/Ownable.sol";
+import {Multicallable} from "solady/utils/Multicallable.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 
-/// @title Oracle Interface
-/// @notice Interface for the Ekubo Oracle Extension
-/// @dev Records price and liquidity into accumulators enabling a separate contract to compute a manipulation resistant average price and liquidity
-interface IOracle is IExposedStorage, IExtension {
-    /// @notice Thrown when trying to create a pool that doesn't pair with the native token
-    error PairsWithNativeTokenOnly();
+import {nextValidTime} from "./math/time.sol";
+import {IOrders} from "./interfaces/IOrders.sol";
+import {IRevenueBuybacks} from "./interfaces/IRevenueBuybacks.sol";
+import {BuybacksState, createBuybacksState} from "./types/buybacksState.sol";
+import {OrderKey} from "./types/orderKey.sol";
+import {createOrderConfig} from "./types/orderConfig.sol";
+import {ExposedStorage} from "./base/ExposedStorage.sol";
+import {NATIVE_TOKEN_ADDRESS} from "./math/constants.sol";
 
-    /// @notice Thrown when the pool fee is not zero
-    error FeeMustBeZero();
+/// @title Revenue Buybacks
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Creates automated revenue buyback orders using TWAMM (Time-Weighted Average Market Maker)
+/// @dev Final contract that manages the creation and execution of buyback orders for protocol revenue
+/// This contract automatically creates TWAMM orders to buy back a specified token using collected revenue
+contract RevenueBuybacks is IRevenueBuybacks, ExposedStorage, Ownable, Multicallable {
+    /// @notice The Orders contract used to create and manage TWAMM orders
+    /// @dev All buyback orders are created through this contract
+    IOrders public immutable ORDERS;
 
-    /// @notice Thrown when the tick spacing is not the maximum allowed value
-    error FullRangePoolOnly();
+    /// @notice The NFT token ID that represents all buyback orders created by this contract
+    /// @dev A single NFT is minted and reused for all buyback orders to simplify management
+    uint256 public immutable NFT_ID;
 
-    /// @notice Thrown when querying data for a future timestamp
-    error FutureTime();
+    /// @notice The token that is purchased with collected revenue
+    /// @dev This is typically the protocol's governance or utility token
+    address public immutable BUY_TOKEN;
 
-    /// @notice Thrown when no previous snapshot exists for the given time
-    /// @param token The token address
-    /// @param time The requested timestamp
-    error NoPreviousSnapshotExists(address token, uint256 time);
+    /// @notice Constructs the RevenueBuybacks contract
+    /// @param owner The address that will own this contract and have administrative privileges
+    /// @param _orders The Orders contract instance for creating TWAMM orders
+    /// @param _buyToken The token that will be purchased with collected revenue
+    constructor(address owner, IOrders _orders, address _buyToken) {
+        _initializeOwner(owner);
+        ORDERS = _orders;
+        BUY_TOKEN = _buyToken;
+        NFT_ID = ORDERS.mint();
+    }
 
-    /// @notice Thrown when the end time is less than the start time
-    error EndTimeLessThanStartTime();
+    /// @notice Approves the Orders contract to spend unlimited amounts of a token
+    /// @dev Must be called at least once for each revenue token before creating buyback orders
+    /// @param token The token to approve for spending by the Orders contract
+    function approveMax(address token) external {
+        SafeTransferLib.safeApproveWithRetry(token, address(ORDERS), type(uint256).max);
+    }
 
-    /// @notice Thrown when timestamps are not provided in sorted order
-    error TimestampsNotSorted();
+    /// @notice Withdraws leftover tokens from the contract (only callable by owner)
+    /// @dev Used to recover tokens that may be stuck in the contract
+    /// @param token The address of the token to withdraw
+    /// @param amount The amount of tokens to withdraw
+    function take(address token, uint256 amount) external onlyOwner {
+        // Transfer to msg.sender since only the owner can call this function
+        SafeTransferLib.safeTransfer(token, msg.sender, amount);
+    }
 
-    /// @notice Thrown when zero timestamps are provided to a function that requires at least one
-    error ZeroTimestampsProvided();
+    /// @notice Withdraws native tokens held by this contract
+    /// @dev Used to recover native tokens that may be stuck in the contract
+    /// @param amount The amount of native tokens to withdraw
+    function takeNative(uint256 amount) external onlyOwner {
+        // Transfer to msg.sender since only the owner can call this function
+        SafeTransferLib.safeTransferETH(msg.sender, amount);
+    }
 
-    /// @notice Gets the pool key for the given token
-    /// @dev The only allowed pool key for the given token pairs with the native token
-    /// @param token The token address
-    /// @return The pool key for the token paired with native token
-    function getPoolKey(address token) external view returns (PoolKey memory);
+    /// @notice Collects the proceeds from a completed buyback order
+    /// @dev Can be called by anyone at any time to collect proceeds from orders that have finished
+    /// @param token The revenue token that was sold in the order
+    /// @param fee The fee tier of the pool where the order was executed
+    /// @param endTime The end time of the order to collect proceeds from
+    /// @return proceeds The amount of buyToken received from the completed order
+    function collect(address token, uint64 fee, uint64 endTime) external returns (uint128 proceeds) {
+        proceeds = ORDERS.collectProceeds(NFT_ID, _createOrderKey(token, fee, 0, endTime), owner());
+    }
 
-    /// @notice Expands the capacity of the list of snapshots for the given token
-    /// @param token The token address
-    /// @param minCapacity The minimum capacity required
-    /// @return capacity The actual capacity after expansion
-    function expandCapacity(address token, uint32 minCapacity) external returns (uint32 capacity);
+    /// @notice Allows the contract to receive ETH revenue
+    /// @dev Required to accept ETH payments when ETH is used as a revenue token
+    receive() external payable {}
 
-    /// @notice Finds the snapshot with the greatest timestamp ≤ the given time
-    /// @param token The token address
-    /// @param time The target timestamp
-    /// @return count The total number of snapshots for the token
-    /// @return logicalIndex The logical index of the found snapshot
-    /// @return snapshot The snapshot data
-    function findPreviousSnapshot(address token, uint256 time)
+    /// @notice Creates a new buyback order or extends an existing one with available revenue
+    /// @dev Can be called by anyone to trigger the creation of buyback orders using collected revenue
+    /// This function will either extend the current order (if conditions are met) or create a new order
+    /// @param token The revenue token to use for creating the buyback order, or NATIVE_TOKEN_ADDRESS
+    /// @return endTime The end time of the order that was created or extended
+    /// @return saleRate The sale rate of the order (amount of token sold per second)
+    function roll(address token) public returns (uint64 endTime, uint112 saleRate) {
+        unchecked {
+            BuybacksState state;
+            assembly ("memory-safe") {
+                state := sload(token)
+            }
+
+            if (!state.isConfigured()) {
+                revert TokenNotConfigured(token);
+            }
+
+            // minOrderDuration == 0 indicates the token is not configured
+            bool isEth = token == NATIVE_TOKEN_ADDRESS;
+            uint256 amountToSpend = isEth ? address(this).balance : SafeTransferLib.balanceOf(token, address(this));
+
+            uint32 timeRemaining = state.lastEndTime() - uint32(block.timestamp);
+            // if the fee changed, or the amount of time exceeds the min order duration
+            // note the time remaining can underflow if the last order has ended. in this case time remaining will be greater than min order duration,
+            // but also greater than last order duration, so it will not be re-used.
+            if (
+                state.fee() == state.lastFee() && timeRemaining >= state.minOrderDuration()
+                    && timeRemaining <= state.lastOrderDuration()
+            ) {
+                // handles overflow
+                endTime = uint64(block.timestamp + timeRemaining);
+            } else {
+                endTime =
+                    uint64(nextValidTime(block.timestamp, block.timestamp + uint256(state.targetOrderDuration()) - 1));
+
+                state = createBuybacksState({
+                    _targetOrderDuration: state.targetOrderDuration(),
+                    _minOrderDuration: state.minOrderDuration(),
+                    _fee: state.fee(),
+                    _lastEndTime: uint32(endTime),
+                    _lastOrderDuration: uint32(endTime - block.timestamp),
+                    _lastFee: state.fee()
+                });
+
+                assembly ("memory-safe") {
+                    sstore(token, state)
+                }
+            }
+
+            if (amountToSpend != 0) {
+                saleRate = ORDERS.increaseSellAmount{value: isEth ? amountToSpend : 0}(
+                    NFT_ID, _createOrderKey(token, state.fee(), 0, endTime), uint128(amountToSpend), type(uint112).max
+                );
+            }
+        }
+    }
+
+    /// @notice Configures buyback parameters for a revenue token (only callable by owner)
+    /// @dev Sets the timing and fee parameters for automated buyback order creation
+    /// @param token The revenue token to configure
+    /// @param targetOrderDuration The target duration for new orders (in seconds)
+    /// @param minOrderDuration The minimum duration threshold for creating new orders (in seconds)
+    /// @param fee The fee tier for the buyback pool
+    function configure(address token, uint32 targetOrderDuration, uint32 minOrderDuration, uint64 fee)
         external
-        view
-        returns (uint256 count, uint256 logicalIndex, Snapshot snapshot);
+        onlyOwner
+    {
+        if (minOrderDuration > targetOrderDuration) revert MinOrderDurationGreaterThanTargetOrderDuration();
+        if (minOrderDuration == 0 && targetOrderDuration != 0) {
+            revert MinOrderDurationMustBeGreaterThanZero();
+        }
 
-    /// @notice Returns cumulative snapshot values at a specific time
-    /// @dev Extrapolates values from the most recent snapshot before the given time
-    /// @param token The token address
-    /// @param atTime The target timestamp
-    /// @return secondsPerLiquidityCumulative The cumulative seconds per liquidity at the target time
-    /// @return tickCumulative The cumulative tick value at the target time
-    function extrapolateSnapshot(address token, uint256 atTime)
-        external
-        view
-        returns (uint160 secondsPerLiquidityCumulative, int64 tickCumulative);
+        BuybacksState state;
+        assembly ("memory-safe") {
+            state := sload(token)
+        }
+        state = createBuybacksState({
+            _targetOrderDuration: targetOrderDuration,
+            _minOrderDuration: minOrderDuration,
+            _fee: fee,
+            _lastEndTime: state.lastEndTime(),
+            _lastOrderDuration: state.lastOrderDuration(),
+            _lastFee: state.lastFee()
+        });
+        assembly ("memory-safe") {
+            sstore(token, state)
+        }
 
-    /// @notice Returns extrapolated snapshots at each of the provided sorted timestamps
-    /// @dev Efficiently computes observations for multiple timestamps in a single call
-    /// @param token The token address
-    /// @param timestamps Array of timestamps in ascending order
-    /// @return observations Array of observations corresponding to each timestamp
-    function getExtrapolatedSnapshotsForSortedTimestamps(address token, uint256[] memory timestamps)
-        external
+        emit Configured(token, state);
+    }
+
+    function _createOrderKey(address token, uint64 fee, uint64 startTime, uint64 endTime)
+        internal
         view
-        returns (Observation[] memory observations);
+        returns (OrderKey memory key)
+    {
+        bool isToken1 = token > BUY_TOKEN;
+        address buyToken = BUY_TOKEN;
+        assembly ("memory-safe") {
+            mstore(add(key, mul(isToken1, 32)), token)
+            mstore(add(key, mul(iszero(isToken1), 32)), buyToken)
+        }
+
+        key.config = createOrderConfig({_fee: fee, _isToken1: isToken1, _startTime: startTime, _endTime: endTime});
+    }
 }
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
@@ -5138,6 +4958,752 @@ contract Core is ICore, FlashAccountant, ExposedStorage {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
+import {ILocker, IForwardee} from "../IFlashAccountant.sol";
+import {IExtension} from "../ICore.sol";
+import {IExposedStorage} from "../IExposedStorage.sol";
+import {PoolKey} from "../../types/poolKey.sol";
+import {OrderKey} from "../../types/orderKey.sol";
+import {OrderConfig} from "../../types/orderConfig.sol";
+import {PoolId} from "../../types/poolId.sol";
+
+/// @title TWAMM Interface
+/// @notice Interface for the Ekubo TWAMM Extension
+/// @dev Extension for Ekubo Protocol that enables creation of DCA orders that are executed over time
+interface ITWAMM is IExposedStorage, IExtension, ILocker, IForwardee {
+    /// @notice Emitted when an order is updated
+    /// @param owner Address of the order owner
+    /// @param salt Unique salt for the order
+    /// @param orderKey Order key identifying the order
+    /// @param saleRateDelta Change in sale rate applied
+    event OrderUpdated(address owner, bytes32 salt, OrderKey orderKey, int112 saleRateDelta);
+
+    /// @notice Emitted when proceeds are withdrawn from an order
+    /// @param owner Address of the order owner
+    /// @param salt Unique salt for the order
+    /// @param orderKey Order key identifying the order
+    /// @param amount Amount of tokens withdrawn
+    event OrderProceedsWithdrawn(address owner, bytes32 salt, OrderKey orderKey, uint128 amount);
+
+    /// @notice Thrown when the number of orders at a time would overflow
+    error TimeNumOrdersOverflow();
+
+    /// @notice Thrown when tick spacing is not the maximum allowed value
+    error FullRangePoolOnly();
+
+    /// @notice Thrown when trying to modify an order that has already ended
+    error OrderAlreadyEnded();
+
+    /// @notice Thrown when order timestamps are invalid
+    error InvalidTimestamps();
+
+    /// @notice Thrown when sale rate delta exceeds maximum allowed value
+    error MaxSaleRateDeltaPerTime();
+
+    /// @notice Thrown when trying to operate on an uninitialized pool
+    error PoolNotInitialized();
+
+    /// @notice Gets the reward rate inside a time range for a specific token
+    /// @dev Used to calculate how much of the buy token an order has earned
+    /// @param poolId Unique identifier for the pool
+    /// @param config The order config that is being checked
+    /// @return result The reward rate inside the specified range
+    function getRewardRateInside(PoolId poolId, OrderConfig config) external view returns (uint256 result);
+
+    /// @notice Locks core and executes virtual orders for the given pool key
+    /// @dev The pool key must use this extension, which is checked in the locked callback
+    /// @param poolKey Pool key identifying the pool
+    function lockAndExecuteVirtualOrders(PoolKey memory poolKey) external;
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {PayableMulticallable} from "./base/PayableMulticallable.sol";
+import {BaseLocker} from "./base/BaseLocker.sol";
+import {UsesCore} from "./base/UsesCore.sol";
+import {ICore} from "./interfaces/ICore.sol";
+import {PoolKey} from "./types/poolKey.sol";
+import {NATIVE_TOKEN_ADDRESS} from "./math/constants.sol";
+import {SqrtRatio} from "./types/sqrtRatio.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
+import {CoreLib} from "./libraries/CoreLib.sol";
+import {PoolState} from "./types/poolState.sol";
+import {PoolBalanceUpdate, createPoolBalanceUpdate} from "./types/poolBalanceUpdate.sol";
+import {SwapParameters, createSwapParameters} from "./types/swapParameters.sol";
+
+/// @notice Represents a single hop in a multi-hop swap route
+/// @dev Contains pool information and swap parameters for one step
+struct RouteNode {
+    /// @notice Pool key identifying the pool for this hop
+    PoolKey poolKey;
+    /// @notice Price limit for this hop (0 for no limit)
+    SqrtRatio sqrtRatioLimit;
+    /// @notice Number of ticks to skip ahead for gas optimization
+    uint256 skipAhead;
+}
+
+/// @notice Represents a token and amount pair
+/// @dev Used to specify input/output tokens and amounts in swaps
+struct TokenAmount {
+    /// @notice Address of the token
+    address token;
+    /// @notice Amount of the token (positive or negative)
+    int128 amount;
+}
+
+/// @notice Represents a multi-hop swap with route and initial token amount
+/// @dev Contains the complete path and starting point for a swap
+struct Swap {
+    /// @notice Array of route nodes defining the swap path
+    RouteNode[] route;
+    /// @notice Initial token and amount for the swap
+    TokenAmount tokenAmount;
+}
+
+/// @title Ekubo Protocol Router
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Enables swapping and quoting against pools in Ekubo Protocol
+/// @dev Provides high-level swap functionality including single-hop, multi-hop, and batch swaps
+contract Router is UsesCore, PayableMulticallable, BaseLocker {
+    using FlashAccountantLib for *;
+    using CoreLib for *;
+
+    uint256 private constant CALL_TYPE_SINGLE_SWAP = 0;
+    uint256 private constant CALL_TYPE_MULTIHOP_SWAP = 1;
+    uint256 private constant CALL_TYPE_MULTI_MULTIHOP_SWAP = 3; // == 1 | 2
+    uint256 private constant CALL_TYPE_QUOTE = 4;
+
+    /// @notice Thrown when a swap doesn't consume the full input amount
+    error PartialSwapsDisallowed();
+
+    /// @notice Thrown when the calculated amount doesn't meet the minimum threshold
+    /// @param expectedAmount The minimum expected amount
+    /// @param calculatedAmount The actual calculated amount
+    error SlippageCheckFailed(int256 expectedAmount, int256 calculatedAmount);
+
+    /// @notice Thrown when tokens don't match across multiple swaps
+    /// @param index The index of the mismatched swap
+    error TokensMismatch(uint256 index);
+
+    /// @notice Constructs the Router contract
+    /// @param core The core contract instance
+    constructor(ICore core) BaseLocker(core) UsesCore(core) {}
+
+    /// @notice Internal function to execute a swap against the core contract
+    /// @dev Virtual function that can be overridden by derived contracts
+    /// @param value Native token value to send with the swap
+    /// @param poolKey Pool key identifying the pool
+    /// @param params The parameters of the swap to make
+    /// @return balanceUpdate Change in token0 and token1 balances of the pool
+    function _swap(uint256 value, PoolKey memory poolKey, SwapParameters params)
+        internal
+        virtual
+        returns (PoolBalanceUpdate balanceUpdate, PoolState stateAfter)
+    {
+        (balanceUpdate, stateAfter) = CORE.swap(value, poolKey, params.withDefaultSqrtRatioLimit());
+    }
+
+    function handleLockData(uint256, bytes memory data) internal override returns (bytes memory result) {
+        uint256 callType = abi.decode(data, (uint256));
+
+        if (callType == CALL_TYPE_SINGLE_SWAP) {
+            // swap
+            (
+                ,
+                address swapper,
+                PoolKey memory poolKey,
+                SwapParameters params,
+                int256 calculatedAmountThreshold,
+                address recipient
+            ) = abi.decode(data, (uint256, address, PoolKey, SwapParameters, int256, address));
+
+            unchecked {
+                uint256 value = FixedPointMathLib.ternary(
+                    !params.isToken1() && !params.isExactOut() && poolKey.token0 == NATIVE_TOKEN_ADDRESS,
+                    uint128(params.amount()),
+                    0
+                );
+
+                bool increasing = params.isPriceIncreasing();
+
+                (PoolBalanceUpdate balanceUpdate,) = _swap(value, poolKey, params);
+
+                int128 amountCalculated = params.isToken1() ? -balanceUpdate.delta0() : -balanceUpdate.delta1();
+                if (amountCalculated < calculatedAmountThreshold) {
+                    revert SlippageCheckFailed(calculatedAmountThreshold, amountCalculated);
+                }
+
+                if (increasing) {
+                    if (balanceUpdate.delta0() != 0) {
+                        ACCOUNTANT.withdraw(poolKey.token0, recipient, uint128(-balanceUpdate.delta0()));
+                    }
+                    if (balanceUpdate.delta1() != 0) {
+                        ACCOUNTANT.payFrom(swapper, poolKey.token1, uint128(balanceUpdate.delta1()));
+                    }
+                } else {
+                    if (balanceUpdate.delta1() != 0) {
+                        ACCOUNTANT.withdraw(poolKey.token1, recipient, uint128(-balanceUpdate.delta1()));
+                    }
+
+                    if (balanceUpdate.delta0() != 0) {
+                        if (poolKey.token0 == NATIVE_TOKEN_ADDRESS) {
+                            int256 valueDifference = int256(value) - int256(balanceUpdate.delta0());
+
+                            // refund the overpaid ETH to the swapper
+                            if (valueDifference > 0) {
+                                ACCOUNTANT.withdraw(NATIVE_TOKEN_ADDRESS, swapper, uint128(uint256(valueDifference)));
+                            } else if (valueDifference < 0) {
+                                SafeTransferLib.safeTransferETH(address(ACCOUNTANT), uint128(uint256(-valueDifference)));
+                            }
+                        } else {
+                            ACCOUNTANT.payFrom(swapper, poolKey.token0, uint128(balanceUpdate.delta0()));
+                        }
+                    }
+                }
+
+                result = abi.encode(balanceUpdate);
+            }
+        } else if ((callType & CALL_TYPE_MULTIHOP_SWAP) != 0) {
+            address swapper;
+            Swap[] memory swaps;
+            int256 calculatedAmountThreshold;
+
+            if (callType == CALL_TYPE_MULTIHOP_SWAP) {
+                Swap memory s;
+                // multihopSwap
+                (, swapper, s, calculatedAmountThreshold) = abi.decode(data, (uint256, address, Swap, int256));
+
+                swaps = new Swap[](1);
+                swaps[0] = s;
+            } else {
+                // multiMultihopSwap
+                (, swapper, swaps, calculatedAmountThreshold) = abi.decode(data, (uint256, address, Swap[], int256));
+            }
+
+            PoolBalanceUpdate[][] memory results = new PoolBalanceUpdate[][](swaps.length);
+
+            unchecked {
+                int256 totalCalculated;
+                int256 totalSpecified;
+                address specifiedToken;
+                address calculatedToken;
+
+                for (uint256 i = 0; i < swaps.length; i++) {
+                    Swap memory s = swaps[i];
+                    results[i] = new PoolBalanceUpdate[](s.route.length);
+
+                    TokenAmount memory tokenAmount = s.tokenAmount;
+                    totalSpecified += tokenAmount.amount;
+
+                    for (uint256 j = 0; j < s.route.length; j++) {
+                        RouteNode memory node = s.route[j];
+
+                        bool isToken1 = tokenAmount.token == node.poolKey.token1;
+                        require(isToken1 || tokenAmount.token == node.poolKey.token0);
+
+                        (PoolBalanceUpdate update,) = _swap(
+                            0,
+                            node.poolKey,
+                            createSwapParameters({
+                                _amount: tokenAmount.amount,
+                                _isToken1: isToken1,
+                                _sqrtRatioLimit: node.sqrtRatioLimit,
+                                _skipAhead: node.skipAhead
+                            })
+                        );
+                        results[i][j] = update;
+
+                        if (isToken1) {
+                            if (update.delta1() != tokenAmount.amount) revert PartialSwapsDisallowed();
+                            tokenAmount = TokenAmount({token: node.poolKey.token0, amount: -update.delta0()});
+                        } else {
+                            if (update.delta0() != tokenAmount.amount) revert PartialSwapsDisallowed();
+                            tokenAmount = TokenAmount({token: node.poolKey.token1, amount: -update.delta1()});
+                        }
+                    }
+
+                    totalCalculated += tokenAmount.amount;
+
+                    if (i == 0) {
+                        specifiedToken = s.tokenAmount.token;
+                        calculatedToken = tokenAmount.token;
+                    } else {
+                        if (specifiedToken != s.tokenAmount.token || calculatedToken != tokenAmount.token) {
+                            revert TokensMismatch(i);
+                        }
+                    }
+                }
+
+                if (totalCalculated < calculatedAmountThreshold) {
+                    revert SlippageCheckFailed(calculatedAmountThreshold, totalCalculated);
+                }
+
+                if (totalSpecified < 0) {
+                    ACCOUNTANT.withdraw(specifiedToken, swapper, uint128(uint256(-totalSpecified)));
+                } else if (totalSpecified > 0) {
+                    if (specifiedToken == NATIVE_TOKEN_ADDRESS) {
+                        SafeTransferLib.safeTransferETH(address(ACCOUNTANT), uint128(uint256(totalSpecified)));
+                    } else {
+                        ACCOUNTANT.payFrom(swapper, specifiedToken, uint128(uint256(totalSpecified)));
+                    }
+                }
+
+                if (totalCalculated > 0) {
+                    ACCOUNTANT.withdraw(calculatedToken, swapper, uint128(uint256(totalCalculated)));
+                } else if (totalCalculated < 0) {
+                    if (calculatedToken == NATIVE_TOKEN_ADDRESS) {
+                        SafeTransferLib.safeTransferETH(address(ACCOUNTANT), uint128(uint256(-totalCalculated)));
+                    } else {
+                        ACCOUNTANT.payFrom(swapper, calculatedToken, uint128(uint256(-totalCalculated)));
+                    }
+                }
+            }
+
+            if (callType == CALL_TYPE_MULTIHOP_SWAP) {
+                result = abi.encode(results[0]);
+            } else {
+                result = abi.encode(results);
+            }
+        } else if (callType == CALL_TYPE_QUOTE) {
+            (, PoolKey memory poolKey, SwapParameters params) = abi.decode(data, (uint256, PoolKey, SwapParameters));
+
+            (PoolBalanceUpdate balanceUpdate, PoolState stateAfter) = _swap(0, poolKey, params);
+
+            revert QuoteReturnValue(balanceUpdate, stateAfter);
+        }
+    }
+
+    /// @notice Executes a single-hop swap with a specified recipient
+    /// @param poolKey Pool key identifying the pool to swap against
+    /// @param params The swap parameters to execute
+    /// @param calculatedAmountThreshold Minimum amount to receive (for slippage protection)
+    /// @return balanceUpdate Change in token0 and token1 balance of the pool
+    function swap(PoolKey memory poolKey, SwapParameters params, int256 calculatedAmountThreshold)
+        public
+        payable
+        returns (PoolBalanceUpdate balanceUpdate)
+    {
+        balanceUpdate = swap(poolKey, params, calculatedAmountThreshold, msg.sender);
+    }
+
+    /// @notice Executes a single-hop swap with a specified recipient
+    /// @param poolKey Pool key identifying the pool to swap against
+    /// @param params The swap parameters to execute
+    /// @param calculatedAmountThreshold Minimum amount to receive (for slippage protection)
+    /// @param recipient Address to receive the output tokens
+    /// @return balanceUpdate Change in token0 and token1 balance of the pool
+    function swap(PoolKey memory poolKey, SwapParameters params, int256 calculatedAmountThreshold, address recipient)
+        public
+        payable
+        returns (PoolBalanceUpdate balanceUpdate)
+    {
+        (balanceUpdate) = abi.decode(
+            lock(abi.encode(CALL_TYPE_SINGLE_SWAP, msg.sender, poolKey, params, calculatedAmountThreshold, recipient)),
+            (PoolBalanceUpdate)
+        );
+    }
+
+    /// @notice Executes a single-hop swap with a specified recipient
+    /// @param poolKey Pool key identifying the pool to swap against
+    /// @param isToken1 True if swapping token1, false if swapping token0
+    /// @param amount Amount to swap (positive for exact input, negative for exact output)
+    /// @param sqrtRatioLimit Price limit for the swap (0 for no limit)
+    /// @param skipAhead Number of ticks to skip ahead for gas optimization
+    /// @param calculatedAmountThreshold Minimum amount to receive (for slippage protection)
+    /// @param recipient Address to receive the output tokens
+    /// @return balanceUpdate Change in token0 and token1 balance of the pool
+    function swap(
+        PoolKey memory poolKey,
+        bool isToken1,
+        int128 amount,
+        SqrtRatio sqrtRatioLimit,
+        uint256 skipAhead,
+        int256 calculatedAmountThreshold,
+        address recipient
+    ) public payable returns (PoolBalanceUpdate balanceUpdate) {
+        balanceUpdate = swap(
+            poolKey,
+            createSwapParameters({
+                _isToken1: isToken1, _amount: amount, _sqrtRatioLimit: sqrtRatioLimit, _skipAhead: skipAhead
+            }),
+            calculatedAmountThreshold,
+            recipient
+        );
+    }
+
+    /// @notice Executes a single-hop swap with msg.sender as recipient
+    /// @param poolKey Pool key identifying the pool to swap against
+    /// @param isToken1 True if swapping token1, false if swapping token0
+    /// @param amount Amount to swap (positive for exact input, negative for exact output)
+    /// @param sqrtRatioLimit Price limit for the swap (0 for no limit)
+    /// @param skipAhead Number of ticks to skip ahead for gas optimization
+    /// @param calculatedAmountThreshold Minimum amount to receive (for slippage protection)
+    /// @return balanceUpdate Change in token0 and token1 balance of the pool
+    function swap(
+        PoolKey memory poolKey,
+        bool isToken1,
+        int128 amount,
+        SqrtRatio sqrtRatioLimit,
+        uint256 skipAhead,
+        int256 calculatedAmountThreshold
+    ) external payable returns (PoolBalanceUpdate balanceUpdate) {
+        balanceUpdate = swap(
+            poolKey, isToken1, amount, sqrtRatioLimit, skipAhead, calculatedAmountThreshold, msg.sender
+        );
+    }
+
+    /// @notice Executes a single-hop swap with no slippage protection
+    /// @param poolKey Pool key identifying the pool to swap against
+    /// @param isToken1 True if swapping token1, false if swapping token0
+    /// @param amount Amount to swap (positive for exact input, negative for exact output)
+    /// @param sqrtRatioLimit Price limit for the swap (0 for no limit)
+    /// @param skipAhead Number of ticks to skip ahead for gas optimization
+    /// @return balanceUpdate Change in token0 and token1 balance of the pool
+    function swap(PoolKey memory poolKey, bool isToken1, int128 amount, SqrtRatio sqrtRatioLimit, uint256 skipAhead)
+        external
+        payable
+        returns (PoolBalanceUpdate balanceUpdate)
+    {
+        balanceUpdate = swap(poolKey, isToken1, amount, sqrtRatioLimit, skipAhead, type(int256).min, msg.sender);
+    }
+
+    /// @notice Executes a single-hop swap using RouteNode and TokenAmount structs
+    /// @param node Route node containing pool and swap parameters
+    /// @param tokenAmount Token and amount to swap
+    /// @param calculatedAmountThreshold Minimum amount to receive (for slippage protection)
+    /// @return balanceUpdate Change in token0 and token1 balance of the pool
+    function swap(RouteNode memory node, TokenAmount memory tokenAmount, int256 calculatedAmountThreshold)
+        public
+        payable
+        returns (PoolBalanceUpdate balanceUpdate)
+    {
+        balanceUpdate = swap(
+            node.poolKey,
+            node.poolKey.token1 == tokenAmount.token,
+            tokenAmount.amount,
+            node.sqrtRatioLimit,
+            node.skipAhead,
+            calculatedAmountThreshold,
+            msg.sender
+        );
+    }
+
+    /// @notice Executes a multi-hop swap through multiple pools
+    /// @param s Swap struct containing the route and initial token amount
+    /// @param calculatedAmountThreshold Minimum final amount to receive (for slippage protection)
+    /// @return result Array of deltas for each hop in the swap
+    function multihopSwap(Swap memory s, int256 calculatedAmountThreshold)
+        external
+        payable
+        returns (PoolBalanceUpdate[] memory result)
+    {
+        result = abi.decode(
+            lock(abi.encode(CALL_TYPE_MULTIHOP_SWAP, msg.sender, s, calculatedAmountThreshold)), (PoolBalanceUpdate[])
+        );
+    }
+
+    /// @notice Executes multiple multi-hop swaps in a single transaction
+    /// @param swaps Array of swap structs, each containing a route and initial token amount
+    /// @param calculatedAmountThreshold Minimum total final amount to receive (for slippage protection)
+    /// @return results Array of delta arrays, one for each swap
+    function multiMultihopSwap(Swap[] memory swaps, int256 calculatedAmountThreshold)
+        external
+        payable
+        returns (PoolBalanceUpdate[][] memory results)
+    {
+        results = abi.decode(
+            lock(abi.encode(CALL_TYPE_MULTI_MULTIHOP_SWAP, msg.sender, swaps, calculatedAmountThreshold)),
+            (PoolBalanceUpdate[][])
+        );
+    }
+
+    /// @notice Error used to return quote values from the quote function
+    /// @param balanceUpdate Change in token0 and token1 balance of the pool
+    /// @param poolState The state after the swap
+    error QuoteReturnValue(PoolBalanceUpdate balanceUpdate, PoolState poolState);
+
+    /// @notice Quotes the result of a swap without executing it
+    /// @dev Uses a revert-based mechanism to return the quote without state changes
+    /// @param poolKey Pool key identifying the pool to quote against
+    /// @param isToken1 True if swapping token1, false if swapping token0
+    /// @param amount Amount to swap (positive for exact input, negative for exact output)
+    /// @param sqrtRatioLimit Price limit for the swap (0 for no limit)
+    /// @param skipAhead Number of ticks to skip ahead for gas optimization
+    /// @return balanceUpdate The change in pool balances resulting from the swap
+    /// @return stateAfter The state of the pool after the swap is complete
+    function quote(PoolKey memory poolKey, bool isToken1, int128 amount, SqrtRatio sqrtRatioLimit, uint256 skipAhead)
+        external
+        returns (PoolBalanceUpdate balanceUpdate, PoolState stateAfter)
+    {
+        bytes memory revertData = lockAndExpectRevert(
+            abi.encode(
+                CALL_TYPE_QUOTE,
+                poolKey,
+                createSwapParameters({
+                    _isToken1: isToken1, _amount: amount, _sqrtRatioLimit: sqrtRatioLimit, _skipAhead: skipAhead
+                })
+            )
+        );
+
+        // check that the sig matches the error data
+
+        bytes4 sig;
+        assembly ("memory-safe") {
+            sig := mload(add(revertData, 32))
+        }
+        if (sig == QuoteReturnValue.selector && revertData.length == 68) {
+            assembly ("memory-safe") {
+                balanceUpdate := mload(add(revertData, 36))
+                stateAfter := mload(add(revertData, 68))
+            }
+        } else {
+            assembly ("memory-safe") {
+                revert(add(revertData, 32), mload(revertData))
+            }
+        }
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {DropKey} from "../types/dropKey.sol";
+import {ClaimKey} from "../types/claimKey.sol";
+import {IExposedStorage} from "./IExposedStorage.sol";
+
+/// @title Incentives Interface
+/// @notice Interface for the Incentives contract that manages airdrops
+/// @dev Inherits from IExposedStorage to allow direct storage access
+interface IIncentives is IExposedStorage {
+    /// @notice Emitted when a drop is funded
+    /// @param key The drop key that was funded
+    /// @param amountNext The new total funded amount
+    event Funded(DropKey key, uint128 amountNext);
+
+    /// @notice Emitted when a drop is refunded
+    /// @param key The drop key that was refunded
+    /// @param refundAmount The amount that was refunded
+    event Refunded(DropKey key, uint128 refundAmount);
+
+    /// @notice Thrown if the claim has already happened for this drop
+    error AlreadyClaimed();
+
+    /// @notice Thrown if the merkle proof does not correspond to the root
+    error InvalidProof();
+
+    /// @notice Thrown if the drop is not sufficiently funded for the claim
+    error InsufficientFunds();
+
+    /// @notice Only the drop owner may call this function
+    error DropOwnerOnly();
+
+    /// @notice Funds a drop to a minimum amount
+    /// @param key The drop key to fund
+    /// @param minimum The minimum amount to fund to
+    /// @return fundedAmount The amount that was actually funded
+    function fund(DropKey memory key, uint128 minimum) external returns (uint128 fundedAmount);
+
+    /// @notice Refunds the remaining amount from a drop to the owner
+    /// @param key The drop key to refund
+    /// @return refundAmount The amount that was refunded
+    function refund(DropKey memory key) external returns (uint128 refundAmount);
+
+    /// @notice Claims tokens from a drop using a merkle proof
+    /// @param key The drop key to claim from
+    /// @param c The claim details
+    /// @param proof The merkle proof for the claim
+    function claim(DropKey memory key, ClaimKey memory c, bytes32[] calldata proof) external;
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+import {IERC20} from "forge-std/interfaces/IERC20.sol";
+import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
+
+import {BaseForwardee} from "./base/BaseForwardee.sol";
+import {UsesCore} from "./base/UsesCore.sol";
+import {ICore} from "./interfaces/ICore.sol";
+import {toDate, toQuarter} from "./libraries/TimeDescriptor.sol";
+import {CoreLib} from "./libraries/CoreLib.sol";
+import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
+import {Locker} from "./types/locker.sol";
+
+/// @title Time-locked Token Wrapper
+/// @author Ekubo Protocol
+/// @notice Wraps tokens that can only be unwrapped after a specific unlock time
+/// @dev Wrapping and unwrapping happens via Ekubo Core#forward. Implements full ERC20 functionality
+contract TokenWrapper is UsesCore, IERC20, BaseForwardee {
+    using CoreLib for *;
+    using FlashAccountantLib for *;
+
+    /// @notice Thrown when trying to unwrap the token before the token has unlocked
+    error TooEarly();
+
+    /// @notice Thrown when attempting to transfer an amount greater than the balance
+    error InsufficientBalance();
+
+    /// @notice Thrown when calling transferFrom with an insufficient allowance
+    error InsufficientAllowance();
+
+    /// @notice The underlying token that is wrapped by this contract
+    IERC20 public immutable UNDERLYING_TOKEN;
+
+    /// @notice The timestamp after which the token may be unwrapped
+    uint256 public immutable UNLOCK_TIME;
+
+    /// @notice Constructs a new TokenWrapper
+    /// @param core The Ekubo Core contract
+    /// @param _underlyingToken The token to be wrapped
+    /// @param _unlockTime The timestamp after which tokens can be unwrapped
+    constructor(ICore core, IERC20 _underlyingToken, uint256 _unlockTime) UsesCore(core) BaseForwardee(core) {
+        UNDERLYING_TOKEN = _underlyingToken;
+        UNLOCK_TIME = _unlockTime;
+    }
+
+    /// @inheritdoc IERC20
+    mapping(address owner => mapping(address spender => uint256)) public override allowance;
+
+    /// @notice Mapping of account balances (not public because we use coreBalance for Core)
+    /// @dev Private mapping to track individual account balances
+    mapping(address account => uint256) private _balanceOf;
+
+    /// @notice Transient balance for the Core contract
+    /// @dev Core never actually holds a real balance of this token, we just use this transient balance to enable low cost payments to core
+    uint256 private transient coreBalance;
+
+    /// @inheritdoc IERC20
+    /// @dev Returns the transient balance for Core contract, otherwise returns stored balance
+    function balanceOf(address account) external view returns (uint256) {
+        if (account == address(CORE)) return coreBalance;
+        return _balanceOf[account];
+    }
+
+    /// @inheritdoc IERC20
+    /// @dev Total supply is tracked in Core's saved balances
+    function totalSupply() external view override returns (uint256) {
+        (uint128 supply,) = CORE.savedBalances({
+            owner: address(this),
+            token0: address(UNDERLYING_TOKEN),
+            token1: address(type(uint160).max),
+            salt: bytes32(0)
+        });
+
+        return supply;
+    }
+
+    /// @inheritdoc IERC20
+    /// @dev Combines underlying token name with unlock date
+    function name() external view returns (string memory) {
+        return string.concat(UNDERLYING_TOKEN.name(), " ", toDate(UNLOCK_TIME));
+    }
+
+    /// @inheritdoc IERC20
+    /// @dev Combines "g" prefix with underlying token symbol and quarter
+    function symbol() external view returns (string memory) {
+        return string.concat("g", UNDERLYING_TOKEN.symbol(), "-", toQuarter(UNLOCK_TIME));
+    }
+
+    /// @inheritdoc IERC20
+    function decimals() external view returns (uint8) {
+        return UNDERLYING_TOKEN.decimals();
+    }
+
+    /// @inheritdoc IERC20
+    function transfer(address to, uint256 amount) external returns (bool) {
+        // note we do not need to check that core balance is sufficient as the sender
+        // even if the caller gets core to withdraw to itself, as part of a payment, it will net to 0 with the Core#withdraw call
+        if (msg.sender != address(CORE)) {
+            uint256 balance = _balanceOf[msg.sender];
+            if (balance < amount) {
+                revert InsufficientBalance();
+            }
+            // since we already checked balance >= amount
+            unchecked {
+                _balanceOf[msg.sender] = balance - amount;
+            }
+        }
+        if (to == address(CORE)) {
+            coreBalance += amount;
+        } else if (to != address(0)) {
+            // we save storage writes on burn by checking to != address(0)
+            _balanceOf[to] += amount;
+        }
+        emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+
+    /// @inheritdoc IERC20
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    /// @inheritdoc IERC20
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        uint256 allowanceCurrent = allowance[from][msg.sender];
+        if (allowanceCurrent != type(uint256).max) {
+            if (allowanceCurrent < amount) revert InsufficientAllowance();
+            // since we already checked allowanceCurrent >= amount
+            unchecked {
+                allowance[from][msg.sender] = allowanceCurrent - amount;
+            }
+        }
+
+        // we know `from` at this point will never be address(core) for amount > 0, since Core will never give an allowance to any address
+
+        uint256 balance = _balanceOf[from];
+        if (balance < amount) {
+            revert InsufficientBalance();
+        }
+        // since we already checked balance >= amount
+        unchecked {
+            _balanceOf[from] = balance - amount;
+        }
+
+        if (to == address(CORE)) {
+            coreBalance += amount;
+        } else {
+            _balanceOf[to] += amount;
+        }
+        emit Transfer(msg.sender, to, amount);
+        return true;
+    }
+
+    /// @notice Handles wrap/unwrap operations forwarded from Core
+    /// @dev Encode (int256 delta) in the forwarded data, where a positive amount means wrapping and a negative amount means unwrapping
+    /// For wrap: the specified amount of this wrapper token will be credited to the locker and the same amount of underlying will be debited
+    /// For unwrap: the specified amount of the underlying will be credited to the locker and the same amount of this wrapper token will be debited, iff block.timestamp > unlockTime and at least that much token has been wrapped
+    /// @param data Encoded int256 delta (positive for wrap, negative for unwrap)
+    /// @return Empty bytes (no return data needed)
+    function handleForwardData(Locker, bytes memory data) internal override returns (bytes memory) {
+        (int256 amount) = abi.decode(data, (int256));
+
+        // unwrap
+        if (amount < 0) {
+            if (block.timestamp < UNLOCK_TIME) revert TooEarly();
+        }
+
+        CORE.updateSavedBalances({
+            token0: address(UNDERLYING_TOKEN),
+            token1: address(type(uint160).max),
+            salt: bytes32(0),
+            delta0: amount,
+            delta1: 0
+        });
+
+        CORE.updateDebt(SafeCastLib.toInt128(-amount));
+
+        return bytes("");
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
 import {Bitmap} from "./types/bitmap.sol";
 import {DropKey} from "./types/dropKey.sol";
 import {ClaimKey} from "./types/claimKey.sol";
@@ -5257,1233 +5823,667 @@ contract Incentives is IIncentives, ExposedStorage, Multicallable {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-import {IForwardee, IFlashAccountant} from "../interfaces/IFlashAccountant.sol";
-import {Locker} from "../types/locker.sol";
-
-/// @title Base Forwardee
-/// @notice Abstract base contract for contracts that need to receive forwarded calls from the flash accountant
-/// @dev Provides the forwarding mechanism and delegates actual data handling to implementing contracts
-abstract contract BaseForwardee is IForwardee {
-    /// @notice Thrown when a function is called by an address other than the accountant
-    error BaseForwardeeAccountantOnly();
-
-    /// @notice The flash accountant contract that can forward calls to this contract
-    IFlashAccountant private immutable ACCOUNTANT;
-
-    /// @notice Constructs the BaseForwardee with a flash accountant
-    /// @param _accountant The flash accountant contract that will forward calls
-    constructor(IFlashAccountant _accountant) {
-        ACCOUNTANT = _accountant;
-    }
-
-    /// CALLBACK HANDLERS
-
-    /// @inheritdoc IForwardee
-    /// @dev Extracts the forwarded data from calldata and delegates to handleForwardData
-    /// The first 68 bytes of calldata contain the function selector (4 bytes), id (32 bytes), and originalLocker (32 bytes)
-    /// All remaining calldata is treated as the forwarded data
-    /// Return data from handleForwardData is returned exactly as is, with no additional encoding or decoding
-    /// Reverts are also bubbled up
-    function forwarded_2374103877(Locker original) external {
-        if (msg.sender != address(ACCOUNTANT)) revert BaseForwardeeAccountantOnly();
-
-        bytes memory data = msg.data[36:];
-
-        bytes memory result = handleForwardData(original, data);
-
-        assembly ("memory-safe") {
-            // raw return whatever the handler sent
-            return(add(result, 32), mload(result))
-        }
-    }
-
-    /// INTERNAL FUNCTIONS
-
-    /// @notice Handles the execution of forwarded data
-    /// @dev Must be implemented by derived contracts to define forwarding behavior
-    /// @param original The original locker that called forward
-    /// @param data The forwarded data to process
-    /// @return result The result of processing the forwarded data
-    function handleForwardData(Locker original, bytes memory data) internal virtual returns (bytes memory result);
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {Ownable} from "solady/auth/Ownable.sol";
-import {Multicallable} from "solady/utils/Multicallable.sol";
-import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-
-import {nextValidTime} from "./math/time.sol";
-import {IOrders} from "./interfaces/IOrders.sol";
-import {IRevenueBuybacks} from "./interfaces/IRevenueBuybacks.sol";
-import {BuybacksState, createBuybacksState} from "./types/buybacksState.sol";
-import {OrderKey} from "./types/orderKey.sol";
-import {createOrderConfig} from "./types/orderConfig.sol";
-import {ExposedStorage} from "./base/ExposedStorage.sol";
-import {NATIVE_TOKEN_ADDRESS} from "./math/constants.sol";
-
-/// @title Revenue Buybacks
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Creates automated revenue buyback orders using TWAMM (Time-Weighted Average Market Maker)
-/// @dev Final contract that manages the creation and execution of buyback orders for protocol revenue
-/// This contract automatically creates TWAMM orders to buy back a specified token using collected revenue
-contract RevenueBuybacks is IRevenueBuybacks, ExposedStorage, Ownable, Multicallable {
-    /// @notice The Orders contract used to create and manage TWAMM orders
-    /// @dev All buyback orders are created through this contract
-    IOrders public immutable ORDERS;
-
-    /// @notice The NFT token ID that represents all buyback orders created by this contract
-    /// @dev A single NFT is minted and reused for all buyback orders to simplify management
-    uint256 public immutable NFT_ID;
-
-    /// @notice The token that is purchased with collected revenue
-    /// @dev This is typically the protocol's governance or utility token
-    address public immutable BUY_TOKEN;
-
-    /// @notice Constructs the RevenueBuybacks contract
-    /// @param owner The address that will own this contract and have administrative privileges
-    /// @param _orders The Orders contract instance for creating TWAMM orders
-    /// @param _buyToken The token that will be purchased with collected revenue
-    constructor(address owner, IOrders _orders, address _buyToken) {
-        _initializeOwner(owner);
-        ORDERS = _orders;
-        BUY_TOKEN = _buyToken;
-        NFT_ID = ORDERS.mint();
-    }
-
-    /// @notice Approves the Orders contract to spend unlimited amounts of a token
-    /// @dev Must be called at least once for each revenue token before creating buyback orders
-    /// @param token The token to approve for spending by the Orders contract
-    function approveMax(address token) external {
-        SafeTransferLib.safeApproveWithRetry(token, address(ORDERS), type(uint256).max);
-    }
-
-    /// @notice Withdraws leftover tokens from the contract (only callable by owner)
-    /// @dev Used to recover tokens that may be stuck in the contract
-    /// @param token The address of the token to withdraw
-    /// @param amount The amount of tokens to withdraw
-    function take(address token, uint256 amount) external onlyOwner {
-        // Transfer to msg.sender since only the owner can call this function
-        SafeTransferLib.safeTransfer(token, msg.sender, amount);
-    }
-
-    /// @notice Withdraws native tokens held by this contract
-    /// @dev Used to recover native tokens that may be stuck in the contract
-    /// @param amount The amount of native tokens to withdraw
-    function takeNative(uint256 amount) external onlyOwner {
-        // Transfer to msg.sender since only the owner can call this function
-        SafeTransferLib.safeTransferETH(msg.sender, amount);
-    }
-
-    /// @notice Collects the proceeds from a completed buyback order
-    /// @dev Can be called by anyone at any time to collect proceeds from orders that have finished
-    /// @param token The revenue token that was sold in the order
-    /// @param fee The fee tier of the pool where the order was executed
-    /// @param endTime The end time of the order to collect proceeds from
-    /// @return proceeds The amount of buyToken received from the completed order
-    function collect(address token, uint64 fee, uint64 endTime) external returns (uint128 proceeds) {
-        proceeds = ORDERS.collectProceeds(NFT_ID, _createOrderKey(token, fee, 0, endTime), owner());
-    }
-
-    /// @notice Allows the contract to receive ETH revenue
-    /// @dev Required to accept ETH payments when ETH is used as a revenue token
-    receive() external payable {}
-
-    /// @notice Creates a new buyback order or extends an existing one with available revenue
-    /// @dev Can be called by anyone to trigger the creation of buyback orders using collected revenue
-    /// This function will either extend the current order (if conditions are met) or create a new order
-    /// @param token The revenue token to use for creating the buyback order, or NATIVE_TOKEN_ADDRESS
-    /// @return endTime The end time of the order that was created or extended
-    /// @return saleRate The sale rate of the order (amount of token sold per second)
-    function roll(address token) public returns (uint64 endTime, uint112 saleRate) {
-        unchecked {
-            BuybacksState state;
-            assembly ("memory-safe") {
-                state := sload(token)
-            }
-
-            if (!state.isConfigured()) {
-                revert TokenNotConfigured(token);
-            }
-
-            // minOrderDuration == 0 indicates the token is not configured
-            bool isEth = token == NATIVE_TOKEN_ADDRESS;
-            uint256 amountToSpend = isEth ? address(this).balance : SafeTransferLib.balanceOf(token, address(this));
-
-            uint32 timeRemaining = state.lastEndTime() - uint32(block.timestamp);
-            // if the fee changed, or the amount of time exceeds the min order duration
-            // note the time remaining can underflow if the last order has ended. in this case time remaining will be greater than min order duration,
-            // but also greater than last order duration, so it will not be re-used.
-            if (
-                state.fee() == state.lastFee() && timeRemaining >= state.minOrderDuration()
-                    && timeRemaining <= state.lastOrderDuration()
-            ) {
-                // handles overflow
-                endTime = uint64(block.timestamp + timeRemaining);
-            } else {
-                endTime =
-                    uint64(nextValidTime(block.timestamp, block.timestamp + uint256(state.targetOrderDuration()) - 1));
-
-                state = createBuybacksState({
-                    _targetOrderDuration: state.targetOrderDuration(),
-                    _minOrderDuration: state.minOrderDuration(),
-                    _fee: state.fee(),
-                    _lastEndTime: uint32(endTime),
-                    _lastOrderDuration: uint32(endTime - block.timestamp),
-                    _lastFee: state.fee()
-                });
-
-                assembly ("memory-safe") {
-                    sstore(token, state)
-                }
-            }
-
-            if (amountToSpend != 0) {
-                saleRate = ORDERS.increaseSellAmount{value: isEth ? amountToSpend : 0}(
-                    NFT_ID, _createOrderKey(token, state.fee(), 0, endTime), uint128(amountToSpend), type(uint112).max
-                );
-            }
-        }
-    }
-
-    /// @notice Configures buyback parameters for a revenue token (only callable by owner)
-    /// @dev Sets the timing and fee parameters for automated buyback order creation
-    /// @param token The revenue token to configure
-    /// @param targetOrderDuration The target duration for new orders (in seconds)
-    /// @param minOrderDuration The minimum duration threshold for creating new orders (in seconds)
-    /// @param fee The fee tier for the buyback pool
-    function configure(address token, uint32 targetOrderDuration, uint32 minOrderDuration, uint64 fee)
-        external
-        onlyOwner
-    {
-        if (minOrderDuration > targetOrderDuration) revert MinOrderDurationGreaterThanTargetOrderDuration();
-        if (minOrderDuration == 0 && targetOrderDuration != 0) {
-            revert MinOrderDurationMustBeGreaterThanZero();
-        }
-
-        BuybacksState state;
-        assembly ("memory-safe") {
-            state := sload(token)
-        }
-        state = createBuybacksState({
-            _targetOrderDuration: targetOrderDuration,
-            _minOrderDuration: minOrderDuration,
-            _fee: fee,
-            _lastEndTime: state.lastEndTime(),
-            _lastOrderDuration: state.lastOrderDuration(),
-            _lastFee: state.lastFee()
-        });
-        assembly ("memory-safe") {
-            sstore(token, state)
-        }
-
-        emit Configured(token, state);
-    }
-
-    function _createOrderKey(address token, uint64 fee, uint64 startTime, uint64 endTime)
-        internal
-        view
-        returns (OrderKey memory key)
-    {
-        bool isToken1 = token > BUY_TOKEN;
-        address buyToken = BUY_TOKEN;
-        assembly ("memory-safe") {
-            mstore(add(key, mul(isToken1, 32)), token)
-            mstore(add(key, mul(iszero(isToken1), 32)), buyToken)
-        }
-
-        key.config = createOrderConfig({_fee: fee, _isToken1: isToken1, _startTime: startTime, _endTime: endTime});
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {IOrders} from "./IOrders.sol";
-import {BuybacksState} from "../types/buybacksState.sol";
-import {IExposedStorage} from "./IExposedStorage.sol";
-
-/// @title Revenue Buybacks Interface
-/// @notice Interface for automated revenue buyback orders using TWAMM (Time-Weighted Average Market Maker)
-/// @dev Defines the interface for managing buyback orders for protocol revenue
-interface IRevenueBuybacks is IExposedStorage {
-    /// @notice Thrown when minimum order duration exceeds target order duration
-    /// @dev This would prevent order creation since the condition order duration >= min order duration would not always be met
-    error MinOrderDurationGreaterThanTargetOrderDuration();
-
-    /// @notice Thrown when minimum order duration is set to zero
-    /// @dev Orders cannot have zero duration, so this prevents invalid configurations
-    error MinOrderDurationMustBeGreaterThanZero();
-
-    /// @notice Thrown when roll is called and a token is not configured
-    error TokenNotConfigured(address token);
-
-    /// @notice Emitted when a token's buyback configuration is updated
-    /// @param token The token being configured for buybacks
-    /// @param state The state after configuring the token
-    event Configured(address token, BuybacksState state);
-
-    /// @notice The Orders contract used to create and manage TWAMM orders
-    /// @dev All buyback orders are created through this contract
-    function ORDERS() external view returns (IOrders);
-
-    /// @notice The NFT token ID that represents all buyback orders created by this contract
-    /// @dev A single NFT is minted and reused for all buyback orders to simplify management
-    function NFT_ID() external view returns (uint256);
-
-    /// @notice The token that is purchased with collected revenue
-    /// @dev This is typically the protocol's governance or utility token
-    function BUY_TOKEN() external view returns (address);
-
-    /// @notice Approves the Orders contract to spend unlimited amounts of a token
-    /// @dev Must be called at least once for each revenue token before creating buyback orders
-    /// @param token The token to approve for spending by the Orders contract
-    function approveMax(address token) external;
-
-    /// @notice Withdraws leftover tokens from the contract (only callable by owner)
-    /// @dev Used to recover tokens that may be stuck in the contract or to withdraw excess funds
-    /// @param token The address of the token to withdraw
-    /// @param amount The amount of tokens to withdraw
-    function take(address token, uint256 amount) external;
-
-    /// @notice Collects the proceeds from a completed buyback order
-    /// @dev Can be called by anyone at any time to collect proceeds from orders that have finished
-    /// @param token The revenue token that was sold in the order
-    /// @param fee The fee tier of the pool where the order was executed
-    /// @param endTime The end time of the order to collect proceeds from
-    /// @return proceeds The amount of buyToken received from the completed order
-    function collect(address token, uint64 fee, uint64 endTime) external returns (uint128 proceeds);
-
-    /// @notice Creates a new buyback order or extends an existing one with available revenue
-    /// @dev Can be called by anyone to trigger the creation of buyback orders using collected revenue
-    /// This function will either extend the current order (if conditions are met) or create a new order
-    /// @param token The revenue token to use for creating the buyback order
-    /// @return endTime The end time of the order that was created or extended
-    /// @return saleRate The sale rate of the order (amount of token sold per second)
-    function roll(address token) external returns (uint64 endTime, uint112 saleRate);
-
-    /// @notice Configures buyback parameters for a revenue token (only callable by owner)
-    /// @dev Sets the timing and fee parameters for automated buyback order creation
-    /// @param token The revenue token to configure
-    /// @param targetOrderDuration The target duration for new orders (in seconds)
-    /// @param minOrderDuration The minimum duration threshold for creating new orders (in seconds)
-    /// @param fee The fee tier for the buyback pool
-    function configure(address token, uint32 targetOrderDuration, uint32 minOrderDuration, uint64 fee) external;
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {BaseLocker} from "./BaseLocker.sol";
-import {UsesCore} from "./UsesCore.sol";
-import {ICore} from "../interfaces/ICore.sol";
-import {IPositions} from "../interfaces/IPositions.sol";
-import {CoreLib} from "../libraries/CoreLib.sol";
-import {FlashAccountantLib} from "../libraries/FlashAccountantLib.sol";
+import {CallPoints} from "../types/callPoints.sol";
 import {PoolKey} from "../types/poolKey.sol";
-import {PositionId, createPositionId} from "../types/positionId.sol";
+import {PositionId} from "../types/positionId.sol";
+import {SqrtRatio, MIN_SQRT_RATIO, MAX_SQRT_RATIO} from "../types/sqrtRatio.sol";
+import {ICore, IExtension} from "../interfaces/ICore.sol";
+import {ITWAMM} from "../interfaces/extensions/ITWAMM.sol";
+import {TimeInfo, createTimeInfo} from "../types/timeInfo.sol";
+import {CoreLib} from "../libraries/CoreLib.sol";
+import {ExposedStorage} from "../base/ExposedStorage.sol";
+import {TWAMMStorageLayout} from "../libraries/TWAMMStorageLayout.sol";
+import {StorageSlot} from "../types/storageSlot.sol";
+import {BaseExtension} from "../base/BaseExtension.sol";
+import {BaseForwardee} from "../base/BaseForwardee.sol";
+import {PoolState} from "../types/poolState.sol";
+import {PoolBalanceUpdate, createPoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
+import {TwammPoolState, createTwammPoolState} from "../types/twammPoolState.sol";
+import {OrderKey} from "../types/orderKey.sol";
+import {OrderConfig} from "../types/orderConfig.sol";
+import {OrderState, createOrderState} from "../types/orderState.sol";
+import {searchForNextInitializedTime, flipTime} from "../math/timeBitmap.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {FeesPerLiquidity} from "../types/feesPerLiquidity.sol";
-import {Position} from "../types/position.sol";
-import {tickToSqrtRatio} from "../math/ticks.sol";
-import {maxLiquidity, liquidityDeltaToAmountDelta} from "../math/liquidity.sol";
-import {PayableMulticallable} from "./PayableMulticallable.sol";
-import {SqrtRatio} from "../types/sqrtRatio.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
-import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {BaseNonfungibleToken} from "./BaseNonfungibleToken.sol";
-import {NATIVE_TOKEN_ADDRESS} from "../math/constants.sol";
+import {computeFee} from "../math/fee.sol";
+import {
+    computeNextSqrtRatio,
+    computeAmountFromSaleRate,
+    computeRewardAmount,
+    addSaleRateDelta
+} from "../math/twamm.sol";
+import {isTimeValid, MAX_ABS_VALUE_SALE_RATE_DELTA} from "../math/time.sol";
 import {PoolId} from "../types/poolId.sol";
-import {PoolBalanceUpdate} from "../types/poolBalanceUpdate.sol";
+import {OrderId} from "../types/orderId.sol";
+import {SwapParameters, createSwapParameters} from "../types/swapParameters.sol";
+import {Locker} from "../types/locker.sol";
+import {LibBit} from "solady/utils/LibBit.sol";
 
-/// @title Base Positions Contract
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Abstract base contract for tracking liquidity positions in Ekubo Protocol as NFTs
-/// @dev Provides core position management functionality with abstract protocol fee collection methods
-abstract contract BasePositions is IPositions, UsesCore, PayableMulticallable, BaseLocker, BaseNonfungibleToken {
-    using CoreLib for *;
-    using FlashAccountantLib for *;
-
-    /// @notice Constructs the BasePositions contract
-    /// @param core The core contract instance
-    /// @param owner The owner of the contract (for access control)
-    constructor(ICore core, address owner) BaseNonfungibleToken(owner) BaseLocker(core) UsesCore(core) {}
-
-    uint256 private constant CALL_TYPE_DEPOSIT = 0;
-    uint256 private constant CALL_TYPE_WITHDRAW = 1;
-    uint256 private constant CALL_TYPE_WITHDRAW_PROTOCOL_FEES = 2;
-
-    /// @inheritdoc IPositions
-    function getPositionFeesAndLiquidity(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
-        external
-        view
-        returns (uint128 liquidity, uint128 principal0, uint128 principal1, uint128 fees0, uint128 fees1)
-    {
-        PoolId poolId = poolKey.toPoolId();
-        SqrtRatio sqrtRatio = CORE.poolState(poolId).sqrtRatio();
-        PositionId positionId =
-            createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper});
-        Position memory position = CORE.poolPositions(poolId, address(this), positionId);
-
-        liquidity = position.liquidity;
-
-        // the sqrt ratio may be 0 (because the pool is uninitialized) but this is
-        // fine since amount0Delta isn't called with it in this case
-        (int128 delta0, int128 delta1) = liquidityDeltaToAmountDelta(
-            sqrtRatio, -SafeCastLib.toInt128(position.liquidity), tickToSqrtRatio(tickLower), tickToSqrtRatio(tickUpper)
-        );
-
-        (principal0, principal1) = (uint128(-delta0), uint128(-delta1));
-
-        FeesPerLiquidity memory feesPerLiquidityInside = poolKey.config.isFullRange()
-            ? CORE.getPoolFeesPerLiquidity(poolId)
-            : CORE.getPoolFeesPerLiquidityInside(poolId, tickLower, tickUpper);
-        (fees0, fees1) = position.fees(feesPerLiquidityInside);
-    }
-
-    /// @inheritdoc IPositions
-    function deposit(
-        uint256 id,
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 maxAmount0,
-        uint128 maxAmount1,
-        uint128 minLiquidity
-    ) public payable authorizedForNft(id) returns (uint128 liquidity, uint128 amount0, uint128 amount1) {
-        SqrtRatio sqrtRatio = CORE.poolState(poolKey.toPoolId()).sqrtRatio();
-
-        liquidity =
-            maxLiquidity(sqrtRatio, tickToSqrtRatio(tickLower), tickToSqrtRatio(tickUpper), maxAmount0, maxAmount1);
-
-        if (liquidity < minLiquidity) {
-            revert DepositFailedDueToSlippage(liquidity, minLiquidity);
-        }
-
-        if (liquidity > uint128(type(int128).max)) {
-            revert DepositOverflow();
-        }
-
-        (amount0, amount1) = abi.decode(
-            lock(abi.encode(CALL_TYPE_DEPOSIT, msg.sender, id, poolKey, tickLower, tickUpper, liquidity)),
-            (uint128, uint128)
-        );
-    }
-
-    /// @inheritdoc IPositions
-    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper)
-        public
-        payable
-        authorizedForNft(id)
-        returns (uint128 amount0, uint128 amount1)
-    {
-        (amount0, amount1) = collectFees(id, poolKey, tickLower, tickUpper, msg.sender);
-    }
-
-    /// @inheritdoc IPositions
-    function collectFees(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, address recipient)
-        public
-        payable
-        authorizedForNft(id)
-        returns (uint128 amount0, uint128 amount1)
-    {
-        (amount0, amount1) = withdraw(id, poolKey, tickLower, tickUpper, 0, recipient, true);
-    }
-
-    /// @inheritdoc IPositions
-    function withdraw(
-        uint256 id,
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 liquidity,
-        address recipient,
-        bool withFees
-    ) public payable authorizedForNft(id) returns (uint128 amount0, uint128 amount1) {
-        (amount0, amount1) = abi.decode(
-            lock(abi.encode(CALL_TYPE_WITHDRAW, id, poolKey, tickLower, tickUpper, liquidity, recipient, withFees)),
-            (uint128, uint128)
-        );
-    }
-
-    /// @inheritdoc IPositions
-    function withdraw(uint256 id, PoolKey memory poolKey, int32 tickLower, int32 tickUpper, uint128 liquidity)
-        public
-        payable
-        returns (uint128 amount0, uint128 amount1)
-    {
-        (amount0, amount1) = withdraw(id, poolKey, tickLower, tickUpper, liquidity, address(msg.sender), true);
-    }
-
-    /// @inheritdoc IPositions
-    function maybeInitializePool(PoolKey memory poolKey, int32 tick)
-        external
-        payable
-        returns (bool initialized, SqrtRatio sqrtRatio)
-    {
-        // the before update position hook shouldn't be taken into account here
-        sqrtRatio = CORE.poolState(poolKey.toPoolId()).sqrtRatio();
-        if (sqrtRatio.isZero()) {
-            initialized = true;
-            sqrtRatio = CORE.initializePool(poolKey, tick);
-        }
-    }
-
-    /// @inheritdoc IPositions
-    function mintAndDeposit(
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 maxAmount0,
-        uint128 maxAmount1,
-        uint128 minLiquidity
-    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1) {
-        id = mint();
-        (liquidity, amount0, amount1) = deposit(id, poolKey, tickLower, tickUpper, maxAmount0, maxAmount1, minLiquidity);
-    }
-
-    /// @inheritdoc IPositions
-    function mintAndDepositWithSalt(
-        bytes32 salt,
-        PoolKey memory poolKey,
-        int32 tickLower,
-        int32 tickUpper,
-        uint128 maxAmount0,
-        uint128 maxAmount1,
-        uint128 minLiquidity
-    ) external payable returns (uint256 id, uint128 liquidity, uint128 amount0, uint128 amount1) {
-        id = mint(salt);
-        (liquidity, amount0, amount1) = deposit(id, poolKey, tickLower, tickUpper, maxAmount0, maxAmount1, minLiquidity);
-    }
-
-    /// @inheritdoc IPositions
-    function withdrawProtocolFees(address token0, address token1, uint128 amount0, uint128 amount1, address recipient)
-        external
-        payable
-        onlyOwner
-    {
-        lock(abi.encode(CALL_TYPE_WITHDRAW_PROTOCOL_FEES, token0, token1, amount0, amount1, recipient));
-    }
-
-    /// @inheritdoc IPositions
-    function getProtocolFees(address token0, address token1) external view returns (uint128 amount0, uint128 amount1) {
-        (amount0, amount1) = CORE.savedBalances(address(this), token0, token1, bytes32(0));
-    }
-
-    /// @notice Handles protocol fee collection during fee collection
-    /// @dev Abstract method that must be implemented by concrete contracts
-    /// @param poolKey The pool key for the position
-    /// @param amount0 The amount of token0 fees collected before protocol fee deduction
-    /// @param amount1 The amount of token1 fees collected before protocol fee deduction
-    /// @return protocolFee0 The amount of token0 protocol fees to collect
-    /// @return protocolFee1 The amount of token1 protocol fees to collect
-    function _computeSwapProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
-        internal
-        view
-        virtual
-        returns (uint128 protocolFee0, uint128 protocolFee1);
-
-    /// @notice Handles protocol fee collection during liquidity withdrawal
-    /// @dev Abstract method that must be implemented by concrete contracts
-    /// @param poolKey The pool key for the position
-    /// @param amount0 The amount of token0 being withdrawn before protocol fee deduction
-    /// @param amount1 The amount of token1 being withdrawn before protocol fee deduction
-    /// @return protocolFee0 The amount of token0 protocol fees to collect
-    /// @return protocolFee1 The amount of token1 protocol fees to collect
-    function _computeWithdrawalProtocolFees(PoolKey memory poolKey, uint128 amount0, uint128 amount1)
-        internal
-        view
-        virtual
-        returns (uint128 protocolFee0, uint128 protocolFee1);
-
-    /// @notice Handles lock callback data for position operations
-    /// @dev Internal function that processes different types of position operations
-    /// @param data Encoded operation data
-    /// @return result Encoded result data
-    function handleLockData(uint256, bytes memory data) internal override returns (bytes memory result) {
-        uint256 callType = abi.decode(data, (uint256));
-
-        if (callType == CALL_TYPE_DEPOSIT) {
-            (
-                ,
-                address caller,
-                uint256 id,
-                PoolKey memory poolKey,
-                int32 tickLower,
-                int32 tickUpper,
-                uint128 liquidity
-            ) = abi.decode(data, (uint256, address, uint256, PoolKey, int32, int32, uint128));
-
-            PoolBalanceUpdate balanceUpdate = CORE.updatePosition(
-                poolKey,
-                createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper}),
-                int128(liquidity)
-            );
-
-            uint128 amount0 = uint128(balanceUpdate.delta0());
-            uint128 amount1 = uint128(balanceUpdate.delta1());
-
-            // Use multi-token payment for ERC20-only pools, fall back to individual payments for native token pools
-            if (poolKey.token0 != NATIVE_TOKEN_ADDRESS) {
-                ACCOUNTANT.payTwoFrom(caller, poolKey.token0, poolKey.token1, amount0, amount1);
-            } else {
-                if (amount0 != 0) {
-                    SafeTransferLib.safeTransferETH(address(ACCOUNTANT), amount0);
-                }
-                if (amount1 != 0) {
-                    ACCOUNTANT.payFrom(caller, poolKey.token1, amount1);
-                }
-            }
-
-            result = abi.encode(amount0, amount1);
-        } else if (callType == CALL_TYPE_WITHDRAW) {
-            (
-                ,
-                uint256 id,
-                PoolKey memory poolKey,
-                int32 tickLower,
-                int32 tickUpper,
-                uint128 liquidity,
-                address recipient,
-                bool withFees
-            ) = abi.decode(data, (uint256, uint256, PoolKey, int32, int32, uint128, address, bool));
-
-            if (liquidity > uint128(type(int128).max)) revert WithdrawOverflow();
-
-            uint128 amount0;
-            uint128 amount1;
-
-            // collect first in case we are withdrawing the entire amount
-            if (withFees) {
-                (amount0, amount1) = CORE.collectFees(
-                    poolKey,
-                    createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper})
-                );
-
-                // Collect swap protocol fees
-                (uint128 swapProtocolFee0, uint128 swapProtocolFee1) =
-                    _computeSwapProtocolFees(poolKey, amount0, amount1);
-
-                if (swapProtocolFee0 != 0 || swapProtocolFee1 != 0) {
-                    CORE.updateSavedBalances(
-                        poolKey.token0, poolKey.token1, bytes32(0), int128(swapProtocolFee0), int128(swapProtocolFee1)
-                    );
-
-                    amount0 -= swapProtocolFee0;
-                    amount1 -= swapProtocolFee1;
-                }
-            }
-
-            if (liquidity != 0) {
-                PoolBalanceUpdate balanceUpdate = CORE.updatePosition(
-                    poolKey,
-                    createPositionId({_salt: bytes24(uint192(id)), _tickLower: tickLower, _tickUpper: tickUpper}),
-                    -int128(liquidity)
-                );
-
-                uint128 withdrawnAmount0 = uint128(-balanceUpdate.delta0());
-                uint128 withdrawnAmount1 = uint128(-balanceUpdate.delta1());
-
-                // Collect withdrawal protocol fees
-                (uint128 withdrawalFee0, uint128 withdrawalFee1) =
-                    _computeWithdrawalProtocolFees(poolKey, withdrawnAmount0, withdrawnAmount1);
-
-                if (withdrawalFee0 != 0 || withdrawalFee1 != 0) {
-                    // we know cast won't overflow because delta0 and delta1 were originally int128
-                    CORE.updateSavedBalances(
-                        poolKey.token0, poolKey.token1, bytes32(0), int128(withdrawalFee0), int128(withdrawalFee1)
-                    );
-                }
-
-                amount0 += withdrawnAmount0 - withdrawalFee0;
-                amount1 += withdrawnAmount1 - withdrawalFee1;
-            }
-
-            ACCOUNTANT.withdrawTwo(poolKey.token0, poolKey.token1, recipient, amount0, amount1);
-
-            result = abi.encode(amount0, amount1);
-        } else if (callType == CALL_TYPE_WITHDRAW_PROTOCOL_FEES) {
-            (, address token0, address token1, uint128 amount0, uint128 amount1, address recipient) =
-                abi.decode(data, (uint256, address, address, uint128, uint128, address));
-
-            CORE.updateSavedBalances(token0, token1, bytes32(0), -int256(uint256(amount0)), -int256(uint256(amount1)));
-            ACCOUNTANT.withdrawTwo(token0, token1, recipient, amount0, amount1);
-        } else {
-            // Will never actually happen
-            revert();
-        }
-    }
+/// @notice Returns the call points configuration for the TWAMM extension
+/// @dev Specifies which hooks TWAMM needs to execute virtual orders and manage DCA functionality
+/// @return The call points configuration for TWAMM functionality
+function twammCallPoints() pure returns (CallPoints memory) {
+    return CallPoints({
+        beforeInitializePool: false,
+        afterInitializePool: true,
+        beforeUpdatePosition: true,
+        afterUpdatePosition: false,
+        beforeSwap: true,
+        afterSwap: false,
+        beforeCollectFees: true,
+        afterCollectFees: false
+    });
 }
 
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
+/// @title Ekubo TWAMM (Time-Weighted Average Market Maker)
+/// @author Moody Salem <moody@ekubo.org>
+/// @notice Extension for Ekubo Protocol that enables creation of DCA (Dollar Cost Averaging) orders that are executed over time
+/// @dev Implements virtual order execution that spreads trades over time periods to reduce price impact and provide better execution
+contract TWAMM is ITWAMM, ExposedStorage, BaseExtension, BaseForwardee {
+    using CoreLib for *;
 
-import {NATIVE_TOKEN_ADDRESS} from "../math/constants.sol";
-import {IFlashAccountant} from "../interfaces/IFlashAccountant.sol";
-import {Locker} from "../types/locker.sol";
+    constructor(ICore core) BaseExtension(core) BaseForwardee(core) {}
 
-/// @title FlashAccountant
-/// @notice Abstract contract that provides flash loan accounting functionality using transient storage
-/// @dev This contract manages debt tracking for flash loans, allowing users to borrow tokens temporarily
-///      and ensuring all debts are settled before the transaction completes. Uses transient storage
-///      for gas-efficient temporary state management within a single transaction.
-abstract contract FlashAccountant is IFlashAccountant {
-    // These offsets are selected so that they do not accidentally overlap with any other base contract's use of transient storage
-
-    /// @dev Transient storage slot for tracking the current locker ID and address
-    /// @dev The stored ID is kept as id + 1 to facilitate the NotLocked check (zero means unlocked)
-    /// @dev Generated using: cast keccak "FlashAccountant#CURRENT_LOCKER_SLOT"
-    uint256 private constant _CURRENT_LOCKER_SLOT = 0x07cc7f5195d862f505d6b095c82f92e00cfc1766f5bca4383c28dc5fca1555fd;
-
-    /// @dev Transient storage offset for tracking token debts for each locker
-    /// @dev Generated using: cast keccak "FlashAccountant#_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET"
-    uint256 private constant _DEBT_LOCKER_TOKEN_ADDRESS_OFFSET =
-        0x753dfe4b4dfb3ff6c11bbf6a97f3c094e91c003ce904a55cc5662fbad220f599;
-
-    /// @dev Transient storage offset for tracking the count of tokens with non-zero debt for each locker
-    /// @dev Generated using: cast keccak "FlashAccountant#NONZERO_DEBT_COUNT_OFFSET"
-    uint256 private constant _NONZERO_DEBT_COUNT_OFFSET =
-        0x7772acfd7e0f66ebb20a058830296c3dc1301b111d23348e1c961d324223190d;
-
-    /// @dev Transient storage offset for tracking token balances during payment operations
-    /// @dev Generated using: cast keccak "FlashAccountant#_PAYMENT_TOKEN_ADDRESS_OFFSET"
-    uint256 private constant _PAYMENT_TOKEN_ADDRESS_OFFSET =
-        0x6747da56dbd05b26a7ecd2a0106781585141cf07098ad54c0e049e4e86dccb8c;
-
-    /// @notice Gets the current locker information from transient storage
-    /// @dev Reverts with NotLocked() if no lock is currently active
-    /// @return locker The current locker containing both id and address
-    function _getLocker() internal view returns (Locker locker) {
+    /// @notice Emits an event for virtual order execution
+    /// @dev Emits an event for the virtual order execution. Assumes that saleRateToken0 and saleRateToken1 are <= type(uint112).max
+    /// @param poolId The unique identifier for the pool
+    /// @param saleRateToken0 The sale rate for token0 orders
+    /// @param saleRateToken1 The sale rate for token1 orders
+    function _emitVirtualOrdersExecuted(PoolId poolId, uint256 saleRateToken0, uint256 saleRateToken1) internal {
         assembly ("memory-safe") {
-            locker := tload(_CURRENT_LOCKER_SLOT)
+            // by writing it backwards, we overwrite only the empty bits with each subsequent write
+            // 28-60, only 46-60 can be non-zero
+            mstore(28, saleRateToken1)
+            // 14-46, only 32-46 can be non-zero
+            mstore(14, saleRateToken0)
+            mstore(0, poolId)
 
-            if iszero(locker) {
-                // cast sig "NotLocked()"
-                mstore(0, shl(224, 0x1834e265))
+            log0(0, 60)
+        }
+    }
+
+    /// @inheritdoc ITWAMM
+    function getRewardRateInside(PoolId poolId, OrderConfig config) public view returns (uint256 result) {
+        if (block.timestamp >= config.endTime()) {
+            uint256 offset = LibBit.rawToUint(!config.isToken1());
+            uint256 rewardRateStart =
+                uint256(TWAMMStorageLayout.poolRewardRatesBeforeSlot(poolId, config.startTime()).add(offset).load());
+
+            uint256 rewardRateEnd =
+                uint256(TWAMMStorageLayout.poolRewardRatesBeforeSlot(poolId, config.endTime()).add(offset).load());
+
+            unchecked {
+                result = rewardRateEnd - rewardRateStart;
+            }
+        } else if (block.timestamp > config.startTime()) {
+            uint256 offset = LibBit.rawToUint(!config.isToken1());
+
+            //  note that we check gt because if it's equal to start time, then the reward rate inside is necessarily 0
+            uint256 rewardRateStart =
+                uint256(TWAMMStorageLayout.poolRewardRatesBeforeSlot(poolId, config.startTime()).add(offset).load());
+            uint256 rewardRateCurrent = uint256(TWAMMStorageLayout.poolRewardRatesSlot(poolId).add(offset).load());
+
+            unchecked {
+                result = rewardRateCurrent - rewardRateStart;
+            }
+        } else {
+            // less than or equal to start time
+            // returns 0
+        }
+    }
+
+    /// @notice Safely adds a change to a sale rate delta with overflow protection
+    /// @dev Ensures the resulting sale rate delta doesn't exceed the maximum allowed value
+    /// @param saleRateDelta The current sale rate delta
+    /// @param saleRateDeltaChange The change to apply to the sale rate delta
+    /// @return saleRateDeltaNext The new sale rate delta after applying the change
+    function _addConstrainSaleRateDelta(int112 saleRateDelta, int256 saleRateDeltaChange)
+        internal
+        pure
+        returns (int112 saleRateDeltaNext)
+    {
+        int256 result = int256(saleRateDelta) + saleRateDeltaChange;
+
+        // checked addition, no overflow of int112 type
+        if (FixedPointMathLib.abs(result) > MAX_ABS_VALUE_SALE_RATE_DELTA) {
+            revert MaxSaleRateDeltaPerTime();
+        }
+
+        // we know cast is safe because abs(result) is less than MAX_ABS_VALUE_SALE_RATE_DELTA which fits in a int112
+        saleRateDeltaNext = int112(result);
+    }
+
+    /// @notice Updates time-specific information for TWAMM orders
+    /// @dev Manages the sale rate deltas and order counts for a specific time point
+    /// @param poolId The unique identifier for the pool
+    /// @param time The timestamp to update
+    /// @param saleRateDelta The change in sale rate for this time
+    /// @param isToken1 True if updating token1 sale rate, false for token0
+    /// @param numOrdersChange The change in number of orders referencing this time
+    function _updateTime(PoolId poolId, uint256 time, int256 saleRateDelta, bool isToken1, int256 numOrdersChange)
+        internal
+    {
+        TimeInfo timeInfo = TimeInfo.wrap(TWAMMStorageLayout.poolTimeInfosSlot(poolId, time).load());
+        (uint32 numOrders, int112 saleRateDeltaToken0, int112 saleRateDeltaToken1) = timeInfo.parse();
+
+        // note we assume this will never overflow, since it would require 2**32 separate orders to be placed
+        uint32 numOrdersNext;
+        assembly ("memory-safe") {
+            numOrdersNext := add(numOrders, numOrdersChange)
+            if gt(numOrdersNext, 0xffffffff) {
+                // cast sig "TimeNumOrdersOverflow()"
+                mstore(0, shl(224, 0x6916a952))
                 revert(0, 4)
             }
         }
-    }
 
-    /// @notice Gets the current locker information and ensures the caller is the locker
-    /// @dev Reverts with LockerOnly() if the caller is not the current locker
-    /// @return locker The current locker containing both id and address (address must be msg.sender)
-    function _requireLocker() internal view returns (Locker locker) {
-        locker = _getLocker();
-        if (locker.addr() != msg.sender) revert LockerOnly();
-    }
+        bool flip = (numOrders == 0) != (numOrdersNext == 0);
 
-    /// @notice Updates the debt tracking for a specific locker and token
-    /// @dev We assume debtChange cannot exceed a 128 bits value, even though it uses a int256 container.
-    ///      This must be enforced at the places it is called for this contract's safety.
-    ///      Negative values erase debt, positive values add debt.
-    ///      Updates the non-zero debt count when debt transitions between zero and non-zero states.
-    /// @param id The locker ID to update debt for
-    /// @param token The token address to update debt for
-    /// @param debtChange The change in debt (negative to reduce, positive to increase)
-    function _accountDebt(uint256 id, address token, int256 debtChange) internal {
-        assembly ("memory-safe") {
-            let deltaSlot := add(_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET, add(shl(160, id), token))
-            let current := tload(deltaSlot)
+        // write the poolRewardRatesBefore[poolId][time] = (1,1) if any orders still reference the time, or write (0,0) otherwise
+        // we assume `_updateTime` is being called only for times that are greater than block.timestamp, i.e. have not been crossed yet
+        // this reduces the cost of crossing that timestamp to a warm write instead of a cold write
+        if (flip) {
+            bytes32 zeroNumOrders = bytes32(LibBit.rawToUint(numOrders == 0));
 
-            // we know this never overflows because debtChange is only ever derived from 128 bit values in inheriting contracts
-            let next := add(current, debtChange)
+            TWAMMStorageLayout.poolRewardRatesBeforeSlot(poolId, time).storeTwo(zeroNumOrders, zeroNumOrders);
 
-            let countChange := sub(iszero(current), iszero(next))
-
-            if countChange {
-                let nzdCountSlot := add(id, _NONZERO_DEBT_COUNT_OFFSET)
-                tstore(nzdCountSlot, add(tload(nzdCountSlot), countChange))
-            }
-
-            tstore(deltaSlot, next)
-        }
-    }
-
-    /// @notice Updates the debt tracking for a specific locker and pair of tokens in a single operation
-    /// @dev Optimized version that updates both tokens' debts and performs a single tload/tstore on the non-zero debt count.
-    ///      Individual token debt slots are still updated separately, but the non-zero debt count is only loaded/stored once.
-    ///      We assume debtChange values cannot exceed 128 bits. This must be enforced at the places it is called for this contract's safety.
-    ///      Negative values erase debt, positive values add debt.
-    /// @param id The locker ID to update debt for
-    /// @param tokenA The first token address
-    /// @param tokenB The second token address
-    /// @param debtChangeA The change in debt for tokenA (negative to reduce, positive to increase)
-    /// @param debtChangeB The change in debt for tokenB (negative to reduce, positive to increase)
-    function _updatePairDebt(uint256 id, address tokenA, address tokenB, int256 debtChangeA, int256 debtChangeB)
-        internal
-    {
-        assembly ("memory-safe") {
-            let nzdCountChange := 0
-
-            // Update token0 debt if there's a change
-            if debtChangeA {
-                let deltaSlotA := add(_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET, add(shl(160, id), tokenA))
-                let currentA := tload(deltaSlotA)
-                let nextA := add(currentA, debtChangeA)
-
-                nzdCountChange := sub(iszero(currentA), iszero(nextA))
-
-                tstore(deltaSlotA, nextA)
-            }
-
-            if debtChangeB {
-                let deltaSlotB := add(_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET, add(shl(160, id), tokenB))
-                let currentB := tload(deltaSlotB)
-                let nextB := add(currentB, debtChangeB)
-
-                nzdCountChange := add(nzdCountChange, sub(iszero(currentB), iszero(nextB)))
-
-                tstore(deltaSlotB, nextB)
-            }
-
-            // Update non-zero debt count only if it changed
-            if nzdCountChange {
-                let nzdCountSlot := add(id, _NONZERO_DEBT_COUNT_OFFSET)
-                tstore(nzdCountSlot, add(tload(nzdCountSlot), nzdCountChange))
-            }
-        }
-    }
-
-    /// @inheritdoc IFlashAccountant
-    function updateDebt() external {
-        if (msg.data.length != 20) {
-            revert UpdateDebtMessageLength();
+            flipTime(TWAMMStorageLayout.poolInitializedTimesBitmapSlot(poolId), time);
         }
 
-        uint256 id = _getLocker().id();
-        int256 delta;
-        assembly ("memory-safe") {
-            delta := signextend(15, shr(128, calldataload(4)))
-        }
-        _accountDebt(id, msg.sender, delta);
-    }
-
-    /// @inheritdoc IFlashAccountant
-    function lock() external {
-        assembly ("memory-safe") {
-            let current := tload(_CURRENT_LOCKER_SLOT)
-
-            let id := shr(160, current)
-
-            // store the count
-            tstore(_CURRENT_LOCKER_SLOT, or(shl(160, add(id, 1)), caller()))
-
-            let free := mload(0x40)
-            // Prepare call to locked_(uint256) -> selector 0
-            mstore(free, 0)
-            mstore(add(free, 4), id) // ID argument
-
-            calldatacopy(add(free, 36), 4, sub(calldatasize(), 4))
-
-            // Call the original caller with the packed data
-            let success := call(gas(), caller(), 0, free, add(calldatasize(), 32), 0, 0)
-
-            // Pass through the error on failure
-            if iszero(success) {
-                returndatacopy(free, 0, returndatasize())
-                revert(free, returndatasize())
-            }
-
-            // Undo the "locker" state changes
-            tstore(_CURRENT_LOCKER_SLOT, current)
-
-            // Check if something is nonzero
-            let nonzeroDebtCount := tload(add(_NONZERO_DEBT_COUNT_OFFSET, id))
-            if nonzeroDebtCount {
-                // cast sig "DebtsNotZeroed(uint256)"
-                mstore(0x00, 0x9731ba37)
-                mstore(0x20, id)
-                revert(0x1c, 0x24)
-            }
-
-            // Directly return whatever the subcall returned
-            returndatacopy(free, 0, returndatasize())
-            return(free, returndatasize())
-        }
-    }
-
-    /// @inheritdoc IFlashAccountant
-    function forward(address to) external {
-        Locker locker = _requireLocker();
-
-        // update this lock's locker to the forwarded address for the duration of the forwarded
-        // call, meaning only the forwarded address can update state
-        assembly ("memory-safe") {
-            tstore(_CURRENT_LOCKER_SLOT, or(shl(160, shr(160, locker)), to))
-
-            let free := mload(0x40)
-
-            // Prepare call to forwarded_2374103877(bytes32) -> selector 0x01
-            mstore(free, shl(224, 1))
-            mstore(add(free, 4), locker)
-
-            calldatacopy(add(free, 36), 36, sub(calldatasize(), 36))
-
-            // Call the forwardee with the packed data
-            let success := call(gas(), to, 0, free, calldatasize(), 0, 0)
-
-            // Pass through the error on failure
-            if iszero(success) {
-                returndatacopy(free, 0, returndatasize())
-                revert(free, returndatasize())
-            }
-
-            tstore(_CURRENT_LOCKER_SLOT, locker)
-
-            // Directly return whatever the subcall returned
-            returndatacopy(free, 0, returndatasize())
-            return(free, returndatasize())
-        }
-    }
-
-    /// @inheritdoc IFlashAccountant
-    function startPayments() external {
-        assembly ("memory-safe") {
-            // 0-52 are used for the balanceOf calldata
-            mstore(20, address()) // Store the `account` argument.
-            mstore(0, 0x70a08231000000000000000000000000) // `balanceOf(address)`.
-
-            let free := mload(0x40)
-
-            for { let i := 4 } lt(i, calldatasize()) { i := add(i, 32) } {
-                // clean upper 96 bits of the token argument at i
-                let token := shr(96, shl(96, calldataload(i)))
-
-                let returnLocation := add(free, sub(i, 4))
-
-                let success := staticcall(gas(), token, 0x10, 0x24, returnLocation, 0x20)
-
-                let tokenBalance :=
-                    mul(
-                        mload(returnLocation),
-                        and(
-                            gt(returndatasize(), 0x1f), // At least 32 bytes returned.
-                            success
-                        )
-                    )
-
-                tstore(add(_PAYMENT_TOKEN_ADDRESS_OFFSET, token), add(tokenBalance, success))
-            }
-
-            return(free, sub(calldatasize(), 4))
-        }
-    }
-
-    /// @inheritdoc IFlashAccountant
-    function completePayments() external {
-        uint256 id = _getLocker().id();
-
-        assembly ("memory-safe") {
-            let paymentAmounts := mload(0x40)
-            let nzdCountChange := 0
-
-            for { let i := 4 } lt(i, calldatasize()) { i := add(i, 32) } {
-                let token := shr(96, shl(96, calldataload(i)))
-
-                let offset := add(_PAYMENT_TOKEN_ADDRESS_OFFSET, token)
-                let lastBalance := tload(offset)
-                tstore(offset, 0)
-
-                mstore(20, address()) // Store the `account` argument.
-                mstore(0, 0x70a08231000000000000000000000000) // `balanceOf(address)`.
-
-                let currentBalance :=
-                    mul( // The arguments of `mul` are evaluated from right to left.
-                        mload(0),
-                        and( // The arguments of `and` are evaluated from right to left.
-                            gt(returndatasize(), 0x1f), // At least 32 bytes returned.
-                            staticcall(gas(), token, 0x10, 0x24, 0, 0x20)
-                        )
-                    )
-
-                let payment :=
-                    mul(
-                        and(gt(lastBalance, 0), not(lt(currentBalance, lastBalance))),
-                        sub(currentBalance, sub(lastBalance, 1))
-                    )
-
-                // We never expect tokens to have this much total supply
-                if shr(128, payment) {
-                    // cast sig "PaymentOverflow()"
-                    mstore(0x00, 0x9cac58ca)
-                    revert(0x1c, 4)
-                }
-
-                mstore(add(paymentAmounts, mul(16, div(i, 32))), shl(128, payment))
-
-                if payment {
-                    let deltaSlot := add(_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET, add(shl(160, id), token))
-                    let current := tload(deltaSlot)
-
-                    // never overflows because of the payment overflow check that bounds payment to 128 bits
-                    let next := sub(current, payment)
-
-                    nzdCountChange := add(nzdCountChange, sub(iszero(current), iszero(next)))
-
-                    tstore(deltaSlot, next)
-                }
-            }
-
-            // Update nzdCountSlot only once if there were any changes
-            if nzdCountChange {
-                let nzdCountSlot := add(id, _NONZERO_DEBT_COUNT_OFFSET)
-                tstore(nzdCountSlot, add(tload(nzdCountSlot), nzdCountChange))
-            }
-
-            return(paymentAmounts, mul(16, div(calldatasize(), 32)))
-        }
-    }
-
-    /// @inheritdoc IFlashAccountant
-    function withdraw() external {
-        uint256 id = _requireLocker().id();
-
-        assembly ("memory-safe") {
-            let nzdCountChange := 0
-
-            // Process each withdrawal entry
-            for { let i := 4 } lt(i, calldatasize()) { i := add(i, 56) } {
-                let token := shr(96, calldataload(i))
-                let recipient := shr(96, calldataload(add(i, 20)))
-                let amount := shr(128, calldataload(add(i, 40)))
-
-                if amount {
-                    // Update debt tracking without updating nzdCountSlot yet
-                    let deltaSlot := add(_DEBT_LOCKER_TOKEN_ADDRESS_OFFSET, add(shl(160, id), token))
-                    let current := tload(deltaSlot)
-                    let next := add(current, amount)
-
-                    nzdCountChange := add(nzdCountChange, sub(iszero(current), iszero(next)))
-
-                    tstore(deltaSlot, next)
-
-                    // Perform the transfer of the withdrawn asset
-                    // Note that these calls can re-enter and even relock with the same ID
-                    // However the nzdCountChange is always applied as a delta at the end, meaning we load the latest value before updating it,
-                    // so it's safe from re-entry
-                    switch token
-                    case 0 {
-                        let success := call(gas(), recipient, amount, 0, 0, 0, 0)
-                        if iszero(success) {
-                            // cast sig "ETHTransferFailed()"
-                            mstore(0x00, 0xb12d13eb)
-                            revert(0x1c, 4)
-                        }
-                    }
-                    default {
-                        mstore(0x14, recipient)
-                        mstore(0x34, amount)
-                        mstore(0x00, 0xa9059cbb000000000000000000000000)
-                        let success := call(gas(), token, 0, 0x10, 0x44, 0x00, 0x20)
-                        if iszero(and(eq(mload(0x00), 1), success)) {
-                            if iszero(lt(or(iszero(extcodesize(token)), returndatasize()), success)) {
-                                mstore(0x00, 0x90b8ec18) // `TransferFailed()`.
-                                revert(0x1c, 0x04)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Update nzdCountSlot only once if there were any changes
-            if nzdCountChange {
-                let nzdCountSlot := add(id, _NONZERO_DEBT_COUNT_OFFSET)
-                tstore(nzdCountSlot, add(tload(nzdCountSlot), nzdCountChange))
-            }
-
-            // we return from assembly so as to prevent solidity from accessing the free memory pointer after we have written into it
-            return(0, 0)
-        }
-    }
-
-    /// @inheritdoc IFlashAccountant
-    receive() external payable {
-        uint256 id = _getLocker().id();
-
-        // Note because we use msg.value here, this contract can never be multicallable, i.e. it should never expose the ability
-        //      to delegatecall itself more than once in a single call
-        unchecked {
-            // We assume msg.value will never exceed type(uint128).max, so this should never cause an overflow/underflow of debt
-            _accountDebt(id, NATIVE_TOKEN_ADDRESS, -int256(msg.value));
-        }
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-import {BaseLocker} from "./base/BaseLocker.sol";
-import {UsesCore} from "./base/UsesCore.sol";
-import {ICore} from "./interfaces/ICore.sol";
-import {IOrders} from "./interfaces/IOrders.sol";
-import {PayableMulticallable} from "./base/PayableMulticallable.sol";
-import {TWAMMLib} from "./libraries/TWAMMLib.sol";
-import {ITWAMM} from "./interfaces/extensions/ITWAMM.sol";
-import {OrderKey} from "./types/orderKey.sol";
-import {computeSaleRate} from "./math/twamm.sol";
-import {BaseNonfungibleToken} from "./base/BaseNonfungibleToken.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
-import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
-import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {NATIVE_TOKEN_ADDRESS} from "./math/constants.sol";
-import {FlashAccountantLib} from "./libraries/FlashAccountantLib.sol";
-
-/// @title Ekubo Protocol Orders
-/// @author Moody Salem <moody@ekubo.org>
-/// @notice Tracks TWAMM (Time-Weighted Average Market Maker) orders in Ekubo Protocol as NFTs
-/// @dev Manages long-term orders that execute over time through the TWAMM extension
-contract Orders is IOrders, UsesCore, PayableMulticallable, BaseLocker, BaseNonfungibleToken {
-    using TWAMMLib for *;
-    using FlashAccountantLib for *;
-
-    uint256 private constant CALL_TYPE_CHANGE_SALE_RATE = 0;
-    uint256 private constant CALL_TYPE_COLLECT_PROCEEDS = 1;
-
-    /// @notice The TWAMM extension contract that handles order execution
-    ITWAMM public immutable TWAMM_EXTENSION;
-
-    /// @notice Constructs the Orders contract
-    /// @param core The core contract instance
-    /// @param _twamm The TWAMM extension contract
-    /// @param owner The owner of the contract (for access control)
-    constructor(ICore core, ITWAMM _twamm, address owner) BaseNonfungibleToken(owner) BaseLocker(core) UsesCore(core) {
-        TWAMM_EXTENSION = _twamm;
-    }
-
-    /// @inheritdoc IOrders
-    function mintAndIncreaseSellAmount(OrderKey memory orderKey, uint112 amount, uint112 maxSaleRate)
-        public
-        payable
-        returns (uint256 id, uint112 saleRate)
-    {
-        id = mint();
-        saleRate = increaseSellAmount(id, orderKey, amount, maxSaleRate);
-    }
-
-    /// @inheritdoc IOrders
-    function increaseSellAmount(uint256 id, OrderKey memory orderKey, uint128 amount, uint112 maxSaleRate)
-        public
-        payable
-        authorizedForNft(id)
-        returns (uint112 saleRate)
-    {
-        uint256 realStart = FixedPointMathLib.max(block.timestamp, orderKey.config.startTime());
-
-        unchecked {
-            if (orderKey.config.endTime() <= realStart) {
-                revert OrderAlreadyEnded();
-            }
-
-            saleRate = uint112(computeSaleRate(amount, uint32(orderKey.config.endTime() - realStart)));
-
-            if (saleRate > maxSaleRate) {
-                revert MaxSaleRateExceeded();
-            }
-        }
-
-        lock(abi.encode(CALL_TYPE_CHANGE_SALE_RATE, msg.sender, id, orderKey, saleRate));
-    }
-
-    /// @inheritdoc IOrders
-    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease, address recipient)
-        public
-        payable
-        authorizedForNft(id)
-        returns (uint112 refund)
-    {
-        refund = uint112(
-            uint256(
-                -abi.decode(
-                    lock(
-                        abi.encode(
-                            CALL_TYPE_CHANGE_SALE_RATE, recipient, id, orderKey, -int256(uint256(saleRateDecrease))
-                        )
-                    ),
-                    (int256)
-                )
-            )
-        );
-    }
-
-    /// @inheritdoc IOrders
-    function decreaseSaleRate(uint256 id, OrderKey memory orderKey, uint112 saleRateDecrease)
-        external
-        payable
-        returns (uint112 refund)
-    {
-        refund = decreaseSaleRate(id, orderKey, saleRateDecrease, msg.sender);
-    }
-
-    /// @inheritdoc IOrders
-    function collectProceeds(uint256 id, OrderKey memory orderKey, address recipient)
-        public
-        payable
-        authorizedForNft(id)
-        returns (uint128 proceeds)
-    {
-        proceeds = abi.decode(lock(abi.encode(CALL_TYPE_COLLECT_PROCEEDS, id, orderKey, recipient)), (uint128));
-    }
-
-    /// @inheritdoc IOrders
-    function collectProceeds(uint256 id, OrderKey memory orderKey) external payable returns (uint128 proceeds) {
-        proceeds = collectProceeds(id, orderKey, msg.sender);
-    }
-
-    /// @inheritdoc IOrders
-    function executeVirtualOrdersAndGetCurrentOrderInfo(uint256 id, OrderKey memory orderKey)
-        external
-        returns (uint112 saleRate, uint256 amountSold, uint256 remainingSellAmount, uint128 purchasedAmount)
-    {
-        (saleRate, amountSold, remainingSellAmount, purchasedAmount) =
-            TWAMM_EXTENSION.executeVirtualOrdersAndGetCurrentOrderInfo(address(this), bytes32(id), orderKey);
-    }
-
-    /// @notice Handles lock callback data for order operations
-    /// @dev Internal function that processes different types of order operations
-    /// @param data Encoded operation data
-    /// @return result Encoded result data
-    function handleLockData(uint256, bytes memory data) internal override returns (bytes memory result) {
-        uint256 callType = abi.decode(data, (uint256));
-
-        if (callType == CALL_TYPE_CHANGE_SALE_RATE) {
-            (, address recipientOrPayer, uint256 id, OrderKey memory orderKey, int256 saleRateDelta) =
-                abi.decode(data, (uint256, address, uint256, OrderKey, int256));
-
-            int256 amount =
-                CORE.updateSaleRate(TWAMM_EXTENSION, bytes32(id), orderKey, SafeCastLib.toInt112(saleRateDelta));
-
-            if (amount != 0) {
-                address sellToken = orderKey.sellToken();
-                if (saleRateDelta > 0) {
-                    if (sellToken == NATIVE_TOKEN_ADDRESS) {
-                        SafeTransferLib.safeTransferETH(address(ACCOUNTANT), uint256(amount));
-                    } else {
-                        ACCOUNTANT.payFrom(recipientOrPayer, sellToken, uint256(amount));
-                    }
-                } else {
-                    unchecked {
-                        // we know amount will never exceed the uint128 type because of limitations on sale rate (fixed point 80.32) and duration (uint32)
-                        ACCOUNTANT.withdraw(sellToken, recipientOrPayer, uint128(uint256(-amount)));
-                    }
-                }
-            }
-
-            result = abi.encode(amount);
-        } else if (callType == CALL_TYPE_COLLECT_PROCEEDS) {
-            (, uint256 id, OrderKey memory orderKey, address recipient) =
-                abi.decode(data, (uint256, uint256, OrderKey, address));
-
-            uint128 proceeds = CORE.collectProceeds(TWAMM_EXTENSION, bytes32(id), orderKey);
-
-            if (proceeds != 0) {
-                ACCOUNTANT.withdraw(orderKey.buyToken(), recipient, proceeds);
-            }
-
-            result = abi.encode(proceeds);
+        if (isToken1) {
+            saleRateDeltaToken1 = _addConstrainSaleRateDelta(saleRateDeltaToken1, saleRateDelta);
         } else {
-            revert();
+            saleRateDeltaToken0 = _addConstrainSaleRateDelta(saleRateDeltaToken0, saleRateDelta);
         }
+
+        TWAMMStorageLayout.poolTimeInfosSlot(poolId, time)
+            .store(TimeInfo.unwrap(createTimeInfo(numOrdersNext, saleRateDeltaToken0, saleRateDeltaToken1)));
+    }
+
+    /// @notice Returns the call points configuration for this extension
+    /// @dev Overrides the base implementation to return TWAMM-specific call points
+    /// @return The call points configuration
+    function getCallPoints() internal pure override returns (CallPoints memory) {
+        return twammCallPoints();
+    }
+
+    ///////////////////////// Callbacks /////////////////////////
+
+    function handleForwardData(Locker original, bytes memory data) internal override returns (bytes memory result) {
+        unchecked {
+            uint256 callType = abi.decode(data, (uint256));
+            address owner = original.addr();
+
+            if (callType == 0) {
+                (, bytes32 salt, OrderKey memory orderKey, int112 saleRateDelta) =
+                    abi.decode(data, (uint256, bytes32, OrderKey, int112));
+
+                (uint64 startTime, uint64 endTime) = (orderKey.config.startTime(), orderKey.config.endTime());
+
+                if (endTime <= block.timestamp) revert OrderAlreadyEnded();
+
+                if (
+                    !isTimeValid(block.timestamp, startTime) || !isTimeValid(block.timestamp, endTime)
+                        || startTime >= endTime
+                ) {
+                    revert InvalidTimestamps();
+                }
+
+                PoolKey memory poolKey = orderKey.toPoolKey(address(this));
+                PoolId poolId = poolKey.toPoolId();
+                _executeVirtualOrdersFromWithinLock(poolKey, poolId);
+
+                OrderId orderId = orderKey.toOrderId();
+
+                StorageSlot orderStateSlot =
+                    TWAMMStorageLayout.orderStateSlotFollowedByOrderRewardRateSnapshotSlot(owner, salt, orderId);
+
+                StorageSlot orderRewardRateSnapshotSlot = orderStateSlot.next();
+
+                OrderState order = OrderState.wrap(orderStateSlot.load());
+                uint256 rewardRateSnapshot = uint256(orderRewardRateSnapshotSlot.load());
+
+                uint256 rewardRateInside = getRewardRateInside(poolId, orderKey.config);
+
+                (uint32 lastUpdateTime, uint112 saleRate, uint112 amountSold) = order.parse();
+
+                uint256 purchasedAmount = computeRewardAmount(rewardRateInside - rewardRateSnapshot, saleRate);
+
+                uint256 saleRateNext = addSaleRateDelta(saleRate, saleRateDelta);
+
+                uint256 rewardRateSnapshotAdjusted;
+                int256 numOrdersChange;
+                assembly ("memory-safe") {
+                    rewardRateSnapshotAdjusted := mul(
+                        sub(rewardRateInside, div(shl(128, purchasedAmount), saleRateNext)),
+                        // if saleRateNext is zero, write 0 for the reward rate snapshot adjusted
+                        iszero(iszero(saleRateNext))
+                    )
+
+                    // if current is zero, and next is zero, then 1-1 = 0
+                    // if current is nonzero, and next is nonzero, then 0-0 = 0
+                    // if current is zero, and next is nonzero, then we get 1-0 = 1
+                    // if current is nonzero, and next is zero, then we get 0-1 = -1 = (type(uint256).max)
+                    numOrdersChange := sub(iszero(saleRate), iszero(saleRateNext))
+                }
+
+                orderStateSlot.store(
+                    OrderState.unwrap(
+                        createOrderState({
+                            _lastUpdateTime: uint32(block.timestamp),
+                            _saleRate: uint112(saleRateNext),
+                            _amountSold: uint112(
+                                amountSold
+                                    + computeAmountFromSaleRate({
+                                        saleRate: saleRate,
+                                        duration: FixedPointMathLib.min(
+                                            uint32(block.timestamp) - lastUpdateTime,
+                                            uint32(uint64(block.timestamp) - startTime)
+                                        ),
+                                        roundUp: false
+                                    })
+                            )
+                        })
+                    )
+                );
+                orderRewardRateSnapshotSlot.store(bytes32(rewardRateSnapshotAdjusted));
+
+                bool isToken1 = orderKey.config.isToken1();
+
+                if (block.timestamp < startTime) {
+                    _updateTime(poolId, startTime, saleRateDelta, isToken1, numOrdersChange);
+                    _updateTime(poolId, endTime, -int256(saleRateDelta), isToken1, numOrdersChange);
+                } else {
+                    // we know block.timestamp < orderKey.endTime because we validate that first
+                    // and we know the order is active, so we have to apply its delta to the current pool state
+                    StorageSlot currentStateSlot = TWAMMStorageLayout.twammPoolStateSlot(poolId);
+                    TwammPoolState currentState = TwammPoolState.wrap(currentStateSlot.load());
+                    (uint32 lastTime, uint112 rate0, uint112 rate1) = currentState.parse();
+
+                    if (isToken1) {
+                        currentState = createTwammPoolState({
+                            _lastVirtualOrderExecutionTime: lastTime,
+                            _saleRateToken0: rate0,
+                            _saleRateToken1: uint112(addSaleRateDelta(rate1, saleRateDelta))
+                        });
+                    } else {
+                        currentState = createTwammPoolState({
+                            _lastVirtualOrderExecutionTime: lastTime,
+                            _saleRateToken0: uint112(addSaleRateDelta(rate0, saleRateDelta)),
+                            _saleRateToken1: rate1
+                        });
+                    }
+
+                    currentStateSlot.store(TwammPoolState.unwrap(currentState));
+
+                    // only update the end time
+                    _updateTime(poolId, endTime, -int256(saleRateDelta), isToken1, numOrdersChange);
+                }
+
+                // we know this will fit in a uint32 because otherwise isValidTime would fail for the end time
+                uint256 durationRemaining = endTime - FixedPointMathLib.max(block.timestamp, startTime);
+
+                // the amount required for executing at the next sale rate for the remaining duration of the order
+                uint256 amountRequired =
+                    computeAmountFromSaleRate({saleRate: saleRateNext, duration: durationRemaining, roundUp: true});
+
+                // subtract the remaining sell amount to get the delta
+                int256 amountDelta;
+
+                uint256 remainingSellAmount =
+                    computeAmountFromSaleRate({saleRate: saleRate, duration: durationRemaining, roundUp: true});
+
+                assembly ("memory-safe") {
+                    amountDelta := sub(amountRequired, remainingSellAmount)
+                }
+
+                // user is withdrawing tokens, so they need to pay a fee to the liquidity providers
+                if (amountDelta < 0) {
+                    // negation and downcast will never overflow, since max sale rate times max duration is at most type(uint112).max
+                    uint128 fee = computeFee(uint128(uint256(-amountDelta)), poolKey.config.fee());
+                    if (isToken1) {
+                        CORE.accumulateAsFees(poolKey, 0, fee);
+                        CORE.updateSavedBalances(poolKey.token0, poolKey.token1, bytes32(0), 0, amountDelta);
+                    } else {
+                        CORE.accumulateAsFees(poolKey, fee, 0);
+                        CORE.updateSavedBalances(poolKey.token0, poolKey.token1, bytes32(0), amountDelta, 0);
+                    }
+
+                    amountDelta += int128(fee);
+                } else {
+                    if (isToken1) {
+                        CORE.updateSavedBalances(poolKey.token0, poolKey.token1, bytes32(0), 0, amountDelta);
+                    } else {
+                        CORE.updateSavedBalances(poolKey.token0, poolKey.token1, bytes32(0), amountDelta, 0);
+                    }
+                }
+
+                emit OrderUpdated(owner, salt, orderKey, saleRateDelta);
+
+                result = abi.encode(amountDelta);
+            } else if (callType == 1) {
+                (, bytes32 salt, OrderKey memory orderKey) = abi.decode(data, (uint256, bytes32, OrderKey));
+
+                PoolKey memory poolKey = orderKey.toPoolKey(address(this));
+                PoolId poolId = poolKey.toPoolId();
+                _executeVirtualOrdersFromWithinLock(poolKey, poolId);
+
+                OrderId orderId = orderKey.toOrderId();
+
+                StorageSlot orderStateSlot =
+                    TWAMMStorageLayout.orderStateSlotFollowedByOrderRewardRateSnapshotSlot(owner, salt, orderId);
+
+                StorageSlot orderRewardRateSnapshotSlot = orderStateSlot.next();
+
+                OrderState order = OrderState.wrap(orderStateSlot.load());
+                uint256 rewardRateSnapshot = uint256(orderRewardRateSnapshotSlot.load());
+
+                uint256 rewardRateInside = getRewardRateInside(poolId, orderKey.config);
+
+                uint256 purchasedAmount = computeRewardAmount(rewardRateInside - rewardRateSnapshot, order.saleRate());
+
+                orderRewardRateSnapshotSlot.store(bytes32(rewardRateInside));
+
+                if (purchasedAmount != 0) {
+                    if (orderKey.config.isToken1()) {
+                        CORE.updateSavedBalances(
+                            poolKey.token0, poolKey.token1, bytes32(0), -int256(purchasedAmount), 0
+                        );
+                    } else {
+                        CORE.updateSavedBalances(
+                            poolKey.token0, poolKey.token1, bytes32(0), 0, -int256(purchasedAmount)
+                        );
+                    }
+                }
+
+                emit OrderProceedsWithdrawn(original.addr(), salt, orderKey, uint128(purchasedAmount));
+
+                result = abi.encode(purchasedAmount);
+            } else {
+                revert();
+            }
+        }
+    }
+
+    function _executeVirtualOrdersFromWithinLock(PoolKey memory poolKey, PoolId poolId) internal {
+        unchecked {
+            StorageSlot stateSlot = TWAMMStorageLayout.twammPoolStateSlot(poolId);
+            TwammPoolState state = TwammPoolState.wrap(stateSlot.load());
+
+            // we only conditionally load this if the state is coincidentally zero,
+            // in order to not lock the pool if state is 0 but the pool _is_ initialized
+            // this can only happen iff a pool has zero sale rates **and** an execution of virtual orders
+            // happens on the uint32 boundary
+            if (TwammPoolState.unwrap(state) == bytes32(0)) {
+                if (poolKey.config.extension() != address(this) || !CORE.poolState(poolId).isInitialized()) {
+                    revert PoolNotInitialized();
+                }
+            }
+
+            uint256 realLastVirtualOrderExecutionTime = state.realLastVirtualOrderExecutionTime();
+
+            // no-op if already executed in this block
+            if (realLastVirtualOrderExecutionTime != block.timestamp) {
+                // initialize the values that are handled once per execution
+                FeesPerLiquidity memory rewardRates;
+
+                // 0 = not loaded & not updated, 1 = loaded & not updated, 2 = loaded & updated
+                uint256 rewardRate0Access;
+                uint256 rewardRate1Access;
+
+                int256 saveDelta0;
+                int256 saveDelta1;
+                PoolState corePoolState;
+                uint256 time = realLastVirtualOrderExecutionTime;
+
+                while (time != block.timestamp) {
+                    StorageSlot initializedTimesBitmapSlot = TWAMMStorageLayout.poolInitializedTimesBitmapSlot(poolId);
+
+                    (uint256 nextTime, bool initialized) = searchForNextInitializedTime({
+                        slot: initializedTimesBitmapSlot,
+                        lastVirtualOrderExecutionTime: realLastVirtualOrderExecutionTime,
+                        fromTime: time,
+                        untilTime: block.timestamp
+                    });
+
+                    // it is assumed that this will never return a value greater than type(uint32).max
+                    uint256 timeElapsed = nextTime - time;
+
+                    uint256 amount0 = computeAmountFromSaleRate({
+                        saleRate: state.saleRateToken0(), duration: timeElapsed, roundUp: false
+                    });
+
+                    uint256 amount1 = computeAmountFromSaleRate({
+                        saleRate: state.saleRateToken1(), duration: timeElapsed, roundUp: false
+                    });
+
+                    int256 rewardDelta0;
+                    int256 rewardDelta1;
+                    // if both sale rates are non-zero but amounts are zero, we will end up doing the math for no reason since we swap 0
+                    if (amount0 != 0 && amount1 != 0) {
+                        if (!corePoolState.isInitialized()) {
+                            corePoolState = CORE.poolState(poolId);
+                        }
+                        SqrtRatio sqrtRatioNext = computeNextSqrtRatio({
+                            sqrtRatio: corePoolState.sqrtRatio(),
+                            liquidity: corePoolState.liquidity(),
+                            saleRateToken0: state.saleRateToken0(),
+                            saleRateToken1: state.saleRateToken1(),
+                            timeElapsed: timeElapsed,
+                            fee: poolKey.config.fee()
+                        });
+
+                        PoolBalanceUpdate swapBalanceUpdate;
+                        if (sqrtRatioNext > corePoolState.sqrtRatio()) {
+                            (swapBalanceUpdate, corePoolState) = CORE.swap(
+                                0,
+                                poolKey,
+                                createSwapParameters({
+                                    _sqrtRatioLimit: sqrtRatioNext,
+                                    _amount: int128(uint128(amount1)),
+                                    _isToken1: true,
+                                    _skipAhead: 0
+                                })
+                            );
+                        } else if (sqrtRatioNext < corePoolState.sqrtRatio()) {
+                            (swapBalanceUpdate, corePoolState) = CORE.swap(
+                                0,
+                                poolKey,
+                                createSwapParameters({
+                                    _sqrtRatioLimit: sqrtRatioNext,
+                                    _amount: int128(uint128(amount0)),
+                                    _isToken1: false,
+                                    _skipAhead: 0
+                                })
+                            );
+                        }
+
+                        saveDelta0 -= swapBalanceUpdate.delta0();
+                        saveDelta1 -= swapBalanceUpdate.delta1();
+
+                        // this cannot overflow or underflow because swapDelta0 is constrained to int128,
+                        // and amounts computed from uint112 sale rates cannot exceed uint112.max
+                        rewardDelta0 = swapBalanceUpdate.delta0() - int256(uint256(amount0));
+                        rewardDelta1 = swapBalanceUpdate.delta1() - int256(uint256(amount1));
+                    } else if (amount0 != 0 || amount1 != 0) {
+                        PoolBalanceUpdate swapBalanceUpdate;
+                        if (amount0 != 0) {
+                            (swapBalanceUpdate, corePoolState) = CORE.swap(
+                                0,
+                                poolKey,
+                                createSwapParameters({
+                                    _sqrtRatioLimit: MIN_SQRT_RATIO,
+                                    _amount: int128(uint128(amount0)),
+                                    _isToken1: false,
+                                    _skipAhead: 0
+                                })
+                            );
+                        } else {
+                            (swapBalanceUpdate, corePoolState) = CORE.swap(
+                                0,
+                                poolKey,
+                                createSwapParameters({
+                                    _sqrtRatioLimit: MAX_SQRT_RATIO,
+                                    _amount: int128(uint128(amount1)),
+                                    _isToken1: true,
+                                    _skipAhead: 0
+                                })
+                            );
+                        }
+
+                        (rewardDelta0, rewardDelta1) = (swapBalanceUpdate.delta0(), swapBalanceUpdate.delta1());
+                        saveDelta0 -= rewardDelta0;
+                        saveDelta1 -= rewardDelta1;
+                    }
+
+                    if (rewardDelta0 < 0) {
+                        if (rewardRate0Access == 0) {
+                            rewardRates.value0 = uint256(TWAMMStorageLayout.poolRewardRatesSlot(poolId).load());
+                        }
+                        rewardRate0Access = 2;
+                        rewardRates.value0 += FixedPointMathLib.rawDiv(
+                            uint256(-rewardDelta0) << 128, state.saleRateToken1()
+                        );
+                    }
+
+                    if (rewardDelta1 < 0) {
+                        if (rewardRate1Access == 0) {
+                            rewardRates.value1 = uint256(TWAMMStorageLayout.poolRewardRatesSlot(poolId).next().load());
+                        }
+                        rewardRate1Access = 2;
+                        rewardRates.value1 += FixedPointMathLib.rawDiv(
+                            uint256(-rewardDelta1) << 128, state.saleRateToken0()
+                        );
+                    }
+
+                    if (initialized) {
+                        if (rewardRate0Access == 0) {
+                            rewardRates.value0 = uint256(TWAMMStorageLayout.poolRewardRatesSlot(poolId).load());
+                            rewardRate0Access = 1;
+                        }
+                        if (rewardRate1Access == 0) {
+                            rewardRates.value1 = uint256(TWAMMStorageLayout.poolRewardRatesSlot(poolId).next().load());
+                            rewardRate1Access = 1;
+                        }
+
+                        TWAMMStorageLayout.poolRewardRatesBeforeSlot(poolId, nextTime)
+                            .storeTwo(bytes32(rewardRates.value0), bytes32(rewardRates.value1));
+
+                        StorageSlot timeInfoSlot = TWAMMStorageLayout.poolTimeInfosSlot(poolId, nextTime);
+                        (, int112 saleRateDeltaToken0, int112 saleRateDeltaToken1) =
+                            TimeInfo.wrap(timeInfoSlot.load()).parse();
+
+                        state = createTwammPoolState({
+                            _lastVirtualOrderExecutionTime: uint32(nextTime),
+                            _saleRateToken0: uint112(addSaleRateDelta(state.saleRateToken0(), saleRateDeltaToken0)),
+                            _saleRateToken1: uint112(addSaleRateDelta(state.saleRateToken1(), saleRateDeltaToken1))
+                        });
+
+                        // this time is _consumed_, will never be crossed again, so we delete the info we no longer need.
+                        // this helps reduce the cost of executing virtual orders.
+                        timeInfoSlot.store(0);
+
+                        flipTime(initializedTimesBitmapSlot, nextTime);
+                    } else {
+                        state = createTwammPoolState({
+                            _lastVirtualOrderExecutionTime: uint32(nextTime),
+                            _saleRateToken0: state.saleRateToken0(),
+                            _saleRateToken1: state.saleRateToken1()
+                        });
+                    }
+
+                    time = nextTime;
+                }
+
+                if (saveDelta0 != 0 || saveDelta1 != 0) {
+                    CORE.updateSavedBalances(poolKey.token0, poolKey.token1, bytes32(0), saveDelta0, saveDelta1);
+                }
+
+                if (rewardRate0Access == 2) {
+                    TWAMMStorageLayout.poolRewardRatesSlot(poolId).store(bytes32(rewardRates.value0));
+                }
+                if (rewardRate1Access == 2) {
+                    TWAMMStorageLayout.poolRewardRatesSlot(poolId).next().store(bytes32(rewardRates.value1));
+                }
+
+                stateSlot.store(TwammPoolState.unwrap(state));
+
+                _emitVirtualOrdersExecuted(poolId, state.saleRateToken0(), state.saleRateToken1());
+            }
+        }
+    }
+
+    // Executes virtual orders for the specified initialized pool key. Protected because it is only called by core.
+    function locked_6416899205(uint256) external override onlyCore {
+        PoolKey memory poolKey;
+        assembly ("memory-safe") {
+            // copy the poolkey out of calldata at the solidity-allocated address
+            calldatacopy(poolKey, 36, 96)
+        }
+        _executeVirtualOrdersFromWithinLock(poolKey, poolKey.toPoolId());
+    }
+
+    /// @inheritdoc ITWAMM
+    function lockAndExecuteVirtualOrders(PoolKey memory poolKey) public {
+        // the only thing we lock for is executing virtual orders, so all we need to encode is the pool key
+        // so we call lock on the core contract with the pool key after it
+        address target = address(CORE);
+        assembly ("memory-safe") {
+            let o := mload(0x40)
+            mstore(o, shl(224, 0xf83d08ba))
+            mcopy(add(o, 4), poolKey, 96)
+
+            // If the call failed, pass through the revert
+            if iszero(call(gas(), target, 0, o, 100, 0, 0)) {
+                returndatacopy(o, 0, returndatasize())
+                revert(o, returndatasize())
+            }
+        }
+    }
+
+    ///////////////////////// Extension call points /////////////////////////
+
+    // This method must be protected because it sets state directly
+    function afterInitializePool(address, PoolKey memory key, int32, SqrtRatio)
+        external
+        override(BaseExtension, IExtension)
+        onlyCore
+    {
+        if (!key.config.isFullRange()) revert FullRangePoolOnly();
+
+        PoolId poolId = key.toPoolId();
+
+        TWAMMStorageLayout.twammPoolStateSlot(poolId)
+            .store(
+                TwammPoolState.unwrap(
+                    createTwammPoolState({
+                        _lastVirtualOrderExecutionTime: uint32(block.timestamp), _saleRateToken0: 0, _saleRateToken1: 0
+                    })
+                )
+            );
+
+        _emitVirtualOrdersExecuted({poolId: poolId, saleRateToken0: 0, saleRateToken1: 0});
+    }
+
+    // Since anyone can call the method `#lockAndExecuteVirtualOrders`, the method is not protected
+    function beforeSwap(Locker, PoolKey memory poolKey, SwapParameters) external override(BaseExtension, IExtension) {
+        lockAndExecuteVirtualOrders(poolKey);
+    }
+
+    // Since anyone can call the method `#lockAndExecuteVirtualOrders`, the method is not protected
+    function beforeUpdatePosition(Locker, PoolKey memory poolKey, PositionId, int128)
+        external
+        override(BaseExtension, IExtension)
+    {
+        lockAndExecuteVirtualOrders(poolKey);
+    }
+
+    // Since anyone can call the method `#lockAndExecuteVirtualOrders`, the method is not protected
+    function beforeCollectFees(Locker, PoolKey memory poolKey, PositionId)
+        external
+        override(BaseExtension, IExtension)
+    {
+        lockAndExecuteVirtualOrders(poolKey);
     }
 }
 

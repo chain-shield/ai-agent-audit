@@ -144,6 +144,13 @@ END OF MAIN TARGET CONTRACT
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
+/// @notice Unique identifier for a pool
+/// @dev Wraps bytes32 to provide type safety for pool identifiers
+type PoolId is bytes32;
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
 import {MIN_TICK, MAX_TICK} from "../math/constants.sol";
 import {PoolConfig} from "./poolConfig.sol";
 
@@ -203,9 +210,76 @@ function validate(PositionId positionId, PoolConfig config) pure {
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
 
-/// @notice Unique identifier for a pool
-/// @dev Wraps bytes32 to provide type safety for pool identifiers
-type PoolId is bytes32;
+type StorageSlot is bytes32;
+
+using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
+
+function load(StorageSlot slot) view returns (bytes32 value) {
+    assembly ("memory-safe") {
+        value := sload(slot)
+    }
+}
+
+function loadTwo(StorageSlot slot) view returns (bytes32 value0, bytes32 value1) {
+    value0 = slot.load();
+    value1 = slot.next().load();
+}
+
+function store(StorageSlot slot, bytes32 value) {
+    assembly ("memory-safe") {
+        sstore(slot, value)
+    }
+}
+
+function storeTwo(StorageSlot slot, bytes32 value0, bytes32 value1) {
+    slot.store(value0);
+    slot.next().store(value1);
+}
+
+function next(StorageSlot slot) pure returns (StorageSlot nextSlot) {
+    assembly ("memory-safe") {
+        nextSlot := add(slot, 1)
+    }
+}
+
+function add(StorageSlot slot, uint256 addend) pure returns (StorageSlot summedSlot) {
+    assembly ("memory-safe") {
+        summedSlot := add(slot, addend)
+    }
+}
+
+function sub(StorageSlot slot, uint256 subtrahend) pure returns (StorageSlot differenceSlot) {
+    assembly ("memory-safe") {
+        differenceSlot := sub(slot, subtrahend)
+    }
+}
+
+// SPDX-License-Identifier: ekubo-license-v1.eth
+pragma solidity >=0.8.30;
+
+// Protocol Constants
+// Contains all constant values used throughout the Ekubo Protocol
+// These constants define the boundaries and special values for the protocol's operation
+
+// The minimum tick value supported by the protocol
+// Corresponds to the minimum possible price ratio in the protocol
+int32 constant MIN_TICK = -88722835;
+
+// The maximum tick value supported by the protocol
+// Corresponds to the maximum possible price ratio in the protocol
+int32 constant MAX_TICK = 88722835;
+
+// The maximum tick magnitude (absolute value of MAX_TICK)
+// Used for validation and bounds checking in tick-related calculations
+uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
+
+// The maximum allowed tick spacing for pools
+// Defines the upper limit for tick spacing configuration in pool creation
+uint32 constant MAX_TICK_SPACING = 698605;
+
+// Address used to represent the native token (ETH) within the protocol
+// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
+address constant NATIVE_TOKEN_ADDRESS = address(0);
 
 // SPDX-License-Identifier: ekubo-license-v1.eth
 pragma solidity >=0.8.30;
@@ -432,80 +506,6 @@ function validate(PoolConfig config) pure {
         }
     }
 }
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-type StorageSlot is bytes32;
-
-using {load, loadTwo, store, storeTwo, next, add, sub} for StorageSlot global;
-
-function load(StorageSlot slot) view returns (bytes32 value) {
-    assembly ("memory-safe") {
-        value := sload(slot)
-    }
-}
-
-function loadTwo(StorageSlot slot) view returns (bytes32 value0, bytes32 value1) {
-    value0 = slot.load();
-    value1 = slot.next().load();
-}
-
-function store(StorageSlot slot, bytes32 value) {
-    assembly ("memory-safe") {
-        sstore(slot, value)
-    }
-}
-
-function storeTwo(StorageSlot slot, bytes32 value0, bytes32 value1) {
-    slot.store(value0);
-    slot.next().store(value1);
-}
-
-function next(StorageSlot slot) pure returns (StorageSlot nextSlot) {
-    assembly ("memory-safe") {
-        nextSlot := add(slot, 1)
-    }
-}
-
-function add(StorageSlot slot, uint256 addend) pure returns (StorageSlot summedSlot) {
-    assembly ("memory-safe") {
-        summedSlot := add(slot, addend)
-    }
-}
-
-function sub(StorageSlot slot, uint256 subtrahend) pure returns (StorageSlot differenceSlot) {
-    assembly ("memory-safe") {
-        differenceSlot := sub(slot, subtrahend)
-    }
-}
-
-// SPDX-License-Identifier: ekubo-license-v1.eth
-pragma solidity >=0.8.30;
-
-// Protocol Constants
-// Contains all constant values used throughout the Ekubo Protocol
-// These constants define the boundaries and special values for the protocol's operation
-
-// The minimum tick value supported by the protocol
-// Corresponds to the minimum possible price ratio in the protocol
-int32 constant MIN_TICK = -88722835;
-
-// The maximum tick value supported by the protocol
-// Corresponds to the maximum possible price ratio in the protocol
-int32 constant MAX_TICK = 88722835;
-
-// The maximum tick magnitude (absolute value of MAX_TICK)
-// Used for validation and bounds checking in tick-related calculations
-uint32 constant MAX_TICK_MAGNITUDE = uint32(MAX_TICK);
-
-// The maximum allowed tick spacing for pools
-// Defines the upper limit for tick spacing configuration in pool creation
-uint32 constant MAX_TICK_SPACING = 698605;
-
-// Address used to represent the native token (ETH) within the protocol
-// Using address(0) allows the protocol to handle native ETH alongside ERC20 tokens
-address constant NATIVE_TOKEN_ADDRESS = address(0);
 
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS

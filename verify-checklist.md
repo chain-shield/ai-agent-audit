@@ -155,24 +155,58 @@ You MUST verify the finding passes **ALL gates**. If ANY gate fails, the finding
 - ❌ Team deploys on wrong chain, doesn't verify addresses
 - ❌ Team chooses malicious integration, configures incorrectly
 - ❌ **"If [TrustedComponent] fails/has bug/behaves unexpectedly"** (assumes future bug)
+- ❌ **Admin fails to coordinate state changes across multiple contracts/chains** (operational coordination)
+- ❌ **Admin changes critical state while user transactions are pending** (admin should monitor mempool/pending txs)
+- ❌ **Admin doesn't grant necessary roles/permissions before enabling functionality** (operational setup error)
+- ❌ **Admin forgets to initialize/configure contract before going live** (deployment checklist item)
 
 **VALID if NO (Code Vulnerability):**
 - ✅ Code should verify/check/validate but doesn't (missing runtime verification)
 - ✅ Non-privileged user gains privileged access (privilege escalation)
+- ✅ Bug happens AFTER admin takes CORRECT action (not admin error)
+- ✅ Code doesn't handle expected admin actions properly
 
 **Key Distinction:**
 - **Code logic/access control** → VALID
 - **Deployment/parameters/trusted component** → INVALID
+- **Bug requires admin ERROR** → INVALID
+- **Bug happens despite admin acting CORRECTLY** → VALID
 
-**Red Flags:**
+**Red Flags (Likely Admin Error - INVALID):**
 - "Team should verify before deploying"
 - "Only on chain X"
 - "If [Component] fails/has bug"
 - "Admin/team chooses..."
+- "If admin doesn't sync/coordinate..."
+- "Before mirroring/replicating state..."
+- "Without coordinating across..."
+- "Admin should monitor/check..."
+- "If admin doesn't grant role/permission first..."
+- "Before initializing/configuring..."
+
+**Examples:**
+
+**INVALID (Admin Error):**
+- ❌ "User interacts with contract where they lack required role/permission" → Admin should grant role first
+- ❌ "State inconsistency between related contracts/chains" → Admin should coordinate state changes
+- ❌ "Admin changes access control while user transactions pending" → Admin should monitor pending operations
+- ❌ "External dependency returns unexpected data" → Admin should choose/configure reliable dependencies
+- ❌ "Contract deployed on incompatible chain/environment" → Admin should verify deployment target
+
+**VALID (Code Bug):**
+- ✅ "User enters valid state, admin takes correct action, code fails to handle it" → Code should handle expected scenarios
+- ✅ "Restricted user can bypass restrictions via alternative code path" → Code allows bypass
+- ✅ "Missing access control allows unprivileged users to call privileged function" → Code vulnerability
+- ✅ "Code doesn't validate critical inputs/parameters" → Code should validate
+
+**The Critical Test:**
+Ask: "Can a responsible, competent admin prevent this by following best practices?"
+- If YES → INVALID (admin error/governance risk)
+- If NO → VALID (code vulnerability)
 
 ---
 
-## GATE 6: UNSUPPORTED TOKEN CHECK
+## GATE 7: UNSUPPORTED TOKEN CHECK
 
 **INVALID:**
 - ❌ Fee-on-transfer/rebasing/decimals edge cases
@@ -180,7 +214,7 @@ You MUST verify the finding passes **ALL gates**. If ANY gate fails, the finding
 
 ---
 
-## GATE 7: SPECULATION CHECK 🚨🚨
+## GATE 8: SPECULATION CHECK 🚨🚨
 
 **Critical Question:** Does root cause exist NOW and is exploitable with TODAY's code?
 
@@ -201,7 +235,26 @@ You MUST verify the finding passes **ALL gates**. If ANY gate fails, the finding
 
 ---
 
-## GATE 8: "BY DESIGN" CHECK 🚨🚨
+## GATE 9: DOCUMENTATION-ONLY ISSUE CHECK 🚨🚨🚨
+
+**Critical Question:** Is this ONLY a documentation error with NO code vulnerability?
+
+**🚨 YOU CANNOT SUBMIT A FINDING BASED SOLELY ON DOCUMENTATION ERROR! 🚨**
+**The Critical Test:**
+1. **Is the code wrong, or just the documentation?**
+   - Code wrong → VALID
+   - Documentation wrong → INVALID
+
+2. **If you fix ONLY the documentation (not the code), does the vulnerability disappear?**
+   - YES → INVALID (documentation-only issue)
+   - NO → VALID (code vulnerability)
+
+3. **Is the code internally consistent?**
+   - YES (hub and spoke both do X) → Likely documentation error
+   - NO (hub does X, spoke does Y) → Likely code bug
+
+
+## GATE 10: "BY DESIGN" CHECK 🚨🚨
 
 **Critical Question:** Is this documented as intentional? Check NatSpec, comments, docs, function naming.
 
@@ -224,7 +277,7 @@ You MUST verify the finding passes **ALL gates**. If ANY gate fails, the finding
 
 ---
 
-## GATE 9: EXPLOITABILITY (PoC)
+## GATE 11: EXPLOITABILITY (PoC)
 
 **Requirements:**
 - Minimal reproducible PoC
@@ -236,7 +289,7 @@ You MUST verify the finding passes **ALL gates**. If ANY gate fails, the finding
 
 ---
 
-## GATE 10: CONFIGURATION CHECK
+## GATE 12: CONFIGURATION CHECK
 
 **If finding relies on constants:**
 - Check for testnet comments
@@ -245,7 +298,7 @@ You MUST verify the finding passes **ALL gates**. If ANY gate fails, the finding
 
 ---
 
-## GATE 11: EXISTING SAFEGUARDS CHECK 🚨🚨
+## GATE 13: EXISTING SAFEGUARDS CHECK 🚨🚨
 
 **Critical Question:** Does the code already have safeguards that mitigate or eliminate this vulnerability?
 
@@ -313,13 +366,9 @@ You MUST verify the finding passes **ALL gates**. If ANY gate fails, the finding
 - Missing standard protections
 
 **Mark INVALID if:**
-- Assumes future bugs (GATE 7)
+- Assumes future bugs (GATE 8)
 - Requires governance mistake (GATE 5)
 - Requires user error (GATE 2)
-- Safeguards already exist and work (GATE 11)
+- Safeguards already exist and work (GATE 13)
 - Bug doesn't actually exist in code (PRE-GATE SANITY CHECK)
-
----
-
-**If it passes PRE-GATE SANITY CHECK + all 11 gates with a working PoC and effect ≥ Medium → SUBMIT**
-
+- Documentation error only (GATE 9)

@@ -13,8 +13,7 @@ Finding Complexity: 2
 Privilege: Permissionless
 
 
-
- **Derived From** : Social recovery guardians using Recovery module
+**Derived From** : Social recovery guardians using Recovery module
 
 [M-2]. Recovery Payloads Remain Valid Indefinitely
 Finding Status: Valid
