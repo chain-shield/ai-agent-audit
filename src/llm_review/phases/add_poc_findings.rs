@@ -5,9 +5,12 @@
 use crate::{
     error::Result,
     llm_review::{
-        context_state::get_metadata_context,
-        enums::{AIAgent, Severity},
-        findings::{Finding, Findings},
+        agent::agent_enums::AIAgent,
+        analysis::context_state::get_metadata_context,
+        findings::{
+            finding_enums::Severity,
+            findings::{Finding, Findings},
+        },
         pattern_phases::pattern_to_findings::generate_content_plus_context_block,
         prompt_support::{
             make_poc_prompt::{generate_poc_prompt, generate_rewrite_poc_prompt},

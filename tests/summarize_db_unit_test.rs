@@ -15,7 +15,7 @@ use ai_agent_audit::{
         },
     },
     config::AuditType,
-    llm_review::contract_category::ContractCategory,
+    llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::{PocConfig, RepoPaths},
 };
 use std::path::PathBuf;

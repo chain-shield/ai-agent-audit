@@ -18,9 +18,9 @@ use std::sync::Mutex;
 use crate::enumerator::libraries::generate_library_to_code_mapping;
 use crate::enumerator::libraries::get_library_code_for_library_calls;
 use crate::enumerator::libraries::ParsedLibrary;
-use crate::llm_review::contract_file_map::insert_contract_to_file_mapping;
-use crate::llm_review::contract_file_map::insert_lib_contract_to_file_mapping;
-use crate::llm_review::contract_file_map::ContractType;
+use crate::llm_review::contract::contract_file_map::insert_contract_to_file_mapping;
+use crate::llm_review::contract::contract_file_map::insert_lib_contract_to_file_mapping;
+use crate::llm_review::contract::contract_file_map::ContractType;
 
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::check_folder_name::is_library_file;
@@ -565,7 +565,7 @@ async fn process_contract_declarations(
             "contract" => ContractType::Contract,
             "interface" => ContractType::Interface,
             "library" => ContractType::Library,
-            _ => ContractType::Contract,
+            _ => ContractType::Library,
         };
 
         if file_type == SolFileType::Standard {

@@ -15,7 +15,7 @@ use ai_agent_audit::{
     },
     config::AuditType,
     enumerator::{codeblock_db::CodeBlocksDb, codeblocks::generate_codeblock_from_codebase},
-    llm_review::contract_category::ContractCategory,
+    llm_review::contract::contract_category::ContractCategory,
     prepare_code::git_clone::{PocConfig, RepoPaths},
     utils::remapping::parse_and_store_remappings,
 };

@@ -1,6 +1,0 @@
-./src/Market/IMarketController.sol
-./src/Market/MarketController.sol
-./src/Market/MarketResolver.sol
-./src/Market/Market.sol
-./src/Token/PositionTokens.sol
-./src/Vault/Vault.sol

@@ -3,21 +3,24 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
+    config::SKIP_PATTERN_VERIFICATION,
     error::Result,
     llm_review::{
-        context_state::get_metadata_context,
-        enums::AIAgent,
-        invariants::ContractInvariants,
-        issues::{IssueStructTrait, IssueTrait},
-        patterns::Patterns,
-        semaphore::GENERAL_SEM,
+        agent::agent_enums::AIAgent,
+        analysis::{context_state::get_metadata_context, semaphore::GENERAL_SEM},
+        threat_models::{
+            actors::ActorAbuses,
+            invariants::ContractInvariants,
+            issues::{IssueStructTrait, IssueTrait},
+            patterns::Patterns,
+        },
     },
     prepare_code::git_clone::RepoPaths,
 };
 use log::info;
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -37,9 +40,25 @@ pub struct LegitInvariant {
     pub why_its_not_legit: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct LegitActorMalice {
+    #[serde(deserialize_with = "deserialize_bool_from_str_or_bool")]
+    is_legit_abuse: bool,
+    why_its_not_legit: Option<String>,
+}
+
 pub trait IsLegit {
     fn is_legit(&self) -> bool;
     fn why_not_legit(&self) -> String;
+}
+
+impl IsLegit for LegitActorMalice {
+    fn is_legit(&self) -> bool {
+        self.is_legit_abuse
+    }
+    fn why_not_legit(&self) -> String {
+        self.why_its_not_legit.clone().unwrap_or_default()
+    }
 }
 
 impl IsLegit for LegitInvariant {
@@ -77,6 +96,15 @@ pub async fn verify_invariants(
 ) -> Result<ContractInvariants> {
     execute::<ContractInvariants, LegitInvariant>(patterns, code, agent, repo).await
 }
+
+pub async fn verify_actor_abuses(
+    patterns: ActorAbuses,
+    code: &str,
+    agent: &Arc<AIAgent>,
+    repo: &RepoPaths,
+) -> Result<ActorAbuses> {
+    execute::<ActorAbuses, LegitActorMalice>(patterns, code, agent, repo).await
+}
 /// Executes the verification phase
 ///
 /// Deduplicates findings and verifies each one using AI analysis to ensure
@@ -97,13 +125,23 @@ where
 
     let mut handles = vec![];
     let deduped_patterns: Arc<T> = Arc::new(patterns.dedup().await?);
+    let dedup_pattern_count = deduped_patterns.issues().len();
+
+    if SKIP_PATTERN_VERIFICATION {
+        info!(
+            "Skipping verification: # of {} AFTER deduping => {}",
+            &deduped_patterns.issue_title(),
+            dedup_pattern_count,
+        );
+        return Ok((*deduped_patterns).clone());
+    }
+
     let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
     let code_and_context = generate_content_plus_context_block(code, &context);
     let arc_code_context = Arc::new(code_and_context);
 
-    let dedup_pattern_count = deduped_patterns.issues().len();
     let is_legit_pattern_vec: Arc<Mutex<Vec<bool>>> =
         Arc::new(Mutex::new(vec![true; dedup_pattern_count]));
 

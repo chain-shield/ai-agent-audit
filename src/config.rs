@@ -25,22 +25,30 @@ pub const MAX_DEPTH: usize = 3;
 /// Maximum token budget per codeblock + context to stay within LLM context limits
 pub const TOKEN_BUDGET: usize = 200_000;
 pub const CREATE_TESTS: bool = false;
-pub const NICHE_PATTERN_ANALYSIS_MODE: bool = false;
+pub const NICHE_PATTERN_ANALYSIS_MODE: bool = true;
+
 // if true set DISCOVERY_RUNS accordingly
 pub const MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE: bool = true;
+pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
+pub const INVARIANT_DISCOVERY_RUNS: usize = 3; // old value 5
+pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10
 
+pub const OPENAI_MODEL: &str = "gpt-5.1";
+pub const SKIP_LIBRARIES: bool = true;
+pub const SKIP_PATTERN_RUNS: bool = true;
+pub const SKIP_PATTERN_VERIFICATION: bool = true;
+
+// NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis
-pub const DISCOVERY_RUNS: usize = 5;
-pub const INVARIANT_RUNS: usize = 0;
-pub const MAX_PATTERN_RUN_TOP: usize = 5;
-pub const MAX_PATTERN_RUN_RARE: usize = 5;
-pub const MAX_PATTERN_RUN_MOST: usize = 5;
-pub const MAX_PATTERN_RUN_FREQUENT: usize = 5;
-pub const MAX_PATTERN_LIBRARY: usize = 1;
-pub const MAX_PATTERN_NICHE: usize = 10;
-pub const MAX_PATTERN_GENERAL: usize = 1;
-
-pub const OPENAI_MODEL: &str = "gpt-5";
+pub const INVARIANT_RUNS: usize = 0; // 0 for large protocols; default: 3
+pub const ACTOR_RUNS: usize = 10; // old value 10
+pub const MAX_PATTERN_RUN_TOP: usize = 2; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_RARE: usize = 2; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_MOST: usize = 2; // 0 for large protocol, default: 3
+pub const MAX_PATTERN_RUN_FREQUENT: usize = 2; // 2 for large protocol, default: 3
+pub const MAX_PATTERN_LIBRARY: usize = 3;
+pub const MAX_PATTERN_NICHE: usize = 3; // 3 for large protocol, default: 4
+pub const MAX_PATTERN_GENERAL: usize = 2; // 2 for large protocol, default: 4
 
 pub const MAX_FILE_RUNS: usize = 1;
 
@@ -140,7 +148,7 @@ impl Default for AuditConfig {
         Self {
             max_depth: MAX_DEPTH,
             token_budget: TOKEN_BUDGET,
-            runs: DISCOVERY_RUNS,
+            runs: PATTERN_DISCOVERY_RUNS,
             qdrant_url: "http://localhost:6334".to_string(),
             openai_api_key: None,
             anthropic_api_key: None,
@@ -324,7 +332,7 @@ impl AuditConfig {
         Self {
             max_depth: MAX_DEPTH,
             token_budget: TOKEN_BUDGET,
-            runs: DISCOVERY_RUNS,
+            runs: PATTERN_DISCOVERY_RUNS,
             qdrant_url: "http://localhost:6334".to_string(),
             openai_api_key: Some("test-key".to_string()),
             anthropic_api_key: None,
@@ -388,7 +396,7 @@ mod tests {
         let config = AuditConfig::default();
         assert_eq!(config.max_depth, MAX_DEPTH);
         assert_eq!(config.token_budget, TOKEN_BUDGET);
-        assert_eq!(config.runs, DISCOVERY_RUNS);
+        assert_eq!(config.runs, PATTERN_DISCOVERY_RUNS);
         // Config validation will fail because no API keys are set
     }
 

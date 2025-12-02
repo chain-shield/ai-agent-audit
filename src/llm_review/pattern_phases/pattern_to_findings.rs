@@ -3,14 +3,16 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    config::DISCOVERY_RUNS,
+    config::PATTERN_DISCOVERY_RUNS,
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context},
-        enums::AIAgent,
-        findings::Findings,
-        issues::{IssueStructTrait, IssueTrait},
-        semaphore::GENERAL_SEM,
+        agent::agent_enums::AIAgent,
+        analysis::{
+            context_state::{generate_audit_scope, get_metadata_context},
+            semaphore::GENERAL_SEM,
+        },
+        findings::findings::Findings,
+        threat_models::issues::{IssueStructTrait, IssueTrait},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -53,7 +55,7 @@ where
 
     for j in 0..pattern_count {
         let arc_pattern = Arc::new(patterns.issues()[j].clone());
-        for i in 0..DISCOVERY_RUNS {
+        for i in 0..PATTERN_DISCOVERY_RUNS {
             let codeblock_plus_context = Arc::clone(&arc_code_context);
             let arc_agent = Arc::clone(&agent);
             let pattern_clone = Arc::clone(&arc_pattern);

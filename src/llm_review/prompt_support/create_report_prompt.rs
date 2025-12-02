@@ -2,9 +2,9 @@ use crate::{
     build_brain::slither_ffi::get_all_files_src,
     config::AuditType,
     llm_review::{
-        findings::Finding,
+        findings::findings::Finding,
         prompt_support::report_templates::CODE4RENA_REPORT_TEMPLATE,
-        utils::prompt_context::{get_finding_report, FindingReportType},
+        utils::prompt_context::{FindingReportType, get_finding_report},
     },
     prepare_code::git_clone::RepoPaths,
 };

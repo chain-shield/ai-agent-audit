@@ -3,15 +3,17 @@
 /// This phase removes duplicate findings and verifies the legitimacy of each
 /// discovered vulnerability using AI-powered analysis.
 use crate::{
-    config::DISCOVERY_RUNS,
+    config::{ACTOR_DISCOVERY_RUNS, INVARIANT_DISCOVERY_RUNS, PATTERN_DISCOVERY_RUNS},
     error::Result,
     llm_review::{
-        context_state::{generate_audit_scope, get_metadata_context},
-        enums::AIAgent,
-        findings::Findings,
-        issues::{IssueStructTrait, IssueTrait},
+        agent::agent_enums::AIAgent,
+        analysis::{
+            context_state::{generate_audit_scope, get_metadata_context},
+            semaphore::GENERAL_SEM,
+        },
+        findings::findings::Findings,
         pattern_phases::pattern_to_findings::generate_content_plus_context_block,
-        semaphore::GENERAL_SEM,
+        threat_models::issues::{IssueStructTrait, IssueTrait},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -50,9 +52,17 @@ where
     let arc_code_context = Arc::new(code_and_context);
     let audit_scope = Arc::new(generate_audit_scope(repo).await?);
     let arc_repo = Arc::new(repo.clone());
-
     let arc_patterns = Arc::new(patterns.clone());
-    for i in 0..DISCOVERY_RUNS {
+
+    let runs = if issue_title == "invariant" {
+        INVARIANT_DISCOVERY_RUNS
+    } else if issue_title == "actor exploit" {
+        ACTOR_DISCOVERY_RUNS
+    } else {
+        PATTERN_DISCOVERY_RUNS
+    };
+
+    for i in 0..runs {
         let codeblock_plus_context = Arc::clone(&arc_code_context);
         let arc_agent = Arc::clone(&agent);
         let patterns_clone = Arc::clone(&arc_patterns);

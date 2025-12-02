@@ -1,4 +1,4 @@
-use ai_agent_audit::llm_review::enums::{Severity, VulnerabilityType};
+use ai_agent_audit::llm_review::findings::finding_enums::{Severity, VulnerabilityType};
 use serde_json;
 
 #[test]

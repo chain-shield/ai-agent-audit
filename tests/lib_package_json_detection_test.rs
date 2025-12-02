@@ -57,11 +57,16 @@ fn test_lib_package_json_detection() {
     println!("   Result: {}", result1);
     assert!(result1, "Should detect package.json in lib folder");
 
-    println!("\n2. Nested lib folder:");
+    println!("\n2. Nested lib folder (node_modules/lib):");
     println!("   Path: {}", nested_lib_pkg.display());
     let result2 = is_library_package_json(&nested_lib_pkg, root);
     println!("   Result: {}", result2);
-    assert!(result2, "Should detect package.json in nested lib folder");
+    // NOTE: This should return FALSE because paths with BOTH node_modules AND lib are rejected
+    // to prevent false positives like node_modules/ethers/lib/package.json
+    assert!(
+        !result2,
+        "Should NOT detect package.json in node_modules/lib (ambiguous case)"
+    );
 
     println!("\n3. Library folder:");
     println!("   Path: {}", library_pkg.display());

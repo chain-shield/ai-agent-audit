@@ -2,11 +2,13 @@ use std::collections::HashSet;
 
 use crate::{
     llm_review::{
+        agent::agent_enums::EnumData,
         dynamic_prompts::findings_template::{
             generate_findings_prompt, generate_findings_prompt_for_multiple_patterns,
         },
-        enums::EnumData,
-        invariants::{ContractInvariants, InvariantFinding, InvariantSpec, InvariantType},
+        threat_models::invariants::{
+            ContractInvariants, InvariantFinding, InvariantSpec, InvariantType,
+        },
         utils::prompt_context::{
             generate_formatted_invariant_finding, generate_formatted_multiple_invariant_findings,
         },

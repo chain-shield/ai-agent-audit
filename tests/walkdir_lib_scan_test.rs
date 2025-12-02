@@ -235,6 +235,12 @@ fn test_lib_folder_detection_logic() {
         &root
     ));
 
+    // Should match (node_modules is considered a lib folder)
+    assert!(is_in_lib_folder(
+        &PathBuf::from("/repo/node_modules/package.json"),
+        &root
+    ));
+
     // Should NOT match
     assert!(!is_in_lib_folder(
         &PathBuf::from("/repo/package.json"),
@@ -242,10 +248,6 @@ fn test_lib_folder_detection_logic() {
     ));
     assert!(!is_in_lib_folder(
         &PathBuf::from("/repo/src/package.json"),
-        &root
-    ));
-    assert!(!is_in_lib_folder(
-        &PathBuf::from("/repo/node_modules/package.json"),
         &root
     ));
 

@@ -438,45 +438,6 @@ library TrailsSentinelLib {
     }
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/// @notice Abstract contract providing a reusable delegatecall-only guard.
-abstract contract DelegatecallGuard {
-    // -------------------------------------------------------------------------
-    // Errors
-    // -------------------------------------------------------------------------
-
-    /// @dev Error thrown when a function expected to be delegatecalled is invoked directly
-    error NotDelegateCall();
-
-    // -------------------------------------------------------------------------
-    // Immutable Variables
-    // -------------------------------------------------------------------------
-
-    /// @dev Cached address of this contract to detect delegatecall context
-    address internal immutable _SELF = address(this);
-
-    // -------------------------------------------------------------------------
-    // Modifiers
-    // -------------------------------------------------------------------------
-
-    /// @dev Modifier restricting functions to only be executed via delegatecall
-    modifier onlyDelegatecall() {
-        _onlyDelegatecall();
-        _;
-    }
-
-    // -------------------------------------------------------------------------
-    // Internal Functions
-    // -------------------------------------------------------------------------
-
-    /// @dev Internal check enforcing delegatecall context
-    function _onlyDelegatecall() internal view {
-        if (address(this) == _SELF) revert NotDelegateCall();
-    }
-}
-
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
@@ -642,6 +603,45 @@ interface ITrailsRouter is IDelegatedExtension {
         uint256 space,
         bytes calldata data
     ) external;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/// @notice Abstract contract providing a reusable delegatecall-only guard.
+abstract contract DelegatecallGuard {
+    // -------------------------------------------------------------------------
+    // Errors
+    // -------------------------------------------------------------------------
+
+    /// @dev Error thrown when a function expected to be delegatecalled is invoked directly
+    error NotDelegateCall();
+
+    // -------------------------------------------------------------------------
+    // Immutable Variables
+    // -------------------------------------------------------------------------
+
+    /// @dev Cached address of this contract to detect delegatecall context
+    address internal immutable _SELF = address(this);
+
+    // -------------------------------------------------------------------------
+    // Modifiers
+    // -------------------------------------------------------------------------
+
+    /// @dev Modifier restricting functions to only be executed via delegatecall
+    modifier onlyDelegatecall() {
+        _onlyDelegatecall();
+        _;
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal Functions
+    // -------------------------------------------------------------------------
+
+    /// @dev Internal check enforcing delegatecall context
+    function _onlyDelegatecall() internal view {
+        if (address(this) == _SELF) revert NotDelegateCall();
+    }
 }
 
 // SPDX-License-Identifier: MIT
@@ -1060,6 +1060,41 @@ DEPLOYMENT SCRIPTS
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import {SingletonDeployer, console} from "erc2470-libs/script/SingletonDeployer.s.sol";
+import {TrailsRouter} from "../src/TrailsRouter.sol";
+
+contract Deploy is SingletonDeployer {
+    // -------------------------------------------------------------------------
+    // Run
+    // -------------------------------------------------------------------------
+
+    function run() external {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        address deployerAddress = vm.addr(pk);
+        console.log("Deployer Address:", deployerAddress);
+
+        address router = deployRouter(pk);
+        console.log("TrailsRouter deployed at:", router);
+    }
+
+    // -------------------------------------------------------------------------
+    // Deploy Router
+    // -------------------------------------------------------------------------
+
+    function deployRouter(uint256 pk) public returns (address) {
+        bytes32 salt = bytes32(0);
+
+        // Deploy TrailsRouter
+        bytes memory initCode = type(TrailsRouter).creationCode;
+        address router = _deployIfNotAlready("TrailsRouter", initCode, salt, pk);
+
+        return router;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
 import {Test} from "forge-std/Test.sol";
 import {Deploy as TrailsRouterShimDeploy} from "script/TrailsRouterShim.s.sol";
 import {TrailsRouterShim} from "src/TrailsRouterShim.sol";
@@ -1287,41 +1322,6 @@ contract TrailsRouterDeploymentTest is Test {
         // This is a smoke test to ensure the contract is properly deployed
         (bool success,) = address(router).call("");
         assertEq(success, true, "Router should accept basic calls");
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {SingletonDeployer, console} from "erc2470-libs/script/SingletonDeployer.s.sol";
-import {TrailsRouter} from "../src/TrailsRouter.sol";
-
-contract Deploy is SingletonDeployer {
-    // -------------------------------------------------------------------------
-    // Run
-    // -------------------------------------------------------------------------
-
-    function run() external {
-        uint256 pk = vm.envUint("PRIVATE_KEY");
-        address deployerAddress = vm.addr(pk);
-        console.log("Deployer Address:", deployerAddress);
-
-        address router = deployRouter(pk);
-        console.log("TrailsRouter deployed at:", router);
-    }
-
-    // -------------------------------------------------------------------------
-    // Deploy Router
-    // -------------------------------------------------------------------------
-
-    function deployRouter(uint256 pk) public returns (address) {
-        bytes32 salt = bytes32(0);
-
-        // Deploy TrailsRouter
-        bytes memory initCode = type(TrailsRouter).creationCode;
-        address router = _deployIfNotAlready("TrailsRouter", initCode, salt, pk);
-
-        return router;
     }
 }
 

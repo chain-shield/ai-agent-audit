@@ -1,239 +1,374 @@
+# 🚨 CRITICAL VERIFICATION GATES - ALL MUST PASS
 
-1. **Scope Gate** → Is root cause in-scope?
+**Your task:** Decide if a reported finding is **Valid** and accurately assess its **Severity** in a Code4rena contest.
 
-   * OOS library root cause → **INVALID**.
-   * OOS token behavior unless USDT or explicitly supported → **INVALID**.
-   * View-only cosmetic/event-only w/o functional impact → **QA/Low**.
-
-2. **Impact Gate (C4 definitions)**
-
-   * Direct/indirect **asset loss/compromise** with real path → **High** (or Medium if low-likelihood).
-   * Protocol function/value/availability impact (DoS, grief, accounting drift, price miscalc, governance blockage) with stated assumptions → **Medium**.
-   * Only dust fees / readability → **QA/Low**.
-
-3. **Likelihood Gate**
-
-   * High-impact + low-likelihood → **Medium/High** (argue likelihood).
-   * Low-impact + low-likelihood → **QA/Low**.
-
-4. **Exploitability Gate (PoC)**
-
-   * Minimal, reproducible PoC that **demonstrates state change** consistent with impact?
-   * If not reproducible in clean scenario ⇒ **rework** or **downgrade**.
-
-5. **Centralization Gate**
-
-   * Requires admin misuse or negligence? → **QA/Low** or **INVALID** per C4.
-   * Vulnerable even under **reasonable** privileged usage (or privilege escalation) → up to **Medium**.
-
-6. **Unsupported Token Gate**
-
-   * Fee-on-transfer/rebasing/decimals edge unless protocol **explicitly** supports → **OOS** (except **USDT**).
-
-7. **Speculation Gate**
-
-   * Root cause exists **now** and is exploitable with today’s code? If no → **speculative** (likely **LOW/INVALID**).
-   * If future integration could trigger, argue **likelihood** & **path** explicitly.
-
-If it passes all gates with a working PoC and the effect is ≥ Medium per above, **submit**.
+You MUST verify the finding passes **ALL gates**. If ANY gate fails, the finding is **Invalid** or **QA/Low**.
 
 ---
 
-## 1) Scope & Root-Cause Validation (GATE 1)
+## 🔍 PRE-GATE SANITY CHECK - VERIFY BUG EXISTS
 
-* **Contract in scope?** File matches contest scope list; cross-check imports.
-* **Root cause location:** The bug arises in **in-scope code’s logic** (not in an OOS lib).
+**BEFORE checking any gates, verify the bug actually exists in the code:**
 
-  * If the bug is **incorrect use** of an OOS lib by in-scope code → **valid**; cite misuse site.
-  * If the bug is **inside** OOS lib → **OOS**.
+### **Step 1: Trace the Code Path**
+- ✅ Locate the exact function/contract mentioned in the finding
+- ✅ Verify the vulnerable code path exists (not hallucinated)
+- ✅ Trace execution flow step-by-step to confirm the issue
+- ✅ Check if code matches the finding's description
 
-**Checklist**
+**INVALID if:**
+- ❌ Function/contract doesn't exist in codebase
+- ❌ Code path described is impossible (wrong function signatures, missing calls)
+- ❌ Finding describes code that was removed/changed
+- ❌ Execution flow doesn't match the claimed vulnerability
 
-* [ ] File is in scope (path & commit).
-* [ ] Root cause in in-scope contract/function.
-* [ ] If involving tokens: non-standard behavior is **explicitly supported** (or token is **USDT**).
+### **Step 2: Verify Invariant Actually Exists**
+- ✅ Check if the claimed invariant is documented (NatSpec, comments, docs)
+- ✅ Verify the invariant is enforced elsewhere in the code
+- ✅ Confirm the invariant is a real protocol requirement (not assumed)
 
----
+**INVALID if:**
+- ❌ Invariant is not documented anywhere
+- ❌ Invariant is not enforced in similar functions
+- ❌ Invariant is assumed but not a real protocol requirement
+- ❌ "Should maintain X" without evidence X is required
 
-## 2) Impact Classification (GATE 2)
+**Common Hallucinations:**
+- "Function X calls Y" → Verify X actually calls Y (check code)
+- "Missing check for Z" → Verify Z check is actually needed (check invariants)
+- "Breaks invariant I" → Verify I is a real invariant (check docs/comments)
+- "State S can occur" → Verify S is actually reachable (trace execution)
 
-Map your effect to C4:
+### **Step 3: Reproduce the Issue**
+- ✅ Can you trace the exact steps to trigger the bug?
+- ✅ Does the PoC actually demonstrate the claimed issue?
+- ✅ Are the preconditions realistic and achievable?
 
-### High (3)
-
-* Theft or permanent loss of assets (funds/NFTs); unauthorized drains; seizure of **authorization**; leakage of **private data** in a way that compromises assets.
-* Economic attacks causing real capital loss (not dust), even if multi-step but **realistic**.
-
-### Medium (2)
-
-* No direct asset loss, but **protocol function/value/availability** harmed:
-
-  * **DoS** of critical actions (e.g., can’t deposit/withdraw, can’t execute governance queue).
-  * **Accounting drift** creating extractable value in plausible conditions.
-  * **Rounding** leading to non-dust value loss/gain.
-  * **Governance blockage**/grief preventing timelock execution under reasonable conditions.
-  * **Oracle / price calc** issues enabling mispricing (without guaranteed drain).
-  * **Privilege escalation** likelihood-dependent (up to Medium).
-
-### QA/Low
-
-* Dust amounts, stylistic issues, events inconsistencies without functional break, pure view-function errors.
-
-**Checklist**
-
-* [ ] Name the **asset or function at risk**.
-* [ ] Quantify **magnitude** (≥ dust).
-* [ ] Show **who benefits / who loses**.
+**INVALID if:**
+- ❌ Cannot trace execution path to the claimed bug
+- ❌ PoC doesn't actually trigger the vulnerability
+- ❌ Preconditions are impossible to achieve
 
 ---
 
-## 3) Likelihood Assessment (GATE 3)
+**⚠️ If sanity check fails → INVALID (hallucination/misunderstanding)**
 
-* Document **preconditions** (liquidity, timing, role possession, market setup).
-* Decide: **Common**, **Occasional**, or **Edge-case**.
-* High-impact + edge-case ⇒ **Medium or High** per C4.
-* Low-impact + edge-case ⇒ **QA/Low**.
-
-**Checklist**
-
-* [ ] Explicit preconditions & external requirements.
-* [ ] Attack steps are realistic on mainnet conditions (not contrived-only).
-* [ ] No reliance on user negligence (that would downgrade).
+**✅ If sanity check passes → Proceed to GATE 1**
 
 ---
 
-## 4) Exploitability Proof (PoC) (GATE 4)
+## GATE 1: SCOPE CHECK
 
-Produce a **minimal Foundry test** that:
+**INVALID:**
+- ❌ Root cause in OOS library
+- ❌ OOS token behavior (except USDT or explicitly supported)
+- ❌ View-only cosmetic/event-only without functional impact
 
-* Sets state to legit scenario (fork or local deployment).
-* Executes the **attack path** step-by-step.
-* **Asserts** final state delta: balances, auth, timelock state, price, share accounting—**non-dust** effect.
-
-**PoC skeleton**
-
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-
-import "forge-std/Test.sol";
-import {Target, Token} from "../src/Target.sol";
-
-contract ExploitTest is Test {
-    Target target;
-    Token  token;
-    address attacker = address(0xBEEF);
-
-    function setUp() public {
-        // deploy or fork setup
-        target = new Target(/*...*/);
-        token  = new Token(/*...*/);
-        // seed attacker, pool, etc.
-    }
-
-    function test_attack_paths() public {
-        // 1) Preconditions
-        // 2) Trigger vulnerability
-        // 3) Observe effects
-        uint256 before = token.balanceOf(attacker);
-
-        // ...attack steps...
-
-        uint256 after_ = token.balanceOf(attacker);
-        assertGt(after_ - before, 1e12, "non-dust profit");
-        // Or assert state invariants broken / DoS demonstrated
-    }
-}
-```
-
-**Fuzz add-on (optional but strong):** a fuzz where invariant fails under a reasonable domain strengthens Medium/High.
-
-**Checklist**
-
-* [ ] Single-click `forge test` runs the PoC.
-* [ ] Clear `assert` shows the **effect** magnitude.
-* [ ] Uses realistic actors/roles and parameters.
+**VALID:**
+- ✅ Root cause in-scope
+- ✅ In-scope code misuses OOS library
 
 ---
 
-## 5) Centralization & Roles (GATE 5)
+## GATE 2: USER ERROR CHECK 🚨
 
-* **Assume admins act correctly**; findings requiring admin misuse ⇒ **QA/Low/Invalid**.
-* If the attack works **even when admins follow spec** (e.g., parameter constraints violated by code, or unavoidable route) ⇒ **Medium+**.
-* **Privilege escalation** via code path under reasonable usage can be **Medium**.
+**Critical Question:** Does exploit require user mistake?
 
-**Checklist**
+**INVALID if requires:**
+- ❌ User chooses bad recipient/target
+- ❌ User provides bad parameters (slippage, deadline, amount)
+- ❌ User approves malicious contract
+- ❌ User signs malicious transaction data
 
-* [ ] Does not require guardian/governor negligence or malicious admin actions.
-* [ ] If privilege involved, it’s an **escalation**, not normal usage.
+**VALID if:**
+- ✅ Protocol forces user into vulnerable state
+- ✅ Attacker exploits without user involvement
+- ✅ User follows normal flow, protocol fails to protect
 
----
-
-## 6) Token Model Constraints (GATE 6)
-
-* ERC-20 non-standard (rebasing/FoT/decimals mismatch) is **OOS unless explicitly supported** (USDT exception).
-* If protocol **claims support**, demonstrate how the handling is insufficient to cause Medium+ effect.
-
-**Checklist**
-
-* [ ] If using non-standard tokens, cite docs proving they are supported.
-* [ ] Otherwise, avoid that angle (or mark OOS).
+**Red Flags:**
+- "If user chooses X..." → likely user error
+- "User must validate..." → likely user error
+- "Transaction reverts if user provides bad input" → likely user error
 
 ---
 
-## 7) Speculation & Integrations (GATE 7)
+## GATE 3: IMPACT CLASSIFICATION
 
-* **Root cause exists now**.
-* If impact needs a future integration: explain **why that integration is plausible**, and how the root cause already enables it. Otherwise **QA/Low**.
+**HIGH (3):**
+- Theft/permanent loss of assets (funds/NFTs)
+- Unauthorized drains, seizure of authorization
+- Economic attacks causing real capital loss (non-dust)
 
-**Checklist**
+**MEDIUM (2):**
+- DoS of critical actions (deposit/withdraw/governance)
+- Accounting drift creating extractable value
+- Rounding leading to non-dust loss/gain
+- Oracle/price calc issues enabling mispricing
+- Privilege escalation (likelihood-dependent)
 
-* [ ] No dependency on hypothetical future code, unless likelihood is argued & credible.
-
----
-
-## 8) Quantification & Non-Dust Thresholds
-
-* Show **numbers**: amounts at risk, percentage slippage, value drift per operation.
-* Back results with math and PoC outputs (e.g., “profit = 0.42 ETH”, “protocol loses 0.3% TVL per cycle”).
-* If rounding: prove it scales (loopable grief, first/last depositor attack, or affects many users).
-
-**Checklist**
-
-* [ ] Non-dust threshold exceeded (document the threshold for the asset).
-* [ ] If cumulative, prove repeatability.
+**QA/LOW:**
+- Dust amounts, stylistic issues, event inconsistencies
+- View-function errors without functional impact
 
 ---
 
-## 9) Duplicate / Non-Novel Check
+## GATE 4: LIKELIHOOD ASSESSMENT 🚨
 
-* Search for the same root cause in prior issues 
-* If dup found suggest combining with result with it (if different exploit) or picking one of the 2.
+**COMMON (High Likelihood):**
+- No preconditions, works anytime/anywhere
+- No special resources or timing needed
+- Example: Missing access control, logic bug
 
+**OCCASIONAL (Medium Likelihood):**
+- Specific but realistic conditions
+- Works on some chains or common market conditions
+- Moderate setup (deploy contract, front-run)
+- Example: Chain-specific issue, timing-dependent
+
+**RARE (Low Likelihood):**
+- Multiple unlikely conditions must align
+- Extreme market conditions or rare states
+- Significant resources or privileged position
+- Example: Storage collision, multi-step low-probability
+
+**Severity Matrix:**
+
+**CRITICAL Impact** (bricks entire protocol, steals ALL funds, complete takeover):
+- Common/Occasional → **HIGH** | Rare → **MEDIUM** ✅ (Exception: critical overrides rare)
+
+**HIGH Impact** (substantial loss, core function break, major DoS):
+- Common → **HIGH** | Occasional → **HIGH/MEDIUM** | Rare → **LOW** ❌
+
+**MEDIUM Impact** (temporary DoS, accounting drift, bounded loss):
+- Common → **MEDIUM** | Occasional → **MEDIUM/LOW** | Rare → **QA** ❌
+
+**🚨 Key:** CRITICAL = entire protocol/ALL funds/complete takeover | HIGH = substantial/core/major
 
 ---
-## 10) Reliability Boosters (to avoid down-grading)
 
-* **State all assumptions** explicitly (liquidity, oracle freshness, fee settings, role addresses).
-* **Show both sides**: a short note why alternate explanations are **not** required (e.g., “doesn’t rely on a revertible user step”).
-* **Edge-cases**: include boundary tests (0, 1 wei, min/max inputs, rollover).
-* **Events**: if events are involved, tie it to **functional** impact (bridging/proofs); otherwise judges cap at Low.
-* **Clean language**: no speculative language without matching proof.
+## GATE 5: GOVERNANCE/CENTRALIZATION RISK 🚨🚨
+
+**Critical Question:** Can governance/team prevent this by acting responsibly?
+
+**INVALID/QA if YES (Governance Risk):**
+- ❌ Admin sets wrong parameters, chooses malicious oracle
+- ❌ Team deploys on wrong chain, doesn't verify addresses
+- ❌ Team chooses malicious integration, configures incorrectly
+- ❌ **"If [TrustedComponent] fails/has bug/behaves unexpectedly"** (assumes future bug)
+- ❌ **Admin fails to coordinate state changes across multiple contracts/chains** (operational coordination)
+- ❌ **Admin changes critical state while user transactions are pending** (admin should monitor mempool/pending txs)
+- ❌ **Admin doesn't grant necessary roles/permissions before enabling functionality** (operational setup error)
+- ❌ **Admin forgets to initialize/configure contract before going live** (deployment checklist item)
+
+**VALID if NO (Code Vulnerability):**
+- ✅ Code should verify/check/validate but doesn't (missing runtime verification)
+- ✅ Non-privileged user gains privileged access (privilege escalation)
+- ✅ Bug happens AFTER admin takes CORRECT action (not admin error)
+- ✅ Code doesn't handle expected admin actions properly
+
+**Key Distinction:**
+- **Code logic/access control** → VALID
+- **Deployment/parameters/trusted component** → INVALID
+- **Bug requires admin ERROR** → INVALID
+- **Bug happens despite admin acting CORRECTLY** → VALID
+
+**Red Flags (Likely Admin Error - INVALID):**
+- "Team should verify before deploying"
+- "Only on chain X"
+- "If [Component] fails/has bug"
+- "Admin/team chooses..."
+- "If admin doesn't sync/coordinate..."
+- "Before mirroring/replicating state..."
+- "Without coordinating across..."
+- "Admin should monitor/check..."
+- "If admin doesn't grant role/permission first..."
+- "Before initializing/configuring..."
+
+**Examples:**
+
+**INVALID (Admin Error):**
+- ❌ "User interacts with contract where they lack required role/permission" → Admin should grant role first
+- ❌ "State inconsistency between related contracts/chains" → Admin should coordinate state changes
+- ❌ "Admin changes access control while user transactions pending" → Admin should monitor pending operations
+- ❌ "External dependency returns unexpected data" → Admin should choose/configure reliable dependencies
+- ❌ "Contract deployed on incompatible chain/environment" → Admin should verify deployment target
+
+**VALID (Code Bug):**
+- ✅ "User enters valid state, admin takes correct action, code fails to handle it" → Code should handle expected scenarios
+- ✅ "Restricted user can bypass restrictions via alternative code path" → Code allows bypass
+- ✅ "Missing access control allows unprivileged users to call privileged function" → Code vulnerability
+- ✅ "Code doesn't validate critical inputs/parameters" → Code should validate
+
+**The Critical Test:**
+Ask: "Can a responsible, competent admin prevent this by following best practices?"
+- If YES → INVALID (admin error/governance risk)
+- If NO → VALID (code vulnerability)
 
 ---
 
-## 11) Quick Severity Rubric (snap-score)
+## GATE 7: UNSUPPORTED TOKEN CHECK
 
-* **HIGH** if: asset drain/theft **or** matured yield loss **with PoC**.
-* **MEDIUM** if:
+**INVALID:**
+- ❌ Fee-on-transfer/rebasing/decimals edge cases
+- ❌ Unless explicitly supported or USDT
 
-  * Functional DoS that blocks core actions, **or**
-  * Governance blockage/queue corruption under reasonable conditions, **or**
-  * Value leakage ≥ non-dust (loopable/abusable) without guaranteed drain, **or**
-  * Price/accounting error affecting user equity in meaningful amounts, **or**
-  * Likely privilege escalation.
-* **QA/LOW** if:
+---
 
-  * Dust rounding only; stylistic; view-only misreports; event cosmetics; requires admin misuse; unsupported token quirk unless claimed supported.
+## GATE 8: SPECULATION CHECK 🚨🚨
+
+**Critical Question:** Does root cause exist NOW and is exploitable with TODAY's code?
+
+**INVALID if speculative:**
+- ❌ "If protocol integrates/adds/upgrades in future..."
+- ❌ **"If [Component] fails/has bug/behaves unexpectedly/is paused..."** (assumes future bug)
+- ❌ "Could/might/potentially happen if..." (hypothetical)
+
+**VALID if current:**
+- ✅ Bug in current code, exploit works now
+- ✅ Plausible future integration (docs mention it, code has hooks, strong evidence)
+
+**Red Flags:**
+- "If [Component] fails"
+- "Could happen if"
+- "When protocol adds"
+- "Future integration"
+
+---
+
+## GATE 9: DOCUMENTATION-ONLY ISSUE CHECK 🚨🚨🚨
+
+**Critical Question:** Is this ONLY a documentation error with NO code vulnerability?
+
+**🚨 YOU CANNOT SUBMIT A FINDING BASED SOLELY ON DOCUMENTATION ERROR! 🚨**
+**The Critical Test:**
+1. **Is the code wrong, or just the documentation?**
+   - Code wrong → VALID
+   - Documentation wrong → INVALID
+
+2. **If you fix ONLY the documentation (not the code), does the vulnerability disappear?**
+   - YES → INVALID (documentation-only issue)
+   - NO → VALID (code vulnerability)
+
+3. **Is the code internally consistent?**
+   - YES (hub and spoke both do X) → Likely documentation error
+   - NO (hub does X, spoke does Y) → Likely code bug
 
 
+## GATE 10: "BY DESIGN" CHECK 🚨🚨
+
+**Critical Question:** Is this documented as intentional? Check NatSpec, comments, docs, function naming.
+
+**🚨 CRITICAL EXCEPTION: Documentation ≠ Not a Vulnerability**
+
+**VALID despite documentation if creates:**
+- ✅ Economic risk/loss for users (liquidators, LPs, depositors)
+- ✅ Missing standard protection (slippage, deadline, minOut, price bounds)
+- ✅ MEV/value extraction opportunity
+- ✅ Incentive misalignment harming protocol
+
+**Examples VALID despite docs:**
+- ✅ Missing slippage/deadline/minOut → controllable loss (**Medium**) - C4 consistently awards Medium
+- ✅ Unfair fee structure → systematic disadvantage (Low/Medium)
+
+**INVALID if documented + no harm:**
+- ❌ Admin emergency pause, governance timelock (protective measures)
+
+**When in doubt:** Mark **VALID + SomeWhatConfident** (false negatives worse than false positives)
+
+---
+
+## GATE 11: EXPLOITABILITY (PoC)
+
+**Requirements:**
+- Minimal reproducible PoC
+- Demonstrates state change consistent with impact
+- Non-dust effect
+- Realistic actors and parameters
+
+**If not reproducible in clean scenario → rework or downgrade**
+
+---
+
+## GATE 12: CONFIGURATION CHECK
+
+**If finding relies on constants:**
+- Check for testnet comments
+- Suspiciously small values
+- Commented-out production values
+
+---
+
+## GATE 13: EXISTING SAFEGUARDS CHECK 🚨🚨
+
+**Critical Question:** Does the code already have safeguards that mitigate or eliminate this vulnerability?
+
+**INVALID if safeguards exist and work, including but not limited to:**
+- ❌ **Reentrancy** → Code has `nonReentrant` modifier, CEI pattern, or reentrancy guard
+- ❌ **Integer overflow/underflow** → Using Solidity 0.8+ with built-in overflow checks
+- ❌ **Access control** → Function has proper modifiers (`onlyOwner`, `onlyRole`, role checks)
+- ❌ **Front-running** → Code uses commit-reveal, deadlines, or slippage protection
+- ❌ **Oracle manipulation** → Code uses TWAP, multiple oracle sources, or price bounds
+- ❌ **DoS via unbounded loop** → Code has pagination, gas limits, or circuit breakers
+- ❌ **Precision loss** → Code uses proper scaling, rounding direction checks, or minimum thresholds
+- ❌ **Flash loan attacks** → Code has flash loan detection or same-block protection
+- ❌ **Price manipulation** → Code has price validation, bounds checks, or sanity limits
+
+**VALID if safeguards missing or insufficient:**
+- ✅ No safeguard exists for the attack vector
+- ✅ Safeguard exists but is **bypassable** (show bypass in PoC)
+- ✅ Safeguard is **incomplete** (only protects some functions, not all)
+- ✅ Safeguard has **wrong parameters** (deadline too long, slippage too high, bounds too wide)
+- ✅ Safeguard is **incorrectly implemented** (logic flaw, off-by-one, wrong condition)
+
+**How to Check:**
+1. **Search codebase** for relevant modifiers/guards (e.g., `nonReentrant`, `onlyOwner`)
+2. **Check if vulnerable function** uses the safeguard
+3. **Verify safeguard parameters** are sufficient (e.g., deadline < 30 min, slippage < 5%)
+4. **Test if safeguard can be bypassed** (include bypass in PoC if claiming it's insufficient)
+5. **Check all code paths** - safeguard must protect ALL vulnerable paths, not just some
+
+**Red Flags (Likely Invalid - Check for Safeguards First):**
+- "Missing reentrancy guard" → Search for `nonReentrant`, `ReentrancyGuard`, CEI pattern, state locks
+- "Integer overflow" → Check Solidity version (0.8+ has built-in checks, 0.7- needs SafeMath)
+- "Missing access control" → Search for `onlyOwner`, `onlyRole`, `require(msg.sender ==`, role checks
+- "Oracle manipulation" → Search for `TWAP`, `consult`, multiple oracle calls, price validation
+- "Front-running" → Search for `deadline`, `minAmountOut`, `slippage`, commit-reveal pattern
+- "DoS via gas" → Search for pagination, `maxIterations`, gas limits, circuit breakers
+- "Flash loan attack" → Search for `block.number` checks, flash loan detection, same-block protection
+
+**Exception (Still VALID despite safeguard):**
+- ✅ Safeguard exists but is **incorrectly implemented** → VALID (show the implementation flaw in PoC)
+- ✅ Safeguard exists but **doesn't cover all cases** → VALID (show the uncovered case in PoC)
+- ✅ Safeguard exists but has **insufficient parameters** → VALID (show how to exploit weak parameters)
+- ✅ Safeguard can be **bypassed** → VALID (show the bypass in PoC)
+
+**Examples:**
+
+**INVALID (Safeguard Exists):**
+- ❌ "Reentrancy in withdraw()" → But function has `nonReentrant` modifier
+- ❌ "Integer overflow in multiply()" → But using Solidity 0.8.20
+- ❌ "Missing access control on setFee()" → But function has `onlyOwner` modifier
+- ❌ "Front-running in swap()" → But function has `deadline` and `minAmountOut` parameters
+
+**VALID (Safeguard Missing or Insufficient):**
+- ✅ "Reentrancy in withdraw()" → No `nonReentrant` modifier, no CEI pattern
+- ✅ "Integer overflow in multiply()" → Using Solidity 0.7.6 without SafeMath
+- ✅ "Access control bypass in setFee()" → `onlyOwner` check is after state change (can be bypassed)
+- ✅ "Front-running in swap()" → `deadline` is set to `type(uint256).max` (ineffective)
+
+---
+
+## ✅ WHEN IN DOUBT → VALID + SomeWhatConfident
+
+**Lean toward VALID if:**
+- Realistic user loss
+- Matches historical C4 patterns
+- Missing standard protections
+
+**Mark INVALID if:**
+- Assumes future bugs (GATE 8)
+- Requires governance mistake (GATE 5)
+- Requires user error (GATE 2)
+- Safeguards already exist and work (GATE 13)
+- Bug doesn't actually exist in code (PRE-GATE SANITY CHECK)
+- Documentation error only (GATE 9)

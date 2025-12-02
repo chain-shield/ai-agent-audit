@@ -190,61 +190,6 @@ abstract contract SelfAuth {
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.18;
 
-/// @title IERC1155Receiver
-/// @notice Interface for the ERC1155 receiver module
-interface IERC1155Receiver {
-
-  /// @notice Called when a single ERC1155 token is transferred to this contract
-  /// @param operator The address which initiated the transfer
-  /// @param from The address which previously owned the token
-  /// @param tokenId The ID of the token being transferred
-  /// @param value The amount of token being transferred
-  /// @param data Additional data with no specified format
-  /// @return magicValue On a success, the selector of the function that was called
-  function onERC1155Received(
-    address operator,
-    address from,
-    uint256 tokenId,
-    uint256 value,
-    bytes calldata data
-  ) external returns (bytes4 magicValue);
-
-  /// @notice Called when multiple ERC1155 tokens are transferred to this contract
-  /// @param operator The address which initiated the transfer
-  /// @param from The address which previously owned the token
-  /// @param ids The list of token IDs being transferred
-  /// @param values The amounts of each token being transferred
-  /// @param data Additional data with no specified format
-  /// @return magicValue On a success, the selector of the function that was called
-  function onERC1155BatchReceived(
-    address operator,
-    address from,
-    uint256[] calldata ids,
-    uint256[] calldata values,
-    bytes calldata data
-  ) external returns (bytes4 magicValue);
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
-/// @title IERC223Receiver
-/// @notice Interface for the ERC223 receiver module
-interface IERC223Receiver {
-
-  /// @notice Called when ERC223 tokens are received by this contract
-  /// @param from The address which previously owned the tokens
-  /// @param value The amount of tokens being transferred
-  /// @param data Transaction metadata
-  /// @return signature The signature of the function to be called
-  function tokenReceived(address from, uint256 value, bytes calldata data) external returns (bytes4 signature);
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.18;
-
 /// @title IERC721Receiver
 /// @notice Interface for the ERC721 receiver module
 interface IERC721Receiver {
@@ -289,8 +234,173 @@ interface IERC777Receiver {
 
 }
 
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title IERC223Receiver
+/// @notice Interface for the ERC223 receiver module
+interface IERC223Receiver {
+
+  /// @notice Called when ERC223 tokens are received by this contract
+  /// @param from The address which previously owned the tokens
+  /// @param value The amount of tokens being transferred
+  /// @param data Transaction metadata
+  /// @return signature The signature of the function to be called
+  function tokenReceived(address from, uint256 value, bytes calldata data) external returns (bytes4 signature);
+
+}
+
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.18;
+
+/// @title IERC1155Receiver
+/// @notice Interface for the ERC1155 receiver module
+interface IERC1155Receiver {
+
+  /// @notice Called when a single ERC1155 token is transferred to this contract
+  /// @param operator The address which initiated the transfer
+  /// @param from The address which previously owned the token
+  /// @param tokenId The ID of the token being transferred
+  /// @param value The amount of token being transferred
+  /// @param data Additional data with no specified format
+  /// @return magicValue On a success, the selector of the function that was called
+  function onERC1155Received(
+    address operator,
+    address from,
+    uint256 tokenId,
+    uint256 value,
+    bytes calldata data
+  ) external returns (bytes4 magicValue);
+
+  /// @notice Called when multiple ERC1155 tokens are transferred to this contract
+  /// @param operator The address which initiated the transfer
+  /// @param from The address which previously owned the token
+  /// @param ids The list of token IDs being transferred
+  /// @param values The amounts of each token being transferred
+  /// @param data Additional data with no specified format
+  /// @return magicValue On a success, the selector of the function that was called
+  function onERC1155BatchReceived(
+    address operator,
+    address from,
+    uint256[] calldata ids,
+    uint256[] calldata values,
+    bytes calldata data
+  ) external returns (bytes4 magicValue);
+
+}
+
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.27;
+
+import { Stage2Module } from "./Stage2Module.sol";
+
+import { Payload } from "./modules/Payload.sol";
+import { IDelegatedExtension } from "./modules/interfaces/IDelegatedExtension.sol";
+import { LibOptim } from "./utils/LibOptim.sol";
+
+/// @title Simulator
+/// @author William Hua
+/// @notice Helper for simulating the execution of a payload
+contract Simulator is Stage2Module {
+
+  constructor(
+    address _entryPoint
+  ) Stage2Module(_entryPoint) { }
+
+  /// @notice Status of the call
+  enum Status {
+    Skipped,
+    Succeeded,
+    Failed,
+    Aborted,
+    Reverted,
+    NotEnoughGas
+  }
+
+  /// @notice Result of the call
+  struct Result {
+    Status status;
+    bytes result;
+    uint256 gasUsed;
+  }
+
+  /// @notice Simulate the execution of a payload
+  /// @param _calls The calls to simulate
+  /// @return results The results of the calls
+  function simulate(
+    Payload.Call[] calldata _calls
+  ) external returns (Result[] memory results) {
+    uint256 startingGas = gasleft();
+    bool errorFlag = false;
+
+    uint256 numCalls = _calls.length;
+    results = new Result[](numCalls);
+    for (uint256 i = 0; i < numCalls; i++) {
+      Payload.Call memory call = _calls[i];
+
+      // Skip onlyFallback calls if no error occurred
+      if (call.onlyFallback && !errorFlag) {
+        continue;
+      }
+
+      // Reset the error flag
+      // onlyFallback calls only apply when the immediately preceding transaction fails
+      errorFlag = false;
+
+      uint256 gasLimit = call.gasLimit;
+      if (gasLimit != 0 && gasleft() < gasLimit) {
+        results[i].status = Status.NotEnoughGas;
+        results[i].result = abi.encode(gasleft());
+        return results;
+      }
+
+      bool success;
+      if (call.delegateCall) {
+        uint256 initial = gasleft();
+        (success) = LibOptim.delegatecall(
+          call.to,
+          gasLimit == 0 ? gasleft() : gasLimit,
+          abi.encodeWithSelector(
+            IDelegatedExtension.handleSequenceDelegateCall.selector, 0, startingGas, i, numCalls, 0, call.data
+          )
+        );
+        results[i].gasUsed = initial - gasleft();
+      } else {
+        uint256 initial = gasleft();
+        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
+        results[i].gasUsed = initial - gasleft();
+      }
+
+      if (!success) {
+        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
+          errorFlag = true;
+          results[i].status = Status.Failed;
+          results[i].result = LibOptim.returnData();
+          continue;
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
+          results[i].status = Status.Reverted;
+          results[i].result = LibOptim.returnData();
+          return results;
+        }
+
+        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
+          results[i].status = Status.Aborted;
+          results[i].result = LibOptim.returnData();
+          break;
+        }
+      }
+
+      results[i].status = Status.Succeeded;
+      results[i].result = LibOptim.returnData();
+    }
+  }
+
+}
+
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.27;
 
@@ -457,116 +567,6 @@ contract Stage1Module is Calls, Stage1Auth, Hooks, ERC4337v07 {
     bytes32 _imageHash
   ) internal view virtual override(IAuth, Stage1Auth) returns (bool) {
     return super._isValidImage(_imageHash);
-  }
-
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.27;
-
-import { Stage2Module } from "./Stage2Module.sol";
-
-import { Payload } from "./modules/Payload.sol";
-import { IDelegatedExtension } from "./modules/interfaces/IDelegatedExtension.sol";
-import { LibOptim } from "./utils/LibOptim.sol";
-
-/// @title Simulator
-/// @author William Hua
-/// @notice Helper for simulating the execution of a payload
-contract Simulator is Stage2Module {
-
-  constructor(
-    address _entryPoint
-  ) Stage2Module(_entryPoint) { }
-
-  /// @notice Status of the call
-  enum Status {
-    Skipped,
-    Succeeded,
-    Failed,
-    Aborted,
-    Reverted,
-    NotEnoughGas
-  }
-
-  /// @notice Result of the call
-  struct Result {
-    Status status;
-    bytes result;
-    uint256 gasUsed;
-  }
-
-  /// @notice Simulate the execution of a payload
-  /// @param _calls The calls to simulate
-  /// @return results The results of the calls
-  function simulate(
-    Payload.Call[] calldata _calls
-  ) external returns (Result[] memory results) {
-    uint256 startingGas = gasleft();
-    bool errorFlag = false;
-
-    uint256 numCalls = _calls.length;
-    results = new Result[](numCalls);
-    for (uint256 i = 0; i < numCalls; i++) {
-      Payload.Call memory call = _calls[i];
-
-      // Skip onlyFallback calls if no error occurred
-      if (call.onlyFallback && !errorFlag) {
-        continue;
-      }
-
-      // Reset the error flag
-      // onlyFallback calls only apply when the immediately preceding transaction fails
-      errorFlag = false;
-
-      uint256 gasLimit = call.gasLimit;
-      if (gasLimit != 0 && gasleft() < gasLimit) {
-        results[i].status = Status.NotEnoughGas;
-        results[i].result = abi.encode(gasleft());
-        return results;
-      }
-
-      bool success;
-      if (call.delegateCall) {
-        uint256 initial = gasleft();
-        (success) = LibOptim.delegatecall(
-          call.to,
-          gasLimit == 0 ? gasleft() : gasLimit,
-          abi.encodeWithSelector(
-            IDelegatedExtension.handleSequenceDelegateCall.selector, 0, startingGas, i, numCalls, 0, call.data
-          )
-        );
-        results[i].gasUsed = initial - gasleft();
-      } else {
-        uint256 initial = gasleft();
-        (success) = LibOptim.call(call.to, call.value, gasLimit == 0 ? gasleft() : gasLimit, call.data);
-        results[i].gasUsed = initial - gasleft();
-      }
-
-      if (!success) {
-        if (call.behaviorOnError == Payload.BEHAVIOR_IGNORE_ERROR) {
-          errorFlag = true;
-          results[i].status = Status.Failed;
-          results[i].result = LibOptim.returnData();
-          continue;
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_REVERT_ON_ERROR) {
-          results[i].status = Status.Reverted;
-          results[i].result = LibOptim.returnData();
-          return results;
-        }
-
-        if (call.behaviorOnError == Payload.BEHAVIOR_ABORT_ON_ERROR) {
-          results[i].status = Status.Aborted;
-          results[i].result = LibOptim.returnData();
-          break;
-        }
-      }
-
-      results[i].status = Status.Succeeded;
-      results[i].result = LibOptim.returnData();
-    }
   }
 
 }

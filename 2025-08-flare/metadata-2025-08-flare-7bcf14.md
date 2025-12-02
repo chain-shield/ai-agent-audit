@@ -1,199 +1,169 @@
 
 ## PROTOCOL OVERVIEW:
 
-# Flare **FAssets** Protocol – Technical Overview
+## Overview
+FAssets is Flare’s **trust-minimised, over-collateralised cross-chain bridge**.  It lets users mint ERC-20 "FAsset" representations of non-smart-contract coins such as BTC, DOGE or XRP and later redeem them back to the native chain.  The solidity code-base is architected as a **diamond (EIP-2535) + proxy micro-system**, split into specialised modules that together manage collateral, agent vaults, minting/redemption flows, a pooled collateral system, liquidation, a Core Vault, price feeds, and governance.
 
-*Author note: <4 000 words total (~2 700).*  This document presents the FAssets protocol from a smart-contract-developer perspective and cross–references the code base shipped in the repository you received.
+The essential ideas are:
+* **Agents** operate vaults that hold underlying assets off-chain and lock collateral on-chain.  Anyone may mint with an Agent providing the Agent has enough free collateral.
+* **Collateral** is two-tier:  
+  • **Vault collateral** (stablecoins etc.) locked by the Agent itself.  
+  • **Pool collateral** (native FLR/SGB) provided by both the Agent and public LPs.  LPs receive **Collateral-Pool Tokens (CPT)** that accrue fees.
+* **Over-collateralisation** ratios and a multi-step **liquidation** engine guarantee solvency.  If the vault CR or pool CR drop below governance thresholds, open liquidations burn FAssets for collateral at a premium.
+* **Flare Data Connector (FDC)** attestation contracts validate every underlying-chain transaction (payments, non-payments, block existence, address validity).  All mint/redemption state-changes are gated by FDC proofs.
+* A **FIFO redemption queue** guarantees fair agent selection during redemption and allows the protocol to track who must pay which redeemer.
+* A **Core Vault** (multisig on the underlying chain) improves capital efficiency.  Agents can transfer excess underlying into the Core Vault, freeing on-chain collateral and providing a system-wide liquidity back-stop.
+* Governance, parameter tuning and upgrades are routed through multi-sig governed contracts with timelocks.
 
----
-## 1. High-Level Goal
-
-FAssets is an over-collateralised bridge that lets users on Flare mint ERC-20 wrappers ( **FAssets** ) of non-smart-contract coins such as XRP, BTC or DOGE.  The design is **trust-minimised**: value is guaranteed by a mix of (1) on-chain collateral locked by *agents* and the community and (2) cryptographic proofs of the underlying payments delivered by the Flare Data Connector (FDC).  All flows are permissionless (except for agent onboarding which is governance/registry-gated).
-
-Typical life-cycle
-1. **Mint** – any user deposits e.g. BTC to an *agent* address; after FDC attests the deposit, the AssetManager mints FBTC on Flare.
-2. **Use** – FBTC can be transferred, provided as DeFi collateral, bridged etc.
-3. **Redeem** – a holder burns FBTC and the same agent (or the Core Vault) sends real BTC back; if they fail, the holder receives the agent’s collateral plus a premium.
-
-Liquidations, challenges, a community collateral pool and a Core Vault guarantee that minted FAssets remain safely redeemable even across price shocks and malicious behaviour.
-
----
-## 2. Actors & Roles
-
-| Actor | Smart-contract address(es) | Controls | Key responsibilities |
-|-------|---------------------------|----------|----------------------|
-| **Governance** | `Governed`, `GovernedProxy…` | parameters, upgrades | Adds collateral types, upgrades facets, whitelists agents, sets fees & CRs. |
-| **Agents** | `AgentVault`, `CollateralPool` | vault collateral, pool collateral, underlying hot wallets | Hold underlying assets, pay out redemptions, earn fees. |
-| **Users** | EOAs | FAsset balances | Mint & redeem. |
-| **Collateral providers** | EOAs | CPT tokens | Supply FLR/SGB to pools, earn fee share. |
-| **Liquidators** | EOAs | Any | Burn FAssets of unhealthy agents against collateral. |
-| **Challengers** | EOAs | Any | Prove agent infractions to earn rewards. |
-| **Core Vault operators** | multisig on native chain | pooled underlying liquidity | Execute batched payouts / escrows under Core Vault rules. |
+Below we drill into the main on-chain building blocks and how they interact.
 
 ---
-## 3. Contract Architecture
+## 1.  Upgrade & Governance Scaffold
+### Diamond
+File `contracts/diamond/implementation/Diamond.sol` is the EIP-2535 dispatcher.  **Facets** implement discrete functional areas: e.g. `MintingFacet`, `RedemptionRequestsFacet`, `LiquidationFacet`, `EmergencyPauseFacet`.  A small `AssetManagerDiamondCutFacet` exposes `diamondCut`, restricted by a governance timelock.
 
-### 3.1 Diamonds & Facets
-The heart of every asset instance is **`AssetManager`**, implemented as an EIP-2535 **Diamond** (`contracts/assetManager/implementation/AssetManager.sol`).  It has ~30 facets covering:
-- Collateral accounting     – `AgentCollateralFacet`, `CollateralReservationsFacet`, `CollateralTypesFacet` …
-- Agent lifecycle           – `AgentVaultManagementFacet`, `AvailableAgentsFacet`, `AgentSettingsFacet` …
-- Minting / redemption      – `MintingFacet`, `RedemptionRequestsFacet`, `RedemptionConfirmationsFacet`, `RedemptionTimeExtensionFacet`
-- Liquidations & challenges – `LiquidationFacet`, `ChallengesFacet`
-- System & settings         – `SettingsManagementFacet`, `SystemStateManagementFacet`, `EmergencyPauseFacet`
+### Governed & Timelock
+`GovernedBase` introduces an **initial governance → production governance** model, a timelocked call queue, and executor roles.  All sensitive facets inherit its `onlyGovernance`, `onlyGovernanceWithTimelockAtLeast`, or `onlyImmediateGovernance` modifiers.  Parameter setters are additionally throttled by `SettingsUpdater` so the same knob cannot be toggled too frequently.
 
-Because state lives in diamond storage, **all upgrades are done via `AssetManagerDiamondCutFacet`** and are restricted by `Governance`.
-
-### 3.2 Periphery contracts
-
-* Agents
-  * `AgentVault` (vault collateral, underlying address binding, ERC-1967 proxy)
-  * `CollateralPool` + `CollateralPoolToken` (FLR pool + CPT ERC-20, UUPS)
-  * Factories (`AgentVaultFactory`, `CollateralPoolFactory`, `CollateralPoolTokenFactory`) create proxies and wire them to the AssetManager.
-* Registry & controller
-  * `AgentOwnerRegistry` – whitelist of management / work addresses, metadata.
-  * `AssetManagerController` – batch governance for multiple diamonds; upgrade helpers, global param pushes, emergency pause.
-* Oracles / prices
-  * `FtsoV2PriceStore` + proxy – stores FTSO or relay prices & “trusted provider” medians.
-  * Price reader interface is used by facets such as `CollateralTypesFacet`.
-* Core Vault subsystem
-  * `CoreVaultManager` (+ proxy) – on-chain queue of payouts / escrows for the underlying-chain multisig.
-* Utils & mocks — `FakePriceReader`, `FakeERC20`, malicious executors for test suites.
-
-### 3.3 Upgrade pattern summary
-- All user-facing logic is behind ERC-1967 **proxies** or **Diamonds**.
-- UUPS (`upgradeTo`, `upgradeToAndCall`) is used for most leaf contracts; upgrade auth = AssetManager or Governance.
-- Proxies are instantiated by factories or governance scripts; impl addresses are immutable for factories but can be upgraded on already-created proxies via governance.
+### Proxy Factories
+Agent vaults, collateral pools, CPT tokens, the AssetManagerController, CoreVaultManager, FAsset itself, etc. are all deployed behind **ERC-1967 UUPS proxies** using dedicated factories.  Upgrades are restricted either to governance or to the parent AssetManager.
 
 ---
-## 4. Data & Economic Model
-
-### 4.1 Collateral Structure
-1. **Vault collateral** – agent-supplied (stablecoin / ETH), held in `AgentVault`.  Covers ordinary redemption obligations.
-2. **Pool collateral** – FLR / SGB from agents *and* community, held in `CollateralPool`.
-   * Providers receive **CPT** tokens whose transferability is limited by (a) a *time lock* and (b) *fee debt*.
-3. **Collateral Ratios (CR)** – Obtained from price feeds; thresholds:
-   * Minimal CR (governance) – below → liquidation allowed after grace.
-   * Liquidation CR – below → immediate liquidation.
-   * Safety CR – must be reached to exit liquidation.
-   * Agent-set: Minting CR, Exit CR (pool), Top-up CR.
-
-### 4.2 Fees
-| Fee | Payer | Split / Destination | Purpose |
-|-----|-------|---------------------|---------|
-| Collateral reservation (CRF) | minter | agent + pool (same split as mint fee) | compensate locked collateral during mint window |
-| Minting fee | minter (underlying) | agent % on underlying, pool % minted as FAssets | agent income + pool incentive |
-| Executor fee | minter (optional, FLR) | executor | incentivise proof submission |
-| Redemption fee | redeemer (underlying) | agent | covers tx fee on underlying |
-| Liquidation premium | liquidator vs. agent | extra reward to burn FAssets |
-
-### 4.3 Core Vault
-A multi-sig custody account on the underlying chain that holds pooled assets out of agents’ direct reach.  Agents can *transfer in* to reduce collateral needs or *request return* via `CoreVaultManager`.  CV maintains daily escrows to minimise hot liquidity.
+## 2.  Price & Oracle Layer
+`FtsoV2PriceStore` is the on-chain store of FTSO prices.  It accepts two data paths:  (1) Merkle-root prices relayed by a Flare relay contract,  (2) “trusted provider” submissions which are median-aggregated and checked for spread limits.  The store exposes three getters expected by the rest of the protocol: `getPrice`, `getPriceFromTrustedProviders`, and `getPriceFromTrustedProvidersWithQuality`.  Pure math helpers (SafePct, MathUtils) prevent overflow and rounding errors during price conversions.
 
 ---
-## 5. Main Flows (Solidity perspective)
+## 3.  Collateral System
+### Collateral Registry
+`CollateralTypesFacet` and `CollateralTypes` maintain a registry of **vault** and **pool** collateral tokens.  Each entry holds FTSO symbol pairs, decimals, min / safety CRs and deprecation time.  Governance can add types or deprecate them with a grace period.
 
-### 5.1 Minting
+### Vault Collateral
+Each Agent chooses one whitelisted ERC-20 stablecoin (USDC, USDX, …).  The **AgentVault** contract (UUPS) custody that collateral.  Only the AssetManager may force payouts/liquidations; the owner can deposit/announce-withdraw subject to CR checks & timelocks.
+
+### Pool Collateral & CPTs
+Pool collateral is always wrapped FLR/SGB (WNAT).  A dedicated **CollateralPool** holds the NAT and mints **CollateralPoolTokens** via `CollateralPoolTokenFactory`.  Timelocks on CPTs prevent sandwich attacks and fee earning is tracked by virtual accounting (`totalFAssetFees`, `feeDebt`).
+
+### Collateral Math Helpers
+`AgentCollateral` computes free collateral lots, locked collateral, min-collateral required to mint a given AMG, the current CR for vault/pool, etc.  `LiquidationPaymentStrategy` produces the time-dependent vault/pool payout split when an Agent is liquidated.
+
+---
+## 4.  Agents & Vault Lifecycle
+1. **Creation** – `AgentVaultManagementFacet.createAgentVault()` verifies the prospective underlying address via FDC attestation, reserves a unique CPT suffix, deploys vault + pool proxies via factories, stores agent settings (fee, mint-CRs, etc.) and emits `AgentVaultCreated`.
+2. **Availability** – Owners call `AvailableAgentsFacet.makeAgentAvailable()` once at least one free lot exists.  The Agent enters the public minting list.  Exit is a two-step announce + execute with delays.
+3. **Settings Updates** – `AgentSettingsFacet` allows per-agent fee / CR / pool-share updates through announce-execute timelocks enforced by global settings.
+4. **Collateral Maintenance** – `AgentCollateralFacet` handles announced withdrawals, collateral token switches (when a vault token is deprecated), and WNat upgrades.
+5. **Destruction** – Agents may announce destroy when fully backed = 0; after timelock they `destroyAgent`, which self-destructs vault and pool proxies and frees implementation storage.
+
+---
+## 5.  Minting Flow
 ```mermaid
-sequenceDiagram
-  participant User
-  participant AssetMgr as AssetManager (diamond)
-  participant AgentVault
-  participant FDC as Flare Data Connector
-  participant Exec as Executor (bot)
-  User->>AssetMgr: reserveCollateral(agent, lots)
-  note right of AssetMgr: Locks agent collateral; emits Reservation(id, ref)
-  User-->>AgentVault: underlying payment + ref
-  FDC-->>AssetMgr: attestation(payment)
-  Exec->>AssetMgr: executeMinting(id, attestation)
-  AssetMgr->>FAsset: mint(lots)
-  AssetMgr-->>User: FBTC, event RedemptionTicket
+graph LR
+Minter--CRT-->AssetManager
+AssetManager--lock collateral-->AgentVault
+Minter--Underlying Payment-->Agent Address  (XRPL/BTC/...)
+FDC--Proof-->AssetManager
+AssetManager--mint FAsset & fees-->Minter / Pool
 ```
-Implementation details:
-* `CollateralReservationsFacet.reserveCollateral` creates **CRT** struct, moves required collateral from *free* → *reserved*.
-* Payment window = `underlyingBlocksForPayment` **OR** `underlyingSecondsForPayment`, whichever earlier.
-* `MintingFacet.executeMinting` verifies proof (`TransactionAttestation` lib), mints FAssets and splits fees.
-* A FIFO **redemption queue** ticket is appended.
-* Edge cases handled by `proveNonPayment`, executor timeouts, dust logic.
 
-### 5.2 Redemption
+1. **Collateral Reservation (CRT)** – `CollateralReservationsFacet.reserveCollateral()` checks that the Agent is public & collateral is free, locks collateral lots, collects the Collateral Reservation Fee (CRF) in NAT and emits a CRT with a unique payment reference and deadlines.
+2. **Underlying Payment** – The minter sends the required amount + agent fee on the underlying chain.
+3. **Payment Proof & Execution** – Anyone (minter, executor, agent) submits the payment proof to `MintingFacet.executeMinting()`.  The function verifies the proof, credits the Agent’s underlying balance, releases the lock, distributes the minting fee between Agent & pool, mints FAssets to the minter, and enqueues a redemption ticket.
+4. **Self-Mint** – Agents can mint from their own payments (`selfMint`) or from free underlying balance (`mintFromFreeUnderlying`).  These skip CRT/fee parts and directly update state.
+5. **Failure Paths** – If payment never arrives, after deadline the agent may call `MintingDefaultsFacet.mintingPaymentDefault()` to pocket CRF and release collateral.  If attestations expire, `unstickMinting` burns collateral equivalent in NAT to unlock.
+
+Minting is blocked when `mintingPaused` flag is set (EmergencyPauseFacet or governance).
+
+---
+## 6.  Redemption Flow
 ```mermaid
-sequenceDiagram
-  participant Redeemer
-  participant AssetMgr
-  participant Agent
-  Redeemer->>AssetMgr: redeem(lots, underlyingAddr)
-  AssetMgr->>FAsset: burn(lots)
-  loop per agent
-    AssetMgr-->>Agent: RedemptionPaymentRequest(ref, amount)
-  end
-  Agent-->>Redeemer: underlying payment
-  Agent->>FDC: submitProof(tx)
-  Agent->>AssetMgr: confirmRedemption(requestId, proof)
-  AssetMgr->>AgentVault+Pool: releaseCollateral
+graph LR
+Redeemer--Burn FAssets-->AssetManager
+AssetManager--select tickets-->RedeemerEvents
+Agent--Underlying Payment-->Redeemer Address
+FDC--Payment Proof-->AssetManager
+AssetManager--release collateral-->AgentVault / Pool
 ```
-If agent fails before `lastBlock|Timestamp`:
-* Redeemer calls `redemptionPaymentDefault` with *non-payment* proof.
-* AssetManager pays out vault(+pool) collateral + **redemptionDefaultPremium**.
+1. **Request** – `RedemptionRequestsFacet.redeem()` burns a whole-lot amount of FAssets, selects tickets from the global queue (FIFO), stores a `Redemption.Request`, and emits deadlines + unique payment references per Agent.
+2. **Payment** – Each agent must pay the redeemer on the underlying chain within the given window.
+3. **Confirmation** – `RedemptionConfirmationsFacet.confirmRedemptionPayment()` verifies the payment proof; on success collateral is unlocked, pool fee share is minted, executor fee is paid/burned, and ticket/agent counters are updated.
+4. **Failure** – If payment not made, redeemer (or after delay anyone) calls `RedemptionDefaultsFacet.redemptionPaymentDefault()` providing non-existence proof.  The redeemer is paid from vault (and pool if needed) with a premium; agent’s collateral/dust counters are updated and liquidation may start.
+5. **Edge Cases** – Blocked addresses, expired attestations, or agent unresponsiveness are handled by alternate proofs and the **confirmation-by-others** reward path.
 
-### 5.3 Liquidation
-Triggered when vault or pool CR < minimal CR for `liquidationStepTime` or immediately if < liquidation CR.
-* `LiquidationFacet.startLiquidation` opens auction window; liquidators burn FAssets via `LiquidationPaymentStrategy` library.
-* Premium increases in steps (5→8→12 %) every `liquidationStepTime` seconds.
-* Proceeds are paid from **vault collateral** (principal) and **pool collateral** (premium).
-* Stops once CR hits safety CR.
-* A **full liquidation** is triggered by ChallengesFacet after a successful agent infraction proof.
+Self-redemption (agent self-close) burns FAssets the agent owns and frees collateral instantly.
 
 ---
-## 6. Governance & Emergency
-
-* All core contracts inherit `Governed` which pulls settings ( vote delays, immediate governance list …) from `GovernanceSettings`.
-* Parameters are changed through dedicated setters on facets; AssetManagerController batches them across multiple instances.
-* `EmergencyPauseFacet` & `EmergencyPauseTransfersFacet` allow governance or pre-approved senders to pause minting, all ops, or even token transfers for a bounded duration.
-
----
-## 7. Security & Upgrade Considerations
-
-1. **Diamond storage layout** – new facets must not clash with existing storage.  Internal libs in `library/data/` store structs referenced by facets.
-2. **Upgrades** –
-   * Diamonds: only via `diamondCut` called by governance.
-   * UUPS contracts: each implementation overrides `_authorizeUpgrade`; AssetManager or Governance is the only allowed caller.
-3. **Re-entrancy & malicious executors** – test contracts (`MaliciousMintExecutor`, `MaliciousExecutor`) simulate attacks; production facets guard with re-entrancy modifiers and state machine flags.
-4. **Price oracle spoofing** – protocol can be paused if trusted price age exceeds `maxTrustedPriceAgeSeconds`.
-5. **Core Vault** – manual multisig plus time-locked escrows limit daily withdrawal capacity; on-chain `CoreVaultManager` cannot be upgraded without governance.
+## 7.  Liquidation Mechanics
+`LiquidationFacet` can be called by anyone:
+* **startLiquidation** – if either vaultCR < minimalCR or poolCR < minimalCR, the facet flips agent status to LIQUIDATION, starts a timestamped premium schedule, and broadcasts the event.
+* **liquidate** – liquidators burn FAssets, receiving vault & pool collateral according to `LiquidationPaymentStrategy` (premium grows in steps).  Liquidation continues until CR ≥ safetyCR or the premium schedule ends.
+* **endLiquidation** – once healthy, anyone can end liquidation which resets agent status to NORMAL and clears liquidation markers.
+* **Full liquidation** – Illegal transactions (double-spend, free-balance negative, etc.) reported via `ChallengesFacet` skip to FULL_LIQUIDATION where agent is barred from future minting.
 
 ---
-## 8. Repository Map (short)
+## 8.  Core Vault Integration
+The **CoreVaultManager** (multisig on underlying chain) and the **CoreVaultClientFacet/CoreVaultClientSettingsFacet** create an optional path:
+* Agents can **transfer to Core Vault**; collateral is temporarily locked and a redemption-ticket-like request is created.  When CV operators provide payment proof on-chain via `confirmTransferToCoreVault`, collateral is released.
+* Agents may **request return** of assets from CV; CoreVaultManager emits on-chain instructions and later confirms payment.
+* Large users can redeem directly from CV via `redeemFromCoreVault`, subject to min lots and possible KYC.
+Safety parameters (min remaining capacity, fee, time extension) are governable via SettingsFacet.
+
+---
+## 9.  Emergency Controls
+Two independent pause channels exist:
+1. **Operations Pause (EmergencyPauseFacet)** – stops CREATION of new CRTs/redemptions/liquidations/minting but allows confirmations to finish.  A rolling-window counter and max-duration cap avoid abuse.
+2. **Transfer Pause (EmergencyPauseTransfersFacet)** – halts FAsset `transfer()` to mitigate contagion while still allowing mint/redeem.
+Both can be triggered by governance or pre-approved “emergency senders”; governance pauses override controller pauses.
+
+---
+## 10.  Security & Upgrades
+* **ReentrancyGuard** (diamond-aware) protects all external, state-changing functions that transfer value.
+* **PaymentConfirmations** storage prevents duplicate use of the same underlying tx proof.
+* **SettingsValidators** constrain governance parameter ranges and monotonicity (e.g. liquidation factors must be increasing, windows ≤ 1 day).
+* **Libraries vs Facets** – all heavy arithmetic or multi-step state changes are in libraries (`Minting`, `Redemptions`, `AgentBacking`) to keep facets slim and testable.
+* **Test/Malicious Contracts** included (MaliciousMintExecutor, MaliciousExecutor, …) demonstrate expected failure patterns exploited in fuzzing.
+
+---
+## 11.  Contract Topology Snapshot
 ```
-contracts/
- ├ agentOwnerRegistry/              – agent registry + proxy
- ├ agentVault/                      – vault impl + factory
- ├ assetManager/                    – diamond root, facets, libs, data
- ├ assetManagerController/          – batch governance controller
- ├ collateralPool/                  – pool, token, factories
- ├ coreVaultManager/                – Core Vault orchestrator + proxy
- ├ diamond/                         – generic Diamond + Loupe
- ├ ftso/                            – price store + proxy
- ├ fassetToken/                     – ERC-20 impl + proxy
- ├ utils/, flareSmartContracts/     – helpers, OZ deps, mocks
+AssetManager (diamond proxy)
+ ├─ facets/… (≈30)                             ┐
+ ├─ libraries/… (≈40) – pure & storage helpers ┤ core protocol
+ └─ data/… – structs only                      ┘
+
+AgentVault (UUPS proxy) ↔ CollateralPool (UUPS) → CollateralPoolToken (UUPS)
+AssetManagerController (UUPS)  ↔ AddressUpdater (off-chain JSON map)
+CoreVaultManager (UUPS proxy)  ↔ Multisig account on XRP/BTC/DOGE
+FAsset (UUPS proxy)            ↔ FAssetProxy (ERC-1967) ERC-20 w/ permit + checkpoints
+FtsoV2PriceStore (UUPS proxy)  ↔ FtsoV2PriceStoreProxy
+AgentOwnerRegistry (UUPS proxy)
 ```
+All pointed to by factories for deterministic deployments.
 
 ---
-## 9. Key Parameters (Songbird test values)
-| Setting | Value |
-|---------|-------|
-| Lot size XRP | 10 XRP |
-| Mint cap | 750 k XRP |
-| Collateral reservation fee | 0.5 % |
-| Redemption fee | 0.5 % |
-| Vault minimal CR | 1.2 |
-| Pool minimal CR | 1.5 |
-| Liquidation premium steps | 5 % / 8 % / 12 % every 300 s |
-| Core Vault escrow amount | 150 k XRP |
+## 12.  Gas & Storage Efficiency
+* **AMG / UBA abstraction** stores minted amounts as 64-bit integers, drastically shrinking per-agent storage.
+* **MerkleTree** utilises iterative hash with O(log n) memory.
+* **Checkpoint histories** compress balance snapshots using uint64/uint192 packing and allow pruning via cleaner contracts.
+* **Redemption queue** is a doubly-linked list keyed by uint64 ids, enabling O(1) deletion without array shifting.
 
 ---
-## 10. Conclusion
+## 13.  Operational Parameters (Songbird defaults)
+* Lot size: **10 XRP**  
+* Minimal vault CR: **1.2**, Pool CR: **1.5**  
+* Liquidation premiums: **5 / 8 / 12 %** stepping every 300 s  
+* CRF: **0.5 %**, Minting fee default: **1 %** (30 % to pool)  
+* Proof windows: Deposit **15 min** or **225 blocks**, Attestation availability **24 h**  
+Full table in documentation can be updated on-chain via `SettingsManagementFacet`.
 
-FAssets provides a comprehensive, modular and upgradeable framework for bringing non-EVM assets onto Flare in a capital-efficient yet non-custodial way.  The design balances multiple safety nets—over-collateralisation, liquidation, pooled collateral, challenge-rewards and the Core Vault—while still allowing agents to operate profitably.  The code base leverages modern Solidity patterns (Diamonds, UUPS, factories) and isolates risk via clearly defined roles and governance controls, making it an illustrative reference for large-scale, cross-chain asset protocols.
+---
+## 14.  Development Notes
+* Solidity ≥0.8 – all custom math is overflow-checked, no SafeMath needed (except SafeMath64 for 64-bit casts).
+* OZ 4.9.6, Hardhat 2.24, Foundry project for fuzz/invariant tests.
+* Extensive unit, integration, forge-invariant and gas-snapshot tests; malicious stubs used for negative testing.
+
+---
+## Conclusion
+The FAssets protocol contracts assemble a sophisticated **cross-chain asset bridge** with layered collateral, oracle-verified proofs, dynamic liquidation, and governance-timelocked upgradeability.  The diamond architecture lets each functional block evolve independently while retaining a single storage layout.  Collateral pools and the Core Vault dramatically improve capital efficiency compared with naïve over-collateralised bridges, while strict CR thresholds, liquidation incentives, and attestation-enforced workflows aim to make user redemption safety equivalent to holding the native asset itself.
 
 
 

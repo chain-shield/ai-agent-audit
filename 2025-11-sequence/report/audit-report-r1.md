@@ -3,6 +3,10 @@
 
 ##Findings by Pattern
 
+USING MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE = false; and gpt-5
+4 VALID UNIQUES
+
+NICHE_PATTERN_ANALYSIS_MODE = false;
 
  **Derived From** : Unbounded return-data copy enables return-bomb DoS via router call
 
