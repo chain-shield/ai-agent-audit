@@ -191,7 +191,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
                 if !raw_findings.findings.is_empty() {
                     // Phase 4: Verify findings and remove false positives
-                    let verify_findings = phases::verify_findings::execute(
+                    let mut verify_findings = phases::verify_findings::execute(
                         raw_findings,
                         &codeblock,
                         &finding_verify_agent,
@@ -200,13 +200,13 @@ pub async fn review_codebase_for_security_issues_v2(
                     .await?;
 
                     // Phase 5: Quality check and enhance findings
-                    let mut quality_findings = phases::quality_check::execute(
-                        verify_findings,
-                        &codeblock,
-                        &verify_agent,
-                        &repo_clone,
-                    )
-                    .await?;
+                    // let mut quality_findings = phases::quality_check::execute(
+                    //     verify_findings,
+                    //     &codeblock,
+                    //     &verify_agent,
+                    //     &repo_clone,
+                    // )
+                    // .await?;
 
                     // Phase 6: PoC Generation for High-Severity Findings
                     // REQUIREMENTS: instructions for writing PoC plus template PoC file (if applicable)
@@ -230,7 +230,7 @@ pub async fn review_codebase_for_security_issues_v2(
                             poc_sem.acquire_owned().await.expect("POC semaphore closed");
 
                         match phases::add_poc_findings::execute(
-                            quality_findings.clone(),
+                            verify_findings.clone(),
                             &codeblock,
                             &finding_verify_agent,
                             &repo_clone,
@@ -238,7 +238,7 @@ pub async fn review_codebase_for_security_issues_v2(
                         .await
                         {
                             Ok(findings_with_pocs) => {
-                                quality_findings = findings_with_pocs;
+                                verify_findings = findings_with_pocs;
                                 log::info!("✅ Phase 6 completed successfully");
                             }
                             Err(e) => {
@@ -252,7 +252,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
                     // Phase 7: Create professional markdown report for EACH finding (only if PoC is passing)
                     match phases::create_report::execute(
-                        quality_findings.clone(),
+                        verify_findings.clone(),
                         &codeblock,
                         &finding_verify_agent,
                         &repo_clone,
@@ -260,7 +260,7 @@ pub async fn review_codebase_for_security_issues_v2(
                     .await
                     {
                         Ok(findings_with_reports) => {
-                            quality_findings = findings_with_reports;
+                            verify_findings = findings_with_reports;
                             log::info!("✅ Phase 7 completed successfully");
                         }
                         Err(e) => {
@@ -272,13 +272,13 @@ pub async fn review_codebase_for_security_issues_v2(
 
                     // Save findings to database before extending
                     let db = results_db.lock().await;
-                    if let Err(e) = db.insert_findings(&quality_findings, &repo_clone) {
+                    if let Err(e) = db.insert_findings(&verify_findings, &repo_clone) {
                         log::warn!("Failed to save findings to database: {}", e);
                     }
 
                     // Extend the aggregate findings
                     let mut all_findings = all_issues.lock().await;
-                    all_findings.findings.extend(quality_findings.findings);
+                    all_findings.findings.extend(verify_findings.findings);
                 }
                 Ok(())
             }

@@ -196,7 +196,7 @@ pub async fn execute(
                     info!(
                         "{} is {} => {}",
                         arc_findings.findings[i].title,
-                        arc_findings.findings[i].status.unwrap_or_default(),
+                        is_legit_struct.status,
                         &is_legit_struct
                             .status_justification
                             .clone()
