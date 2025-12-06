@@ -11,6 +11,7 @@ use crate::{
             semaphore::GENERAL_SEM,
         },
         findings::findings::{Finding, Findings},
+        phases::verify_rounds::FindingStatus,
         prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
         utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
     },
@@ -28,41 +29,7 @@ use crate::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
-use strum_macros::EnumIter;
 use tokio::sync::Mutex;
-
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    EnumIter,
-    strum_macros::EnumString,
-    strum_macros::Display,
-)]
-pub enum FindingStatus {
-    #[default]
-    Valid,
-    InvalidBugDoesNotExist,
-    InvalidOutOfScope,
-    InvalidUserErrorOrMistake,
-    InvalidGoveranaceRisk,
-    InvalidERC20EdgeCase,
-    InvalidNotExploitable,
-    InvalidFutureSpeculation,
-    InvalidByDesign,
-    InvalidSafeGuardInPlace,
-    LowSeverityDueToLowImpact,
-    LowSeverityDueToRareLikelihood,
-    InvalidOtherReason,
-    NeedsMoreInfo,
-}
 
 /// Verification result for a potential vulnerability
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -71,26 +38,6 @@ pub struct LegitVulnerability {
     pub status_justification: Option<String>,
     #[serde(deserialize_with = "deserialize_finding_complexity")]
     pub finding_complexity: u8,
-}
-
-/// Helper function to deserialize boolean from string or boolean
-/// Used by scope_findings.rs
-pub fn deserialize_bool_from_str_or_bool<'de, D>(
-    deserializer: D,
-) -> std::result::Result<bool, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let val: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
-    match val {
-        serde_json::Value::Bool(b) => Ok(b),
-        serde_json::Value::String(s) => match s.to_lowercase().as_str() {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            _ => Err(serde::de::Error::custom("expected boolean or string")),
-        },
-        _ => Err(serde::de::Error::custom("expected boolean or string")),
-    }
 }
 
 /// Helper function to deserialize u8 from string or number with validation (1-10)
@@ -196,7 +143,7 @@ pub async fn execute(
                     info!(
                         "{} is {} => {}",
                         arc_findings.findings[i].title,
-                        is_legit_struct.status,
+                        is_legit_struct.status.clone(),
                         &is_legit_struct
                             .status_justification
                             .clone()
@@ -236,7 +183,7 @@ pub async fn execute(
         .map(|(idx, f)| {
             let legit_findings = legit_findings_vec[idx].clone();
             let enriched_finding = Finding {
-                status: Some(legit_findings.status),
+                status: Some(vec![legit_findings.status]),
                 status_justification: legit_findings.status_justification,
                 finding_complexity: Some(legit_findings.finding_complexity),
                 ..f.clone()

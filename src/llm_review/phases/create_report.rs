@@ -8,7 +8,7 @@ use crate::{
         agent::agent_enums::AIAgent,
         analysis::{context_state::get_metadata_context, semaphore::VERIFY_SEM},
         findings::findings::{Finding, Findings},
-        phases::{add_poc_findings::PocStatus, verify_findings::FindingStatus},
+        phases::{add_poc_findings::PocStatus, verify_rounds::FindingStatus},
         prompt_support::create_report_prompt::generate_create_report_prompt,
     },
     prepare_code::git_clone::RepoPaths,

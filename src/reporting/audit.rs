@@ -8,7 +8,7 @@ use crate::{
             finding_enums::Severity,
             findings::{Finding, Findings},
         },
-        phases::verify_findings::FindingStatus,
+        phases::verify_rounds::FindingStatus,
         utils::prompt_context::{self, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
