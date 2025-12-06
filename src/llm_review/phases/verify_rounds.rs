@@ -21,6 +21,7 @@ use crate::{
 use log::info;
 
 use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use strum_macros::EnumIter;
@@ -60,6 +61,7 @@ pub enum FindingStatus {
 
 pub trait AnalysisRound {
     type Spec: FindingAnalysis;
+    fn findings(&self) -> &[Self::Spec];
 }
 
 pub trait FindingAnalysis {
@@ -67,18 +69,29 @@ pub trait FindingAnalysis {
     fn print_analysis_results(&self);
     fn generate_verify_prompt() -> String;
     fn generate_verify_json() -> String;
+    fn id(&self) -> String;
+    fn get_justification(&self) -> String;
 }
 
 impl AnalysisRound for VerifyRoundOne {
     type Spec = RoundOneLegitAnalysis;
+    fn findings(&self) -> &[Self::Spec] {
+        &self.findings
+    }
 }
 
 impl AnalysisRound for VerifyRoundTwo {
     type Spec = RoundTwoLegitAnalysis;
+    fn findings(&self) -> &[Self::Spec] {
+        &self.findings
+    }
 }
 
 impl AnalysisRound for VerifyRoundThree {
     type Spec = RoundThreeLegitAnalysis;
+    fn findings(&self) -> &[Self::Spec] {
+        &self.findings
+    }
 }
 
 /// Executes the verification phase
@@ -106,6 +119,7 @@ pub async fn execute_rounds(
 
     let audit_scope = generate_audit_scope(repo).await?;
 
+    // ROUND 1 of VERIFICATON
     let verify_r1_prompt = RoundOneLegitAnalysis::generate_verify_prompt();
 
     let r1_prompt = if audit_scope.is_empty() {
@@ -117,7 +131,6 @@ pub async fn execute_rounds(
         )
     };
 
-    // ROUND 1 of VERIFICATON
     let verify_json = RoundOneLegitAnalysis::generate_verify_json();
     let post_verify_json = generate_post_round_verify_json_requirement(&verify_json);
 
@@ -298,5 +311,86 @@ pub async fn execute_rounds(
 
     Ok(Findings {
         findings: verified_findings,
+    })
+}
+
+pub async fn run_round<T>(
+    round_number: usize,
+    findings: Findings,
+    code_and_context: &str,
+    audit_scope: &str,
+    agent: &AIAgent,
+) -> Result<Findings>
+where
+    T: AnalysisRound + DeserializeOwned,
+{
+    // filter out all findings that got tagged on ALL previous checks
+    let clean_findings = Findings {
+        findings: findings
+            .findings
+            .clone()
+            .into_iter()
+            .filter(|f| f.status == None)
+            .collect::<Vec<_>>(),
+    };
+
+    let verify_prompt = T::Spec::generate_verify_prompt();
+
+    let r_prompt = if audit_scope.is_empty() {
+        verify_prompt.to_string()
+    } else {
+        format!(
+            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
+            &verify_prompt, &audit_scope
+        )
+    };
+
+    let verify_json = T::Spec::generate_verify_json();
+    let post_verify_json = generate_post_round_verify_json_requirement(&verify_json);
+
+    let instruction_prompt = generate_prompt_for_multi_finding_issue_check(
+        &code_and_context,
+        &clean_findings,
+        &r_prompt,
+        &post_verify_json,
+        FindingReportType::NoPoC,
+    );
+
+    info!("Round {} of Verification", round_number);
+    let r_analysis: T = agent.extract_with_retry(&instruction_prompt).await?;
+
+    r_analysis
+        .findings()
+        .iter()
+        .for_each(|r| r.print_analysis_results());
+
+    let r_findings: Vec<Finding> = findings
+        .findings
+        .iter()
+        .map(|f| {
+            let r_option = r_analysis.findings().iter().find(|r| r.id() == f.id);
+            let (finding_status_vec, justification) = match r_option {
+                Some(r) => (
+                    Some(r.get_finding_status_array_from_analysis()),
+                    Some(r.get_justification()),
+                ),
+                None => (None, None),
+            };
+
+            let enriched_finding = Finding {
+                status: finding_status_vec,
+                status_justification: f
+                    .status_justification
+                    .clone()
+                    .zip(justification)
+                    .map(|(a, b)| format!("{}\n{}", a, b)),
+                ..f.clone()
+            };
+            enriched_finding
+        })
+        .collect();
+
+    Ok(Findings {
+        findings: r_findings,
     })
 }

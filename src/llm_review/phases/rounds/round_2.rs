@@ -25,6 +25,12 @@ pub struct VerifyRoundTwo {
 }
 
 impl FindingAnalysis for RoundTwoLegitAnalysis {
+    fn id(&self) -> String {
+        self.finding_id.clone()
+    }
+    fn get_justification(&self) -> String {
+        self.justification.clone()
+    }
     fn get_finding_status_array_from_analysis(&self) -> Vec<FindingStatus> {
         let mut finding_status_vec = Vec::new();
 
