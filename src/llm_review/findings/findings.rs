@@ -28,6 +28,7 @@ pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
 pub struct Finding {
     // [Severity-issue number] - List Issue (Reentrancy, Denial of Service, etc) and
     // <Contract>::<Function> its localed in
+    pub id: String,
     pub derived_from: Option<String>,
     pub title: String,
     pub exploit_type: VulnerabilityType,
@@ -44,7 +45,7 @@ pub struct Finding {
     #[schemars(description = "Severity level: Critical, High, Medium, Low, Info")]
     pub severity: Severity, //severity of issue
     pub mitigation: Option<String>,
-    pub status: Option<FindingStatus>,
+    pub status: Option<Vec<FindingStatus>>,
     pub status_justification: Option<String>,
     // competition ready report (C4, Sherlock,etc) for issue, only produced if All Tests Passed for PoC
     pub competition_report: Option<CompetitionReport>,

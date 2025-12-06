@@ -184,6 +184,7 @@ pub mod utils {
     pub mod contract_name_check;
     /// Docker volume cleanup utilities
     pub mod delete_docker_volumes;
+    pub mod deserialize_bool;
     pub mod display_file;
     pub mod env_security;
     /// LLM extraction with retry logic

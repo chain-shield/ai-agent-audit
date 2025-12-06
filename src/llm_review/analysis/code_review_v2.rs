@@ -12,7 +12,7 @@ use crate::llm_review::contract::contract_file_map::ContractType;
 use crate::llm_review::dynamic_prompts::actors::{
     generate_formated_list_from_actor_data, generate_formatted_actor_abuse_list,
 };
-use crate::llm_review::findings::findings::CLAUDE_4_5_SONNET;
+use crate::llm_review::findings::findings::{Finding, CLAUDE_4_5_SONNET};
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::llm_review::{agent::agent_enums::AIAgent, phases};
 use crate::llm_review::{
@@ -34,6 +34,7 @@ use log::info;
 use std::{path::PathBuf, sync::Arc};
 use strum::IntoEnumIterator;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 /// Multi-LLM security analysis orchestration.
 ///
@@ -190,9 +191,21 @@ pub async fn review_codebase_for_security_issues_v2(
                 }
 
                 if !raw_findings.findings.is_empty() {
+                    // add uuid to each finding to uniquely identify
+                    let findings_with_id: Findings = Findings {
+                        findings: raw_findings
+                            .findings
+                            .into_iter()
+                            .map(|f| Finding {
+                                id: Uuid::new_v4().to_string(),
+                                ..f
+                            })
+                            .collect(),
+                    };
+
                     // Phase 4: Verify findings and remove false positives
                     let mut verify_findings = phases::verify_findings::execute(
-                        raw_findings,
+                        findings_with_id,
                         &codeblock,
                         &finding_verify_agent,
                         &repo_clone,

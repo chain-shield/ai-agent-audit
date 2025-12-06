@@ -1,5 +1,5 @@
 use crate::llm_review::{
-    findings::findings::Finding,
+    findings::findings::{Finding, Findings},
     threat_models::{invariants::InvariantFinding, patterns::Pattern},
 };
 
@@ -28,6 +28,32 @@ pub fn generate_prompt_for_issue_check(
     prompt
 }
 
+pub fn generate_prompt_for_multi_finding_issue_check(
+    code: &str,
+    finding: &Findings,
+    instructions: &str,
+    post_instructions: &str,
+    report_type: FindingReportType,
+) -> String {
+    let mut prompt = format!("{}{}", instructions, post_instructions);
+
+    prompt.push_str("\n\n");
+    prompt.push_str("## SECURITY FINDINGS TO EVALUATE");
+    prompt.push_str("\n\n");
+
+    for finding in &finding.findings {
+        let report = get_finding_report(finding, None, report_type);
+        prompt.push_str(&report);
+        prompt.push_str("\n\n");
+    }
+
+    prompt.push_str("## CODEBASE WHERE FINDINGS WERE FOUND");
+    prompt.push_str("\n\n");
+
+    prompt.push_str(code);
+
+    prompt
+}
 pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> String {
     let mut invariant_finding = String::new();
 
@@ -157,7 +183,7 @@ pub fn generate_formatted_multiple_patterns(patterns: &[Pattern]) -> String {
     pattern_list
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FindingReportType {
     Standard,
     Enhanced,
@@ -206,7 +232,14 @@ pub fn get_finding_report(
     if report_type == FindingReportType::Enhanced {
         findings_report.push_str(&format!(
             "## Finding Status: {}\n",
-            finding.status.unwrap_or_default().to_string()
+            finding
+                .status
+                .clone()
+                .unwrap_or(Vec::new())
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         findings_report.push_str(&format!(
             "### Finding Status Justification: {}\n",

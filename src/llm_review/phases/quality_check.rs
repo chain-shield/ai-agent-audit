@@ -1,3 +1,4 @@
+use crate::utils::deserialize_bool::deserialize_bool_from_str_or_bool;
 /// Phase 4: Quality assurance and final finding refinement
 ///
 /// This phase performs final quality checks on verified findings and enhances
@@ -8,13 +9,13 @@ use crate::{
         agent::agent_enums::AIAgent,
         analysis::{context_state::get_metadata_context, semaphore::GENERAL_SEM},
         findings::findings::{Finding, Findings},
-        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
+        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
 };
 use log::info;
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -28,23 +29,6 @@ pub struct VulnerabilityQualityCheck {
     pub proof_of_concept: Option<String>,    // updated POC (if necessary)
     pub proof_of_code: Option<String>,       // updated proof of code (if necessary)
     pub mitigation: Option<String>,          // updated mitigation (if necessary)
-}
-
-/// Helper function to deserialize boolean from string or boolean
-fn deserialize_bool_from_str_or_bool<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let val: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
-    match val {
-        serde_json::Value::Bool(b) => Ok(b),
-        serde_json::Value::String(s) => match s.to_lowercase().as_str() {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            _ => Err(serde::de::Error::custom("expected boolean or string")),
-        },
-        _ => Err(serde::de::Error::custom("expected boolean or string")),
-    }
 }
 
 const QUALIFY_PROMPT: &str = r#"
