@@ -176,9 +176,20 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
             ));
             findings_summary.push_str(&format!(
                 "Finding Status: {}\n",
-                finding.status.unwrap_or_default().to_string()
+                finding
+                    .status
+                    .clone()
+                    .unwrap_or(Vec::new())
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
-            if finding.status == Some(FindingStatus::NeedsMoreInfo) {
+            if finding
+                .status
+                .as_ref()
+                .is_some_and(|s| s.contains(&FindingStatus::NeedsMoreInfo))
+            {
                 findings_summary.push_str(&format!(
                     "Finding Status Justification: {}\n",
                     finding.status_justification.clone().unwrap_or_default()
@@ -258,7 +269,13 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
 
                     findings_summary.push_str(&format!(
                         "Finding Status: {}\n",
-                        f.status.unwrap_or_default().to_string()
+                        f.status
+                            .clone()
+                            .unwrap_or(Vec::new())
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ));
                     findings_summary.push_str(&format!(
                         "Finding Status Justification: {}\n",
@@ -308,7 +325,16 @@ fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataTyp
         for f in findings.findings.iter() {
             let key = f
                 .status
-                .and_then(|s| Some(s.to_string()))
+                .clone()
+                .and_then(|s| {
+                    Some(
+                        s.clone()
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )
+                })
                 .unwrap_or_else(|| "Unknown".to_string());
             if !map.contains_key(&key) {
                 order.push(key.clone());
