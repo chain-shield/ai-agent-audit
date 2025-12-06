@@ -214,6 +214,8 @@ pub fn get_finding_report(
         ));
     }
 
+    findings_report.push_str(&format!("## id: {}\n\n", &finding.id));
+
     //derived from
     findings_report.push_str("## Derived From Pattern/Invariant\n");
     findings_report.push_str(&finding.derived_from.clone().unwrap_or_default());

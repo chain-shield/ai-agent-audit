@@ -31,10 +31,10 @@ use crate::llm_review::{
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::reporting::patterns::save_patterns;
 use log::info;
+use nanoid::nanoid;
 use std::{path::PathBuf, sync::Arc};
 use strum::IntoEnumIterator;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 /// Multi-LLM security analysis orchestration.
 ///
@@ -196,10 +196,7 @@ pub async fn review_codebase_for_security_issues_v2(
                         findings: raw_findings
                             .findings
                             .into_iter()
-                            .map(|f| Finding {
-                                id: Uuid::new_v4().to_string(),
-                                ..f
-                            })
+                            .map(|f| Finding { id: nanoid!(), ..f })
                             .collect(),
                     };
 

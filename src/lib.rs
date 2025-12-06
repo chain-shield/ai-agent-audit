@@ -125,8 +125,15 @@ pub mod llm_review {
         pub mod quality_check;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_findings;
+        pub mod verify_rounds;
         // Phase 7: Create professaionl competition-grade report
         pub mod create_report;
+        pub mod rounds {
+            pub mod round_1;
+            pub mod round_2;
+            pub mod round_3;
+            pub mod utils;
+        }
     }
     pub mod pattern_phases {
         pub mod generate_actors;
