@@ -31,7 +31,7 @@ impl FindingAnalysis for RoundTwoLegitAnalysis {
     fn get_justification(&self) -> String {
         self.justification.clone()
     }
-    fn get_finding_status_array_from_analysis(&self) -> Vec<FindingStatus> {
+    fn get_finding_status_array_from_analysis(&self) -> Option<Vec<FindingStatus>> {
         let mut finding_status_vec = Vec::new();
 
         if self.does_bug_exist {
@@ -40,7 +40,12 @@ impl FindingAnalysis for RoundTwoLegitAnalysis {
         if self.safeguard_against_it {
             finding_status_vec.push(FindingStatus::InvalidSafeGuardInPlace);
         }
-        finding_status_vec
+
+        if finding_status_vec.is_empty() {
+            None
+        } else {
+            Some(finding_status_vec)
+        }
     }
 
     fn print_analysis_results(&self) {
