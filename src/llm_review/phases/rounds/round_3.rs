@@ -33,7 +33,7 @@ impl FindingAnalysis for RoundThreeLegitAnalysis {
     fn get_justification(&self) -> String {
         self.justification.clone()
     }
-    fn get_finding_status_array_from_analysis(&self) -> Vec<FindingStatus> {
+    fn get_finding_status_array_from_analysis(&self) -> Option<Vec<FindingStatus>> {
         let mut finding_status_vec = Vec::new();
 
         if self.by_design {
@@ -45,7 +45,12 @@ impl FindingAnalysis for RoundThreeLegitAnalysis {
         if self.in_scope {
             finding_status_vec.push(FindingStatus::InvalidOutOfScope);
         }
-        finding_status_vec
+
+        if finding_status_vec.is_empty() {
+            None
+        } else {
+            Some(finding_status_vec)
+        }
     }
 
     fn print_analysis_results(&self) {

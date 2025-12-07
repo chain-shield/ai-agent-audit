@@ -23,6 +23,7 @@ use log::info;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use strum_macros::EnumIter;
 
@@ -65,7 +66,7 @@ pub trait AnalysisRound {
 }
 
 pub trait FindingAnalysis {
-    fn get_finding_status_array_from_analysis(&self) -> Vec<FindingStatus>;
+    fn get_finding_status_array_from_analysis(&self) -> Option<Vec<FindingStatus>>;
     fn print_analysis_results(&self);
     fn generate_verify_prompt() -> String;
     fn generate_verify_json() -> String;
@@ -119,175 +120,38 @@ pub async fn execute_rounds(
 
     let audit_scope = generate_audit_scope(repo).await?;
 
+    //************************
     // ROUND 1 of VERIFICATON
-    let verify_r1_prompt = RoundOneLegitAnalysis::generate_verify_prompt();
-
-    let r1_prompt = if audit_scope.is_empty() {
-        verify_r1_prompt.to_string()
-    } else {
-        format!(
-            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
-            &verify_r1_prompt, &audit_scope
-        )
-    };
-
-    let verify_json = RoundOneLegitAnalysis::generate_verify_json();
-    let post_verify_json = generate_post_round_verify_json_requirement(&verify_json);
-
-    let instruction_prompt = generate_prompt_for_multi_finding_issue_check(
-        &code_and_context,
-        &deduped_findings,
-        &r1_prompt,
-        &post_verify_json,
-        FindingReportType::NoPoC,
+    //************************
+    let r1_findings = run_round_1(deduped_findings, &code_and_context, &audit_scope, agent).await?;
+    info!(
+        "{} finding tagged as low or invalid",
+        tagged_findings(&r1_findings)
     );
-
-    info!("Round 1 of Verification");
-    let r1_analysis: VerifyRoundOne = agent.extract_with_retry(&instruction_prompt).await?;
-
-    r1_analysis
-        .findings
-        .iter()
-        .for_each(|r| r.print_analysis_results());
-
-    let r1_findings: Vec<Finding> = deduped_findings
-        .findings
-        .iter()
-        .map(|f| {
-            let r1_option = r1_analysis.findings.iter().find(|r| r.finding_id == f.id);
-            let finding_status_vec = match r1_option {
-                Some(r1) => Some(r1.get_finding_status_array_from_analysis()),
-                None => None,
-            };
-
-            let enriched_finding = Finding {
-                status: finding_status_vec,
-                ..f.clone()
-            };
-            enriched_finding
-        })
-        .collect();
-
-    // filter out all findings that passed ALL r1 checks
-    let mut clean_findings = Findings {
-        findings: r1_findings
-            .clone()
-            .into_iter()
-            .filter(|f| f.status == None)
-            .collect::<Vec<_>>(),
-    };
 
     //************************
     // ROUND 2 of VERIFICATON
     //************************
-    let verify_r2_prompt = RoundTwoLegitAnalysis::generate_verify_prompt();
-
-    let r2_prompt = if audit_scope.is_empty() {
-        verify_r2_prompt.to_string()
-    } else {
-        format!(
-            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
-            &verify_r2_prompt, &audit_scope
-        )
-    };
-
-    let verify_json = RoundTwoLegitAnalysis::generate_verify_json();
-    let post_verify_json = generate_post_round_verify_json_requirement(&verify_json);
-
-    let instruction_prompt = generate_prompt_for_multi_finding_issue_check(
-        &code_and_context,
-        &clean_findings,
-        &r2_prompt,
-        &post_verify_json,
-        FindingReportType::NoPoC,
+    let r2_findings = run_round_2(r1_findings, &code_and_context, &audit_scope, agent).await?;
+    info!(
+        "{} finding tagged as low or invalid",
+        tagged_findings(&r2_findings)
     );
 
-    info!("Round 2 of Verification");
-    let r2_analysis: VerifyRoundTwo = agent.extract_with_retry(&instruction_prompt).await?;
-
-    // print results
-    r2_analysis
-        .findings
-        .iter()
-        .for_each(|r| r.print_analysis_results());
-
-    let r2_findings: Vec<Finding> = r1_findings
-        .into_iter()
-        .map(|f| {
-            let r2_option = r2_analysis.findings.iter().find(|r| r.finding_id == f.id);
-            let finding_status_vec = match r2_option {
-                Some(r2) => Some(r2.get_finding_status_array_from_analysis()),
-                None => None,
-            };
-
-            let enriched_finding = Finding {
-                status: finding_status_vec,
-                ..f.clone()
-            };
-            enriched_finding
-        })
-        .collect();
-
-    clean_findings = Findings {
-        findings: r2_findings
-            .clone()
-            .into_iter()
-            .filter(|f| f.status == None)
-            .collect::<Vec<_>>(),
-    };
-
+    //************************
     // ROUND 3 of VERIFICATON
-    let verify_r3_prompt = RoundThreeLegitAnalysis::generate_verify_prompt();
-
-    let r3_prompt = if audit_scope.is_empty() {
-        verify_r3_prompt.to_string()
-    } else {
-        format!(
-            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
-            &verify_r3_prompt, &audit_scope
-        )
-    };
-
-    let verify_json = RoundThreeLegitAnalysis::generate_verify_json();
-    let post_verify_json = generate_post_round_verify_json_requirement(&verify_json);
-
-    let instruction_prompt = generate_prompt_for_multi_finding_issue_check(
-        &code_and_context,
-        &clean_findings,
-        &r3_prompt,
-        &post_verify_json,
-        FindingReportType::NoPoC,
+    //************************
+    let r3_findings = run_round_3(r2_findings, &code_and_context, &audit_scope, agent).await?;
+    info!(
+        "{} finding tagged as low or invalid",
+        tagged_findings(&r3_findings)
     );
-
-    info!("Round 3 of Verification");
-    let r3_analysis: VerifyRoundThree = agent.extract_with_retry(&instruction_prompt).await?;
-
-    r3_analysis
-        .findings
-        .iter()
-        .for_each(|r| r.print_analysis_results());
-
-    let r3_findings: Vec<Finding> = r2_findings
-        .into_iter()
-        .map(|f| {
-            let r3_option = r3_analysis.findings.iter().find(|r| r.finding_id == f.id);
-            let finding_status_vec = match r3_option {
-                Some(r3) => Some(r3.get_finding_status_array_from_analysis()),
-                None => None,
-            };
-
-            let enriched_finding = Finding {
-                status: finding_status_vec,
-                ..f.clone()
-            };
-            enriched_finding
-        })
-        .collect();
 
     let verified_findings: Vec<Finding> = r3_findings
+        .findings
         .into_iter()
         .map(|f| {
-            if f.status == None {
+            if f.status.is_none() {
                 Finding {
                     status: Some(vec![FindingStatus::Valid]),
                     ..f
@@ -314,6 +178,41 @@ pub async fn execute_rounds(
     })
 }
 
+pub fn tagged_findings(findings: &Findings) -> usize {
+    findings
+        .findings
+        .iter()
+        .filter(|f| f.status.is_some())
+        .count()
+}
+
+pub async fn run_round_1(
+    findings: Findings,
+    code_and_context: &str,
+    audit_scope: &str,
+    agent: &AIAgent,
+) -> Result<Findings> {
+    run_round::<VerifyRoundOne>(1, findings, code_and_context, audit_scope, agent).await
+}
+
+pub async fn run_round_2(
+    findings: Findings,
+    code_and_context: &str,
+    audit_scope: &str,
+    agent: &AIAgent,
+) -> Result<Findings> {
+    run_round::<VerifyRoundTwo>(2, findings, code_and_context, audit_scope, agent).await
+}
+
+pub async fn run_round_3(
+    findings: Findings,
+    code_and_context: &str,
+    audit_scope: &str,
+    agent: &AIAgent,
+) -> Result<Findings> {
+    run_round::<VerifyRoundThree>(3, findings, code_and_context, audit_scope, agent).await
+}
+
 pub async fn run_round<T>(
     round_number: usize,
     findings: Findings,
@@ -330,7 +229,7 @@ where
             .findings
             .clone()
             .into_iter()
-            .filter(|f| f.status == None)
+            .filter(|f| f.status.is_none())
             .collect::<Vec<_>>(),
     };
 
@@ -364,14 +263,17 @@ where
         .iter()
         .for_each(|r| r.print_analysis_results());
 
+    let r_map: HashMap<String, &T::Spec> =
+        r_analysis.findings().iter().map(|r| (r.id(), r)).collect();
+
     let r_findings: Vec<Finding> = findings
         .findings
         .iter()
         .map(|f| {
-            let r_option = r_analysis.findings().iter().find(|r| r.id() == f.id);
+            let r_option = r_map.get(&f.id);
             let (finding_status_vec, justification) = match r_option {
                 Some(r) => (
-                    Some(r.get_finding_status_array_from_analysis()),
+                    r.get_finding_status_array_from_analysis(),
                     Some(r.get_justification()),
                 ),
                 None => (None, None),
@@ -381,9 +283,9 @@ where
                 status: finding_status_vec,
                 status_justification: f
                     .status_justification
-                    .clone()
+                    .as_ref()
                     .zip(justification)
-                    .map(|(a, b)| format!("{}\n{}", a, b)),
+                    .map(|(j, k)| format!("{}\n{}", j, k)),
                 ..f.clone()
             };
             enriched_finding

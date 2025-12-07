@@ -197,6 +197,7 @@ pub mod utils {
     /// LLM extraction with retry logic
     pub mod extract_retry;
     pub mod file_security;
+    pub mod finding_status_string;
     /// Function labeling utilities
     pub mod fn_labels;
     /// Function name extraction

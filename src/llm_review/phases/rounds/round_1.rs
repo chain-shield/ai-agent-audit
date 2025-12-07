@@ -83,7 +83,7 @@ impl FindingAnalysis for RoundOneLegitAnalysis {
     fn get_justification(&self) -> String {
         self.justification.clone()
     }
-    fn get_finding_status_array_from_analysis(&self) -> Vec<FindingStatus> {
+    fn get_finding_status_array_from_analysis(&self) -> Option<Vec<FindingStatus>> {
         let mut finding_status_vec = Vec::new();
 
         if self.user_error_or_mistake {
@@ -104,7 +104,12 @@ impl FindingAnalysis for RoundOneLegitAnalysis {
         if self.likelihood == Likelihood::Rare {
             finding_status_vec.push(FindingStatus::LowSeverityDueToRareLikelihood);
         }
-        finding_status_vec
+
+        if finding_status_vec.is_empty() {
+            None
+        } else {
+            Some(finding_status_vec)
+        }
     }
 
     fn print_analysis_results(&self) {

@@ -1,6 +1,9 @@
-use crate::llm_review::{
-    findings::findings::{Finding, Findings},
-    threat_models::{invariants::InvariantFinding, patterns::Pattern},
+use crate::{
+    llm_review::{
+        findings::findings::{Finding, Findings},
+        threat_models::{invariants::InvariantFinding, patterns::Pattern},
+    },
+    utils::finding_status_string::finding_status_to_string,
 };
 
 pub fn generate_prompt_for_issue_check(
@@ -35,7 +38,7 @@ pub fn generate_prompt_for_multi_finding_issue_check(
     post_instructions: &str,
     report_type: FindingReportType,
 ) -> String {
-    let mut prompt = format!("{}{}", instructions, post_instructions);
+    let mut prompt = instructions.to_string();
 
     prompt.push_str("\n\n");
     prompt.push_str("## SECURITY FINDINGS TO EVALUATE");
@@ -51,6 +54,8 @@ pub fn generate_prompt_for_multi_finding_issue_check(
     prompt.push_str("\n\n");
 
     prompt.push_str(code);
+    prompt.push_str("\n\n");
+    prompt.push_str(post_instructions);
 
     prompt
 }
@@ -234,14 +239,7 @@ pub fn get_finding_report(
     if report_type == FindingReportType::Enhanced {
         findings_report.push_str(&format!(
             "## Finding Status: {}\n",
-            finding
-                .status
-                .clone()
-                .unwrap_or(Vec::new())
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
+            finding_status_to_string(finding)
         ));
         findings_report.push_str(&format!(
             "### Finding Status Justification: {}\n",
