@@ -41,8 +41,8 @@ pub const SKIP_PATTERN_VERIFICATION: bool = true;
 
 // NOTE: for large protocols consider reducing scale, skip libs
 /// Number of discovery rounds per contract during analysis
-pub const INVARIANT_RUNS: usize = 0; // 0 for large protocols; default: 3
-pub const ACTOR_RUNS: usize = 10; // old value 10
+pub const INVARIANT_RUNS: usize = 3; // 0 for large protocols; default: 3
+pub const ACTOR_RUNS: usize = 0; // old value 10
 pub const MAX_PATTERN_RUN_TOP: usize = 2; // 2 for large protocol, default: 3
 pub const MAX_PATTERN_RUN_RARE: usize = 2; // 2 for large protocol, default: 3
 pub const MAX_PATTERN_RUN_MOST: usize = 2; // 0 for large protocol, default: 3

@@ -219,7 +219,10 @@ pub fn get_finding_report(
         ));
     }
 
-    findings_report.push_str(&format!("## id: {}\n\n", &finding.id));
+    findings_report.push_str(&format!(
+        "## id: {}\n\n",
+        &finding.id.clone().unwrap_or_default()
+    ));
 
     //derived from
     findings_report.push_str("## Derived From Pattern/Invariant\n");

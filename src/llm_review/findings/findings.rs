@@ -26,7 +26,7 @@ pub const CLAUDE_4_OPUS: &str = "claude-opus-4-0";
 pub struct Finding {
     // [Severity-issue number] - List Issue (Reentrancy, Denial of Service, etc) and
     // <Contract>::<Function> its localed in
-    pub id: String,
+    pub id: Option<String>,
     pub derived_from: Option<String>,
     pub title: String,
     pub exploit_type: VulnerabilityType,

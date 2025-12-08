@@ -66,13 +66,9 @@ pub async fn review_codebase_for_security_issues_v2(
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
-    // ONLY audit these failed
-    // let custom_scoped_contracts = Some(vec![
-    //     "RevenueBuybacks".to_string(),
-    //     "TWAMM".to_string(),
-    //     "MEVCapture".to_string(),
-    // ]);
-    let custom_scoped_contracts: Option<Vec<_>> = None;
+    // ONLY audit these
+    let custom_scoped_contracts = Some(vec!["ERC7575VaultUpgradeable".to_string()]);
+    // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -198,7 +194,10 @@ pub async fn review_codebase_for_security_issues_v2(
                         findings: raw_findings
                             .findings
                             .into_iter()
-                            .map(|f| Finding { id: nanoid!(), ..f })
+                            .map(|f| Finding {
+                                id: Some(nanoid!()),
+                                ..f
+                            })
                             .collect(),
                     };
 

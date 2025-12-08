@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::path::Path;
 
@@ -148,7 +148,7 @@ impl FindingDb {
         use std::str::FromStr;
 
         Finding {
-            id: self.id.clone(),
+            id: Some(self.id.clone()),
             derived_from: None,
             title: self.title.clone(),
             exploit_type: VulnerabilityType::default(),
