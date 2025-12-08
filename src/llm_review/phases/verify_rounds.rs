@@ -272,7 +272,8 @@ where
         .iter()
         .enumerate()
         .map(|(idx, f)| {
-            let r_option = r_map.get(&f.id);
+            let f_id = f.id.clone().unwrap_or_default();
+            let r_option = r_map.get(&f_id);
             let (finding_status_vec, justification) = match r_option {
                 Some(r) => (
                     r.get_finding_status_array_from_analysis(),
@@ -284,7 +285,7 @@ where
                         "Round {}: LLM did not return analysis for finding #{} (id: {}, title: {})",
                         round_number,
                         idx + 1,
-                        f.id,
+                        f_id,
                         f.title
                     );
                     (None, None)
