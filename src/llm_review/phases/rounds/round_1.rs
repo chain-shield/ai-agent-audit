@@ -90,7 +90,7 @@ impl FindingAnalysis for RoundOneLegitAnalysis {
             finding_status_vec.push(FindingStatus::InvalidUserErrorOrMistake);
         }
         if self.governance_risk {
-            finding_status_vec.push(FindingStatus::InvalidGoveranaceRisk);
+            finding_status_vec.push(FindingStatus::InvalidGovernanceRisk);
         }
         if self.future_speculation {
             finding_status_vec.push(FindingStatus::InvalidFutureSpeculation);
@@ -119,7 +119,9 @@ impl FindingAnalysis for RoundOneLegitAnalysis {
         info!("is governance_risk: {}\n", self.governance_risk);
         info!("is future speculation: {}\n", self.future_speculation);
         info!("is non standard token: {}\n", self.non_standard_token);
-        info!("justification: {}\n", self.justification);
+        info!("Impact: {}\n", self.impact.to_string());
+        info!("Likelihood: {}\n", self.likelihood.to_string());
+        info!("Justification: {}\n", self.justification);
         info!("\n");
     }
 
@@ -177,7 +179,7 @@ impl FindingAnalysis for RoundOneLegitAnalysis {
     -  "Finding depends on if protocol integrates/adds/upgrades in future..."
     -  "Could/might/potentially happen if..." (hypothetical)
 
-    # OUTPUT REQUIREMENTS
+    ## OUTPUT REQUIREMENTS
 
     Based on your assessment please provided the following for EACH finding:
 
@@ -200,19 +202,21 @@ impl FindingAnalysis for RoundOneLegitAnalysis {
         let impact_list = generate_enum_list(all_enum_variants::<Impact>().as_slice());
         format!(
             r#"
-    [
-        {{
-            "finding_id: "'id' field from finding",
-            "finding_title: "'title' field from finding",
-            "user_error_or_mistake": true | false,
-            "governance_risk": true | false,
-            "future_speculation": true | false,
-            "non_standard_token": true | false,
-            "impact": "{impact_list}",
-            "likelihood": "{likelihood_list}",
-            "justification": "Please provide justification for your choices (under 200 words)."
-        }}
-    ]
+    {{
+        "findings": [
+            {{
+                "finding_id": "'id' field from finding",
+                "finding_title": "'title' field from finding",
+                "user_error_or_mistake": true | false,
+                "governance_risk": true | false,
+                "future_speculation": true | false,
+                "non_standard_token": true | false,
+                "impact": "{impact_list}",
+                "likelihood": "{likelihood_list}",
+                "justification": "Please provide justification for your choices (under 200 words)."
+            }}
+        ]
+    }}
     "#
         )
     }

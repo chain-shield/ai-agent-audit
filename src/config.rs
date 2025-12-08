@@ -29,6 +29,7 @@ pub const NICHE_PATTERN_ANALYSIS_MODE: bool = true;
 
 // if true set DISCOVERY_RUNS accordingly
 pub const MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE: bool = true;
+pub const MULTI_PATTERN_TO_VERIFY_ANALYSIS_MODE: bool = true;
 pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
 pub const INVARIANT_DISCOVERY_RUNS: usize = 3; // old value 5
 pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10

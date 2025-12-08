@@ -1,6 +1,7 @@
 use crate::config::{
-    ACTOR_RUNS, CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE,
-    SKIP_LIBRARIES, SKIP_PATTERN_RUNS,
+    ACTOR_RUNS, CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE,
+    MULTI_PATTERN_TO_VERIFY_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE, SKIP_LIBRARIES,
+    SKIP_PATTERN_RUNS,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
@@ -192,6 +193,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
                 if !raw_findings.findings.is_empty() {
                     // add uuid to each finding to uniquely identify
+
                     let findings_with_id: Findings = Findings {
                         findings: raw_findings
                             .findings
@@ -201,13 +203,23 @@ pub async fn review_codebase_for_security_issues_v2(
                     };
 
                     // Phase 4: Verify findings and remove false positives
-                    let mut verify_findings = phases::verify_findings::execute(
-                        findings_with_id,
-                        &codeblock,
-                        &finding_verify_agent,
-                        &repo_clone,
-                    )
-                    .await?;
+                    let mut verify_findings = if MULTI_PATTERN_TO_VERIFY_ANALYSIS_MODE {
+                        phases::verify_rounds::execute_rounds(
+                            findings_with_id,
+                            &codeblock,
+                            &finding_verify_agent,
+                            &repo_clone,
+                        )
+                        .await?
+                    } else {
+                        phases::verify_findings::execute(
+                            findings_with_id,
+                            &codeblock,
+                            &finding_verify_agent,
+                            &repo_clone,
+                        )
+                        .await?
+                    };
 
                     // Phase 5: Quality check and enhance findings
                     // let mut quality_findings = phases::quality_check::execute(

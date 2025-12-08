@@ -39,10 +39,10 @@ impl FindingAnalysis for RoundThreeLegitAnalysis {
         if self.by_design {
             finding_status_vec.push(FindingStatus::InvalidByDesign);
         }
-        if self.exploitable {
+        if !self.exploitable {
             finding_status_vec.push(FindingStatus::InvalidNotExploitable);
         }
-        if self.in_scope {
+        if !self.in_scope {
             finding_status_vec.push(FindingStatus::InvalidOutOfScope);
         }
 
@@ -92,7 +92,7 @@ impl FindingAnalysis for RoundThreeLegitAnalysis {
     Based on your assessment please provided the following for EACH finding:
 
     *finding id*: insert finding id (from 'id' field)
-    *by design*: insert finding title
+    *by design*: true | false
     *in scope*: true | false
     *exploitable*: true | false
     *justification:*: Please provide justification for your choices (under 200 words)
@@ -104,16 +104,18 @@ impl FindingAnalysis for RoundThreeLegitAnalysis {
     fn generate_verify_json() -> String {
         format!(
             r#"
-    [
-        {{
-            "finding_id: "'id' field from finding",
-            "finding_title: "'title' field from finding",
-            "by_design": true | false,
-            "in_scope": true | false,
-            "exploitable": true | false,
-            "justification": "Please provide justification for your choices (under 200 words)."
-        }}
-    ]
+    {{
+        "findings": [
+            {{
+                "finding_id": "'id' field from finding",
+                "finding_title": "'title' field from finding",
+                "by_design": true | false,
+                "in_scope": true | false,
+                "exploitable": true | false,
+                "justification": "Please provide justification for your choices (under 200 words)."
+            }}
+        ]
+    }}
 "#
         )
     }
