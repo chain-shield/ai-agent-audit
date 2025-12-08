@@ -12,7 +12,7 @@ use crate::{
         utils::prompt_context::{self, FindingReportType},
     },
     prepare_code::git_clone::RepoPaths,
-    utils::finding_status_string::{self, finding_status_to_string},
+    utils::finding_status_string::finding_status_to_string,
 };
 /// Professional audit report generation with findings categorization.
 ///
@@ -263,13 +263,7 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
 
                     findings_summary.push_str(&format!(
                         "Finding Status: {}\n",
-                        f.status
-                            .clone()
-                            .unwrap_or(Vec::new())
-                            .iter()
-                            .map(|s| s.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        finding_status_to_string(f)
                     ));
                     findings_summary.push_str(&format!(
                         "Finding Status Justification: {}\n",

@@ -34,7 +34,7 @@ impl FindingAnalysis for RoundTwoLegitAnalysis {
     fn get_finding_status_array_from_analysis(&self) -> Option<Vec<FindingStatus>> {
         let mut finding_status_vec = Vec::new();
 
-        if self.does_bug_exist {
+        if !self.does_bug_exist {
             finding_status_vec.push(FindingStatus::InvalidBugDoesNotExist);
         }
         if self.safeguard_against_it {
@@ -100,7 +100,7 @@ impl FindingAnalysis for RoundTwoLegitAnalysis {
     **How to Check:** Search codebase for modifiers/guards, verify vulnerable function uses them, test if bypassable
 
 
-    # OUTPUT REQUIREMENTS
+    ## OUTPUT REQUIREMENTS
 
     Based on your assessment please provided the following for EACH finding:
 
@@ -117,15 +117,17 @@ impl FindingAnalysis for RoundTwoLegitAnalysis {
     fn generate_verify_json() -> String {
         format!(
             r#"
-        [
-            {{
-                "finding_id: "'id' field from finding",
-                "finding_title: "'title' field from finding",
-                "does_bug_exist": true | false,
-                "safeguard_against_it": true | false,
-                "justification": "Please provide justification for your choices (under 200 words)."
-            }}
-        ]
+        {{
+            "findings": [
+                {{
+                    "finding_id": "'id' field from finding",
+                    "finding_title": "'title' field from finding",
+                    "does_bug_exist": true | false,
+                    "safeguard_against_it": true | false,
+                    "justification": "Please provide justification for your choices (under 200 words)."
+                }}
+            ]
+        }}
 "#
         )
     }

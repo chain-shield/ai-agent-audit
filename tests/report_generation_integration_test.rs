@@ -6,11 +6,7 @@ use ai_agent_audit::{
             finding_enums::{Severity, VulnerabilityType},
             findings::{Finding, Findings, PrivilegeLevel},
         },
-        phases::{
-            add_poc_findings::PocStatus,
-            create_report,
-            verify_findings::{FindingConfidence, FindingStatus},
-        },
+        phases::{add_poc_findings::PocStatus, create_report, verify_rounds::FindingStatus},
     },
     prepare_code::git_clone::{PocConfig, RepoPaths},
 };
@@ -154,19 +150,16 @@ contract PuppyRaffle {
                 }
             }
 
-            // Verify findings without Valid status or AllTestPass don't get reports
+            // Verify findings without AllTestPass don't get reports
             let findings_without_reports = findings_with_reports
                 .findings
                 .iter()
-                .filter(|f| {
-                    f.status != Some(FindingStatus::Valid)
-                        || f.poc_test_status != Some(PocStatus::AllTestPass)
-                })
+                .filter(|f| f.poc_test_status != Some(PocStatus::AllTestPass))
                 .count();
 
             if findings_without_reports > 0 {
                 println!(
-                    "\n✓ Correctly skipped {} findings without Valid+AllTestPass status",
+                    "\n✓ Correctly skipped {} findings without AllTestPass status",
                     findings_without_reports
                 );
             }
@@ -180,6 +173,7 @@ contract PuppyRaffle {
 /// Creates mock findings with Valid status and AllTestPass PoC status
 fn create_mock_findings_with_passing_pocs() -> Findings {
     let finding1 = Finding {
+        id: "H-1".to_string(),
         title: "Reentrancy vulnerability in refund function".to_string(),
         exploit_type: VulnerabilityType::Reentrancy,
         privilege: PrivilegeLevel::Permissionless,
@@ -202,17 +196,15 @@ fn create_mock_findings_with_passing_pocs() -> Findings {
         mitigation: Some(
             "Use checks-effects-interactions pattern or add reentrancy guard.".to_string()
         ),
-        severity_justification: Some("Can drain all contract funds".to_string()),
-        status: Some(FindingStatus::Valid),
+        status: Some(vec![FindingStatus::Valid]),
         status_justification: Some("Confirmed vulnerability with working PoC".to_string()),
-        status_confidence: Some(FindingConfidence::VeryConfident),
-        status_confidence_justification: Some("PoC demonstrates full exploit".to_string()),
         competition_report: None,
         finding_complexity: Some(3),
         derived_from: Some("Pattern: Reentrancy".to_string()),
     };
 
     let finding2 = Finding {
+        id: "M-1".to_string(),
         title: "Integer overflow in fee calculation".to_string(),
         exploit_type: VulnerabilityType::IntegerOverflow,
         privilege: PrivilegeLevel::Permissionless,
@@ -229,11 +221,8 @@ fn create_mock_findings_with_passing_pocs() -> Findings {
         poc_test_status: Some(PocStatus::AllTestPass),
         severity: Severity::Medium,
         mitigation: Some("Use SafeMath or Solidity 0.8+".to_string()),
-        severity_justification: Some("Loss of fees but not user funds".to_string()),
-        status: Some(FindingStatus::Valid),
+        status: Some(vec![FindingStatus::Valid]),
         status_justification: Some("Confirmed with PoC".to_string()),
-        status_confidence: Some(FindingConfidence::VeryConfident),
-        status_confidence_justification: Some("Clear overflow demonstrated".to_string()),
         competition_report: None,
         finding_complexity: Some(2),
         derived_from: Some("Pattern: IntegerOverflow".to_string()),
@@ -241,6 +230,7 @@ fn create_mock_findings_with_passing_pocs() -> Findings {
 
     // Add a finding that should NOT get a report (no AllTestPass)
     let finding3 = Finding {
+        id: "L-1".to_string(),
         title: "Low severity gas optimization".to_string(),
         exploit_type: VulnerabilityType::GasGriefBlockLimit,
         privilege: PrivilegeLevel::Permissionless,
@@ -255,11 +245,8 @@ fn create_mock_findings_with_passing_pocs() -> Findings {
         poc_test_status: None, // No PoC status - should not get report
         severity: Severity::Low,
         mitigation: Some("Optimize loop".to_string()),
-        severity_justification: Some("Gas only".to_string()),
-        status: Some(FindingStatus::Valid),
+        status: None,
         status_justification: Some("Valid optimization".to_string()),
-        status_confidence: Some(FindingConfidence::SomeWhatConfident),
-        status_confidence_justification: Some("Standard optimization".to_string()),
         competition_report: None,
         finding_complexity: Some(1),
         derived_from: Some("Pattern: GasOptimization".to_string()),

@@ -48,7 +48,7 @@ pub enum FindingStatus {
     InvalidBugDoesNotExist,
     InvalidOutOfScope,
     InvalidUserErrorOrMistake,
-    InvalidGoveranaceRisk,
+    InvalidGovernanceRisk,
     InvalidERC20EdgeCase,
     InvalidNotExploitable,
     InvalidFutureSpeculation,
@@ -111,6 +111,7 @@ pub async fn execute_rounds(
     let context = get_metadata_context(repo)
         .await
         .expect("could not extract context");
+
     let code_and_context = generate_content_plus_context_block(code, &context);
 
     let dedup_finding_count = deduped_findings.findings.len();
@@ -227,9 +228,9 @@ where
     let clean_findings = Findings {
         findings: findings
             .findings
-            .clone()
-            .into_iter()
+            .iter()
             .filter(|f| f.status.is_none())
+            .cloned()
             .collect::<Vec<_>>(),
     };
 
@@ -269,23 +270,41 @@ where
     let r_findings: Vec<Finding> = findings
         .findings
         .iter()
-        .map(|f| {
+        .enumerate()
+        .map(|(idx, f)| {
             let r_option = r_map.get(&f.id);
             let (finding_status_vec, justification) = match r_option {
                 Some(r) => (
                     r.get_finding_status_array_from_analysis(),
                     Some(r.get_justification()),
                 ),
-                None => (None, None),
+                None => {
+                    // Log warning if LLM didn't return analysis for this finding
+                    log::warn!(
+                        "Round {}: LLM did not return analysis for finding #{} (id: {}, title: {})",
+                        round_number,
+                        idx + 1,
+                        f.id,
+                        f.title
+                    );
+                    (None, None)
+                }
+            };
+
+            // Properly concatenate justifications from all rounds
+            let updated_justification = match (&f.status_justification, justification) {
+                (Some(existing), Some(new)) => Some(format!(
+                    "{}\n\n--- Round {} ---\n{}",
+                    existing, round_number, new
+                )),
+                (Some(existing), None) => Some(existing.clone()),
+                (None, Some(new)) => Some(format!("--- Round {} ---\n{}", round_number, new)),
+                (None, None) => None,
             };
 
             let enriched_finding = Finding {
                 status: finding_status_vec,
-                status_justification: f
-                    .status_justification
-                    .as_ref()
-                    .zip(justification)
-                    .map(|(j, k)| format!("{}\n{}", j, k)),
+                status_justification: updated_justification,
                 ..f.clone()
             };
             enriched_finding
