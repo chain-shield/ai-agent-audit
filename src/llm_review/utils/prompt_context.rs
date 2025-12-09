@@ -212,10 +212,6 @@ pub fn get_finding_summary_report(finding: &Finding, index: usize) -> String {
         "Finding Status: {}\n",
         finding_status_to_string(finding)
     ));
-    findings_summary.push_str(&format!(
-        "Finding Complexity: {}\n",
-        finding.finding_complexity.unwrap_or_default()
-    ));
     findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.to_string()));
 
     if CREATE_TESTS {

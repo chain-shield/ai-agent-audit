@@ -272,7 +272,7 @@ where
         .findings
         .iter()
         .enumerate()
-        .map(|(idx, f)| {
+        .map(|(_, f)| {
             let f_id = f.id.clone().unwrap_or_default();
             let r_option = r_map.get(&f_id);
             let (finding_status_vec, justification) = match r_option {
@@ -282,13 +282,13 @@ where
                 ),
                 None => {
                     // Log warning if LLM didn't return analysis for this finding
-                    log::warn!(
-                        "Round {}: LLM did not return analysis for finding #{} (id: {}, title: {})",
-                        round_number,
-                        idx + 1,
-                        f_id,
-                        f.title
-                    );
+                    // log::warn!(
+                    //     "Round {}: LLM did not return analysis for finding #{} (id: {}, title: {})",
+                    //     round_number,
+                    //     idx + 1,
+                    //     f_id,
+                    //     f.title
+                    // );
                     (None, None)
                 }
             };
