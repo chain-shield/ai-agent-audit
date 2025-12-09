@@ -173,7 +173,7 @@ contract PuppyRaffle {
 /// Creates mock findings with Valid status and AllTestPass PoC status
 fn create_mock_findings_with_passing_pocs() -> Findings {
     let finding1 = Finding {
-        id: "H-1".to_string(),
+        id: Some("H-1".to_string()),
         title: "Reentrancy vulnerability in refund function".to_string(),
         exploit_type: VulnerabilityType::Reentrancy,
         privilege: PrivilegeLevel::Permissionless,
@@ -204,7 +204,7 @@ fn create_mock_findings_with_passing_pocs() -> Findings {
     };
 
     let finding2 = Finding {
-        id: "M-1".to_string(),
+        id: Some("M-1".to_string()),
         title: "Integer overflow in fee calculation".to_string(),
         exploit_type: VulnerabilityType::IntegerOverflow,
         privilege: PrivilegeLevel::Permissionless,
@@ -230,7 +230,7 @@ fn create_mock_findings_with_passing_pocs() -> Findings {
 
     // Add a finding that should NOT get a report (no AllTestPass)
     let finding3 = Finding {
-        id: "L-1".to_string(),
+        id: Some("L-1".to_string()),
         title: "Low severity gas optimization".to_string(),
         exploit_type: VulnerabilityType::GasGriefBlockLimit,
         privilege: PrivilegeLevel::Permissionless,

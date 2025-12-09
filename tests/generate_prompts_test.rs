@@ -171,7 +171,8 @@ fn print_findings_template_prompts() {
         templated
     );
 
-    let findings_json = ft::get_findings_json_requirement(&issue_type, issue_definition, &repo);
+    let findings_json =
+        ft::get_post_findings_json_requirement(&issue_type, issue_definition, &repo);
     println!(
         "\n===== Findings JSON (from VulnerabilityPattern) =====\n{}\n",
         findings_json

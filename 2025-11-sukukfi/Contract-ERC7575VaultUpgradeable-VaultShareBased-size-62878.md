@@ -2196,122 +2196,72 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
+pragma solidity ^0.8.30;
 
-pragma solidity ^0.8.20;
-
-import {ContextUpgradeable} from "../utils/ContextUpgradeable.sol";
-import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
- * @dev Contract module which provides a basic access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
+ * @title SafeTokenTransfers
+ * @notice Library for safe token transfers with strict balance validation
  *
- * The initial owner is set to the address provided by the deployer. This can
- * later be changed with {transferOwnership}.
+ * This library enforces exact balance changes to prevent fee-on-transfer exploits,
+ * accounting mismatches, and silent value leakage in vault systems.
  *
- * This module is used through inheritance. It will make available the modifier
- * `onlyOwner`, which can be applied to your functions to restrict their use to
- * the owner.
+ * COMPATIBLE TOKENS (Standard ERC20):
+ * - USDC, DAI, USDT (without fees enabled)
+ * - Standard wrapped tokens (WETH, WBTC)
+ * - Most ERC20 tokens that transfer exact amounts
+ *
+ * INCOMPATIBLE TOKENS (will revert with TransferAmountMismatch):
+ * - Fee-on-transfer tokens (SAFEMOON, USDT with fees, etc.)
+ * - Rebase tokens (stETH, aTokens, AMPL)
+ * - Elastic supply tokens
+ * - Tokens with transfer hooks that modify balances
+ * - Any token that doesn't deliver exact transfer amounts
+ *
+ * USAGE WARNING:
+ * Before deploying a vault with a new token, verify that the token:
+ * 1. Transfers exactly the specified amount (no fees)
+ * 2. Does not rebase or change balances automatically
+ * 3. Does not have transfer hooks that modify amounts
+ *
+ * Test with small amounts first to ensure compatibility.
+ *
+ * @dev The balance validation check will reject any token where
+ * recipientBalanceAfter != recipientBalanceBefore + amount
  */
-abstract contract OwnableUpgradeable is Initializable, ContextUpgradeable {
-    /// @custom:storage-location erc7201:openzeppelin.storage.Ownable
-    struct OwnableStorage {
-        address _owner;
-    }
+library SafeTokenTransfers {
+    using SafeERC20 for IERC20Metadata;
 
-    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.Ownable")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant OwnableStorageLocation = 0x9016d09d72d40fdae2fd8ceac6b6234c7706214fd39c1cd1e609a0528c199300;
-
-    function _getOwnableStorage() private pure returns (OwnableStorage storage $) {
-        assembly {
-            $.slot := OwnableStorageLocation
-        }
-    }
+    /// @dev Transfer amount mismatch (fee-on-transfer or rebase token detected)
+    error TransferAmountMismatch();
 
     /**
-     * @dev The caller account is not authorized to perform an operation.
+     * @dev Safely transfer tokens with balance validation to protect against fee-on-transfer tokens
+     * @param token The token contract address
+     * @param recipient The recipient address
+     * @param amount The amount to transfer
      */
-    error OwnableUnauthorizedAccount(address account);
-
-    /**
-     * @dev The owner is not a valid owner account. (eg. `address(0)`)
-     */
-    error OwnableInvalidOwner(address owner);
-
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Initializes the contract setting the address provided by the deployer as the initial owner.
-     */
-    function __Ownable_init(address initialOwner) internal onlyInitializing {
-        __Ownable_init_unchained(initialOwner);
-    }
-
-    function __Ownable_init_unchained(address initialOwner) internal onlyInitializing {
-        if (initialOwner == address(0)) {
-            revert OwnableInvalidOwner(address(0));
-        }
-        _transferOwnership(initialOwner);
+    function safeTransfer(address token, address recipient, uint256 amount) internal {
+        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
+        IERC20Metadata(token).safeTransfer(recipient, amount);
+        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
+        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
     }
 
     /**
-     * @dev Throws if called by any account other than the owner.
+     * @dev Safely transfer tokens from sender to recipient with balance validation
+     * @param token The token contract address
+     * @param sender The sender address
+     * @param recipient The recipient address
+     * @param amount The amount to transfer
      */
-    modifier onlyOwner() {
-        _checkOwner();
-        _;
-    }
-
-    /**
-     * @dev Returns the address of the current owner.
-     */
-    function owner() public view virtual returns (address) {
-        OwnableStorage storage $ = _getOwnableStorage();
-        return $._owner;
-    }
-
-    /**
-     * @dev Throws if the sender is not the owner.
-     */
-    function _checkOwner() internal view virtual {
-        if (owner() != _msgSender()) {
-            revert OwnableUnauthorizedAccount(_msgSender());
-        }
-    }
-
-    /**
-     * @dev Leaves the contract without owner. It will not be possible to call
-     * `onlyOwner` functions. Can only be called by the current owner.
-     *
-     * NOTE: Renouncing ownership will leave the contract without an owner,
-     * thereby disabling any functionality that is only available to the owner.
-     */
-    function renounceOwnership() public virtual onlyOwner {
-        _transferOwnership(address(0));
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Can only be called by the current owner.
-     */
-    function transferOwnership(address newOwner) public virtual onlyOwner {
-        if (newOwner == address(0)) {
-            revert OwnableInvalidOwner(address(0));
-        }
-        _transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`).
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual {
-        OwnableStorage storage $ = _getOwnableStorage();
-        address oldOwner = $._owner;
-        $._owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
+    function safeTransferFrom(address token, address sender, address recipient, uint256 amount) internal {
+        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
+        IERC20Metadata(token).safeTransferFrom(sender, recipient, amount);
+        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
+        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
     }
 }
 
@@ -3357,162 +3307,147 @@ contract ShareTokenUpgradeable is Initializable, ERC20Upgradeable, Ownable2StepU
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
+// OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
 
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+pragma solidity ^0.8.20;
+
+import {ContextUpgradeable} from "../utils/ContextUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 /**
- * @title SafeTokenTransfers
- * @notice Library for safe token transfers with strict balance validation
+ * @dev Contract module which provides a basic access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
  *
- * This library enforces exact balance changes to prevent fee-on-transfer exploits,
- * accounting mismatches, and silent value leakage in vault systems.
+ * The initial owner is set to the address provided by the deployer. This can
+ * later be changed with {transferOwnership}.
  *
- * COMPATIBLE TOKENS (Standard ERC20):
- * - USDC, DAI, USDT (without fees enabled)
- * - Standard wrapped tokens (WETH, WBTC)
- * - Most ERC20 tokens that transfer exact amounts
- *
- * INCOMPATIBLE TOKENS (will revert with TransferAmountMismatch):
- * - Fee-on-transfer tokens (SAFEMOON, USDT with fees, etc.)
- * - Rebase tokens (stETH, aTokens, AMPL)
- * - Elastic supply tokens
- * - Tokens with transfer hooks that modify balances
- * - Any token that doesn't deliver exact transfer amounts
- *
- * USAGE WARNING:
- * Before deploying a vault with a new token, verify that the token:
- * 1. Transfers exactly the specified amount (no fees)
- * 2. Does not rebase or change balances automatically
- * 3. Does not have transfer hooks that modify amounts
- *
- * Test with small amounts first to ensure compatibility.
- *
- * @dev The balance validation check will reject any token where
- * recipientBalanceAfter != recipientBalanceBefore + amount
+ * This module is used through inheritance. It will make available the modifier
+ * `onlyOwner`, which can be applied to your functions to restrict their use to
+ * the owner.
  */
-library SafeTokenTransfers {
-    using SafeERC20 for IERC20Metadata;
+abstract contract OwnableUpgradeable is Initializable, ContextUpgradeable {
+    /// @custom:storage-location erc7201:openzeppelin.storage.Ownable
+    struct OwnableStorage {
+        address _owner;
+    }
 
-    /// @dev Transfer amount mismatch (fee-on-transfer or rebase token detected)
-    error TransferAmountMismatch();
+    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.Ownable")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant OwnableStorageLocation = 0x9016d09d72d40fdae2fd8ceac6b6234c7706214fd39c1cd1e609a0528c199300;
 
-    /**
-     * @dev Safely transfer tokens with balance validation to protect against fee-on-transfer tokens
-     * @param token The token contract address
-     * @param recipient The recipient address
-     * @param amount The amount to transfer
-     */
-    function safeTransfer(address token, address recipient, uint256 amount) internal {
-        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
-        IERC20Metadata(token).safeTransfer(recipient, amount);
-        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
-        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
+    function _getOwnableStorage() private pure returns (OwnableStorage storage $) {
+        assembly {
+            $.slot := OwnableStorageLocation
+        }
     }
 
     /**
-     * @dev Safely transfer tokens from sender to recipient with balance validation
-     * @param token The token contract address
-     * @param sender The sender address
-     * @param recipient The recipient address
-     * @param amount The amount to transfer
+     * @dev The caller account is not authorized to perform an operation.
      */
-    function safeTransferFrom(address token, address sender, address recipient, uint256 amount) internal {
-        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
-        IERC20Metadata(token).safeTransferFrom(sender, recipient, amount);
-        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
-        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
+    error OwnableUnauthorizedAccount(address account);
+
+    /**
+     * @dev The owner is not a valid owner account. (eg. `address(0)`)
+     */
+    error OwnableInvalidOwner(address owner);
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Initializes the contract setting the address provided by the deployer as the initial owner.
+     */
+    function __Ownable_init(address initialOwner) internal onlyInitializing {
+        __Ownable_init_unchained(initialOwner);
+    }
+
+    function __Ownable_init_unchained(address initialOwner) internal onlyInitializing {
+        if (initialOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(initialOwner);
+    }
+
+    /**
+     * @dev Throws if called by any account other than the owner.
+     */
+    modifier onlyOwner() {
+        _checkOwner();
+        _;
+    }
+
+    /**
+     * @dev Returns the address of the current owner.
+     */
+    function owner() public view virtual returns (address) {
+        OwnableStorage storage $ = _getOwnableStorage();
+        return $._owner;
+    }
+
+    /**
+     * @dev Throws if the sender is not the owner.
+     */
+    function _checkOwner() internal view virtual {
+        if (owner() != _msgSender()) {
+            revert OwnableUnauthorizedAccount(_msgSender());
+        }
+    }
+
+    /**
+     * @dev Leaves the contract without owner. It will not be possible to call
+     * `onlyOwner` functions. Can only be called by the current owner.
+     *
+     * NOTE: Renouncing ownership will leave the contract without an owner,
+     * thereby disabling any functionality that is only available to the owner.
+     */
+    function renounceOwnership() public virtual onlyOwner {
+        _transferOwnership(address(0));
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`).
+     * Can only be called by the current owner.
+     */
+    function transferOwnership(address newOwner) public virtual onlyOwner {
+        if (newOwner == address(0)) {
+            revert OwnableInvalidOwner(address(0));
+        }
+        _transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`).
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual {
+        OwnableStorage storage $ = _getOwnableStorage();
+        address oldOwner = $._owner;
+        $._owner = newOwner;
+        emit OwnershipTransferred(oldOwner, newOwner);
     }
 }
 
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
+pragma solidity ^0.8.30;
 
-pragma solidity ^0.8.20;
-
-import {OwnableUpgradeable} from "./OwnableUpgradeable.sol";
-import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-
-/**
- * @dev Contract module which provides access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * This extension of the {Ownable} contract includes a two-step mechanism to transfer
- * ownership, where the new owner must call {acceptOwnership} in order to replace the
- * old one. This can help prevent common mistakes, such as transfers of ownership to
- * incorrect accounts, or to contracts that are unable to interact with the
- * permission system.
- *
- * The initial owner is specified at deployment time in the constructor for `Ownable`. This
- * can later be changed with {transferOwnership} and {acceptOwnership}.
- *
- * This module is used through inheritance. It will make available all functions
- * from parent (Ownable).
- */
-abstract contract Ownable2StepUpgradeable is Initializable, OwnableUpgradeable {
-    /// @custom:storage-location erc7201:openzeppelin.storage.Ownable2Step
-    struct Ownable2StepStorage {
-        address _pendingOwner;
+// Interface for vault metrics to check pending requests and active users
+interface IVaultMetrics {
+    struct VaultMetrics {
+        uint256 totalPendingDepositAssets;
+        uint256 totalClaimableRedeemAssets;
+        uint256 totalCancelDepositAssets; // ERC7887 cancelation assets
+        uint64 scalingFactor;
+        uint256 totalAssets;
+        uint256 availableForInvestment;
+        uint256 activeDepositRequestersCount;
+        uint256 activeRedeemRequestersCount;
+        bool isActive;
+        address asset;
+        address shareToken;
+        address investmentManager;
+        address investmentVault;
     }
 
-    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.Ownable2Step")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant Ownable2StepStorageLocation = 0x237e158222e3e6968b72b9db0d8043aacf074ad9f650f0d1606b4d82ee432c00;
-
-    function _getOwnable2StepStorage() private pure returns (Ownable2StepStorage storage $) {
-        assembly {
-            $.slot := Ownable2StepStorageLocation
-        }
-    }
-
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
-
-    function __Ownable2Step_init() internal onlyInitializing {
-    }
-
-    function __Ownable2Step_init_unchained() internal onlyInitializing {
-    }
-    /**
-     * @dev Returns the address of the pending owner.
-     */
-    function pendingOwner() public view virtual returns (address) {
-        Ownable2StepStorage storage $ = _getOwnable2StepStorage();
-        return $._pendingOwner;
-    }
-
-    /**
-     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
-     * Can only be called by the current owner.
-     *
-     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
-     */
-    function transferOwnership(address newOwner) public virtual override onlyOwner {
-        Ownable2StepStorage storage $ = _getOwnable2StepStorage();
-        $._pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner(), newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual override {
-        Ownable2StepStorage storage $ = _getOwnable2StepStorage();
-        delete $._pendingOwner;
-        super._transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev The new owner accepts the ownership transfer.
-     */
-    function acceptOwnership() public virtual {
-        address sender = _msgSender();
-        if (pendingOwner() != sender) {
-            revert OwnableUnauthorizedAccount(sender);
-        }
-        _transferOwnership(sender);
-    }
+    function getVaultMetrics() external view returns (VaultMetrics memory);
 }
 
 // SPDX-License-Identifier: MIT
@@ -3636,28 +3571,260 @@ abstract contract ReentrancyGuard {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
+// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
 
-// Interface for vault metrics to check pending requests and active users
-interface IVaultMetrics {
-    struct VaultMetrics {
-        uint256 totalPendingDepositAssets;
-        uint256 totalClaimableRedeemAssets;
-        uint256 totalCancelDepositAssets; // ERC7887 cancelation assets
-        uint64 scalingFactor;
-        uint256 totalAssets;
-        uint256 availableForInvestment;
-        uint256 activeDepositRequestersCount;
-        uint256 activeRedeemRequestersCount;
-        bool isActive;
-        address asset;
-        address shareToken;
-        address investmentManager;
-        address investmentVault;
+pragma solidity ^0.8.20;
+
+import {OwnableUpgradeable} from "./OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+
+/**
+ * @dev Contract module which provides access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * This extension of the {Ownable} contract includes a two-step mechanism to transfer
+ * ownership, where the new owner must call {acceptOwnership} in order to replace the
+ * old one. This can help prevent common mistakes, such as transfers of ownership to
+ * incorrect accounts, or to contracts that are unable to interact with the
+ * permission system.
+ *
+ * The initial owner is specified at deployment time in the constructor for `Ownable`. This
+ * can later be changed with {transferOwnership} and {acceptOwnership}.
+ *
+ * This module is used through inheritance. It will make available all functions
+ * from parent (Ownable).
+ */
+abstract contract Ownable2StepUpgradeable is Initializable, OwnableUpgradeable {
+    /// @custom:storage-location erc7201:openzeppelin.storage.Ownable2Step
+    struct Ownable2StepStorage {
+        address _pendingOwner;
     }
 
-    function getVaultMetrics() external view returns (VaultMetrics memory);
+    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.Ownable2Step")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant Ownable2StepStorageLocation = 0x237e158222e3e6968b72b9db0d8043aacf074ad9f650f0d1606b4d82ee432c00;
+
+    function _getOwnable2StepStorage() private pure returns (Ownable2StepStorage storage $) {
+        assembly {
+            $.slot := Ownable2StepStorageLocation
+        }
+    }
+
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+
+    function __Ownable2Step_init() internal onlyInitializing {
+    }
+
+    function __Ownable2Step_init_unchained() internal onlyInitializing {
+    }
+    /**
+     * @dev Returns the address of the pending owner.
+     */
+    function pendingOwner() public view virtual returns (address) {
+        Ownable2StepStorage storage $ = _getOwnable2StepStorage();
+        return $._pendingOwner;
+    }
+
+    /**
+     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
+     * Can only be called by the current owner.
+     *
+     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
+     */
+    function transferOwnership(address newOwner) public virtual override onlyOwner {
+        Ownable2StepStorage storage $ = _getOwnable2StepStorage();
+        $._pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner(), newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual override {
+        Ownable2StepStorage storage $ = _getOwnable2StepStorage();
+        delete $._pendingOwner;
+        super._transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev The new owner accepts the ownership transfer.
+     */
+    function acceptOwnership() public virtual {
+        address sender = _msgSender();
+        if (pendingOwner() != sender) {
+            revert OwnableUnauthorizedAccount(sender);
+        }
+        _transferOwnership(sender);
+    }
 }
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/**
+ * @title IERC7887
+ * @dev Interface for ERC7887 "Asynchronous Tokenized Vault Cancelation Extension"
+ *      Extends ERC7540 with asynchronous cancelation capabilities
+ *      https://eips.ethereum.org/EIPS/eip-7887
+ */
+interface IERC7887DepositCancelation {
+    /**
+     * @dev Emitted when a deposit cancelation request is submitted
+     * controller - address that controls the cancelation request
+     * owner - original owner of the assets
+     * requestId - unique identifier for the cancelation request
+     * sender - address that called cancelDepositRequest
+     * assets - amount of assets being canceled
+     */
+    event CancelDepositRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 assets);
+
+    /**
+     * @dev Emitted when a deposit cancelation is claimed
+     * controller - address that controlled the cancelation request
+     * receiver - address that received the assets
+     * requestId - unique identifier for the cancelation request
+     * assets - amount of assets claimed
+     */
+    event CancelDepositRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 assets);
+
+    /**
+     * @dev Submits a request to cancel a pending deposit request
+     * Transitions the deposit request assets from pending state into pending cancelation state
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST block new deposit requests for this controller while cancelation is pending
+     * - MUST emit `CancelDepositRequest` event
+     * - Can only cancel deposits in Pending state, not Claimable state
+     *
+     * @param requestId The requestId from the original deposit request (identifies which deposit to cancel)
+     * @param controller Address that made the original deposit request
+     */
+    function cancelDepositRequest(uint256 requestId, address controller) external;
+
+    /**
+     * @dev Whether the given requestId and controller have a pending deposit cancelation request
+     *
+     * - Returns true if a deposit cancelation is in Pending state for this controller
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original deposit request
+     * @return isPending Whether a pending deposit cancelation exists for this controller
+     */
+    function pendingCancelDepositRequest(uint256 requestId, address controller) external view returns (bool isPending);
+
+    /**
+     * @dev Returns the amount of assets in claimable cancelation state
+     *
+     * - MUST NOT include any assets in Pending state
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original deposit request
+     * @return assets Amount of assets ready to claim
+     */
+    function claimableCancelDepositRequest(uint256 requestId, address controller) external view returns (uint256 assets);
+
+    /**
+     * @dev Claims assets from a claimable deposit cancelation request
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST transition request from Claimable to Claimed state
+     * - MUST transfer assets to `receiver`
+     * - MUST emit `CancelDepositRequestClaimed` event
+     * - Cannot be called unless request is in Claimable state
+     *
+     * @param requestId Cancelation request identifier
+     * @param receiver Address to receive the claimed assets
+     * @param controller Address that made the original deposit request
+     */
+    function claimCancelDepositRequest(uint256 requestId, address receiver, address controller) external;
+}
+
+interface IERC7887RedeemCancelation {
+    /**
+     * @dev Emitted when a redeem cancelation request is submitted
+     * controller - address that controls the cancelation request
+     * owner - original owner of the shares
+     * requestId - unique identifier for the cancelation request
+     * sender - address that called cancelRedeemRequest
+     * shares - amount of shares being canceled
+     */
+    event CancelRedeemRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 shares);
+
+    /**
+     * @dev Emitted when a redeem cancelation is claimed
+     * controller - address that controlled the cancelation request
+     * receiver - address that received the shares
+     * requestId - unique identifier for the cancelation request
+     * shares - amount of shares claimed
+     */
+    event CancelRedeemRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 shares);
+
+    /**
+     * @dev Submits a request to cancel a pending redeem request
+     * Transitions the redeem request shares from pending state into pending cancelation state
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST block new redeem requests for this controller while cancelation is pending
+     * - MUST emit `CancelRedeemRequest` event
+     * - Can only cancel redeems in Pending state, not Claimable state
+     *
+     * @param requestId The requestId from the original redeem request (identifies which redeem to cancel)
+     * @param controller Address that made the original redeem request
+     */
+    function cancelRedeemRequest(uint256 requestId, address controller) external;
+
+    /**
+     * @dev Whether the given requestId and controller have a pending redeem cancelation request
+     *
+     * - Returns true if a redeem cancelation is in Pending state for this controller
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original redeem request
+     * @return isPending Whether a pending redeem cancelation exists for this controller
+     */
+    function pendingCancelRedeemRequest(uint256 requestId, address controller) external view returns (bool isPending);
+
+    /**
+     * @dev Returns the amount of shares in claimable cancelation state
+     *
+     * - MUST NOT include any shares in Pending state
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original redeem request
+     * @return shares Amount of shares ready to claim
+     */
+    function claimableCancelRedeemRequest(uint256 requestId, address controller) external view returns (uint256 shares);
+
+    /**
+     * @dev Claims shares from a claimable redeem cancelation request
+     *
+     * - MUST revert unless `msg.sender` is either equal to `owner` or an operator approved by `owner`
+     * - MUST transition request from Claimable to Claimed state
+     * - MUST transfer shares to `receiver`
+     * - MUST emit `CancelRedeemRequestClaimed` event
+     * - Cannot be called unless request is in Claimable state
+     *
+     * @param requestId Cancelation request identifier
+     * @param receiver Address to receive the claimed shares
+     * @param owner Address that made the original redeem request
+     */
+    function claimCancelRedeemRequest(uint256 requestId, address receiver, address owner) external;
+}
+
+/**
+ * @title IERC7887
+ * @dev Full ERC7887 interface combining deposit and redeem cancelation
+ */
+interface IERC7887 is IERC7887DepositCancelation, IERC7887RedeemCancelation {}
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
@@ -3748,6 +3915,21 @@ interface IERC7575ShareExtended is IERC7575Share {
      * @return totalNormalizedAssets Total normalized assets (18 decimals) across all vaults
      */
     function getCirculatingSupplyAndAssets() external view returns (uint256 circulatingSupply, uint256 totalNormalizedAssets);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/**
+ * @title DecimalConstants
+ * @dev Common decimal validation constants shared between ShareToken and Vault
+ */
+library DecimalConstants {
+    /// @dev Share tokens always use 18 decimals
+    uint8 constant SHARE_TOKEN_DECIMALS = 18;
+
+    /// @dev Minimum allowed asset decimals
+    uint8 constant MIN_ASSET_DECIMALS = 6;
 }
 
 pragma solidity ^0.8.30;
@@ -4079,715 +4261,8 @@ interface IERC7575Errors {
     error CannotCancelClaimable();
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/**
- * @title IERC7887
- * @dev Interface for ERC7887 "Asynchronous Tokenized Vault Cancelation Extension"
- *      Extends ERC7540 with asynchronous cancelation capabilities
- *      https://eips.ethereum.org/EIPS/eip-7887
- */
-interface IERC7887DepositCancelation {
-    /**
-     * @dev Emitted when a deposit cancelation request is submitted
-     * controller - address that controls the cancelation request
-     * owner - original owner of the assets
-     * requestId - unique identifier for the cancelation request
-     * sender - address that called cancelDepositRequest
-     * assets - amount of assets being canceled
-     */
-    event CancelDepositRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 assets);
-
-    /**
-     * @dev Emitted when a deposit cancelation is claimed
-     * controller - address that controlled the cancelation request
-     * receiver - address that received the assets
-     * requestId - unique identifier for the cancelation request
-     * assets - amount of assets claimed
-     */
-    event CancelDepositRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 assets);
-
-    /**
-     * @dev Submits a request to cancel a pending deposit request
-     * Transitions the deposit request assets from pending state into pending cancelation state
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST block new deposit requests for this controller while cancelation is pending
-     * - MUST emit `CancelDepositRequest` event
-     * - Can only cancel deposits in Pending state, not Claimable state
-     *
-     * @param requestId The requestId from the original deposit request (identifies which deposit to cancel)
-     * @param controller Address that made the original deposit request
-     */
-    function cancelDepositRequest(uint256 requestId, address controller) external;
-
-    /**
-     * @dev Whether the given requestId and controller have a pending deposit cancelation request
-     *
-     * - Returns true if a deposit cancelation is in Pending state for this controller
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original deposit request
-     * @return isPending Whether a pending deposit cancelation exists for this controller
-     */
-    function pendingCancelDepositRequest(uint256 requestId, address controller) external view returns (bool isPending);
-
-    /**
-     * @dev Returns the amount of assets in claimable cancelation state
-     *
-     * - MUST NOT include any assets in Pending state
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original deposit request
-     * @return assets Amount of assets ready to claim
-     */
-    function claimableCancelDepositRequest(uint256 requestId, address controller) external view returns (uint256 assets);
-
-    /**
-     * @dev Claims assets from a claimable deposit cancelation request
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST transition request from Claimable to Claimed state
-     * - MUST transfer assets to `receiver`
-     * - MUST emit `CancelDepositRequestClaimed` event
-     * - Cannot be called unless request is in Claimable state
-     *
-     * @param requestId Cancelation request identifier
-     * @param receiver Address to receive the claimed assets
-     * @param controller Address that made the original deposit request
-     */
-    function claimCancelDepositRequest(uint256 requestId, address receiver, address controller) external;
-}
-
-interface IERC7887RedeemCancelation {
-    /**
-     * @dev Emitted when a redeem cancelation request is submitted
-     * controller - address that controls the cancelation request
-     * owner - original owner of the shares
-     * requestId - unique identifier for the cancelation request
-     * sender - address that called cancelRedeemRequest
-     * shares - amount of shares being canceled
-     */
-    event CancelRedeemRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 shares);
-
-    /**
-     * @dev Emitted when a redeem cancelation is claimed
-     * controller - address that controlled the cancelation request
-     * receiver - address that received the shares
-     * requestId - unique identifier for the cancelation request
-     * shares - amount of shares claimed
-     */
-    event CancelRedeemRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 shares);
-
-    /**
-     * @dev Submits a request to cancel a pending redeem request
-     * Transitions the redeem request shares from pending state into pending cancelation state
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST block new redeem requests for this controller while cancelation is pending
-     * - MUST emit `CancelRedeemRequest` event
-     * - Can only cancel redeems in Pending state, not Claimable state
-     *
-     * @param requestId The requestId from the original redeem request (identifies which redeem to cancel)
-     * @param controller Address that made the original redeem request
-     */
-    function cancelRedeemRequest(uint256 requestId, address controller) external;
-
-    /**
-     * @dev Whether the given requestId and controller have a pending redeem cancelation request
-     *
-     * - Returns true if a redeem cancelation is in Pending state for this controller
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original redeem request
-     * @return isPending Whether a pending redeem cancelation exists for this controller
-     */
-    function pendingCancelRedeemRequest(uint256 requestId, address controller) external view returns (bool isPending);
-
-    /**
-     * @dev Returns the amount of shares in claimable cancelation state
-     *
-     * - MUST NOT include any shares in Pending state
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original redeem request
-     * @return shares Amount of shares ready to claim
-     */
-    function claimableCancelRedeemRequest(uint256 requestId, address controller) external view returns (uint256 shares);
-
-    /**
-     * @dev Claims shares from a claimable redeem cancelation request
-     *
-     * - MUST revert unless `msg.sender` is either equal to `owner` or an operator approved by `owner`
-     * - MUST transition request from Claimable to Claimed state
-     * - MUST transfer shares to `receiver`
-     * - MUST emit `CancelRedeemRequestClaimed` event
-     * - Cannot be called unless request is in Claimable state
-     *
-     * @param requestId Cancelation request identifier
-     * @param receiver Address to receive the claimed shares
-     * @param owner Address that made the original redeem request
-     */
-    function claimCancelRedeemRequest(uint256 requestId, address receiver, address owner) external;
-}
-
-/**
- * @title IERC7887
- * @dev Full ERC7887 interface combining deposit and redeem cancelation
- */
-interface IERC7887 is IERC7887DepositCancelation, IERC7887RedeemCancelation {}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/**
- * @title DecimalConstants
- * @dev Common decimal validation constants shared between ShareToken and Vault
- */
-library DecimalConstants {
-    /// @dev Share tokens always use 18 decimals
-    uint8 constant SHARE_TOKEN_DECIMALS = 18;
-
-    /// @dev Minimum allowed asset decimals
-    uint8 constant MIN_ASSET_DECIMALS = 6;
-}
-
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-
-/**
- * @title ERC20Faucet6
- * @dev Test token faucet with 6 decimals (USDC/USDT-like) and permit support.
- */
-contract ERC20Faucet6 is ERC20, ERC20Permit {
-    uint8 private constant DECIMALS = 6;
-    uint256 public constant FAUCET_AMOUNT = 10_000 * 10 ** DECIMALS;
-    uint256 public constant MAX_FAUCET_AMOUNT = 100_000 * 10 ** DECIMALS;
-    uint256 public constant COOLDOWN_TIME = 1 hours;
-
-    mapping(address => uint256) public lastRequestTime;
-
-    /**
-     * @param name_ Token name (e.g., "USD Coin")
-     * @param symbol_ Token symbol (e.g., "USDC")
-     * @param initialSupply Initial supply (6-decimal units) minted to deployer
-     */
-    constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
-        _mint(msg.sender, initialSupply);
-    }
-
-    function decimals() public pure override returns (uint8) {
-        return DECIMALS;
-    }
-
-    // Faucet helpers
-    function faucet() external {
-        _faucetFor(msg.sender, FAUCET_AMOUNT);
-    }
-
-    function faucetAmount(uint256 amount) external {
-        _faucetFor(msg.sender, amount);
-    }
-
-    function faucetFor(address receiver) external {
-        _faucetFor(receiver, FAUCET_AMOUNT);
-    }
-
-    function faucetAmountFor(address receiver, uint256 amount) external {
-        _faucetFor(receiver, amount);
-    }
-
-    function _faucetFor(address receiver, uint256 amount) internal {
-        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "COOLDOWN");
-        require(amount <= MAX_FAUCET_AMOUNT, "MAX_EXCEEDED");
-        _mint(receiver, amount);
-        lastRequestTime[receiver] = block.timestamp;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {DecimalConstants} from "./DecimalConstants.sol";
-import {SafeTokenTransfers} from "./SafeTokenTransfers.sol";
-import {WERC7575ShareToken} from "./WERC7575ShareToken.sol";
-import {IERC7575} from "./interfaces/IERC7575.sol";
-import {IERC7575Errors} from "./interfaces/IERC7575Errors.sol";
-
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-
-contract WERC7575Vault is IERC7575, ERC165, ReentrancyGuard, Ownable2Step, Pausable, IERC7575Errors {
-    using SafeERC20 for IERC20Metadata;
-
-    /**
-     * @dev Emitted when assets are deposited into the vault
-     * @param sender The address that initiated the deposit
-     * @param owner The address that received the shares
-     * @param assets The amount of assets deposited
-     * @param shares The amount of shares minted
-     */
-    event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares);
-
-    /**
-     * @dev Emitted when assets are withdrawn from the vault
-     * @param sender The address that initiated the withdrawal
-     * @param receiver The address that received the assets
-     * @param owner The address that owned the shares
-     * @param assets The amount of assets withdrawn
-     * @param shares The amount of shares burned
-     */
-    event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares);
-
-    event VaultActiveStateChanged(bool indexed isActive);
-
-    address private _asset; // 20 bytes
-    uint64 private _scalingFactor; // 8 bytes
-    bool private _isActive; // 1 byte - packs with _asset and _scalingFactor in same slot
-    WERC7575ShareToken private _shareToken;
-
-    /**
-     * @dev Initializes a synchronous ERC4626 vault for the multi-asset system (ERC7575 compliant)
-     *
-     * Creates a simple, synchronous vault that enables immediate deposit/redeem operations
-     * for a single asset. Integrates with the shared ShareToken to participate in the
-     * multi-asset vault ecosystem.
-     *
-     * VAULT ARCHITECTURE:
-     * - Synchronous operations: deposits and redeems are immediate
-     * - Single asset per vault (paired asset-vault relationship)
-     * - Shares minted/burned directly (no async requests)
-     * - Integrates with multi-asset ShareToken
-     * - Can be paused by owner for emergency situations
-     *
-     * SPECIFICATION COMPLIANCE:
-     * - ERC7575: Multi-asset vault standard
-     * - ERC4626: Complete tokenized vault functionality
-     * - Decimal normalization: 6-18 decimals for assets, 18 for shares
-     *
-     * INITIALIZATION:
-     * After deployment, the owner must:
-     * 1. Call shareToken.registerVault(asset, vault_address)
-     * 2. Set vault as active if needed (defaults to active)
-     *
-     * VALIDATION:
-     * - Asset must be valid ERC20 with 6-18 decimals
-     * - ShareToken must be valid ERC20 with 18 decimals
-     * - ShareToken address must not be zero
-     * - Scaling factor must fit in uint64
-     *
-     * @param asset_ The underlying ERC20 asset token (e.g., USDC, USDT)
-     * @param shareToken_ The ERC7575 share token for multi-asset vault system
-     *
-     * @custom:throws ZeroAddress If shareToken_ is zero address
-     * @custom:throws UnsupportedAssetDecimals If asset decimals are not 6-18
-     * @custom:throws WrongDecimals If shareToken decimals are not 18
-     * @custom:throws AssetDecimalsFailed If asset.decimals() call fails
-     * @custom:throws ScalingFactorTooLarge If scaling factor exceeds uint64 max
-     */
-    constructor(address asset_, WERC7575ShareToken shareToken_) Ownable(msg.sender) {
-        // Validate asset compatibility
-        uint8 assetDecimals;
-        try IERC20Metadata(asset_).decimals() returns (uint8 decimals) {
-            if (decimals < DecimalConstants.MIN_ASSET_DECIMALS || decimals > DecimalConstants.SHARE_TOKEN_DECIMALS) {
-                revert UnsupportedAssetDecimals();
-            }
-            assetDecimals = decimals;
-        } catch {
-            revert AssetDecimalsFailed();
-        }
-        // Validate share token compatibility and enforce 18 decimals
-        if (address(shareToken_) == address(0)) revert ZeroAddress();
-        if (shareToken_.decimals() != DecimalConstants.SHARE_TOKEN_DECIMALS) {
-            revert WrongDecimals();
-        }
-
-        // Precompute scaling factor: 10^(18 - assetDecimals)
-        // Max scaling factor is 10^12 (for 6 decimals) which fits in uint64
-        uint256 scalingFactor = 10 ** (DecimalConstants.SHARE_TOKEN_DECIMALS - assetDecimals);
-        if (scalingFactor > type(uint64).max) revert ScalingFactorTooLarge();
-
-        _asset = asset_;
-        _scalingFactor = uint64(scalingFactor);
-        _isActive = true; // Vault is active by default
-        _shareToken = shareToken_;
-
-        // Note: Owner must separately call shareToken.registerVault(asset, vault) after deployment
-    }
-
-    /**
-     * @dev Pause all vault operations. Only callable by owner.
-     * Used for emergency situations to halt deposits, withdrawals, mints, and redeems.
-     */
-    function pause() external onlyOwner {
-        _pause();
-    }
-
-    /**
-     * @dev Unpause all vault operations. Only callable by owner.
-     */
-    function unpause() external onlyOwner {
-        _unpause();
-    }
-
-    /**
-     * @dev Sets the vault active state (only owner)
-     * @param _active True to activate, false to deactivate
-     */
-    function setVaultActive(bool _active) external onlyOwner {
-        _isActive = _active;
-        emit VaultActiveStateChanged(_active);
-    }
-
-    /**
-     * @dev Returns whether the vault is active and accepting deposits
-     * @return True if vault is active
-     */
-    function isVaultActive() external view returns (bool) {
-        return _isActive;
-    }
-
-    /**
-     * @dev Returns true if this contract implements the interface defined by interfaceId
-     * @param interfaceId The interface identifier, as specified in ERC-165
-     * @return bool True if the contract implements interfaceId
-     */
-    function supportsInterface(bytes4 interfaceId) public view virtual override(ERC165) returns (bool) {
-        return interfaceId == type(IERC7575).interfaceId || super.supportsInterface(interfaceId);
-    }
-
-    /**
-     * @dev Returns the address of the share token contract
-     * @return address The ERC7575 share token address
-     */
-    function share() external view returns (address) {
-        return address(_shareToken);
-    }
-
-    /**
-     * @dev Returns the address of the underlying asset token
-     * @return address The ERC20 asset token address
-     */
-    function asset() external view returns (address) {
-        return _asset;
-    }
-
-    /**
-     * @dev Returns the total amount of underlying assets held by the vault
-     * @return uint256 Total assets held in the vault
-     */
-    function totalAssets() public view returns (uint256) {
-        return IERC20Metadata(_asset).balanceOf(address(this));
-    }
-
-    /**
-     * @dev Converts asset amount to equivalent share amount
-     * @param assets Amount of assets to convert
-     * @return uint256 Equivalent amount of shares
-     */
-    function convertToShares(uint256 assets) public view returns (uint256) {
-        return _convertToShares(assets, Math.Rounding.Floor);
-    }
-
-    /**
-     * @dev Converts share amount to equivalent asset amount
-     * @param shares Amount of shares to convert
-     * @return uint256 Equivalent amount of assets
-     */
-    function convertToAssets(uint256 shares) public view returns (uint256) {
-        return _convertToAssets(shares, Math.Rounding.Floor);
-    }
-
-    /**
-     * @dev Converts assets to shares using decimal normalization for stablecoins
-     * @param assets Amount of assets to convert
-     * @return shares Amount of shares equivalent to assets
-     *
-     * Formula: shares = assets * 10^(18 - assetDecimals)
-     *
-     * For stablecoins with no yield:
-     * - Share decimals: enforced to be 18 in ShareToken constructor
-     * - Asset decimals: varies (6 for USDC, 18 for DAI, etc.)
-     * - This provides 1:1 value conversion with decimal normalization
-     * - No first depositor attack possible since conversion is deterministic
-     * - No manipulation possible since no dependency on totalSupply or totalAssets
-     */
-    function _convertToShares(uint256 assets, Math.Rounding rounding) internal view returns (uint256) {
-        // ShareToken always has 18 decimals, assetDecimals ∈ [6, 18]
-        // shares = assets * _scalingFactor where _scalingFactor = 10^(18 - assetDecimals)
-        // Use Math.mulDiv to prevent overflow on large amounts
-        return Math.mulDiv(assets, uint256(_scalingFactor), 1, rounding);
-    }
-
-    /**
-     * @dev Converts shares to assets using decimal normalization for stablecoins
-     * @param shares Amount of shares to convert
-     * @param rounding Rounding direction (Floor = favor vault, Ceil = favor user)
-     * @return assets Amount of assets equivalent to shares
-     *
-     * Formula: assets = shares * 10^(assetDecimals) / 10^(shareDecimals)
-     *
-     * For stablecoins with no yield:
-     * - Share decimals: queried from share token (typically 18)
-     * - Asset decimals: varies (6 for USDC, 18 for DAI, etc.)
-     * - This provides 1:1 value conversion with decimal normalization
-     * - No first depositor attack possible since conversion is deterministic
-     * - No manipulation possible since no dependency on totalSupply or totalAssets
-     */
-    function _convertToAssets(uint256 shares, Math.Rounding rounding) internal view returns (uint256) {
-        // ShareToken always has 18 decimals, assetDecimals ∈ [6, 18]
-        // When _scalingFactor == 1 (assetDecimals == 18): assets = shares
-        // When _scalingFactor > 1 (assetDecimals < 18): assets = shares / _scalingFactor
-        if (_scalingFactor == 1) {
-            return shares;
-        } else {
-            return Math.mulDiv(shares, 1, uint256(_scalingFactor), rounding);
-        }
-    }
-
-    /**
-     * @dev Preview shares received for depositing assets
-     * Uses Floor rounding to give slightly fewer shares to user (favors vault)
-     */
-    function previewDeposit(uint256 assets) public view returns (uint256) {
-        return _convertToShares(assets, Math.Rounding.Floor);
-    }
-
-    /**
-     * @dev Preview assets needed to mint shares
-     * Uses Ceil rounding to require slightly more assets from user (favors vault)
-     */
-    function previewMint(uint256 shares) public view returns (uint256) {
-        return _convertToAssets(shares, Math.Rounding.Ceil);
-    }
-
-    /**
-     * @dev Preview shares needed to withdraw assets
-     * Uses Ceil rounding to require slightly more shares from user (favors vault)
-     */
-    function previewWithdraw(uint256 assets) public view returns (uint256) {
-        return _convertToShares(assets, Math.Rounding.Ceil);
-    }
-
-    /**
-     * @dev Preview assets received for redeeming shares
-     * Uses Floor rounding to give slightly fewer assets to user (favors vault)
-     */
-    function previewRedeem(uint256 shares) public view returns (uint256) {
-        return _convertToAssets(shares, Math.Rounding.Floor);
-    }
-
-    /**
-     * @dev Returns the maximum amount of assets that can be deposited
-     * @return uint256 Maximum deposit amount (unlimited)
-     *
-     * Note: Receiver parameter is unused as there are no deposit limits
-     */
-    function maxDeposit(address) public pure returns (uint256) {
-        return type(uint256).max;
-    }
-
-    /**
-     * @dev Returns the maximum amount of shares that can be minted
-     * @return uint256 Maximum mint amount (unlimited)
-     *
-     * Note: Receiver parameter is unused as there are no mint limits
-     */
-    function maxMint(address) public pure returns (uint256) {
-        return type(uint256).max;
-    }
-
-    /**
-     * @dev Returns the maximum amount of assets that can be withdrawn by owner
-     * @param owner The address that owns the shares
-     * @return uint256 Maximum withdrawal amount based on share balance
-     */
-    function maxWithdraw(address owner) public view returns (uint256) {
-        return _convertToAssets(_shareToken.balanceOf(owner), Math.Rounding.Floor);
-    }
-
-    /**
-     * @dev Returns the maximum amount of shares that can be redeemed by owner
-     * @param owner The address that owns the shares
-     * @return uint256 Maximum redeem amount (owner's full share balance)
-     */
-    function maxRedeem(address owner) public view returns (uint256) {
-        return _shareToken.balanceOf(owner);
-    }
-
-    /**
-     * @dev Internal function to handle deposit/mint logic
-     * @param assets Amount of assets to transfer
-     * @param shares Amount of shares to mint
-     * @param receiver Address to receive shares
-     */
-    function _deposit(uint256 assets, uint256 shares, address receiver) internal {
-        if (!_isActive) revert VaultNotActive();
-        if (receiver == address(0)) {
-            revert IERC20Errors.ERC20InvalidReceiver(address(0));
-        }
-        if (assets == 0) revert ZeroAssets();
-        if (shares == 0) revert ZeroShares();
-
-        SafeTokenTransfers.safeTransferFrom(_asset, msg.sender, address(this), assets);
-
-        _shareToken.mint(receiver, shares);
-        emit Deposit(msg.sender, receiver, assets, shares);
-    }
-
-    /**
-     * @dev Deposits exact amount of assets and receives corresponding shares (ERC4626 compliant)
-     *
-     * Synchronous deposit operation: immediately mints shares and transfers assets.
-     * Simple one-step process without async state management.
-     *
-     * OPERATION:
-     * - Previews share amount for the deposit
-     * - Transfers assets from caller to vault
-     * - Mints shares to receiver
-     *
-     * SECURITY:
-     * - Reentrancy protected
-     * - Paused state check
-     * - Vault must be active
-     * - Zero address validation
-     *
-     * @param assets Amount of assets to deposit
-     * @param receiver Address to receive the minted shares
-     *
-     * @return shares Amount of shares minted
-     */
-    function deposit(uint256 assets, address receiver) public nonReentrant whenNotPaused returns (uint256 shares) {
-        shares = previewDeposit(assets);
-        _deposit(assets, shares, receiver);
-    }
-
-    /**
-     * @dev Mints exact amount of shares by depositing necessary assets (ERC4626 compliant)
-     *
-     * Synchronous mint operation: caller specifies desired shares, assets calculated.
-     * Transfers required assets and immediately mints specified shares.
-     *
-     * OPERATION:
-     * - Previews asset amount needed for shares
-     * - Transfers required assets from caller
-     * - Mints exact shares to receiver
-     *
-     * USE CASE:
-     * - When you want exactly X shares (not Y assets)
-     * - May require more assets due to rounding
-     *
-     * @param shares Amount of shares to mint (exact)
-     * @param receiver Address to receive the minted shares
-     *
-     * @return assets Amount of assets required for the mint
-     */
-    function mint(uint256 shares, address receiver) public nonReentrant whenNotPaused returns (uint256 assets) {
-        assets = previewMint(shares);
-        _deposit(assets, shares, receiver);
-    }
-
-    /**
-     * @dev Internal function to handle withdraw/redeem logic
-     * @param assets Amount of assets to transfer
-     * @param shares Amount of shares to burn
-     * @param receiver Address to receive assets
-     * @param owner Address that owns the shares
-     */
-    function _withdraw(uint256 assets, uint256 shares, address receiver, address owner) internal {
-        if (receiver == address(0)) {
-            revert IERC20Errors.ERC20InvalidReceiver(address(0));
-        }
-        if (owner == address(0)) {
-            revert IERC20Errors.ERC20InvalidSender(address(0));
-        }
-        if (assets == 0) revert ZeroAssets();
-        if (shares == 0) revert ZeroShares();
-
-        _shareToken.spendSelfAllowance(owner, shares);
-        _shareToken.burn(owner, shares);
-        SafeTokenTransfers.safeTransfer(_asset, receiver, assets);
-        emit Withdraw(msg.sender, receiver, owner, assets, shares);
-    }
-
-    /**
-     * @dev Withdraws exact amount of assets from vault by burning shares (ERC4626 compliant)
-     *
-     * Synchronous withdrawal operation: caller specifies assets, shares calculated.
-     * Burns required shares and immediately transfers assets to receiver.
-     *
-     * OPERATION:
-     * - Previews share amount needed for assets
-     * - Burns required shares from owner
-     * - Transfers exact assets to receiver
-     *
-     * AUTHORIZATION:
-     * - msg.sender must be owner OR have allowance for the shares
-     * - Allows delegation to withdrawal operators
-     *
-     * @param assets Amount of assets to withdraw (exact)
-     * @param receiver Address to receive the assets
-     * @param owner Address that owns the shares to be burned
-     *
-     * @return shares Amount of shares burned
-     */
-    function withdraw(uint256 assets, address receiver, address owner) public nonReentrant whenNotPaused returns (uint256 shares) {
-        shares = previewWithdraw(assets);
-        _withdraw(assets, shares, receiver, owner);
-    }
-
-    /**
-     * @dev Redeems exact amount of shares for assets (ERC4626 compliant)
-     *
-     * Synchronous redemption operation: caller specifies shares, assets calculated.
-     * Burns exact shares and transfers corresponding assets to receiver.
-     *
-     * OPERATION:
-     * - Previews asset amount for shares
-     * - Burns exact shares from owner
-     * - Transfers corresponding assets to receiver
-     *
-     * AUTHORIZATION:
-     * - msg.sender must be owner OR have allowance for the shares
-     * - Allows delegation to redemption operators
-     *
-     * USE CASE:
-     * - When you want to burn exactly X shares (not Y assets)
-     * - Receives at least minimum due to rounding down
-     *
-     * @param shares Amount of shares to redeem (exact)
-     * @param receiver Address to receive the assets
-     * @param owner Address that owns the shares to be burned
-     *
-     * @return assets Amount of assets withdrawn
-     */
-    function redeem(uint256 shares, address receiver, address owner) public nonReentrant whenNotPaused returns (uint256 assets) {
-        assets = previewRedeem(shares);
-        _withdraw(assets, shares, receiver, owner);
-    }
-}
-
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
@@ -6375,6 +5850,531 @@ contract WERC7575ShareToken is ERC20, IERC20Permit, EIP712, Nonces, ReentrancyGu
 
         delete _rBalanceAdjustments[account][ts];
         emit RBalanceAdjustmentCancelled(account, ts);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+
+/**
+ * @title ERC20Faucet6
+ * @dev Test token faucet with 6 decimals (USDC/USDT-like) and permit support.
+ */
+contract ERC20Faucet6 is ERC20, ERC20Permit {
+    uint8 private constant DECIMALS = 6;
+    uint256 public constant FAUCET_AMOUNT = 10_000 * 10 ** DECIMALS;
+    uint256 public constant MAX_FAUCET_AMOUNT = 100_000 * 10 ** DECIMALS;
+    uint256 public constant COOLDOWN_TIME = 1 hours;
+
+    mapping(address => uint256) public lastRequestTime;
+
+    /**
+     * @param name_ Token name (e.g., "USD Coin")
+     * @param symbol_ Token symbol (e.g., "USDC")
+     * @param initialSupply Initial supply (6-decimal units) minted to deployer
+     */
+    constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
+        _mint(msg.sender, initialSupply);
+    }
+
+    function decimals() public pure override returns (uint8) {
+        return DECIMALS;
+    }
+
+    // Faucet helpers
+    function faucet() external {
+        _faucetFor(msg.sender, FAUCET_AMOUNT);
+    }
+
+    function faucetAmount(uint256 amount) external {
+        _faucetFor(msg.sender, amount);
+    }
+
+    function faucetFor(address receiver) external {
+        _faucetFor(receiver, FAUCET_AMOUNT);
+    }
+
+    function faucetAmountFor(address receiver, uint256 amount) external {
+        _faucetFor(receiver, amount);
+    }
+
+    function _faucetFor(address receiver, uint256 amount) internal {
+        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "COOLDOWN");
+        require(amount <= MAX_FAUCET_AMOUNT, "MAX_EXCEEDED");
+        _mint(receiver, amount);
+        lastRequestTime[receiver] = block.timestamp;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {DecimalConstants} from "./DecimalConstants.sol";
+import {SafeTokenTransfers} from "./SafeTokenTransfers.sol";
+import {WERC7575ShareToken} from "./WERC7575ShareToken.sol";
+import {IERC7575} from "./interfaces/IERC7575.sol";
+import {IERC7575Errors} from "./interfaces/IERC7575Errors.sol";
+
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+
+contract WERC7575Vault is IERC7575, ERC165, ReentrancyGuard, Ownable2Step, Pausable, IERC7575Errors {
+    using SafeERC20 for IERC20Metadata;
+
+    /**
+     * @dev Emitted when assets are deposited into the vault
+     * @param sender The address that initiated the deposit
+     * @param owner The address that received the shares
+     * @param assets The amount of assets deposited
+     * @param shares The amount of shares minted
+     */
+    event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares);
+
+    /**
+     * @dev Emitted when assets are withdrawn from the vault
+     * @param sender The address that initiated the withdrawal
+     * @param receiver The address that received the assets
+     * @param owner The address that owned the shares
+     * @param assets The amount of assets withdrawn
+     * @param shares The amount of shares burned
+     */
+    event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares);
+
+    event VaultActiveStateChanged(bool indexed isActive);
+
+    address private _asset; // 20 bytes
+    uint64 private _scalingFactor; // 8 bytes
+    bool private _isActive; // 1 byte - packs with _asset and _scalingFactor in same slot
+    WERC7575ShareToken private _shareToken;
+
+    /**
+     * @dev Initializes a synchronous ERC4626 vault for the multi-asset system (ERC7575 compliant)
+     *
+     * Creates a simple, synchronous vault that enables immediate deposit/redeem operations
+     * for a single asset. Integrates with the shared ShareToken to participate in the
+     * multi-asset vault ecosystem.
+     *
+     * VAULT ARCHITECTURE:
+     * - Synchronous operations: deposits and redeems are immediate
+     * - Single asset per vault (paired asset-vault relationship)
+     * - Shares minted/burned directly (no async requests)
+     * - Integrates with multi-asset ShareToken
+     * - Can be paused by owner for emergency situations
+     *
+     * SPECIFICATION COMPLIANCE:
+     * - ERC7575: Multi-asset vault standard
+     * - ERC4626: Complete tokenized vault functionality
+     * - Decimal normalization: 6-18 decimals for assets, 18 for shares
+     *
+     * INITIALIZATION:
+     * After deployment, the owner must:
+     * 1. Call shareToken.registerVault(asset, vault_address)
+     * 2. Set vault as active if needed (defaults to active)
+     *
+     * VALIDATION:
+     * - Asset must be valid ERC20 with 6-18 decimals
+     * - ShareToken must be valid ERC20 with 18 decimals
+     * - ShareToken address must not be zero
+     * - Scaling factor must fit in uint64
+     *
+     * @param asset_ The underlying ERC20 asset token (e.g., USDC, USDT)
+     * @param shareToken_ The ERC7575 share token for multi-asset vault system
+     *
+     * @custom:throws ZeroAddress If shareToken_ is zero address
+     * @custom:throws UnsupportedAssetDecimals If asset decimals are not 6-18
+     * @custom:throws WrongDecimals If shareToken decimals are not 18
+     * @custom:throws AssetDecimalsFailed If asset.decimals() call fails
+     * @custom:throws ScalingFactorTooLarge If scaling factor exceeds uint64 max
+     */
+    constructor(address asset_, WERC7575ShareToken shareToken_) Ownable(msg.sender) {
+        // Validate asset compatibility
+        uint8 assetDecimals;
+        try IERC20Metadata(asset_).decimals() returns (uint8 decimals) {
+            if (decimals < DecimalConstants.MIN_ASSET_DECIMALS || decimals > DecimalConstants.SHARE_TOKEN_DECIMALS) {
+                revert UnsupportedAssetDecimals();
+            }
+            assetDecimals = decimals;
+        } catch {
+            revert AssetDecimalsFailed();
+        }
+        // Validate share token compatibility and enforce 18 decimals
+        if (address(shareToken_) == address(0)) revert ZeroAddress();
+        if (shareToken_.decimals() != DecimalConstants.SHARE_TOKEN_DECIMALS) {
+            revert WrongDecimals();
+        }
+
+        // Precompute scaling factor: 10^(18 - assetDecimals)
+        // Max scaling factor is 10^12 (for 6 decimals) which fits in uint64
+        uint256 scalingFactor = 10 ** (DecimalConstants.SHARE_TOKEN_DECIMALS - assetDecimals);
+        if (scalingFactor > type(uint64).max) revert ScalingFactorTooLarge();
+
+        _asset = asset_;
+        _scalingFactor = uint64(scalingFactor);
+        _isActive = true; // Vault is active by default
+        _shareToken = shareToken_;
+
+        // Note: Owner must separately call shareToken.registerVault(asset, vault) after deployment
+    }
+
+    /**
+     * @dev Pause all vault operations. Only callable by owner.
+     * Used for emergency situations to halt deposits, withdrawals, mints, and redeems.
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /**
+     * @dev Unpause all vault operations. Only callable by owner.
+     */
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /**
+     * @dev Sets the vault active state (only owner)
+     * @param _active True to activate, false to deactivate
+     */
+    function setVaultActive(bool _active) external onlyOwner {
+        _isActive = _active;
+        emit VaultActiveStateChanged(_active);
+    }
+
+    /**
+     * @dev Returns whether the vault is active and accepting deposits
+     * @return True if vault is active
+     */
+    function isVaultActive() external view returns (bool) {
+        return _isActive;
+    }
+
+    /**
+     * @dev Returns true if this contract implements the interface defined by interfaceId
+     * @param interfaceId The interface identifier, as specified in ERC-165
+     * @return bool True if the contract implements interfaceId
+     */
+    function supportsInterface(bytes4 interfaceId) public view virtual override(ERC165) returns (bool) {
+        return interfaceId == type(IERC7575).interfaceId || super.supportsInterface(interfaceId);
+    }
+
+    /**
+     * @dev Returns the address of the share token contract
+     * @return address The ERC7575 share token address
+     */
+    function share() external view returns (address) {
+        return address(_shareToken);
+    }
+
+    /**
+     * @dev Returns the address of the underlying asset token
+     * @return address The ERC20 asset token address
+     */
+    function asset() external view returns (address) {
+        return _asset;
+    }
+
+    /**
+     * @dev Returns the total amount of underlying assets held by the vault
+     * @return uint256 Total assets held in the vault
+     */
+    function totalAssets() public view returns (uint256) {
+        return IERC20Metadata(_asset).balanceOf(address(this));
+    }
+
+    /**
+     * @dev Converts asset amount to equivalent share amount
+     * @param assets Amount of assets to convert
+     * @return uint256 Equivalent amount of shares
+     */
+    function convertToShares(uint256 assets) public view returns (uint256) {
+        return _convertToShares(assets, Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Converts share amount to equivalent asset amount
+     * @param shares Amount of shares to convert
+     * @return uint256 Equivalent amount of assets
+     */
+    function convertToAssets(uint256 shares) public view returns (uint256) {
+        return _convertToAssets(shares, Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Converts assets to shares using decimal normalization for stablecoins
+     * @param assets Amount of assets to convert
+     * @return shares Amount of shares equivalent to assets
+     *
+     * Formula: shares = assets * 10^(18 - assetDecimals)
+     *
+     * For stablecoins with no yield:
+     * - Share decimals: enforced to be 18 in ShareToken constructor
+     * - Asset decimals: varies (6 for USDC, 18 for DAI, etc.)
+     * - This provides 1:1 value conversion with decimal normalization
+     * - No first depositor attack possible since conversion is deterministic
+     * - No manipulation possible since no dependency on totalSupply or totalAssets
+     */
+    function _convertToShares(uint256 assets, Math.Rounding rounding) internal view returns (uint256) {
+        // ShareToken always has 18 decimals, assetDecimals ∈ [6, 18]
+        // shares = assets * _scalingFactor where _scalingFactor = 10^(18 - assetDecimals)
+        // Use Math.mulDiv to prevent overflow on large amounts
+        return Math.mulDiv(assets, uint256(_scalingFactor), 1, rounding);
+    }
+
+    /**
+     * @dev Converts shares to assets using decimal normalization for stablecoins
+     * @param shares Amount of shares to convert
+     * @param rounding Rounding direction (Floor = favor vault, Ceil = favor user)
+     * @return assets Amount of assets equivalent to shares
+     *
+     * Formula: assets = shares * 10^(assetDecimals) / 10^(shareDecimals)
+     *
+     * For stablecoins with no yield:
+     * - Share decimals: queried from share token (typically 18)
+     * - Asset decimals: varies (6 for USDC, 18 for DAI, etc.)
+     * - This provides 1:1 value conversion with decimal normalization
+     * - No first depositor attack possible since conversion is deterministic
+     * - No manipulation possible since no dependency on totalSupply or totalAssets
+     */
+    function _convertToAssets(uint256 shares, Math.Rounding rounding) internal view returns (uint256) {
+        // ShareToken always has 18 decimals, assetDecimals ∈ [6, 18]
+        // When _scalingFactor == 1 (assetDecimals == 18): assets = shares
+        // When _scalingFactor > 1 (assetDecimals < 18): assets = shares / _scalingFactor
+        if (_scalingFactor == 1) {
+            return shares;
+        } else {
+            return Math.mulDiv(shares, 1, uint256(_scalingFactor), rounding);
+        }
+    }
+
+    /**
+     * @dev Preview shares received for depositing assets
+     * Uses Floor rounding to give slightly fewer shares to user (favors vault)
+     */
+    function previewDeposit(uint256 assets) public view returns (uint256) {
+        return _convertToShares(assets, Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Preview assets needed to mint shares
+     * Uses Ceil rounding to require slightly more assets from user (favors vault)
+     */
+    function previewMint(uint256 shares) public view returns (uint256) {
+        return _convertToAssets(shares, Math.Rounding.Ceil);
+    }
+
+    /**
+     * @dev Preview shares needed to withdraw assets
+     * Uses Ceil rounding to require slightly more shares from user (favors vault)
+     */
+    function previewWithdraw(uint256 assets) public view returns (uint256) {
+        return _convertToShares(assets, Math.Rounding.Ceil);
+    }
+
+    /**
+     * @dev Preview assets received for redeeming shares
+     * Uses Floor rounding to give slightly fewer assets to user (favors vault)
+     */
+    function previewRedeem(uint256 shares) public view returns (uint256) {
+        return _convertToAssets(shares, Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Returns the maximum amount of assets that can be deposited
+     * @return uint256 Maximum deposit amount (unlimited)
+     *
+     * Note: Receiver parameter is unused as there are no deposit limits
+     */
+    function maxDeposit(address) public pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    /**
+     * @dev Returns the maximum amount of shares that can be minted
+     * @return uint256 Maximum mint amount (unlimited)
+     *
+     * Note: Receiver parameter is unused as there are no mint limits
+     */
+    function maxMint(address) public pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    /**
+     * @dev Returns the maximum amount of assets that can be withdrawn by owner
+     * @param owner The address that owns the shares
+     * @return uint256 Maximum withdrawal amount based on share balance
+     */
+    function maxWithdraw(address owner) public view returns (uint256) {
+        return _convertToAssets(_shareToken.balanceOf(owner), Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Returns the maximum amount of shares that can be redeemed by owner
+     * @param owner The address that owns the shares
+     * @return uint256 Maximum redeem amount (owner's full share balance)
+     */
+    function maxRedeem(address owner) public view returns (uint256) {
+        return _shareToken.balanceOf(owner);
+    }
+
+    /**
+     * @dev Internal function to handle deposit/mint logic
+     * @param assets Amount of assets to transfer
+     * @param shares Amount of shares to mint
+     * @param receiver Address to receive shares
+     */
+    function _deposit(uint256 assets, uint256 shares, address receiver) internal {
+        if (!_isActive) revert VaultNotActive();
+        if (receiver == address(0)) {
+            revert IERC20Errors.ERC20InvalidReceiver(address(0));
+        }
+        if (assets == 0) revert ZeroAssets();
+        if (shares == 0) revert ZeroShares();
+
+        SafeTokenTransfers.safeTransferFrom(_asset, msg.sender, address(this), assets);
+
+        _shareToken.mint(receiver, shares);
+        emit Deposit(msg.sender, receiver, assets, shares);
+    }
+
+    /**
+     * @dev Deposits exact amount of assets and receives corresponding shares (ERC4626 compliant)
+     *
+     * Synchronous deposit operation: immediately mints shares and transfers assets.
+     * Simple one-step process without async state management.
+     *
+     * OPERATION:
+     * - Previews share amount for the deposit
+     * - Transfers assets from caller to vault
+     * - Mints shares to receiver
+     *
+     * SECURITY:
+     * - Reentrancy protected
+     * - Paused state check
+     * - Vault must be active
+     * - Zero address validation
+     *
+     * @param assets Amount of assets to deposit
+     * @param receiver Address to receive the minted shares
+     *
+     * @return shares Amount of shares minted
+     */
+    function deposit(uint256 assets, address receiver) public nonReentrant whenNotPaused returns (uint256 shares) {
+        shares = previewDeposit(assets);
+        _deposit(assets, shares, receiver);
+    }
+
+    /**
+     * @dev Mints exact amount of shares by depositing necessary assets (ERC4626 compliant)
+     *
+     * Synchronous mint operation: caller specifies desired shares, assets calculated.
+     * Transfers required assets and immediately mints specified shares.
+     *
+     * OPERATION:
+     * - Previews asset amount needed for shares
+     * - Transfers required assets from caller
+     * - Mints exact shares to receiver
+     *
+     * USE CASE:
+     * - When you want exactly X shares (not Y assets)
+     * - May require more assets due to rounding
+     *
+     * @param shares Amount of shares to mint (exact)
+     * @param receiver Address to receive the minted shares
+     *
+     * @return assets Amount of assets required for the mint
+     */
+    function mint(uint256 shares, address receiver) public nonReentrant whenNotPaused returns (uint256 assets) {
+        assets = previewMint(shares);
+        _deposit(assets, shares, receiver);
+    }
+
+    /**
+     * @dev Internal function to handle withdraw/redeem logic
+     * @param assets Amount of assets to transfer
+     * @param shares Amount of shares to burn
+     * @param receiver Address to receive assets
+     * @param owner Address that owns the shares
+     */
+    function _withdraw(uint256 assets, uint256 shares, address receiver, address owner) internal {
+        if (receiver == address(0)) {
+            revert IERC20Errors.ERC20InvalidReceiver(address(0));
+        }
+        if (owner == address(0)) {
+            revert IERC20Errors.ERC20InvalidSender(address(0));
+        }
+        if (assets == 0) revert ZeroAssets();
+        if (shares == 0) revert ZeroShares();
+
+        _shareToken.spendSelfAllowance(owner, shares);
+        _shareToken.burn(owner, shares);
+        SafeTokenTransfers.safeTransfer(_asset, receiver, assets);
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
+    }
+
+    /**
+     * @dev Withdraws exact amount of assets from vault by burning shares (ERC4626 compliant)
+     *
+     * Synchronous withdrawal operation: caller specifies assets, shares calculated.
+     * Burns required shares and immediately transfers assets to receiver.
+     *
+     * OPERATION:
+     * - Previews share amount needed for assets
+     * - Burns required shares from owner
+     * - Transfers exact assets to receiver
+     *
+     * AUTHORIZATION:
+     * - msg.sender must be owner OR have allowance for the shares
+     * - Allows delegation to withdrawal operators
+     *
+     * @param assets Amount of assets to withdraw (exact)
+     * @param receiver Address to receive the assets
+     * @param owner Address that owns the shares to be burned
+     *
+     * @return shares Amount of shares burned
+     */
+    function withdraw(uint256 assets, address receiver, address owner) public nonReentrant whenNotPaused returns (uint256 shares) {
+        shares = previewWithdraw(assets);
+        _withdraw(assets, shares, receiver, owner);
+    }
+
+    /**
+     * @dev Redeems exact amount of shares for assets (ERC4626 compliant)
+     *
+     * Synchronous redemption operation: caller specifies shares, assets calculated.
+     * Burns exact shares and transfers corresponding assets to receiver.
+     *
+     * OPERATION:
+     * - Previews asset amount for shares
+     * - Burns exact shares from owner
+     * - Transfers corresponding assets to receiver
+     *
+     * AUTHORIZATION:
+     * - msg.sender must be owner OR have allowance for the shares
+     * - Allows delegation to redemption operators
+     *
+     * USE CASE:
+     * - When you want to burn exactly X shares (not Y assets)
+     * - Receives at least minimum due to rounding down
+     *
+     * @param shares Amount of shares to redeem (exact)
+     * @param receiver Address to receive the assets
+     * @param owner Address that owns the shares to be burned
+     *
+     * @return assets Amount of assets withdrawn
+     */
+    function redeem(uint256 shares, address receiver, address owner) public nonReentrant whenNotPaused returns (uint256 assets) {
+        assets = previewRedeem(shares);
+        _withdraw(assets, shares, receiver, owner);
     }
 }
 

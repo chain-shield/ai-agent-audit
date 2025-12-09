@@ -295,7 +295,6 @@ static FINDINGS_BY_STATUS_CACHE: OnceLock<Vec<(String, Vec<Finding>)>> = OnceLoc
 
 fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataType) -> String {
     let mut findings_summary = String::new();
-    let mut valid_findings = Vec::new();
 
     // Initialize the cache once with insertion-order grouping based on the incoming findings
     // ************************************************************************************
@@ -315,13 +314,20 @@ fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataTyp
             map.entry(key).or_insert_with(Vec::new).push(f.clone());
         }
 
-        valid_findings = map.get("Valid").cloned().unwrap_or_default();
-
-        // Rehydrate into a Vec following first-seen key order to keep output stable
+        // Rehydrate into a Vec with "Valid" first, then other statuses in first-seen order
         let mut grouped: Vec<(String, Vec<Finding>)> = Vec::new();
+
+        // Add "Valid" findings first if they exist
+        if let Some(valid) = map.remove("Valid") {
+            grouped.push(("Valid".to_string(), valid));
+        }
+
+        // Then add all other statuses in their original order
         for k in order {
-            if let Some(v) = map.remove(&k) {
-                grouped.push((k, v));
+            if k != "Valid" {
+                if let Some(v) = map.remove(&k) {
+                    grouped.push((k, v));
+                }
             }
         }
         grouped
@@ -335,18 +341,9 @@ fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataTyp
     findings_summary.push_str("##Findings by Status\n");
 
     let mut num = 1;
-    if !valid_findings.is_empty() {
-        findings_summary.push_str("\n\nFinding Status: Valid\n");
-        for f in &valid_findings {
-            findings_summary.push_str(&prompt_context::get_finding_summary_report(f, num));
-            num += 1;
-        }
-    }
 
+    // Iterate through all grouped findings (Valid is already first in the cache)
     for (status, findings_vec) in grouped_findings.iter() {
-        if status == "Valid" {
-            continue;
-        };
         findings_summary.push_str(&format!("\n\nFinding Status: {}\n", status));
         for f in findings_vec {
             match report_type {

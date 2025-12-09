@@ -114,13 +114,13 @@ impl FindingAnalysis for RoundOneLegitAnalysis {
 
     fn print_analysis_results(&self) {
         info!("\n");
-        info!("{}: \n", self.finding_title);
-        info!("is user error or mistake: {}\n", self.user_error_or_mistake);
-        info!("is governance_risk: {}\n", self.governance_risk);
-        info!("is future speculation: {}\n", self.future_speculation);
-        info!("is non standard token: {}\n", self.non_standard_token);
-        info!("Impact: {}\n", self.impact.to_string());
-        info!("Likelihood: {}\n", self.likelihood.to_string());
+        // info!("{}: \n", self.finding_title);
+        // info!("is user error or mistake: {}\n", self.user_error_or_mistake);
+        // info!("is governance_risk: {}\n", self.governance_risk);
+        // info!("is future speculation: {}\n", self.future_speculation);
+        // info!("is non standard token: {}\n", self.non_standard_token);
+        // info!("Impact: {}\n", self.impact.to_string());
+        // info!("Likelihood: {}\n", self.likelihood.to_string());
         info!("Justification: {}\n", self.justification);
         info!("\n");
     }

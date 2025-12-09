@@ -1521,53 +1521,6 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.0.0) (utils/Nonces.sol)
-pragma solidity ^0.8.20;
-
-/**
- * @dev Provides tracking nonces for addresses. Nonces will only increment.
- */
-abstract contract Nonces {
-    /**
-     * @dev The nonce used for an `account` is not the expected current nonce.
-     */
-    error InvalidAccountNonce(address account, uint256 currentNonce);
-
-    mapping(address account => uint256) private _nonces;
-
-    /**
-     * @dev Returns the next unused nonce for an address.
-     */
-    function nonces(address owner) public view virtual returns (uint256) {
-        return _nonces[owner];
-    }
-
-    /**
-     * @dev Consumes a nonce.
-     *
-     * Returns the current value and increments nonce.
-     */
-    function _useNonce(address owner) internal virtual returns (uint256) {
-        // For each account, the nonce has an initial value of 0, can only be incremented by one, and cannot be
-        // decremented or reset. This guarantees that the nonce never overflows.
-        unchecked {
-            // It is important to do x++ and not ++x here.
-            return _nonces[owner]++;
-        }
-    }
-
-    /**
-     * @dev Same as {_useNonce} but checking that `nonce` is the next valid for `owner`.
-     */
-    function _useCheckedNonce(address owner, uint256 nonce) internal virtual {
-        uint256 current = _useNonce(owner);
-        if (nonce != current) {
-            revert InvalidAccountNonce(owner, current);
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.3.0) (utils/Pausable.sol)
 
 pragma solidity ^0.8.20;
@@ -1677,6 +1630,53 @@ abstract contract Pausable is Context {
     function _unpause() internal virtual whenPaused {
         _paused = false;
         emit Unpaused(_msgSender());
+    }
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.0.0) (utils/Nonces.sol)
+pragma solidity ^0.8.20;
+
+/**
+ * @dev Provides tracking nonces for addresses. Nonces will only increment.
+ */
+abstract contract Nonces {
+    /**
+     * @dev The nonce used for an `account` is not the expected current nonce.
+     */
+    error InvalidAccountNonce(address account, uint256 currentNonce);
+
+    mapping(address account => uint256) private _nonces;
+
+    /**
+     * @dev Returns the next unused nonce for an address.
+     */
+    function nonces(address owner) public view virtual returns (uint256) {
+        return _nonces[owner];
+    }
+
+    /**
+     * @dev Consumes a nonce.
+     *
+     * Returns the current value and increments nonce.
+     */
+    function _useNonce(address owner) internal virtual returns (uint256) {
+        // For each account, the nonce has an initial value of 0, can only be incremented by one, and cannot be
+        // decremented or reset. This guarantees that the nonce never overflows.
+        unchecked {
+            // It is important to do x++ and not ++x here.
+            return _nonces[owner]++;
+        }
+    }
+
+    /**
+     * @dev Same as {_useNonce} but checking that `nonce` is the next valid for `owner`.
+     */
+    function _useCheckedNonce(address owner, uint256 nonce) internal virtual {
+        uint256 current = _useNonce(owner);
+        if (nonce != current) {
+            revert InvalidAccountNonce(owner, current);
+        }
     }
 }
 
@@ -1901,97 +1901,6 @@ abstract contract Ownable2Step is Ownable {
 pragma solidity ^0.8.30;
 
 /**
- * @title IERC7575
- * @dev Interface of the ERC7575 "Multi-Asset ERC-4626 Vaults", as defined in
- *      https://eips.ethereum.org/EIPS/eip-7575
- *
- * This standard extends ERC-4626 to support multiple assets or entry points
- * for the same share token. It includes all ERC4626 functions plus the share() function.
- * Interface ID: 0x2f0a18c5
- */
-interface IERC7575 {
-    /**
-     * @dev Emitted when a vault address is updated for a specific asset.
-     * @param asset The asset token address
-     * @param vault The vault address for this asset
-     */
-    event VaultUpdate(address indexed asset, address vault);
-
-    /**
-     * @dev Returns the address of the share token.
-     * This is the token minted to represent ownership in the vault.
-     * @return shareTokenAddress The address of the share token
-     */
-    function share() external view returns (address shareTokenAddress);
-
-    // ERC4626 functions (inherited from IERC4626)
-    function asset() external view returns (address assetTokenAddress);
-    function totalAssets() external view returns (uint256 totalManagedAssets);
-    function convertToShares(uint256 assets) external view returns (uint256 shares);
-    function convertToAssets(uint256 shares) external view returns (uint256 assets);
-    function maxDeposit(address receiver) external view returns (uint256 maxAssets);
-    function previewDeposit(uint256 assets) external view returns (uint256 shares);
-    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
-    function maxMint(address receiver) external view returns (uint256 maxShares);
-    function previewMint(uint256 shares) external view returns (uint256 assets);
-    function mint(uint256 shares, address receiver) external returns (uint256 assets);
-    function maxWithdraw(address owner) external view returns (uint256 maxAssets);
-    function previewWithdraw(uint256 assets) external view returns (uint256 shares);
-    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
-    function maxRedeem(address owner) external view returns (uint256 maxShares);
-    function previewRedeem(uint256 shares) external view returns (uint256 assets);
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
-}
-
-/**
- * @title IERC7575Share
- * @dev Basic interface for share tokens in the ERC7575 ecosystem.
- * This covers the fundamental vault lookup functionality that all share tokens should implement.
- * Interface ID: 0x3749710f
- */
-interface IERC7575Share {
-    /**
-     * @dev Returns the vault address for a specific asset.
-     * Allows share tokens to point back to their vaults.
-     * @param asset The asset token address
-     * @return vault The vault address that handles this asset
-     */
-    function vault(address asset) external view returns (address vault);
-
-    /**
-     * @dev Returns all registered assets in the multi-asset system.
-     * @return assets Array of all asset addresses that have registered vaults
-     */
-    function getRegisteredAssets() external view returns (address[] memory assets);
-
-    /**
-     * @dev Emitted when a vault address is updated for a specific asset.
-     * @param asset The asset token address
-     * @param vault The vault address for this asset
-     */
-    event VaultUpdate(address indexed asset, address vault);
-}
-
-/**
- * @title IERC7575ShareExtended
- * @dev Full interface for share tokens in the ERC7575 ecosystem with advanced features.
- * Extends the basic interface with optimization functions for upgradeable implementations.
- * Interface ID: 0x0a13f305
- */
-interface IERC7575ShareExtended is IERC7575Share {
-    /**
-     * @dev Returns both circulating supply and total normalized assets in a single optimized call.
-     * This is the preferred method for conversion calculations as it reduces gas usage.
-     * @return circulatingSupply Total supply minus shares held by vaults for redemption claims
-     * @return totalNormalizedAssets Total normalized assets (18 decimals) across all vaults
-     */
-    function getCirculatingSupplyAndAssets() external view returns (uint256 circulatingSupply, uint256 totalNormalizedAssets);
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/**
  * @title IERC7575Errors
  * @dev Common error definitions for ERC7575 vault implementations
  *
@@ -2203,6 +2112,97 @@ library DecimalConstants {
     uint8 constant MIN_ASSET_DECIMALS = 6;
 }
 
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/**
+ * @title IERC7575
+ * @dev Interface of the ERC7575 "Multi-Asset ERC-4626 Vaults", as defined in
+ *      https://eips.ethereum.org/EIPS/eip-7575
+ *
+ * This standard extends ERC-4626 to support multiple assets or entry points
+ * for the same share token. It includes all ERC4626 functions plus the share() function.
+ * Interface ID: 0x2f0a18c5
+ */
+interface IERC7575 {
+    /**
+     * @dev Emitted when a vault address is updated for a specific asset.
+     * @param asset The asset token address
+     * @param vault The vault address for this asset
+     */
+    event VaultUpdate(address indexed asset, address vault);
+
+    /**
+     * @dev Returns the address of the share token.
+     * This is the token minted to represent ownership in the vault.
+     * @return shareTokenAddress The address of the share token
+     */
+    function share() external view returns (address shareTokenAddress);
+
+    // ERC4626 functions (inherited from IERC4626)
+    function asset() external view returns (address assetTokenAddress);
+    function totalAssets() external view returns (uint256 totalManagedAssets);
+    function convertToShares(uint256 assets) external view returns (uint256 shares);
+    function convertToAssets(uint256 shares) external view returns (uint256 assets);
+    function maxDeposit(address receiver) external view returns (uint256 maxAssets);
+    function previewDeposit(uint256 assets) external view returns (uint256 shares);
+    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
+    function maxMint(address receiver) external view returns (uint256 maxShares);
+    function previewMint(uint256 shares) external view returns (uint256 assets);
+    function mint(uint256 shares, address receiver) external returns (uint256 assets);
+    function maxWithdraw(address owner) external view returns (uint256 maxAssets);
+    function previewWithdraw(uint256 assets) external view returns (uint256 shares);
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
+    function maxRedeem(address owner) external view returns (uint256 maxShares);
+    function previewRedeem(uint256 shares) external view returns (uint256 assets);
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
+}
+
+/**
+ * @title IERC7575Share
+ * @dev Basic interface for share tokens in the ERC7575 ecosystem.
+ * This covers the fundamental vault lookup functionality that all share tokens should implement.
+ * Interface ID: 0x3749710f
+ */
+interface IERC7575Share {
+    /**
+     * @dev Returns the vault address for a specific asset.
+     * Allows share tokens to point back to their vaults.
+     * @param asset The asset token address
+     * @return vault The vault address that handles this asset
+     */
+    function vault(address asset) external view returns (address vault);
+
+    /**
+     * @dev Returns all registered assets in the multi-asset system.
+     * @return assets Array of all asset addresses that have registered vaults
+     */
+    function getRegisteredAssets() external view returns (address[] memory assets);
+
+    /**
+     * @dev Emitted when a vault address is updated for a specific asset.
+     * @param asset The asset token address
+     * @param vault The vault address for this asset
+     */
+    event VaultUpdate(address indexed asset, address vault);
+}
+
+/**
+ * @title IERC7575ShareExtended
+ * @dev Full interface for share tokens in the ERC7575 ecosystem with advanced features.
+ * Extends the basic interface with optimization functions for upgradeable implementations.
+ * Interface ID: 0x0a13f305
+ */
+interface IERC7575ShareExtended is IERC7575Share {
+    /**
+     * @dev Returns both circulating supply and total normalized assets in a single optimized call.
+     * This is the preferred method for conversion calculations as it reduces gas usage.
+     * @return circulatingSupply Total supply minus shares held by vaults for redemption claims
+     * @return totalNormalizedAssets Total normalized assets (18 decimals) across all vaults
+     */
+    function getCirculatingSupplyAndAssets() external view returns (uint256 circulatingSupply, uint256 totalNormalizedAssets);
+}
+
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
 // SPDX-License-Identifier: MIT
@@ -2212,68 +2212,50 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 
 /**
- * @title ERC20Faucet
- * @dev A test token faucet that allows users to request tokens with a cooldown period
- * Used for testing and development purposes. Includes permit functionality for gasless approvals.
+ * @title ERC20Faucet6
+ * @dev Test token faucet with 6 decimals (USDC/USDT-like) and permit support.
  */
-contract ERC20Faucet is ERC20, ERC20Permit {
-    uint256 public constant FAUCET_AMOUNT = 10000 * 10 ** 18; // Amount of tokens dispensed by the faucet
-    uint256 public constant MAX_FAUCET_AMOUNT = 100000 * 10 ** 18; // Maximum amount of tokens dispensed by the faucet
+contract ERC20Faucet6 is ERC20, ERC20Permit {
+    uint8 private constant DECIMALS = 6;
+    uint256 public constant FAUCET_AMOUNT = 10_000 * 10 ** DECIMALS;
+    uint256 public constant MAX_FAUCET_AMOUNT = 100_000 * 10 ** DECIMALS;
+    uint256 public constant COOLDOWN_TIME = 1 hours;
+
     mapping(address => uint256) public lastRequestTime;
-    uint256 public constant COOLDOWN_TIME = 1 hours; // Cooldown period
 
     /**
-     * @dev Constructor that initializes the token with custom name and symbol
-     * @param name_ The name of the token (e.g., "USD Tether")
-     * @param symbol_ The symbol of the token (e.g., "USDT")
-     * @param initialSupply The initial token supply to mint to deployer
-     *
-     * Mints initial supply to the deployer and enables permit functionality for gasless approvals.
+     * @param name_ Token name (e.g., "USD Coin")
+     * @param symbol_ Token symbol (e.g., "USDC")
+     * @param initialSupply Initial supply (6-decimal units) minted to deployer
      */
     constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
         _mint(msg.sender, initialSupply);
     }
 
-    /**
-     * @dev Request standard faucet amount for the caller
-     */
-    function faucet() public {
+    function decimals() public pure override returns (uint8) {
+        return DECIMALS;
+    }
+
+    // Faucet helpers
+    function faucet() external {
         _faucetFor(msg.sender, FAUCET_AMOUNT);
     }
 
-    /**
-     * @dev Request specific amount of tokens for the caller
-     * @param amount Amount of tokens to request
-     */
-    function faucetAmount(uint256 amount) public {
+    function faucetAmount(uint256 amount) external {
         _faucetFor(msg.sender, amount);
     }
 
-    /**
-     * @dev Request standard faucet amount for a specific receiver
-     * @param receiver Address to receive the tokens
-     */
-    function faucetFor(address receiver) public {
+    function faucetFor(address receiver) external {
         _faucetFor(receiver, FAUCET_AMOUNT);
     }
 
-    /**
-     * @dev Request specific amount of tokens for a specific receiver
-     * @param receiver Address to receive the tokens
-     * @param amount Amount of tokens to request
-     */
-    function faucetAmountFor(address receiver, uint256 amount) public {
+    function faucetAmountFor(address receiver, uint256 amount) external {
         _faucetFor(receiver, amount);
     }
 
-    /**
-     * @dev Internal function to handle faucet requests with cooldown and limit checks
-     * @param receiver Address to receive the tokens
-     * @param amount Amount of tokens to mint
-     */
     function _faucetFor(address receiver, uint256 amount) internal {
-        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "You must wait for the cooldown period to end.");
-        require(amount <= MAX_FAUCET_AMOUNT, "Amount exceeds maximum faucet amount.");
+        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "COOLDOWN");
+        require(amount <= MAX_FAUCET_AMOUNT, "MAX_EXCEEDED");
         _mint(receiver, amount);
         lastRequestTime[receiver] = block.timestamp;
     }
@@ -2407,6 +2389,80 @@ interface IERC7540Redeem is IERC7540Operator {
  *         https://eips.ethereum.org/EIPS/eip-7540
  */
 interface IERC7540 is IERC7540Operator, IERC7540Deposit, IERC7540Redeem {}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+
+/**
+ * @title ERC20Faucet
+ * @dev A test token faucet that allows users to request tokens with a cooldown period
+ * Used for testing and development purposes. Includes permit functionality for gasless approvals.
+ */
+contract ERC20Faucet is ERC20, ERC20Permit {
+    uint256 public constant FAUCET_AMOUNT = 10000 * 10 ** 18; // Amount of tokens dispensed by the faucet
+    uint256 public constant MAX_FAUCET_AMOUNT = 100000 * 10 ** 18; // Maximum amount of tokens dispensed by the faucet
+    mapping(address => uint256) public lastRequestTime;
+    uint256 public constant COOLDOWN_TIME = 1 hours; // Cooldown period
+
+    /**
+     * @dev Constructor that initializes the token with custom name and symbol
+     * @param name_ The name of the token (e.g., "USD Tether")
+     * @param symbol_ The symbol of the token (e.g., "USDT")
+     * @param initialSupply The initial token supply to mint to deployer
+     *
+     * Mints initial supply to the deployer and enables permit functionality for gasless approvals.
+     */
+    constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
+        _mint(msg.sender, initialSupply);
+    }
+
+    /**
+     * @dev Request standard faucet amount for the caller
+     */
+    function faucet() public {
+        _faucetFor(msg.sender, FAUCET_AMOUNT);
+    }
+
+    /**
+     * @dev Request specific amount of tokens for the caller
+     * @param amount Amount of tokens to request
+     */
+    function faucetAmount(uint256 amount) public {
+        _faucetFor(msg.sender, amount);
+    }
+
+    /**
+     * @dev Request standard faucet amount for a specific receiver
+     * @param receiver Address to receive the tokens
+     */
+    function faucetFor(address receiver) public {
+        _faucetFor(receiver, FAUCET_AMOUNT);
+    }
+
+    /**
+     * @dev Request specific amount of tokens for a specific receiver
+     * @param receiver Address to receive the tokens
+     * @param amount Amount of tokens to request
+     */
+    function faucetAmountFor(address receiver, uint256 amount) public {
+        _faucetFor(receiver, amount);
+    }
+
+    /**
+     * @dev Internal function to handle faucet requests with cooldown and limit checks
+     * @param receiver Address to receive the tokens
+     * @param amount Amount of tokens to mint
+     */
+    function _faucetFor(address receiver, uint256 amount) internal {
+        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "You must wait for the cooldown period to end.");
+        require(amount <= MAX_FAUCET_AMOUNT, "Amount exceeds maximum faucet amount.");
+        _mint(receiver, amount);
+        lastRequestTime[receiver] = block.timestamp;
+    }
+}
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
@@ -3207,531 +3263,6 @@ contract ShareTokenUpgradeable is Initializable, ERC20Upgradeable, Ownable2StepU
      */
     function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
         return interfaceId == type(IERC7575ShareExtended).interfaceId || interfaceId == type(IERC7540Operator).interfaceId || interfaceId == type(IERC165).interfaceId;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-
-/**
- * @title ERC20Faucet6
- * @dev Test token faucet with 6 decimals (USDC/USDT-like) and permit support.
- */
-contract ERC20Faucet6 is ERC20, ERC20Permit {
-    uint8 private constant DECIMALS = 6;
-    uint256 public constant FAUCET_AMOUNT = 10_000 * 10 ** DECIMALS;
-    uint256 public constant MAX_FAUCET_AMOUNT = 100_000 * 10 ** DECIMALS;
-    uint256 public constant COOLDOWN_TIME = 1 hours;
-
-    mapping(address => uint256) public lastRequestTime;
-
-    /**
-     * @param name_ Token name (e.g., "USD Coin")
-     * @param symbol_ Token symbol (e.g., "USDC")
-     * @param initialSupply Initial supply (6-decimal units) minted to deployer
-     */
-    constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
-        _mint(msg.sender, initialSupply);
-    }
-
-    function decimals() public pure override returns (uint8) {
-        return DECIMALS;
-    }
-
-    // Faucet helpers
-    function faucet() external {
-        _faucetFor(msg.sender, FAUCET_AMOUNT);
-    }
-
-    function faucetAmount(uint256 amount) external {
-        _faucetFor(msg.sender, amount);
-    }
-
-    function faucetFor(address receiver) external {
-        _faucetFor(receiver, FAUCET_AMOUNT);
-    }
-
-    function faucetAmountFor(address receiver, uint256 amount) external {
-        _faucetFor(receiver, amount);
-    }
-
-    function _faucetFor(address receiver, uint256 amount) internal {
-        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "COOLDOWN");
-        require(amount <= MAX_FAUCET_AMOUNT, "MAX_EXCEEDED");
-        _mint(receiver, amount);
-        lastRequestTime[receiver] = block.timestamp;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {DecimalConstants} from "./DecimalConstants.sol";
-import {SafeTokenTransfers} from "./SafeTokenTransfers.sol";
-import {WERC7575ShareToken} from "./WERC7575ShareToken.sol";
-import {IERC7575} from "./interfaces/IERC7575.sol";
-import {IERC7575Errors} from "./interfaces/IERC7575Errors.sol";
-
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-
-contract WERC7575Vault is IERC7575, ERC165, ReentrancyGuard, Ownable2Step, Pausable, IERC7575Errors {
-    using SafeERC20 for IERC20Metadata;
-
-    /**
-     * @dev Emitted when assets are deposited into the vault
-     * @param sender The address that initiated the deposit
-     * @param owner The address that received the shares
-     * @param assets The amount of assets deposited
-     * @param shares The amount of shares minted
-     */
-    event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares);
-
-    /**
-     * @dev Emitted when assets are withdrawn from the vault
-     * @param sender The address that initiated the withdrawal
-     * @param receiver The address that received the assets
-     * @param owner The address that owned the shares
-     * @param assets The amount of assets withdrawn
-     * @param shares The amount of shares burned
-     */
-    event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares);
-
-    event VaultActiveStateChanged(bool indexed isActive);
-
-    address private _asset; // 20 bytes
-    uint64 private _scalingFactor; // 8 bytes
-    bool private _isActive; // 1 byte - packs with _asset and _scalingFactor in same slot
-    WERC7575ShareToken private _shareToken;
-
-    /**
-     * @dev Initializes a synchronous ERC4626 vault for the multi-asset system (ERC7575 compliant)
-     *
-     * Creates a simple, synchronous vault that enables immediate deposit/redeem operations
-     * for a single asset. Integrates with the shared ShareToken to participate in the
-     * multi-asset vault ecosystem.
-     *
-     * VAULT ARCHITECTURE:
-     * - Synchronous operations: deposits and redeems are immediate
-     * - Single asset per vault (paired asset-vault relationship)
-     * - Shares minted/burned directly (no async requests)
-     * - Integrates with multi-asset ShareToken
-     * - Can be paused by owner for emergency situations
-     *
-     * SPECIFICATION COMPLIANCE:
-     * - ERC7575: Multi-asset vault standard
-     * - ERC4626: Complete tokenized vault functionality
-     * - Decimal normalization: 6-18 decimals for assets, 18 for shares
-     *
-     * INITIALIZATION:
-     * After deployment, the owner must:
-     * 1. Call shareToken.registerVault(asset, vault_address)
-     * 2. Set vault as active if needed (defaults to active)
-     *
-     * VALIDATION:
-     * - Asset must be valid ERC20 with 6-18 decimals
-     * - ShareToken must be valid ERC20 with 18 decimals
-     * - ShareToken address must not be zero
-     * - Scaling factor must fit in uint64
-     *
-     * @param asset_ The underlying ERC20 asset token (e.g., USDC, USDT)
-     * @param shareToken_ The ERC7575 share token for multi-asset vault system
-     *
-     * @custom:throws ZeroAddress If shareToken_ is zero address
-     * @custom:throws UnsupportedAssetDecimals If asset decimals are not 6-18
-     * @custom:throws WrongDecimals If shareToken decimals are not 18
-     * @custom:throws AssetDecimalsFailed If asset.decimals() call fails
-     * @custom:throws ScalingFactorTooLarge If scaling factor exceeds uint64 max
-     */
-    constructor(address asset_, WERC7575ShareToken shareToken_) Ownable(msg.sender) {
-        // Validate asset compatibility
-        uint8 assetDecimals;
-        try IERC20Metadata(asset_).decimals() returns (uint8 decimals) {
-            if (decimals < DecimalConstants.MIN_ASSET_DECIMALS || decimals > DecimalConstants.SHARE_TOKEN_DECIMALS) {
-                revert UnsupportedAssetDecimals();
-            }
-            assetDecimals = decimals;
-        } catch {
-            revert AssetDecimalsFailed();
-        }
-        // Validate share token compatibility and enforce 18 decimals
-        if (address(shareToken_) == address(0)) revert ZeroAddress();
-        if (shareToken_.decimals() != DecimalConstants.SHARE_TOKEN_DECIMALS) {
-            revert WrongDecimals();
-        }
-
-        // Precompute scaling factor: 10^(18 - assetDecimals)
-        // Max scaling factor is 10^12 (for 6 decimals) which fits in uint64
-        uint256 scalingFactor = 10 ** (DecimalConstants.SHARE_TOKEN_DECIMALS - assetDecimals);
-        if (scalingFactor > type(uint64).max) revert ScalingFactorTooLarge();
-
-        _asset = asset_;
-        _scalingFactor = uint64(scalingFactor);
-        _isActive = true; // Vault is active by default
-        _shareToken = shareToken_;
-
-        // Note: Owner must separately call shareToken.registerVault(asset, vault) after deployment
-    }
-
-    /**
-     * @dev Pause all vault operations. Only callable by owner.
-     * Used for emergency situations to halt deposits, withdrawals, mints, and redeems.
-     */
-    function pause() external onlyOwner {
-        _pause();
-    }
-
-    /**
-     * @dev Unpause all vault operations. Only callable by owner.
-     */
-    function unpause() external onlyOwner {
-        _unpause();
-    }
-
-    /**
-     * @dev Sets the vault active state (only owner)
-     * @param _active True to activate, false to deactivate
-     */
-    function setVaultActive(bool _active) external onlyOwner {
-        _isActive = _active;
-        emit VaultActiveStateChanged(_active);
-    }
-
-    /**
-     * @dev Returns whether the vault is active and accepting deposits
-     * @return True if vault is active
-     */
-    function isVaultActive() external view returns (bool) {
-        return _isActive;
-    }
-
-    /**
-     * @dev Returns true if this contract implements the interface defined by interfaceId
-     * @param interfaceId The interface identifier, as specified in ERC-165
-     * @return bool True if the contract implements interfaceId
-     */
-    function supportsInterface(bytes4 interfaceId) public view virtual override(ERC165) returns (bool) {
-        return interfaceId == type(IERC7575).interfaceId || super.supportsInterface(interfaceId);
-    }
-
-    /**
-     * @dev Returns the address of the share token contract
-     * @return address The ERC7575 share token address
-     */
-    function share() external view returns (address) {
-        return address(_shareToken);
-    }
-
-    /**
-     * @dev Returns the address of the underlying asset token
-     * @return address The ERC20 asset token address
-     */
-    function asset() external view returns (address) {
-        return _asset;
-    }
-
-    /**
-     * @dev Returns the total amount of underlying assets held by the vault
-     * @return uint256 Total assets held in the vault
-     */
-    function totalAssets() public view returns (uint256) {
-        return IERC20Metadata(_asset).balanceOf(address(this));
-    }
-
-    /**
-     * @dev Converts asset amount to equivalent share amount
-     * @param assets Amount of assets to convert
-     * @return uint256 Equivalent amount of shares
-     */
-    function convertToShares(uint256 assets) public view returns (uint256) {
-        return _convertToShares(assets, Math.Rounding.Floor);
-    }
-
-    /**
-     * @dev Converts share amount to equivalent asset amount
-     * @param shares Amount of shares to convert
-     * @return uint256 Equivalent amount of assets
-     */
-    function convertToAssets(uint256 shares) public view returns (uint256) {
-        return _convertToAssets(shares, Math.Rounding.Floor);
-    }
-
-    /**
-     * @dev Converts assets to shares using decimal normalization for stablecoins
-     * @param assets Amount of assets to convert
-     * @return shares Amount of shares equivalent to assets
-     *
-     * Formula: shares = assets * 10^(18 - assetDecimals)
-     *
-     * For stablecoins with no yield:
-     * - Share decimals: enforced to be 18 in ShareToken constructor
-     * - Asset decimals: varies (6 for USDC, 18 for DAI, etc.)
-     * - This provides 1:1 value conversion with decimal normalization
-     * - No first depositor attack possible since conversion is deterministic
-     * - No manipulation possible since no dependency on totalSupply or totalAssets
-     */
-    function _convertToShares(uint256 assets, Math.Rounding rounding) internal view returns (uint256) {
-        // ShareToken always has 18 decimals, assetDecimals ∈ [6, 18]
-        // shares = assets * _scalingFactor where _scalingFactor = 10^(18 - assetDecimals)
-        // Use Math.mulDiv to prevent overflow on large amounts
-        return Math.mulDiv(assets, uint256(_scalingFactor), 1, rounding);
-    }
-
-    /**
-     * @dev Converts shares to assets using decimal normalization for stablecoins
-     * @param shares Amount of shares to convert
-     * @param rounding Rounding direction (Floor = favor vault, Ceil = favor user)
-     * @return assets Amount of assets equivalent to shares
-     *
-     * Formula: assets = shares * 10^(assetDecimals) / 10^(shareDecimals)
-     *
-     * For stablecoins with no yield:
-     * - Share decimals: queried from share token (typically 18)
-     * - Asset decimals: varies (6 for USDC, 18 for DAI, etc.)
-     * - This provides 1:1 value conversion with decimal normalization
-     * - No first depositor attack possible since conversion is deterministic
-     * - No manipulation possible since no dependency on totalSupply or totalAssets
-     */
-    function _convertToAssets(uint256 shares, Math.Rounding rounding) internal view returns (uint256) {
-        // ShareToken always has 18 decimals, assetDecimals ∈ [6, 18]
-        // When _scalingFactor == 1 (assetDecimals == 18): assets = shares
-        // When _scalingFactor > 1 (assetDecimals < 18): assets = shares / _scalingFactor
-        if (_scalingFactor == 1) {
-            return shares;
-        } else {
-            return Math.mulDiv(shares, 1, uint256(_scalingFactor), rounding);
-        }
-    }
-
-    /**
-     * @dev Preview shares received for depositing assets
-     * Uses Floor rounding to give slightly fewer shares to user (favors vault)
-     */
-    function previewDeposit(uint256 assets) public view returns (uint256) {
-        return _convertToShares(assets, Math.Rounding.Floor);
-    }
-
-    /**
-     * @dev Preview assets needed to mint shares
-     * Uses Ceil rounding to require slightly more assets from user (favors vault)
-     */
-    function previewMint(uint256 shares) public view returns (uint256) {
-        return _convertToAssets(shares, Math.Rounding.Ceil);
-    }
-
-    /**
-     * @dev Preview shares needed to withdraw assets
-     * Uses Ceil rounding to require slightly more shares from user (favors vault)
-     */
-    function previewWithdraw(uint256 assets) public view returns (uint256) {
-        return _convertToShares(assets, Math.Rounding.Ceil);
-    }
-
-    /**
-     * @dev Preview assets received for redeeming shares
-     * Uses Floor rounding to give slightly fewer assets to user (favors vault)
-     */
-    function previewRedeem(uint256 shares) public view returns (uint256) {
-        return _convertToAssets(shares, Math.Rounding.Floor);
-    }
-
-    /**
-     * @dev Returns the maximum amount of assets that can be deposited
-     * @return uint256 Maximum deposit amount (unlimited)
-     *
-     * Note: Receiver parameter is unused as there are no deposit limits
-     */
-    function maxDeposit(address) public pure returns (uint256) {
-        return type(uint256).max;
-    }
-
-    /**
-     * @dev Returns the maximum amount of shares that can be minted
-     * @return uint256 Maximum mint amount (unlimited)
-     *
-     * Note: Receiver parameter is unused as there are no mint limits
-     */
-    function maxMint(address) public pure returns (uint256) {
-        return type(uint256).max;
-    }
-
-    /**
-     * @dev Returns the maximum amount of assets that can be withdrawn by owner
-     * @param owner The address that owns the shares
-     * @return uint256 Maximum withdrawal amount based on share balance
-     */
-    function maxWithdraw(address owner) public view returns (uint256) {
-        return _convertToAssets(_shareToken.balanceOf(owner), Math.Rounding.Floor);
-    }
-
-    /**
-     * @dev Returns the maximum amount of shares that can be redeemed by owner
-     * @param owner The address that owns the shares
-     * @return uint256 Maximum redeem amount (owner's full share balance)
-     */
-    function maxRedeem(address owner) public view returns (uint256) {
-        return _shareToken.balanceOf(owner);
-    }
-
-    /**
-     * @dev Internal function to handle deposit/mint logic
-     * @param assets Amount of assets to transfer
-     * @param shares Amount of shares to mint
-     * @param receiver Address to receive shares
-     */
-    function _deposit(uint256 assets, uint256 shares, address receiver) internal {
-        if (!_isActive) revert VaultNotActive();
-        if (receiver == address(0)) {
-            revert IERC20Errors.ERC20InvalidReceiver(address(0));
-        }
-        if (assets == 0) revert ZeroAssets();
-        if (shares == 0) revert ZeroShares();
-
-        SafeTokenTransfers.safeTransferFrom(_asset, msg.sender, address(this), assets);
-
-        _shareToken.mint(receiver, shares);
-        emit Deposit(msg.sender, receiver, assets, shares);
-    }
-
-    /**
-     * @dev Deposits exact amount of assets and receives corresponding shares (ERC4626 compliant)
-     *
-     * Synchronous deposit operation: immediately mints shares and transfers assets.
-     * Simple one-step process without async state management.
-     *
-     * OPERATION:
-     * - Previews share amount for the deposit
-     * - Transfers assets from caller to vault
-     * - Mints shares to receiver
-     *
-     * SECURITY:
-     * - Reentrancy protected
-     * - Paused state check
-     * - Vault must be active
-     * - Zero address validation
-     *
-     * @param assets Amount of assets to deposit
-     * @param receiver Address to receive the minted shares
-     *
-     * @return shares Amount of shares minted
-     */
-    function deposit(uint256 assets, address receiver) public nonReentrant whenNotPaused returns (uint256 shares) {
-        shares = previewDeposit(assets);
-        _deposit(assets, shares, receiver);
-    }
-
-    /**
-     * @dev Mints exact amount of shares by depositing necessary assets (ERC4626 compliant)
-     *
-     * Synchronous mint operation: caller specifies desired shares, assets calculated.
-     * Transfers required assets and immediately mints specified shares.
-     *
-     * OPERATION:
-     * - Previews asset amount needed for shares
-     * - Transfers required assets from caller
-     * - Mints exact shares to receiver
-     *
-     * USE CASE:
-     * - When you want exactly X shares (not Y assets)
-     * - May require more assets due to rounding
-     *
-     * @param shares Amount of shares to mint (exact)
-     * @param receiver Address to receive the minted shares
-     *
-     * @return assets Amount of assets required for the mint
-     */
-    function mint(uint256 shares, address receiver) public nonReentrant whenNotPaused returns (uint256 assets) {
-        assets = previewMint(shares);
-        _deposit(assets, shares, receiver);
-    }
-
-    /**
-     * @dev Internal function to handle withdraw/redeem logic
-     * @param assets Amount of assets to transfer
-     * @param shares Amount of shares to burn
-     * @param receiver Address to receive assets
-     * @param owner Address that owns the shares
-     */
-    function _withdraw(uint256 assets, uint256 shares, address receiver, address owner) internal {
-        if (receiver == address(0)) {
-            revert IERC20Errors.ERC20InvalidReceiver(address(0));
-        }
-        if (owner == address(0)) {
-            revert IERC20Errors.ERC20InvalidSender(address(0));
-        }
-        if (assets == 0) revert ZeroAssets();
-        if (shares == 0) revert ZeroShares();
-
-        _shareToken.spendSelfAllowance(owner, shares);
-        _shareToken.burn(owner, shares);
-        SafeTokenTransfers.safeTransfer(_asset, receiver, assets);
-        emit Withdraw(msg.sender, receiver, owner, assets, shares);
-    }
-
-    /**
-     * @dev Withdraws exact amount of assets from vault by burning shares (ERC4626 compliant)
-     *
-     * Synchronous withdrawal operation: caller specifies assets, shares calculated.
-     * Burns required shares and immediately transfers assets to receiver.
-     *
-     * OPERATION:
-     * - Previews share amount needed for assets
-     * - Burns required shares from owner
-     * - Transfers exact assets to receiver
-     *
-     * AUTHORIZATION:
-     * - msg.sender must be owner OR have allowance for the shares
-     * - Allows delegation to withdrawal operators
-     *
-     * @param assets Amount of assets to withdraw (exact)
-     * @param receiver Address to receive the assets
-     * @param owner Address that owns the shares to be burned
-     *
-     * @return shares Amount of shares burned
-     */
-    function withdraw(uint256 assets, address receiver, address owner) public nonReentrant whenNotPaused returns (uint256 shares) {
-        shares = previewWithdraw(assets);
-        _withdraw(assets, shares, receiver, owner);
-    }
-
-    /**
-     * @dev Redeems exact amount of shares for assets (ERC4626 compliant)
-     *
-     * Synchronous redemption operation: caller specifies shares, assets calculated.
-     * Burns exact shares and transfers corresponding assets to receiver.
-     *
-     * OPERATION:
-     * - Previews asset amount for shares
-     * - Burns exact shares from owner
-     * - Transfers corresponding assets to receiver
-     *
-     * AUTHORIZATION:
-     * - msg.sender must be owner OR have allowance for the shares
-     * - Allows delegation to redemption operators
-     *
-     * USE CASE:
-     * - When you want to burn exactly X shares (not Y assets)
-     * - Receives at least minimum due to rounding down
-     *
-     * @param shares Amount of shares to redeem (exact)
-     * @param receiver Address to receive the assets
-     * @param owner Address that owns the shares to be burned
-     *
-     * @return assets Amount of assets withdrawn
-     */
-    function redeem(uint256 shares, address receiver, address owner) public nonReentrant whenNotPaused returns (uint256 assets) {
-        assets = previewRedeem(shares);
-        _withdraw(assets, shares, receiver, owner);
     }
 }
 
@@ -6092,6 +5623,475 @@ interface IERC7887RedeemCancelation {
  * @dev Full ERC7887 interface combining deposit and redeem cancelation
  */
 interface IERC7887 is IERC7887DepositCancelation, IERC7887RedeemCancelation {}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {DecimalConstants} from "./DecimalConstants.sol";
+import {SafeTokenTransfers} from "./SafeTokenTransfers.sol";
+import {WERC7575ShareToken} from "./WERC7575ShareToken.sol";
+import {IERC7575} from "./interfaces/IERC7575.sol";
+import {IERC7575Errors} from "./interfaces/IERC7575Errors.sol";
+
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ERC165} from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+
+contract WERC7575Vault is IERC7575, ERC165, ReentrancyGuard, Ownable2Step, Pausable, IERC7575Errors {
+    using SafeERC20 for IERC20Metadata;
+
+    /**
+     * @dev Emitted when assets are deposited into the vault
+     * @param sender The address that initiated the deposit
+     * @param owner The address that received the shares
+     * @param assets The amount of assets deposited
+     * @param shares The amount of shares minted
+     */
+    event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares);
+
+    /**
+     * @dev Emitted when assets are withdrawn from the vault
+     * @param sender The address that initiated the withdrawal
+     * @param receiver The address that received the assets
+     * @param owner The address that owned the shares
+     * @param assets The amount of assets withdrawn
+     * @param shares The amount of shares burned
+     */
+    event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares);
+
+    event VaultActiveStateChanged(bool indexed isActive);
+
+    address private _asset; // 20 bytes
+    uint64 private _scalingFactor; // 8 bytes
+    bool private _isActive; // 1 byte - packs with _asset and _scalingFactor in same slot
+    WERC7575ShareToken private _shareToken;
+
+    /**
+     * @dev Initializes a synchronous ERC4626 vault for the multi-asset system (ERC7575 compliant)
+     *
+     * Creates a simple, synchronous vault that enables immediate deposit/redeem operations
+     * for a single asset. Integrates with the shared ShareToken to participate in the
+     * multi-asset vault ecosystem.
+     *
+     * VAULT ARCHITECTURE:
+     * - Synchronous operations: deposits and redeems are immediate
+     * - Single asset per vault (paired asset-vault relationship)
+     * - Shares minted/burned directly (no async requests)
+     * - Integrates with multi-asset ShareToken
+     * - Can be paused by owner for emergency situations
+     *
+     * SPECIFICATION COMPLIANCE:
+     * - ERC7575: Multi-asset vault standard
+     * - ERC4626: Complete tokenized vault functionality
+     * - Decimal normalization: 6-18 decimals for assets, 18 for shares
+     *
+     * INITIALIZATION:
+     * After deployment, the owner must:
+     * 1. Call shareToken.registerVault(asset, vault_address)
+     * 2. Set vault as active if needed (defaults to active)
+     *
+     * VALIDATION:
+     * - Asset must be valid ERC20 with 6-18 decimals
+     * - ShareToken must be valid ERC20 with 18 decimals
+     * - ShareToken address must not be zero
+     * - Scaling factor must fit in uint64
+     *
+     * @param asset_ The underlying ERC20 asset token (e.g., USDC, USDT)
+     * @param shareToken_ The ERC7575 share token for multi-asset vault system
+     *
+     * @custom:throws ZeroAddress If shareToken_ is zero address
+     * @custom:throws UnsupportedAssetDecimals If asset decimals are not 6-18
+     * @custom:throws WrongDecimals If shareToken decimals are not 18
+     * @custom:throws AssetDecimalsFailed If asset.decimals() call fails
+     * @custom:throws ScalingFactorTooLarge If scaling factor exceeds uint64 max
+     */
+    constructor(address asset_, WERC7575ShareToken shareToken_) Ownable(msg.sender) {
+        // Validate asset compatibility
+        uint8 assetDecimals;
+        try IERC20Metadata(asset_).decimals() returns (uint8 decimals) {
+            if (decimals < DecimalConstants.MIN_ASSET_DECIMALS || decimals > DecimalConstants.SHARE_TOKEN_DECIMALS) {
+                revert UnsupportedAssetDecimals();
+            }
+            assetDecimals = decimals;
+        } catch {
+            revert AssetDecimalsFailed();
+        }
+        // Validate share token compatibility and enforce 18 decimals
+        if (address(shareToken_) == address(0)) revert ZeroAddress();
+        if (shareToken_.decimals() != DecimalConstants.SHARE_TOKEN_DECIMALS) {
+            revert WrongDecimals();
+        }
+
+        // Precompute scaling factor: 10^(18 - assetDecimals)
+        // Max scaling factor is 10^12 (for 6 decimals) which fits in uint64
+        uint256 scalingFactor = 10 ** (DecimalConstants.SHARE_TOKEN_DECIMALS - assetDecimals);
+        if (scalingFactor > type(uint64).max) revert ScalingFactorTooLarge();
+
+        _asset = asset_;
+        _scalingFactor = uint64(scalingFactor);
+        _isActive = true; // Vault is active by default
+        _shareToken = shareToken_;
+
+        // Note: Owner must separately call shareToken.registerVault(asset, vault) after deployment
+    }
+
+    /**
+     * @dev Pause all vault operations. Only callable by owner.
+     * Used for emergency situations to halt deposits, withdrawals, mints, and redeems.
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /**
+     * @dev Unpause all vault operations. Only callable by owner.
+     */
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /**
+     * @dev Sets the vault active state (only owner)
+     * @param _active True to activate, false to deactivate
+     */
+    function setVaultActive(bool _active) external onlyOwner {
+        _isActive = _active;
+        emit VaultActiveStateChanged(_active);
+    }
+
+    /**
+     * @dev Returns whether the vault is active and accepting deposits
+     * @return True if vault is active
+     */
+    function isVaultActive() external view returns (bool) {
+        return _isActive;
+    }
+
+    /**
+     * @dev Returns true if this contract implements the interface defined by interfaceId
+     * @param interfaceId The interface identifier, as specified in ERC-165
+     * @return bool True if the contract implements interfaceId
+     */
+    function supportsInterface(bytes4 interfaceId) public view virtual override(ERC165) returns (bool) {
+        return interfaceId == type(IERC7575).interfaceId || super.supportsInterface(interfaceId);
+    }
+
+    /**
+     * @dev Returns the address of the share token contract
+     * @return address The ERC7575 share token address
+     */
+    function share() external view returns (address) {
+        return address(_shareToken);
+    }
+
+    /**
+     * @dev Returns the address of the underlying asset token
+     * @return address The ERC20 asset token address
+     */
+    function asset() external view returns (address) {
+        return _asset;
+    }
+
+    /**
+     * @dev Returns the total amount of underlying assets held by the vault
+     * @return uint256 Total assets held in the vault
+     */
+    function totalAssets() public view returns (uint256) {
+        return IERC20Metadata(_asset).balanceOf(address(this));
+    }
+
+    /**
+     * @dev Converts asset amount to equivalent share amount
+     * @param assets Amount of assets to convert
+     * @return uint256 Equivalent amount of shares
+     */
+    function convertToShares(uint256 assets) public view returns (uint256) {
+        return _convertToShares(assets, Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Converts share amount to equivalent asset amount
+     * @param shares Amount of shares to convert
+     * @return uint256 Equivalent amount of assets
+     */
+    function convertToAssets(uint256 shares) public view returns (uint256) {
+        return _convertToAssets(shares, Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Converts assets to shares using decimal normalization for stablecoins
+     * @param assets Amount of assets to convert
+     * @return shares Amount of shares equivalent to assets
+     *
+     * Formula: shares = assets * 10^(18 - assetDecimals)
+     *
+     * For stablecoins with no yield:
+     * - Share decimals: enforced to be 18 in ShareToken constructor
+     * - Asset decimals: varies (6 for USDC, 18 for DAI, etc.)
+     * - This provides 1:1 value conversion with decimal normalization
+     * - No first depositor attack possible since conversion is deterministic
+     * - No manipulation possible since no dependency on totalSupply or totalAssets
+     */
+    function _convertToShares(uint256 assets, Math.Rounding rounding) internal view returns (uint256) {
+        // ShareToken always has 18 decimals, assetDecimals ∈ [6, 18]
+        // shares = assets * _scalingFactor where _scalingFactor = 10^(18 - assetDecimals)
+        // Use Math.mulDiv to prevent overflow on large amounts
+        return Math.mulDiv(assets, uint256(_scalingFactor), 1, rounding);
+    }
+
+    /**
+     * @dev Converts shares to assets using decimal normalization for stablecoins
+     * @param shares Amount of shares to convert
+     * @param rounding Rounding direction (Floor = favor vault, Ceil = favor user)
+     * @return assets Amount of assets equivalent to shares
+     *
+     * Formula: assets = shares * 10^(assetDecimals) / 10^(shareDecimals)
+     *
+     * For stablecoins with no yield:
+     * - Share decimals: queried from share token (typically 18)
+     * - Asset decimals: varies (6 for USDC, 18 for DAI, etc.)
+     * - This provides 1:1 value conversion with decimal normalization
+     * - No first depositor attack possible since conversion is deterministic
+     * - No manipulation possible since no dependency on totalSupply or totalAssets
+     */
+    function _convertToAssets(uint256 shares, Math.Rounding rounding) internal view returns (uint256) {
+        // ShareToken always has 18 decimals, assetDecimals ∈ [6, 18]
+        // When _scalingFactor == 1 (assetDecimals == 18): assets = shares
+        // When _scalingFactor > 1 (assetDecimals < 18): assets = shares / _scalingFactor
+        if (_scalingFactor == 1) {
+            return shares;
+        } else {
+            return Math.mulDiv(shares, 1, uint256(_scalingFactor), rounding);
+        }
+    }
+
+    /**
+     * @dev Preview shares received for depositing assets
+     * Uses Floor rounding to give slightly fewer shares to user (favors vault)
+     */
+    function previewDeposit(uint256 assets) public view returns (uint256) {
+        return _convertToShares(assets, Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Preview assets needed to mint shares
+     * Uses Ceil rounding to require slightly more assets from user (favors vault)
+     */
+    function previewMint(uint256 shares) public view returns (uint256) {
+        return _convertToAssets(shares, Math.Rounding.Ceil);
+    }
+
+    /**
+     * @dev Preview shares needed to withdraw assets
+     * Uses Ceil rounding to require slightly more shares from user (favors vault)
+     */
+    function previewWithdraw(uint256 assets) public view returns (uint256) {
+        return _convertToShares(assets, Math.Rounding.Ceil);
+    }
+
+    /**
+     * @dev Preview assets received for redeeming shares
+     * Uses Floor rounding to give slightly fewer assets to user (favors vault)
+     */
+    function previewRedeem(uint256 shares) public view returns (uint256) {
+        return _convertToAssets(shares, Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Returns the maximum amount of assets that can be deposited
+     * @return uint256 Maximum deposit amount (unlimited)
+     *
+     * Note: Receiver parameter is unused as there are no deposit limits
+     */
+    function maxDeposit(address) public pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    /**
+     * @dev Returns the maximum amount of shares that can be minted
+     * @return uint256 Maximum mint amount (unlimited)
+     *
+     * Note: Receiver parameter is unused as there are no mint limits
+     */
+    function maxMint(address) public pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    /**
+     * @dev Returns the maximum amount of assets that can be withdrawn by owner
+     * @param owner The address that owns the shares
+     * @return uint256 Maximum withdrawal amount based on share balance
+     */
+    function maxWithdraw(address owner) public view returns (uint256) {
+        return _convertToAssets(_shareToken.balanceOf(owner), Math.Rounding.Floor);
+    }
+
+    /**
+     * @dev Returns the maximum amount of shares that can be redeemed by owner
+     * @param owner The address that owns the shares
+     * @return uint256 Maximum redeem amount (owner's full share balance)
+     */
+    function maxRedeem(address owner) public view returns (uint256) {
+        return _shareToken.balanceOf(owner);
+    }
+
+    /**
+     * @dev Internal function to handle deposit/mint logic
+     * @param assets Amount of assets to transfer
+     * @param shares Amount of shares to mint
+     * @param receiver Address to receive shares
+     */
+    function _deposit(uint256 assets, uint256 shares, address receiver) internal {
+        if (!_isActive) revert VaultNotActive();
+        if (receiver == address(0)) {
+            revert IERC20Errors.ERC20InvalidReceiver(address(0));
+        }
+        if (assets == 0) revert ZeroAssets();
+        if (shares == 0) revert ZeroShares();
+
+        SafeTokenTransfers.safeTransferFrom(_asset, msg.sender, address(this), assets);
+
+        _shareToken.mint(receiver, shares);
+        emit Deposit(msg.sender, receiver, assets, shares);
+    }
+
+    /**
+     * @dev Deposits exact amount of assets and receives corresponding shares (ERC4626 compliant)
+     *
+     * Synchronous deposit operation: immediately mints shares and transfers assets.
+     * Simple one-step process without async state management.
+     *
+     * OPERATION:
+     * - Previews share amount for the deposit
+     * - Transfers assets from caller to vault
+     * - Mints shares to receiver
+     *
+     * SECURITY:
+     * - Reentrancy protected
+     * - Paused state check
+     * - Vault must be active
+     * - Zero address validation
+     *
+     * @param assets Amount of assets to deposit
+     * @param receiver Address to receive the minted shares
+     *
+     * @return shares Amount of shares minted
+     */
+    function deposit(uint256 assets, address receiver) public nonReentrant whenNotPaused returns (uint256 shares) {
+        shares = previewDeposit(assets);
+        _deposit(assets, shares, receiver);
+    }
+
+    /**
+     * @dev Mints exact amount of shares by depositing necessary assets (ERC4626 compliant)
+     *
+     * Synchronous mint operation: caller specifies desired shares, assets calculated.
+     * Transfers required assets and immediately mints specified shares.
+     *
+     * OPERATION:
+     * - Previews asset amount needed for shares
+     * - Transfers required assets from caller
+     * - Mints exact shares to receiver
+     *
+     * USE CASE:
+     * - When you want exactly X shares (not Y assets)
+     * - May require more assets due to rounding
+     *
+     * @param shares Amount of shares to mint (exact)
+     * @param receiver Address to receive the minted shares
+     *
+     * @return assets Amount of assets required for the mint
+     */
+    function mint(uint256 shares, address receiver) public nonReentrant whenNotPaused returns (uint256 assets) {
+        assets = previewMint(shares);
+        _deposit(assets, shares, receiver);
+    }
+
+    /**
+     * @dev Internal function to handle withdraw/redeem logic
+     * @param assets Amount of assets to transfer
+     * @param shares Amount of shares to burn
+     * @param receiver Address to receive assets
+     * @param owner Address that owns the shares
+     */
+    function _withdraw(uint256 assets, uint256 shares, address receiver, address owner) internal {
+        if (receiver == address(0)) {
+            revert IERC20Errors.ERC20InvalidReceiver(address(0));
+        }
+        if (owner == address(0)) {
+            revert IERC20Errors.ERC20InvalidSender(address(0));
+        }
+        if (assets == 0) revert ZeroAssets();
+        if (shares == 0) revert ZeroShares();
+
+        _shareToken.spendSelfAllowance(owner, shares);
+        _shareToken.burn(owner, shares);
+        SafeTokenTransfers.safeTransfer(_asset, receiver, assets);
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
+    }
+
+    /**
+     * @dev Withdraws exact amount of assets from vault by burning shares (ERC4626 compliant)
+     *
+     * Synchronous withdrawal operation: caller specifies assets, shares calculated.
+     * Burns required shares and immediately transfers assets to receiver.
+     *
+     * OPERATION:
+     * - Previews share amount needed for assets
+     * - Burns required shares from owner
+     * - Transfers exact assets to receiver
+     *
+     * AUTHORIZATION:
+     * - msg.sender must be owner OR have allowance for the shares
+     * - Allows delegation to withdrawal operators
+     *
+     * @param assets Amount of assets to withdraw (exact)
+     * @param receiver Address to receive the assets
+     * @param owner Address that owns the shares to be burned
+     *
+     * @return shares Amount of shares burned
+     */
+    function withdraw(uint256 assets, address receiver, address owner) public nonReentrant whenNotPaused returns (uint256 shares) {
+        shares = previewWithdraw(assets);
+        _withdraw(assets, shares, receiver, owner);
+    }
+
+    /**
+     * @dev Redeems exact amount of shares for assets (ERC4626 compliant)
+     *
+     * Synchronous redemption operation: caller specifies shares, assets calculated.
+     * Burns exact shares and transfers corresponding assets to receiver.
+     *
+     * OPERATION:
+     * - Previews asset amount for shares
+     * - Burns exact shares from owner
+     * - Transfers corresponding assets to receiver
+     *
+     * AUTHORIZATION:
+     * - msg.sender must be owner OR have allowance for the shares
+     * - Allows delegation to redemption operators
+     *
+     * USE CASE:
+     * - When you want to burn exactly X shares (not Y assets)
+     * - Receives at least minimum due to rounding down
+     *
+     * @param shares Amount of shares to redeem (exact)
+     * @param receiver Address to receive the assets
+     * @param owner Address that owns the shares to be burned
+     *
+     * @return assets Amount of assets withdrawn
+     */
+    function redeem(uint256 shares, address receiver, address owner) public nonReentrant whenNotPaused returns (uint256 assets) {
+        assets = previewRedeem(shares);
+        _withdraw(assets, shares, receiver, owner);
+    }
+}
 
 
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
