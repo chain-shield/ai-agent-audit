@@ -259,10 +259,11 @@ where
     info!("Round {} of Verification", round_number);
     let r_analysis: T = agent.extract_with_retry(&instruction_prompt).await?;
 
-    r_analysis
-        .findings()
-        .iter()
-        .for_each(|r| r.print_analysis_results());
+    // show analysis results
+    // r_analysis
+    //     .findings()
+    //     .iter()
+    //     .for_each(|r| r.print_analysis_results());
 
     let r_map: HashMap<String, &T::Spec> =
         r_analysis.findings().iter().map(|r| (r.id(), r)).collect();

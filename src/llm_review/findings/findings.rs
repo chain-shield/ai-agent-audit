@@ -5,7 +5,7 @@ use crate::llm_review::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
+    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
     llm_review::phases::{add_poc_findings::PocStatus, create_report::CompetitionReport},
     utils::semantic_compare,
 };
@@ -342,8 +342,35 @@ where
     T: DeserializeOwned,
 {
     fn parse_from_json(json_str: &str) -> Result<Self, serde_json::Error> {
+        // Try parsing the raw JSON first - don't fix what isn't broken!
+        match serde_json::from_str(json_str) {
+            Ok(parsed) => {
+                log::debug!("✅ Raw JSON parsed successfully without cleaning");
+                return Ok(parsed);
+            }
+            Err(raw_error) => {
+                log::debug!(
+                    "Raw JSON failed to parse: {} - attempting to clean",
+                    raw_error
+                );
+            }
+        }
+
+        // If raw parsing failed, try cleaning the JSON
         let cleaned = Self::clean_json_string(json_str);
-        serde_json::from_str(&cleaned)
+
+        // Debug: Log cleaned JSON if RUST_LOG=debug
+        log::debug!(
+            "Cleaned JSON (first 500 chars): {}",
+            &cleaned[..cleaned.len().min(500)]
+        );
+
+        let result = serde_json::from_str(&cleaned);
+        if let Err(ref e) = result {
+            log::error!("JSON parse error after cleaning: {}", e);
+            log::error!("Cleaned JSON that failed to parse:\n{}", cleaned);
+        }
+        result
     }
 
     fn clean_json_string(input: &str) -> String {
@@ -361,7 +388,104 @@ where
             cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
         }
 
-        let cleaned_str = cleaned.to_string();
+        let mut cleaned_str = cleaned.to_string();
+
+        // Fix broken JSON strings where Gemini splits a string value across lines
+        // Two patterns to handle:
+        // 1. Escaped newline: "proof_of_code": "function test() {...}\\n    \\\"severity\": \"High\""
+        // 2. Actual newline: "proof_of_code": "function test() {...}\n    \"severity": "High"
+        // This happens when Gemini truncates long strings and continues on next line
+        // We need to close the broken string and properly start the next field
+
+        // Pattern 1: Escaped backslash-n (\\n) followed by escaped quote (\\")
+        // Matches: \\n    \\\"severity\": \"
+        let escaped_newline_pattern = regex::Regex::new(r#"\\n\s*\\"([a-zA-Z_]+)":\s*""#).unwrap();
+        cleaned_str = escaped_newline_pattern
+            .replace_all(&cleaned_str, r#"", "$1": ""#)
+            .to_string();
+
+        // Pattern 2: Actual newline (\n) followed by escaped quote (\")
+        // Matches: \n    \"severity": "
+        let actual_newline_pattern = regex::Regex::new(r#"\n\s*\\"([a-zA-Z_]+)":\s*""#).unwrap();
+        cleaned_str = actual_newline_pattern
+            .replace_all(&cleaned_str, r#"", "$1": ""#)
+            .to_string();
+
+        // Strip // comments (sometimes LLMs include them from examples)
+        let comment_re = Regex::new(r"\s*//[^\n]*").unwrap();
+        cleaned_str = comment_re.replace_all(&cleaned_str, "").to_string();
+
+        // Escape unescaped characters inside JSON string values
+        // This fixes control characters AND unescaped quotes that break JSON parsing
+        // Strategy: Track when we're inside a JSON string value (between unescaped quotes)
+        // and escape any quotes we find inside that aren't already escaped
+        let mut result = String::with_capacity(cleaned_str.len() * 2);
+        let mut chars = cleaned_str.chars().peekable();
+        let mut in_string = false;
+        let mut prev_was_backslash = false;
+
+        while let Some(ch) = chars.next() {
+            match ch {
+                '"' if !prev_was_backslash && !in_string => {
+                    // Start of a JSON string value
+                    in_string = true;
+                    result.push(ch);
+                    prev_was_backslash = false;
+                }
+                '"' if !prev_was_backslash && in_string => {
+                    // This could be end of string OR an unescaped quote inside the string
+                    // Look ahead to see if this looks like end of string (followed by : or , or })
+                    let next_non_ws = chars.clone().skip_while(|c| c.is_whitespace()).next();
+                    if matches!(
+                        next_non_ws,
+                        Some(':') | Some(',') | Some('}') | Some(']') | None
+                    ) {
+                        // End of JSON string value
+                        in_string = false;
+                        result.push(ch);
+                    } else {
+                        // Unescaped quote inside string - escape it!
+                        result.push_str("\\\"");
+                    }
+                    prev_was_backslash = false;
+                }
+                '\\' => {
+                    result.push(ch);
+                    prev_was_backslash = !prev_was_backslash;
+                }
+                '\n' if in_string && !prev_was_backslash => {
+                    result.push_str("\\n");
+                    prev_was_backslash = false;
+                }
+                '\r' if in_string && !prev_was_backslash => {
+                    result.push_str("\\r");
+                    prev_was_backslash = false;
+                }
+                '\t' if in_string && !prev_was_backslash => {
+                    result.push_str("\\t");
+                    prev_was_backslash = false;
+                }
+                '\x08' if in_string && !prev_was_backslash => {
+                    result.push_str("\\b");
+                    prev_was_backslash = false;
+                }
+                '\x0C' if in_string && !prev_was_backslash => {
+                    result.push_str("\\f");
+                    prev_was_backslash = false;
+                }
+                c if in_string && c.is_control() && !prev_was_backslash => {
+                    // Escape any other control characters as unicode
+                    result.push_str(&format!("\\u{:04x}", c as u32));
+                    prev_was_backslash = false;
+                }
+                _ => {
+                    result.push(ch);
+                    prev_was_backslash = false;
+                }
+            }
+        }
+
+        cleaned_str = result;
 
         // Fix numeric fields that are returned as strings (e.g., "finding_complexity": "5" -> "finding_complexity": 5)
         // This regex finds patterns like "field_name": "123" and removes quotes around the number
@@ -376,6 +500,13 @@ where
         match (json_start, json_end) {
             (Some(start), Some(end)) if start < end => {
                 let json_part = &response[start..=end];
+
+                // Debug: Log if RUST_LOG=debug is set
+                log::debug!(
+                    "Extracted JSON (first 500 chars): {}",
+                    &json_part[..json_part.len().min(500)]
+                );
+
                 Self::parse_from_json(json_part)
                     .map_err(|e| format!("Failed to parse JSON: {}", e).into())
             }

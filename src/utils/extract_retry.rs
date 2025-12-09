@@ -1,10 +1,10 @@
-use crate::cost::cost_data::TokenType;
 /// LLM extraction with retry logic and cost tracking.
 ///
 /// This module provides robust LLM interaction utilities with automatic retry
 /// mechanisms for handling rate limits, network issues, and parsing errors,
 /// while tracking inference costs across different providers.
 use crate::cost::cost_data::add_to_inference_cost_by_type;
+use crate::cost::cost_data::TokenType;
 use crate::llm_review::agent::agent_enums::AgentMetadata;
 use crate::llm_review::findings::findings::FromLLMJson;
 use rig::agent::Agent;
@@ -16,9 +16,9 @@ use rig::extractor::ExtractionError;
 use rig::extractor::Extractor;
 use rig::http_client;
 use schemars::JsonSchema;
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde::de::Error as _; // <- bring the trait’s methods into scope
+use serde::Deserialize;
 use serde_json::Error as JsonError;
 use std::{thread, time::Duration};
 
@@ -94,6 +94,9 @@ where
             Ok(f) => return Ok(f), // ✅ success
             Err(e) => {
                 let msg = e.to_string();
+
+                log::info!("failed to parse this json => {:#?}", raw);
+
                 // Check if we should retry based on the original error
                 let should_retry = should_retry_based_on_error(&msg) && attempt < MAX_ATTEMPTS;
 
@@ -180,6 +183,8 @@ fn should_retry_prompt_err(e: &PromptError) -> bool {
                     || m.contains("internal server error")
                     || m.contains("error occurred while processing your request")
                     || m.contains("help.openai.com")
+                    || m.contains("empty")  // Gemini sometimes returns empty responses
+                    || m.contains("no message") // "Response contained no message or tool call (empty)"
             }
 
             /* 3) Anything else – usually not transient */
@@ -188,5 +193,76 @@ fn should_retry_prompt_err(e: &PromptError) -> bool {
 
         /* Tool-call failures, depth-limit, etc. -> *not* transient */
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rig::completion::CompletionError;
+    use rig::completion::PromptError;
+
+    #[test]
+    fn test_should_retry_on_gemini_empty_response() {
+        // Test the exact error message from Gemini
+        let err = PromptError::CompletionError(CompletionError::ResponseError(
+            "Response contained no message or tool call (empty)".to_string(),
+        ));
+        assert!(
+            should_retry_prompt_err(&err),
+            "Should retry on Gemini empty response error"
+        );
+    }
+
+    #[test]
+    fn test_should_retry_on_empty_keyword() {
+        let err = PromptError::CompletionError(CompletionError::ResponseError(
+            "Response is empty".to_string(),
+        ));
+        assert!(
+            should_retry_prompt_err(&err),
+            "Should retry on 'empty' keyword"
+        );
+    }
+
+    #[test]
+    fn test_should_retry_on_no_message_keyword() {
+        let err = PromptError::CompletionError(CompletionError::ResponseError(
+            "No message received from provider".to_string(),
+        ));
+        assert!(
+            should_retry_prompt_err(&err),
+            "Should retry on 'no message' keyword"
+        );
+    }
+
+    #[test]
+    fn test_should_retry_on_rate_limit() {
+        let err = PromptError::CompletionError(CompletionError::ProviderError(
+            "Rate limit exceeded".to_string(),
+        ));
+        assert!(should_retry_prompt_err(&err), "Should retry on rate limit");
+    }
+
+    #[test]
+    fn test_should_retry_on_server_error() {
+        let err = PromptError::CompletionError(CompletionError::ResponseError(
+            "Internal server error".to_string(),
+        ));
+        assert!(
+            should_retry_prompt_err(&err),
+            "Should retry on server error"
+        );
+    }
+
+    #[test]
+    fn test_should_not_retry_on_invalid_api_key() {
+        let err = PromptError::CompletionError(CompletionError::ResponseError(
+            "Invalid API key".to_string(),
+        ));
+        assert!(
+            !should_retry_prompt_err(&err),
+            "Should NOT retry on invalid API key"
+        );
     }
 }
