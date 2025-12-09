@@ -303,8 +303,22 @@ where
                 (None, None) => None,
             };
 
+            let updated_status = if f.status.is_none() {
+                finding_status_vec
+            } else if finding_status_vec.is_none() {
+                f.status.clone()
+            } else {
+                f.status
+                    .clone()
+                    .zip(finding_status_vec)
+                    .map(|(mut a, mut b)| {
+                        a.append(&mut b);
+                        a
+                    })
+            };
+
             let enriched_finding = Finding {
-                status: finding_status_vec,
+                status: updated_status,
                 status_justification: updated_justification,
                 ..f.clone()
             };
