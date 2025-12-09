@@ -189,10 +189,6 @@ fn get_finding_summary_by_severity(findings: &Findings, severity: Severity) -> S
                     finding.status_justification.clone().unwrap_or_default()
                 ));
             }
-            findings_summary.push_str(&format!(
-                "Finding Complexity: {}\n",
-                finding.finding_complexity.unwrap_or_default()
-            ));
             findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.to_string()));
 
             if CREATE_TESTS {
@@ -269,10 +265,6 @@ fn get_finding_summary_by_pattern(findings: &Findings, report_type: ReportDataTy
                         "Finding Status Justification: {}\n",
                         f.status_justification.clone().unwrap_or_default()
                     ));
-                    findings_summary.push_str(&format!(
-                        "Finding Complexity: {}\n",
-                        f.finding_complexity.unwrap_or_default()
-                    ));
                     findings_summary.push_str(&format!("Privilege: {}\n", f.privilege.to_string()));
 
                     if CREATE_TESTS {
@@ -303,6 +295,7 @@ static FINDINGS_BY_STATUS_CACHE: OnceLock<Vec<(String, Vec<Finding>)>> = OnceLoc
 
 fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataType) -> String {
     let mut findings_summary = String::new();
+    let mut valid_findings = Vec::new();
 
     // Initialize the cache once with insertion-order grouping based on the incoming findings
     // ************************************************************************************
@@ -311,24 +304,18 @@ fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataTyp
         let mut order: Vec<String> = Vec::new();
 
         for f in findings.findings.iter() {
-            let key = f
-                .status
-                .clone()
-                .and_then(|s| {
-                    Some(
-                        s.clone()
-                            .iter()
-                            .map(|s| s.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    )
-                })
-                .unwrap_or_else(|| "Unknown".to_string());
+            let mut key = finding_status_to_string(f);
+            if key.is_empty() {
+                key = "Unknown".to_string();
+            }
+
             if !map.contains_key(&key) {
                 order.push(key.clone());
             }
             map.entry(key).or_insert_with(Vec::new).push(f.clone());
         }
+
+        valid_findings = map.get("Valid").cloned().unwrap_or_default();
 
         // Rehydrate into a Vec following first-seen key order to keep output stable
         let mut grouped: Vec<(String, Vec<Finding>)> = Vec::new();
@@ -348,37 +335,23 @@ fn get_finding_summary_by_status(findings: &Findings, report_type: ReportDataTyp
     findings_summary.push_str("##Findings by Status\n");
 
     let mut num = 1;
+    if !valid_findings.is_empty() {
+        findings_summary.push_str("\n\nFinding Status: Valid\n");
+        for f in &valid_findings {
+            findings_summary.push_str(&prompt_context::get_finding_summary_report(f, num));
+            num += 1;
+        }
+    }
+
     for (status, findings_vec) in grouped_findings.iter() {
+        if status == "Valid" {
+            continue;
+        };
         findings_summary.push_str(&format!("\n\nFinding Status: {}\n", status));
         for f in findings_vec {
             match report_type {
                 ReportDataType::Summary => {
-                    findings_summary.push_str(&format!(
-                        "\n\n[{}-{}]. {}\n",
-                        f.severity.as_initial(),
-                        num,
-                        f.title
-                    ));
-                    findings_summary.push_str(&format!(
-                        "**Derived From** : {}\n",
-                        f.derived_from.clone().unwrap_or_default()
-                    ));
-                    findings_summary.push_str(&format!(
-                        "Finding Status Justification: {}\n",
-                        f.status_justification.clone().unwrap_or_default()
-                    ));
-                    findings_summary.push_str(&format!(
-                        "Finding Complexity: {}\n",
-                        f.finding_complexity.unwrap_or_default()
-                    ));
-                    findings_summary.push_str(&format!("Privilege: {}\n", f.privilege.to_string()));
-
-                    if CREATE_TESTS {
-                        findings_summary.push_str(&format!(
-                            "Poc Test Status: {}\n\n",
-                            f.poc_test_status.unwrap_or_default().to_string()
-                        ));
-                    }
+                    findings_summary.push_str(&prompt_context::get_finding_summary_report(f, num));
                 }
                 ReportDataType::Full => {
                     findings_summary.push_str(&prompt_context::get_finding_report(

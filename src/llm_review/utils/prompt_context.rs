@@ -1,4 +1,5 @@
 use crate::{
+    config::CREATE_TESTS,
     llm_review::{
         findings::findings::{Finding, Findings},
         threat_models::{invariants::InvariantFinding, patterns::Pattern},
@@ -193,6 +194,38 @@ pub enum FindingReportType {
     Standard,
     Enhanced,
     NoPoC,
+}
+
+pub fn get_finding_summary_report(finding: &Finding, index: usize) -> String {
+    let mut findings_summary = String::new();
+    findings_summary.push_str(&format!(
+        "\n\n[{}-{}]. {}\n",
+        finding.severity.as_initial(),
+        index,
+        finding.title
+    ));
+    findings_summary.push_str(&format!(
+        "**Derived From** : {}\n",
+        finding.derived_from.clone().unwrap_or_default()
+    ));
+    findings_summary.push_str(&format!(
+        "Finding Status: {}\n",
+        finding_status_to_string(finding)
+    ));
+    findings_summary.push_str(&format!(
+        "Finding Complexity: {}\n",
+        finding.finding_complexity.unwrap_or_default()
+    ));
+    findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.to_string()));
+
+    if CREATE_TESTS {
+        findings_summary.push_str(&format!(
+            "Poc Test Status: {}\n\n",
+            finding.poc_test_status.unwrap_or_default().to_string()
+        ));
+    }
+
+    findings_summary
 }
 
 pub fn get_finding_report(
