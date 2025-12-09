@@ -285,44 +285,6 @@ pub static INVARIANT_SM_TYPES: &[VulnerabilityType] = &[
 ];
 
 impl ContractInvariants {
-    /// Parse JSON string containing findings from LLM response
-    /// Handles both clean JSON and JSON wrapped in markdown code blocks
-    pub fn parse_from_json(json_str: &str) -> Result<ContractInvariants, serde_json::Error> {
-        // Clean the input - remove markdown code blocks and extra quotes/escapes
-        let cleaned_json = Self::clean_json_string(json_str);
-
-        // Parse the cleaned JSON
-        serde_json::from_str(&cleaned_json)
-    }
-
-    /// Clean JSON string by removing markdown code blocks, escaped quotes, and extra formatting
-    fn clean_json_string(input: &str) -> String {
-        let mut cleaned = input.trim();
-
-        // Remove outer quotes if present (from string literals)
-        if cleaned.starts_with('"') && cleaned.ends_with('"') {
-            cleaned = &cleaned[1..cleaned.len() - 1];
-        }
-
-        // Remove markdown code blocks
-        if cleaned.starts_with("```json") {
-            cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
-        }
-
-        if cleaned.ends_with("```") {
-            cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
-        }
-
-        // Replace escaped quotes and newlines
-        // cleaned
-        //     .replace("\\\"", "\"")
-        //     .replace("\\n", "\n")
-        //     .replace("\\\n", "\n")
-        //     .trim()
-        //     .to_string()
-        cleaned.to_string()
-    }
-
     pub fn get_all_violations(self) -> Vec<InvariantFinding> {
         self.invariants
             .into_iter()
