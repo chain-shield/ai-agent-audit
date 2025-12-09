@@ -11,7 +11,7 @@ use crate::{
             actor_findings::{generate_actor_to_findings, generate_multi_actor_to_findings_prompt},
             actors::{generate_actor_abuse_verify_prompt, generate_formatted_actor_abuse},
             findings_template::{
-                get_findings_json_requirement, get_json_requirement_for_multipattern,
+                get_post_findings_json_requirement, get_post_json_requirement_for_multipattern,
             },
             inv_findings::{
                 generate_invariant_to_findings, generate_multi_invariant_to_findings_prompt,
@@ -105,7 +105,7 @@ impl IssueTrait for ActorAbuse {
         generate_actor_to_findings(self, repo)
     }
     fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
-        get_findings_json_requirement(&self.category, &self.title, repo)
+        get_post_findings_json_requirement(&self.category, &self.title, repo)
     }
 }
 
@@ -144,7 +144,7 @@ impl IssueTrait for InvariantFinding {
         generate_invariant_to_findings(self, repo)
     }
     fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
-        get_findings_json_requirement(&self.inv_type, &self.predicate, repo)
+        get_post_findings_json_requirement(&self.inv_type, &self.predicate, repo)
     }
 }
 
@@ -182,7 +182,7 @@ impl IssueTrait for Pattern {
         generate_pattern_to_findings_prompt(self, repo)
     }
     fn findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
-        get_findings_json_requirement(&self.issue_type, &self.title, repo)
+        get_post_findings_json_requirement(&self.issue_type, &self.title, repo)
     }
 }
 
@@ -211,7 +211,7 @@ impl IssueStructTrait for ActorAbuses {
     }
     fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
         let actors: Vec<VulnerabilityPattern> = self.issues().iter().map(|p| p.category).collect();
-        get_json_requirement_for_multipattern(&actors, "Malicious Actor Abuse", repo)
+        get_post_json_requirement_for_multipattern(&actors, "Malicious Actor Abuse", repo)
     }
 }
 
@@ -240,7 +240,7 @@ impl IssueStructTrait for ContractInvariants {
     }
     fn multi_issue_findings_json_required_prompt(&self, repo: &RepoPaths) -> String {
         let invariants: Vec<InvariantType> = self.issues().iter().map(|p| p.inv_type).collect();
-        get_json_requirement_for_multipattern(&invariants, "Invariant", repo)
+        get_post_json_requirement_for_multipattern(&invariants, "Invariant", repo)
     }
 }
 
@@ -269,7 +269,7 @@ impl IssueStructTrait for Patterns {
         let vulnerability_patterns: Vec<VulnerabilityPattern> =
             self.issues().iter().map(|p| p.issue_type).collect();
 
-        get_json_requirement_for_multipattern(
+        get_post_json_requirement_for_multipattern(
             &vulnerability_patterns,
             "Security vulnerability Pattern",
             repo,
