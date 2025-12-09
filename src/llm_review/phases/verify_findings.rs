@@ -13,7 +13,7 @@ use crate::{
         findings::findings::{Finding, Findings},
         phases::verify_rounds::FindingStatus,
         prompt_support::severity_rubics::CODE4RENA_SEVERITY_RUBRIC,
-        utils::prompt_context::{generate_prompt_for_issue_check, FindingReportType},
+        utils::prompt_context::{FindingReportType, generate_prompt_for_issue_check},
     },
     prepare_code::git_clone::RepoPaths,
 };
@@ -474,7 +474,7 @@ fn generate_verify_json() -> String {
 {{
     "status": "{finding_status_list}",
     "status_justification": "If invalid, or low/qa. please provide detailed Justification (under 200 words). **MUST cite specific gate failures (e.g., "GATE 7 FAIL: Assumes future Distributor bug").",
-    "finding_complexity": How likely is it that other security researchers would find this?  1-10 scale, 10 being very unlikely. Higher the score the better as it will earn the researcher a higher bounty. This value is a number (NOT a string)
+    "finding_complexity": 5  // Number 1-10: How likely is it that other security researchers would find this? 10 = very unlikely (higher score = higher bounty). MUST be a number, NOT a string.
 }}
 "#
     )
