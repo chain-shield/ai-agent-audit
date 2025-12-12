@@ -1521,6 +1521,53 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.0.0) (utils/Nonces.sol)
+pragma solidity ^0.8.20;
+
+/**
+ * @dev Provides tracking nonces for addresses. Nonces will only increment.
+ */
+abstract contract Nonces {
+    /**
+     * @dev The nonce used for an `account` is not the expected current nonce.
+     */
+    error InvalidAccountNonce(address account, uint256 currentNonce);
+
+    mapping(address account => uint256) private _nonces;
+
+    /**
+     * @dev Returns the next unused nonce for an address.
+     */
+    function nonces(address owner) public view virtual returns (uint256) {
+        return _nonces[owner];
+    }
+
+    /**
+     * @dev Consumes a nonce.
+     *
+     * Returns the current value and increments nonce.
+     */
+    function _useNonce(address owner) internal virtual returns (uint256) {
+        // For each account, the nonce has an initial value of 0, can only be incremented by one, and cannot be
+        // decremented or reset. This guarantees that the nonce never overflows.
+        unchecked {
+            // It is important to do x++ and not ++x here.
+            return _nonces[owner]++;
+        }
+    }
+
+    /**
+     * @dev Same as {_useNonce} but checking that `nonce` is the next valid for `owner`.
+     */
+    function _useCheckedNonce(address owner, uint256 nonce) internal virtual {
+        uint256 current = _useNonce(owner);
+        if (nonce != current) {
+            revert InvalidAccountNonce(owner, current);
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.3.0) (utils/Pausable.sol)
 
 pragma solidity ^0.8.20;
@@ -1630,53 +1677,6 @@ abstract contract Pausable is Context {
     function _unpause() internal virtual whenPaused {
         _paused = false;
         emit Unpaused(_msgSender());
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.0.0) (utils/Nonces.sol)
-pragma solidity ^0.8.20;
-
-/**
- * @dev Provides tracking nonces for addresses. Nonces will only increment.
- */
-abstract contract Nonces {
-    /**
-     * @dev The nonce used for an `account` is not the expected current nonce.
-     */
-    error InvalidAccountNonce(address account, uint256 currentNonce);
-
-    mapping(address account => uint256) private _nonces;
-
-    /**
-     * @dev Returns the next unused nonce for an address.
-     */
-    function nonces(address owner) public view virtual returns (uint256) {
-        return _nonces[owner];
-    }
-
-    /**
-     * @dev Consumes a nonce.
-     *
-     * Returns the current value and increments nonce.
-     */
-    function _useNonce(address owner) internal virtual returns (uint256) {
-        // For each account, the nonce has an initial value of 0, can only be incremented by one, and cannot be
-        // decremented or reset. This guarantees that the nonce never overflows.
-        unchecked {
-            // It is important to do x++ and not ++x here.
-            return _nonces[owner]++;
-        }
-    }
-
-    /**
-     * @dev Same as {_useNonce} but checking that `nonce` is the next valid for `owner`.
-     */
-    function _useCheckedNonce(address owner, uint256 nonce) internal virtual {
-        uint256 current = _useNonce(owner);
-        if (nonce != current) {
-            revert InvalidAccountNonce(owner, current);
-        }
     }
 }
 
@@ -1901,6 +1901,112 @@ abstract contract Ownable2Step is Ownable {
 pragma solidity ^0.8.30;
 
 /**
+ * @title IERC7575
+ * @dev Interface of the ERC7575 "Multi-Asset ERC-4626 Vaults", as defined in
+ *      https://eips.ethereum.org/EIPS/eip-7575
+ *
+ * This standard extends ERC-4626 to support multiple assets or entry points
+ * for the same share token. It includes all ERC4626 functions plus the share() function.
+ * Interface ID: 0x2f0a18c5
+ */
+interface IERC7575 {
+    /**
+     * @dev Emitted when a vault address is updated for a specific asset.
+     * @param asset The asset token address
+     * @param vault The vault address for this asset
+     */
+    event VaultUpdate(address indexed asset, address vault);
+
+    /**
+     * @dev Returns the address of the share token.
+     * This is the token minted to represent ownership in the vault.
+     * @return shareTokenAddress The address of the share token
+     */
+    function share() external view returns (address shareTokenAddress);
+
+    // ERC4626 functions (inherited from IERC4626)
+    function asset() external view returns (address assetTokenAddress);
+    function totalAssets() external view returns (uint256 totalManagedAssets);
+    function convertToShares(uint256 assets) external view returns (uint256 shares);
+    function convertToAssets(uint256 shares) external view returns (uint256 assets);
+    function maxDeposit(address receiver) external view returns (uint256 maxAssets);
+    function previewDeposit(uint256 assets) external view returns (uint256 shares);
+    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
+    function maxMint(address receiver) external view returns (uint256 maxShares);
+    function previewMint(uint256 shares) external view returns (uint256 assets);
+    function mint(uint256 shares, address receiver) external returns (uint256 assets);
+    function maxWithdraw(address owner) external view returns (uint256 maxAssets);
+    function previewWithdraw(uint256 assets) external view returns (uint256 shares);
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
+    function maxRedeem(address owner) external view returns (uint256 maxShares);
+    function previewRedeem(uint256 shares) external view returns (uint256 assets);
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
+}
+
+/**
+ * @title IERC7575Share
+ * @dev Basic interface for share tokens in the ERC7575 ecosystem.
+ * This covers the fundamental vault lookup functionality that all share tokens should implement.
+ * Interface ID: 0x3749710f
+ */
+interface IERC7575Share {
+    /**
+     * @dev Returns the vault address for a specific asset.
+     * Allows share tokens to point back to their vaults.
+     * @param asset The asset token address
+     * @return vault The vault address that handles this asset
+     */
+    function vault(address asset) external view returns (address vault);
+
+    /**
+     * @dev Returns all registered assets in the multi-asset system.
+     * @return assets Array of all asset addresses that have registered vaults
+     */
+    function getRegisteredAssets() external view returns (address[] memory assets);
+
+    /**
+     * @dev Emitted when a vault address is updated for a specific asset.
+     * @param asset The asset token address
+     * @param vault The vault address for this asset
+     */
+    event VaultUpdate(address indexed asset, address vault);
+}
+
+/**
+ * @title IERC7575ShareExtended
+ * @dev Full interface for share tokens in the ERC7575 ecosystem with advanced features.
+ * Extends the basic interface with optimization functions for upgradeable implementations.
+ * Interface ID: 0x0a13f305
+ */
+interface IERC7575ShareExtended is IERC7575Share {
+    /**
+     * @dev Returns both circulating supply and total normalized assets in a single optimized call.
+     * This is the preferred method for conversion calculations as it reduces gas usage.
+     * @return circulatingSupply Total supply minus shares held by vaults for redemption claims
+     * @return totalNormalizedAssets Total normalized assets (18 decimals) across all vaults
+     */
+    function getCirculatingSupplyAndAssets() external view returns (uint256 circulatingSupply, uint256 totalNormalizedAssets);
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/**
+ * @title DecimalConstants
+ * @dev Common decimal validation constants shared between ShareToken and Vault
+ */
+library DecimalConstants {
+    /// @dev Share tokens always use 18 decimals
+    uint8 constant SHARE_TOKEN_DECIMALS = 18;
+
+    /// @dev Minimum allowed asset decimals
+    uint8 constant MIN_ASSET_DECIMALS = 6;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/**
  * @title IERC7575Errors
  * @dev Common error definitions for ERC7575 vault implementations
  *
@@ -2097,114 +2203,175 @@ interface IERC7575Errors {
     error CannotCancelClaimable();
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/**
- * @title DecimalConstants
- * @dev Common decimal validation constants shared between ShareToken and Vault
- */
-library DecimalConstants {
-    /// @dev Share tokens always use 18 decimals
-    uint8 constant SHARE_TOKEN_DECIMALS = 18;
-
-    /// @dev Minimum allowed asset decimals
-    uint8 constant MIN_ASSET_DECIMALS = 6;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/**
- * @title IERC7575
- * @dev Interface of the ERC7575 "Multi-Asset ERC-4626 Vaults", as defined in
- *      https://eips.ethereum.org/EIPS/eip-7575
- *
- * This standard extends ERC-4626 to support multiple assets or entry points
- * for the same share token. It includes all ERC4626 functions plus the share() function.
- * Interface ID: 0x2f0a18c5
- */
-interface IERC7575 {
-    /**
-     * @dev Emitted when a vault address is updated for a specific asset.
-     * @param asset The asset token address
-     * @param vault The vault address for this asset
-     */
-    event VaultUpdate(address indexed asset, address vault);
-
-    /**
-     * @dev Returns the address of the share token.
-     * This is the token minted to represent ownership in the vault.
-     * @return shareTokenAddress The address of the share token
-     */
-    function share() external view returns (address shareTokenAddress);
-
-    // ERC4626 functions (inherited from IERC4626)
-    function asset() external view returns (address assetTokenAddress);
-    function totalAssets() external view returns (uint256 totalManagedAssets);
-    function convertToShares(uint256 assets) external view returns (uint256 shares);
-    function convertToAssets(uint256 shares) external view returns (uint256 assets);
-    function maxDeposit(address receiver) external view returns (uint256 maxAssets);
-    function previewDeposit(uint256 assets) external view returns (uint256 shares);
-    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
-    function maxMint(address receiver) external view returns (uint256 maxShares);
-    function previewMint(uint256 shares) external view returns (uint256 assets);
-    function mint(uint256 shares, address receiver) external returns (uint256 assets);
-    function maxWithdraw(address owner) external view returns (uint256 maxAssets);
-    function previewWithdraw(uint256 assets) external view returns (uint256 shares);
-    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
-    function maxRedeem(address owner) external view returns (uint256 maxShares);
-    function previewRedeem(uint256 shares) external view returns (uint256 assets);
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
-}
-
-/**
- * @title IERC7575Share
- * @dev Basic interface for share tokens in the ERC7575 ecosystem.
- * This covers the fundamental vault lookup functionality that all share tokens should implement.
- * Interface ID: 0x3749710f
- */
-interface IERC7575Share {
-    /**
-     * @dev Returns the vault address for a specific asset.
-     * Allows share tokens to point back to their vaults.
-     * @param asset The asset token address
-     * @return vault The vault address that handles this asset
-     */
-    function vault(address asset) external view returns (address vault);
-
-    /**
-     * @dev Returns all registered assets in the multi-asset system.
-     * @return assets Array of all asset addresses that have registered vaults
-     */
-    function getRegisteredAssets() external view returns (address[] memory assets);
-
-    /**
-     * @dev Emitted when a vault address is updated for a specific asset.
-     * @param asset The asset token address
-     * @param vault The vault address for this asset
-     */
-    event VaultUpdate(address indexed asset, address vault);
-}
-
-/**
- * @title IERC7575ShareExtended
- * @dev Full interface for share tokens in the ERC7575 ecosystem with advanced features.
- * Extends the basic interface with optimization functions for upgradeable implementations.
- * Interface ID: 0x0a13f305
- */
-interface IERC7575ShareExtended is IERC7575Share {
-    /**
-     * @dev Returns both circulating supply and total normalized assets in a single optimized call.
-     * This is the preferred method for conversion calculations as it reduces gas usage.
-     * @return circulatingSupply Total supply minus shares held by vaults for redemption claims
-     * @return totalNormalizedAssets Total normalized assets (18 decimals) across all vaults
-     */
-    function getCirculatingSupplyAndAssets() external view returns (uint256 circulatingSupply, uint256 totalNormalizedAssets);
-}
-
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/**
+ * @title IERC7887
+ * @dev Interface for ERC7887 "Asynchronous Tokenized Vault Cancelation Extension"
+ *      Extends ERC7540 with asynchronous cancelation capabilities
+ *      https://eips.ethereum.org/EIPS/eip-7887
+ */
+interface IERC7887DepositCancelation {
+    /**
+     * @dev Emitted when a deposit cancelation request is submitted
+     * controller - address that controls the cancelation request
+     * owner - original owner of the assets
+     * requestId - unique identifier for the cancelation request
+     * sender - address that called cancelDepositRequest
+     * assets - amount of assets being canceled
+     */
+    event CancelDepositRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 assets);
+
+    /**
+     * @dev Emitted when a deposit cancelation is claimed
+     * controller - address that controlled the cancelation request
+     * receiver - address that received the assets
+     * requestId - unique identifier for the cancelation request
+     * assets - amount of assets claimed
+     */
+    event CancelDepositRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 assets);
+
+    /**
+     * @dev Submits a request to cancel a pending deposit request
+     * Transitions the deposit request assets from pending state into pending cancelation state
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST block new deposit requests for this controller while cancelation is pending
+     * - MUST emit `CancelDepositRequest` event
+     * - Can only cancel deposits in Pending state, not Claimable state
+     *
+     * @param requestId The requestId from the original deposit request (identifies which deposit to cancel)
+     * @param controller Address that made the original deposit request
+     */
+    function cancelDepositRequest(uint256 requestId, address controller) external;
+
+    /**
+     * @dev Whether the given requestId and controller have a pending deposit cancelation request
+     *
+     * - Returns true if a deposit cancelation is in Pending state for this controller
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original deposit request
+     * @return isPending Whether a pending deposit cancelation exists for this controller
+     */
+    function pendingCancelDepositRequest(uint256 requestId, address controller) external view returns (bool isPending);
+
+    /**
+     * @dev Returns the amount of assets in claimable cancelation state
+     *
+     * - MUST NOT include any assets in Pending state
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original deposit request
+     * @return assets Amount of assets ready to claim
+     */
+    function claimableCancelDepositRequest(uint256 requestId, address controller) external view returns (uint256 assets);
+
+    /**
+     * @dev Claims assets from a claimable deposit cancelation request
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST transition request from Claimable to Claimed state
+     * - MUST transfer assets to `receiver`
+     * - MUST emit `CancelDepositRequestClaimed` event
+     * - Cannot be called unless request is in Claimable state
+     *
+     * @param requestId Cancelation request identifier
+     * @param receiver Address to receive the claimed assets
+     * @param controller Address that made the original deposit request
+     */
+    function claimCancelDepositRequest(uint256 requestId, address receiver, address controller) external;
+}
+
+interface IERC7887RedeemCancelation {
+    /**
+     * @dev Emitted when a redeem cancelation request is submitted
+     * controller - address that controls the cancelation request
+     * owner - original owner of the shares
+     * requestId - unique identifier for the cancelation request
+     * sender - address that called cancelRedeemRequest
+     * shares - amount of shares being canceled
+     */
+    event CancelRedeemRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 shares);
+
+    /**
+     * @dev Emitted when a redeem cancelation is claimed
+     * controller - address that controlled the cancelation request
+     * receiver - address that received the shares
+     * requestId - unique identifier for the cancelation request
+     * shares - amount of shares claimed
+     */
+    event CancelRedeemRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 shares);
+
+    /**
+     * @dev Submits a request to cancel a pending redeem request
+     * Transitions the redeem request shares from pending state into pending cancelation state
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST block new redeem requests for this controller while cancelation is pending
+     * - MUST emit `CancelRedeemRequest` event
+     * - Can only cancel redeems in Pending state, not Claimable state
+     *
+     * @param requestId The requestId from the original redeem request (identifies which redeem to cancel)
+     * @param controller Address that made the original redeem request
+     */
+    function cancelRedeemRequest(uint256 requestId, address controller) external;
+
+    /**
+     * @dev Whether the given requestId and controller have a pending redeem cancelation request
+     *
+     * - Returns true if a redeem cancelation is in Pending state for this controller
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original redeem request
+     * @return isPending Whether a pending redeem cancelation exists for this controller
+     */
+    function pendingCancelRedeemRequest(uint256 requestId, address controller) external view returns (bool isPending);
+
+    /**
+     * @dev Returns the amount of shares in claimable cancelation state
+     *
+     * - MUST NOT include any shares in Pending state
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original redeem request
+     * @return shares Amount of shares ready to claim
+     */
+    function claimableCancelRedeemRequest(uint256 requestId, address controller) external view returns (uint256 shares);
+
+    /**
+     * @dev Claims shares from a claimable redeem cancelation request
+     *
+     * - MUST revert unless `msg.sender` is either equal to `owner` or an operator approved by `owner`
+     * - MUST transition request from Claimable to Claimed state
+     * - MUST transfer shares to `receiver`
+     * - MUST emit `CancelRedeemRequestClaimed` event
+     * - Cannot be called unless request is in Claimable state
+     *
+     * @param requestId Cancelation request identifier
+     * @param receiver Address to receive the claimed shares
+     * @param owner Address that made the original redeem request
+     */
+    function claimCancelRedeemRequest(uint256 requestId, address receiver, address owner) external;
+}
+
+/**
+ * @title IERC7887
+ * @dev Full ERC7887 interface combining deposit and redeem cancelation
+ */
+interface IERC7887 is IERC7887DepositCancelation, IERC7887RedeemCancelation {}
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
@@ -2389,80 +2556,6 @@ interface IERC7540Redeem is IERC7540Operator {
  *         https://eips.ethereum.org/EIPS/eip-7540
  */
 interface IERC7540 is IERC7540Operator, IERC7540Deposit, IERC7540Redeem {}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-
-/**
- * @title ERC20Faucet
- * @dev A test token faucet that allows users to request tokens with a cooldown period
- * Used for testing and development purposes. Includes permit functionality for gasless approvals.
- */
-contract ERC20Faucet is ERC20, ERC20Permit {
-    uint256 public constant FAUCET_AMOUNT = 10000 * 10 ** 18; // Amount of tokens dispensed by the faucet
-    uint256 public constant MAX_FAUCET_AMOUNT = 100000 * 10 ** 18; // Maximum amount of tokens dispensed by the faucet
-    mapping(address => uint256) public lastRequestTime;
-    uint256 public constant COOLDOWN_TIME = 1 hours; // Cooldown period
-
-    /**
-     * @dev Constructor that initializes the token with custom name and symbol
-     * @param name_ The name of the token (e.g., "USD Tether")
-     * @param symbol_ The symbol of the token (e.g., "USDT")
-     * @param initialSupply The initial token supply to mint to deployer
-     *
-     * Mints initial supply to the deployer and enables permit functionality for gasless approvals.
-     */
-    constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
-        _mint(msg.sender, initialSupply);
-    }
-
-    /**
-     * @dev Request standard faucet amount for the caller
-     */
-    function faucet() public {
-        _faucetFor(msg.sender, FAUCET_AMOUNT);
-    }
-
-    /**
-     * @dev Request specific amount of tokens for the caller
-     * @param amount Amount of tokens to request
-     */
-    function faucetAmount(uint256 amount) public {
-        _faucetFor(msg.sender, amount);
-    }
-
-    /**
-     * @dev Request standard faucet amount for a specific receiver
-     * @param receiver Address to receive the tokens
-     */
-    function faucetFor(address receiver) public {
-        _faucetFor(receiver, FAUCET_AMOUNT);
-    }
-
-    /**
-     * @dev Request specific amount of tokens for a specific receiver
-     * @param receiver Address to receive the tokens
-     * @param amount Amount of tokens to request
-     */
-    function faucetAmountFor(address receiver, uint256 amount) public {
-        _faucetFor(receiver, amount);
-    }
-
-    /**
-     * @dev Internal function to handle faucet requests with cooldown and limit checks
-     * @param receiver Address to receive the tokens
-     * @param amount Amount of tokens to mint
-     */
-    function _faucetFor(address receiver, uint256 amount) internal {
-        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "You must wait for the cooldown period to end.");
-        require(amount <= MAX_FAUCET_AMOUNT, "Amount exceeds maximum faucet amount.");
-        _mint(receiver, amount);
-        lastRequestTime[receiver] = block.timestamp;
-    }
-}
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
@@ -5460,173 +5553,6 @@ contract ERC7575VaultUpgradeable is Initializable, ReentrancyGuard, Ownable2Step
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-/**
- * @title IERC7887
- * @dev Interface for ERC7887 "Asynchronous Tokenized Vault Cancelation Extension"
- *      Extends ERC7540 with asynchronous cancelation capabilities
- *      https://eips.ethereum.org/EIPS/eip-7887
- */
-interface IERC7887DepositCancelation {
-    /**
-     * @dev Emitted when a deposit cancelation request is submitted
-     * controller - address that controls the cancelation request
-     * owner - original owner of the assets
-     * requestId - unique identifier for the cancelation request
-     * sender - address that called cancelDepositRequest
-     * assets - amount of assets being canceled
-     */
-    event CancelDepositRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 assets);
-
-    /**
-     * @dev Emitted when a deposit cancelation is claimed
-     * controller - address that controlled the cancelation request
-     * receiver - address that received the assets
-     * requestId - unique identifier for the cancelation request
-     * assets - amount of assets claimed
-     */
-    event CancelDepositRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 assets);
-
-    /**
-     * @dev Submits a request to cancel a pending deposit request
-     * Transitions the deposit request assets from pending state into pending cancelation state
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST block new deposit requests for this controller while cancelation is pending
-     * - MUST emit `CancelDepositRequest` event
-     * - Can only cancel deposits in Pending state, not Claimable state
-     *
-     * @param requestId The requestId from the original deposit request (identifies which deposit to cancel)
-     * @param controller Address that made the original deposit request
-     */
-    function cancelDepositRequest(uint256 requestId, address controller) external;
-
-    /**
-     * @dev Whether the given requestId and controller have a pending deposit cancelation request
-     *
-     * - Returns true if a deposit cancelation is in Pending state for this controller
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original deposit request
-     * @return isPending Whether a pending deposit cancelation exists for this controller
-     */
-    function pendingCancelDepositRequest(uint256 requestId, address controller) external view returns (bool isPending);
-
-    /**
-     * @dev Returns the amount of assets in claimable cancelation state
-     *
-     * - MUST NOT include any assets in Pending state
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original deposit request
-     * @return assets Amount of assets ready to claim
-     */
-    function claimableCancelDepositRequest(uint256 requestId, address controller) external view returns (uint256 assets);
-
-    /**
-     * @dev Claims assets from a claimable deposit cancelation request
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST transition request from Claimable to Claimed state
-     * - MUST transfer assets to `receiver`
-     * - MUST emit `CancelDepositRequestClaimed` event
-     * - Cannot be called unless request is in Claimable state
-     *
-     * @param requestId Cancelation request identifier
-     * @param receiver Address to receive the claimed assets
-     * @param controller Address that made the original deposit request
-     */
-    function claimCancelDepositRequest(uint256 requestId, address receiver, address controller) external;
-}
-
-interface IERC7887RedeemCancelation {
-    /**
-     * @dev Emitted when a redeem cancelation request is submitted
-     * controller - address that controls the cancelation request
-     * owner - original owner of the shares
-     * requestId - unique identifier for the cancelation request
-     * sender - address that called cancelRedeemRequest
-     * shares - amount of shares being canceled
-     */
-    event CancelRedeemRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 shares);
-
-    /**
-     * @dev Emitted when a redeem cancelation is claimed
-     * controller - address that controlled the cancelation request
-     * receiver - address that received the shares
-     * requestId - unique identifier for the cancelation request
-     * shares - amount of shares claimed
-     */
-    event CancelRedeemRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 shares);
-
-    /**
-     * @dev Submits a request to cancel a pending redeem request
-     * Transitions the redeem request shares from pending state into pending cancelation state
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST block new redeem requests for this controller while cancelation is pending
-     * - MUST emit `CancelRedeemRequest` event
-     * - Can only cancel redeems in Pending state, not Claimable state
-     *
-     * @param requestId The requestId from the original redeem request (identifies which redeem to cancel)
-     * @param controller Address that made the original redeem request
-     */
-    function cancelRedeemRequest(uint256 requestId, address controller) external;
-
-    /**
-     * @dev Whether the given requestId and controller have a pending redeem cancelation request
-     *
-     * - Returns true if a redeem cancelation is in Pending state for this controller
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original redeem request
-     * @return isPending Whether a pending redeem cancelation exists for this controller
-     */
-    function pendingCancelRedeemRequest(uint256 requestId, address controller) external view returns (bool isPending);
-
-    /**
-     * @dev Returns the amount of shares in claimable cancelation state
-     *
-     * - MUST NOT include any shares in Pending state
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original redeem request
-     * @return shares Amount of shares ready to claim
-     */
-    function claimableCancelRedeemRequest(uint256 requestId, address controller) external view returns (uint256 shares);
-
-    /**
-     * @dev Claims shares from a claimable redeem cancelation request
-     *
-     * - MUST revert unless `msg.sender` is either equal to `owner` or an operator approved by `owner`
-     * - MUST transition request from Claimable to Claimed state
-     * - MUST transfer shares to `receiver`
-     * - MUST emit `CancelRedeemRequestClaimed` event
-     * - Cannot be called unless request is in Claimable state
-     *
-     * @param requestId Cancelation request identifier
-     * @param receiver Address to receive the claimed shares
-     * @param owner Address that made the original redeem request
-     */
-    function claimCancelRedeemRequest(uint256 requestId, address receiver, address owner) external;
-}
-
-/**
- * @title IERC7887
- * @dev Full ERC7887 interface combining deposit and redeem cancelation
- */
-interface IERC7887 is IERC7887DepositCancelation, IERC7887RedeemCancelation {}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
 import {DecimalConstants} from "./DecimalConstants.sol";
 import {SafeTokenTransfers} from "./SafeTokenTransfers.sol";
 import {WERC7575ShareToken} from "./WERC7575ShareToken.sol";
@@ -6090,6 +6016,80 @@ contract WERC7575Vault is IERC7575, ERC165, ReentrancyGuard, Ownable2Step, Pausa
     function redeem(uint256 shares, address receiver, address owner) public nonReentrant whenNotPaused returns (uint256 assets) {
         assets = previewRedeem(shares);
         _withdraw(assets, shares, receiver, owner);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+
+/**
+ * @title ERC20Faucet
+ * @dev A test token faucet that allows users to request tokens with a cooldown period
+ * Used for testing and development purposes. Includes permit functionality for gasless approvals.
+ */
+contract ERC20Faucet is ERC20, ERC20Permit {
+    uint256 public constant FAUCET_AMOUNT = 10000 * 10 ** 18; // Amount of tokens dispensed by the faucet
+    uint256 public constant MAX_FAUCET_AMOUNT = 100000 * 10 ** 18; // Maximum amount of tokens dispensed by the faucet
+    mapping(address => uint256) public lastRequestTime;
+    uint256 public constant COOLDOWN_TIME = 1 hours; // Cooldown period
+
+    /**
+     * @dev Constructor that initializes the token with custom name and symbol
+     * @param name_ The name of the token (e.g., "USD Tether")
+     * @param symbol_ The symbol of the token (e.g., "USDT")
+     * @param initialSupply The initial token supply to mint to deployer
+     *
+     * Mints initial supply to the deployer and enables permit functionality for gasless approvals.
+     */
+    constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
+        _mint(msg.sender, initialSupply);
+    }
+
+    /**
+     * @dev Request standard faucet amount for the caller
+     */
+    function faucet() public {
+        _faucetFor(msg.sender, FAUCET_AMOUNT);
+    }
+
+    /**
+     * @dev Request specific amount of tokens for the caller
+     * @param amount Amount of tokens to request
+     */
+    function faucetAmount(uint256 amount) public {
+        _faucetFor(msg.sender, amount);
+    }
+
+    /**
+     * @dev Request standard faucet amount for a specific receiver
+     * @param receiver Address to receive the tokens
+     */
+    function faucetFor(address receiver) public {
+        _faucetFor(receiver, FAUCET_AMOUNT);
+    }
+
+    /**
+     * @dev Request specific amount of tokens for a specific receiver
+     * @param receiver Address to receive the tokens
+     * @param amount Amount of tokens to request
+     */
+    function faucetAmountFor(address receiver, uint256 amount) public {
+        _faucetFor(receiver, amount);
+    }
+
+    /**
+     * @dev Internal function to handle faucet requests with cooldown and limit checks
+     * @param receiver Address to receive the tokens
+     * @param amount Amount of tokens to mint
+     */
+    function _faucetFor(address receiver, uint256 amount) internal {
+        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "You must wait for the cooldown period to end.");
+        require(amount <= MAX_FAUCET_AMOUNT, "Amount exceeds maximum faucet amount.");
+        _mint(receiver, amount);
+        lastRequestTime[receiver] = block.timestamp;
     }
 }
 

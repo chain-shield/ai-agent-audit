@@ -288,7 +288,7 @@ where
 
     let r_findings: Vec<Finding> = findings
         .findings
-        .iter()
+        .into_iter()
         .map(|f| {
             let f_id = f.id.clone().unwrap_or_default();
             let r_option = r_map.get(&f_id);
@@ -307,7 +307,7 @@ where
                 return Finding {
                     status_justification: justification,
                     verification_rounds_passed: Some(T::Spec::round_number() as u8),
-                    ..f.clone()
+                    ..f
                 };
             } else {
                 f.status
@@ -322,7 +322,7 @@ where
             let enriched_finding = Finding {
                 status: updated_status,
                 status_justification: justification,
-                ..f.clone()
+                ..f
             };
             enriched_finding
         })
@@ -407,7 +407,6 @@ pub async fn run_round_validation(
         .map(|r| (r.id(), r))
         .collect();
 
-    let mut upgraded_count = 0;
     let mut confirmed_invalid_count = 0;
 
     let r_validated_findings: Vec<Finding> = findings
@@ -425,7 +424,6 @@ pub async fn run_round_validation(
 
             // now can safely unwrap
             let validation_analysis = validation_analysis_option.unwrap();
-            info!("VALIDATION ANALYSIS => {:#?}", validation_analysis);
 
             let updated_finding_status = validation_analysis.get_fixed_finding_status(f);
 
@@ -452,21 +450,13 @@ pub async fn run_round_validation(
                 f.status_justification.clone()
             };
 
-            // Track validation statistics
-            let was_invalid = f
-                .status
-                .as_ref()
-                .is_some_and(|s| !s.contains(&FindingStatus::Valid));
-            let is_now_valid = final_status
-                .as_ref()
-                .is_some_and(|s| s.contains(&FindingStatus::Valid));
-            let is_still_invalid = final_status
-                .as_ref()
-                .is_some_and(|s| !s.is_empty() && !s.contains(&FindingStatus::Valid));
+            let is_still_invalid = final_status.as_ref().is_some_and(|s| {
+                !s.is_empty()
+                    && !s.contains(&FindingStatus::Valid)
+                    && !s.contains(&FindingStatus::NeedsMoreInfo)
+            });
 
-            if was_invalid && is_now_valid {
-                upgraded_count += 1;
-            } else if is_still_invalid {
+            if is_still_invalid {
                 confirmed_invalid_count += 1;
             }
 
@@ -480,8 +470,9 @@ pub async fn run_round_validation(
         .collect();
 
     info!(
-        "Validation Results: {} upgraded to Valid, {} confirmed invalid",
-        upgraded_count, confirmed_invalid_count
+        "Validation Results: {} Likely Valid,  {} Confirmed Invalid",
+        r_validated_findings.len() - confirmed_invalid_count,
+        confirmed_invalid_count
     );
 
     Ok(Findings {

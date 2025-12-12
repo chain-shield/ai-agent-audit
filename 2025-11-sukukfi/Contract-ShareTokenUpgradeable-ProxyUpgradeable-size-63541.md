@@ -807,245 +807,6 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.3.0) (proxy/utils/Initializable.sol)
-
-pragma solidity ^0.8.20;
-
-/**
- * @dev This is a base contract to aid in writing upgradeable contracts, or any kind of contract that will be deployed
- * behind a proxy. Since proxied contracts do not make use of a constructor, it's common to move constructor logic to an
- * external initializer function, usually called `initialize`. It then becomes necessary to protect this initializer
- * function so it can only be called once. The {initializer} modifier provided by this contract will have this effect.
- *
- * The initialization functions use a version number. Once a version number is used, it is consumed and cannot be
- * reused. This mechanism prevents re-execution of each "step" but allows the creation of new initialization steps in
- * case an upgrade adds a module that needs to be initialized.
- *
- * For example:
- *
- * [.hljs-theme-light.nopadding]
- * ```solidity
- * contract MyToken is ERC20Upgradeable {
- *     function initialize() initializer public {
- *         __ERC20_init("MyToken", "MTK");
- *     }
- * }
- *
- * contract MyTokenV2 is MyToken, ERC20PermitUpgradeable {
- *     function initializeV2() reinitializer(2) public {
- *         __ERC20Permit_init("MyToken");
- *     }
- * }
- * ```
- *
- * TIP: To avoid leaving the proxy in an uninitialized state, the initializer function should be called as early as
- * possible by providing the encoded function call as the `_data` argument to {ERC1967Proxy-constructor}.
- *
- * CAUTION: When used with inheritance, manual care must be taken to not invoke a parent initializer twice, or to ensure
- * that all initializers are idempotent. This is not verified automatically as constructors are by Solidity.
- *
- * [CAUTION]
- * ====
- * Avoid leaving a contract uninitialized.
- *
- * An uninitialized contract can be taken over by an attacker. This applies to both a proxy and its implementation
- * contract, which may impact the proxy. To prevent the implementation contract from being used, you should invoke
- * the {_disableInitializers} function in the constructor to automatically lock it when it is deployed:
- *
- * [.hljs-theme-light.nopadding]
- * ```
- * /// @custom:oz-upgrades-unsafe-allow constructor
- * constructor() {
- *     _disableInitializers();
- * }
- * ```
- * ====
- */
-abstract contract Initializable {
-    /**
-     * @dev Storage of the initializable contract.
-     *
-     * It's implemented on a custom ERC-7201 namespace to reduce the risk of storage collisions
-     * when using with upgradeable contracts.
-     *
-     * @custom:storage-location erc7201:openzeppelin.storage.Initializable
-     */
-    struct InitializableStorage {
-        /**
-         * @dev Indicates that the contract has been initialized.
-         */
-        uint64 _initialized;
-        /**
-         * @dev Indicates that the contract is in the process of being initialized.
-         */
-        bool _initializing;
-    }
-
-    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.Initializable")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant INITIALIZABLE_STORAGE = 0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00;
-
-    /**
-     * @dev The contract is already initialized.
-     */
-    error InvalidInitialization();
-
-    /**
-     * @dev The contract is not initializing.
-     */
-    error NotInitializing();
-
-    /**
-     * @dev Triggered when the contract has been initialized or reinitialized.
-     */
-    event Initialized(uint64 version);
-
-    /**
-     * @dev A modifier that defines a protected initializer function that can be invoked at most once. In its scope,
-     * `onlyInitializing` functions can be used to initialize parent contracts.
-     *
-     * Similar to `reinitializer(1)`, except that in the context of a constructor an `initializer` may be invoked any
-     * number of times. This behavior in the constructor can be useful during testing and is not expected to be used in
-     * production.
-     *
-     * Emits an {Initialized} event.
-     */
-    modifier initializer() {
-        // solhint-disable-next-line var-name-mixedcase
-        InitializableStorage storage $ = _getInitializableStorage();
-
-        // Cache values to avoid duplicated sloads
-        bool isTopLevelCall = !$._initializing;
-        uint64 initialized = $._initialized;
-
-        // Allowed calls:
-        // - initialSetup: the contract is not in the initializing state and no previous version was
-        //                 initialized
-        // - construction: the contract is initialized at version 1 (no reinitialization) and the
-        //                 current contract is just being deployed
-        bool initialSetup = initialized == 0 && isTopLevelCall;
-        bool construction = initialized == 1 && address(this).code.length == 0;
-
-        if (!initialSetup && !construction) {
-            revert InvalidInitialization();
-        }
-        $._initialized = 1;
-        if (isTopLevelCall) {
-            $._initializing = true;
-        }
-        _;
-        if (isTopLevelCall) {
-            $._initializing = false;
-            emit Initialized(1);
-        }
-    }
-
-    /**
-     * @dev A modifier that defines a protected reinitializer function that can be invoked at most once, and only if the
-     * contract hasn't been initialized to a greater version before. In its scope, `onlyInitializing` functions can be
-     * used to initialize parent contracts.
-     *
-     * A reinitializer may be used after the original initialization step. This is essential to configure modules that
-     * are added through upgrades and that require initialization.
-     *
-     * When `version` is 1, this modifier is similar to `initializer`, except that functions marked with `reinitializer`
-     * cannot be nested. If one is invoked in the context of another, execution will revert.
-     *
-     * Note that versions can jump in increments greater than 1; this implies that if multiple reinitializers coexist in
-     * a contract, executing them in the right order is up to the developer or operator.
-     *
-     * WARNING: Setting the version to 2**64 - 1 will prevent any future reinitialization.
-     *
-     * Emits an {Initialized} event.
-     */
-    modifier reinitializer(uint64 version) {
-        // solhint-disable-next-line var-name-mixedcase
-        InitializableStorage storage $ = _getInitializableStorage();
-
-        if ($._initializing || $._initialized >= version) {
-            revert InvalidInitialization();
-        }
-        $._initialized = version;
-        $._initializing = true;
-        _;
-        $._initializing = false;
-        emit Initialized(version);
-    }
-
-    /**
-     * @dev Modifier to protect an initialization function so that it can only be invoked by functions with the
-     * {initializer} and {reinitializer} modifiers, directly or indirectly.
-     */
-    modifier onlyInitializing() {
-        _checkInitializing();
-        _;
-    }
-
-    /**
-     * @dev Reverts if the contract is not in an initializing state. See {onlyInitializing}.
-     */
-    function _checkInitializing() internal view virtual {
-        if (!_isInitializing()) {
-            revert NotInitializing();
-        }
-    }
-
-    /**
-     * @dev Locks the contract, preventing any future reinitialization. This cannot be part of an initializer call.
-     * Calling this in the constructor of a contract will prevent that contract from being initialized or reinitialized
-     * to any version. It is recommended to use this to lock implementation contracts that are designed to be called
-     * through proxies.
-     *
-     * Emits an {Initialized} event the first time it is successfully executed.
-     */
-    function _disableInitializers() internal virtual {
-        // solhint-disable-next-line var-name-mixedcase
-        InitializableStorage storage $ = _getInitializableStorage();
-
-        if ($._initializing) {
-            revert InvalidInitialization();
-        }
-        if ($._initialized != type(uint64).max) {
-            $._initialized = type(uint64).max;
-            emit Initialized(type(uint64).max);
-        }
-    }
-
-    /**
-     * @dev Returns the highest version that has been initialized. See {reinitializer}.
-     */
-    function _getInitializedVersion() internal view returns (uint64) {
-        return _getInitializableStorage()._initialized;
-    }
-
-    /**
-     * @dev Returns `true` if the contract is currently initializing. See {onlyInitializing}.
-     */
-    function _isInitializing() internal view returns (bool) {
-        return _getInitializableStorage()._initializing;
-    }
-
-    /**
-     * @dev Pointer to storage slot. Allows integrators to override it with a custom storage location.
-     *
-     * NOTE: Consider following the ERC-7201 formula to derive storage locations.
-     */
-    function _initializableStorageSlot() internal pure virtual returns (bytes32) {
-        return INITIALIZABLE_STORAGE;
-    }
-
-    /**
-     * @dev Returns a pointer to the storage namespace.
-     */
-    // solhint-disable-next-line var-name-mixedcase
-    function _getInitializableStorage() private pure returns (InitializableStorage storage $) {
-        bytes32 slot = _initializableStorageSlot();
-        assembly {
-            $.slot := slot
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -2562,6 +2323,245 @@ contract WERC7575ShareToken is ERC20, IERC20Permit, EIP712, Nonces, ReentrancyGu
 }
 
 // SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.3.0) (proxy/utils/Initializable.sol)
+
+pragma solidity ^0.8.20;
+
+/**
+ * @dev This is a base contract to aid in writing upgradeable contracts, or any kind of contract that will be deployed
+ * behind a proxy. Since proxied contracts do not make use of a constructor, it's common to move constructor logic to an
+ * external initializer function, usually called `initialize`. It then becomes necessary to protect this initializer
+ * function so it can only be called once. The {initializer} modifier provided by this contract will have this effect.
+ *
+ * The initialization functions use a version number. Once a version number is used, it is consumed and cannot be
+ * reused. This mechanism prevents re-execution of each "step" but allows the creation of new initialization steps in
+ * case an upgrade adds a module that needs to be initialized.
+ *
+ * For example:
+ *
+ * [.hljs-theme-light.nopadding]
+ * ```solidity
+ * contract MyToken is ERC20Upgradeable {
+ *     function initialize() initializer public {
+ *         __ERC20_init("MyToken", "MTK");
+ *     }
+ * }
+ *
+ * contract MyTokenV2 is MyToken, ERC20PermitUpgradeable {
+ *     function initializeV2() reinitializer(2) public {
+ *         __ERC20Permit_init("MyToken");
+ *     }
+ * }
+ * ```
+ *
+ * TIP: To avoid leaving the proxy in an uninitialized state, the initializer function should be called as early as
+ * possible by providing the encoded function call as the `_data` argument to {ERC1967Proxy-constructor}.
+ *
+ * CAUTION: When used with inheritance, manual care must be taken to not invoke a parent initializer twice, or to ensure
+ * that all initializers are idempotent. This is not verified automatically as constructors are by Solidity.
+ *
+ * [CAUTION]
+ * ====
+ * Avoid leaving a contract uninitialized.
+ *
+ * An uninitialized contract can be taken over by an attacker. This applies to both a proxy and its implementation
+ * contract, which may impact the proxy. To prevent the implementation contract from being used, you should invoke
+ * the {_disableInitializers} function in the constructor to automatically lock it when it is deployed:
+ *
+ * [.hljs-theme-light.nopadding]
+ * ```
+ * /// @custom:oz-upgrades-unsafe-allow constructor
+ * constructor() {
+ *     _disableInitializers();
+ * }
+ * ```
+ * ====
+ */
+abstract contract Initializable {
+    /**
+     * @dev Storage of the initializable contract.
+     *
+     * It's implemented on a custom ERC-7201 namespace to reduce the risk of storage collisions
+     * when using with upgradeable contracts.
+     *
+     * @custom:storage-location erc7201:openzeppelin.storage.Initializable
+     */
+    struct InitializableStorage {
+        /**
+         * @dev Indicates that the contract has been initialized.
+         */
+        uint64 _initialized;
+        /**
+         * @dev Indicates that the contract is in the process of being initialized.
+         */
+        bool _initializing;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.Initializable")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant INITIALIZABLE_STORAGE = 0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00;
+
+    /**
+     * @dev The contract is already initialized.
+     */
+    error InvalidInitialization();
+
+    /**
+     * @dev The contract is not initializing.
+     */
+    error NotInitializing();
+
+    /**
+     * @dev Triggered when the contract has been initialized or reinitialized.
+     */
+    event Initialized(uint64 version);
+
+    /**
+     * @dev A modifier that defines a protected initializer function that can be invoked at most once. In its scope,
+     * `onlyInitializing` functions can be used to initialize parent contracts.
+     *
+     * Similar to `reinitializer(1)`, except that in the context of a constructor an `initializer` may be invoked any
+     * number of times. This behavior in the constructor can be useful during testing and is not expected to be used in
+     * production.
+     *
+     * Emits an {Initialized} event.
+     */
+    modifier initializer() {
+        // solhint-disable-next-line var-name-mixedcase
+        InitializableStorage storage $ = _getInitializableStorage();
+
+        // Cache values to avoid duplicated sloads
+        bool isTopLevelCall = !$._initializing;
+        uint64 initialized = $._initialized;
+
+        // Allowed calls:
+        // - initialSetup: the contract is not in the initializing state and no previous version was
+        //                 initialized
+        // - construction: the contract is initialized at version 1 (no reinitialization) and the
+        //                 current contract is just being deployed
+        bool initialSetup = initialized == 0 && isTopLevelCall;
+        bool construction = initialized == 1 && address(this).code.length == 0;
+
+        if (!initialSetup && !construction) {
+            revert InvalidInitialization();
+        }
+        $._initialized = 1;
+        if (isTopLevelCall) {
+            $._initializing = true;
+        }
+        _;
+        if (isTopLevelCall) {
+            $._initializing = false;
+            emit Initialized(1);
+        }
+    }
+
+    /**
+     * @dev A modifier that defines a protected reinitializer function that can be invoked at most once, and only if the
+     * contract hasn't been initialized to a greater version before. In its scope, `onlyInitializing` functions can be
+     * used to initialize parent contracts.
+     *
+     * A reinitializer may be used after the original initialization step. This is essential to configure modules that
+     * are added through upgrades and that require initialization.
+     *
+     * When `version` is 1, this modifier is similar to `initializer`, except that functions marked with `reinitializer`
+     * cannot be nested. If one is invoked in the context of another, execution will revert.
+     *
+     * Note that versions can jump in increments greater than 1; this implies that if multiple reinitializers coexist in
+     * a contract, executing them in the right order is up to the developer or operator.
+     *
+     * WARNING: Setting the version to 2**64 - 1 will prevent any future reinitialization.
+     *
+     * Emits an {Initialized} event.
+     */
+    modifier reinitializer(uint64 version) {
+        // solhint-disable-next-line var-name-mixedcase
+        InitializableStorage storage $ = _getInitializableStorage();
+
+        if ($._initializing || $._initialized >= version) {
+            revert InvalidInitialization();
+        }
+        $._initialized = version;
+        $._initializing = true;
+        _;
+        $._initializing = false;
+        emit Initialized(version);
+    }
+
+    /**
+     * @dev Modifier to protect an initialization function so that it can only be invoked by functions with the
+     * {initializer} and {reinitializer} modifiers, directly or indirectly.
+     */
+    modifier onlyInitializing() {
+        _checkInitializing();
+        _;
+    }
+
+    /**
+     * @dev Reverts if the contract is not in an initializing state. See {onlyInitializing}.
+     */
+    function _checkInitializing() internal view virtual {
+        if (!_isInitializing()) {
+            revert NotInitializing();
+        }
+    }
+
+    /**
+     * @dev Locks the contract, preventing any future reinitialization. This cannot be part of an initializer call.
+     * Calling this in the constructor of a contract will prevent that contract from being initialized or reinitialized
+     * to any version. It is recommended to use this to lock implementation contracts that are designed to be called
+     * through proxies.
+     *
+     * Emits an {Initialized} event the first time it is successfully executed.
+     */
+    function _disableInitializers() internal virtual {
+        // solhint-disable-next-line var-name-mixedcase
+        InitializableStorage storage $ = _getInitializableStorage();
+
+        if ($._initializing) {
+            revert InvalidInitialization();
+        }
+        if ($._initialized != type(uint64).max) {
+            $._initialized = type(uint64).max;
+            emit Initialized(type(uint64).max);
+        }
+    }
+
+    /**
+     * @dev Returns the highest version that has been initialized. See {reinitializer}.
+     */
+    function _getInitializedVersion() internal view returns (uint64) {
+        return _getInitializableStorage()._initialized;
+    }
+
+    /**
+     * @dev Returns `true` if the contract is currently initializing. See {onlyInitializing}.
+     */
+    function _isInitializing() internal view returns (bool) {
+        return _getInitializableStorage()._initializing;
+    }
+
+    /**
+     * @dev Pointer to storage slot. Allows integrators to override it with a custom storage location.
+     *
+     * NOTE: Consider following the ERC-7201 formula to derive storage locations.
+     */
+    function _initializableStorageSlot() internal pure virtual returns (bytes32) {
+        return INITIALIZABLE_STORAGE;
+    }
+
+    /**
+     * @dev Returns a pointer to the storage namespace.
+     */
+    // solhint-disable-next-line var-name-mixedcase
+    function _getInitializableStorage() private pure returns (InitializableStorage storage $) {
+        bytes32 slot = _initializableStorageSlot();
+        assembly {
+            $.slot := slot
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
 
 pragma solidity ^0.8.20;
@@ -2706,6 +2706,74 @@ interface IVaultMetrics {
 }
 
 // SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
+
+pragma solidity ^0.8.20;
+
+import {Ownable} from "./Ownable.sol";
+
+/**
+ * @dev Contract module which provides access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * This extension of the {Ownable} contract includes a two-step mechanism to transfer
+ * ownership, where the new owner must call {acceptOwnership} in order to replace the
+ * old one. This can help prevent common mistakes, such as transfers of ownership to
+ * incorrect accounts, or to contracts that are unable to interact with the
+ * permission system.
+ *
+ * The initial owner is specified at deployment time in the constructor for `Ownable`. This
+ * can later be changed with {transferOwnership} and {acceptOwnership}.
+ *
+ * This module is used through inheritance. It will make available all functions
+ * from parent (Ownable).
+ */
+abstract contract Ownable2Step is Ownable {
+    address private _pendingOwner;
+
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Returns the address of the pending owner.
+     */
+    function pendingOwner() public view virtual returns (address) {
+        return _pendingOwner;
+    }
+
+    /**
+     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
+     * Can only be called by the current owner.
+     *
+     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
+     */
+    function transferOwnership(address newOwner) public virtual override onlyOwner {
+        _pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner(), newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual override {
+        delete _pendingOwner;
+        super._transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev The new owner accepts the ownership transfer.
+     */
+    function acceptOwnership() public virtual {
+        address sender = _msgSender();
+        if (pendingOwner() != sender) {
+            revert OwnableUnauthorizedAccount(sender);
+        }
+        _transferOwnership(sender);
+    }
+}
+
+// SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.0.0) (utils/Nonces.sol)
 pragma solidity ^0.8.20;
 
@@ -2749,6 +2817,119 @@ abstract contract Nonces {
         if (nonce != current) {
             revert InvalidAccountNonce(owner, current);
         }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.3.0) (utils/Pausable.sol)
+
+pragma solidity ^0.8.20;
+
+import {Context} from "../utils/Context.sol";
+
+/**
+ * @dev Contract module which allows children to implement an emergency stop
+ * mechanism that can be triggered by an authorized account.
+ *
+ * This module is used through inheritance. It will make available the
+ * modifiers `whenNotPaused` and `whenPaused`, which can be applied to
+ * the functions of your contract. Note that they will not be pausable by
+ * simply including this module, only once the modifiers are put in place.
+ */
+abstract contract Pausable is Context {
+    bool private _paused;
+
+    /**
+     * @dev Emitted when the pause is triggered by `account`.
+     */
+    event Paused(address account);
+
+    /**
+     * @dev Emitted when the pause is lifted by `account`.
+     */
+    event Unpaused(address account);
+
+    /**
+     * @dev The operation failed because the contract is paused.
+     */
+    error EnforcedPause();
+
+    /**
+     * @dev The operation failed because the contract is not paused.
+     */
+    error ExpectedPause();
+
+    /**
+     * @dev Modifier to make a function callable only when the contract is not paused.
+     *
+     * Requirements:
+     *
+     * - The contract must not be paused.
+     */
+    modifier whenNotPaused() {
+        _requireNotPaused();
+        _;
+    }
+
+    /**
+     * @dev Modifier to make a function callable only when the contract is paused.
+     *
+     * Requirements:
+     *
+     * - The contract must be paused.
+     */
+    modifier whenPaused() {
+        _requirePaused();
+        _;
+    }
+
+    /**
+     * @dev Returns true if the contract is paused, and false otherwise.
+     */
+    function paused() public view virtual returns (bool) {
+        return _paused;
+    }
+
+    /**
+     * @dev Throws if the contract is paused.
+     */
+    function _requireNotPaused() internal view virtual {
+        if (paused()) {
+            revert EnforcedPause();
+        }
+    }
+
+    /**
+     * @dev Throws if the contract is not paused.
+     */
+    function _requirePaused() internal view virtual {
+        if (!paused()) {
+            revert ExpectedPause();
+        }
+    }
+
+    /**
+     * @dev Triggers stopped state.
+     *
+     * Requirements:
+     *
+     * - The contract must not be paused.
+     */
+    function _pause() internal virtual whenNotPaused {
+        _paused = true;
+        emit Paused(_msgSender());
+    }
+
+    /**
+     * @dev Returns to normal state.
+     *
+     * Requirements:
+     *
+     * - The contract must be paused.
+     */
+    function _unpause() internal virtual whenPaused {
+        _paused = false;
+        emit Unpaused(_msgSender());
     }
 }
 
@@ -2869,257 +3050,6 @@ abstract contract ReentrancyGuard {
 
     function _reentrancyGuardStorageSlot() internal pure virtual returns (bytes32) {
         return REENTRANCY_GUARD_STORAGE;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
-
-pragma solidity ^0.8.20;
-
-import {Ownable} from "./Ownable.sol";
-
-/**
- * @dev Contract module which provides access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * This extension of the {Ownable} contract includes a two-step mechanism to transfer
- * ownership, where the new owner must call {acceptOwnership} in order to replace the
- * old one. This can help prevent common mistakes, such as transfers of ownership to
- * incorrect accounts, or to contracts that are unable to interact with the
- * permission system.
- *
- * The initial owner is specified at deployment time in the constructor for `Ownable`. This
- * can later be changed with {transferOwnership} and {acceptOwnership}.
- *
- * This module is used through inheritance. It will make available all functions
- * from parent (Ownable).
- */
-abstract contract Ownable2Step is Ownable {
-    address private _pendingOwner;
-
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Returns the address of the pending owner.
-     */
-    function pendingOwner() public view virtual returns (address) {
-        return _pendingOwner;
-    }
-
-    /**
-     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
-     * Can only be called by the current owner.
-     *
-     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
-     */
-    function transferOwnership(address newOwner) public virtual override onlyOwner {
-        _pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner(), newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual override {
-        delete _pendingOwner;
-        super._transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev The new owner accepts the ownership transfer.
-     */
-    function acceptOwnership() public virtual {
-        address sender = _msgSender();
-        if (pendingOwner() != sender) {
-            revert OwnableUnauthorizedAccount(sender);
-        }
-        _transferOwnership(sender);
-    }
-}
-
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.3.0) (utils/Pausable.sol)
-
-pragma solidity ^0.8.20;
-
-import {Context} from "../utils/Context.sol";
-
-/**
- * @dev Contract module which allows children to implement an emergency stop
- * mechanism that can be triggered by an authorized account.
- *
- * This module is used through inheritance. It will make available the
- * modifiers `whenNotPaused` and `whenPaused`, which can be applied to
- * the functions of your contract. Note that they will not be pausable by
- * simply including this module, only once the modifiers are put in place.
- */
-abstract contract Pausable is Context {
-    bool private _paused;
-
-    /**
-     * @dev Emitted when the pause is triggered by `account`.
-     */
-    event Paused(address account);
-
-    /**
-     * @dev Emitted when the pause is lifted by `account`.
-     */
-    event Unpaused(address account);
-
-    /**
-     * @dev The operation failed because the contract is paused.
-     */
-    error EnforcedPause();
-
-    /**
-     * @dev The operation failed because the contract is not paused.
-     */
-    error ExpectedPause();
-
-    /**
-     * @dev Modifier to make a function callable only when the contract is not paused.
-     *
-     * Requirements:
-     *
-     * - The contract must not be paused.
-     */
-    modifier whenNotPaused() {
-        _requireNotPaused();
-        _;
-    }
-
-    /**
-     * @dev Modifier to make a function callable only when the contract is paused.
-     *
-     * Requirements:
-     *
-     * - The contract must be paused.
-     */
-    modifier whenPaused() {
-        _requirePaused();
-        _;
-    }
-
-    /**
-     * @dev Returns true if the contract is paused, and false otherwise.
-     */
-    function paused() public view virtual returns (bool) {
-        return _paused;
-    }
-
-    /**
-     * @dev Throws if the contract is paused.
-     */
-    function _requireNotPaused() internal view virtual {
-        if (paused()) {
-            revert EnforcedPause();
-        }
-    }
-
-    /**
-     * @dev Throws if the contract is not paused.
-     */
-    function _requirePaused() internal view virtual {
-        if (!paused()) {
-            revert ExpectedPause();
-        }
-    }
-
-    /**
-     * @dev Triggers stopped state.
-     *
-     * Requirements:
-     *
-     * - The contract must not be paused.
-     */
-    function _pause() internal virtual whenNotPaused {
-        _paused = true;
-        emit Paused(_msgSender());
-    }
-
-    /**
-     * @dev Returns to normal state.
-     *
-     * Requirements:
-     *
-     * - The contract must be paused.
-     */
-    function _unpause() internal virtual whenPaused {
-        _paused = false;
-        emit Unpaused(_msgSender());
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
-/**
- * @title SafeTokenTransfers
- * @notice Library for safe token transfers with strict balance validation
- *
- * This library enforces exact balance changes to prevent fee-on-transfer exploits,
- * accounting mismatches, and silent value leakage in vault systems.
- *
- * COMPATIBLE TOKENS (Standard ERC20):
- * - USDC, DAI, USDT (without fees enabled)
- * - Standard wrapped tokens (WETH, WBTC)
- * - Most ERC20 tokens that transfer exact amounts
- *
- * INCOMPATIBLE TOKENS (will revert with TransferAmountMismatch):
- * - Fee-on-transfer tokens (SAFEMOON, USDT with fees, etc.)
- * - Rebase tokens (stETH, aTokens, AMPL)
- * - Elastic supply tokens
- * - Tokens with transfer hooks that modify balances
- * - Any token that doesn't deliver exact transfer amounts
- *
- * USAGE WARNING:
- * Before deploying a vault with a new token, verify that the token:
- * 1. Transfers exactly the specified amount (no fees)
- * 2. Does not rebase or change balances automatically
- * 3. Does not have transfer hooks that modify amounts
- *
- * Test with small amounts first to ensure compatibility.
- *
- * @dev The balance validation check will reject any token where
- * recipientBalanceAfter != recipientBalanceBefore + amount
- */
-library SafeTokenTransfers {
-    using SafeERC20 for IERC20Metadata;
-
-    /// @dev Transfer amount mismatch (fee-on-transfer or rebase token detected)
-    error TransferAmountMismatch();
-
-    /**
-     * @dev Safely transfer tokens with balance validation to protect against fee-on-transfer tokens
-     * @param token The token contract address
-     * @param recipient The recipient address
-     * @param amount The amount to transfer
-     */
-    function safeTransfer(address token, address recipient, uint256 amount) internal {
-        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
-        IERC20Metadata(token).safeTransfer(recipient, amount);
-        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
-        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
-    }
-
-    /**
-     * @dev Safely transfer tokens from sender to recipient with balance validation
-     * @param token The token contract address
-     * @param sender The sender address
-     * @param recipient The recipient address
-     * @param amount The amount to transfer
-     */
-    function safeTransferFrom(address token, address sender, address recipient, uint256 amount) internal {
-        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
-        IERC20Metadata(token).safeTransferFrom(sender, recipient, amount);
-        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
-        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
     }
 }
 
@@ -3322,173 +3252,6 @@ interface IERC7575Errors {
     /// @dev Cannot cancel a claimable or already claimed request
     error CannotCancelClaimable();
 }
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/**
- * @title IERC7887
- * @dev Interface for ERC7887 "Asynchronous Tokenized Vault Cancelation Extension"
- *      Extends ERC7540 with asynchronous cancelation capabilities
- *      https://eips.ethereum.org/EIPS/eip-7887
- */
-interface IERC7887DepositCancelation {
-    /**
-     * @dev Emitted when a deposit cancelation request is submitted
-     * controller - address that controls the cancelation request
-     * owner - original owner of the assets
-     * requestId - unique identifier for the cancelation request
-     * sender - address that called cancelDepositRequest
-     * assets - amount of assets being canceled
-     */
-    event CancelDepositRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 assets);
-
-    /**
-     * @dev Emitted when a deposit cancelation is claimed
-     * controller - address that controlled the cancelation request
-     * receiver - address that received the assets
-     * requestId - unique identifier for the cancelation request
-     * assets - amount of assets claimed
-     */
-    event CancelDepositRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 assets);
-
-    /**
-     * @dev Submits a request to cancel a pending deposit request
-     * Transitions the deposit request assets from pending state into pending cancelation state
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST block new deposit requests for this controller while cancelation is pending
-     * - MUST emit `CancelDepositRequest` event
-     * - Can only cancel deposits in Pending state, not Claimable state
-     *
-     * @param requestId The requestId from the original deposit request (identifies which deposit to cancel)
-     * @param controller Address that made the original deposit request
-     */
-    function cancelDepositRequest(uint256 requestId, address controller) external;
-
-    /**
-     * @dev Whether the given requestId and controller have a pending deposit cancelation request
-     *
-     * - Returns true if a deposit cancelation is in Pending state for this controller
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original deposit request
-     * @return isPending Whether a pending deposit cancelation exists for this controller
-     */
-    function pendingCancelDepositRequest(uint256 requestId, address controller) external view returns (bool isPending);
-
-    /**
-     * @dev Returns the amount of assets in claimable cancelation state
-     *
-     * - MUST NOT include any assets in Pending state
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original deposit request
-     * @return assets Amount of assets ready to claim
-     */
-    function claimableCancelDepositRequest(uint256 requestId, address controller) external view returns (uint256 assets);
-
-    /**
-     * @dev Claims assets from a claimable deposit cancelation request
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST transition request from Claimable to Claimed state
-     * - MUST transfer assets to `receiver`
-     * - MUST emit `CancelDepositRequestClaimed` event
-     * - Cannot be called unless request is in Claimable state
-     *
-     * @param requestId Cancelation request identifier
-     * @param receiver Address to receive the claimed assets
-     * @param controller Address that made the original deposit request
-     */
-    function claimCancelDepositRequest(uint256 requestId, address receiver, address controller) external;
-}
-
-interface IERC7887RedeemCancelation {
-    /**
-     * @dev Emitted when a redeem cancelation request is submitted
-     * controller - address that controls the cancelation request
-     * owner - original owner of the shares
-     * requestId - unique identifier for the cancelation request
-     * sender - address that called cancelRedeemRequest
-     * shares - amount of shares being canceled
-     */
-    event CancelRedeemRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 shares);
-
-    /**
-     * @dev Emitted when a redeem cancelation is claimed
-     * controller - address that controlled the cancelation request
-     * receiver - address that received the shares
-     * requestId - unique identifier for the cancelation request
-     * shares - amount of shares claimed
-     */
-    event CancelRedeemRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 shares);
-
-    /**
-     * @dev Submits a request to cancel a pending redeem request
-     * Transitions the redeem request shares from pending state into pending cancelation state
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST block new redeem requests for this controller while cancelation is pending
-     * - MUST emit `CancelRedeemRequest` event
-     * - Can only cancel redeems in Pending state, not Claimable state
-     *
-     * @param requestId The requestId from the original redeem request (identifies which redeem to cancel)
-     * @param controller Address that made the original redeem request
-     */
-    function cancelRedeemRequest(uint256 requestId, address controller) external;
-
-    /**
-     * @dev Whether the given requestId and controller have a pending redeem cancelation request
-     *
-     * - Returns true if a redeem cancelation is in Pending state for this controller
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original redeem request
-     * @return isPending Whether a pending redeem cancelation exists for this controller
-     */
-    function pendingCancelRedeemRequest(uint256 requestId, address controller) external view returns (bool isPending);
-
-    /**
-     * @dev Returns the amount of shares in claimable cancelation state
-     *
-     * - MUST NOT include any shares in Pending state
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original redeem request
-     * @return shares Amount of shares ready to claim
-     */
-    function claimableCancelRedeemRequest(uint256 requestId, address controller) external view returns (uint256 shares);
-
-    /**
-     * @dev Claims shares from a claimable redeem cancelation request
-     *
-     * - MUST revert unless `msg.sender` is either equal to `owner` or an operator approved by `owner`
-     * - MUST transition request from Claimable to Claimed state
-     * - MUST transfer shares to `receiver`
-     * - MUST emit `CancelRedeemRequestClaimed` event
-     * - Cannot be called unless request is in Claimable state
-     *
-     * @param requestId Cancelation request identifier
-     * @param receiver Address to receive the claimed shares
-     * @param owner Address that made the original redeem request
-     */
-    function claimCancelRedeemRequest(uint256 requestId, address receiver, address owner) external;
-}
-
-/**
- * @title IERC7887
- * @dev Full ERC7887 interface combining deposit and redeem cancelation
- */
-interface IERC7887 is IERC7887DepositCancelation, IERC7887RedeemCancelation {}
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
@@ -5684,16 +5447,162 @@ contract ERC7575VaultUpgradeable is Initializable, ReentrancyGuard, Ownable2Step
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-/**
- * @title DecimalConstants
- * @dev Common decimal validation constants shared between ShareToken and Vault
- */
-library DecimalConstants {
-    /// @dev Share tokens always use 18 decimals
-    uint8 constant SHARE_TOKEN_DECIMALS = 18;
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-    /// @dev Minimum allowed asset decimals
-    uint8 constant MIN_ASSET_DECIMALS = 6;
+/**
+ * @title SafeTokenTransfers
+ * @notice Library for safe token transfers with strict balance validation
+ *
+ * This library enforces exact balance changes to prevent fee-on-transfer exploits,
+ * accounting mismatches, and silent value leakage in vault systems.
+ *
+ * COMPATIBLE TOKENS (Standard ERC20):
+ * - USDC, DAI, USDT (without fees enabled)
+ * - Standard wrapped tokens (WETH, WBTC)
+ * - Most ERC20 tokens that transfer exact amounts
+ *
+ * INCOMPATIBLE TOKENS (will revert with TransferAmountMismatch):
+ * - Fee-on-transfer tokens (SAFEMOON, USDT with fees, etc.)
+ * - Rebase tokens (stETH, aTokens, AMPL)
+ * - Elastic supply tokens
+ * - Tokens with transfer hooks that modify balances
+ * - Any token that doesn't deliver exact transfer amounts
+ *
+ * USAGE WARNING:
+ * Before deploying a vault with a new token, verify that the token:
+ * 1. Transfers exactly the specified amount (no fees)
+ * 2. Does not rebase or change balances automatically
+ * 3. Does not have transfer hooks that modify amounts
+ *
+ * Test with small amounts first to ensure compatibility.
+ *
+ * @dev The balance validation check will reject any token where
+ * recipientBalanceAfter != recipientBalanceBefore + amount
+ */
+library SafeTokenTransfers {
+    using SafeERC20 for IERC20Metadata;
+
+    /// @dev Transfer amount mismatch (fee-on-transfer or rebase token detected)
+    error TransferAmountMismatch();
+
+    /**
+     * @dev Safely transfer tokens with balance validation to protect against fee-on-transfer tokens
+     * @param token The token contract address
+     * @param recipient The recipient address
+     * @param amount The amount to transfer
+     */
+    function safeTransfer(address token, address recipient, uint256 amount) internal {
+        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
+        IERC20Metadata(token).safeTransfer(recipient, amount);
+        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
+        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
+    }
+
+    /**
+     * @dev Safely transfer tokens from sender to recipient with balance validation
+     * @param token The token contract address
+     * @param sender The sender address
+     * @param recipient The recipient address
+     * @param amount The amount to transfer
+     */
+    function safeTransferFrom(address token, address sender, address recipient, uint256 amount) internal {
+        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
+        IERC20Metadata(token).safeTransferFrom(sender, recipient, amount);
+        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
+        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/**
+ * @title IERC7575
+ * @dev Interface of the ERC7575 "Multi-Asset ERC-4626 Vaults", as defined in
+ *      https://eips.ethereum.org/EIPS/eip-7575
+ *
+ * This standard extends ERC-4626 to support multiple assets or entry points
+ * for the same share token. It includes all ERC4626 functions plus the share() function.
+ * Interface ID: 0x2f0a18c5
+ */
+interface IERC7575 {
+    /**
+     * @dev Emitted when a vault address is updated for a specific asset.
+     * @param asset The asset token address
+     * @param vault The vault address for this asset
+     */
+    event VaultUpdate(address indexed asset, address vault);
+
+    /**
+     * @dev Returns the address of the share token.
+     * This is the token minted to represent ownership in the vault.
+     * @return shareTokenAddress The address of the share token
+     */
+    function share() external view returns (address shareTokenAddress);
+
+    // ERC4626 functions (inherited from IERC4626)
+    function asset() external view returns (address assetTokenAddress);
+    function totalAssets() external view returns (uint256 totalManagedAssets);
+    function convertToShares(uint256 assets) external view returns (uint256 shares);
+    function convertToAssets(uint256 shares) external view returns (uint256 assets);
+    function maxDeposit(address receiver) external view returns (uint256 maxAssets);
+    function previewDeposit(uint256 assets) external view returns (uint256 shares);
+    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
+    function maxMint(address receiver) external view returns (uint256 maxShares);
+    function previewMint(uint256 shares) external view returns (uint256 assets);
+    function mint(uint256 shares, address receiver) external returns (uint256 assets);
+    function maxWithdraw(address owner) external view returns (uint256 maxAssets);
+    function previewWithdraw(uint256 assets) external view returns (uint256 shares);
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
+    function maxRedeem(address owner) external view returns (uint256 maxShares);
+    function previewRedeem(uint256 shares) external view returns (uint256 assets);
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
+}
+
+/**
+ * @title IERC7575Share
+ * @dev Basic interface for share tokens in the ERC7575 ecosystem.
+ * This covers the fundamental vault lookup functionality that all share tokens should implement.
+ * Interface ID: 0x3749710f
+ */
+interface IERC7575Share {
+    /**
+     * @dev Returns the vault address for a specific asset.
+     * Allows share tokens to point back to their vaults.
+     * @param asset The asset token address
+     * @return vault The vault address that handles this asset
+     */
+    function vault(address asset) external view returns (address vault);
+
+    /**
+     * @dev Returns all registered assets in the multi-asset system.
+     * @return assets Array of all asset addresses that have registered vaults
+     */
+    function getRegisteredAssets() external view returns (address[] memory assets);
+
+    /**
+     * @dev Emitted when a vault address is updated for a specific asset.
+     * @param asset The asset token address
+     * @param vault The vault address for this asset
+     */
+    event VaultUpdate(address indexed asset, address vault);
+}
+
+/**
+ * @title IERC7575ShareExtended
+ * @dev Full interface for share tokens in the ERC7575 ecosystem with advanced features.
+ * Extends the basic interface with optimization functions for upgradeable implementations.
+ * Interface ID: 0x0a13f305
+ */
+interface IERC7575ShareExtended is IERC7575Share {
+    /**
+     * @dev Returns both circulating supply and total normalized assets in a single optimized call.
+     * This is the preferred method for conversion calculations as it reduces gas usage.
+     * @return circulatingSupply Total supply minus shares held by vaults for redemption claims
+     * @return totalNormalizedAssets Total normalized assets (18 decimals) across all vaults
+     */
+    function getCirculatingSupplyAndAssets() external view returns (uint256 circulatingSupply, uint256 totalNormalizedAssets);
 }
 
 pragma solidity ^0.8.30;
@@ -5829,92 +5738,183 @@ interface IERC7540 is IERC7540Operator, IERC7540Deposit, IERC7540Redeem {}
 pragma solidity ^0.8.30;
 
 /**
- * @title IERC7575
- * @dev Interface of the ERC7575 "Multi-Asset ERC-4626 Vaults", as defined in
- *      https://eips.ethereum.org/EIPS/eip-7575
- *
- * This standard extends ERC-4626 to support multiple assets or entry points
- * for the same share token. It includes all ERC4626 functions plus the share() function.
- * Interface ID: 0x2f0a18c5
+ * @title DecimalConstants
+ * @dev Common decimal validation constants shared between ShareToken and Vault
  */
-interface IERC7575 {
+library DecimalConstants {
+    /// @dev Share tokens always use 18 decimals
+    uint8 constant SHARE_TOKEN_DECIMALS = 18;
+
+    /// @dev Minimum allowed asset decimals
+    uint8 constant MIN_ASSET_DECIMALS = 6;
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/**
+ * @title IERC7887
+ * @dev Interface for ERC7887 "Asynchronous Tokenized Vault Cancelation Extension"
+ *      Extends ERC7540 with asynchronous cancelation capabilities
+ *      https://eips.ethereum.org/EIPS/eip-7887
+ */
+interface IERC7887DepositCancelation {
     /**
-     * @dev Emitted when a vault address is updated for a specific asset.
-     * @param asset The asset token address
-     * @param vault The vault address for this asset
+     * @dev Emitted when a deposit cancelation request is submitted
+     * controller - address that controls the cancelation request
+     * owner - original owner of the assets
+     * requestId - unique identifier for the cancelation request
+     * sender - address that called cancelDepositRequest
+     * assets - amount of assets being canceled
      */
-    event VaultUpdate(address indexed asset, address vault);
+    event CancelDepositRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 assets);
 
     /**
-     * @dev Returns the address of the share token.
-     * This is the token minted to represent ownership in the vault.
-     * @return shareTokenAddress The address of the share token
+     * @dev Emitted when a deposit cancelation is claimed
+     * controller - address that controlled the cancelation request
+     * receiver - address that received the assets
+     * requestId - unique identifier for the cancelation request
+     * assets - amount of assets claimed
      */
-    function share() external view returns (address shareTokenAddress);
+    event CancelDepositRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 assets);
 
-    // ERC4626 functions (inherited from IERC4626)
-    function asset() external view returns (address assetTokenAddress);
-    function totalAssets() external view returns (uint256 totalManagedAssets);
-    function convertToShares(uint256 assets) external view returns (uint256 shares);
-    function convertToAssets(uint256 shares) external view returns (uint256 assets);
-    function maxDeposit(address receiver) external view returns (uint256 maxAssets);
-    function previewDeposit(uint256 assets) external view returns (uint256 shares);
-    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
-    function maxMint(address receiver) external view returns (uint256 maxShares);
-    function previewMint(uint256 shares) external view returns (uint256 assets);
-    function mint(uint256 shares, address receiver) external returns (uint256 assets);
-    function maxWithdraw(address owner) external view returns (uint256 maxAssets);
-    function previewWithdraw(uint256 assets) external view returns (uint256 shares);
-    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256 shares);
-    function maxRedeem(address owner) external view returns (uint256 maxShares);
-    function previewRedeem(uint256 shares) external view returns (uint256 assets);
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
+    /**
+     * @dev Submits a request to cancel a pending deposit request
+     * Transitions the deposit request assets from pending state into pending cancelation state
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST block new deposit requests for this controller while cancelation is pending
+     * - MUST emit `CancelDepositRequest` event
+     * - Can only cancel deposits in Pending state, not Claimable state
+     *
+     * @param requestId The requestId from the original deposit request (identifies which deposit to cancel)
+     * @param controller Address that made the original deposit request
+     */
+    function cancelDepositRequest(uint256 requestId, address controller) external;
+
+    /**
+     * @dev Whether the given requestId and controller have a pending deposit cancelation request
+     *
+     * - Returns true if a deposit cancelation is in Pending state for this controller
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original deposit request
+     * @return isPending Whether a pending deposit cancelation exists for this controller
+     */
+    function pendingCancelDepositRequest(uint256 requestId, address controller) external view returns (bool isPending);
+
+    /**
+     * @dev Returns the amount of assets in claimable cancelation state
+     *
+     * - MUST NOT include any assets in Pending state
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original deposit request
+     * @return assets Amount of assets ready to claim
+     */
+    function claimableCancelDepositRequest(uint256 requestId, address controller) external view returns (uint256 assets);
+
+    /**
+     * @dev Claims assets from a claimable deposit cancelation request
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST transition request from Claimable to Claimed state
+     * - MUST transfer assets to `receiver`
+     * - MUST emit `CancelDepositRequestClaimed` event
+     * - Cannot be called unless request is in Claimable state
+     *
+     * @param requestId Cancelation request identifier
+     * @param receiver Address to receive the claimed assets
+     * @param controller Address that made the original deposit request
+     */
+    function claimCancelDepositRequest(uint256 requestId, address receiver, address controller) external;
+}
+
+interface IERC7887RedeemCancelation {
+    /**
+     * @dev Emitted when a redeem cancelation request is submitted
+     * controller - address that controls the cancelation request
+     * owner - original owner of the shares
+     * requestId - unique identifier for the cancelation request
+     * sender - address that called cancelRedeemRequest
+     * shares - amount of shares being canceled
+     */
+    event CancelRedeemRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 shares);
+
+    /**
+     * @dev Emitted when a redeem cancelation is claimed
+     * controller - address that controlled the cancelation request
+     * receiver - address that received the shares
+     * requestId - unique identifier for the cancelation request
+     * shares - amount of shares claimed
+     */
+    event CancelRedeemRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 shares);
+
+    /**
+     * @dev Submits a request to cancel a pending redeem request
+     * Transitions the redeem request shares from pending state into pending cancelation state
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST block new redeem requests for this controller while cancelation is pending
+     * - MUST emit `CancelRedeemRequest` event
+     * - Can only cancel redeems in Pending state, not Claimable state
+     *
+     * @param requestId The requestId from the original redeem request (identifies which redeem to cancel)
+     * @param controller Address that made the original redeem request
+     */
+    function cancelRedeemRequest(uint256 requestId, address controller) external;
+
+    /**
+     * @dev Whether the given requestId and controller have a pending redeem cancelation request
+     *
+     * - Returns true if a redeem cancelation is in Pending state for this controller
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original redeem request
+     * @return isPending Whether a pending redeem cancelation exists for this controller
+     */
+    function pendingCancelRedeemRequest(uint256 requestId, address controller) external view returns (bool isPending);
+
+    /**
+     * @dev Returns the amount of shares in claimable cancelation state
+     *
+     * - MUST NOT include any shares in Pending state
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original redeem request
+     * @return shares Amount of shares ready to claim
+     */
+    function claimableCancelRedeemRequest(uint256 requestId, address controller) external view returns (uint256 shares);
+
+    /**
+     * @dev Claims shares from a claimable redeem cancelation request
+     *
+     * - MUST revert unless `msg.sender` is either equal to `owner` or an operator approved by `owner`
+     * - MUST transition request from Claimable to Claimed state
+     * - MUST transfer shares to `receiver`
+     * - MUST emit `CancelRedeemRequestClaimed` event
+     * - Cannot be called unless request is in Claimable state
+     *
+     * @param requestId Cancelation request identifier
+     * @param receiver Address to receive the claimed shares
+     * @param owner Address that made the original redeem request
+     */
+    function claimCancelRedeemRequest(uint256 requestId, address receiver, address owner) external;
 }
 
 /**
- * @title IERC7575Share
- * @dev Basic interface for share tokens in the ERC7575 ecosystem.
- * This covers the fundamental vault lookup functionality that all share tokens should implement.
- * Interface ID: 0x3749710f
+ * @title IERC7887
+ * @dev Full ERC7887 interface combining deposit and redeem cancelation
  */
-interface IERC7575Share {
-    /**
-     * @dev Returns the vault address for a specific asset.
-     * Allows share tokens to point back to their vaults.
-     * @param asset The asset token address
-     * @return vault The vault address that handles this asset
-     */
-    function vault(address asset) external view returns (address vault);
-
-    /**
-     * @dev Returns all registered assets in the multi-asset system.
-     * @return assets Array of all asset addresses that have registered vaults
-     */
-    function getRegisteredAssets() external view returns (address[] memory assets);
-
-    /**
-     * @dev Emitted when a vault address is updated for a specific asset.
-     * @param asset The asset token address
-     * @param vault The vault address for this asset
-     */
-    event VaultUpdate(address indexed asset, address vault);
-}
-
-/**
- * @title IERC7575ShareExtended
- * @dev Full interface for share tokens in the ERC7575 ecosystem with advanced features.
- * Extends the basic interface with optimization functions for upgradeable implementations.
- * Interface ID: 0x0a13f305
- */
-interface IERC7575ShareExtended is IERC7575Share {
-    /**
-     * @dev Returns both circulating supply and total normalized assets in a single optimized call.
-     * This is the preferred method for conversion calculations as it reduces gas usage.
-     * @return circulatingSupply Total supply minus shares held by vaults for redemption claims
-     * @return totalNormalizedAssets Total normalized assets (18 decimals) across all vaults
-     */
-    function getCirculatingSupplyAndAssets() external view returns (uint256 circulatingSupply, uint256 totalNormalizedAssets);
-}
+interface IERC7887 is IERC7887DepositCancelation, IERC7887RedeemCancelation {}
 
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
@@ -5987,62 +5987,6 @@ contract ERC20Faucet is ERC20, ERC20Permit {
     function _faucetFor(address receiver, uint256 amount) internal {
         require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "You must wait for the cooldown period to end.");
         require(amount <= MAX_FAUCET_AMOUNT, "Amount exceeds maximum faucet amount.");
-        _mint(receiver, amount);
-        lastRequestTime[receiver] = block.timestamp;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-
-/**
- * @title ERC20Faucet6
- * @dev Test token faucet with 6 decimals (USDC/USDT-like) and permit support.
- */
-contract ERC20Faucet6 is ERC20, ERC20Permit {
-    uint8 private constant DECIMALS = 6;
-    uint256 public constant FAUCET_AMOUNT = 10_000 * 10 ** DECIMALS;
-    uint256 public constant MAX_FAUCET_AMOUNT = 100_000 * 10 ** DECIMALS;
-    uint256 public constant COOLDOWN_TIME = 1 hours;
-
-    mapping(address => uint256) public lastRequestTime;
-
-    /**
-     * @param name_ Token name (e.g., "USD Coin")
-     * @param symbol_ Token symbol (e.g., "USDC")
-     * @param initialSupply Initial supply (6-decimal units) minted to deployer
-     */
-    constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
-        _mint(msg.sender, initialSupply);
-    }
-
-    function decimals() public pure override returns (uint8) {
-        return DECIMALS;
-    }
-
-    // Faucet helpers
-    function faucet() external {
-        _faucetFor(msg.sender, FAUCET_AMOUNT);
-    }
-
-    function faucetAmount(uint256 amount) external {
-        _faucetFor(msg.sender, amount);
-    }
-
-    function faucetFor(address receiver) external {
-        _faucetFor(receiver, FAUCET_AMOUNT);
-    }
-
-    function faucetAmountFor(address receiver, uint256 amount) external {
-        _faucetFor(receiver, amount);
-    }
-
-    function _faucetFor(address receiver, uint256 amount) internal {
-        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "COOLDOWN");
-        require(amount <= MAX_FAUCET_AMOUNT, "MAX_EXCEEDED");
         _mint(receiver, amount);
         lastRequestTime[receiver] = block.timestamp;
     }
@@ -6514,6 +6458,62 @@ contract WERC7575Vault is IERC7575, ERC165, ReentrancyGuard, Ownable2Step, Pausa
     function redeem(uint256 shares, address receiver, address owner) public nonReentrant whenNotPaused returns (uint256 assets) {
         assets = previewRedeem(shares);
         _withdraw(assets, shares, receiver, owner);
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+
+/**
+ * @title ERC20Faucet6
+ * @dev Test token faucet with 6 decimals (USDC/USDT-like) and permit support.
+ */
+contract ERC20Faucet6 is ERC20, ERC20Permit {
+    uint8 private constant DECIMALS = 6;
+    uint256 public constant FAUCET_AMOUNT = 10_000 * 10 ** DECIMALS;
+    uint256 public constant MAX_FAUCET_AMOUNT = 100_000 * 10 ** DECIMALS;
+    uint256 public constant COOLDOWN_TIME = 1 hours;
+
+    mapping(address => uint256) public lastRequestTime;
+
+    /**
+     * @param name_ Token name (e.g., "USD Coin")
+     * @param symbol_ Token symbol (e.g., "USDC")
+     * @param initialSupply Initial supply (6-decimal units) minted to deployer
+     */
+    constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
+        _mint(msg.sender, initialSupply);
+    }
+
+    function decimals() public pure override returns (uint8) {
+        return DECIMALS;
+    }
+
+    // Faucet helpers
+    function faucet() external {
+        _faucetFor(msg.sender, FAUCET_AMOUNT);
+    }
+
+    function faucetAmount(uint256 amount) external {
+        _faucetFor(msg.sender, amount);
+    }
+
+    function faucetFor(address receiver) external {
+        _faucetFor(receiver, FAUCET_AMOUNT);
+    }
+
+    function faucetAmountFor(address receiver, uint256 amount) external {
+        _faucetFor(receiver, amount);
+    }
+
+    function _faucetFor(address receiver, uint256 amount) internal {
+        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "COOLDOWN");
+        require(amount <= MAX_FAUCET_AMOUNT, "MAX_EXCEEDED");
+        _mint(receiver, amount);
+        lastRequestTime[receiver] = block.timestamp;
     }
 }
 
