@@ -153,6 +153,7 @@ impl FindingDb {
             title: self.title.clone(),
             exploit_type: VulnerabilityType::default(),
             privilege: PrivilegeLevel::Permissionless,
+            verification_rounds_passed: None,
             contract: String::new(),
             function: String::new(),
             description: if self.description.is_empty() {

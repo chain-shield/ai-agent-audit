@@ -1,11 +1,12 @@
+use crate::llm_review::agent::agent_factory::{AgentConfig, AgentFactory};
 use crate::llm_review::pattern_phases::pattern_to_findings::generate_content_plus_context_block;
 use crate::llm_review::phases::rounds::round_1::{RoundOneLegitAnalysis, VerifyRoundOne};
 use crate::llm_review::phases::rounds::round_2::{RoundTwoLegitAnalysis, VerifyRoundTwo};
 use crate::llm_review::phases::rounds::round_3::{RoundThreeLegitAnalysis, VerifyRoundThree};
 use crate::llm_review::phases::rounds::utils::generate_post_round_verify_json_requirement;
 use crate::llm_review::phases::rounds::validate_round::{
-    FindingDowngradeValidation, ValidateLegitAnalysis, generate_dynamic_validation_json,
-    generate_round_validation_prompt,
+    generate_dynamic_validation_json, generate_round_validation_prompt, FindingDowngradeValidation,
+    ValidateLegitAnalysis,
 };
 /// Phase 3: Deduplication and verification of discovered security findings
 ///
@@ -76,6 +77,7 @@ pub trait FindingAnalysis {
     fn generate_verify_json() -> String;
     fn id(&self) -> String;
     fn get_justification(&self) -> String;
+    fn round_number() -> usize;
 }
 
 impl AnalysisRound for VerifyRoundOne {
@@ -152,7 +154,7 @@ pub async fn execute_rounds(
         tagged_findings(&r3_findings)
     );
 
-    let verified_findings: Vec<Finding> = r3_findings
+    let r3_findings_labeled: Vec<Finding> = r3_findings
         .findings
         .into_iter()
         .map(|f| {
@@ -167,9 +169,20 @@ pub async fn execute_rounds(
         })
         .collect();
 
+    let verified_findings = run_round_validation(
+        Findings {
+            findings: r3_findings_labeled,
+        },
+        &code_and_context,
+        &audit_scope,
+        repo,
+    )
+    .await?;
+
     info!(
         "✅ Phase 4 complete: {} Validated Findings!",
         verified_findings
+            .findings
             .iter()
             .filter(|f| f
                 .status
@@ -178,9 +191,7 @@ pub async fn execute_rounds(
             .count()
     );
 
-    Ok(Findings {
-        findings: verified_findings,
-    })
+    Ok(verified_findings)
 }
 
 pub fn tagged_findings(findings: &Findings) -> usize {
@@ -197,7 +208,7 @@ pub async fn run_round_1(
     audit_scope: &str,
     agent: &AIAgent,
 ) -> Result<Findings> {
-    run_round::<VerifyRoundOne>(1, findings, code_and_context, audit_scope, agent).await
+    run_round::<VerifyRoundOne>(findings, code_and_context, audit_scope, agent).await
 }
 
 pub async fn run_round_2(
@@ -206,7 +217,7 @@ pub async fn run_round_2(
     audit_scope: &str,
     agent: &AIAgent,
 ) -> Result<Findings> {
-    run_round::<VerifyRoundTwo>(2, findings, code_and_context, audit_scope, agent).await
+    run_round::<VerifyRoundTwo>(findings, code_and_context, audit_scope, agent).await
 }
 
 pub async fn run_round_3(
@@ -215,11 +226,10 @@ pub async fn run_round_3(
     audit_scope: &str,
     agent: &AIAgent,
 ) -> Result<Findings> {
-    run_round::<VerifyRoundThree>(3, findings, code_and_context, audit_scope, agent).await
+    run_round::<VerifyRoundThree>(findings, code_and_context, audit_scope, agent).await
 }
 
 pub async fn run_round<T>(
-    round_number: usize,
     findings: Findings,
     code_and_context: &str,
     audit_scope: &str,
@@ -237,6 +247,10 @@ where
             .cloned()
             .collect::<Vec<_>>(),
     };
+
+    if clean_findings.findings.is_empty() {
+        return Ok(findings);
+    }
 
     let verify_prompt = T::Spec::generate_verify_prompt();
 
@@ -260,14 +274,14 @@ where
         FindingReportType::NoPoC,
     );
 
-    info!("Round {} of Verification", round_number);
+    info!("Round {} of Verification", T::Spec::round_number());
     let r_analysis: T = agent.extract_with_retry(&instruction_prompt).await?;
 
     // show analysis results
-    // r_analysis
-    //     .findings()
-    //     .iter()
-    //     .for_each(|r| r.print_analysis_results());
+    r_analysis
+        .findings()
+        .iter()
+        .for_each(|r| r.print_analysis_results());
 
     let r_map: HashMap<String, &T::Spec> =
         r_analysis.findings().iter().map(|r| (r.id(), r)).collect();
@@ -289,7 +303,12 @@ where
             let updated_status = if f.status.is_none() {
                 finding_status_vec
             } else if finding_status_vec.is_none() {
-                f.status.clone()
+                // finding passed!
+                return Finding {
+                    status_justification: justification,
+                    verification_rounds_passed: Some(T::Spec::round_number() as u8),
+                    ..f.clone()
+                };
             } else {
                 f.status
                     .clone()
@@ -318,8 +337,17 @@ pub async fn run_round_validation(
     findings: Findings,
     code_and_context: &str,
     audit_scope: &str,
-    agent: &AIAgent,
+    repo: &RepoPaths,
 ) -> Result<Findings> {
+    // custom agent for validation
+    let validation_config = AgentConfig::new(Some(repo.clone()))
+        .with_model("gpt-5.2")
+        .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing, and Top Code4rena Judge.")
+        .with_file_retrieval(false)
+        .with_openai_reasoning_effort("high");
+
+    let validation_agent = Arc::new(AgentFactory::create_openai_agent(&validation_config)?);
+
     // Only validate findings that were downgraded (not Valid, not None)
     let clean_findings = Findings {
         findings: findings
@@ -335,6 +363,10 @@ pub async fn run_round_validation(
             .cloned()
             .collect::<Vec<_>>(),
     };
+
+    if clean_findings.findings.is_empty() {
+        return Ok(findings);
+    }
 
     let validation_prompt = generate_round_validation_prompt(&findings);
 
@@ -359,8 +391,9 @@ pub async fn run_round_validation(
     instruction_prompt.push_str(&verify_json);
 
     info!("Validating Verification Rounds");
-    let validation_analysis: FindingDowngradeValidation =
-        agent.extract_with_retry(&instruction_prompt).await?;
+    let validation_analysis: FindingDowngradeValidation = validation_agent
+        .extract_with_retry(&instruction_prompt)
+        .await?;
 
     // show analysis results
     validation_analysis
@@ -392,12 +425,23 @@ pub async fn run_round_validation(
 
             // now can safely unwrap
             let validation_analysis = validation_analysis_option.unwrap();
+            info!("VALIDATION ANALYSIS => {:#?}", validation_analysis);
 
             let updated_finding_status = validation_analysis.get_fixed_finding_status(f);
 
-            // If validation returns None, all downgrade reasons were rejected -> upgrade to Valid
+            // If validation returns None, all downgrade reasons were rejected -> upgrade to Valid or NeedsMoreInfo
+            // NOTE: only set as Valid if passed 2+ rounds (high confidence), otherwise set as NeedsMoreInfo
             let final_status = if updated_finding_status.is_none() {
-                Some(vec![FindingStatus::Valid])
+                // If it passed 2 rounds, it means it failed Round 3, but that failure was overturned
+                // in the final validation round, therefore the finding is now Valid.
+                // If it passed fewer than 2 rounds, it needs human review (NeedsMoreInfo).
+                // Note: Some(3) won't appear here because those findings are already marked Valid
+                // and filtered out before validation.
+                if f.verification_rounds_passed == Some(2) {
+                    Some(vec![FindingStatus::Valid])
+                } else {
+                    Some(vec![FindingStatus::NeedsMoreInfo])
+                }
             } else {
                 updated_finding_status
             };
