@@ -3,6 +3,10 @@ use crate::llm_review::phases::rounds::round_1::{RoundOneLegitAnalysis, VerifyRo
 use crate::llm_review::phases::rounds::round_2::{RoundTwoLegitAnalysis, VerifyRoundTwo};
 use crate::llm_review::phases::rounds::round_3::{RoundThreeLegitAnalysis, VerifyRoundThree};
 use crate::llm_review::phases::rounds::utils::generate_post_round_verify_json_requirement;
+use crate::llm_review::phases::rounds::validate_round::{
+    FindingDowngradeValidation, ValidateLegitAnalysis, generate_dynamic_validation_json,
+    generate_round_validation_prompt,
+};
 /// Phase 3: Deduplication and verification of discovered security findings
 ///
 /// This phase removes duplicate findings and verifies the legitimacy of each
@@ -271,8 +275,7 @@ where
     let r_findings: Vec<Finding> = findings
         .findings
         .iter()
-        .enumerate()
-        .map(|(_, f)| {
+        .map(|f| {
             let f_id = f.id.clone().unwrap_or_default();
             let r_option = r_map.get(&f_id);
             let (finding_status_vec, justification) = match r_option {
@@ -280,28 +283,7 @@ where
                     r.get_finding_status_array_from_analysis(),
                     Some(r.get_justification()),
                 ),
-                None => {
-                    // Log warning if LLM didn't return analysis for this finding
-                    // log::warn!(
-                    //     "Round {}: LLM did not return analysis for finding #{} (id: {}, title: {})",
-                    //     round_number,
-                    //     idx + 1,
-                    //     f_id,
-                    //     f.title
-                    // );
-                    (None, None)
-                }
-            };
-
-            // Properly concatenate justifications from all rounds
-            let updated_justification = match (&f.status_justification, justification) {
-                (Some(existing), Some(new)) => Some(format!(
-                    "{}\n\n--- Round {} ---\n{}",
-                    existing, round_number, new
-                )),
-                (Some(existing), None) => Some(existing.clone()),
-                (None, Some(new)) => Some(format!("--- Round {} ---\n{}", round_number, new)),
-                (None, None) => None,
+                None => (None, None),
             };
 
             let updated_status = if f.status.is_none() {
@@ -320,7 +302,7 @@ where
 
             let enriched_finding = Finding {
                 status: updated_status,
-                status_justification: updated_justification,
+                status_justification: justification,
                 ..f.clone()
             };
             enriched_finding
@@ -329,5 +311,136 @@ where
 
     Ok(Findings {
         findings: r_findings,
+    })
+}
+
+pub async fn run_round_validation(
+    findings: Findings,
+    code_and_context: &str,
+    audit_scope: &str,
+    agent: &AIAgent,
+) -> Result<Findings> {
+    // Only validate findings that were downgraded (not Valid, not None)
+    let clean_findings = Findings {
+        findings: findings
+            .findings
+            .iter()
+            .filter(|f| {
+                f.status.is_some()
+                    && !f
+                        .status
+                        .as_ref()
+                        .is_some_and(|s| s.contains(&FindingStatus::Valid))
+            })
+            .cloned()
+            .collect::<Vec<_>>(),
+    };
+
+    let validation_prompt = generate_round_validation_prompt(&findings);
+
+    let main_instructions = if audit_scope.is_empty() {
+        validation_prompt.to_string()
+    } else {
+        format!(
+            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
+            &validation_prompt, &audit_scope
+        )
+    };
+
+    let verify_json = generate_dynamic_validation_json(&clean_findings);
+
+    let mut instruction_prompt = format!("{}\n\n", main_instructions);
+
+    instruction_prompt.push_str("## CODEBASE WHERE FINDINGS WERE FOUND");
+    instruction_prompt.push_str("\n\n");
+
+    instruction_prompt.push_str(&code_and_context);
+    instruction_prompt.push_str("\n\n");
+    instruction_prompt.push_str(&verify_json);
+
+    info!("Validating Verification Rounds");
+    let validation_analysis: FindingDowngradeValidation =
+        agent.extract_with_retry(&instruction_prompt).await?;
+
+    // show analysis results
+    validation_analysis
+        .findings
+        .iter()
+        .for_each(|r| r.print_analysis_results());
+
+    let validation_map: HashMap<String, ValidateLegitAnalysis> = validation_analysis
+        .findings
+        .into_iter()
+        .map(|r| (r.id(), r))
+        .collect();
+
+    let mut upgraded_count = 0;
+    let mut confirmed_invalid_count = 0;
+
+    let r_validated_findings: Vec<Finding> = findings
+        .findings
+        .iter()
+        .map(|f| {
+            let f_id = f.id.clone().unwrap_or_default();
+            let validation_analysis_option = validation_map.get(&f_id);
+
+            // findings that are already marked as valid will not have validation analysis, skip
+            // those
+            if validation_analysis_option.is_none() {
+                return f.clone();
+            }
+
+            // now can safely unwrap
+            let validation_analysis = validation_analysis_option.unwrap();
+
+            let updated_finding_status = validation_analysis.get_fixed_finding_status(f);
+
+            // If validation returns None, all downgrade reasons were rejected -> upgrade to Valid
+            let final_status = if updated_finding_status.is_none() {
+                Some(vec![FindingStatus::Valid])
+            } else {
+                updated_finding_status
+            };
+
+            let updated_justification = if validation_analysis.justification.is_some() {
+                validation_analysis.clone().justification
+            } else {
+                f.status_justification.clone()
+            };
+
+            // Track validation statistics
+            let was_invalid = f
+                .status
+                .as_ref()
+                .is_some_and(|s| !s.contains(&FindingStatus::Valid));
+            let is_now_valid = final_status
+                .as_ref()
+                .is_some_and(|s| s.contains(&FindingStatus::Valid));
+            let is_still_invalid = final_status
+                .as_ref()
+                .is_some_and(|s| !s.is_empty() && !s.contains(&FindingStatus::Valid));
+
+            if was_invalid && is_now_valid {
+                upgraded_count += 1;
+            } else if is_still_invalid {
+                confirmed_invalid_count += 1;
+            }
+
+            let rectified_finding = Finding {
+                status: final_status,
+                status_justification: updated_justification,
+                ..f.clone()
+            };
+            rectified_finding
+        })
+        .collect();
+
+    info!(
+        "Validation Results: {} upgraded to Valid, {} confirmed invalid",
+        upgraded_count, confirmed_invalid_count
+    );
+
+    Ok(Findings {
+        findings: r_validated_findings,
     })
 }

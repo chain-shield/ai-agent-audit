@@ -133,6 +133,7 @@ pub mod llm_review {
             pub mod round_2;
             pub mod round_3;
             pub mod utils;
+            pub mod validate_round;
         }
     }
     pub mod pattern_phases {
