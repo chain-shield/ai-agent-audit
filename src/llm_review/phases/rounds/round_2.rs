@@ -25,6 +25,9 @@ pub struct VerifyRoundTwo {
 }
 
 impl FindingAnalysis for RoundTwoLegitAnalysis {
+    fn round_number() -> usize {
+        2
+    }
     fn id(&self) -> String {
         self.finding_id.clone()
     }
@@ -50,9 +53,10 @@ impl FindingAnalysis for RoundTwoLegitAnalysis {
 
     fn print_analysis_results(&self) {
         info!("\n");
-        // info!("{}: \n", self.finding_title);
-        // info!("does bug exist: {}\n", self.does_bug_exist);
-        // info!("is safeguard against it: {}\n", self.safeguard_against_it);
+        info!("{}: \n", self.finding_title);
+        info!("id: {}\n", self.id());
+        info!("does bug exist: {}\n", self.does_bug_exist);
+        info!("is safeguard against it: {}\n", self.safeguard_against_it);
         info!("justification: {}\n", self.justification);
         info!("\n");
     }

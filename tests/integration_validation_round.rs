@@ -175,10 +175,17 @@ async fn test_validation_round_puppy_raffle() -> Result<()> {
         "Should have same number of findings after validation"
     );
 
-    // At least some findings should have been processed
+    // Expected results based on verification_rounds_passed:
+    // - Finding 1 (H-1): rounds_passed=2, validation rejects -> Valid (upgraded)
+    // - Finding 2 (M-1): rounds_passed=1, validation rejects -> NeedsMoreInfo (unchanged)
+    // - Finding 3 (H-2): rounds_passed=2, validation rejects -> Valid (upgraded)
+    // - Finding 4 (M-2): rounds_passed=2, validation rejects -> Valid (upgraded)
+
+    // Expected: 3 upgraded (findings with rounds_passed=2)
+    // Note: The AI might confirm some downgrades, so we check for at least 1 upgrade
     assert!(
-        upgraded_count > 0 || confirmed_invalid_count > 0,
-        "Validation should have processed at least some findings"
+        upgraded_count >= 1,
+        "At least one finding with rounds_passed=2 should be upgraded to Valid"
     );
 
     println!("✅ Validation Round Integration Test Passed!\n");
@@ -211,6 +218,7 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
             mitigation: Some("Follow checks-effects-interactions pattern. Update state before external call.".to_string()),
             status: Some(vec![FindingStatus::InvalidBugDoesNotExist]),
             status_justification: Some("Verification round incorrectly flagged this as non-existent".to_string()),
+            verification_rounds_passed: Some(2), // Passed R1 & R2, failed R3
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,
@@ -235,6 +243,7 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
             mitigation: Some("Add timelock or multi-sig for critical parameter changes.".to_string()),
             status: Some(vec![FindingStatus::InvalidOutOfScope]),
             status_justification: Some("Centralization risks are out of scope for this audit".to_string()),
+            verification_rounds_passed: Some(1), // Passed R1, failed R2
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,
@@ -261,6 +270,7 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
             mitigation: Some("Use uint256 for totalFees and remove unsafe casting.".to_string()),
             status: Some(vec![FindingStatus::InvalidGovernanceRisk]),
             status_justification: Some("Incorrectly marked as governance risk".to_string()),
+            verification_rounds_passed: Some(2), // Passed R1 & R2, failed R3
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,
@@ -290,6 +300,7 @@ fn create_downgraded_puppy_raffle_findings() -> Findings {
                 FindingStatus::LowSeverityDueToLowImpact,
             ]),
             status_justification: Some("Marked as non-existent and low impact, but bug exists and impact is medium".to_string()),
+            verification_rounds_passed: Some(2), // Passed R1 & R2, failed R3
             poc_test_file: None,
             poc_test_command: None,
             poc_test_status: None,

@@ -260,6 +260,100 @@ fn test_generate_dynamic_validation_json_multiple_findings() {
     assert!(json.contains("\"is_really_low_impact\": true | false"));
 }
 
+#[test]
+fn test_validate_with_rounds_passed_none() {
+    // Finding that never passed any round (failed Round 1)
+    let finding = create_test_finding_with_status_and_rounds(
+        vec![FindingStatus::InvalidBugDoesNotExist],
+        None,
+    );
+
+    let analysis = ValidateLegitAnalysis {
+        finding_id: "test-finding-1".to_string(),
+        finding_title: "Test Reentrancy Vulnerability".to_string(),
+        does_bug_really_not_exist: Some(false), // Validation rejects the downgrade
+        is_really_out_of_scope: None,
+        is_really_user_error_or_mistake: None,
+        is_really_governance_risk: None,
+        is_really_future_speculation: None,
+        is_really_non_standard_token: None,
+        is_really_low_impact: None,
+        is_really_low_likelihood: None,
+        is_there_really_safeguard_against_it: None,
+        is_bug_really_by_design: None,
+        is_really_not_exploitable: None,
+        justification: Some("Bug exists".to_string()),
+    };
+
+    let result = analysis.get_fixed_finding_status(&finding);
+
+    // All reasons rejected, but rounds_passed = None (low confidence)
+    // Should return None, which will be converted to NeedsMoreInfo
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_validate_with_rounds_passed_one() {
+    // Finding that passed Round 1, failed Round 2
+    let finding =
+        create_test_finding_with_status_and_rounds(vec![FindingStatus::InvalidOutOfScope], Some(1));
+
+    let analysis = ValidateLegitAnalysis {
+        finding_id: "test-finding-1".to_string(),
+        finding_title: "Test Reentrancy Vulnerability".to_string(),
+        does_bug_really_not_exist: None,
+        is_really_out_of_scope: Some(false), // Validation rejects the downgrade
+        is_really_user_error_or_mistake: None,
+        is_really_governance_risk: None,
+        is_really_future_speculation: None,
+        is_really_non_standard_token: None,
+        is_really_low_impact: None,
+        is_really_low_likelihood: None,
+        is_there_really_safeguard_against_it: None,
+        is_bug_really_by_design: None,
+        is_really_not_exploitable: None,
+        justification: Some("Not out of scope".to_string()),
+    };
+
+    let result = analysis.get_fixed_finding_status(&finding);
+
+    // All reasons rejected, but rounds_passed = Some(1) (low confidence)
+    // Should return None, which will be converted to NeedsMoreInfo
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_validate_with_rounds_passed_two() {
+    // Finding that passed Rounds 1 & 2, failed Round 3
+    let finding = create_test_finding_with_status_and_rounds(
+        vec![FindingStatus::InvalidGovernanceRisk],
+        Some(2),
+    );
+
+    let analysis = ValidateLegitAnalysis {
+        finding_id: "test-finding-1".to_string(),
+        finding_title: "Test Reentrancy Vulnerability".to_string(),
+        does_bug_really_not_exist: None,
+        is_really_out_of_scope: None,
+        is_really_user_error_or_mistake: None,
+        is_really_governance_risk: Some(false), // Validation rejects the downgrade
+        is_really_future_speculation: None,
+        is_really_non_standard_token: None,
+        is_really_low_impact: None,
+        is_really_low_likelihood: None,
+        is_there_really_safeguard_against_it: None,
+        is_bug_really_by_design: None,
+        is_really_not_exploitable: None,
+        justification: Some("Not a governance risk".to_string()),
+    };
+
+    let result = analysis.get_fixed_finding_status(&finding);
+
+    // All reasons rejected, and rounds_passed = Some(2) (high confidence)
+    // Should return None, which will be converted to Valid
+    assert_eq!(result, None);
+}
+
 // Helper functions
 
 fn create_test_finding() -> Finding {
@@ -278,6 +372,7 @@ fn create_test_finding() -> Finding {
         mitigation: Some("Test mitigation".to_string()),
         status: None,
         status_justification: Some("Test justification".to_string()),
+        verification_rounds_passed: None,
         poc_test_file: None,
         poc_test_command: None,
         poc_test_status: None,
@@ -291,5 +386,16 @@ fn create_test_finding_with_status(statuses: Vec<FindingStatus>) -> Finding {
     let mut finding = create_test_finding();
     finding.status = Some(statuses);
     finding.status_justification = Some("Downgraded for testing".to_string());
+    finding
+}
+
+fn create_test_finding_with_status_and_rounds(
+    statuses: Vec<FindingStatus>,
+    rounds_passed: Option<u8>,
+) -> Finding {
+    let mut finding = create_test_finding();
+    finding.status = Some(statuses);
+    finding.status_justification = Some("Downgraded for testing".to_string());
+    finding.verification_rounds_passed = rounds_passed;
     finding
 }

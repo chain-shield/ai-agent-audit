@@ -27,6 +27,9 @@ pub struct VerifyRoundThree {
 }
 
 impl FindingAnalysis for RoundThreeLegitAnalysis {
+    fn round_number() -> usize {
+        3
+    }
     fn id(&self) -> String {
         self.finding_id.clone()
     }
@@ -55,10 +58,11 @@ impl FindingAnalysis for RoundThreeLegitAnalysis {
 
     fn print_analysis_results(&self) {
         info!("\n");
-        // info!("{}: \n", self.finding_title);
-        // info!("is by_design: {}\n", self.by_design);
-        // info!("is in scope: {}\n", self.in_scope);
-        // info!("is exploitable: {}\n", self.exploitable);
+        info!("{}: \n", self.finding_title);
+        info!("id: {}\n", self.id());
+        info!("is by design: {}\n", self.by_design);
+        info!("is in scope: {}\n", self.in_scope);
+        info!("is exploitable: {}\n", self.exploitable);
         info!("justification: {}\n", self.justification);
         info!("\n");
     }

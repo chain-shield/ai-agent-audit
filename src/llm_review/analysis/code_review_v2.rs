@@ -67,8 +67,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    // let custom_scoped_contracts = Some(vec!["ERC7575VaultUpgradeable".to_string()]);
-    let custom_scoped_contracts: Option<Vec<_>> = None;
+    let custom_scoped_contracts = Some(vec!["ERC7575VaultUpgradeable".to_string()]);
+    // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -611,8 +611,8 @@ async fn process_actors(
 
     // custom agent for digging up list of actors
     let actor_discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.1")
-        .with_preamble("You are a world-class expert at smart contract auditing.")
+        .with_model("gpt-5.2")
+        .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
         .with_file_retrieval(false)
         .with_openai_reasoning_effort("high");
 
