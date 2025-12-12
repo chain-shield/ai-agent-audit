@@ -411,7 +411,7 @@ pub async fn run_round_validation(
 
     let r_validated_findings: Vec<Finding> = findings
         .findings
-        .iter()
+        .into_iter()
         .map(|f| {
             let f_id = f.id.clone().unwrap_or_default();
             let validation_analysis_option = validation_map.get(&f_id);
@@ -419,13 +419,13 @@ pub async fn run_round_validation(
             // findings that are already marked as valid will not have validation analysis, skip
             // those
             if validation_analysis_option.is_none() {
-                return f.clone();
+                return f;
             }
 
             // now can safely unwrap
             let validation_analysis = validation_analysis_option.unwrap();
 
-            let updated_finding_status = validation_analysis.get_fixed_finding_status(f);
+            let updated_finding_status = validation_analysis.get_fixed_finding_status(&f);
 
             // If validation returns None, all downgrade reasons were rejected -> upgrade to Valid or NeedsMoreInfo
             // NOTE: only set as Valid if passed 2+ rounds (high confidence), otherwise set as NeedsMoreInfo
@@ -463,7 +463,7 @@ pub async fn run_round_validation(
             let rectified_finding = Finding {
                 status: final_status,
                 status_justification: updated_justification,
-                ..f.clone()
+                ..f
             };
             rectified_finding
         })
