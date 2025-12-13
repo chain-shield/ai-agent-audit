@@ -1,84 +1,243 @@
-## Verified Patterns Found: 23
+## Verified Patterns Found: 25
 
 ## Verified Patterns Found in following Categories:
 
+- UnsafeRecipient
 - SlippageMissingOrInsufficient
-- GovernanceDelegationFlaw
-- PermitMisuse
-- PricePrecisionOrRoundingError
-- AccountingInvariantViolation
-- AccessControlOrAuthByPass
-- ReserveOrPriceDesync
-- ERC4626SharePriceMismatch
-- StateGrowthOrStorageBloat
 - StandardViolation
-- FeeOnTransferAssumption
+- PrecisionDriftAccumulation
+- Reentrancy
+- AccessControlOrAuthByPass
+- ReadOnlyReentrancy
+- ReserveOrPriceDesync
+- GriefableCallbacks
+- PricePrecisionOrRoundingError
+- GovernanceDelegationFlaw
 - ForcedAssetVsStrictEquality
+- FlashLoanEconomicManipulation
+- AccountingInvariantViolation
 
 
 
 ## Summary of Patterns
 
-Strict Balance Equality Check Enables Griefing of Vault Unregistration
+Permanent DoS via Broken Vault Dependency
 
-Vault Unregistration DoS via Dust Holdings
+Rounding direction in withdraw allows free asset withdrawals
 
-Precision Loss in Redemption Fulfillment
+Unsafe Controller in Deposit/Redeem Requests
 
-ERC-4626 Standard Violation in Preview Functions
+rBalance Corruption via Logic Divergence
 
-Single Point of Failure in Share Pricing Mechanism
+Slippage Missing in Async Vault Operations
 
-Non-Standard ERC20 Implementation Breaks Composability
+Multi-Asset Reserve Desync Arbitrage
 
-Permit Signer Validation Flaw in ShareToken
+Share Price Manipulation via Donation
 
-Insufficient virtual offset allows first depositor inflation attack
+Vault Unregistration Griefing via Dust
 
-Silent rBalance Truncation Corrupts Investment Accounting
+Share Price Manipulation via Donation (Spot Balance Dependency)
 
-Missing Slippage Protection in Asynchronous Redemption
+Double Allowance Consumption in WERC7575ShareToken.transferFrom
 
-Strict Balance Check Incompatible with Fee-on-Transfer Tokens
+Governance DoS via Broken Vault Integration
 
-Permanent Denial of Service on Vault Unregistration via Dust State
+ERC4626 Preview Functions Revert Breaking Standard Integrations
 
-Unbacked Share Price Inflation via adjustrBalance
+Unsafe UUPS Implementation Bypassing Verification
 
-FeeOnTransferAssumption (Rebasing Tokens)
+System-Wide DoS via Griefable Asset Callbacks
 
-Investment Layer IUSD Token Lacks KYC Restrictions Allowing Compliance Bypass
+Dust donation prevents vault unregistration
 
-Slippage Missing in Async Fulfillment
+Precision Drift Favoring User in mint (Claim Deposit)
 
-Incorrect rounding in withdraw allows asset drainage without burning shares
+Share Price Inflation via Insolvency Clamping in totalAssets
 
-SlippageMissingOrInsufficient in Async Deposit Flow
+Precision Drift allowing Free Asset Extraction in withdraw
 
-Accounting Mismatch in Reserved Asset Calculation
+Phantom yield in rBalance causes Investment Layer insolvency
 
-Total Assets Clamping Hides Insolvency and Breaks Price
+TotalSupply Invariant Violation via Unsafe Recipient in Batch Transfers
 
-Missing Slippage Protection in Investment Execution
+Share Price Dilution via Dust Shares Accumulation
 
-Yield trapped in rBalance due to accounting logic mismatch
+Read-Only Reentrancy in Share Price via Asset Callbacks
 
-Accounting Invariant Violation in Yield Adjustment
+Read-Only Reentrancy in `totalAssets` via `requestDeposit`
+
+Slippage Missing in Investment Operations
+
+Missing slippage protection in async deposit/redeem requests
 
 ## Patterns
 
 
 
- ### Issue Type: ForcedAssetVsStrictEquality
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: ShareTokenUpgradeable.getCirculatingSupplyAndAssets
+
+ ### Title
+Permanent DoS via Broken Vault Dependency
+ ### Description/Code Snippet
+The `ShareTokenUpgradeable.getCirculatingSupplyAndAssets` function iterates over all registered vaults to aggregate assets. It calls `vault.getClaimableSharesAndNormalizedAssets()`, which calls `vault.totalAssets()`, which calls `IERC20(asset).balanceOf(vault)`. If a single underlying asset reverts on `balanceOf` (e.g. paused token, malicious upgrade, or hacked adapter), the entire ShareToken accounting reverts. This bricks `convertNormalizedAssetsToShares` and `fulfillDeposit` for ALL vaults. Crucially, `unregisterVault` also performs the same `totalAssets()` check to verify the vault is empty, so the Owner cannot remove the broken vault to restore system functionality. The protocol becomes permanently frozen.
+ ### Static Signals
+loop over external calls, critical dependency on external token state, unregister function reverts if dependency fails, no try-catch block
+ ### Assets at Risk
+Availability of all funds
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: PricePrecisionOrRoundingError
+
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.withdraw
+
+ ### Title
+Rounding direction in withdraw allows free asset withdrawals
+ ### Description/Code Snippet
+In `ERC7575VaultUpgradeable.sol`, the `withdraw` function calculates the shares to burn using `Math.Rounding.Floor`: `shares = assets.mulDiv(availableShares, availableAssets, Math.Rounding.Floor)`. If `availableAssets > availableShares` (share price > 1 asset), a user can withdraw small amounts of assets such that `assets * availableShares < availableAssets`, resulting in `shares = 0`. The code executes `if (shares > 0) { ... burn ... }` but unconditionally transfers assets `SafeTokenTransfers.safeTransfer($.asset, receiver, assets)`. This allows users to drain assets without burning any shares. Similarly, `mint` uses Floor rounding for asset cost, favoring the user.
+ ### Static Signals
+Math.Rounding.Floor used for calculating costs/inputs, shares = assets.mulDiv(..., Floor)
+ ### Assets at Risk
+assets
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: UnsafeRecipient
+
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.requestDeposit
+
+ ### Title
+Unsafe Controller in Deposit/Redeem Requests
+ ### Description/Code Snippet
+The `requestDeposit` and `requestRedeem` functions in `ERC7575VaultUpgradeable` do not validate that the `controller` parameter is non-zero. If a user mistakenly passes `address(0)` as the controller (e.g., thinking it defaults to `msg.sender`), the assets or shares will be transferred to the vault but the resulting request record will be assigned to `address(0)`. Since no one can authenticate as `address(0)` or authorize an operator for it, these funds become permanently stuck in the pending or claimable state, leading to loss of funds.
+ ### Static Signals
+no zero-address guard, controller parameter used directly in mapping keys, authentication check validates owner but not controller
+ ### Assets at Risk
+user deposits, user shares
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: GovernanceDelegationFlaw
+
+ ### Relevant Function/Location: WERC7575ShareToken.rBatchTransfers
+
+ ### Title
+rBalance Corruption via Logic Divergence
+ ### Description/Code Snippet
+The `rBatchTransfers` function relies on `consolidateTransfers` to aggregate accounts in a specific order that must exactly match the order used by the off-chain `computeRBalanceFlags` helper. The `rBalanceFlags` bitmask is applied to indices derived from this aggregation. While currently identical, the logic is duplicated across `consolidateTransfers` and `_computeRBalanceFlagsInternal`. Any future update or subtle deviation between these two complex aggregation algorithms will cause the bitmask to apply to the wrong accounts, silently corrupting the critical `_rBalances` ledger which tracks investor capital.
+ ### Static Signals
+logic duplication, complex bitmask mapping, critical state update depends on implicit ordering
+ ### Assets at Risk
+Investor capital tracking
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresAdminRole
+
+
+
+
+ ### Issue Type: SlippageMissingOrInsufficient
+
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.requestDeposit, requestRedeem
+
+ ### Title
+Slippage Missing in Async Vault Operations
+ ### Description/Code Snippet
+The `ERC7575VaultUpgradeable` implements ERC-7540 asynchronous flows (`requestDeposit`, `requestRedeem`) where users lock assets/shares, but the exchange rate is determined later at fulfillment time by the Investment Manager. The request functions (`requestDeposit`, `requestRedeem`) lack `minShares` or `minAssets` parameters, and the fulfillment logic (`fulfillDeposit`, `fulfillRedeem`) calculates the payout using the spot rate at execution time without any user-defined bounds. This exposes users to unlimited slippage due to market movements or rate manipulation between the request and fulfillment transactions.
+ ### Static Signals
+amountOutMin=0 or missing, payout calculated at execution time without minimum bound, no minAmountOut parameter in liquidation/redemption
+ ### Assets at Risk
+assets, shares
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: ReserveOrPriceDesync
+
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.requestRedeem
+
+ ### Title
+Multi-Asset Reserve Desync Arbitrage
+ ### Description/Code Snippet
+The system allows multiple vaults with different underlying assets (e.g., USDC, DAI) to mint the same fungible `ShareToken`, assuming a fixed 1:1 exchange rate (after decimal normalization). The protocol lacks an oracle to verify real-time market prices. If one underlying asset depegs (e.g., USDC drops to $0.90), the invariant `1 Share = 1 Normalized Unit` breaks. Users can deposit the depegged asset to mint shares at face value and redeem them for a pegged asset (e.g., DAI) from another vault, effectively draining the valuable reserves and diluting other share holders.
+ ### Static Signals
+assumes invariant without verifying, assumes reserve/price invariants that no longer hold
+ ### Assets at Risk
+vault reserves
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: FlashLoanEconomicManipulation
+
+ ### Relevant Function/Location: ShareTokenUpgradeable.convertNormalizedAssetsToShares
+
+ ### Title
+Share Price Manipulation via Donation
+ ### Description/Code Snippet
+The `ShareTokenUpgradeable` calculates the global share price based on `totalNormalizedAssets`, which includes the balance of `investmentShareToken` held by the contract. An attacker can donate `investmentShareToken` assets directly to the `ShareTokenUpgradeable` contract to artificially inflate `totalNormalizedAssets` and thus the share price (`assets/supply`). While a self-donation/redeem cycle is typically zero-sum for the attacker, this manipulation can be used to grief other users (e.g., inflating price right before a `fulfillDeposit` executes, causing the user to receive dust shares) or exploit external systems relying on the share price.
+ ### Static Signals
+share price derived from manipulable pool state, uses totalSupply/totalAssets in same tx as deposit/withdraw
+ ### Assets at Risk
+user deposits, share price integrity
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: AccessControlOrAuthByPass
 
  ### Relevant Function/Location: ShareTokenUpgradeable.unregisterVault
 
  ### Title
-Strict Balance Equality Check Enables Griefing of Vault Unregistration
+Vault Unregistration Griefing via Dust
  ### Description/Code Snippet
-The `unregisterVault` function enforces a strict check `IERC20(asset).balanceOf(vaultAddress) != 0` to ensure the vault is empty. An attacker can perform a direct transfer of 1 wei of the asset to the vault (`donation`). If the investment vault is not configured (or was removed), the admin has no mechanism to sweep this dust (as `investAssets` requires a valid investment vault). This forces the unregistration to revert, griefing the protocol's lifecycle management.
+The `unregisterVault` function enforces a strict check that `IERC20(asset).balanceOf(vaultAddress) == 0`. An attacker can send 1 wei of the asset to the vault (direct transfer), causing this check to fail. While the Investment Manager can theoretically move funds via `investAssets`, this requires the vault to be active and the Investment Vault to accept dust (which might fail due to min deposit limits). If the dust cannot be cleared, the vault cannot be unregistered, permanently occupying one of the limited slots (`MAX_VAULTS_PER_SHARE_TOKEN` = 10) and preventing vault rotation.
  ### Static Signals
-require(address(this).balance == 0), strict equality check
+strict equality check on balance, external user can manipulate balance, admin action blocked by user state
+ ### Assets at Risk
+Protocol slots, Management capability
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: FlashLoanEconomicManipulation
+
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.totalAssets
+
+ ### Title
+Share Price Manipulation via Donation (Spot Balance Dependency)
+ ### Description/Code Snippet
+The `totalAssets` function in `ERC7575VaultUpgradeable` relies directly on `IERC20(asset).balanceOf(address(this))`. This allows an attacker to manipulate the exchange rate (share price) by donating assets to the vault to inflate `totalAssets`. Since `ShareTokenUpgradeable` aggregates these spot balances to calculate `totalNormalizedAssets` for conversion rates, any function relying on this rate (such as `fulfillDeposit`, `fulfillRedeem`, or external pricing) uses a manipulable spot price. This facilitates flash loan attacks or sandwich attacks against user deposits/redemptions.
+ ### Static Signals
+totalAssets uses balanceOf(this), no internal accounting balance, share price derived from spot balance
+ ### Assets at Risk
+user deposits, user redemptions
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: WERC7575ShareToken.transferFrom
+
+ ### Title
+Double Allowance Consumption in WERC7575ShareToken.transferFrom
+ ### Description/Code Snippet
+The `transferFrom` function in `WERC7575ShareToken` explicitly calls `_spendAllowance(from, from, value)` to enforce self-allowance (permit), and then calls `super.transferFrom(from, to, value)`. The parent OpenZeppelin `ERC20.transferFrom` implementation calls `_spendAllowance(from, msg.sender, value)`. When a user calls `transferFrom` on themselves (`msg.sender == from`), `allowance[from][from]` is deducted twice: once in the override and once in the parent function. This creates an accounting invariant violation where a self-transfer costs double the allowance amount.
+ ### Static Signals
+_spendAllowance(from, from, value), super.transferFrom(from, to, value), msg.sender == from
  ### Assets at Risk
 
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -88,34 +247,17 @@ require(address(this).balance == 0), strict equality check
 
  ### Issue Type: GovernanceDelegationFlaw
 
- ### Relevant Function/Location: ShareTokenUpgradeable.unregisterVault
+ ### Relevant Function/Location: ShareTokenUpgradeable.setInvestmentManager
 
  ### Title
-Vault Unregistration DoS via Dust Holdings
+Governance DoS via Broken Vault Integration
  ### Description/Code Snippet
-A malicious user can permanently block the unregistration of a vault by maintaining a small pending cancelation or unclaimed deposit/redemption. `ShareTokenUpgradeable.unregisterVault` (lines 198-245) strictly requires the target vault to have zero total pending, claimable, and cancel assets to prevent user fund loss. However, there is no mechanism for the admin to force-claim, refund, or sweep these specific user funds. An attacker can deposit a minimal amount in all registered vaults and refuse to claim or finalize cancelations. Combined with the hard cap of 10 vaults (`MAX_VAULTS_PER_SHARE_TOKEN` line 52) and the inability to add new vaults once the limit is reached (`registerVault` lines 147-150), this allows an attacker to permanently lock the protocol's asset list, preventing the onboarding of new assets.
+The `setInvestmentManager` function in `ShareTokenUpgradeable` iterates through all registered vaults to update the investment manager. If a single vault enters a broken state where it reverts on this call (or is a malicious contract registered by a compromised owner), the global update function becomes permanently unusable. Furthermore, `unregisterVault` attempts to query `getVaultMetrics` and `balanceOf` on the vault before removal; if these calls revert, the vault cannot be unregistered. This creates a circular dependency where a broken vault cannot be fixed (via manager update) and cannot be removed, causing a permanent Denial of Service to critical governance functions.
  ### Static Signals
-MAX_VAULTS_PER_SHARE_TOKEN, revert CannotUnregisterVaultAssetBalance, revert CannotUnregisterVaultPendingDeposits
+external call in loop, try/catch that reverts in catch, global configuration push
  ### Assets at Risk
 
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: PricePrecisionOrRoundingError
-
- ### Relevant Function/Location: ERC7575VaultUpgradeable.fulfillRedeem
-
- ### Title
-Precision Loss in Redemption Fulfillment
- ### Description/Code Snippet
-In `ERC7575VaultUpgradeable`, `fulfillRedeem` converts shares to assets using `Math.Rounding.Floor`. For assets with low decimals (e.g., USDC, 6 decimals) and shares with 18 decimals, `scalingFactor` is large (1e12). Redeeming `shares < 1e12` results in 0 assets, but the shares are marked for burning in `claimableRedeemShares`. When the user calls `redeem`, they burn shares but receive 0 assets. This creates a systematic precision loss for dust amounts or non-aligned share amounts.
- ### Static Signals
-division with large scaling factor, rounding down to zero, state update with zero value
- ### Assets at Risk
-user shares
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresAdminRole
 
 
 
@@ -125,11 +267,11 @@ user shares
  ### Relevant Function/Location: ERC7575VaultUpgradeable.previewDeposit
 
  ### Title
-ERC-4626 Standard Violation in Preview Functions
+ERC4626 Preview Functions Revert Breaking Standard Integrations
  ### Description/Code Snippet
-The `ERC7575VaultUpgradeable` contract implements ERC-4626 but causes all preview functions (`previewDeposit`, `previewMint`, etc.) to revert with `AsyncFlow()`. The ERC-4626 standard requires these functions to return a simulation of the transaction effects. Reverting breaks compatibility with on-chain aggregators, routers, and off-chain tools that rely on the standard ERC-4626 interface for price and outcome estimation.
+The `ERC7575VaultUpgradeable` contract implements `IERC4626` but defines all preview functions (`previewDeposit`, `previewMint`, `previewWithdraw`, `previewRedeem`) to revert with `AsyncFlow()`. While this behavior complies with ERC-7540 for async vaults, it violates the ERC-4626 standard which mandates that preview functions simulate the effects of a transaction. Integrators and routers expecting standard ERC-4626 behavior will fail when interacting with this vault.
  ### Static Signals
-revert AsyncFlow()
+revert AsyncFlow(), implementing IERC4626, preview function reverts
  ### Assets at Risk
 
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -137,33 +279,50 @@ revert AsyncFlow()
 
 
 
- ### Issue Type: ReserveOrPriceDesync
+ ### Issue Type: StandardViolation
+
+ ### Relevant Function/Location: ShareTokenUpgradeable.upgradeTo
+
+ ### Title
+Unsafe UUPS Implementation Bypassing Verification
+ ### Description/Code Snippet
+Both `ShareTokenUpgradeable` and `ERC7575VaultUpgradeable` inherit from `UUPSUpgradeable` but implement a custom `upgradeTo` function that calls `ERC1967Utils.upgradeToAndCall` directly. This bypasses the standard UUPS safety mechanism (normally enforced via `_authorizeUpgrade` and `UUPSUpgradeable`'s version of `upgradeTo`) which verifies that the new implementation contract supports UUPS upgrades (`proxiableUUID` check). Upgrading to a logic contract that lacks this UUID or the upgrade function will permanently brick the proxy, preventing future upgrades.
+ ### Static Signals
+ERC1967Utils.upgradeToAndCall used directly in public function, missing _authorizeUpgrade override usage, manual upgradeTo implementation in UUPS contract
+ ### Assets at Risk
+future upgrades
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresAdminRole
+
+
+
+
+ ### Issue Type: GriefableCallbacks
 
  ### Relevant Function/Location: ShareTokenUpgradeable.getCirculatingSupplyAndAssets
 
  ### Title
-Single Point of Failure in Share Pricing Mechanism
+System-Wide DoS via Griefable Asset Callbacks
  ### Description/Code Snippet
-The `ShareTokenUpgradeable.getCirculatingSupplyAndAssets` function iterates over all registered vaults to calculate total system assets. If a single registered vault becomes dysfunctional (e.g., reverts on `getClaimableSharesAndNormalizedAssets` due to a bug, upgrade failure, or pause state), the call will revert. This causes the shared pricing functions `convertToShares` and `convertToAssets` to fail globally, effectively bricking deposit and redemption operations for ALL vaults in the system.
+The `ShareTokenUpgradeable` contract aggregates value across all registered vaults in `getCirculatingSupplyAndAssets` by looping through the `assetToVault` list. Inside the loop, it calls `getClaimableSharesAndNormalizedAssets` on each vault, which eventually calls `totalAssets()` and the underlying asset's `balanceOf()`. If a single registered asset reverts (e.g., PAUSED USDC, upgraded token, or malicious token), the entire loop fails. This causes `convertNormalizedAssetsToShares` to revert, which in turn causes `fulfillDeposit` to revert for ALL vaults. A single failing asset denies service to the entire multi-asset system.
  ### Static Signals
-loop over all vaults, external call in loop, no try/catch
+external call in loop without failure isolation, loops over user-controlled arrays/sets
  ### Assets at Risk
-system availability
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresAdminRole
+vault operations
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 
 
 
 
- ### Issue Type: StandardViolation
+ ### Issue Type: ForcedAssetVsStrictEquality
 
- ### Relevant Function/Location: WERC7575ShareToken.transfer
+ ### Relevant Function/Location: ShareTokenUpgradeable.unregisterVault
 
  ### Title
-Non-Standard ERC20 Implementation Breaks Composability
+Dust donation prevents vault unregistration
  ### Description/Code Snippet
-The WERC7575ShareToken implementation intentionally breaks ERC-20 standard compliance by requiring a validator-signed permit for `transfer` operations and disabling self-approval via `approve`. Specifically, `transfer` calls `_spendAllowance(msg.sender, msg.sender, value)`, which reverts unless a self-allowance has been set via `permit`. Furthermore, `approve` reverts if `spender == msg.sender`. This design breaks compatibility with standard wallets, DEXs, and other protocols that rely on the standard ERC-20 interface, causing transactions to revert unexpectedly.
+The `ShareTokenUpgradeable.unregisterVault` function strictly requires `IERC20(asset).balanceOf(vaultAddress) == 0`. An attacker can send a minimal amount (dust) of the asset to the vault address, causing this check to fail and preventing the owner from unregistering the vault. While the Investment Manager can technically sweep assets via `investAssets`, this creates a griefing vector where unregistration is blocked until specific cleanup actions are taken.
  ### Static Signals
-_spendAllowance(msg.sender, msg.sender, value), if (msg.sender == spender) revert ERC20InvalidSpender
+require(address(this).balance == totalFees) or similar strict guard, assumes only contract code changes balances
  ### Assets at Risk
 
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
@@ -171,226 +330,52 @@ _spendAllowance(msg.sender, msg.sender, value), if (msg.sender == spender) rever
 
 
 
- ### Issue Type: PermitMisuse
+ ### Issue Type: PrecisionDriftAccumulation
 
- ### Relevant Function/Location: WERC7575ShareToken.permit
-
- ### Title
-Permit Signer Validation Flaw in ShareToken
- ### Description/Code Snippet
-In `WERC7575ShareToken.permit`, when `owner == spender`, the contract enforces `signer == _validator` instead of `signer == owner`. While this implements the intended 'self-allowance via validator' logic, it deviates from the EIP-2612 standard which expects the owner to sign. This non-standard behavior breaks integrations with wallets and dApps that generate standard permit signatures signed by the owner. Additionally, `_useNonce(owner)` consumes the owner's nonce even though the validator signed it, potentially leading to nonce synchronization issues if the owner also signs standard permits.
- ### Static Signals
-no deadline check, nonces reused or not incremented
- ### Assets at Risk
-
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: ERC4626SharePriceMismatch
-
- ### Relevant Function/Location: ShareTokenUpgradeable.convertNormalizedAssetsToShares
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.mint
 
  ### Title
-Insufficient virtual offset allows first depositor inflation attack
+Precision Drift Favoring User in mint (Claim Deposit)
  ### Description/Code Snippet
-The `ShareTokenUpgradeable` uses `VIRTUAL_ASSETS` and `VIRTUAL_SHARES` constants set to `1e6` to prevent inflation attacks. However, the system normalizes all assets to 18 decimals (`1e18`). A virtual offset of `1e6` (equivalent to `1e-12` tokens) is negligible compared to the 18-decimal precision. A malicious first depositor can deposit a small amount (e.g., 1 wei of USDC, normalized to `1e12`), then donate a large amount of assets to the vault to inflate the share price excessively, causing subsequent depositors to lose value due to rounding.
+In `ERC7575VaultUpgradeable.mint`, the asset calculation uses `Math.Rounding.Floor`: `assets = shares.mulDiv(availableAssets, availableShares, Math.Rounding.Floor)`. This calculates the assets to consume from the user's claimable bucket to mint a specific number of shares. Rounding down means the user consumes slightly fewer assets than the shares are worth proportionally. This systematically undervalues the assets required, favoring early claimers and leaving dust shares in the bucket with insufficient backing assets for the last claimer.
  ### Static Signals
-no virtual shares/assets to prevent inflation attack, first depositor can manipulate share price
+assets = shares.mulDiv(..., Math.Rounding.Floor), assets calculated from shares using Floor
  ### Assets at Risk
-user deposits
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+claimableDepositAssets
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
 
 
 
 
  ### Issue Type: AccountingInvariantViolation
 
- ### Relevant Function/Location: WERC7575ShareToken.rBatchTransfers
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.totalAssets
 
  ### Title
-Silent rBalance Truncation Corrupts Investment Accounting
+Share Price Inflation via Insolvency Clamping in totalAssets
  ### Description/Code Snippet
-In `rBatchTransfers`, the logic silently truncates an account's `_rBalances` (reserved balance) to zero if the amount to be deducted exceeds the current rBalance (`if (rbalance < amount) _rBalances[...] = 0`). This destroys the invariant of tracked invested capital versus returned capital. If `adjustrBalance` or `cancelrBalanceAdjustment` is called later, the accounting will be incorrect because the historical investment basis has been lost. This can lead to incorrect yield distribution or inability to reconcile investment positions.
+In `ERC7575VaultUpgradeable.totalAssets()`, the function returns `balance > reservedAssets ? balance - reservedAssets : 0`. `reservedAssets` includes `totalClaimableRedeemAssets`. If the Investment Manager invests all liquid assets (so `balance` becomes 0) and then fulfills a redemption request (converting pending shares to `claimableRedeemAssets`), `reservedAssets` will exceed `balance`. The function will return 0 due to clamping. However, `ShareTokenUpgradeable` calculates the global share price by summing `totalAssets()` from all vaults (0) and adding `investedAssets` (full amount) while subtracting the redeemed shares from `circulatingSupply`. This effectively counts the assets twice (once in `investedAssets` and implicitly again by not deducting the liability from `totalAssets`), causing `totalNormalizedAssets` to be overstated relative to `circulatingSupply`, leading to an artificial spike in share price.
  ### Static Signals
-_rBalances[account.owner] = 0, if (rbalance < amount)
+return balance > reservedAssets ? balance - reservedAssets : 0
  ### Assets at Risk
-rewards
+vault shares
  ### Minimum Privilege Required to Exploit Vulnerability: RequiresAdminRole
 
 
 
 
- ### Issue Type: SlippageMissingOrInsufficient
-
- ### Relevant Function/Location: ERC7575VaultUpgradeable.requestRedeem
-
- ### Title
-Missing Slippage Protection in Asynchronous Redemption
- ### Description/Code Snippet
-The `requestRedeem` function allows users to queue shares for redemption, and `fulfillRedeem` converts these shares to assets using the exchange rate at the time of fulfillment. However, there is no `minAssets` parameter in `requestRedeem` or `fulfillRedeem` to enforce a minimum acceptable output. Because the fulfillment is asynchronous and controlled by the Investment Manager, users are exposed to unlimited downward price volatility (slippage or investment losses) between the time of their request and the time of execution.
- ### Static Signals
-no minAmountOut parameter in liquidation/redemption, payout calculated at execution time without minimum bound
- ### Assets at Risk
-user deposits
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: StandardViolation
-
- ### Relevant Function/Location: SafeTokenTransfers.safeTransfer
-
- ### Title
-Strict Balance Check Incompatible with Fee-on-Transfer Tokens
- ### Description/Code Snippet
-The `SafeTokenTransfers` library enforces a strict invariant that `balanceAfter == balanceBefore + amount`. This check will revert for any Fee-on-Transfer tokens (e.g., USDT with fees enabled) or rebase tokens where the received amount is less than the transferred amount. If the protocol supports such assets, this validation will cause a Denial of Service for all deposits and transfers involving that asset.
- ### Static Signals
-if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch
- ### Assets at Risk
-
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: StateGrowthOrStorageBloat
-
- ### Relevant Function/Location: ERC7575VaultUpgradeable.unregisterVault
-
- ### Title
-Permanent Denial of Service on Vault Unregistration via Dust State
- ### Description/Code Snippet
-The `unregisterVault` function strictly requires `metrics.activeDepositRequestersCount == 0`. A user is only removed from `activeDepositRequesters` when they fully claim their deposit (`availableAssets == assets` in `deposit`). An attacker can request a deposit, wait for fulfillment, and then claim all but 1 wei of the assets. This keeps the attacker in the `activeDepositRequesters` set indefinitely. Since the admin cannot force-claim or evict a user, this permanently prevents the `unregisterVault` function from executing.
- ### Static Signals
-no pruning mechanism, strict equality check on state size
- ### Assets at Risk
-
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: ERC4626SharePriceMismatch
-
- ### Relevant Function/Location: WERC7575ShareToken.adjustrBalance
-
- ### Title
-Unbacked Share Price Inflation via adjustrBalance
- ### Description/Code Snippet
-The `adjustrBalance` function in `WERC7575ShareToken` increases `_rBalances` for accounts based on reported profits (`amountr > amounti`) without requiring a corresponding increase in liquid `_balances`. 
-
-`ShareTokenUpgradeable` calculates the share price (via `convertNormalizedAssetsToShares`) using `totalNormalizedAssets`, which includes `rBalance` (via `getInvestedAssets`). 
-
-By increasing `rBalance` without backing assets, `adjustrBalance` inflates the share price. Since the underlying `_balances` do not increase, the vault lacks the liquid assets to fulfill redemptions at this inflated price, leading to insolvency and loss of funds for last-exiters.
- ### Static Signals
-_rBalances[account] +=, no transfer from _balances
- ### Assets at Risk
-vault solvency, user funds
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresAdminRole
-
-
-
-
- ### Issue Type: FeeOnTransferAssumption
-
- ### Relevant Function/Location: ERC7575VaultUpgradeable.requestDeposit
-
- ### Title
-FeeOnTransferAssumption (Rebasing Tokens)
- ### Description/Code Snippet
-The `requestDeposit` function tracks deposits using a static `pendingDepositAssets` mapping. If the underlying asset is a rebasing token (e.g., stETH, aTokens) that changes balance over time without a transfer hook, the vault's `balanceOf` will diverge from the sum of `reservedAssets` and invested assets. The yield or loss generated by the pending assets will be misattributed to the general pool (existing shareholders) via `totalAssets()` instead of the pending depositor, effectively stealing yield or socializing losses for the pending amounts.
- ### Static Signals
-accounting based on transfer parameter, not actual balance change, no handling for rebasing tokens
- ### Assets at Risk
-yield, user principal
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccessControlOrAuthByPass
-
- ### Relevant Function/Location: ShareTokenUpgradeable.transfer / transferFrom
-
- ### Title
-Investment Layer IUSD Token Lacks KYC Restrictions Allowing Compliance Bypass
- ### Description/Code Snippet
-The protocol documentation emphasizes regulatory compliance and KYC/AML enforcement. The Settlement Layer token (`WERC7575ShareToken`) correctly overrides `transfer` and `transferFrom` to enforce `isKycVerified[user]`. However, the Investment Layer share token (`ShareTokenUpgradeable`), which represents `IUSD`, inherits `ERC20Upgradeable` but does not override transfer functions to check KYC status. This allows non-KYC verified actors to acquire, hold, and transfer IUSD tokens permissionlessly. Since IUSD represents a claim on assets that are invested into the regulated Settlement Layer, this bypasses the protocol's compliance perimeter.
- ### Static Signals
-inherits ERC20Upgradeable, no override for transfer/transferFrom, no isKycVerified check, intended regulatory compliance
- ### Assets at Risk
-Regulatory Compliance, Reputation
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: SlippageMissingOrInsufficient
-
- ### Relevant Function/Location: ERC7575VaultUpgradeable.fulfillDeposit
-
- ### Title
-Slippage Missing in Async Fulfillment
- ### Description/Code Snippet
-The `fulfillDeposit` and `fulfillRedeem` functions in `ERC7575VaultUpgradeable` execute share/asset conversions at the current spot rate without any slippage protection (e.g., `minShares` or `minAssets`). Since the exchange rate depends on `totalAssets` (which includes balances in external vaults and the `InvestmentShareToken`), it can fluctuate or be manipulated between the user's request and the manager's fulfillment. This exposes users to significant value loss if the rate moves unfavorably.
- ### Static Signals
-payout calculated at execution time without minimum bound, price fetched at execution without user-specified floor
- ### Assets at Risk
-user deposits, user redemptions
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
-
-
-
-
- ### Issue Type: ERC4626SharePriceMismatch
+ ### Issue Type: PrecisionDriftAccumulation
 
  ### Relevant Function/Location: ERC7575VaultUpgradeable.withdraw
 
  ### Title
-Incorrect rounding in withdraw allows asset drainage without burning shares
+Precision Drift allowing Free Asset Extraction in withdraw
  ### Description/Code Snippet
-In `ERC7575VaultUpgradeable.withdraw`, the share calculation uses `Math.Rounding.Floor` (`shares = assets.mulDiv(availableShares, availableAssets, Math.Rounding.Floor)`). This rounding direction favors the caller instead of the vault. An attacker can repeatedly withdraw small amounts of assets such that the calculated `shares` to burn rounds down to 0, allowing them to drain the `claimableRedeemAssets` without burning any `claimableRedeemShares`. This devalues the share token for other holders.
+In `ERC7575VaultUpgradeable.withdraw`, the share calculation uses `Math.Rounding.Floor` when calculating the shares to burn for a requested asset amount: `shares = assets.mulDiv(availableShares, availableAssets, Math.Rounding.Floor)`. If the user requests an asset amount small enough such that `assets * availableShares < availableAssets`, the result `shares` rounds to 0. The function does not check if calculated `shares` is 0 (unlike `deposit` or `mint` which have checks). It proceeds to transfer the assets and burn 0 shares (`if (shares > 0)`). This allows an attacker to drain their claimable assets without burning any shares by making multiple small withdrawals.
  ### Static Signals
-rounding bias always favors caller
+shares = assets.mulDiv(..., Math.Rounding.Floor), if (shares > 0) burn, missing check shares != 0
  ### Assets at Risk
 claimableRedeemAssets
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: SlippageMissingOrInsufficient
-
- ### Relevant Function/Location: ERC7575VaultUpgradeable.requestDeposit
-
- ### Title
-SlippageMissingOrInsufficient in Async Deposit Flow
- ### Description/Code Snippet
-The `requestDeposit` function in `ERC7575VaultUpgradeable` initiates an asynchronous deposit by transferring assets to the vault, but it lacks an `amountOutMin` or `minShares` parameter. The actual share minting occurs later in `fulfillDeposit` based on the exchange rate at that time. Users have no guarantee of the exchange rate they will receive and cannot enforce a minimum slippage bound, exposing them to rate changes or manipulation between the request and fulfillment.
- ### Static Signals
-amountOutMin=0 or missing, payout calculated at execution time without minimum bound
- ### Assets at Risk
-user funds
- ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
-
-
-
-
- ### Issue Type: AccountingInvariantViolation
-
- ### Relevant Function/Location: ERC7575VaultUpgradeable.totalAssets
-
- ### Title
-Accounting Mismatch in Reserved Asset Calculation
- ### Description/Code Snippet
-The `totalAssets()` function in `ERC7575VaultUpgradeable` calculates available assets by subtracting `reservedAssets` from the balance. `reservedAssets` includes `pendingDepositAssets`, `claimableRedeemAssets`, and `cancelDepositAssets`, but omits `claimableDepositAssets`. This allows the Investment Manager to invest assets that correspond to fulfilled but unclaimed deposits via `investAssets()`. This contradicts the documentation/invariants which state reserved assets (including claimable) should sit idle and not be invested to ensure liquidity and correct yield commitment.
- ### Static Signals
-reservedAssets calculation omits claimableDepositAssets, investAssets relies on totalAssets
- ### Assets at Risk
-claimable deposit assets
  ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
 
 
@@ -398,16 +383,86 @@ claimable deposit assets
 
  ### Issue Type: AccountingInvariantViolation
 
- ### Relevant Function/Location: ERC7575VaultUpgradeable.totalAssets
+ ### Relevant Function/Location: WERC7575ShareToken.adjustrBalance
 
  ### Title
-Total Assets Clamping Hides Insolvency and Breaks Price
+Phantom yield in rBalance causes Investment Layer insolvency
  ### Description/Code Snippet
-In `ERC7575VaultUpgradeable.totalAssets()`, the function returns `0` if `balance < reservedAssets` due to the check `balance > reservedAssets ? balance - reservedAssets : 0`. `reservedAssets` includes `claimableRedeemAssets` which are physically present in the balance. If the vault suffers a loss such that `balance` falls below `reservedAssets`, `totalAssets` reports 0. This causes the share price calculation (`Supply / TotalAssets`) in `ShareTokenUpgradeable` to revert (div by zero) or return an incorrect infinite price, bricking the protocol and potentially enabling share price manipulation exploits if the balance fluctuates near the threshold.
+The `WERC7575ShareToken` implements an `adjustrBalance` function intended to inject yield/profit into the system by increasing `_rBalances`. The Investment Layer (`ShareTokenUpgradeable`) counts these `rBalance` increases as assets (`_calculateInvestmentAssets`). However, `adjustrBalance` does not mint or transfer actual liquid tokens to `_balances`. Since `WERC7575Vault` redemption burns from `_balances` (standard ERC20 behavior), the Investment Layer cannot redeem this phantom yield. When investors try to exit, the Investment Layer will be insolvent as it holds 'value' in `rBalance` that cannot be converted to underlying assets via redemption.
  ### Static Signals
-balance tracking references different token than actual holdings, collateral swapped but totalCollateral unchanged
+accounting state not updated when underlying asset is swapped/upgraded, balance tracking references different token than actual holdings
  ### Assets at Risk
-vault funds
+rewards, treasury
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
+
+
+
+
+ ### Issue Type: AccountingInvariantViolation
+
+ ### Relevant Function/Location: WERC7575ShareToken.batchTransfers
+
+ ### Title
+TotalSupply Invariant Violation via Unsafe Recipient in Batch Transfers
+ ### Description/Code Snippet
+The `WERC7575ShareToken.batchTransfers` function directly modifies `_balances` based on input arrays without checking for `address(0)` or updating `_totalSupply` (it bypasses the `_update` override). If the validator passes `address(0)` as a creditor (mint effect) or debtor (burn effect), the `_balances[0]` changes but `_totalSupply` remains unchanged. This breaks the invariant `totalSupply == sum(balances)`. While ERC20 transfers usually block `address(0)`, this custom batch function does not validation on the addresses.
+ ### Static Signals
+_balances[account.owner] += amount, missing address(0) check, bypasses _update/totalSupply logic
+ ### Assets at Risk
+token accounting integrity
+ ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
+
+
+
+
+ ### Issue Type: PrecisionDriftAccumulation
+
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.deposit
+
+ ### Title
+Share Price Dilution via Dust Shares Accumulation
+ ### Description/Code Snippet
+In `ERC7575VaultUpgradeable.deposit` and `mint` (claim functions), when a user claims the full amount of `claimableDepositAssets`, the corresponding `claimableDepositShares` record is deleted. However, due to `Math.Rounding.Floor` in the share calculation, the calculated `shares` transferred to the user may be slightly less than the total `availableShares` held by the vault for that deposit. The difference (dust shares) remains in the vault's balance but is removed from the `claimableDepositShares` tracking. 
+
+Since `ShareTokenUpgradeable.getCirculatingSupplyAndAssets` calculates `circulatingSupply` by subtracting `totalClaimableRedeemShares` (but not deposit shares) from `totalSupply`, these dust shares are considered 'circulating'. However, the assets backing them have been fully claimed and removed from the vault. This results in circulating shares with zero backing assets, permanently diluting the share price. Repeated cycles of deposit and full claim will accumulate this drift.
+ ### Static Signals
+delete $.claimableDepositShares[controller], shares = assets.mulDiv(availableShares, availableAssets, Math.Rounding.Floor), IERC20Metadata($.shareToken).transfer(receiver, shares)
+ ### Assets at Risk
+vault share price
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: ReadOnlyReentrancy
+
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.requestDeposit
+
+ ### Title
+Read-Only Reentrancy in Share Price via Asset Callbacks
+ ### Description/Code Snippet
+The `requestDeposit` function in `ERC7575VaultUpgradeable.sol` calls `SafeTokenTransfers.safeTransferFrom`, which transfers assets *before* updating `pendingDepositAssets`. If the underlying asset supports transfer hooks (e.g., ERC-777 or ERC-677), an attacker can trigger code execution after the balance update but before the state update. During this window, `totalAssets()` (calculated as `balance - reserved`) will be artificially inflated because the balance has increased but `reserved` (pending deposits) has not yet. Since `ShareTokenUpgradeable`'s share price calculation relies on `totalAssets()` from all vaults, this inflated value allows the attacker to manipulate the global share price, potentially exploiting external protocols relying on this price or executing arbitrage.
+ ### Static Signals
+external call before view function stabilizes, view function reads balanceOf/totalSupply during external call
+ ### Assets at Risk
+share price integrity, external protocol collateral
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
+
+
+
+
+ ### Issue Type: Reentrancy
+
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.requestDeposit
+
+ ### Title
+Read-Only Reentrancy in `totalAssets` via `requestDeposit`
+ ### Description/Code Snippet
+In `ERC7575VaultUpgradeable.requestDeposit`, assets are transferred from the user using `safeTransferFrom` *before* the `pendingDepositAssets` state is updated. If the asset token allows reentrancy (e.g., ERC777 hooks), an attacker can read `totalAssets()` during the callback. `totalAssets()` calculates `balanceOf(this) - reservedAssets`. Since `balance` has increased but `reservedAssets` (which includes pending deposits) has not yet updated, `totalAssets()` momentarily inflates. This creates a manipulated share price in `convertToShares` and `convertToAssets` (which rely on `totalAssets` via the ShareToken), potentially exploiting external protocols or composable defi integrations relying on this vault as an oracle.
+ ### Static Signals
+balanceOf(this) used in state-dependent view, CEI violation, external call before state update
+ ### Assets at Risk
+external protocols
  ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 
 
@@ -418,11 +473,11 @@ vault funds
  ### Relevant Function/Location: ERC7575VaultUpgradeable.investAssets
 
  ### Title
-Missing Slippage Protection in Investment Execution
+Slippage Missing in Investment Operations
  ### Description/Code Snippet
-The `investAssets` function in `ERC7575VaultUpgradeable` deposits assets into an external `investmentVault` without a minimum share output parameter (`minShares`). If the external vault has variable exchange rates, slippage, or is manipulated, the vault may receive fewer shares than expected, leading to value loss for the protocol.
+The `investAssets` and `withdrawFromInvestment` functions in `ERC7575VaultUpgradeable.sol` interact with external investment vaults (`IERC7575`) without any user-specified or manager-specified slippage protection (minimum shares or minimum assets). If the external vault has a variable exchange rate (e.g., standard ERC-4626) and is manipulated (e.g., via sandwich attack or flash loan) or experiences high volatility, the protocol may receive significantly fewer shares or assets than expected, resulting in loss of value for the vault users.
  ### Static Signals
-external call to deposit without min output, no slippage param
+amountOutMin=0 or missing, payout calculated at execution time without minimum bound
  ### Assets at Risk
 vault assets
  ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
@@ -430,34 +485,17 @@ vault assets
 
 
 
- ### Issue Type: AccountingInvariantViolation
+ ### Issue Type: SlippageMissingOrInsufficient
 
- ### Relevant Function/Location: WERC7575ShareToken.adjustrBalance
-
- ### Title
-Yield trapped in rBalance due to accounting logic mismatch
- ### Description/Code Snippet
-The `WERC7575ShareToken.adjustrBalance` function updates `_rBalances` to reflect investment profit but does not move these profits to `_balances`. Conversely, `WERC7575Vault.redeem` and `_burn` only operate on `_balances`. As a result, when the Investment Manager calls `withdrawFromInvestment` to realize yield, the `redeem` operation is capped by the principal (`balanceOf`), leaving the profit (`rBalance`) trapped and unwithdrawable. This contradicts the system's documented yield generation flow.
- ### Static Signals
-accounting state not updated when underlying asset is swapped/upgraded, balance tracking references different token than actual holdings
- ### Assets at Risk
-investment yield
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresAdminRole
-
-
-
-
- ### Issue Type: AccountingInvariantViolation
-
- ### Relevant Function/Location: WERC7575ShareToken.adjustrBalance
+ ### Relevant Function/Location: ERC7575VaultUpgradeable.requestDeposit
 
  ### Title
-Accounting Invariant Violation in Yield Adjustment
+Missing slippage protection in async deposit/redeem requests
  ### Description/Code Snippet
-In `WERC7575ShareToken.adjustrBalance`, the function updates `_rBalances` (reserved balance) and `_balances` (liquid balance) to reflect investment yield, but it fails to update `_totalSupply`. While the provided code snippet only explicitly shows the `_rBalances` update, the logic implies profit distribution. If `_balances` are increased (as implied by documentation/logic for withdrawal) without a corresponding `_totalSupply` increase, subsequent withdrawals (which call `burn` and decrease `_totalSupply`) will eventually cause `_totalSupply` to underflow and revert, permanently locking the contract.
+The functions `requestDeposit` and `requestRedeem` in `ERC7575VaultUpgradeable.sol` initiate an asynchronous flow where assets/shares are transferred to the vault, but the exchange rate is determined later upon fulfillment by the Investment Manager. These functions lack a `minShares` or `minAssets` parameter (slippage protection). If the vault's share price changes unfavorably (e.g., due to investment losses or manipulation) between the request and the fulfillment, users are forced to accept the unfavorable rate without recourse.
  ### Static Signals
-totalSupply != sum(balances), burnFrom doesn't reduce totalSupply
+requestDeposit returns requestId but takes no minOut, requestRedeem takes no minAssets, async flow without bounded execution price
  ### Assets at Risk
-all token liquidity
- ### Minimum Privilege Required to Exploit Vulnerability: RequiresRole
+assets, shares
+ ### Minimum Privilege Required to Exploit Vulnerability: Permissionless
 

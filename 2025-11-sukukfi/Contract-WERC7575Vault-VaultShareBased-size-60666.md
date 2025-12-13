@@ -474,6 +474,76 @@ END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
 // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+/**
+ * @title SafeTokenTransfers
+ * @notice Library for safe token transfers with strict balance validation
+ *
+ * This library enforces exact balance changes to prevent fee-on-transfer exploits,
+ * accounting mismatches, and silent value leakage in vault systems.
+ *
+ * COMPATIBLE TOKENS (Standard ERC20):
+ * - USDC, DAI, USDT (without fees enabled)
+ * - Standard wrapped tokens (WETH, WBTC)
+ * - Most ERC20 tokens that transfer exact amounts
+ *
+ * INCOMPATIBLE TOKENS (will revert with TransferAmountMismatch):
+ * - Fee-on-transfer tokens (SAFEMOON, USDT with fees, etc.)
+ * - Rebase tokens (stETH, aTokens, AMPL)
+ * - Elastic supply tokens
+ * - Tokens with transfer hooks that modify balances
+ * - Any token that doesn't deliver exact transfer amounts
+ *
+ * USAGE WARNING:
+ * Before deploying a vault with a new token, verify that the token:
+ * 1. Transfers exactly the specified amount (no fees)
+ * 2. Does not rebase or change balances automatically
+ * 3. Does not have transfer hooks that modify amounts
+ *
+ * Test with small amounts first to ensure compatibility.
+ *
+ * @dev The balance validation check will reject any token where
+ * recipientBalanceAfter != recipientBalanceBefore + amount
+ */
+library SafeTokenTransfers {
+    using SafeERC20 for IERC20Metadata;
+
+    /// @dev Transfer amount mismatch (fee-on-transfer or rebase token detected)
+    error TransferAmountMismatch();
+
+    /**
+     * @dev Safely transfer tokens with balance validation to protect against fee-on-transfer tokens
+     * @param token The token contract address
+     * @param recipient The recipient address
+     * @param amount The amount to transfer
+     */
+    function safeTransfer(address token, address recipient, uint256 amount) internal {
+        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
+        IERC20Metadata(token).safeTransfer(recipient, amount);
+        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
+        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
+    }
+
+    /**
+     * @dev Safely transfer tokens from sender to recipient with balance validation
+     * @param token The token contract address
+     * @param sender The sender address
+     * @param recipient The recipient address
+     * @param amount The amount to transfer
+     */
+    function safeTransferFrom(address token, address sender, address recipient, uint256 amount) internal {
+        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
+        IERC20Metadata(token).safeTransferFrom(sender, recipient, amount);
+        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
+        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
+    }
+}
+
+// SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.3.0) (utils/Pausable.sol)
 
 pragma solidity ^0.8.20;
@@ -612,76 +682,6 @@ abstract contract Context {
 
     function _contextSuffixLength() internal view virtual returns (uint256) {
         return 0;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-
-/**
- * @title SafeTokenTransfers
- * @notice Library for safe token transfers with strict balance validation
- *
- * This library enforces exact balance changes to prevent fee-on-transfer exploits,
- * accounting mismatches, and silent value leakage in vault systems.
- *
- * COMPATIBLE TOKENS (Standard ERC20):
- * - USDC, DAI, USDT (without fees enabled)
- * - Standard wrapped tokens (WETH, WBTC)
- * - Most ERC20 tokens that transfer exact amounts
- *
- * INCOMPATIBLE TOKENS (will revert with TransferAmountMismatch):
- * - Fee-on-transfer tokens (SAFEMOON, USDT with fees, etc.)
- * - Rebase tokens (stETH, aTokens, AMPL)
- * - Elastic supply tokens
- * - Tokens with transfer hooks that modify balances
- * - Any token that doesn't deliver exact transfer amounts
- *
- * USAGE WARNING:
- * Before deploying a vault with a new token, verify that the token:
- * 1. Transfers exactly the specified amount (no fees)
- * 2. Does not rebase or change balances automatically
- * 3. Does not have transfer hooks that modify amounts
- *
- * Test with small amounts first to ensure compatibility.
- *
- * @dev The balance validation check will reject any token where
- * recipientBalanceAfter != recipientBalanceBefore + amount
- */
-library SafeTokenTransfers {
-    using SafeERC20 for IERC20Metadata;
-
-    /// @dev Transfer amount mismatch (fee-on-transfer or rebase token detected)
-    error TransferAmountMismatch();
-
-    /**
-     * @dev Safely transfer tokens with balance validation to protect against fee-on-transfer tokens
-     * @param token The token contract address
-     * @param recipient The recipient address
-     * @param amount The amount to transfer
-     */
-    function safeTransfer(address token, address recipient, uint256 amount) internal {
-        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
-        IERC20Metadata(token).safeTransfer(recipient, amount);
-        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
-        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
-    }
-
-    /**
-     * @dev Safely transfer tokens from sender to recipient with balance validation
-     * @param token The token contract address
-     * @param sender The sender address
-     * @param recipient The recipient address
-     * @param amount The amount to transfer
-     */
-    function safeTransferFrom(address token, address sender, address recipient, uint256 amount) internal {
-        uint256 balanceBefore = IERC20Metadata(token).balanceOf(recipient);
-        IERC20Metadata(token).safeTransferFrom(sender, recipient, amount);
-        uint256 balanceAfter = IERC20Metadata(token).balanceOf(recipient);
-        if (balanceAfter != balanceBefore + amount) revert TransferAmountMismatch();
     }
 }
 
@@ -2531,21 +2531,6 @@ interface IERC7575ShareExtended is IERC7575Share {
 pragma solidity ^0.8.30;
 
 /**
- * @title DecimalConstants
- * @dev Common decimal validation constants shared between ShareToken and Vault
- */
-library DecimalConstants {
-    /// @dev Share tokens always use 18 decimals
-    uint8 constant SHARE_TOKEN_DECIMALS = 18;
-
-    /// @dev Minimum allowed asset decimals
-    uint8 constant MIN_ASSET_DECIMALS = 6;
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/**
  * @title IERC7575Errors
  * @dev Common error definitions for ERC7575 vault implementations
  *
@@ -2740,6 +2725,21 @@ interface IERC7575Errors {
 
     /// @dev Cannot cancel a claimable or already claimed request
     error CannotCancelClaimable();
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/**
+ * @title DecimalConstants
+ * @dev Common decimal validation constants shared between ShareToken and Vault
+ */
+library DecimalConstants {
+    /// @dev Share tokens always use 18 decimals
+    uint8 constant SHARE_TOKEN_DECIMALS = 18;
+
+    /// @dev Minimum allowed asset decimals
+    uint8 constant MIN_ASSET_DECIMALS = 6;
 }
 
 
@@ -3543,229 +3543,6 @@ contract ShareTokenUpgradeable is Initializable, ERC20Upgradeable, Ownable2StepU
      */
     function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
         return interfaceId == type(IERC7575ShareExtended).interfaceId || interfaceId == type(IERC7540Operator).interfaceId || interfaceId == type(IERC165).interfaceId;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/**
- * @title IERC7887
- * @dev Interface for ERC7887 "Asynchronous Tokenized Vault Cancelation Extension"
- *      Extends ERC7540 with asynchronous cancelation capabilities
- *      https://eips.ethereum.org/EIPS/eip-7887
- */
-interface IERC7887DepositCancelation {
-    /**
-     * @dev Emitted when a deposit cancelation request is submitted
-     * controller - address that controls the cancelation request
-     * owner - original owner of the assets
-     * requestId - unique identifier for the cancelation request
-     * sender - address that called cancelDepositRequest
-     * assets - amount of assets being canceled
-     */
-    event CancelDepositRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 assets);
-
-    /**
-     * @dev Emitted when a deposit cancelation is claimed
-     * controller - address that controlled the cancelation request
-     * receiver - address that received the assets
-     * requestId - unique identifier for the cancelation request
-     * assets - amount of assets claimed
-     */
-    event CancelDepositRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 assets);
-
-    /**
-     * @dev Submits a request to cancel a pending deposit request
-     * Transitions the deposit request assets from pending state into pending cancelation state
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST block new deposit requests for this controller while cancelation is pending
-     * - MUST emit `CancelDepositRequest` event
-     * - Can only cancel deposits in Pending state, not Claimable state
-     *
-     * @param requestId The requestId from the original deposit request (identifies which deposit to cancel)
-     * @param controller Address that made the original deposit request
-     */
-    function cancelDepositRequest(uint256 requestId, address controller) external;
-
-    /**
-     * @dev Whether the given requestId and controller have a pending deposit cancelation request
-     *
-     * - Returns true if a deposit cancelation is in Pending state for this controller
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original deposit request
-     * @return isPending Whether a pending deposit cancelation exists for this controller
-     */
-    function pendingCancelDepositRequest(uint256 requestId, address controller) external view returns (bool isPending);
-
-    /**
-     * @dev Returns the amount of assets in claimable cancelation state
-     *
-     * - MUST NOT include any assets in Pending state
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original deposit request
-     * @return assets Amount of assets ready to claim
-     */
-    function claimableCancelDepositRequest(uint256 requestId, address controller) external view returns (uint256 assets);
-
-    /**
-     * @dev Claims assets from a claimable deposit cancelation request
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST transition request from Claimable to Claimed state
-     * - MUST transfer assets to `receiver`
-     * - MUST emit `CancelDepositRequestClaimed` event
-     * - Cannot be called unless request is in Claimable state
-     *
-     * @param requestId Cancelation request identifier
-     * @param receiver Address to receive the claimed assets
-     * @param controller Address that made the original deposit request
-     */
-    function claimCancelDepositRequest(uint256 requestId, address receiver, address controller) external;
-}
-
-interface IERC7887RedeemCancelation {
-    /**
-     * @dev Emitted when a redeem cancelation request is submitted
-     * controller - address that controls the cancelation request
-     * owner - original owner of the shares
-     * requestId - unique identifier for the cancelation request
-     * sender - address that called cancelRedeemRequest
-     * shares - amount of shares being canceled
-     */
-    event CancelRedeemRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 shares);
-
-    /**
-     * @dev Emitted when a redeem cancelation is claimed
-     * controller - address that controlled the cancelation request
-     * receiver - address that received the shares
-     * requestId - unique identifier for the cancelation request
-     * shares - amount of shares claimed
-     */
-    event CancelRedeemRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 shares);
-
-    /**
-     * @dev Submits a request to cancel a pending redeem request
-     * Transitions the redeem request shares from pending state into pending cancelation state
-     *
-     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
-     * - MUST block new redeem requests for this controller while cancelation is pending
-     * - MUST emit `CancelRedeemRequest` event
-     * - Can only cancel redeems in Pending state, not Claimable state
-     *
-     * @param requestId The requestId from the original redeem request (identifies which redeem to cancel)
-     * @param controller Address that made the original redeem request
-     */
-    function cancelRedeemRequest(uint256 requestId, address controller) external;
-
-    /**
-     * @dev Whether the given requestId and controller have a pending redeem cancelation request
-     *
-     * - Returns true if a redeem cancelation is in Pending state for this controller
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original redeem request
-     * @return isPending Whether a pending redeem cancelation exists for this controller
-     */
-    function pendingCancelRedeemRequest(uint256 requestId, address controller) external view returns (bool isPending);
-
-    /**
-     * @dev Returns the amount of shares in claimable cancelation state
-     *
-     * - MUST NOT include any shares in Pending state
-     * - MUST NOT show any variations depending on the caller
-     * - MUST NOT revert unless due to integer overflow
-     *
-     * @param requestId Cancelation request identifier
-     * @param controller Address that made the original redeem request
-     * @return shares Amount of shares ready to claim
-     */
-    function claimableCancelRedeemRequest(uint256 requestId, address controller) external view returns (uint256 shares);
-
-    /**
-     * @dev Claims shares from a claimable redeem cancelation request
-     *
-     * - MUST revert unless `msg.sender` is either equal to `owner` or an operator approved by `owner`
-     * - MUST transition request from Claimable to Claimed state
-     * - MUST transfer shares to `receiver`
-     * - MUST emit `CancelRedeemRequestClaimed` event
-     * - Cannot be called unless request is in Claimable state
-     *
-     * @param requestId Cancelation request identifier
-     * @param receiver Address to receive the claimed shares
-     * @param owner Address that made the original redeem request
-     */
-    function claimCancelRedeemRequest(uint256 requestId, address receiver, address owner) external;
-}
-
-/**
- * @title IERC7887
- * @dev Full ERC7887 interface combining deposit and redeem cancelation
- */
-interface IERC7887 is IERC7887DepositCancelation, IERC7887RedeemCancelation {}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
-
-/**
- * @title ERC20Faucet6
- * @dev Test token faucet with 6 decimals (USDC/USDT-like) and permit support.
- */
-contract ERC20Faucet6 is ERC20, ERC20Permit {
-    uint8 private constant DECIMALS = 6;
-    uint256 public constant FAUCET_AMOUNT = 10_000 * 10 ** DECIMALS;
-    uint256 public constant MAX_FAUCET_AMOUNT = 100_000 * 10 ** DECIMALS;
-    uint256 public constant COOLDOWN_TIME = 1 hours;
-
-    mapping(address => uint256) public lastRequestTime;
-
-    /**
-     * @param name_ Token name (e.g., "USD Coin")
-     * @param symbol_ Token symbol (e.g., "USDC")
-     * @param initialSupply Initial supply (6-decimal units) minted to deployer
-     */
-    constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
-        _mint(msg.sender, initialSupply);
-    }
-
-    function decimals() public pure override returns (uint8) {
-        return DECIMALS;
-    }
-
-    // Faucet helpers
-    function faucet() external {
-        _faucetFor(msg.sender, FAUCET_AMOUNT);
-    }
-
-    function faucetAmount(uint256 amount) external {
-        _faucetFor(msg.sender, amount);
-    }
-
-    function faucetFor(address receiver) external {
-        _faucetFor(receiver, FAUCET_AMOUNT);
-    }
-
-    function faucetAmountFor(address receiver, uint256 amount) external {
-        _faucetFor(receiver, amount);
-    }
-
-    function _faucetFor(address receiver, uint256 amount) internal {
-        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "COOLDOWN");
-        require(amount <= MAX_FAUCET_AMOUNT, "MAX_EXCEEDED");
-        _mint(receiver, amount);
-        lastRequestTime[receiver] = block.timestamp;
     }
 }
 
@@ -6087,6 +5864,229 @@ contract ERC7575VaultUpgradeable is Initializable, ReentrancyGuard, Ownable2Step
     }
 
     // ========== Internal Helper Functions for Safe Transfers ==========
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+/**
+ * @title IERC7887
+ * @dev Interface for ERC7887 "Asynchronous Tokenized Vault Cancelation Extension"
+ *      Extends ERC7540 with asynchronous cancelation capabilities
+ *      https://eips.ethereum.org/EIPS/eip-7887
+ */
+interface IERC7887DepositCancelation {
+    /**
+     * @dev Emitted when a deposit cancelation request is submitted
+     * controller - address that controls the cancelation request
+     * owner - original owner of the assets
+     * requestId - unique identifier for the cancelation request
+     * sender - address that called cancelDepositRequest
+     * assets - amount of assets being canceled
+     */
+    event CancelDepositRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 assets);
+
+    /**
+     * @dev Emitted when a deposit cancelation is claimed
+     * controller - address that controlled the cancelation request
+     * receiver - address that received the assets
+     * requestId - unique identifier for the cancelation request
+     * assets - amount of assets claimed
+     */
+    event CancelDepositRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 assets);
+
+    /**
+     * @dev Submits a request to cancel a pending deposit request
+     * Transitions the deposit request assets from pending state into pending cancelation state
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST block new deposit requests for this controller while cancelation is pending
+     * - MUST emit `CancelDepositRequest` event
+     * - Can only cancel deposits in Pending state, not Claimable state
+     *
+     * @param requestId The requestId from the original deposit request (identifies which deposit to cancel)
+     * @param controller Address that made the original deposit request
+     */
+    function cancelDepositRequest(uint256 requestId, address controller) external;
+
+    /**
+     * @dev Whether the given requestId and controller have a pending deposit cancelation request
+     *
+     * - Returns true if a deposit cancelation is in Pending state for this controller
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original deposit request
+     * @return isPending Whether a pending deposit cancelation exists for this controller
+     */
+    function pendingCancelDepositRequest(uint256 requestId, address controller) external view returns (bool isPending);
+
+    /**
+     * @dev Returns the amount of assets in claimable cancelation state
+     *
+     * - MUST NOT include any assets in Pending state
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original deposit request
+     * @return assets Amount of assets ready to claim
+     */
+    function claimableCancelDepositRequest(uint256 requestId, address controller) external view returns (uint256 assets);
+
+    /**
+     * @dev Claims assets from a claimable deposit cancelation request
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST transition request from Claimable to Claimed state
+     * - MUST transfer assets to `receiver`
+     * - MUST emit `CancelDepositRequestClaimed` event
+     * - Cannot be called unless request is in Claimable state
+     *
+     * @param requestId Cancelation request identifier
+     * @param receiver Address to receive the claimed assets
+     * @param controller Address that made the original deposit request
+     */
+    function claimCancelDepositRequest(uint256 requestId, address receiver, address controller) external;
+}
+
+interface IERC7887RedeemCancelation {
+    /**
+     * @dev Emitted when a redeem cancelation request is submitted
+     * controller - address that controls the cancelation request
+     * owner - original owner of the shares
+     * requestId - unique identifier for the cancelation request
+     * sender - address that called cancelRedeemRequest
+     * shares - amount of shares being canceled
+     */
+    event CancelRedeemRequest(address indexed controller, address indexed owner, uint256 indexed requestId, address sender, uint256 shares);
+
+    /**
+     * @dev Emitted when a redeem cancelation is claimed
+     * controller - address that controlled the cancelation request
+     * receiver - address that received the shares
+     * requestId - unique identifier for the cancelation request
+     * shares - amount of shares claimed
+     */
+    event CancelRedeemRequestClaimed(address indexed controller, address indexed receiver, uint256 indexed requestId, uint256 shares);
+
+    /**
+     * @dev Submits a request to cancel a pending redeem request
+     * Transitions the redeem request shares from pending state into pending cancelation state
+     *
+     * - MUST revert unless `msg.sender` is either equal to `controller` or an operator approved by `controller`
+     * - MUST block new redeem requests for this controller while cancelation is pending
+     * - MUST emit `CancelRedeemRequest` event
+     * - Can only cancel redeems in Pending state, not Claimable state
+     *
+     * @param requestId The requestId from the original redeem request (identifies which redeem to cancel)
+     * @param controller Address that made the original redeem request
+     */
+    function cancelRedeemRequest(uint256 requestId, address controller) external;
+
+    /**
+     * @dev Whether the given requestId and controller have a pending redeem cancelation request
+     *
+     * - Returns true if a redeem cancelation is in Pending state for this controller
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original redeem request
+     * @return isPending Whether a pending redeem cancelation exists for this controller
+     */
+    function pendingCancelRedeemRequest(uint256 requestId, address controller) external view returns (bool isPending);
+
+    /**
+     * @dev Returns the amount of shares in claimable cancelation state
+     *
+     * - MUST NOT include any shares in Pending state
+     * - MUST NOT show any variations depending on the caller
+     * - MUST NOT revert unless due to integer overflow
+     *
+     * @param requestId Cancelation request identifier
+     * @param controller Address that made the original redeem request
+     * @return shares Amount of shares ready to claim
+     */
+    function claimableCancelRedeemRequest(uint256 requestId, address controller) external view returns (uint256 shares);
+
+    /**
+     * @dev Claims shares from a claimable redeem cancelation request
+     *
+     * - MUST revert unless `msg.sender` is either equal to `owner` or an operator approved by `owner`
+     * - MUST transition request from Claimable to Claimed state
+     * - MUST transfer shares to `receiver`
+     * - MUST emit `CancelRedeemRequestClaimed` event
+     * - Cannot be called unless request is in Claimable state
+     *
+     * @param requestId Cancelation request identifier
+     * @param receiver Address to receive the claimed shares
+     * @param owner Address that made the original redeem request
+     */
+    function claimCancelRedeemRequest(uint256 requestId, address receiver, address owner) external;
+}
+
+/**
+ * @title IERC7887
+ * @dev Full ERC7887 interface combining deposit and redeem cancelation
+ */
+interface IERC7887 is IERC7887DepositCancelation, IERC7887RedeemCancelation {}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+
+/**
+ * @title ERC20Faucet6
+ * @dev Test token faucet with 6 decimals (USDC/USDT-like) and permit support.
+ */
+contract ERC20Faucet6 is ERC20, ERC20Permit {
+    uint8 private constant DECIMALS = 6;
+    uint256 public constant FAUCET_AMOUNT = 10_000 * 10 ** DECIMALS;
+    uint256 public constant MAX_FAUCET_AMOUNT = 100_000 * 10 ** DECIMALS;
+    uint256 public constant COOLDOWN_TIME = 1 hours;
+
+    mapping(address => uint256) public lastRequestTime;
+
+    /**
+     * @param name_ Token name (e.g., "USD Coin")
+     * @param symbol_ Token symbol (e.g., "USDC")
+     * @param initialSupply Initial supply (6-decimal units) minted to deployer
+     */
+    constructor(string memory name_, string memory symbol_, uint256 initialSupply) ERC20(name_, symbol_) ERC20Permit(name_) {
+        _mint(msg.sender, initialSupply);
+    }
+
+    function decimals() public pure override returns (uint8) {
+        return DECIMALS;
+    }
+
+    // Faucet helpers
+    function faucet() external {
+        _faucetFor(msg.sender, FAUCET_AMOUNT);
+    }
+
+    function faucetAmount(uint256 amount) external {
+        _faucetFor(msg.sender, amount);
+    }
+
+    function faucetFor(address receiver) external {
+        _faucetFor(receiver, FAUCET_AMOUNT);
+    }
+
+    function faucetAmountFor(address receiver, uint256 amount) external {
+        _faucetFor(receiver, amount);
+    }
+
+    function _faucetFor(address receiver, uint256 amount) internal {
+        require(block.timestamp > lastRequestTime[receiver] + COOLDOWN_TIME, "COOLDOWN");
+        require(amount <= MAX_FAUCET_AMOUNT, "MAX_EXCEEDED");
+        _mint(receiver, amount);
+        lastRequestTime[receiver] = block.timestamp;
+    }
 }
 
 // SPDX-License-Identifier: MIT
