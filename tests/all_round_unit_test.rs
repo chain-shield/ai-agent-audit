@@ -1,15 +1,9 @@
-use ai_agent_audit::llm_review::{
-    findings::{
-        finding_enums::{Severity, VulnerabilityType},
-        findings::PrivilegeLevel,
+use ai_agent_audit::llm_review::phases::{
+    rounds::{
+        all_rounds::{AllRoundLegitAnalysis, VerifyAllRound},
+        round_1::{Impact, Likelihood},
     },
-    phases::{
-        rounds::{
-            all_rounds::{AllRoundLegitAnalysis, VerifyAllRound},
-            round_1::{Impact, Likelihood},
-        },
-        verify_rounds::{FindingAnalysis, FindingStatus},
-    },
+    verify_rounds::{FindingAnalysis, FindingStatus},
 };
 
 #[test]

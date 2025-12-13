@@ -8,7 +8,6 @@ use ai_agent_audit::{
     config::AuditType,
     error::Result,
     llm_review::{
-        agent::agent_factory::{AgentConfig, AgentFactory, LlmProvider},
         findings::{
             finding_enums::{Severity, VulnerabilityType},
             findings::{Finding, Findings, PrivilegeLevel},
@@ -17,8 +16,7 @@ use ai_agent_audit::{
     },
     prepare_code::git_clone::{PocConfig, RepoPaths},
 };
-use rig::providers::anthropic::CLAUDE_4_SONNET;
-use std::{env, path::PathBuf, sync::Arc};
+use std::{env, path::PathBuf};
 
 /// Returns true if Anthropic API key is present in the environment
 fn anthropic_key_present() -> bool {
@@ -92,19 +90,7 @@ async fn test_validation_round_puppy_raffle() -> Result<()> {
     let code_with_context = create_puppy_raffle_code_context();
     let audit_scope = ""; // No specific scope for this test
 
-    // Create agent
-    let agent_config = AgentConfig::new(Some(repo.clone()))
-        .with_model(CLAUDE_4_SONNET)
-        .with_temperature(0.0)
-        .with_max_tokens(16_000);
-
-    let agent = Arc::new(AgentFactory::create_agent(
-        LlmProvider::Anthropic,
-        &agent_config,
-    )?);
-    println!("✅ Agent initialized");
-
-    // Run validation round
+    // Run validation round (agent is created internally)
     println!("\n🔍 Starting Validation Round...");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
@@ -112,7 +98,7 @@ async fn test_validation_round_puppy_raffle() -> Result<()> {
         findings.clone(),
         &code_with_context,
         audit_scope,
-        &agent,
+        &repo,
     )
     .await?;
 

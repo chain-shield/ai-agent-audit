@@ -280,7 +280,6 @@ Return ONLY the JSON, no other text."#,
         println!("...\n");
 
         // Now show what clean_json_string does to it
-        use ai_agent_audit::llm_review::findings::findings::FromLLMJson;
         println!("🧹 Testing clean_json_string on extracted JSON...");
     }
 
