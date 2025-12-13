@@ -1,5 +1,6 @@
 use crate::llm_review::agent::agent_factory::{AgentConfig, AgentFactory};
 use crate::llm_review::pattern_phases::pattern_to_findings::generate_content_plus_context_block;
+use crate::llm_review::phases::rounds::all_rounds::{AllRoundLegitAnalysis, VerifyAllRound};
 use crate::llm_review::phases::rounds::round_1::{RoundOneLegitAnalysis, VerifyRoundOne};
 use crate::llm_review::phases::rounds::round_2::{RoundTwoLegitAnalysis, VerifyRoundTwo};
 use crate::llm_review::phases::rounds::round_3::{RoundThreeLegitAnalysis, VerifyRoundThree};
@@ -31,6 +32,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use strum_macros::EnumIter;
+
+const RUN_SINGLE_ROUND: bool = true;
 
 #[derive(
     Default,
@@ -101,6 +104,13 @@ impl AnalysisRound for VerifyRoundThree {
     }
 }
 
+impl AnalysisRound for VerifyAllRound {
+    type Spec = AllRoundLegitAnalysis;
+    fn findings(&self) -> &[Self::Spec] {
+        &self.findings
+    }
+}
+
 /// Executes the verification phase
 ///
 /// Deduplicates findings and verifies each one using AI analysis to ensure
@@ -127,57 +137,88 @@ pub async fn execute_rounds(
 
     let audit_scope = generate_audit_scope(repo).await?;
 
-    //************************
-    // ROUND 1 of VERIFICATON
-    //************************
-    let r1_findings = run_round_1(deduped_findings, &code_and_context, &audit_scope, agent).await?;
-    info!(
-        "{} finding tagged as low or invalid",
-        tagged_findings(&r1_findings)
-    );
+    let labeled_findings = if RUN_SINGLE_ROUND {
+        //************************
+        // ALL ROUND VERIFICATON
+        //************************
 
-    //************************
-    // ROUND 2 of VERIFICATON
-    //************************
-    let r2_findings = run_round_2(r1_findings, &code_and_context, &audit_scope, agent).await?;
-    info!(
-        "{} finding tagged as low or invalid",
-        tagged_findings(&r2_findings)
-    );
+        let all_round_findings =
+            run_all_round(deduped_findings, &code_and_context, &audit_scope, agent).await?;
+        info!(
+            "{} finding tagged as low or invalid",
+            tagged_findings(&all_round_findings)
+        );
 
-    //************************
-    // ROUND 3 of VERIFICATON
-    //************************
-    let r3_findings = run_round_3(r2_findings, &code_and_context, &audit_scope, agent).await?;
-    info!(
-        "{} finding tagged as low or invalid",
-        tagged_findings(&r3_findings)
-    );
-
-    let r3_findings_labeled: Vec<Finding> = r3_findings
-        .findings
-        .into_iter()
-        .map(|f| {
-            if f.status.is_none() {
-                Finding {
-                    status: Some(vec![FindingStatus::Valid]),
-                    ..f
+        // Label findings with status=None as Valid (they passed all checks)
+        let all_round_findings_labeled: Vec<Finding> = all_round_findings
+            .findings
+            .into_iter()
+            .map(|f| {
+                if f.status.is_none() {
+                    Finding {
+                        status: Some(vec![FindingStatus::Valid]),
+                        ..f
+                    }
+                } else {
+                    f
                 }
-            } else {
-                f
-            }
-        })
-        .collect();
+            })
+            .collect();
 
-    let verified_findings = run_round_validation(
+        Findings {
+            findings: all_round_findings_labeled,
+        }
+    } else {
+        //************************
+        // ROUND 1 of VERIFICATON
+        //************************
+        let r1_findings =
+            run_round_1(deduped_findings, &code_and_context, &audit_scope, agent).await?;
+        info!(
+            "{} finding tagged as low or invalid",
+            tagged_findings(&r1_findings)
+        );
+
+        //************************
+        // ROUND 2 of VERIFICATON
+        //************************
+        let r2_findings = run_round_2(r1_findings, &code_and_context, &audit_scope, agent).await?;
+        info!(
+            "{} finding tagged as low or invalid",
+            tagged_findings(&r2_findings)
+        );
+
+        //************************
+        // ROUND 3 of VERIFICATON
+        //************************
+        let r3_findings = run_round_3(r2_findings, &code_and_context, &audit_scope, agent).await?;
+        info!(
+            "{} finding tagged as low or invalid",
+            tagged_findings(&r3_findings)
+        );
+
+        let r3_findings_labeled: Vec<Finding> = r3_findings
+            .findings
+            .into_iter()
+            .map(|f| {
+                if f.status.is_none() {
+                    Finding {
+                        status: Some(vec![FindingStatus::Valid]),
+                        ..f
+                    }
+                } else {
+                    f
+                }
+            })
+            .collect();
+
         Findings {
             findings: r3_findings_labeled,
-        },
-        &code_and_context,
-        &audit_scope,
-        repo,
-    )
-    .await?;
+        }
+    };
+
+    let verified_findings =
+        run_round_validation(labeled_findings, &code_and_context, &audit_scope, repo).await?;
 
     info!(
         "✅ Phase 4 complete: {} Validated Findings!",
@@ -227,6 +268,15 @@ pub async fn run_round_3(
     agent: &AIAgent,
 ) -> Result<Findings> {
     run_round::<VerifyRoundThree>(findings, code_and_context, audit_scope, agent).await
+}
+
+pub async fn run_all_round(
+    findings: Findings,
+    code_and_context: &str,
+    audit_scope: &str,
+    agent: &AIAgent,
+) -> Result<Findings> {
+    run_round::<VerifyAllRound>(findings, code_and_context, audit_scope, agent).await
 }
 
 pub async fn run_round<T>(
@@ -435,10 +485,16 @@ pub async fn run_round_validation(
                 // If it passed fewer than 2 rounds, it needs human review (NeedsMoreInfo).
                 // Note: Some(3) won't appear here because those findings are already marked Valid
                 // and filtered out before validation.
-                if f.verification_rounds_passed == Some(2) {
+                if RUN_SINGLE_ROUND {
                     Some(vec![FindingStatus::Valid])
                 } else {
-                    Some(vec![FindingStatus::NeedsMoreInfo])
+                    if f.verification_rounds_passed == Some(2)
+                        || f.verification_rounds_passed == Some(3)
+                    {
+                        Some(vec![FindingStatus::Valid])
+                    } else {
+                        Some(vec![FindingStatus::NeedsMoreInfo])
+                    }
                 }
             } else {
                 updated_finding_status
