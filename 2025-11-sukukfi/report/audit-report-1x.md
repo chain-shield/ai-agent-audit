@@ -13,19 +13,15 @@ Finding Status: Valid
 Privilege: Permissionless
 
 
-
-Finding Status: Unknown
-
-
 [M-2]. Slippage Missing in Investment Operations
 **Derived From** : SlippageMissingOrInsufficient
-Finding Status: 
+Finding Status: Valid
 Privilege: RequiresRole
 
 
 [M-3]. Rounding direction in withdraw allows free asset withdrawals
 **Derived From** : PricePrecision
-Finding Status: 
+Finding Status: Valid
 Privilege: RequiresRole
 
 
