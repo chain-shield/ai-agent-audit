@@ -111,54 +111,59 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
         _ => CODE4RENA_SEVERITY_RUBRIC,
     };
 
+    let json = get_pre_json_requirement_for_multipattern(enum_issues, issue_type, repo);
+
     format!(
-        r#"Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
+        r#"
 
-## **Persist until all patterns are considered**
-   - Do **not** stop at the first interesting exploit.
-   - Your goal is **maximum coverage** – find every valid finding.
-   - Systematically go through **every** candidate block in "{title_all_caps} TO ANALYZE" and decide:
-     - "Real in-scope vulnerability keep as a finding"
+        {json}
 
-## Rules
+        Your job: analyze the main target contract **through the lens of the provided {pattern_type}** and enumerate the **top exploits/attack vectors** a hacker may deploy.
 
-- Only report exploits **directly tied** to the provided {pattern_type} (patterns or invariants), **not** unrelated issues.
-- Only analyze code **actually present** in the codebase. 
-- Prefer exploits accessible to **unprivileged EOAs**; if an exploit requires a trusted role, make that clear via the `"privilege"` field (as specified in the JSON instructions).
-- Focus on **present-state** bugs in the current code. Ignore one-time deployment/upgrade windows unless the same condition can be recreated or abused permissionlessly later.
-- A valid finding must be:
-  - In-scope,
-  - Backed by a credible exploit path,
-  - And clearly severity according to the rubric.
-- If nothing meets these criteria, return `{{"findings":[]}}`.
+        ## **Persist until all patterns are considered**
+        - Do **not** stop at the first interesting exploit.
+        - Your goal is **maximum coverage** – find every valid finding.
+        - Systematically go through **every** candidate block in "{title_all_caps} TO ANALYZE" and decide:
+            - "Real in-scope vulnerability keep as a finding"
 
-## Severity rubric
+        ## Rules
 
-{rubric}
+        - Only report exploits **directly tied** to the provided {pattern_type} (patterns or invariants), **not** unrelated issues.
+        - Only analyze code **actually present** in the codebase. 
+        - Prefer exploits accessible to **unprivileged EOAs**; if an exploit requires a trusted role, make that clear via the `"privilege"` field (as specified in the JSON instructions).
+        - Focus on **present-state** bugs in the current code. Ignore one-time deployment/upgrade windows unless the same condition can be recreated or abused permissionlessly later.
+        - A valid finding must be:
+        - In-scope,
+        - Backed by a credible exploit path,
+        - And clearly severity according to the rubric.
+        - If nothing meets these criteria, return `{{"findings":[]}}`.
+
+        ## Severity rubric
+
+        {rubric}
 
 
-## Exploit guidelines
+        ## Exploit guidelines
 
-- Severity priority: **Theft > DoS > accounting mismatch**.
-- Bigger **blast radius** and simpler execution are more valuable.
-- Assert conditions using `assertGt` / `assertEq`, not just logs.
-- For `"proof_of_code"`, the PoC should correspond to a **compilable Foundry test** (for example using `forge-std`, `vm.prank(attacker)`, etc.), as required by the JSON schema that follows.
+        - Severity priority: **Theft > DoS > accounting mismatch**.
+        - Bigger **blast radius** and simpler execution are more valuable.
+        - Assert conditions using `assertGt` / `assertEq`, not just logs.
+        - For `"proof_of_code"`, the PoC should correspond to a **compilable Foundry test** (for example using `forge-std`, `vm.prank(attacker)`, etc.), as required by the JSON schema that follows.
 
----
+        ---
 
-## {pattern_type} Overview
+        ## {pattern_type} Overview
 
-### Common Exploits
+        ### Common Exploits
 
-{exploit_bullets}
+        {exploit_bullets}
 
----
+        ---
 
-## {title_all_caps} TO ANALYZE
+        ## {title_all_caps} TO ANALYZE
 
-{full_spec}
+        {full_spec}
 
----
         "#,
         pattern_type = issue_type,
         rubric = severity_rubic,
@@ -168,7 +173,7 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
     )
 }
 
-pub fn get_findings_json_requirement<T>(
+pub fn get_post_findings_json_requirement<T>(
     pattern: &T,
     pattern_description: &str,
     repo: &RepoPaths,
@@ -233,11 +238,75 @@ where
     )
 }
 
-pub fn get_json_requirement_for_multipattern<T>(
+pub fn get_post_json_requirement_for_multipattern<T>(
     patterns: &[T],
     pattern_type: &str,
     repo: &RepoPaths,
 ) -> String
+where
+    T: std::fmt::Display + EnumData,
+{
+    let json = get_json_requirement(patterns, pattern_type, repo);
+    let vulnerabities: Vec<VulnerabilityType> = patterns
+        .iter()
+        .flat_map(|p| p.to_types())
+        .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let issue_list = generate_enum_list(&vulnerabities);
+
+    format!(
+        r#"
+
+        ## OUTPUT REQUIREMENTS 
+
+        *Please respond with ONLY valid JSON in the following exact format:*
+
+        {json}
+
+        - Keep "derived_from" exactly as shown
+        - *privilege* -> least privilege to trigger vulnerability
+        - for "exploit_type" please select from one of the listed types: {issue_list}
+        - If no vulnerabilities are found, return: 
+
+        {{
+        "findings": []
+        }}
+
+        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
+        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
+        they match up correctly.
+       "#
+    )
+}
+
+pub fn get_pre_json_requirement_for_multipattern<T>(
+    patterns: &[T],
+    pattern_type: &str,
+    repo: &RepoPaths,
+) -> String
+where
+    T: std::fmt::Display + EnumData,
+{
+    let json = get_json_requirement(patterns, pattern_type, repo);
+
+    format!(
+        r#"
+
+        Before instructions are provided on the task please note required output format:
+
+        ## JSON Output Requirement
+
+        **Output must be strictly valid JSON** with this structure (no extra text or code fencing):
+
+        {json}
+
+       "#
+    )
+}
+
+pub fn get_json_requirement<T>(patterns: &[T], pattern_type: &str, repo: &RepoPaths) -> String
 where
     T: std::fmt::Display + EnumData,
 {
@@ -263,11 +332,6 @@ where
 
     format!(
         r#"
-
-        ## OUTPUT REQUIREMENTS 
-
-        *Please respond with ONLY valid JSON in the following exact format:*
-
         {{
         "findings": [
             {{
@@ -286,19 +350,6 @@ where
             }}
         ]
         }}
-
-        - Keep "derived_from" exactly as shown
-        - *privilege* -> least privilege to trigger vulnerability
-        - for "exploit_type" please select from one of the listed types: {issue_list}
-        - If no vulnerabilities are found, return: 
-
-        {{
-        "findings": []
-        }}
-
-        **Note: **NO extra text** and **NO code fencing** in response, just plain JSON. 
-        **Please double-check opening and closing brackets: `}}` and `]`, make sure 
-        they match up correctly.
        "#
     )
 }

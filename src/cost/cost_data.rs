@@ -78,6 +78,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "gpt-5" => 1.25,
             "gpt-5-mini" => 0.25,
             "gpt-5.1" => 1.25,
+            "gpt-5.2" => 1.75,
             "o3" => 2.00,
 
             // Anthropic models
@@ -111,6 +112,7 @@ pub fn get_cost_per_million_tokens_by_model(model: &str, token_type: TokenType) 
             "gpt-5" => 25.00, // set to 2.5X actual value to account for reasoning tokens
             "gpt-5-mini" => 2.00,
             "gpt-5.1" => 25.00,
+            "gpt-5.2" => 30.00,
             "o3" => 8.00,
 
             // Anthropic models

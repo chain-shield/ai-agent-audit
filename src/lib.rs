@@ -125,8 +125,17 @@ pub mod llm_review {
         pub mod quality_check;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_findings;
+        pub mod verify_rounds;
         // Phase 7: Create professaionl competition-grade report
         pub mod create_report;
+        pub mod rounds {
+            pub mod all_rounds;
+            pub mod round_1;
+            pub mod round_2;
+            pub mod round_3;
+            pub mod utils;
+            pub mod validate_round;
+        }
     }
     pub mod pattern_phases {
         pub mod generate_actors;
@@ -184,11 +193,13 @@ pub mod utils {
     pub mod contract_name_check;
     /// Docker volume cleanup utilities
     pub mod delete_docker_volumes;
+    pub mod deserialize_bool;
     pub mod display_file;
     pub mod env_security;
     /// LLM extraction with retry logic
     pub mod extract_retry;
     pub mod file_security;
+    pub mod finding_status_string;
     /// Function labeling utilities
     pub mod fn_labels;
     /// Function name extraction

@@ -8,7 +8,7 @@ use crate::{
         agent::agent_enums::AIAgent,
         analysis::{context_state::get_metadata_context, semaphore::VERIFY_SEM},
         findings::findings::{Finding, Findings},
-        phases::{add_poc_findings::PocStatus, verify_findings::FindingStatus},
+        phases::{add_poc_findings::PocStatus, verify_rounds::FindingStatus},
         prompt_support::create_report_prompt::generate_create_report_prompt,
     },
     prepare_code::git_clone::RepoPaths,
@@ -72,7 +72,10 @@ pub async fn execute(
         let arc_agent = Arc::clone(&agent);
         let sem = Arc::clone(&VERIFY_SEM);
 
-        if arc_findings.findings[i].status == Some(FindingStatus::Valid)
+        if arc_findings.findings[i]
+            .status
+            .as_ref()
+            .is_some_and(|s| s.contains(&FindingStatus::Valid))
             && arc_findings.findings[i].poc_test_status == Some(PocStatus::AllTestPass)
         {
             handles.push(tokio::spawn(async move {
