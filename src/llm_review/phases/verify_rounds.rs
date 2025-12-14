@@ -220,10 +220,22 @@ pub async fn execute_rounds(
     let verified_findings =
         run_round_validation(labeled_findings, &code_and_context, &audit_scope, repo).await?;
 
+    let verify_findings_vec: Vec<Finding> = verified_findings
+        .findings
+        .into_iter()
+        .filter(|f| {
+            f.status.as_ref().is_some_and(|s| {
+                s.len() == 1
+                    || (s.len() <= 2 // edge case in case is Critical Impact and rare  => Medium
+                        && s.contains(&FindingStatus::LowSeverityDueToRareLikelihood)
+                        && !s.contains(&FindingStatus::LowSeverityDueToLowImpact))
+            })
+        })
+        .collect();
+
     info!(
         "✅ Phase 4 complete: {} Validated Findings!",
-        verified_findings
-            .findings
+        verify_findings_vec
             .iter()
             .filter(|f| f
                 .status
@@ -232,7 +244,9 @@ pub async fn execute_rounds(
             .count()
     );
 
-    Ok(verified_findings)
+    Ok(Findings {
+        findings: verify_findings_vec,
+    })
 }
 
 pub fn tagged_findings(findings: &Findings) -> usize {
