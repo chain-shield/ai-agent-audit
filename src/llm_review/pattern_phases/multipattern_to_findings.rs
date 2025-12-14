@@ -90,12 +90,11 @@ where
 
                 let json_requirement_prompt =
                     patterns_clone.multi_issue_findings_json_required_prompt(&repo_clone);
+
                 let full_prompt = format!(
                     "{}{}{}",
                     instruction_prompt, codeblock_plus_context, json_requirement_prompt
                 );
-
-                // info!("json_requirement_prompt: {}", json_requirement_prompt);
 
                 let findings: Findings = arc_agent.extract_with_retry(&full_prompt).await?;
 

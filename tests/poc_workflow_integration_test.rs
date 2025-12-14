@@ -114,6 +114,7 @@ fn create_puppy_raffle_findings() -> Findings {
     let findings = vec![
         // H-2: Fee downcast overflow
         Finding {
+            id: Some("H-2".to_string()),
             derived_from: Some("uint64 downcast overflows fees; breaks balance==totalFees invariant and locks fees".to_string()),
             title: "Fee downcast in PuppyRaffle.selectWinner truncates 20% fee, breaking balance==totalFees invariant and bricking withdrawFees".to_string(),
             exploit_type: VulnerabilityType::IntegerMath,
@@ -129,16 +130,15 @@ fn create_puppy_raffle_findings() -> Findings {
             poc_test_status: None,
             severity: Severity::High,
             mitigation: Some("Change totalFees from uint64 to uint256 to match the fee calculation type.".to_string()),
-            severity_justification: Some("High severity because it permanently locks protocol revenue".to_string()),
             status: None,
-            status_justification: None,
-            status_confidence: None,
-            status_confidence_justification: None,
+            status_justification: Some("High severity because it permanently locks protocol revenue".to_string()),
+            verification_rounds_passed: None,
             competition_report: None,
             finding_complexity: Some(4),
         },
         // H-3: Reentrancy
         Finding {
+            id: Some("H-3".to_string()),
             derived_from: Some("Refund reentrancy drains multiple tickets due to external call before state update".to_string()),
             title: "PuppyRaffle.refund reentrancy drains entire pot via Address.sendValue before zeroing player slot".to_string(),
             exploit_type: VulnerabilityType::Reentrancy,
@@ -154,11 +154,9 @@ fn create_puppy_raffle_findings() -> Findings {
             poc_test_status: None,
             severity: Severity::High,
             mitigation: Some("Follow checks-effects-interactions pattern: update players[playerIndex] = address(0) before calling sendValue.".to_string()),
-            severity_justification: Some("High severity because it allows complete drainage of raffle funds".to_string()),
             status: None,
-            status_justification: None,
-            status_confidence: None,
-            status_confidence_justification: None,
+            status_justification: Some("High severity because it allows complete drainage of raffle funds".to_string()),
+            verification_rounds_passed: None,
             competition_report: None,
             finding_complexity: Some(3),
         },

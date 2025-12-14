@@ -18,7 +18,7 @@ use crate::{
 };
 use log::info;
 
-use serde::{de::DeserializeOwned, Deserializer};
+use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -156,23 +156,4 @@ pub fn generate_content_plus_context_block(codeblock: &str, added_context: &str)
     code_plus_context.push_str("\n\n");
 
     code_plus_context
-}
-
-/// Helper function to deserialize boolean from string or boolean
-pub fn deserialize_bool_from_str_or_bool<'de, D>(
-    deserializer: D,
-) -> std::result::Result<bool, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let val: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
-    match val {
-        serde_json::Value::Bool(b) => Ok(b),
-        serde_json::Value::String(s) => match s.to_lowercase().as_str() {
-            "true" => Ok(true),
-            "false" => Ok(false),
-            _ => Err(serde::de::Error::custom("expected boolean or string")),
-        },
-        _ => Err(serde::de::Error::custom("expected boolean or string")),
-    }
 }

@@ -1,7 +1,10 @@
-use crate::llm_review::{
-    findings::findings::Finding,
-    phases::verify_findings::{FindingConfidence, FindingStatus},
-    threat_models::{invariants::InvariantFinding, patterns::Pattern},
+use crate::{
+    config::CREATE_TESTS,
+    llm_review::{
+        findings::findings::{Finding, Findings},
+        threat_models::{invariants::InvariantFinding, patterns::Pattern},
+    },
+    utils::finding_status_string::finding_status_to_string,
 };
 
 pub fn generate_prompt_for_issue_check(
@@ -29,6 +32,34 @@ pub fn generate_prompt_for_issue_check(
     prompt
 }
 
+pub fn generate_prompt_for_multi_finding_issue_check(
+    code: &str,
+    finding: &Findings,
+    instructions: &str,
+    post_instructions: &str,
+    report_type: FindingReportType,
+) -> String {
+    let mut prompt = instructions.to_string();
+
+    prompt.push_str("\n\n");
+    prompt.push_str("## SECURITY FINDINGS TO EVALUATE");
+    prompt.push_str("\n\n");
+
+    for finding in &finding.findings {
+        let report = get_finding_report(finding, None, report_type);
+        prompt.push_str(&report);
+        prompt.push_str("\n\n");
+    }
+
+    prompt.push_str("## CODEBASE WHERE FINDINGS WERE FOUND");
+    prompt.push_str("\n\n");
+
+    prompt.push_str(code);
+    prompt.push_str("\n\n");
+    prompt.push_str(post_instructions);
+
+    prompt
+}
 pub fn generate_formatted_invariant_finding(invariant: &InvariantFinding) -> String {
     let mut invariant_finding = String::new();
 
@@ -158,11 +189,39 @@ pub fn generate_formatted_multiple_patterns(patterns: &[Pattern]) -> String {
     pattern_list
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FindingReportType {
     Standard,
     Enhanced,
     NoPoC,
+}
+
+pub fn get_finding_summary_report(finding: &Finding, index: usize) -> String {
+    let mut findings_summary = String::new();
+    findings_summary.push_str(&format!(
+        "\n\n[{}-{}]. {}\n",
+        finding.severity.as_initial(),
+        index,
+        finding.title
+    ));
+    findings_summary.push_str(&format!(
+        "**Derived From** : {}\n",
+        finding.derived_from.clone().unwrap_or_default()
+    ));
+    findings_summary.push_str(&format!(
+        "Finding Status: {}\n",
+        finding_status_to_string(finding)
+    ));
+    findings_summary.push_str(&format!("Privilege: {}\n", finding.privilege.to_string()));
+
+    if CREATE_TESTS {
+        findings_summary.push_str(&format!(
+            "Poc Test Status: {}\n\n",
+            finding.poc_test_status.unwrap_or_default().to_string()
+        ));
+    }
+
+    findings_summary
 }
 
 pub fn get_finding_report(
@@ -188,9 +247,10 @@ pub fn get_finding_report(
             finding.title
         ));
     }
+
     findings_report.push_str(&format!(
-        "### Finding Severity Justification: {}\n",
-        finding.severity_justification.clone().unwrap_or_default()
+        "## id: {}\n\n",
+        &finding.id.clone().unwrap_or_default()
     ));
 
     //derived from
@@ -211,27 +271,12 @@ pub fn get_finding_report(
     if report_type == FindingReportType::Enhanced {
         findings_report.push_str(&format!(
             "## Finding Status: {}\n",
-            finding.status.unwrap_or_default().to_string()
+            finding_status_to_string(finding)
         ));
-        if finding.status == Some(FindingStatus::NeedsMoreInfo) {
-            findings_report.push_str(&format!(
-                "### Finding Status Justification: {}\n",
-                finding.status_justification.clone().unwrap_or_default()
-            ));
-        }
         findings_report.push_str(&format!(
-            "## Status Confidence: {}\n",
-            finding.status_confidence.unwrap_or_default().to_string()
+            "### Finding Status Justification: {}\n",
+            finding.status_justification.clone().unwrap_or_default()
         ));
-        if finding.status_confidence == Some(FindingConfidence::SomeWhatConfident) {
-            findings_report.push_str(&format!(
-                "### Finding Confidence Justification: {}\n",
-                finding
-                    .status_confidence_justification
-                    .clone()
-                    .unwrap_or_default()
-            ));
-        }
         findings_report.push_str(&format!(
             "### Finding Complexity: {}\n",
             finding.finding_complexity.unwrap_or_default()

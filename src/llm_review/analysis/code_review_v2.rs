@@ -1,6 +1,7 @@
 use crate::config::{
-    ACTOR_RUNS, CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE,
-    SKIP_LIBRARIES, SKIP_PATTERN_RUNS,
+    ACTOR_RUNS, CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE,
+    MULTI_PATTERN_TO_VERIFY_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE, SKIP_LIBRARIES,
+    SKIP_PATTERN_RUNS,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
@@ -12,7 +13,7 @@ use crate::llm_review::contract::contract_file_map::ContractType;
 use crate::llm_review::dynamic_prompts::actors::{
     generate_formated_list_from_actor_data, generate_formatted_actor_abuse_list,
 };
-use crate::llm_review::findings::findings::CLAUDE_4_5_SONNET;
+use crate::llm_review::findings::findings::{Finding, CLAUDE_4_5_SONNET};
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::llm_review::{agent::agent_enums::AIAgent, phases};
 use crate::llm_review::{
@@ -31,6 +32,7 @@ use crate::llm_review::{
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::reporting::patterns::save_patterns;
 use log::info;
+use nanoid::nanoid;
 use std::{path::PathBuf, sync::Arc};
 use strum::IntoEnumIterator;
 use tokio::sync::Mutex;
@@ -64,13 +66,9 @@ pub async fn review_codebase_for_security_issues_v2(
     let contracts = codeblocks_db.get_all_contracts(repo)?;
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
-    // ONLY audit these failed
-    // let custom_scoped_contracts = Some(vec![
-    //     "RevenueBuybacks".to_string(),
-    //     "TWAMM".to_string(),
-    //     "MEVCapture".to_string(),
-    // ]);
-    let custom_scoped_contracts: Option<Vec<_>> = None;
+    // ONLY audit these
+    let custom_scoped_contracts = Some(vec!["ERC7575VaultUpgradeable".to_string()]);
+    // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -190,23 +188,46 @@ pub async fn review_codebase_for_security_issues_v2(
                 }
 
                 if !raw_findings.findings.is_empty() {
+                    // add uuid to each finding to uniquely identify
+
+                    let findings_with_id: Findings = Findings {
+                        findings: raw_findings
+                            .findings
+                            .into_iter()
+                            .map(|f| Finding {
+                                id: Some(nanoid!()),
+                                ..f
+                            })
+                            .collect(),
+                    };
+
                     // Phase 4: Verify findings and remove false positives
-                    let verify_findings = phases::verify_findings::execute(
-                        raw_findings,
-                        &codeblock,
-                        &finding_verify_agent,
-                        &repo_clone,
-                    )
-                    .await?;
+                    let mut verify_findings = if MULTI_PATTERN_TO_VERIFY_ANALYSIS_MODE {
+                        phases::verify_rounds::execute_rounds(
+                            findings_with_id,
+                            &codeblock,
+                            &finding_verify_agent,
+                            &repo_clone,
+                        )
+                        .await?
+                    } else {
+                        phases::verify_findings::execute(
+                            findings_with_id,
+                            &codeblock,
+                            &finding_verify_agent,
+                            &repo_clone,
+                        )
+                        .await?
+                    };
 
                     // Phase 5: Quality check and enhance findings
-                    let mut quality_findings = phases::quality_check::execute(
-                        verify_findings,
-                        &codeblock,
-                        &verify_agent,
-                        &repo_clone,
-                    )
-                    .await?;
+                    // let mut quality_findings = phases::quality_check::execute(
+                    //     verify_findings,
+                    //     &codeblock,
+                    //     &verify_agent,
+                    //     &repo_clone,
+                    // )
+                    // .await?;
 
                     // Phase 6: PoC Generation for High-Severity Findings
                     // REQUIREMENTS: instructions for writing PoC plus template PoC file (if applicable)
@@ -230,7 +251,7 @@ pub async fn review_codebase_for_security_issues_v2(
                             poc_sem.acquire_owned().await.expect("POC semaphore closed");
 
                         match phases::add_poc_findings::execute(
-                            quality_findings.clone(),
+                            verify_findings.clone(),
                             &codeblock,
                             &finding_verify_agent,
                             &repo_clone,
@@ -238,7 +259,7 @@ pub async fn review_codebase_for_security_issues_v2(
                         .await
                         {
                             Ok(findings_with_pocs) => {
-                                quality_findings = findings_with_pocs;
+                                verify_findings = findings_with_pocs;
                                 log::info!("✅ Phase 6 completed successfully");
                             }
                             Err(e) => {
@@ -252,7 +273,7 @@ pub async fn review_codebase_for_security_issues_v2(
 
                     // Phase 7: Create professional markdown report for EACH finding (only if PoC is passing)
                     match phases::create_report::execute(
-                        quality_findings.clone(),
+                        verify_findings.clone(),
                         &codeblock,
                         &finding_verify_agent,
                         &repo_clone,
@@ -260,7 +281,7 @@ pub async fn review_codebase_for_security_issues_v2(
                     .await
                     {
                         Ok(findings_with_reports) => {
-                            quality_findings = findings_with_reports;
+                            verify_findings = findings_with_reports;
                             log::info!("✅ Phase 7 completed successfully");
                         }
                         Err(e) => {
@@ -272,13 +293,13 @@ pub async fn review_codebase_for_security_issues_v2(
 
                     // Save findings to database before extending
                     let db = results_db.lock().await;
-                    if let Err(e) = db.insert_findings(&quality_findings, &repo_clone) {
+                    if let Err(e) = db.insert_findings(&verify_findings, &repo_clone) {
                         log::warn!("Failed to save findings to database: {}", e);
                     }
 
                     // Extend the aggregate findings
                     let mut all_findings = all_issues.lock().await;
-                    all_findings.findings.extend(quality_findings.findings);
+                    all_findings.findings.extend(verify_findings.findings);
                 }
                 Ok(())
             }
@@ -311,17 +332,18 @@ pub async fn generate_ai_agents(
     // Enhanced preamble for verification agent
     let verify_preamble = "
 
-    You are **SoliditySec-Verifier**, a senior smart-contract auditor specializing on
-    *confirming* reported findings, writing comprehensive reports of findings, and creating
+    You are **SoliditySec-Verifier**, a Solidity EVM senior smart-contract auditor, and top Code4rena judge, specializing on
+    verifying reported findings, writing comprehensive reports of findings, and creating
     rigorous PoC tests that validate the findings.";
 
     // Create verification agent using OpenAI O3
-    let _verify_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5")
+    let verify_config = AgentConfig::new(Some(repo.clone()))
+        .with_model("gpt-5.2")
         .with_preamble(verify_preamble)
-        .with_file_picker(false); // Disabled to avoid rate limits
+        .with_file_picker(false) // Disabled to avoid rate limits
+        .with_openai_reasoning_effort("high");
 
-    let verify_config_gemini = AgentConfig::new(Some(repo.clone()))
+    let _verify_config_gemini = AgentConfig::new(Some(repo.clone()))
         .with_temperature(1.0)
         .with_model("gemini-3-pro-preview")
         .with_preamble(verify_preamble);
@@ -334,10 +356,10 @@ pub async fn generate_ai_agents(
         .with_file_picker(false) // Disabled to avoid rate limits
         .with_file_retrieval(false);
 
-    // let ai_finding_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
-    let ai_pattern_verify_agent =
-        Arc::new(AgentFactory::create_gemini_agent(&verify_config_gemini)?);
-    // let _finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
+    let ai_finding_verify_agent = Arc::new(AgentFactory::create_openai_agent(&verify_config)?);
+    // let ai_pattern_verify_agent =
+    //     Arc::new(AgentFactory::create_gemini_agent(&verify_config_gemini)?);
+    // let finding_ai_verify_agent = Arc::new(AgentFactory::create_anthropic_agent(
     //     &finding_verify_config,
     // )?);
 
@@ -379,9 +401,9 @@ pub async fn generate_ai_agents(
     // )?);
 
     Ok((
-        ai_pattern_verify_agent.clone(),
+        ai_finding_verify_agent.clone(),
         pattern_discovery_gemini_agent.clone(),
-        ai_pattern_verify_agent,
+        ai_finding_verify_agent,
         pattern_discovery_gemini_agent,
     ))
 }
@@ -590,8 +612,8 @@ async fn process_actors(
 
     // custom agent for digging up list of actors
     let actor_discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.1")
-        .with_preamble("You are a world-class expert at smart contract auditing.")
+        .with_model("gpt-5.2")
+        .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
         .with_file_retrieval(false)
         .with_openai_reasoning_effort("high");
 

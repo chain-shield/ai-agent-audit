@@ -153,8 +153,7 @@ async fn main() -> Result<()> {
     // ────────────────────────────────
     // Generate comprehensive audit report (paid version)
     let audit_report =
-        audit::generated_audit_report(&security_findings, &repo, audit::ReportType::Pattern)
-            .await?;
+        audit::generated_audit_report(&security_findings, &repo, audit::ReportType::Status).await?;
 
     // ────────────────────────────────
     // 7. File Export

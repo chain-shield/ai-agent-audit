@@ -1,11 +1,14 @@
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::path::Path;
 
 use crate::{
     config::{CHAINSHIELD_DB_FOLDER, FINDINGS_DB},
-    llm_review::findings::findings::{Finding, Findings},
+    llm_review::findings::{
+        finding_enums::{Severity, VulnerabilityType},
+        findings::{Finding, Findings, PrivilegeLevel},
+    },
     prepare_code::git_clone::RepoPaths,
 };
 
@@ -92,6 +95,36 @@ impl FindingsDb {
         tx.commit()?;
         Ok(())
     }
+
+    /// Retrieve all findings for a given project
+    pub fn get_findings_by_project(&self, repo: &RepoPaths) -> Result<Findings> {
+        let mut stmt = self.0.prepare(
+            "SELECT id, project_id, title, description, impact, proof_of_concept, proof_of_code, severity
+             FROM findings
+             WHERE project_id = ?1",
+        )?;
+
+        let findings_iter = stmt.query_map([&repo.project_id], |row| {
+            Ok(FindingDb {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                title: row.get(2)?,
+                description: row.get(3)?,
+                impact: row.get(4)?,
+                proof_of_concept: row.get(5)?,
+                proof_of_code: row.get(6)?,
+                severity: row.get(7)?,
+            })
+        })?;
+
+        let mut findings = Vec::new();
+        for finding_result in findings_iter {
+            let finding_db = finding_result?;
+            findings.push(finding_db.to_finding());
+        }
+
+        Ok(Findings { findings })
+    }
 }
 
 impl FindingDb {
@@ -106,6 +139,52 @@ impl FindingDb {
             proof_of_concept: finding.proof_of_concept.clone().unwrap_or_default(),
             proof_of_code: finding.proof_of_code.clone().unwrap_or_default(),
             severity: finding.severity.to_string(),
+        }
+    }
+
+    /// Convert a FindingDb back to a Finding
+    /// Note: Some fields are not stored in the database and will be set to defaults
+    pub fn to_finding(&self) -> Finding {
+        use std::str::FromStr;
+
+        Finding {
+            id: Some(self.id.clone()),
+            derived_from: None,
+            title: self.title.clone(),
+            exploit_type: VulnerabilityType::default(),
+            privilege: PrivilegeLevel::Permissionless,
+            verification_rounds_passed: None,
+            contract: String::new(),
+            function: String::new(),
+            description: if self.description.is_empty() {
+                None
+            } else {
+                Some(self.description.clone())
+            },
+            impact: if self.impact.is_empty() {
+                None
+            } else {
+                Some(self.impact.clone())
+            },
+            proof_of_concept: if self.proof_of_concept.is_empty() {
+                None
+            } else {
+                Some(self.proof_of_concept.clone())
+            },
+            proof_of_code: if self.proof_of_code.is_empty() {
+                None
+            } else {
+                Some(self.proof_of_code.clone())
+            },
+            poc_test_file: None,
+            poc_test_command: None,
+            poc_test_status: None,
+            severity: Severity::from_str(&self.severity).unwrap_or_default(),
+            mitigation: None,
+            status: None,
+            status_justification: None,
+            competition_report: None,
+            finding_complexity: None,
         }
     }
 }

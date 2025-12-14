@@ -1,8 +1,8 @@
 pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 
-# Severity Classifications
+## Severity Classifications
 
-## Estimating Risk
+### Estimating Risk
 
 **Assets** = funds, NFTs, data, authorization, or private/confidential information.
 
@@ -19,7 +19,7 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 * **Dust amounts** (rounding errors, marginal fee variations) → QA/Low.
 * **Real amounts** → Severity depends on conditions and likelihood.
 
-## Finding Likelihood
+### Finding Likelihood
 * A High Impact Low Likelihood Finding = Medium or High
 * However, Low Likelihood Finding that is NOT High Impact -> QA/Low
 
@@ -29,7 +29,7 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 * **Dust yield** loss = QA/Low.
 * **Unmatured yield/in-motion yield** = capped at Medium.
 
-## Centralization Risks
+### Centralization Risks
 
 * Assume assigned roles are trustworthy and act in the protocol’s best interest.
 * Reckless admin mistakes = invalid.
@@ -38,30 +38,30 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 * Privilege escalation = judged by likelihood and impact (up to Medium).
 * Vulnerabilities in privileged functions under reasonable use = up to Medium.
 
-## Unsupported / Non-Standard Tokens
+### Unsupported / Non-Standard Tokens
 
 * Non-standard ERC-20 or fee-on-transfer tokens = **out of scope** unless explicitly supported in docs.
 * Exception: **USDT** (in-scope despite non-standard behavior).
 * Judges should invalidate non-compliant findings.
 * Definition of ERC-20 = [Ethereum docs](https://ethereum.org/en/developers/docs/standards/tokens/erc-20/).
 
-## View Functions
+### View Functions
 
 * Findings about unused `view` functions = Low (QA) at best.
 
-## Out-of-Scope (OOS) Libraries
+### Out-of-Scope (OOS) Libraries
 
 * Root cause in OOS contract = OOS.
 * Incorrect use of OOS functionality in in-scope contract = valid, in-scope.
 * Judge discretion applies for edge cases.
 
-## User Mistakes
+### User Mistakes
 
 * Issues requiring careless user input = QA at best, may be invalid.
 * Non-privileged users expected to preview transactions.
 * Phishing and bad user hygiene fall under this rule.
 
-## Speculation on Future Code
+### Speculation on Future Code
 
 * Issues not exploitable within current scope = speculative.
 * Only valid if root cause exists in current code.
@@ -69,7 +69,7 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
 * Judges may assign severity based on likelihood and impact.
 * Integrations: assume competent third-party integrator with due diligence.
 
-## Event-Related Impacts
+### Event-Related Impacts
 
 * Faulty events assessed by broader functional impact:
 
@@ -78,7 +78,7 @@ pub const CODE4RENA_SEVERITY_RUBRIC: &str = r#"
   * Cosmetic/readability issues = Low.
 * Front-end display/readability bugs = capped at Low.
 
-## Other Specific Rules
+### Other Specific Rules
 
 * **Approve race condition:**
 
