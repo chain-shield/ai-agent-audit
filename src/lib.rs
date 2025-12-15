@@ -113,6 +113,7 @@ pub mod llm_review {
     pub mod dynamic_prompts {
         pub mod actor_findings;
         pub mod actors;
+        pub mod findings;
         pub mod findings_template;
         pub mod inv_findings;
         pub mod invariants;
@@ -121,8 +122,6 @@ pub mod llm_review {
     }
     pub mod phases {
         pub mod add_poc_findings;
-        /// Phase 5: Quality assurance and final finding refinement
-        pub mod quality_check;
         /// Phase 3: Deduplication and verification of discovered security findings
         pub mod verify_findings;
         pub mod verify_rounds;
@@ -139,6 +138,7 @@ pub mod llm_review {
     }
     pub mod pattern_phases {
         pub mod generate_actors;
+        pub mod generate_direct_findings;
         /// Phase 2: Parallel vulnerability detection across multiple AI agents
         pub mod generate_patterns;
         pub mod multipattern_to_findings;

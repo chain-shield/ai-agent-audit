@@ -22,12 +22,17 @@ use crate::{
             },
             patterns::generate_pattern_verify_prompt,
         },
+        findings::findings::{Finding, Findings},
+        phases::{rounds::all_rounds::AllRoundLegitAnalysis, verify_rounds::FindingAnalysis},
         prompt_support::dedup::DEDUP_PROMPT_PATTERN,
         threat_models::{
             actors::{Actor, ActorAbuse, ActorAbuses},
             patterns::VulnerabilityPattern,
         },
-        utils::prompt_context::{generate_formatted_invariant_finding, generate_formatted_pattern},
+        utils::prompt_context::{
+            self, generate_formatted_invariant_finding, generate_formatted_pattern,
+            FindingReportType,
+        },
     },
     prepare_code::git_clone::RepoPaths,
     utils::semantic_compare,
@@ -187,6 +192,36 @@ impl IssueTrait for Pattern {
 }
 
 #[async_trait]
+impl IssueTrait for Finding {
+    fn hash(&self) -> String {
+        format!("{}-{}", self.contract, self.function,)
+    }
+    async fn is_duplicate_issue(&self, issue: &Self, ai_agent: &AIAgent) -> anyhow::Result<bool> {
+        self.is_duplicate_issue(issue, ai_agent).await
+    }
+    fn get_issue_report(&self) -> String {
+        prompt_context::get_finding_report(&self, None, FindingReportType::NoPoC)
+    }
+    fn title_str(&self) -> String {
+        self.title.clone()
+    }
+    fn generate_verify_prompt(&self) -> String {
+        AllRoundLegitAnalysis::generate_verify_prompt()
+    }
+    fn description(&self) -> String {
+        self.description.clone().unwrap_or_default()
+    }
+    // NOTE: not needed in this case
+    fn pattern_to_findings_prompt(&self, _repo: &RepoPaths) -> String {
+        String::new()
+    }
+    // NOTE: not needed in this case
+    fn findings_json_required_prompt(&self, _repo: &RepoPaths) -> String {
+        String::new()
+    }
+}
+
+#[async_trait]
 impl IssueStructTrait for ActorAbuses {
     type Spec = ActorAbuse;
     fn issues(&self) -> &[ActorAbuse] {
@@ -274,6 +309,34 @@ impl IssueStructTrait for Patterns {
             "Security vulnerability Pattern",
             repo,
         )
+    }
+}
+
+#[async_trait]
+impl IssueStructTrait for Findings {
+    type Spec = Finding;
+    fn issues(&self) -> &[Finding] {
+        &self.findings
+    }
+    fn issues_mut(&mut self) -> &mut Vec<Finding> {
+        &mut self.findings
+    }
+    fn new(issues: Vec<Finding>) -> Self {
+        Self { findings: issues }
+    }
+    async fn dedup(self) -> anyhow::Result<Self> {
+        self.dedup().await
+    }
+    fn issue_title(&self) -> String {
+        "finding".to_string()
+    }
+    // NOTE: not need for this case
+    fn multi_issue_to_findings_prompt(&self, _repo: &RepoPaths) -> String {
+        String::new()
+    }
+    // NOTE: not need for this case
+    fn multi_issue_findings_json_required_prompt(&self, _repo: &RepoPaths) -> String {
+        String::new()
     }
 }
 

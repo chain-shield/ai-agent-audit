@@ -1,6 +1,5 @@
 use crate::config::{
-    ACTOR_RUNS, CREATE_TESTS, MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE,
-    MULTI_PATTERN_TO_VERIFY_ANALYSIS_MODE, NICHE_PATTERN_ANALYSIS_MODE, SKIP_LIBRARIES,
+    ACTOR_RUNS, CREATE_TESTS, DIRECT_TO_FINDING_MODE, NICHE_PATTERN_ANALYSIS_MODE, SKIP_LIBRARIES,
     SKIP_PATTERN_RUNS,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
@@ -67,8 +66,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    let custom_scoped_contracts = Some(vec!["ERC7575VaultUpgradeable".to_string()]);
-    // let custom_scoped_contracts: Option<Vec<_>> = None;
+    // let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
+    let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -202,32 +201,13 @@ pub async fn review_codebase_for_security_issues_v2(
                     };
 
                     // Phase 4: Verify findings and remove false positives
-                    let mut verify_findings = if MULTI_PATTERN_TO_VERIFY_ANALYSIS_MODE {
-                        phases::verify_rounds::execute_rounds(
-                            findings_with_id,
-                            &codeblock,
-                            &finding_verify_agent,
-                            &repo_clone,
-                        )
-                        .await?
-                    } else {
-                        phases::verify_findings::execute(
-                            findings_with_id,
-                            &codeblock,
-                            &finding_verify_agent,
-                            &repo_clone,
-                        )
-                        .await?
-                    };
-
-                    // Phase 5: Quality check and enhance findings
-                    // let mut quality_findings = phases::quality_check::execute(
-                    //     verify_findings,
-                    //     &codeblock,
-                    //     &verify_agent,
-                    //     &repo_clone,
-                    // )
-                    // .await?;
+                    let mut verify_findings = phases::verify_rounds::execute_rounds(
+                        findings_with_id,
+                        &codeblock,
+                        &finding_verify_agent,
+                        &repo_clone,
+                    )
+                    .await?;
 
                     // Phase 6: PoC Generation for High-Severity Findings
                     // REQUIREMENTS: instructions for writing PoC plus template PoC file (if applicable)
@@ -364,7 +344,86 @@ pub async fn generate_ai_agents(
     // )?);
 
     // Enhanced preamble for discovery agents
-    let solidity_auditor_preamble = "You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in Solidity codebases. You consistently land valid solo High and Medium findings in competitive audit contests.";
+    let solidity_auditor_preamble = r#"You are a world-class expert at smart contract auditing, renowned for your ability to find the most complex and trickiest security vulnerabilities in EVM Solidity codebases. You consistently land valid solo High and Medium findings in competitive audit contests.
+
+
+     ## Expert Security Auditor Systems-Level Mindset 
+
+     When reasoning, silently follow this 5-point plan:
+
+     1. **Build a mental model of the contract (system view)**
+        - Identify the contract's role (vault, router, token, oracle adapter, governance, proxy, bridge, signature validator, etc.).
+        - Identify critical state:
+     - balances, shares, debts, limits, indices, epochs, flags, roles, configuration parameters, checkpoints, nonces.
+        - Identify external dependencies:
+     - tokens, routers, factories, oracles, multicall, proxies, libraries, bridges, external configs, middleware modules.
+        - Sketch the lifecycle:
+     - how assets, permissions, and configuration flow through this contract over time
+       (for example: deposit -> accrue -> withdraw; open -> modify -> close; submit -> execute -> settle; sign -> validate -> execute).
+
+     2. **Derive key invariants and assumptions (including from docs/metadata)**
+        Treat comments, metadata files, and protocol documentation as the **intended specification**:
+
+     - Safety invariants (what must always hold), for example:
+     - accounting relationships (total assets vs. shares/debt/reserves),
+     - role and permission boundaries,
+     - monotonic or one-way state transitions (indices, epochs, nonces, checkpoints, initialization),
+     - upgrade / delegatecall / storage-layout assumptions.
+        - Integration assumptions:
+     - decimals, rounding behavior, return types, expected behavior of external tokens/libraries/oracles,
+     - assumptions about multicall, bridges, cross-chain behavior, middlewares/checkpointers.
+        - **Spec vs implementation mismatches:**
+     For each invariant or assumption stated in docs/metadata/comments
+     (for example: signatures must always enforce a particular condition, checkpoints must not be bypassed,
+     or once a signer is evicted they must never be able to act under the old configuration),
+     check whether the implementation can violate it through any realistic sequence of calls or flag/parameter choices.
+     Any such mismatch that enables a realistic exploit is a valid security vulnerability pattern.
+
+     3. **For EACH vulnerability pattern, invariant, or malicious actor (internal checklist)**
+        For each pattern in the list above:
+
+        - Locate all functions and code regions that could realistically exhibit that pattern.
+        - For each candidate location:
+     - trace preconditions (modifiers, `require` checks),
+     - trace storage reads and writes (how state evolves across calls and over time),
+     - trace external calls (including `call`, `delegatecall`, multicall, token transfers, oracle reads, middlewares),
+     - connect this to the invariants and assumptions from step 2.
+        - Consider:
+     - single-call behavior,
+     - multi-step / multi-transaction sequences (call A then B then C, possibly across different users or roles),
+     - cross-contract and cross-library interactions (for example: router <-> vault, adapter <-> AMM, signature library <-> auth module).
+
+        Pay special attention to:
+        - **Flags / mode bits / "ignore" booleans / optional middlewares** that can disable checks
+     (for example: checkpoint/nonce usage flags, toggles that skip validation, optional modules).
+     Ask whether an attacker or evicted signer can choose a mode that bypasses intended validation,
+     reuses stale configuration, or skips a checkpoint/nonce/snapshot.
+        - **Chained or nested flows** (for example: chained signatures, batched operations, multicalls)
+     where each step looks safe in isolation but the composition breaks an invariant.
+
+     4. **Scenario-based reasoning (edges of the state space)**
+        For each relevant pattern, imagine at least one **realistic scenario** (2-4 calls over time) where:
+        - boundary conditions are hit (first/last depositor, zero/non-zero balances, max/min values),
+        - donations, fee changes, rebases, or emergency functions are involved,
+        - ordering is non-trivial (withdraw before claim, emergency mode between operations, admin config change between user calls),
+        - for signatures/auth: various combinations of flags, nonces, checkpoints, and signer revocations.
+
+        Ask whether this scenario plausibly breaks an invariant or assumption identified earlier,
+        or creates a clear profit or state-corruption opportunity for some actor.
+
+     5. **Cross-module / cross-library composition**
+        Pay close attention to how **different pieces combine**:
+
+        - This contract's logic plus math/token/signature libraries,
+        - This contract plus external routers/oracles/multicall/middleware,
+        - Storage and delegatecall interactions between this contract and its caller or proxy.
+
+        Look for "safe + safe = unsafe" patterns, for example:
+        - rounding in one module plus truncation in another,
+        - different decimal assumptions between modules,
+        - a generic multicall/delegatecall primitive used with a wrong or weakly-controlled address,
+        - optional middleware (for example: checkpointing, rate limits) that can be switched off by the attacker's choice of parameters or flags.
+"#;
 
     // let _discovery_config_claude = AgentConfig::new(Some(repo.clone()))
     //     .with_temperature(1.0)
@@ -455,36 +514,45 @@ async fn process_patterns(
 
     let pattern_prompt = IssuePrompt::Pattern(pattern_categories);
 
-    // Phase 1: Generate patterns
-    info!("PHASE 1: GENERATE PATTERNS");
-    let raw_patterns: Patterns = pattern_phases::generate_patterns::execute(
-        pattern_prompt,
-        codeblock,
-        pattern_discovery_agent,
-        repo,
-    )
-    .await?;
-
-    // Phase 2: Verify patterns
-    info!("PHASE 2: VERIFY PATTERNS");
-    let verified_patterns = if !raw_patterns.issues().is_empty() {
-        pattern_phases::verify_patterns::verify_patterns(
-            raw_patterns,
+    let findings = if DIRECT_TO_FINDING_MODE {
+        info!("PHASE 1-3: GENERATE FINDINGS DIRECT FROM PATTERN");
+        pattern_phases::generate_direct_findings::execute(
+            pattern_prompt,
             codeblock,
-            ai_verify_agent,
+            pattern_discovery_agent,
             repo,
         )
         .await?
     } else {
-        Patterns::default()
-    };
+        // Phase 1: Generate patterns
+        info!("PHASE 1: GENERATE PATTERNS");
+        let raw_patterns: Patterns = pattern_phases::generate_patterns::execute(
+            pattern_prompt,
+            codeblock,
+            pattern_discovery_agent,
+            repo,
+        )
+        .await?;
 
-    info!("PHASE 3: GENERATE FINDINGS FROM PATTERNS");
-    if !verified_patterns.issues().is_empty() {
-        // save patterns to file (by contract)
-        save_patterns(&verified_patterns.patterns, repo).await?;
+        // Phase 2: Verify patterns
+        info!("PHASE 2: VERIFY PATTERNS");
+        let verified_patterns = if !raw_patterns.issues().is_empty() {
+            pattern_phases::verify_patterns::verify_patterns(
+                raw_patterns,
+                codeblock,
+                ai_verify_agent,
+                repo,
+            )
+            .await?
+        } else {
+            Patterns::default()
+        };
 
-        let findings_from_patterns = if MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE {
+        info!("PHASE 3: GENERATE FINDINGS FROM PATTERNS");
+        let finding_from_patterns = if !verified_patterns.issues().is_empty() {
+            // save patterns to file (by contract)
+            save_patterns(&verified_patterns.patterns, repo).await?;
+
             pattern_phases::multipattern_to_findings::execute(
                 verified_patterns,
                 codeblock,
@@ -493,19 +561,12 @@ async fn process_patterns(
             )
             .await?
         } else {
-            pattern_phases::pattern_to_findings::execute(
-                verified_patterns,
-                codeblock,
-                finding_discovery_agent,
-                repo,
-            )
-            .await?
+            Findings::default()
         };
+        finding_from_patterns
+    };
 
-        Ok(findings_from_patterns)
-    } else {
-        Ok(Findings::default())
-    }
+    Ok(findings)
 }
 
 /// Process ipattern_discovery_config_gemininvariant analysis: generate, verify, and convert to findings
@@ -567,23 +628,13 @@ async fn process_invariants(
     info!("PHASE 3: GENERATE FINDINGS FROM INVARIANTS");
 
     if !verified_invariants.issues().is_empty() {
-        let findings_from_invariants = if MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE {
-            pattern_phases::multipattern_to_findings::execute(
-                verified_invariants,
-                codeblock,
-                finding_discovery_agent,
-                repo,
-            )
-            .await?
-        } else {
-            pattern_phases::pattern_to_findings::execute(
-                verified_invariants,
-                codeblock,
-                finding_discovery_agent,
-                repo,
-            )
-            .await?
-        };
+        let findings_from_invariants = pattern_phases::multipattern_to_findings::execute(
+            verified_invariants,
+            codeblock,
+            finding_discovery_agent,
+            repo,
+        )
+        .await?;
 
         Ok(findings_from_invariants)
     } else {
@@ -666,46 +717,16 @@ async fn process_actors(
     // Phase 4: Convert verified actor abuses into detailed security findings
     info!("PHASE 4: GENERATE FINDINGS FROM ACTOR ABUSES");
     if !verified_abuses.issues().is_empty() {
-        let findings_from_actors = if MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE {
-            pattern_phases::multipattern_to_findings::execute(
-                verified_abuses,
-                codeblock,
-                finding_discovery_agent,
-                repo,
-            )
-            .await?
-        } else {
-            pattern_phases::pattern_to_findings::execute(
-                verified_abuses,
-                codeblock,
-                finding_discovery_agent,
-                repo,
-            )
-            .await?
-        };
+        let findings_from_actors = pattern_phases::multipattern_to_findings::execute(
+            verified_abuses,
+            codeblock,
+            finding_discovery_agent,
+            repo,
+        )
+        .await?;
 
         Ok(findings_from_actors)
     } else {
         Ok(Findings::default())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_parallel_processing_structure() {
-        // This test verifies the threading structure compiles and runs
-        // without actually calling the AI agents (which would require setup)
-
-        let handles: Vec<tokio::task::JoinHandle<Result<Findings>>> = Vec::new();
-
-        // Verify we can create the handle structure
-        assert_eq!(handles.len(), 0);
-
-        // Test that our Result<Findings> type works correctly
-        let test_findings = Findings::default();
-        assert!(test_findings.findings.is_empty());
     }
 }

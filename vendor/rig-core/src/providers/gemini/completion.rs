@@ -36,8 +36,8 @@ use crate::providers::gemini::completion::gemini_api_types::{
 use crate::providers::gemini::streaming::StreamingCompletionResponse;
 use crate::telemetry::SpanCombinator;
 use crate::{
-    completion::{self, CompletionError, CompletionRequest},
     OneOrMany,
+    completion::{self, CompletionError, CompletionRequest},
 };
 use gemini_api_types::{
     Content, FunctionDeclaration, GenerateContentRequest, GenerateContentResponse, Part, PartKind,
@@ -444,15 +444,15 @@ pub mod gemini_api_types {
     // Gemini API Types
     // =================================================================
     use serde::{Deserialize, Serialize};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use crate::completion::GetTokenUsage;
     use crate::message::{DocumentSourceKind, ImageMediaType, MessageError, MimeType};
     use crate::{
+        OneOrMany,
         completion::CompletionError,
         message::{self, Reasoning, Text},
         providers::gemini::gemini_api_types::{CodeExecutionResult, ExecutableCode},
-        OneOrMany,
     };
 
     #[derive(Debug, Deserialize, Serialize, Default)]
@@ -550,11 +550,7 @@ pub mod gemini_api_types {
                 .collect::<Vec<String>>()
                 .join("\n");
 
-            if str.is_empty() {
-                None
-            } else {
-                Some(str)
-            }
+            if str.is_empty() { None } else { Some(str) }
         }
 
         fn get_usage(&self) -> Option<Self::Usage> {
@@ -1407,8 +1403,13 @@ pub mod gemini_api_types {
     #[derive(Debug, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct ThinkingConfig {
-        pub thinking_budget: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub thinking_budget: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub include_thoughts: Option<bool>,
+        /// Thinking level for Gemini 3 Pro models ("low" or "high")
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub thinking_level: Option<String>,
     }
     /// The Schema object allows the definition of input and output data types. These types can be objects, but also
     /// primitives and arrays. Represents a select subset of an OpenAPI 3.0 schema object.

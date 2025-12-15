@@ -60,15 +60,24 @@ async fn test_gemini3_pro_simple_prompt() {
 
     println!("\n🧪 Testing Gemini 3 Pro with simple prompt...\n");
 
-    // Create agent configuration for Gemini 3 Pro
+    // Create agent configuration for Gemini 3 Pro with high thinking level
     let config = AgentConfig::new(None)
         .with_temperature(1.0)
         .with_model("gemini-3-pro-preview")
-        .with_preamble("You are a helpful assistant.");
+        .with_preamble("You are a helpful assistant.")
+        .with_gemini_thinking_level("high");
 
     println!("✅ Configuration created successfully");
     println!("   - Model: {}", config.model);
     println!("   - Temperature: {}", config.temperature);
+    println!(
+        "   - Thinking Level: {}",
+        config
+            .gemini_config
+            .thinking_level
+            .as_ref()
+            .unwrap_or(&"default".to_string())
+    );
 
     // Create the Gemini agent
     let agent = AgentFactory::create_gemini_agent(&config)
@@ -110,14 +119,23 @@ async fn test_gemini3_pro_json_extraction() {
 
     println!("\n🧪 Testing Gemini 3 Pro with JSON extraction (extract_with_retry)...\n");
 
-    // Create agent configuration
+    // Create agent configuration with high thinking level
     let config = AgentConfig::new(None)
         .with_temperature(0.7)
         .with_model("gemini-3-pro-preview")
-        .with_preamble("You are a security analyst. Always respond with valid JSON.");
+        .with_preamble("You are a security analyst. Always respond with valid JSON.")
+        .with_gemini_thinking_level("high");
 
     println!("✅ Configuration created");
     println!("   - Model: {}", config.model);
+    println!(
+        "   - Thinking Level: {}",
+        config
+            .gemini_config
+            .thinking_level
+            .as_ref()
+            .unwrap_or(&"default".to_string())
+    );
 
     // Create the Gemini agent
     let agent = AgentFactory::create_gemini_agent(&config)
@@ -163,5 +181,69 @@ Provide your analysis in JSON format with:
     assert!(
         !result.key_points.is_empty(),
         "Key points should not be empty"
+    );
+}
+
+#[tokio::test]
+async fn test_gemini3_pro_thinking_level_low() {
+    // Load environment variables
+    dotenv().ok();
+
+    // Skip if no Gemini API key present
+    if !gemini_key_present() {
+        eprintln!("⚠️ Skipping test_gemini3_pro_thinking_level_low - no GEMINI_API_KEY found");
+        return;
+    }
+
+    // Initialize logger
+    let _ = env_logger::try_init();
+
+    // Initialize configuration
+    let _ = init_config();
+    let _ = init_llm_clients();
+
+    println!("\n🧪 Testing Gemini 3 Pro with LOW thinking level...\n");
+
+    // Create agent configuration with LOW thinking level
+    let config = AgentConfig::new(None)
+        .with_temperature(0.5)
+        .with_model("gemini-3-pro-preview")
+        .with_preamble("You are a helpful assistant.")
+        .with_gemini_thinking_level("low");
+
+    println!("✅ Configuration created");
+    println!("   - Model: {}", config.model);
+    println!(
+        "   - Thinking Level: {}",
+        config
+            .gemini_config
+            .thinking_level
+            .as_ref()
+            .unwrap_or(&"default".to_string())
+    );
+
+    // Create the Gemini agent
+    let agent = AgentFactory::create_gemini_agent(&config)
+        .expect("Should create Gemini agent successfully");
+
+    println!("✅ Agent created\n");
+
+    // Test with a simple prompt that doesn't require deep thinking
+    let test_prompt = "List 3 primary colors.";
+
+    println!("📝 Sending prompt: \"{}\"\n", test_prompt);
+
+    let response = agent
+        .prompt(test_prompt)
+        .await
+        .expect("Should receive response from Gemini 3 Pro");
+
+    println!("✅ Response received:\n{}\n", response);
+    assert!(!response.is_empty(), "Response should not be empty");
+    assert!(
+        response.to_lowercase().contains("red")
+            || response.to_lowercase().contains("blue")
+            || response.to_lowercase().contains("yellow"),
+        "Response should mention primary colors"
     );
 }
