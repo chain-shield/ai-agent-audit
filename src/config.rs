@@ -26,10 +26,9 @@ pub const MAX_DEPTH: usize = 3;
 pub const TOKEN_BUDGET: usize = 200_000;
 pub const CREATE_TESTS: bool = false;
 pub const NICHE_PATTERN_ANALYSIS_MODE: bool = true;
+pub const DIRECT_TO_FINDING_MODE: bool = true;
 
 // if true set DISCOVERY_RUNS accordingly
-pub const MULTI_PATTERN_TO_FINDING_ANALYSIS_MODE: bool = true;
-pub const MULTI_PATTERN_TO_VERIFY_ANALYSIS_MODE: bool = true;
 pub const PATTERN_DISCOVERY_RUNS: usize = 5; // old value 10
 pub const INVARIANT_DISCOVERY_RUNS: usize = 3; // old value 5
 pub const ACTOR_DISCOVERY_RUNS: usize = 5; // old value 10

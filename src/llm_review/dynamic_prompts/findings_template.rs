@@ -265,7 +265,6 @@ where
 
         {json}
 
-        - Keep "derived_from" exactly as shown
         - *privilege* -> least privilege to trigger vulnerability
         - for "exploit_type" please select from one of the listed types: {issue_list}
         - If no vulnerabilities are found, return: 
@@ -335,7 +334,7 @@ where
         {{
         "findings": [
             {{
-            "derived_from": "Insert Title (or Predicate) of most relevant {pattern_type} this finding derives from",
+            "derived_from": "Insert title (or predicate) of most relevant {pattern_type} this finding derives from",
             "title": "200 chars or less audit report friendly title i.e. DOS due to unbounded loop in <contract_name>.<function_name> bricking withdrawals",
             "description": "Detailed explanation + vulnerable snippet",
             "exploit_type": "{issue_list}",

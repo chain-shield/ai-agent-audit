@@ -137,84 +137,35 @@ pub async fn execute_rounds(
 
     let audit_scope = generate_audit_scope(repo).await?;
 
-    let labeled_findings = if RUN_SINGLE_ROUND {
-        //************************
-        // ALL ROUND VERIFICATON
-        //************************
+    //************************
+    // ALL ROUND VERIFICATON
+    //************************
 
-        let all_round_findings =
-            run_all_round(deduped_findings, &code_and_context, &audit_scope, agent).await?;
-        info!(
-            "{} finding tagged as low or invalid",
-            tagged_findings(&all_round_findings)
-        );
+    let all_round_findings =
+        run_all_round(deduped_findings, &code_and_context, &audit_scope, agent).await?;
+    info!(
+        "{} finding tagged as low or invalid",
+        tagged_findings(&all_round_findings)
+    );
 
-        // Label findings with status=None as Valid (they passed all checks)
-        let all_round_findings_labeled: Vec<Finding> = all_round_findings
-            .findings
-            .into_iter()
-            .map(|f| {
-                if f.status.is_none() {
-                    Finding {
-                        status: Some(vec![FindingStatus::Valid]),
-                        ..f
-                    }
-                } else {
-                    f
+    // Label findings with status=None as Valid (they passed all checks)
+    let all_round_findings_labeled: Vec<Finding> = all_round_findings
+        .findings
+        .into_iter()
+        .map(|f| {
+            if f.status.is_none() {
+                Finding {
+                    status: Some(vec![FindingStatus::Valid]),
+                    ..f
                 }
-            })
-            .collect();
+            } else {
+                f
+            }
+        })
+        .collect();
 
-        Findings {
-            findings: all_round_findings_labeled,
-        }
-    } else {
-        //************************
-        // ROUND 1 of VERIFICATON
-        //************************
-        let r1_findings =
-            run_round_1(deduped_findings, &code_and_context, &audit_scope, agent).await?;
-        info!(
-            "{} finding tagged as low or invalid",
-            tagged_findings(&r1_findings)
-        );
-
-        //************************
-        // ROUND 2 of VERIFICATON
-        //************************
-        let r2_findings = run_round_2(r1_findings, &code_and_context, &audit_scope, agent).await?;
-        info!(
-            "{} finding tagged as low or invalid",
-            tagged_findings(&r2_findings)
-        );
-
-        //************************
-        // ROUND 3 of VERIFICATON
-        //************************
-        let r3_findings = run_round_3(r2_findings, &code_and_context, &audit_scope, agent).await?;
-        info!(
-            "{} finding tagged as low or invalid",
-            tagged_findings(&r3_findings)
-        );
-
-        let r3_findings_labeled: Vec<Finding> = r3_findings
-            .findings
-            .into_iter()
-            .map(|f| {
-                if f.status.is_none() {
-                    Finding {
-                        status: Some(vec![FindingStatus::Valid]),
-                        ..f
-                    }
-                } else {
-                    f
-                }
-            })
-            .collect();
-
-        Findings {
-            findings: r3_findings_labeled,
-        }
+    let labeled_findings = Findings {
+        findings: all_round_findings_labeled,
     };
 
     let verified_findings =

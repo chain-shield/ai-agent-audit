@@ -42,6 +42,9 @@ const VALID_SERVICE_TIERS: &[&str] = &["auto", "default", "flex"];
 /// map it to "low" when calling the API.
 const VALID_REASONING_EFFORTS: &[&str] = &["none", "low", "medium", "high"];
 
+/// Valid Gemini thinking levels (for Gemini 3 Pro models)
+const VALID_THINKING_LEVELS: &[&str] = &["low", "high"];
+
 /// Supported LLM providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LlmProvider {
@@ -184,6 +187,39 @@ impl OpenAIConfig {
     }
 }
 
+/// Gemini-specific configuration options
+#[derive(Debug, Clone)]
+pub struct GeminiConfig {
+    /// Thinking level for Gemini 3 Pro models ("low" or "high")
+    pub thinking_level: Option<String>,
+}
+
+impl Default for GeminiConfig {
+    fn default() -> Self {
+        Self {
+            thinking_level: Some("high".to_string()),
+        }
+    }
+}
+
+impl GeminiConfig {
+    /// Validates the thinking level value
+    pub fn validate_thinking_level(level: &str) -> Result<()> {
+        if VALID_THINKING_LEVELS.contains(&level) {
+            Ok(())
+        } else {
+            Err(AuditError::configuration(
+                "gemini_thinking_level",
+                &format!(
+                    "Invalid thinking level '{}'. Valid options: {}",
+                    level,
+                    VALID_THINKING_LEVELS.join(", ")
+                ),
+            ))
+        }
+    }
+}
+
 /// Configuration for creating AI agents.
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
@@ -209,7 +245,10 @@ pub struct AgentConfig {
     pub enable_file_picker: bool,
     /// OpenAI-specific configuration (service tier, reasoning effort)
     pub openai_config: OpenAIConfig,
+    /// Anthropic-specific configuration (thinking)
     pub anthropic_config: AnthropicConfig,
+    /// Gemini-specific configuration (thinking level)
+    pub gemini_config: GeminiConfig,
 }
 
 impl AgentConfig {
@@ -228,6 +267,7 @@ impl AgentConfig {
             enable_file_picker: false,
             openai_config: OpenAIConfig::default(),
             anthropic_config: AnthropicConfig::default(),
+            gemini_config: GeminiConfig::default(),
         }
     }
 
@@ -321,6 +361,17 @@ impl AgentConfig {
         }
         self.anthropic_config.thinking = Some(think.into());
         self.anthropic_config.thinking_token_budget = token_budget;
+        self
+    }
+
+    /// Sets the Gemini thinking level ("low" or "high").
+    /// Validates the input and panics on invalid values during development.
+    pub fn with_gemini_thinking_level(mut self, thinking_level: impl Into<String>) -> Self {
+        let level = thinking_level.into();
+        if let Err(e) = GeminiConfig::validate_thinking_level(&level) {
+            panic!("Invalid thinking level in config builder: {}", e);
+        }
+        self.gemini_config.thinking_level = Some(level);
         self
     }
 
@@ -594,7 +645,8 @@ impl AgentFactory {
     /// Creates a Gemini agent with the specified configuration.
     pub fn create_gemini_agent(config: &AgentConfig) -> Result<AIAgent> {
         use rig::providers::gemini::completion::gemini_api_types::{
-            AdditionalParameters, GenerationConfig, HarmBlockThreshold, HarmCategory, SafetySetting,
+            AdditionalParameters, GenerationConfig, HarmBlockThreshold, HarmCategory,
+            SafetySetting, ThinkingConfig,
         };
 
         let client = gemini_client()?;
@@ -603,6 +655,11 @@ impl AgentFactory {
         } else {
             &config.model
         };
+
+        // Validate Gemini-specific configuration at runtime
+        if let Some(ref level) = config.gemini_config.thinking_level {
+            GeminiConfig::validate_thinking_level(level)?;
+        }
 
         // Disable safety filters for security research (analyzing vulnerabilities)
         let safety_settings = vec![
@@ -626,11 +683,21 @@ impl AgentFactory {
 
         // Set max output tokens to prevent truncation
         // Gemini 3 Pro supports up to 65,536 output tokens
-        let generation_config = GenerationConfig {
+        // Configure thinking level for Gemini 3 Pro models
+        let mut generation_config = GenerationConfig {
             max_output_tokens: Some(64_000),
             temperature: Some(config.temperature),
             ..Default::default()
         };
+
+        // Add thinking configuration if specified
+        if let Some(ref thinking_level) = config.gemini_config.thinking_level {
+            generation_config.thinking_config = Some(ThinkingConfig {
+                thinking_budget: None,
+                include_thoughts: None,
+                thinking_level: Some(thinking_level.clone()),
+            });
+        }
 
         let additional_params = AdditionalParameters::default()
             .with_safety_settings(safety_settings)
@@ -804,5 +871,40 @@ mod tests {
         let _ = init_config();
 
         let _config = AgentConfig::new(None).with_anthropic_thinking("invalid", 10000u32);
+    }
+
+    #[test]
+    fn test_gemini_thinking_level_config() {
+        // Test default config
+        let config = GeminiConfig::default();
+        assert_eq!(config.thinking_level, Some("high".to_string()));
+
+        // Test validation
+        assert!(GeminiConfig::validate_thinking_level("low").is_ok());
+        assert!(GeminiConfig::validate_thinking_level("high").is_ok());
+        assert!(GeminiConfig::validate_thinking_level("invalid").is_err());
+    }
+
+    #[test]
+    fn test_agent_config_with_gemini_thinking_level() {
+        use crate::config::init_config;
+
+        // Initialize config (required for AgentConfig::new)
+        let _ = init_config();
+
+        let config = AgentConfig::new(None).with_gemini_thinking_level("low");
+
+        assert_eq!(config.gemini_config.thinking_level, Some("low".to_string()));
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid thinking level")]
+    fn test_agent_config_with_invalid_thinking_level() {
+        use crate::config::init_config;
+
+        // Initialize config (required for AgentConfig::new)
+        let _ = init_config();
+
+        let _config = AgentConfig::new(None).with_gemini_thinking_level("invalid");
     }
 }
