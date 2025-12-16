@@ -125,6 +125,14 @@ pub enum VulnerabilityPattern {
     MulticallCrossPathReentrancy,
     TWAPWindowPinningOrLowLiquidity,
     ForcedAssetVsStrictEquality,
+
+    // NEW (12/16/2025) - Missing Megapot patterns
+    ArbitraryExternalCall, // user-controlled .call() with calldata enables asset theft
+    GlobalParamMidFlowManipulation, // global param changeable mid-flow causes manipulation
+    GovernanceFrontrunDoS, // users can frontrun governance to block param changes
+    ExternalProtocolKeyCollision, // external protocol ID/key collision when config changes
+    EmergencyModeStateStuck, // emergency mode blocks settlement while allowing state changes
+    IncentiveMisalignmentOrGameTheory, // rational actors profit by harming others or blocking protocol
 }
 
 #[derive(
@@ -423,6 +431,38 @@ impl EnumData for VulnerabilityPattern {
                 VulnerabilityType::ForcedAssetVsStrictEquality,
                 VulnerabilityType::AccountingInvariantViolation,
                 VulnerabilityType::UnexpectedEth,
+            ],
+
+            // ── NEW 12/16/2025 - Missing Megapot patterns ─────────────────────────────────
+            VulnerabilityPattern::ArbitraryExternalCall => &[
+                VulnerabilityType::ArbitraryExternalCall,
+                VulnerabilityType::UncheckedReturn,
+                VulnerabilityType::AccessControl,
+            ],
+            VulnerabilityPattern::GlobalParamMidFlowManipulation => &[
+                VulnerabilityType::GlobalParamMidFlowManipulation,
+                VulnerabilityType::AccessControl,
+                VulnerabilityType::AccountingInvariantViolation,
+            ],
+            VulnerabilityPattern::GovernanceFrontrunDoS => &[
+                VulnerabilityType::GovernanceFrontrunDoS,
+                VulnerabilityType::Dos,
+                VulnerabilityType::FrontrunMev,
+            ],
+            VulnerabilityPattern::ExternalProtocolKeyCollision => &[
+                VulnerabilityType::ExternalProtocolKeyCollision,
+                VulnerabilityType::StorageLayout,
+                VulnerabilityType::AccountingInvariantViolation,
+            ],
+            VulnerabilityPattern::EmergencyModeStateStuck => &[
+                VulnerabilityType::EmergencyModeStateStuck,
+                VulnerabilityType::PausableEmergencyStop,
+                VulnerabilityType::Dos,
+            ],
+            VulnerabilityPattern::IncentiveMisalignmentOrGameTheory => &[
+                VulnerabilityType::IncentiveMisalignmentOrGameTheory,
+                VulnerabilityType::FrontrunMev,
+                VulnerabilityType::Dos,
             ],
         }
     }
@@ -878,12 +918,22 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
     },
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::StorageCollisionOrSelectorClash,
-        definition: "Overlapping storage slots/selectors across facets/impls corrupt state or hijack calls.",
+        definition: "Overlapping storage slots/selectors across facets/impls corrupt state, or external protocol IDs/keys collide when configuration changes (e.g., provider/oracle address change creates overlapping sequence numbers).",
         static_signals: &[
             "manual assembly slots without namespace",
             "duplicate function selectors",
+            "mapping key from external source not scoped to provider/source",
+            "pending[sequenceNumber] where sequence is per-provider, not global",
+            "setProvider/setOracle creates key collision window with old pending data",
+            "external ID space (nonce, sequence, requestId) can overlap after config change",
+            "no migration/cleanup when external source address changes",
         ],
-        examples: &["diamond storage overwritten after upgrade"],
+        examples: &[
+            "diamond storage overwritten after upgrade",
+            "entropy provider change causes pending[seq] collision with old provider data",
+            "oracle address update leaves stale requests with overlapping IDs",
+            "VRF requestId collision after coordinator change",
+        ],
         impact_hint: ImpactHint::HighMedium,
     },
     VulnerabilityPatternSpec {
@@ -1003,9 +1053,25 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
     },
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::BlockhashOrPRNGWeakness,
-        definition: "Predictable or stale randomness via blockhash/poor PRNG.",
-        static_signals: &["blockhash used beyond 256 blocks", "no commit-reveal"],
-        examples: &["game picks winner via blockhash"],
+        definition: "Predictable, stale, or correlated randomness via blockhash/poor PRNG, including seed reuse across multiple draws or identical input ranges producing correlated outputs.",
+        static_signals: &[
+            "blockhash used beyond 256 blocks",
+            "no commit-reveal",
+            "same seed used for multiple random draws",
+            "identical input ranges produce correlated outputs",
+            "no nonce/salt separation between randomness requests",
+            "Fisher-Yates/shuffle with shared seed across calls",
+            "random number derived from known/predictable values",
+            "randomness source visible before user commits",
+            "seed reused across epochs/rounds/drawings",
+        ],
+        examples: &[
+            "game picks winner via blockhash",
+            "lottery uses same VRF seed for both winner and prize selection",
+            "random selection from identical ranges always correlated",
+            "user sees randomness then submits bet in same block",
+            "shuffle seed shared across multiple prize selections",
+        ],
         impact_hint: ImpactHint::Medium,
     },
     VulnerabilityPatternSpec {
@@ -1039,13 +1105,23 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
     // K) EVM/Assembly & Low-Level
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::UncheckedLowLevelCallResults,
-        definition: "Ignores success flag or return data from low-level calls.",
+        definition: "Ignores success flag or return data from low-level calls, or allows user-controlled calldata in .call() without validating custody/ownership of assets afterwards.",
         static_signals: &[
             "(ok,) = target.call(...); but ok unused",
             "no revert bubble",
+            "user-controlled 'to' address in low-level call",
+            "user-controlled calldata passed to .call()",
+            "no balance/ownership check after external .call()",
+            "NFT/token custody not validated after arbitrary call",
+            ".call{value:}(data) where data is user-supplied",
         ],
-        examples: &["token call fails silently; accounting continues"],
-        impact_hint: ImpactHint::Medium,
+        examples: &[
+            "token call fails silently; accounting continues",
+            "arbitrary call with user calldata drains NFTs via transferFrom",
+            "user supplies calldata that calls approve() on held tokens",
+            "execute(target, data) allows stealing protocol-held assets",
+        ],
+        impact_hint: ImpactHint::HighMedium,
     },
     VulnerabilityPatternSpec {
         key: VulnerabilityPattern::UnsafeAssembyTypeCasts,
@@ -1368,6 +1444,134 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
             "refund path requires equality; any rebate breaks withdrawals",
         ],
         impact_hint: ImpactHint::High,
+    },
+    // ── NEW 12/16/2025: Missing Megapot Patterns ──────────────────────────────────
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ArbitraryExternalCall,
+        definition: "Contract exposes .call() with user-controlled target and/or calldata, enabling theft of protocol-held assets (tokens, NFTs, ETH) via crafted calldata (e.g., approve, transferFrom, setApprovalForAll).",
+        static_signals: &[
+            "target.call(userControlledData) without allowlist",
+            "execute(address to, bytes calldata data) is public/external",
+            "no validation of calldata function selector",
+            "protocol holds assets (NFTs, tokens) on behalf of users",
+            "no custody/balance check after arbitrary call",
+            "callback function performs .call() with user-supplied data",
+            "rescue/recovery function allows arbitrary calls",
+        ],
+        examples: &[
+            "attacker uses execute() to call approve() on held NFTs",
+            "callback with user calldata drains protocol treasury",
+            "rescue function allows calling transferFrom on any held token",
+            "staking contract holds NFTs; arbitrary call enables theft via setApprovalForAll",
+        ],
+        impact_hint: ImpactHint::High,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::GlobalParamMidFlowManipulation,
+        definition: "Global configuration parameter can be changed by admin/owner during an active multi-phase flow (e.g., between ticket purchase and settlement), causing unexpected behavior or manipulation.",
+        static_signals: &[
+            "global param read during settlement but modifiable by owner anytime",
+            "no snapshot of critical params at flow start",
+            "setX() callable while flow depending on X is active",
+            "fee/oracle/manager address changeable mid-epoch/mid-round",
+            "multi-phase flow uses current param values, not snapshotted values",
+            "callback/settlement reads global state that admin controls",
+        ],
+        examples: &[
+            "admin changes fee between ticket purchase and drawing settlement",
+            "oracle address changed mid-round affects active positions",
+            "manager address updated between claim and settlement causes mismatch",
+            "yield rate changed while unstaking period is active",
+            "reward token address changed before pending claims are processed",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::GovernanceFrontrunDoS,
+        definition: "Users can frontrun governance/admin transactions to create conditions that cause the governance action to revert, effectively blocking parameter changes or protocol upgrades.",
+        static_signals: &[
+            "governance function reverts if user state exceeds new limit",
+            "setPoolCap() fails if current total + pending > newCap",
+            "user deposit before governance tx mines blocks cap reduction",
+            "governance change requires all users below threshold",
+            "no grace period or forced migration for limit changes",
+            "parameter change conditional on current user positions",
+        ],
+        examples: &[
+            "LPs deposit to exceed new cap before setMaxTotalLP tx mines",
+            "user stakes to block staking cap reduction",
+            "governance cannot reduce withdrawal limit due to pending withdrawals",
+            "attacker frontruns fee increase to lock in lower fee forever",
+            "pool members block pool size reduction by depositing",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::ExternalProtocolKeyCollision,
+        definition: "Protocol uses IDs/keys from external source (VRF requestId, entropy sequence, oracle nonce) in mappings without scoping to the source, causing collisions when the external source/provider is changed.",
+        static_signals: &[
+            "mapping[externalId] without provider/source in key",
+            "pending[sequenceNumber] where sequence resets per provider",
+            "setProvider() does not migrate or clear pending requests",
+            "requestId from VRF/oracle used directly as mapping key",
+            "no composite key (provider, id) for external request tracking",
+            "old provider's pending data accessible after provider change",
+        ],
+        examples: &[
+            "entropy provider change allows sequence 1 collision with old request",
+            "VRF coordinator change causes requestId collision attack",
+            "oracle update leaves pending[oldNonce] exploitable by new oracle",
+            "attacker triggers callback for old provider's pending request via new provider",
+        ],
+        impact_hint: ImpactHint::High,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::EmergencyModeStateStuck,
+        definition: "Emergency/paused mode blocks critical finalization functions (settlement, epoch advancement) while allowing state-modifying actions that depend on those blocked functions, causing permanent stuck funds or inconsistent state.",
+        static_signals: &[
+            "settlement/finalize has whenNotEmergency but claim/withdraw doesn't",
+            "emergency modifier coverage gap between dependent functions",
+            "state credited in emergency mode requires settlement that's blocked",
+            "emergency mode is explicitly unrecoverable (per design)",
+            "noEmergencyMode on function X, but function Y modifies state for X",
+            "rewards/earnings accumulate but payout path is blocked",
+        ],
+        examples: &[
+            "LP earnings credited during emergency but settlement blocked forever",
+            "claim allowed in emergency but credits drawing that never settles",
+            "unstaking allowed but withdrawal requires finalization that's paused",
+            "yield accumulates in emergency but harvest is blocked",
+            "voting counted during emergency but execution is blocked",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::IncentiveMisalignmentOrGameTheory,
+        definition: "Protocol mechanism design creates perverse incentives where rational actors profit by harming others, blocking protocol operations, extracting value from other participants, or exploiting first/last-mover advantages in ways not intended by designers.",
+        static_signals: &[
+            "user profits by blocking/reverting governance or protocol actions",
+            "first-mover/last-mover advantage in multi-user flows",
+            "cost to grief < profit from griefing",
+            "large stakeholders can extract value from smaller ones",
+            "no penalty for blocking shared resources or common goods",
+            "free rider benefits without proportional contribution",
+            "collusion between roles creates extraction opportunity",
+            "winner-take-all dynamics encourage manipulation",
+            "MEV profit exceeds protocol penalties",
+            "rational actor can force others into worse exit conditions",
+            "sequential processing order creates extractable value",
+        ],
+        examples: &[
+            "LPs frontrun governance to block fee changes they dislike",
+            "first withdrawer gets full value; later withdrawers get less (bank run)",
+            "validator colludes with MEV searcher to extract from users",
+            "staker can force others into worse unstaking conditions",
+            "large holder manipulates voting to extract treasury funds",
+            "last participant in batch gets worse price than first",
+            "user delays claim to increase share of fixed reward pool",
+            "attacker deposits minimally to block pool parameter changes",
+        ],
+        impact_hint: ImpactHint::Medium,
     },
 ];
 
