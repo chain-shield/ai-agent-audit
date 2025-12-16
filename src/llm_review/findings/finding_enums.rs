@@ -135,6 +135,14 @@ pub enum VulnerabilityType {
 
     //added 11/20/2025
     AuthorityOrGovernance, // rational actor escalates privileges within rules
+
+    // added 12/16/2025 - Missing Megapot patterns
+    ArbitraryExternalCall, // user-controlled .call() with calldata enables asset theft
+    GlobalParamMidFlowManipulation, // global param changeable mid-flow (before settlement) causes manipulation
+    GovernanceFrontrunDoS,          // users can frontrun governance to block parameter changes
+    ExternalProtocolKeyCollision,   // external protocol ID/key collision when config changes
+    EmergencyModeStateStuck,        // emergency mode blocks settlement while allowing state changes
+    IncentiveMisalignmentOrGameTheory, // rational actors profit by harming others or blocking protocol
 }
 
 impl Default for VulnerabilityType {
@@ -206,6 +214,17 @@ impl VulnerabilityType {
             VulnerabilityType::TWAPWindowPinning => "TWAP Window Pinning",
             VulnerabilityType::ForcedAssetVsStrictEquality => "Forced Asset Vs Strict Equality",
             VulnerabilityType::AuthorityOrGovernance => "Authority Or Governance",
+            // Added 12/16/2025
+            VulnerabilityType::ArbitraryExternalCall => "Arbitrary External Call",
+            VulnerabilityType::GlobalParamMidFlowManipulation => {
+                "Global Param Mid-Flow Manipulation"
+            }
+            VulnerabilityType::GovernanceFrontrunDoS => "Governance Frontrun DoS",
+            VulnerabilityType::ExternalProtocolKeyCollision => "External Protocol Key Collision",
+            VulnerabilityType::EmergencyModeStateStuck => "Emergency Mode State Stuck",
+            VulnerabilityType::IncentiveMisalignmentOrGameTheory => {
+                "Incentive Misalignment / Game Theory"
+            }
         }
     }
 }

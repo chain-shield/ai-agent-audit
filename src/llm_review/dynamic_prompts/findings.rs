@@ -1,7 +1,7 @@
 use crate::{
     config::AuditType,
     llm_review::{
-        dynamic_prompts::patterns,
+        dynamic_prompts::{findings_template::get_pre_json_requirement_for_multipattern, patterns},
         prompt_support::severity_rubics::{
             CANTINA_SEVERITY_RUBRIC, CODE4RENA_SEVERITY_RUBRIC, SHERLOCK_SEVERITY_RUBRIC,
         },
@@ -24,10 +24,17 @@ pub fn generate_pattern_category_to_findings_prompt(
         _ => CODE4RENA_SEVERITY_RUBRIC,
     };
 
+    let pre_json = get_pre_json_requirement_for_multipattern(
+        &category_spec.issues,
+        "security vulnerability pattern",
+        repo,
+    );
+
     // NOTE: LARGE INSTRUCTIONS SET
     format!(
         r#"
-     You are a top Code4rena Security Warden. 
+
+        {pre_json} 
 
      ## **Persist until you've thoroughly analyzed ALL possible exploits from provided patterns**
      - Your goal is **maximum coverage** – unearth **EVERY** valid security finding.

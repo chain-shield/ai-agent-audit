@@ -1,6 +1,6 @@
 use crate::config::{
-    ACTOR_RUNS, CREATE_TESTS, DIRECT_TO_FINDING_MODE, NICHE_PATTERN_ANALYSIS_MODE, SKIP_LIBRARIES,
-    SKIP_PATTERN_RUNS,
+    ACTOR_RUNS, ALL_PATTERN_APPROACH, CREATE_TESTS, DIRECT_TO_FINDING_MODE,
+    NICHE_PATTERN_ANALYSIS_MODE, SKIP_LIBRARIES, SKIP_PATTERN_RUNS,
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
@@ -66,8 +66,11 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    // let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
-    let custom_scoped_contracts: Option<Vec<_>> = None;
+    let custom_scoped_contracts = Some(vec![
+        "Jackpot".to_string(),
+        "JackpotBridgeManager".to_string(),
+    ]);
+    // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -470,6 +473,9 @@ pub async fn generate_ai_agents(
 fn get_pattern_category_from_contract_category(
     contract_category: ContractCategory,
 ) -> Vec<PatternCategory> {
+    if ALL_PATTERN_APPROACH {
+        return vec![PatternCategory::Relevant];
+    }
     let default_pattern_categories = vec![
         PatternCategory::Top,
         PatternCategory::MostObserved,

@@ -4,7 +4,7 @@ use crate::{
     config::AuditType,
     llm_review::{
         agent::agent_enums::{
-            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
+            EnumData, all_enum_variants, generate_enum_bulleted_list, generate_enum_list,
         },
         findings::{
             finding_enums::{Severity, VulnerabilityType},
@@ -337,7 +337,7 @@ where
             "derived_from": "Insert title (or predicate) of most relevant {pattern_type} this finding derives from",
             "title": "200 chars or less audit report friendly title i.e. DOS due to unbounded loop in <contract_name>.<function_name> bricking withdrawals",
             "description": "Detailed explanation + vulnerable snippet",
-            "exploit_type": "{issue_list}",
+            "exploit_type": "MUST be exactly one of: {issue_list}",
             "privilege": "{privilege_enum_list}",
             "contract": "{{contract_name}}", 
             "function": "{{function_name}}", 

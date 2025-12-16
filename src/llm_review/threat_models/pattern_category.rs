@@ -1,7 +1,7 @@
 use crate::{
     config::{
-        MAX_PATTERN_GENERAL, MAX_PATTERN_LIBRARY, MAX_PATTERN_NICHE, MAX_PATTERN_RUN_FREQUENT,
-        MAX_PATTERN_RUN_MOST, MAX_PATTERN_RUN_RARE, MAX_PATTERN_RUN_TOP,
+        MAX_PATTERN_GENERAL, MAX_PATTERN_LIBRARY, MAX_PATTERN_NICHE, MAX_PATTERN_RELEVANT_FREQUENT,
+        MAX_PATTERN_RUN_FREQUENT, MAX_PATTERN_RUN_MOST, MAX_PATTERN_RUN_RARE, MAX_PATTERN_RUN_TOP,
     },
     llm_review::threat_models::patterns::VulnerabilityPattern,
 };
@@ -48,6 +48,7 @@ pub enum PatternCategory {
     Frequent,
     MostObserved,
     Library,
+    Relevant,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -272,6 +273,13 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
         issues: FREQUENT_PATTERNS,
         tier: PatternTier::Tier1,
         runs: MAX_PATTERN_RUN_FREQUENT,
+    },
+    PatternCategorySpec {
+        category: PatternCategory::Relevant,
+        title: "Most Relevant Code4rena",
+        issues: RELEVANT_PATTERNS,
+        tier: PatternTier::Tier1,
+        runs: MAX_PATTERN_RELEVANT_FREQUENT,
     },
     PatternCategorySpec {
         category: PatternCategory::MostObserved,
@@ -547,6 +555,8 @@ pub const RANDOMNESS_RAFFLE_LOTTERY_PATTERNS: &[VulnerabilityPattern; 10] = &[
     VulnerabilityPattern::ConfigFootgun,
 ];
 
+// RELEVANT_PATTERNS moved to patterns.rs - use super::patterns::RELEVANT_PATTERNS
+
 pub const COMMON_PATTERNS: &[VulnerabilityPattern; 20] = &[
     // Core Access Control & Auth (3 patterns) - Keep most critical, remove signature-specific
     VulnerabilityPattern::AccessControlOrAuthByPass, // High - universal auth bypass
@@ -658,6 +668,87 @@ pub const FREQUENT_PATTERNS: &[VulnerabilityPattern; 15] = &[
 ];
 
 // TOP VULNERABILITY PATTERNS
+
+/// Curated list of High/Medium severity patterns for focused analysis.
+/// Excludes Low-severity patterns (TimestampOrBlockManipulation, ChainIdorDomainDrift).
+pub const RELEVANT_PATTERNS: &[VulnerabilityPattern; 61] = &[
+    // auth bypass
+    VulnerabilityPattern::AccessControlOrAuthByPass, // High
+    VulnerabilityPattern::GovernanceDelegationFlaw,
+    VulnerabilityPattern::DoubleExecutionOrReplay,
+    VulnerabilityPattern::PermitOrSignatureReplay,
+    VulnerabilityPattern::EIP1271ByPass,
+    VulnerabilityPattern::ConfigFootgun, // untrusted admin
+    // Call Order, Reentrancy, External calls
+    VulnerabilityPattern::CEIViolation,
+    VulnerabilityPattern::Reentrancy, // High
+    VulnerabilityPattern::ReadOnlyReentrancy,
+    VulnerabilityPattern::ExternalCallAfterStateChange, // Medium
+    // Economic, Market, & Oracle
+    VulnerabilityPattern::SlippageMissingOrInsufficient,
+    VulnerabilityPattern::OracleUsingDEXorTWAP,
+    VulnerabilityPattern::FlashLoanEconomicManipulation, // High
+    VulnerabilityPattern::FeeOnTransferAssumption,
+    VulnerabilityPattern::ReserveOrPriceDesync,
+    // Accounting & Invariants
+    VulnerabilityPattern::AccountingInvariantViolation,
+    VulnerabilityPattern::UnsafeRecipient,
+    VulnerabilityPattern::PrecisionDriftAccumulation, // Medium
+    VulnerabilityPattern::PricePrecisionOrRoundingError,
+    // Token Standard Allowance
+    VulnerabilityPattern::StandardViolation,
+    VulnerabilityPattern::AllowanceRace, // Medium
+    VulnerabilityPattern::PermitMisuse,
+    // Upgradeability, Proxies, & Init
+    VulnerabilityPattern::UpgradeAuthBypass,
+    VulnerabilityPattern::InitOrderOrUnintialized,
+    VulnerabilityPattern::StorageCollisionOrSelectorClash,
+    VulnerabilityPattern::SelfdestructOrMetamorphicFootguns,
+    // Lifecycle & State Machines
+    VulnerabilityPattern::MaturityorGatingByPass,
+    VulnerabilityPattern::EpochOrIndexMonotonicity,
+    // DoS, Gas, and Complexity - all Mediums
+    VulnerabilityPattern::UnboundedLoops,
+    VulnerabilityPattern::GriefableCallbacks,
+    VulnerabilityPattern::StateGrowthOrStorageBloat,
+    // Randomness - Medium
+    VulnerabilityPattern::BlockhashOrPRNGWeakness,
+    // Cross-Chain & Bridging - only for L2 or bridges
+    VulnerabilityPattern::CrossChainMessageSpoofing,
+    VulnerabilityPattern::FinalityOrReplayAcrossDomains,
+    // EVM/Assembly & Low-Level
+    VulnerabilityPattern::UncheckedLowLevelCallResults,
+    VulnerabilityPattern::UnsafeAssembyTypeCasts,
+    VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath,
+    // ETH/WETH & Payment Flows
+    VulnerabilityPattern::EthVsWethConfusion,
+    VulnerabilityPattern::PullorPushPaymentbugs,
+    // Token behaviors
+    VulnerabilityPattern::NonStandardERC20Behavior,
+    VulnerabilityPattern::ERC20DecimalsMismatch,
+    VulnerabilityPattern::ERC777HookReentrancy,
+    VulnerabilityPattern::StaleOracleAcceptance,
+    VulnerabilityPattern::SandwichableOracle,
+    VulnerabilityPattern::PermitFrontRun,
+    VulnerabilityPattern::UnprotectedPauseOrStop,
+    VulnerabilityPattern::UntrustedDelegateCall,
+    VulnerabilityPattern::ReplayAcrossForksOrL2s,
+    VulnerabilityPattern::ERC4626SharePriceMismatch,
+    VulnerabilityPattern::FeeAccountingDrift,
+    // NEW (10/20/2025)
+    VulnerabilityPattern::BeaconOrFactoryAuthorityDrift,
+    VulnerabilityPattern::TimelockEdgeCase,
+    VulnerabilityPattern::MulticallCrossPathReentrancy,
+    VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity,
+    VulnerabilityPattern::ForcedAssetVsStrictEquality,
+    // NEW (12/16/2025) - Missing Megapot patterns
+    VulnerabilityPattern::ArbitraryExternalCall,
+    VulnerabilityPattern::GlobalParamMidFlowManipulation,
+    VulnerabilityPattern::GovernanceFrontrunDoS,
+    VulnerabilityPattern::ExternalProtocolKeyCollision,
+    VulnerabilityPattern::EmergencyModeStateStuck,
+    VulnerabilityPattern::IncentiveMisalignmentOrGameTheory,
+];
 
 // Custom utility library pattern sets
 pub const BYTE_MANIPULATION_LIBRARY_PATTERNS: &[VulnerabilityPattern; 5] = &[
