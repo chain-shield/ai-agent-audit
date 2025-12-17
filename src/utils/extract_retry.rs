@@ -95,13 +95,11 @@ where
             Err(e) => {
                 let msg = e.to_string();
 
-                log::info!("failed to parse this json => {:#?}", raw);
-
                 // Check if we should retry based on the original error
                 let should_retry = should_retry_based_on_error(&msg) && attempt < MAX_ATTEMPTS;
 
                 if should_retry {
-                    eprintln!("parse error ({msg}) – retrying {attempt}/{MAX_ATTEMPTS}");
+                    eprintln!("parse error – retrying {attempt}/{MAX_ATTEMPTS}");
                     // sleep(delay).await; --> NOT Send
                     continue;
                 } else {
