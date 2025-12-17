@@ -4,7 +4,7 @@ use crate::{
     config::AuditType,
     llm_review::{
         agent::agent_enums::{
-            all_enum_variants, generate_enum_bulleted_list, generate_enum_list, EnumData,
+            EnumData, all_enum_variants, generate_enum_bulleted_list, generate_enum_list,
         },
         findings::{
             finding_enums::{Severity, VulnerabilityType},
@@ -128,30 +128,29 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
 
         ## Rules
 
+        - Only report exploits **directly tied** to the provided {pattern_type} (patterns or invariants), **not** unrelated issues.
         - Only analyze code **actually present** in the codebase. 
         - Prefer exploits accessible to **unprivileged EOAs**; if an exploit requires a trusted role, make that clear via the `"privilege"` field (as specified in the JSON instructions).
         - Focus on **present-state** bugs in the current code. Ignore one-time deployment/upgrade windows unless the same condition can be recreated or abused permissionlessly later.
-
-        ## A valid finding must be:
+        - A valid finding must be:
         - In-scope,
         - Backed by a credible exploit path,
-        - And clearly High or Medium severity according to the below rubric.
+        - And clearly severity according to the rubric.
         - If nothing meets these criteria, return `{{"findings":[]}}`.
 
-        ### In-Context Skill Primer: How to Find Semantic / Multi-Step Bugs - essential to MAXIMIZE Coverage
+        ## Severity rubric
 
-        **Goal:** Find issues that are *not* syntactically obvious. Avoid repeating common patterns unless uniquely exploitable.
+        {rubric}
 
-        **Method (follow exactly):**
 
-        1. **Model state transitions:** Identify critical state variables and who can change them *between* steps/txs.
-        2. **Snapshot vs live reads:** For each multi-call flow, mark which values are snapshotted vs reread later.
-        3. **Cross-contract edges:** List external calls + callbacks + hooks (ERC777, ERC4626, tokens, oracles, governance modules).
-        4. **Probabilistic reasoning:** For any randomness/entropy, ask “what if inputs correlate / repeat / are controllable?”
-        5. **Incentives & griefing:** Ask “who benefits if this fails or is delayed?” Include DoS-by-incentive.
-        6. **Multi-step attack synthesis:** Write at least **2 candidate attack sequences** (3–6 steps each) before concluding “no issue”.
+        ## Exploit guidelines
 
-        **Hard constraint:** Produce **at least 3 findings candidates** that require ≥2 steps or cross-contract reasoning, even if tentative.
+        - Severity priority: **Theft > DoS > accounting mismatch**.
+        - Bigger **blast radius** and simpler execution are more valuable.
+        - Assert conditions using `assertGt` / `assertEq`, not just logs.
+        - For `"proof_of_code"`, the PoC should correspond to a **compilable Foundry test** (for example using `forge-std`, `vm.prank(attacker)`, etc.), as required by the JSON schema that follows.
+
+        ---
 
         ## {pattern_type} Overview
 
@@ -164,10 +163,6 @@ pub fn generate_findings_prompt_for_multiple_patterns<T: EnumData + std::fmt::Di
         ## {title_all_caps} TO ANALYZE
 
         {full_spec}
-
-        ## Severity Rubric
-
-        {rubric}
 
         "#,
         pattern_type = issue_type,
