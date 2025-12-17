@@ -394,7 +394,7 @@ fn get_pattern_category_from_contract_category(
     contract_category: ContractCategory,
 ) -> Vec<PatternCategory> {
     if ALL_PATTERN_APPROACH {
-        return vec![PatternCategory::Relevant];
+        return vec![PatternCategory::R1, PatternCategory::R2];
     }
     let default_pattern_categories = vec![
         PatternCategory::Top,

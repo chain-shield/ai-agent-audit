@@ -287,15 +287,8 @@ pub const PATTERN_CATEGORY_LIBRARY: &[PatternCategorySpec] = &[
     },
     PatternCategorySpec {
         category: PatternCategory::R2,
-        title: "Common Code4rena",
+        title: "Complex Code4rena",
         issues: R2_PATTERNS,
-        tier: PatternTier::Tier1,
-        runs: MAX_PATTERN_R_FREQUENT,
-    },
-    PatternCategorySpec {
-        category: PatternCategory::R3,
-        title: "Common Code4rena",
-        issues: R3_PATTERNS,
         tier: PatternTier::Tier1,
         runs: MAX_PATTERN_R_FREQUENT,
     },
@@ -777,88 +770,116 @@ pub const RELEVANT_PATTERNS: &[VulnerabilityPattern; 61] = &[
 
 /// Curated list of High/Medium severity patterns for focused analysis.
 /// Excludes Low-severity patterns (TimestampOrBlockManipulation, ChainIdorDomainDrift).
-pub const R1_PATTERNS: &[VulnerabilityPattern; 19] = &[
-    // auth bypass
-    VulnerabilityPattern::AccessControlOrAuthByPass, // High
-    VulnerabilityPattern::GovernanceDelegationFlaw,
+pub const R1_PATTERNS: &[VulnerabilityPattern; 49] = &[
+    // ============================================
+    // SYNTACTIC PATTERNS (Easy for LLMs)
+    // ============================================
+    // These are deterministic, single-contract, visible in code syntax
+    // LLMs have HIGH recall on these patterns
+
+    // Auth & Access Control (syntactically visible modifiers/checks)
+    VulnerabilityPattern::AccessControlOrAuthByPass,
     VulnerabilityPattern::DoubleExecutionOrReplay,
     VulnerabilityPattern::PermitOrSignatureReplay,
     VulnerabilityPattern::EIP1271ByPass,
-    VulnerabilityPattern::ConfigFootgun, // untrusted admin
-    // Call Order, Reentrancy, External calls
+    // Call Order & Reentrancy (syntactically visible call patterns)
     VulnerabilityPattern::CEIViolation,
-    VulnerabilityPattern::Reentrancy, // High
+    VulnerabilityPattern::Reentrancy,
     VulnerabilityPattern::ReadOnlyReentrancy,
-    VulnerabilityPattern::ExternalCallAfterStateChange, // Medium
-    // Economic, Market, & Oracle
+    VulnerabilityPattern::ExternalCallAfterStateChange,
+    // Economic & Oracle (syntactically visible oracle calls)
     VulnerabilityPattern::SlippageMissingOrInsufficient,
     VulnerabilityPattern::OracleUsingDEXorTWAP,
-    VulnerabilityPattern::FlashLoanEconomicManipulation, // High
     VulnerabilityPattern::FeeOnTransferAssumption,
     VulnerabilityPattern::ReserveOrPriceDesync,
-    // Accounting & Invariants
+    // Accounting & Invariants (syntactically visible math)
     VulnerabilityPattern::AccountingInvariantViolation,
     VulnerabilityPattern::UnsafeRecipient,
-    VulnerabilityPattern::PrecisionDriftAccumulation, // Medium
+    VulnerabilityPattern::PrecisionDriftAccumulation,
     VulnerabilityPattern::PricePrecisionOrRoundingError,
-];
-
-pub const R2_PATTERNS: &[VulnerabilityPattern; 20] = &[
-    // Token Standard Allowance
+    // Token Standard (syntactically visible allowance/transfer)
     VulnerabilityPattern::StandardViolation,
-    VulnerabilityPattern::AllowanceRace, // Medium
+    VulnerabilityPattern::AllowanceRace,
     VulnerabilityPattern::PermitMisuse,
-    // Upgradeability, Proxies, & Init
+    // Upgradeability & Init (syntactically visible init/upgrade)
     VulnerabilityPattern::UpgradeAuthBypass,
     VulnerabilityPattern::InitOrderOrUnintialized,
     VulnerabilityPattern::StorageCollisionOrSelectorClash,
     VulnerabilityPattern::SelfdestructOrMetamorphicFootguns,
-    // Lifecycle & State Machines
+    // Lifecycle & State Machines (syntactically visible state checks)
     VulnerabilityPattern::MaturityorGatingByPass,
     VulnerabilityPattern::EpochOrIndexMonotonicity,
-    // DoS, Gas, and Complexity - all Mediums
+    // DoS, Gas, and Complexity (syntactically visible loops)
     VulnerabilityPattern::UnboundedLoops,
-    VulnerabilityPattern::GriefableCallbacks,
     VulnerabilityPattern::StateGrowthOrStorageBloat,
-    // Randomness - Medium
-    VulnerabilityPattern::BlockhashOrPRNGWeakness,
-    // Cross-Chain & Bridging - only for L2 or bridges
+    // Randomness & Time (syntactically visible timestamp/blockhash)
+    VulnerabilityPattern::TimestampOrBlockManipulation,
+    VulnerabilityPattern::ChainIdorDomainDrift,
+    // Cross-Chain (syntactically visible message validation)
     VulnerabilityPattern::CrossChainMessageSpoofing,
     VulnerabilityPattern::FinalityOrReplayAcrossDomains,
-    // EVM/Assembly & Low-Level
+    // EVM/Assembly (syntactically visible low-level calls)
     VulnerabilityPattern::UncheckedLowLevelCallResults,
     VulnerabilityPattern::UnsafeAssembyTypeCasts,
     VulnerabilityPattern::DivideByZeroOrOverFlowInCustomMath,
-    // ETH/WETH & Payment Flows
+    // ETH/WETH (syntactically visible ETH/WETH handling)
     VulnerabilityPattern::EthVsWethConfusion,
     VulnerabilityPattern::PullorPushPaymentbugs,
-];
-
-pub const R3_PATTERNS: &[VulnerabilityPattern; 21] = &[
-    // Token behaviors
+    // Token Behavior (syntactically visible token interactions)
+    VulnerabilityPattern::NonStandardERC20Behavior,
     VulnerabilityPattern::ERC20DecimalsMismatch,
-    VulnerabilityPattern::ERC777HookReentrancy,
+    // Oracle (syntactically visible staleness checks)
     VulnerabilityPattern::StaleOracleAcceptance,
     VulnerabilityPattern::SandwichableOracle,
-    VulnerabilityPattern::PermitFrontRun,
+    // Pause/Stop (syntactically visible pause modifiers)
     VulnerabilityPattern::UnprotectedPauseOrStop,
+    // Delegatecall (syntactically visible delegatecall)
     VulnerabilityPattern::UntrustedDelegateCall,
+    // Replay (syntactically visible replay protection)
     VulnerabilityPattern::ReplayAcrossForksOrL2s,
+    // ERC4626 (syntactically visible share/asset math)
     VulnerabilityPattern::ERC4626SharePriceMismatch,
+    // Fee Accounting (syntactically visible fee math)
     VulnerabilityPattern::FeeAccountingDrift,
-    // NEW (10/20/2025)
+    // Beacon/Factory (syntactically visible authority checks)
     VulnerabilityPattern::BeaconOrFactoryAuthorityDrift,
+    // Timelock (syntactically visible timelock checks)
     VulnerabilityPattern::TimelockEdgeCase,
-    VulnerabilityPattern::MulticallCrossPathReentrancy,
+    // TWAP (syntactically visible TWAP window)
     VulnerabilityPattern::TWAPWindowPinningOrLowLiquidity,
+    // Asset Equality (syntactically visible balance checks)
     VulnerabilityPattern::ForcedAssetVsStrictEquality,
-    // NEW (12/16/2025) - Missing Megapot patterns
-    VulnerabilityPattern::ArbitraryExternalCall,
-    VulnerabilityPattern::GlobalParamMidFlowManipulation,
-    VulnerabilityPattern::GovernanceFrontrunDoS,
-    VulnerabilityPattern::ExternalProtocolKeyCollision,
-    VulnerabilityPattern::EmergencyModeStateStuck,
-    VulnerabilityPattern::IncentiveMisalignmentOrGameTheory,
+];
+
+pub const R2_PATTERNS: &[VulnerabilityPattern; 14] = &[
+    // ============================================
+    // SEMANTIC PATTERNS (Hard for LLMs)
+    // ============================================
+    // These require deep understanding, multi-step reasoning,
+    // game theory, probabilistic analysis, or cross-contract tracing
+    // LLMs have LOW recall on these patterns
+
+    // Auth & Governance (requires understanding delegation/governance flow)
+    VulnerabilityPattern::GovernanceDelegationFlaw,
+    VulnerabilityPattern::ConfigFootgun, // Requires understanding admin trust assumptions
+    // Economic & Game Theory (requires economic/incentive analysis)
+    VulnerabilityPattern::FlashLoanEconomicManipulation, // Multi-step attack
+    VulnerabilityPattern::IncentiveMisalignmentOrGameTheory, // Requires game theory
+    // Callbacks & Hooks (requires understanding callback flow)
+    VulnerabilityPattern::GriefableCallbacks, // Requires understanding griefing incentives
+    VulnerabilityPattern::ERC777HookReentrancy, // Requires understanding ERC777 hooks
+    // Randomness (requires probabilistic/cryptographic analysis)
+    VulnerabilityPattern::BlockhashOrPRNGWeakness, // Requires understanding RNG properties
+    // Permit (requires understanding frontrunning)
+    VulnerabilityPattern::PermitFrontRun, // Requires multi-step attack sequencing
+    // Multicall (requires cross-path analysis)
+    VulnerabilityPattern::MulticallCrossPathReentrancy, // Requires understanding multicall interactions
+    // NEW MEGAPOT PATTERNS (all require deep semantic understanding)
+    VulnerabilityPattern::ArbitraryExternalCall, // Requires multi-step attack chain + custody analysis
+    VulnerabilityPattern::GlobalParamMidFlowManipulation, // Requires temporal state analysis
+    VulnerabilityPattern::GovernanceFrontrunDoS, // Requires game theory + frontrunning analysis
+    VulnerabilityPattern::ExternalProtocolKeyCollision, // Requires external protocol knowledge
+    VulnerabilityPattern::EmergencyModeStateStuck, // Requires state machine analysis
 ];
 
 // Custom utility library pattern sets
