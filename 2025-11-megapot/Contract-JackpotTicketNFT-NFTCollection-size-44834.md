@@ -211,350 +211,6 @@ contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
-
-import { Combinations } from "./Combinations.sol";
-import { LibBit } from "solady/src/utils/LibBit.sol";
-
-/**
- * @title TicketComboTracker
- * @notice Library for tracking jackpot ticket combinations and calculating win distributions efficiently
- * @dev Implements scalable settlement calculations using bit vectors and inclusion-exclusion principle:
- *      - Stores ticket combinations as bit vectors for efficient subset operations
- *      - Tracks both unique and duplicate ticket counts per combination subset
- *      - Uses inclusion-exclusion principle to avoid double-counting when calculating payouts
- *      - Enables O(1) duplicate detection and efficient tier-based payout calculations
- *      - Supports configurable normal ball ranges and bonusball values
- *      - Optimized for gas efficiency in high-volume jackpot scenarios
- */
-library TicketComboTracker {
-    struct ComboCount {
-        uint128 count;
-        uint128 dupCount;
-    }
-
-    struct Tracker {
-        uint8 normalMax;
-        uint8 bonusballMax;
-        uint8 normalTiers;
-        mapping(uint8 => mapping(uint256 => ComboCount)) comboCounts;
-        mapping(uint8 => ComboCount) bonusballTicketCounts;
-    }
-
-    /**
-     * @notice Initializes a combo tracker with jackpot configuration parameters
-     * @dev Sets up the tracker with ball ranges and tier configuration for efficient combo tracking.
-     *      Must be called before using any other tracker functions.
-     * @param tracker Storage reference to the tracker being initialized
-     * @param _normalMax Maximum value for normal balls (1 to this value)
-     * @param _bonusballMax Maximum value for bonusball (1 to this value)
-     * @param _normalTiers Number of normal balls per ticket (typically 5)
-     * @custom:effects
-     * - Configures tracker parameters for combo calculations
-     * - Prepares tracker for ticket insertion and counting operations
-     * @custom:security
-     * - No validation as this is internal initialization
-     * - Caller responsible for providing valid parameters
-     */
-    function init(
-        Tracker storage tracker,
-        uint8 _normalMax,
-        uint8 _bonusballMax,
-        uint8 _normalTiers
-    ) internal {
-        tracker.normalMax = _normalMax;
-        tracker.bonusballMax = _bonusballMax;
-        tracker.normalTiers = _normalTiers;
-    }
-
-    /**
-     * @notice Converts an array of normal ball numbers to a bit vector representation
-     * @dev Creates a bit vector where each bit position represents a ball number.
-     *      Validates no duplicates and all numbers are within valid range.
-     * @param _set Array of ball numbers to convert
-     * @param _maxNormalBall Maximum valid ball number
-     * @return Bit vector representation where bit N is set if ball N is selected
-     * @custom:requirements
-     * - Set must not be empty
-     * - All numbers must be > 0 and <= _maxNormalBall
-     * - No duplicate numbers allowed
-     * @custom:security
-     * - Validates range and uniqueness to prevent invalid combinations
-     * - Uses bit operations for efficient duplicate detection
-     */
-    function toNormalsBitVector(
-        uint8[] memory _set,
-        uint256 _maxNormalBall
-    )
-        internal
-        pure
-        returns (uint256)
-    {
-        require(_set.length != 0, "Invalid set length");
-        uint256 bitVector = 0;
-        for (uint256 i; i < _set.length; ++i) {
-            require(_set[i] <= _maxNormalBall && _set[i] > 0, "Invalid set selection");
-            require((bitVector & (1 << _set[i])) == 0, "Duplicate number in set");
-            bitVector |= 1 << _set[i];
-        }
-        return bitVector;
-    }
-
-    /**
-     * @notice Inserts a ticket combination into the tracker and updates subset counts
-     * @dev Converts ticket to bit vector, generates all subsets, and updates counts.
-     *      Distinguishes between first purchase of a ticket (unique) and duplicates for
-     *      payout calculations. 
-     * @param _tracker Storage reference to the tracker
-     * @param _normalBalls Array of normal ball numbers
-     * @param _bonusball Bonusball number
-     * @return ticketNumbers Bit vector representation of the complete ticket
-     * @return isDup True if this exact combination was already inserted
-     * @custom:requirements
-     * - Normal balls array length must match tracker.normalTiers
-     * - All ball numbers must be valid per tracker configuration
-     * @custom:effects
-     * - Updates counts for all subset combinations of the ticket
-     * - Increments either unique or duplicate counts based on prior existence
-     * - Tracks bonusball-specific subset counts for tier calculations
-     * @custom:security
-     * - Validates ticket format matches tracker configuration
-     * - Prevents invalid combinations through bit vector validation
-     */
-    function insert(
-        Tracker storage _tracker,
-        uint8[] memory _normalBalls,
-        uint8 _bonusball
-    )
-        internal
-        returns (uint256 ticketNumbers, bool isDup)
-    {
-        require(_normalBalls.length == _tracker.normalTiers, "Invalid pick length");
-        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
-        // Iterate over all tier combos and store the combo counts
-        isDup = _tracker.comboCounts[_bonusball][set].count > 0;
-        for (uint8 i = 1; i <= _tracker.normalTiers; i++) {
-            uint256[] memory subsets = Combinations.generateSubsets(set, i);
-            for (uint256 j = 0; j < subsets.length; j++) {
-                if (isDup) {
-                    _tracker.comboCounts[_bonusball][subsets[j]].dupCount++;
-                } else {
-                    _tracker.comboCounts[_bonusball][subsets[j]].count++;
-                }
-            }
-        }
-
-        if (isDup) {
-            _tracker.bonusballTicketCounts[_bonusball].dupCount++;
-        } else {
-            _tracker.bonusballTicketCounts[_bonusball].count++;
-        }
-
-        // Add the bonusball to the bit vector
-        ticketNumbers = set |= 1 << (_bonusball + _tracker.normalMax);
-    }
-
-    function _countSubsetMatches(
-        Tracker storage _tracker,
-        uint256 _normalBallsBitVector,
-        uint8 _bonusball
-    )
-        private
-        view
-        returns (uint256[] memory matches, uint256[] memory dupMatches)
-    {
-        matches = new uint256[]((_tracker.normalTiers+1)*2);
-        dupMatches = new uint256[]((_tracker.normalTiers+1)*2);
-        
-        for (uint8 i = 1; i <= _tracker.bonusballMax; i++) {
-            for (uint8 k = 1; k <= _tracker.normalTiers; k++) {
-                uint256[] memory subsets = Combinations.generateSubsets(_normalBallsBitVector, k);
-                for (uint256 l = 0; l < subsets.length; l++) {
-                    if (i == _bonusball) {
-                        matches[(k*2)+1] += _tracker.comboCounts[i][subsets[l]].count;
-                        dupMatches[k*2+1] += _tracker.comboCounts[i][subsets[l]].dupCount;
-                    } else {
-                        matches[(k*2)] += _tracker.comboCounts[i][subsets[l]].count;
-                        dupMatches[k*2] += _tracker.comboCounts[i][subsets[l]].dupCount;
-                    }
-                }
-            }
-        }
-    }
-
-    function _applyInclusionExclusionPrinciple(
-        Tracker storage _tracker,
-        uint256[] memory _matches,
-        uint256[] memory _dupMatches
-    )
-        private
-        view
-        returns (uint256[] memory result, uint256[] memory dupResult)
-    {
-        result = new uint256[](_matches.length);
-        dupResult = new uint256[](_dupMatches.length);
-        
-        // Solve top-down (starting from "all matched")
-        for (uint256 k = _tracker.normalTiers; k >= 1; --k) {
-            uint256 s = _matches[2*k];
-            uint256 sp = _matches[2*k+1];
-            uint256 sd = _dupMatches[2*k];
-            uint256 sdp = _dupMatches[2*k+1];
-            
-            // Repeatedly subtract higher-tier counts that spill over into this tier
-            for (uint256 m = k + 1; m <= _tracker.normalTiers; ++m) {
-                // Each higher-tier ticket contributes C(m,k) subsets to this tier
-                uint256 c = Combinations.choose(m, k);
-                s -= c * result[2*m];
-                sp -= c * result[2*m+1];
-                sd -= c * dupResult[2*m];
-                sdp -= c * dupResult[2*m+1];
-            }
-            
-            result[2*k] = s;
-            result[2*k+1] = sp;
-            dupResult[2*k] = sd;
-            dupResult[2*k+1] = sdp;
-        }
-    }
-
-    function _calculateBonusballOnlyMatches(
-        Tracker storage _tracker,
-        uint8 _bonusball,
-        uint256[] memory _uniqueResult,
-        uint256[] memory _dupResult
-    )
-        private
-        view
-    {
-        // Start with all bonusball-only tickets
-        _uniqueResult[1] = _tracker.bonusballTicketCounts[_bonusball].count;
-        _dupResult[1] = _tracker.bonusballTicketCounts[_bonusball].dupCount;
-        
-        // Subtract tickets that also match normal balls (they're counted in higher tiers)
-        for (uint256 i = 1; i <= _tracker.normalTiers; i++) {
-            _uniqueResult[1] -= _uniqueResult[2*i + 1];
-            _dupResult[1] -= _dupResult[2*i + 1];
-        }
-    }
-
-    /**
-     * @notice Calculates winning ticket counts across all tiers for given winning numbers
-     * @dev Implements three-phase calculation to determine exact winner counts per tier:
-     *      1. Count all subset matches across bonusball values
-     *      2. Apply inclusion-exclusion principle to remove double-counting
-     *      3. Calculate bonusball-only matches (0 normal matches + bonusball)
-     * @param _tracker Storage reference to the tracker
-     * @param _normalBalls Array of winning normal ball numbers
-     * @param _bonusball Winning bonusball number
-     * @return winningTicket Bit vector representation of the winning combination
-     * @return uniqueResult Array of unique winner counts per tier (indexed by tier ID)
-     * @return dupResult Array of duplicate winner counts per tier (indexed by tier ID)
-     * @custom:effects
-     * - Generates comprehensive winner statistics for payout calculations
-     * - Separates unique and duplicate winners for accurate settlement
-     * - Covers all 12 tiers: matches(0-5) + bonusball(0/1)
-     * @custom:security
-     * - Read-only operation with no state changes
-     * - Uses mathematical inclusion-exclusion for accurate counting
-     * - Prevents over-counting tickets in multiple tiers
-     */
-    function countTierMatchesWithBonusball(
-        Tracker storage _tracker,
-        uint8[] memory _normalBalls,
-        uint8 _bonusball
-    )
-        internal
-        view
-        returns (uint256 winningTicket, uint256[] memory uniqueResult, uint256[] memory dupResult)
-    {
-        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
-        winningTicket = set | (1 << (_bonusball + _tracker.normalMax));
-
-        // Step 1: Count all subset matches across all bonusballs
-        (uint256[] memory matches, uint256[] memory dupMatches) = _countSubsetMatches(_tracker, set, _bonusball);
-        
-        // Step 2: Apply inclusion-exclusion principle to remove double counting
-        (uniqueResult, dupResult) = _applyInclusionExclusionPrinciple(_tracker, matches, dupMatches);
-        
-        // Step 3: Calculate bonusball-only matches (no normal balls matched)
-        _calculateBonusballOnlyMatches(_tracker, _bonusball, uniqueResult, dupResult);
-    }
-
-    /**
-     * @notice Checks if a ticket combination has already been inserted into the tracker
-     * @dev Efficiently determines duplicate status by checking if the exact combination
-     *      has a non-zero count in the tracker's storage.
-     * @param _tracker Storage reference to the tracker
-     * @param _normalBalls Array of normal ball numbers to check
-     * @param _bonusball Bonusball number to check
-     * @return True if this exact combination exists in the tracker
-     * @custom:requirements
-     * - Normal balls array length must match tracker configuration
-     * - All ball numbers must be valid per tracker setup
-     * @custom:security
-     * - Read-only operation with no state changes
-     * - Validates input format before processing
-     * - Uses efficient bit vector lookup for O(1) duplicate detection
-     */
-    function isDuplicate(
-        Tracker storage _tracker,
-        uint8[] memory _normalBalls,
-        uint8 _bonusball
-    )
-        internal
-        view
-        returns (bool)
-    {
-        require(_normalBalls.length == _tracker.normalTiers, "Invalid set length");
-        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
-        return _tracker.comboCounts[_bonusball][set].count > 0;
-    }
-
-    /**
-     * @notice Unpacks a bit vector representation back into separate normal balls and bonusball number
-     * @dev Extracts individual ball numbers from a packed ticket by scanning bit positions.
-     *      Normal balls are stored at bit positions 1 to _normalMax, bonusball at position (_normalMax + bonusball_value).
-     *      Uses LibBit operations for efficient bit scanning and counting to reconstruct original ticket.
-     * @param _packedTicket Bit vector representation of the complete ticket
-     * @param _normalMax Maximum value for normal balls (defines boundary between normal and bonusball bits)
-     * @return normalBalls Array of normal ball numbers extracted from bit positions 1 to _normalMax
-     * @return bonusball Bonusball number calculated from highest set bit position minus _normalMax
-     * @custom:requirements
-     * - Packed ticket must contain valid bit pattern with at least one bonusball bit set
-     * - Normal ball bits must be within positions 1 to _normalMax if present
-     * - Bonusball bit must be at position > _normalMax
-     * @custom:effects
-     * - Scans bit vector to extract individual ball numbers in ascending order
-     * - Reconstructs original ticket structure from packed representation
-     * - No state changes as this is a pure function
-     * @custom:security
-     * - Read-only operation with no side effects or external calls
-     * - Uses efficient LibBit operations to prevent gas issues with large bit vectors
-     * - Handles edge cases like single-ball tickets and sparse patterns gracefully
-     */
-    function unpackTicket(
-        uint256 _packedTicket,
-        uint8 _normalMax
-    )
-        internal
-        pure
-        returns (uint8[] memory normalBalls, uint8 bonusball)
-    {
-        uint256 ballCount = LibBit.popCount(_packedTicket);
-        normalBalls = new uint8[](ballCount - 1);
-        uint256 p;
-        for (uint256 i = 1; i <= _normalMax; i++) {
-            if (_packedTicket & (1 << i) != 0) {
-                normalBalls[p++] = uint8(i);
-            }
-        }
-
-        // Find the bonusball bit position and subtract _normalMax to get the bonusball value
-        bonusball = uint8(LibBit.fls(_packedTicket) - _normalMax);
-    }
-}
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -2571,6 +2227,350 @@ library LibBit {
 }
 
 // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import { Combinations } from "./Combinations.sol";
+import { LibBit } from "solady/src/utils/LibBit.sol";
+
+/**
+ * @title TicketComboTracker
+ * @notice Library for tracking jackpot ticket combinations and calculating win distributions efficiently
+ * @dev Implements scalable settlement calculations using bit vectors and inclusion-exclusion principle:
+ *      - Stores ticket combinations as bit vectors for efficient subset operations
+ *      - Tracks both unique and duplicate ticket counts per combination subset
+ *      - Uses inclusion-exclusion principle to avoid double-counting when calculating payouts
+ *      - Enables O(1) duplicate detection and efficient tier-based payout calculations
+ *      - Supports configurable normal ball ranges and bonusball values
+ *      - Optimized for gas efficiency in high-volume jackpot scenarios
+ */
+library TicketComboTracker {
+    struct ComboCount {
+        uint128 count;
+        uint128 dupCount;
+    }
+
+    struct Tracker {
+        uint8 normalMax;
+        uint8 bonusballMax;
+        uint8 normalTiers;
+        mapping(uint8 => mapping(uint256 => ComboCount)) comboCounts;
+        mapping(uint8 => ComboCount) bonusballTicketCounts;
+    }
+
+    /**
+     * @notice Initializes a combo tracker with jackpot configuration parameters
+     * @dev Sets up the tracker with ball ranges and tier configuration for efficient combo tracking.
+     *      Must be called before using any other tracker functions.
+     * @param tracker Storage reference to the tracker being initialized
+     * @param _normalMax Maximum value for normal balls (1 to this value)
+     * @param _bonusballMax Maximum value for bonusball (1 to this value)
+     * @param _normalTiers Number of normal balls per ticket (typically 5)
+     * @custom:effects
+     * - Configures tracker parameters for combo calculations
+     * - Prepares tracker for ticket insertion and counting operations
+     * @custom:security
+     * - No validation as this is internal initialization
+     * - Caller responsible for providing valid parameters
+     */
+    function init(
+        Tracker storage tracker,
+        uint8 _normalMax,
+        uint8 _bonusballMax,
+        uint8 _normalTiers
+    ) internal {
+        tracker.normalMax = _normalMax;
+        tracker.bonusballMax = _bonusballMax;
+        tracker.normalTiers = _normalTiers;
+    }
+
+    /**
+     * @notice Converts an array of normal ball numbers to a bit vector representation
+     * @dev Creates a bit vector where each bit position represents a ball number.
+     *      Validates no duplicates and all numbers are within valid range.
+     * @param _set Array of ball numbers to convert
+     * @param _maxNormalBall Maximum valid ball number
+     * @return Bit vector representation where bit N is set if ball N is selected
+     * @custom:requirements
+     * - Set must not be empty
+     * - All numbers must be > 0 and <= _maxNormalBall
+     * - No duplicate numbers allowed
+     * @custom:security
+     * - Validates range and uniqueness to prevent invalid combinations
+     * - Uses bit operations for efficient duplicate detection
+     */
+    function toNormalsBitVector(
+        uint8[] memory _set,
+        uint256 _maxNormalBall
+    )
+        internal
+        pure
+        returns (uint256)
+    {
+        require(_set.length != 0, "Invalid set length");
+        uint256 bitVector = 0;
+        for (uint256 i; i < _set.length; ++i) {
+            require(_set[i] <= _maxNormalBall && _set[i] > 0, "Invalid set selection");
+            require((bitVector & (1 << _set[i])) == 0, "Duplicate number in set");
+            bitVector |= 1 << _set[i];
+        }
+        return bitVector;
+    }
+
+    /**
+     * @notice Inserts a ticket combination into the tracker and updates subset counts
+     * @dev Converts ticket to bit vector, generates all subsets, and updates counts.
+     *      Distinguishes between first purchase of a ticket (unique) and duplicates for
+     *      payout calculations. 
+     * @param _tracker Storage reference to the tracker
+     * @param _normalBalls Array of normal ball numbers
+     * @param _bonusball Bonusball number
+     * @return ticketNumbers Bit vector representation of the complete ticket
+     * @return isDup True if this exact combination was already inserted
+     * @custom:requirements
+     * - Normal balls array length must match tracker.normalTiers
+     * - All ball numbers must be valid per tracker configuration
+     * @custom:effects
+     * - Updates counts for all subset combinations of the ticket
+     * - Increments either unique or duplicate counts based on prior existence
+     * - Tracks bonusball-specific subset counts for tier calculations
+     * @custom:security
+     * - Validates ticket format matches tracker configuration
+     * - Prevents invalid combinations through bit vector validation
+     */
+    function insert(
+        Tracker storage _tracker,
+        uint8[] memory _normalBalls,
+        uint8 _bonusball
+    )
+        internal
+        returns (uint256 ticketNumbers, bool isDup)
+    {
+        require(_normalBalls.length == _tracker.normalTiers, "Invalid pick length");
+        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
+        // Iterate over all tier combos and store the combo counts
+        isDup = _tracker.comboCounts[_bonusball][set].count > 0;
+        for (uint8 i = 1; i <= _tracker.normalTiers; i++) {
+            uint256[] memory subsets = Combinations.generateSubsets(set, i);
+            for (uint256 j = 0; j < subsets.length; j++) {
+                if (isDup) {
+                    _tracker.comboCounts[_bonusball][subsets[j]].dupCount++;
+                } else {
+                    _tracker.comboCounts[_bonusball][subsets[j]].count++;
+                }
+            }
+        }
+
+        if (isDup) {
+            _tracker.bonusballTicketCounts[_bonusball].dupCount++;
+        } else {
+            _tracker.bonusballTicketCounts[_bonusball].count++;
+        }
+
+        // Add the bonusball to the bit vector
+        ticketNumbers = set |= 1 << (_bonusball + _tracker.normalMax);
+    }
+
+    function _countSubsetMatches(
+        Tracker storage _tracker,
+        uint256 _normalBallsBitVector,
+        uint8 _bonusball
+    )
+        private
+        view
+        returns (uint256[] memory matches, uint256[] memory dupMatches)
+    {
+        matches = new uint256[]((_tracker.normalTiers+1)*2);
+        dupMatches = new uint256[]((_tracker.normalTiers+1)*2);
+        
+        for (uint8 i = 1; i <= _tracker.bonusballMax; i++) {
+            for (uint8 k = 1; k <= _tracker.normalTiers; k++) {
+                uint256[] memory subsets = Combinations.generateSubsets(_normalBallsBitVector, k);
+                for (uint256 l = 0; l < subsets.length; l++) {
+                    if (i == _bonusball) {
+                        matches[(k*2)+1] += _tracker.comboCounts[i][subsets[l]].count;
+                        dupMatches[k*2+1] += _tracker.comboCounts[i][subsets[l]].dupCount;
+                    } else {
+                        matches[(k*2)] += _tracker.comboCounts[i][subsets[l]].count;
+                        dupMatches[k*2] += _tracker.comboCounts[i][subsets[l]].dupCount;
+                    }
+                }
+            }
+        }
+    }
+
+    function _applyInclusionExclusionPrinciple(
+        Tracker storage _tracker,
+        uint256[] memory _matches,
+        uint256[] memory _dupMatches
+    )
+        private
+        view
+        returns (uint256[] memory result, uint256[] memory dupResult)
+    {
+        result = new uint256[](_matches.length);
+        dupResult = new uint256[](_dupMatches.length);
+        
+        // Solve top-down (starting from "all matched")
+        for (uint256 k = _tracker.normalTiers; k >= 1; --k) {
+            uint256 s = _matches[2*k];
+            uint256 sp = _matches[2*k+1];
+            uint256 sd = _dupMatches[2*k];
+            uint256 sdp = _dupMatches[2*k+1];
+            
+            // Repeatedly subtract higher-tier counts that spill over into this tier
+            for (uint256 m = k + 1; m <= _tracker.normalTiers; ++m) {
+                // Each higher-tier ticket contributes C(m,k) subsets to this tier
+                uint256 c = Combinations.choose(m, k);
+                s -= c * result[2*m];
+                sp -= c * result[2*m+1];
+                sd -= c * dupResult[2*m];
+                sdp -= c * dupResult[2*m+1];
+            }
+            
+            result[2*k] = s;
+            result[2*k+1] = sp;
+            dupResult[2*k] = sd;
+            dupResult[2*k+1] = sdp;
+        }
+    }
+
+    function _calculateBonusballOnlyMatches(
+        Tracker storage _tracker,
+        uint8 _bonusball,
+        uint256[] memory _uniqueResult,
+        uint256[] memory _dupResult
+    )
+        private
+        view
+    {
+        // Start with all bonusball-only tickets
+        _uniqueResult[1] = _tracker.bonusballTicketCounts[_bonusball].count;
+        _dupResult[1] = _tracker.bonusballTicketCounts[_bonusball].dupCount;
+        
+        // Subtract tickets that also match normal balls (they're counted in higher tiers)
+        for (uint256 i = 1; i <= _tracker.normalTiers; i++) {
+            _uniqueResult[1] -= _uniqueResult[2*i + 1];
+            _dupResult[1] -= _dupResult[2*i + 1];
+        }
+    }
+
+    /**
+     * @notice Calculates winning ticket counts across all tiers for given winning numbers
+     * @dev Implements three-phase calculation to determine exact winner counts per tier:
+     *      1. Count all subset matches across bonusball values
+     *      2. Apply inclusion-exclusion principle to remove double-counting
+     *      3. Calculate bonusball-only matches (0 normal matches + bonusball)
+     * @param _tracker Storage reference to the tracker
+     * @param _normalBalls Array of winning normal ball numbers
+     * @param _bonusball Winning bonusball number
+     * @return winningTicket Bit vector representation of the winning combination
+     * @return uniqueResult Array of unique winner counts per tier (indexed by tier ID)
+     * @return dupResult Array of duplicate winner counts per tier (indexed by tier ID)
+     * @custom:effects
+     * - Generates comprehensive winner statistics for payout calculations
+     * - Separates unique and duplicate winners for accurate settlement
+     * - Covers all 12 tiers: matches(0-5) + bonusball(0/1)
+     * @custom:security
+     * - Read-only operation with no state changes
+     * - Uses mathematical inclusion-exclusion for accurate counting
+     * - Prevents over-counting tickets in multiple tiers
+     */
+    function countTierMatchesWithBonusball(
+        Tracker storage _tracker,
+        uint8[] memory _normalBalls,
+        uint8 _bonusball
+    )
+        internal
+        view
+        returns (uint256 winningTicket, uint256[] memory uniqueResult, uint256[] memory dupResult)
+    {
+        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
+        winningTicket = set | (1 << (_bonusball + _tracker.normalMax));
+
+        // Step 1: Count all subset matches across all bonusballs
+        (uint256[] memory matches, uint256[] memory dupMatches) = _countSubsetMatches(_tracker, set, _bonusball);
+        
+        // Step 2: Apply inclusion-exclusion principle to remove double counting
+        (uniqueResult, dupResult) = _applyInclusionExclusionPrinciple(_tracker, matches, dupMatches);
+        
+        // Step 3: Calculate bonusball-only matches (no normal balls matched)
+        _calculateBonusballOnlyMatches(_tracker, _bonusball, uniqueResult, dupResult);
+    }
+
+    /**
+     * @notice Checks if a ticket combination has already been inserted into the tracker
+     * @dev Efficiently determines duplicate status by checking if the exact combination
+     *      has a non-zero count in the tracker's storage.
+     * @param _tracker Storage reference to the tracker
+     * @param _normalBalls Array of normal ball numbers to check
+     * @param _bonusball Bonusball number to check
+     * @return True if this exact combination exists in the tracker
+     * @custom:requirements
+     * - Normal balls array length must match tracker configuration
+     * - All ball numbers must be valid per tracker setup
+     * @custom:security
+     * - Read-only operation with no state changes
+     * - Validates input format before processing
+     * - Uses efficient bit vector lookup for O(1) duplicate detection
+     */
+    function isDuplicate(
+        Tracker storage _tracker,
+        uint8[] memory _normalBalls,
+        uint8 _bonusball
+    )
+        internal
+        view
+        returns (bool)
+    {
+        require(_normalBalls.length == _tracker.normalTiers, "Invalid set length");
+        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
+        return _tracker.comboCounts[_bonusball][set].count > 0;
+    }
+
+    /**
+     * @notice Unpacks a bit vector representation back into separate normal balls and bonusball number
+     * @dev Extracts individual ball numbers from a packed ticket by scanning bit positions.
+     *      Normal balls are stored at bit positions 1 to _normalMax, bonusball at position (_normalMax + bonusball_value).
+     *      Uses LibBit operations for efficient bit scanning and counting to reconstruct original ticket.
+     * @param _packedTicket Bit vector representation of the complete ticket
+     * @param _normalMax Maximum value for normal balls (defines boundary between normal and bonusball bits)
+     * @return normalBalls Array of normal ball numbers extracted from bit positions 1 to _normalMax
+     * @return bonusball Bonusball number calculated from highest set bit position minus _normalMax
+     * @custom:requirements
+     * - Packed ticket must contain valid bit pattern with at least one bonusball bit set
+     * - Normal ball bits must be within positions 1 to _normalMax if present
+     * - Bonusball bit must be at position > _normalMax
+     * @custom:effects
+     * - Scans bit vector to extract individual ball numbers in ascending order
+     * - Reconstructs original ticket structure from packed representation
+     * - No state changes as this is a pure function
+     * @custom:security
+     * - Read-only operation with no side effects or external calls
+     * - Uses efficient LibBit operations to prevent gas issues with large bit vectors
+     * - Handles edge cases like single-ball tickets and sparse patterns gracefully
+     */
+    function unpackTicket(
+        uint256 _packedTicket,
+        uint8 _normalMax
+    )
+        internal
+        pure
+        returns (uint8[] memory normalBalls, uint8 bonusball)
+    {
+        uint256 ballCount = LibBit.popCount(_packedTicket);
+        normalBalls = new uint8[](ballCount - 1);
+        uint256 p;
+        for (uint256 i = 1; i <= _normalMax; i++) {
+            if (_packedTicket & (1 << i) != 0) {
+                normalBalls[p++] = uint8(i);
+            }
+        }
+
+        // Find the bonusball bit position and subtract _normalMax to get the bonusball value
+        bonusball = uint8(LibBit.fls(_packedTicket) - _normalMax);
+    }
+}
+// SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
 
 pragma solidity ^0.8.20;
@@ -2638,67 +2638,6 @@ abstract contract Ownable2Step is Ownable {
     }
 }
 
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpotTicketNFT {
-
-    struct TrackedTicket {
-        uint256 drawingId;
-        uint256 packedTicket;
-        bytes32 referralScheme;
-    }
-
-    struct ExtendedTrackedTicket {
-        uint256 ticketId;
-        TrackedTicket ticket;
-        uint8[] normals;
-        uint8 bonusball;
-    }
-
-    function mintTicket(
-        address recipient, 
-        uint256 ticketId, 
-        uint256 drawingId,
-        uint256 packedTicket, 
-        bytes32 referralScheme
-    ) external;
-    
-    function burnTicket(uint256 ticketId) external;
-    function getTicketInfo(uint256 ticketId) external view returns (TrackedTicket memory);
-    function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
-}
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpot {
-
-    struct Ticket {
-        uint8[] normals;
-        uint8 bonusball;
-    }
-
-    function buyTickets(
-        Ticket[] memory _tickets,
-        address _recipient,
-        address[] memory _referrers,
-        uint256[] memory _referralSplitBps,
-        bytes32 _source
-    )
-        external
-        returns (uint256[] memory ticketIds);
-
-    function claimWinnings(
-        uint256[] memory _userTicketIds
-    )
-        external;
-
-    function ticketPrice() external view returns (uint256);
-    function currentDrawingId() external view returns (uint256);
-    function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
-}
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
 
@@ -2763,6 +2702,94 @@ abstract contract ReentrancyGuardTransient {
 
 //SPDX-License-Identifier: UNLICENSED
 
+pragma solidity ^0.8.28;
+
+interface IJackpot {
+
+    struct Ticket {
+        uint8[] normals;
+        uint8 bonusball;
+    }
+
+    function buyTickets(
+        Ticket[] memory _tickets,
+        address _recipient,
+        address[] memory _referrers,
+        uint256[] memory _referralSplitBps,
+        bytes32 _source
+    )
+        external
+        returns (uint256[] memory ticketIds);
+
+    function claimWinnings(
+        uint256[] memory _userTicketIds
+    )
+        external;
+
+    function ticketPrice() external view returns (uint256);
+    function currentDrawingId() external view returns (uint256);
+    function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
+}
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IJackpotTicketNFT {
+
+    struct TrackedTicket {
+        uint256 drawingId;
+        uint256 packedTicket;
+        bytes32 referralScheme;
+    }
+
+    struct ExtendedTrackedTicket {
+        uint256 ticketId;
+        TrackedTicket ticket;
+        uint8[] normals;
+        uint8 bonusball;
+    }
+
+    function mintTicket(
+        address recipient, 
+        uint256 ticketId, 
+        uint256 drawingId,
+        uint256 packedTicket, 
+        bytes32 referralScheme
+    ) external;
+    
+    function burnTicket(uint256 ticketId) external;
+    function getTicketInfo(uint256 ticketId) external view returns (TrackedTicket memory);
+    function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
+}
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
+
+Change Date: 2029-12-01
+
+On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
+*/
+
+pragma solidity ^0.8.28;
+
+interface IPayoutCalculator {
+    function calculateAndStoreDrawingUserWinnings(
+        uint256 _drawingId,
+        uint256 _prizePool,
+        uint8 _ballMax,
+        uint8 _bonusballMax,
+        uint256[] memory _result,
+        uint256[] memory _dupResult
+    ) external returns (uint256);
+
+    function setDrawingTierInfo(uint256 _drawingId) external;
+
+    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
+}
+//SPDX-License-Identifier: UNLICENSED
+
 /*
 Copyright (C) 2025 Coordination Inc.
 All rights reserved.
@@ -2775,41 +2802,65 @@ For licensing inquiries: legal@coordinationlabs.com
 
 pragma solidity ^0.8.28;
 
-/**
- * @title UintCasts
- * @notice Minimal helpers for safely downcasting uint256 values to uint8.
- * @dev Reverts with Uint8OutOfBounds() if a value exceeds uint8's max (255).
- */
-library UintCasts {
-    /// @notice Raised when a value cannot be represented as uint8 (value > 255)
-    error Uint8OutOfBounds();
+library JackpotErrors {
+    // =============================================================
+    //                            ERRORS
+    // =============================================================
 
-    /**
-     * @notice Safely cast a uint256 to uint8.
-     * @param _value The value to cast.
-     * @return out The value as uint8 (reverts if out of range).
-     */
-    function toUint8(uint256 _value) internal pure returns (uint8) {
-        if (_value > type(uint8).max) revert Uint8OutOfBounds();
-        return uint8(_value);
-    }
-
-    /**
-     * @notice Safely cast an array of uint256 to uint8[] element-wise.
-     * @param _values The array of values to cast.
-     * @return out The cast array (reverts if any element is out of range).
-     */
-    function toUint8Array(uint256[] memory _values) internal pure returns (uint8[] memory) {
-        uint256 len = _values.length;
-        uint8[] memory out = new uint8[](len);
-        for (uint256 i = 0; i < len; ) {
-            out[i] = toUint8(_values[i]);
-            unchecked { ++i; }
-        }
-        return out;
-    }
+    error JackpotLocked();
+    error DrawingNotDue();
+    error InvalidRecipient();
+    error InvalidTicketCount();
+    error ReferralSplitLengthMismatch();
+    error TooManyReferrers();
+    error ReferralSplitSumInvalid();
+    error InvalidBonusball();
+    error TicketAlreadyMinted();
+    error NoTicketsToClaim();
+    error NotTicketOwner();
+    error TicketFromFutureDrawing();
+    error DepositAmountZero();
+    error ExceedsPoolCap();
+    error WithdrawAmountZero();
+    error InsufficientShares();
+    error NothingToWithdraw();
+    error UnauthorizedEntropyCaller();
+    error EntropyAlreadyCalled();
+    error JackpotNotLocked();
+    error ContractAlreadyInitialized();
+    error ZeroAddress();
+    error ContractNotInitialized();
+    error LPDepositsAlreadyInitialized();
+    error LPDepositsNotInitialized();
+    error JackpotAlreadyInitialized();
+    error TicketPurchasesDisabled();
+    error InvalidTierWeights();
+    error InvalidReferralSplitBps();
+    error InvalidNormalsCount();
+    error InsufficientEntropyFee();
+    error NoReferralFeesToClaim();
+    error NoPrizePool();
+    error TicketPurchasesAlreadyEnabled();
+    error TicketPurchasesAlreadyDisabled();
+    error InvalidNormalBallMax();
+    error InvalidDrawingDuration();
+    error InvalidBonusballMin();
+    error InvalidLpEdgeTarget();
+    error InvalidReserveRatio();
+    error InvalidReferralFee();
+    error InvalidReferralWinShare();
+    error InvalidTicketPrice();
+    error InvalidMaxReferrers();
+    error EmergencyEnabled();
+    error EmergencyModeNotEngaged();
+    error EmergencyModeAlreadyEnabled();
+    error EmergencyModeAlreadyDisabled();
+    error NoLPDeposits();
+    error InvalidProtocolFee();
+    error InvalidGovernancePoolCap();
+    error TicketNotEligibleForRefund();
+    error NoTicketsProvided();
 }
-
 //SPDX-License-Identifier: UNLICENSED
 
 pragma solidity ^0.8.28;
@@ -2848,30 +2899,25 @@ interface IJackpotLPManager {
 }
 //SPDX-License-Identifier: UNLICENSED
 
-/*
-Copyright (C) 2025 Coordination Inc.
-Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
-
-Change Date: 2029-12-01
-
-On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
-*/
-
 pragma solidity ^0.8.28;
 
-interface IPayoutCalculator {
-    function calculateAndStoreDrawingUserWinnings(
-        uint256 _drawingId,
-        uint256 _prizePool,
-        uint8 _ballMax,
-        uint8 _bonusballMax,
-        uint256[] memory _result,
-        uint256[] memory _dupResult
-    ) external returns (uint256);
-
-    function setDrawingTierInfo(uint256 _drawingId) external;
-
-    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
+interface IScaledEntropyProvider {
+    struct SetRequest {
+        uint8 samples;
+        uint256 minRange;
+        uint256 maxRange;
+        bool withReplacement;
+    }
+    function requestAndCallbackScaledRandomness(
+        uint32 _gasLimit,
+        SetRequest[] memory _requests,
+        bytes4 _selector,
+        bytes memory _context
+    )
+        external
+        payable
+        returns (uint64 requestId);
+    function getFee(uint32 _gasLimit) external view returns (uint256);
 }
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8;
@@ -2957,430 +3003,196 @@ For licensing inquiries: legal@coordinationlabs.com
 
 pragma solidity ^0.8.28;
 
-library JackpotErrors {
-    // =============================================================
-    //                            ERRORS
-    // =============================================================
+/**
+ * @title UintCasts
+ * @notice Minimal helpers for safely downcasting uint256 values to uint8.
+ * @dev Reverts with Uint8OutOfBounds() if a value exceeds uint8's max (255).
+ */
+library UintCasts {
+    /// @notice Raised when a value cannot be represented as uint8 (value > 255)
+    error Uint8OutOfBounds();
 
-    error JackpotLocked();
-    error DrawingNotDue();
-    error InvalidRecipient();
-    error InvalidTicketCount();
-    error ReferralSplitLengthMismatch();
-    error TooManyReferrers();
-    error ReferralSplitSumInvalid();
-    error InvalidBonusball();
-    error TicketAlreadyMinted();
-    error NoTicketsToClaim();
-    error NotTicketOwner();
-    error TicketFromFutureDrawing();
-    error DepositAmountZero();
-    error ExceedsPoolCap();
-    error WithdrawAmountZero();
-    error InsufficientShares();
-    error NothingToWithdraw();
-    error UnauthorizedEntropyCaller();
-    error EntropyAlreadyCalled();
-    error JackpotNotLocked();
-    error ContractAlreadyInitialized();
-    error ZeroAddress();
-    error ContractNotInitialized();
-    error LPDepositsAlreadyInitialized();
-    error LPDepositsNotInitialized();
-    error JackpotAlreadyInitialized();
-    error TicketPurchasesDisabled();
-    error InvalidTierWeights();
-    error InvalidReferralSplitBps();
-    error InvalidNormalsCount();
-    error InsufficientEntropyFee();
-    error NoReferralFeesToClaim();
-    error NoPrizePool();
-    error TicketPurchasesAlreadyEnabled();
-    error TicketPurchasesAlreadyDisabled();
-    error InvalidNormalBallMax();
-    error InvalidDrawingDuration();
-    error InvalidBonusballMin();
-    error InvalidLpEdgeTarget();
-    error InvalidReserveRatio();
-    error InvalidReferralFee();
-    error InvalidReferralWinShare();
-    error InvalidTicketPrice();
-    error InvalidMaxReferrers();
-    error EmergencyEnabled();
-    error EmergencyModeNotEngaged();
-    error EmergencyModeAlreadyEnabled();
-    error EmergencyModeAlreadyDisabled();
-    error NoLPDeposits();
-    error InvalidProtocolFee();
-    error InvalidGovernancePoolCap();
-    error TicketNotEligibleForRefund();
-    error NoTicketsProvided();
-}
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IScaledEntropyProvider {
-    struct SetRequest {
-        uint8 samples;
-        uint256 minRange;
-        uint256 maxRange;
-        bool withReplacement;
+    /**
+     * @notice Safely cast a uint256 to uint8.
+     * @param _value The value to cast.
+     * @return out The value as uint8 (reverts if out of range).
+     */
+    function toUint8(uint256 _value) internal pure returns (uint8) {
+        if (_value > type(uint8).max) revert Uint8OutOfBounds();
+        return uint8(_value);
     }
-    function requestAndCallbackScaledRandomness(
-        uint32 _gasLimit,
-        SetRequest[] memory _requests,
-        bytes4 _selector,
-        bytes memory _context
-    )
-        external
-        payable
-        returns (uint64 requestId);
-    function getFee(uint32 _gasLimit) external view returns (uint256);
+
+    /**
+     * @notice Safely cast an array of uint256 to uint8[] element-wise.
+     * @param _values The array of values to cast.
+     * @return out The cast array (reverts if any element is out of range).
+     */
+    function toUint8Array(uint256[] memory _values) internal pure returns (uint8[] memory) {
+        uint256 len = _values.length;
+        uint8[] memory out = new uint8[](len);
+        for (uint256 i = 0; i < len; ) {
+            out[i] = toUint8(_values[i]);
+            unchecked { ++i; }
+        }
+        return out;
+    }
 }
+
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
-//SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: Apache 2
+pragma solidity ^0.8.0;
 
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
+import "./EntropyEvents.sol";
+import "./EntropyEventsV2.sol";
+import "./EntropyStructsV2.sol";
+import "./IEntropyV2.sol";
 
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
+interface IEntropy is EntropyEvents, EntropyEventsV2, IEntropyV2 {
+    // Register msg.sender as a randomness provider. The arguments are the provider's configuration parameters
+    // and initial commitment. Re-registering the same provider rotates the provider's commitment (and updates
+    // the feeInWei).
+    //
+    // chainLength is the number of values in the hash chain *including* the commitment, that is, chainLength >= 1.
+    function register(
+        uint128 feeInWei,
+        bytes32 commitment,
+        bytes calldata commitmentMetadata,
+        uint64 chainLength,
+        bytes calldata uri
+    ) external;
 
-For licensing inquiries: legal@coordinationlabs.com
-*/
+    // Withdraw a portion of the accumulated fees for the provider msg.sender.
+    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
+    // balance of fees in the contract).
+    function withdraw(uint128 amount) external;
 
-pragma solidity ^0.8.28;
+    // Withdraw a portion of the accumulated fees for provider. The msg.sender must be the fee manager for this provider.
+    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
+    // balance of fees in the contract).
+    function withdrawAsFeeManager(address provider, uint128 amount) external;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
-import { IEntropyV2 } from "@pythnetwork/entropy-sdk-solidity/IEntropyV2.sol";
+    // As a user, request a random number from `provider`. Prior to calling this method, the user should
+    // generate a random number x and keep it secret. The user should then compute hash(x) and pass that
+    // as the userCommitment argument. (You may call the constructUserCommitment method to compute the hash.)
+    //
+    // This method returns a sequence number. The user should pass this sequence number to
+    // their chosen provider (the exact method for doing so will depend on the provider) to retrieve the provider's
+    // number. The user should then call fulfillRequest to construct the final random number.
+    //
+    // This method will revert unless the caller provides a sufficient fee (at least getFee(provider)) as msg.value.
+    // Note that excess value is *not* refunded to the caller.
+    function request(
+        address provider,
+        bytes32 userCommitment,
+        bool useBlockHash
+    ) external payable returns (uint64 assignedSequenceNumber);
 
-import { FisherYatesRejection } from "./lib/FisherYatesWithRejection.sol";
-import { IScaledEntropyProvider } from "./interfaces/IScaledEntropyProvider.sol";
+    // Request a random number. The method expects the provider address and a secret random number
+    // in the arguments. It returns a sequence number.
+    //
+    // The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    // The `entropyCallback` method on that interface will receive a callback with the generated random number.
+    // `entropyCallback` will be run with the provider's default gas limit (see `getProviderInfo(provider).defaultGasLimit`).
+    // If your callback needs additional gas, please use `requestWithCallbackAndGasLimit`.
+    //
+    // This method will revert unless the caller provides a sufficient fee (at least `getFee(provider)`) as msg.value.
+    // Note that excess value is *not* refunded to the caller.
+    function requestWithCallback(
+        address provider,
+        bytes32 userRandomNumber
+    ) external payable returns (uint64 assignedSequenceNumber);
 
-/**
- * @title ScaledEntropyProvider
- * @notice Provides scaled random number generation using Pyth Network entropy with callback functionality
- * @dev Integrates with Pyth Network's entropy service to generate cryptographically secure random numbers:
- *      - Handles entropy requests with custom scaling and range parameters
- *      - Supports both sampling with and without replacement using Fisher-Yates algorithm
- *      - Provides callback mechanism for asynchronous random number delivery
- *      - Implements unbiased rejection sampling to prevent modulo bias
- *      - Manages fee payments to entropy providers
- *      - Stores pending requests and validates callback execution
- */
-contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsumer {
-    // =============================================================
-    //                           STRUCTS
-    // =============================================================
-    struct PendingRequest {
-        address callback;
-        bytes4 selector;
-        bytes context;
-        bytes32 userRandomNumber;
-        SetRequest[] setRequests;
-    }
+    // Fulfill a request for a random number. This method validates the provided userRandomness and provider's proof
+    // against the corresponding commitments in the in-flight request. If both values are validated, this function returns
+    // the corresponding random number.
+    //
+    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
+    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
+    // If you need to use the returned random number more than once, you are responsible for storing it.
+    function reveal(
+        address provider,
+        uint64 sequenceNumber,
+        bytes32 userRevelation,
+        bytes32 providerRevelation
+    ) external returns (bytes32 randomNumber);
 
-    // =============================================================
-    //                           EVENTS
-    // =============================================================
+    // Fulfill a request for a random number. This method validates the provided userRandomness
+    // and provider's revelation against the corresponding commitment in the in-flight request. If both values are validated
+    // and the requestor address is a contract address, this function calls the requester's entropyCallback method with the
+    // sequence number, provider address and the random number as arguments. Else if the requestor is an EOA, it won't call it.
+    //
+    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
+    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
+    // If you need to use the returned random number more than once, you are responsible for storing it.
+    //
+    // Anyone can call this method to fulfill a request, but the callback will only be made to the original requester.
+    function revealWithCallback(
+        address provider,
+        uint64 sequenceNumber,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation
+    ) external;
 
-    event ScaledRandomnessDelivered(uint64 indexed sequence, address indexed callback, uint256 samples);
-    event EntropyFulfilled(uint64 indexed sequence, bytes32 randomNumber);
+    function getProviderInfo(
+        address provider
+    ) external view returns (EntropyStructs.ProviderInfo memory info);
 
-    // =============================================================
-    //                           ERRORS
-    // =============================================================
-    error InvalidCallback();
-    error CallbackFailed(bytes4 selector);
-    error ZeroAddress();
-    error InvalidSelector();
-    error InvalidRequests();
-    error InvalidRange();
-    error InvalidSamples();
-    error InsufficientFee();
-    error UnknownSequence();
+    function getRequest(
+        address provider,
+        uint64 sequenceNumber
+    ) external view returns (EntropyStructs.Request memory req);
 
-    // =============================================================
-    //                       STATE VARIABLES
-    // =============================================================
+    // Get the fee charged by provider for a request with the default gasLimit (`request` or `requestWithCallback`).
+    // If you are calling any of the `requestV2` methods, please use `getFeeV2`.
+    function getFee(address provider) external view returns (uint128 feeAmount);
 
-    IEntropyV2 private entropy;
-    address private entropyProvider;
-    mapping(uint64 => PendingRequest) private pending;
-
-    // =============================================================
-    //                         CONSTRUCTOR
-    // =============================================================
-    
-    /**
-     * @notice Initializes the ScaledEntropyProvider with Pyth Network entropy configuration
-     * @dev Sets up connections to Pyth Network entropy contract and provider.
-     *      Both addresses are validated and stored as immutable references.
-     * @param _entropy Address of the Pyth Network entropy contract
-     * @param _entropyProvider Address of the specific entropy provider to use
-     * @custom:requirements
-     * - Entropy contract address must not be zero
-     * - Entropy provider address must not be zero
-     * @custom:effects
-     * - Sets immutable entropy contract reference
-     * - Configures entropy provider for fee calculations
-     * - Sets deployer as contract owner
-     * @custom:security
-     * - Address validation prevents zero address configuration
-     * - Immutable references prevent unauthorized changes
-     * - Owner-based access control for administrative functions
-     */
-    constructor(address _entropy, address _entropyProvider) Ownable(msg.sender) {
-        if (_entropy == address(0)) revert ZeroAddress();
-        if (_entropyProvider == address(0)) revert ZeroAddress();
-        entropy = IEntropyV2(_entropy);
-        entropyProvider = _entropyProvider;
-    }
-
-    // =============================================================
-    //                      EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Requests scaled random numbers from Pyth Network with callback delivery
-     * @dev Submits entropy request to Pyth Network and stores callback details for async delivery.
-     *      The callback will receive scaled random numbers according to the specified requests. Developer
-     *      needs to ensure that the range is not too large to be able to build an array of the appropriate
-     *      size in memory in order to avoid out of gas errors during Fisher-Yates sampling.
-     *      IMPORTANT: The callback address is automatically set to msg.sender (the calling contract).
-     * @param _gasLimit Gas limit for the entropy callback execution
-     * @param _requests Array of SetRequest structs defining random number requirements
-     * @param _selector Function selector for the callback method on the calling contract
-     * @param _context Additional data to pass to the callback
-     * @return sequence Unique identifier for tracking this entropy request
-     * @custom:requirements
-     * - Calling contract (msg.sender) must implement the callback function
-     * - Provided fee (msg.value) must meet minimum requirements
-     * - Function selector must not be zero
-     * - All set requests must be valid (proper ranges and sample counts)
-     * @custom:emits None (events emitted in callback)
-     * @custom:effects
-     * - Submits entropy request to Pyth Network
-     * - Stores pending request details with msg.sender as callback address
-     * - Transfers fee to entropy provider
-     * @custom:security
-     * - Callback address is restricted to msg.sender preventing unauthorized callbacks
-     * - Fee validation ensures sufficient payment
-     * - Request validation prevents invalid random number generation
-     */
-    function requestAndCallbackScaledRandomness(
-        uint32 _gasLimit,
-        SetRequest[] memory _requests,
-        bytes4 _selector,
-        bytes memory _context
-    )
+    function getAccruedPythFees()
         external
-        payable
-        returns (uint64 sequence)
-    {
-        // We assume that the caller has already checked that the fee is sufficient
-        if (msg.value < getFee(_gasLimit)) revert InsufficientFee();
-        if (_selector == bytes4(0)) revert InvalidSelector();
-        _validateRequests(_requests);
+        view
+        returns (uint128 accruedPythFeesInWei);
 
-        sequence = entropy.requestV2{value: msg.value}(entropyProvider, _gasLimit);
-        _storePendingRequest(sequence, _selector, _context, _requests);
-    }
+    function setProviderFee(uint128 newFeeInWei) external;
 
-    /**
-     * @notice Returns the fee required for an entropy request with specified gas limit
-     * @dev Queries the Pyth Network entropy contract for current fee requirements.
-     *      Fee covers entropy generation and callback execution costs.
-     * @param _gasLimit Gas limit for the callback execution
-     * @return Fee amount in wei required for the entropy request
-     */
-    function getFee(uint32 _gasLimit) public view returns (uint256) {
-        return entropy.getFeeV2(entropyProvider, _gasLimit);
-    }
+    function setProviderFeeAsFeeManager(
+        address provider,
+        uint128 newFeeInWei
+    ) external;
 
-    /**
-     * @notice Returns the address of the Pyth Network entropy contract
-     * @dev Provides access to the entropy contract address for integration purposes.
-     * @return Address of the entropy contract
-     */
-    function getEntropyContract() external view returns (address) {
-        return address(entropy);
-    }
+    function setProviderUri(bytes calldata newUri) external;
 
-    /**
-     * @notice Returns the address of the currently configured entropy provider
-     * @dev Shows which entropy provider is being used for fee calculations and requests.
-     * @return Address of the entropy provider
-     */
-    function getEntropyProvider() external view returns (address) {
-        return entropyProvider;
-    }
+    // Set manager as the fee manager for the provider msg.sender.
+    // After calling this function, manager will be able to set the provider's fees and withdraw them.
+    // Only one address can be the fee manager for a provider at a time -- calling this function again with a new value
+    // will override the previous value. Call this function with the all-zero address to disable the fee manager role.
+    function setFeeManager(address manager) external;
 
-    /**
-     * @notice Returns the details of a pending entropy request
-     * @dev Retrieves stored request information for a specific sequence number.
-     *      Useful for debugging and monitoring pending requests.
-     * @param sequence Unique identifier of the entropy request
-     * @return PendingRequest struct containing callback details and request parameters
-     */
-    function getPendingRequest(uint64 sequence) external view returns (PendingRequest memory) {
-        return pending[sequence];
-    }
+    // Set the maximum number of hashes to record in a request. This should be set according to the maximum gas limit
+    // the provider supports for callbacks.
+    function setMaxNumHashes(uint32 maxNumHashes) external;
 
-    // =============================================================
-    //                      ADMIN FUNCTIONS
-    // =============================================================
+    // Set the default gas limit for a request. If 0, no
+    function setDefaultGasLimit(uint32 gasLimit) external;
 
-    /**
-     * @notice Updates the entropy provider address
-     * @dev Changes which entropy provider is used for fee calculations and requests.
-     *      Only affects future requests, not pending ones.
-     * @param _entropyProvider New entropy provider address
-     * @custom:requirements
-     * - Only owner can call
-     * - Provider address must not be zero
-     * @custom:emits None
-     * @custom:effects
-     * - Updates entropy provider for future requests
-     * - Changes fee calculations for new requests
-     * @custom:security
-     * - Owner-only access restriction
-     * - Zero address validation
-     */
-    function setEntropyProvider(address _entropyProvider) external onlyOwner {
-        if (_entropyProvider == address(0)) revert ZeroAddress();
-        entropyProvider = _entropyProvider;
-    }
+    // Advance the provider commitment and increase the sequence number.
+    // This is used to reduce the `numHashes` required for future requests which leads to reduced gas usage.
+    function advanceProviderCommitment(
+        address provider,
+        uint64 advancedSequenceNumber,
+        bytes32 providerRevelation
+    ) external;
 
-    // =============================================================
-    //                      INTERNAL FUNCTIONS
-    // =============================================================
+    function constructUserCommitment(
+        bytes32 userRandomness
+    ) external pure returns (bytes32 userCommitment);
 
-    /**
-     * @notice Processes entropy callback from Pyth Network and delivers scaled random numbers
-     * @dev Called by Pyth Network when entropy is available. Processes the raw entropy into scaled
-     *      random numbers according to stored request parameters and delivers via callback.
-     *      This is the core function that bridges Pyth entropy with application-specific randomness.
-     * @param sequence Unique identifier for the entropy request
-     * @param randomNumber Raw entropy value from Pyth Network (provider parameter ignored)
-     * @custom:requirements
-     * - Sequence must correspond to a valid pending request
-     * - Callback execution must succeed
-     * - Only called by Pyth Network entropy contract
-     * @custom:emits EntropyFulfilled with sequence and raw random number
-     * @custom:emits ScaledRandomnessDelivered with sequence, callback address, and sample count
-     * @custom:effects
-     * - Retrieves and deletes pending request data
-     * - Generates scaled random numbers using Fisher-Yates or replacement sampling
-     * - Executes callback with scaled results and original context
-     * - Cleans up pending request storage
-     * @custom:security
-     * - Validates sequence corresponds to pending request
-     * - Ensures callback execution succeeds before cleanup
-     * - Uses unbiased sampling methods to prevent statistical attacks
-     * - Immediate cleanup prevents replay attacks
-     */
-    function entropyCallback(uint64 sequence, address /*provider*/, bytes32 randomNumber) internal override {
-        PendingRequest memory req = pending[sequence];
-        if (req.callback == address(0)) revert UnknownSequence();
-        
-        delete pending[sequence];
-
-        uint256[][] memory scaledRandomNumbers = _getScaledRandomness(randomNumber, req.setRequests);
-        (bool success, ) = req.callback.call(abi.encodeWithSelector(req.selector, sequence, scaledRandomNumbers, req.context));
-        if (!success) revert CallbackFailed(req.selector);
-
-        emit EntropyFulfilled(sequence, randomNumber);
-        emit ScaledRandomnessDelivered(sequence, req.callback, scaledRandomNumbers.length);
-    }
-
-    function _getScaledRandomness(
-        bytes32 _randomNumber,
-        SetRequest[] memory _setRequests
-    )
-        internal
-        pure
-        returns (uint256[][] memory requestsOutputs)
-    {
-        requestsOutputs = new uint256[][](_setRequests.length);
-        
-        for (uint256 i = 0; i < _setRequests.length; i++) {
-            if (!_setRequests[i].withReplacement) {
-                requestsOutputs[i] = FisherYatesRejection.draw(
-                    _setRequests[i].minRange,
-                    _setRequests[i].maxRange,
-                    _setRequests[i].samples,
-                    uint256(_randomNumber)
-                );
-            } else {
-                requestsOutputs[i] = _drawWithReplacement(
-                    _setRequests[i].minRange,
-                    _setRequests[i].maxRange,
-                    _setRequests[i].samples,
-                    uint256(_randomNumber)
-                );
-            }
-        }
-    }
-
-    function getEntropy() internal view override returns (address) {
-        return address(entropy);
-    }
-
-    function _validateRequests(SetRequest[] memory _requests) internal pure {
-        if (_requests.length == 0) revert InvalidRequests();
-        for (uint256 i = 0; i < _requests.length; i++) {
-            if (_requests[i].minRange > _requests[i].maxRange) revert InvalidRange();
-            if (_requests[i].samples == 0) revert InvalidSamples();
-        }
-    }
-
-    function _storePendingRequest(
-        uint64 sequence,
-        bytes4 _selector,
-        bytes memory _context,
-        SetRequest[] memory _setRequests
-    ) internal {
-        pending[sequence].callback = msg.sender;
-        pending[sequence].selector = _selector;
-        pending[sequence].context = _context;
-        for (uint256 i = 0; i < _setRequests.length; i++) {
-            pending[sequence].setRequests.push(_setRequests[i]);
-        }
-    }
-
-    function _drawWithReplacement(
-        uint256 _minRange,
-        uint256 _maxRange,
-        uint8 _samples,
-        uint256 _randomNumber
-    ) internal pure returns (uint256[] memory) {
-        uint256[] memory result = new uint256[](_samples);
-        uint256 range = _maxRange - _minRange + 1;
-        uint256 nonce = 0;
-
-        for (uint256 i = 0; i < _samples; i++) {
-            uint256 rand;
-            while (true) {
-                rand = uint256(keccak256(abi.encode(_randomNumber, nonce)));
-                uint256 limit = (type(uint256).max / range) * range;
-
-                if (rand < limit) {
-                    result[i] = uint256((rand % range) + _minRange); // [1..range]
-                    break;
-                }
-                nonce++;
-            }
-            nonce++;
-        }
-
-        return result;
-    }
+    function combineRandomValues(
+        bytes32 userRandomness,
+        bytes32 providerRandomness,
+        bytes32 blockHash
+    ) external pure returns (bytes32 combinedRandomness);
 }
+
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -3921,159 +3733,347 @@ contract JackpotLPManager is IJackpotLPManager, Ownable {
     }
 }
 
-// SPDX-License-Identifier: Apache 2
-pragma solidity ^0.8.0;
+//SPDX-License-Identifier: UNLICENSED
 
-import "./EntropyEvents.sol";
-import "./EntropyEventsV2.sol";
-import "./EntropyStructsV2.sol";
-import "./IEntropyV2.sol";
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
 
-interface IEntropy is EntropyEvents, EntropyEventsV2, IEntropyV2 {
-    // Register msg.sender as a randomness provider. The arguments are the provider's configuration parameters
-    // and initial commitment. Re-registering the same provider rotates the provider's commitment (and updates
-    // the feeInWei).
-    //
-    // chainLength is the number of values in the hash chain *including* the commitment, that is, chainLength >= 1.
-    function register(
-        uint128 feeInWei,
-        bytes32 commitment,
-        bytes calldata commitmentMetadata,
-        uint64 chainLength,
-        bytes calldata uri
-    ) external;
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
 
-    // Withdraw a portion of the accumulated fees for the provider msg.sender.
-    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
-    // balance of fees in the contract).
-    function withdraw(uint128 amount) external;
+For licensing inquiries: legal@coordinationlabs.com
+*/
 
-    // Withdraw a portion of the accumulated fees for provider. The msg.sender must be the fee manager for this provider.
-    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
-    // balance of fees in the contract).
-    function withdrawAsFeeManager(address provider, uint128 amount) external;
+pragma solidity ^0.8.28;
 
-    // As a user, request a random number from `provider`. Prior to calling this method, the user should
-    // generate a random number x and keep it secret. The user should then compute hash(x) and pass that
-    // as the userCommitment argument. (You may call the constructUserCommitment method to compute the hash.)
-    //
-    // This method returns a sequence number. The user should pass this sequence number to
-    // their chosen provider (the exact method for doing so will depend on the provider) to retrieve the provider's
-    // number. The user should then call fulfillRequest to construct the final random number.
-    //
-    // This method will revert unless the caller provides a sufficient fee (at least getFee(provider)) as msg.value.
-    // Note that excess value is *not* refunded to the caller.
-    function request(
-        address provider,
-        bytes32 userCommitment,
-        bool useBlockHash
-    ) external payable returns (uint64 assignedSequenceNumber);
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
+import { IEntropyV2 } from "@pythnetwork/entropy-sdk-solidity/IEntropyV2.sol";
 
-    // Request a random number. The method expects the provider address and a secret random number
-    // in the arguments. It returns a sequence number.
-    //
-    // The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    // The `entropyCallback` method on that interface will receive a callback with the generated random number.
-    // `entropyCallback` will be run with the provider's default gas limit (see `getProviderInfo(provider).defaultGasLimit`).
-    // If your callback needs additional gas, please use `requestWithCallbackAndGasLimit`.
-    //
-    // This method will revert unless the caller provides a sufficient fee (at least `getFee(provider)`) as msg.value.
-    // Note that excess value is *not* refunded to the caller.
-    function requestWithCallback(
-        address provider,
-        bytes32 userRandomNumber
-    ) external payable returns (uint64 assignedSequenceNumber);
+import { FisherYatesRejection } from "./lib/FisherYatesWithRejection.sol";
+import { IScaledEntropyProvider } from "./interfaces/IScaledEntropyProvider.sol";
 
-    // Fulfill a request for a random number. This method validates the provided userRandomness and provider's proof
-    // against the corresponding commitments in the in-flight request. If both values are validated, this function returns
-    // the corresponding random number.
-    //
-    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
-    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
-    // If you need to use the returned random number more than once, you are responsible for storing it.
-    function reveal(
-        address provider,
-        uint64 sequenceNumber,
-        bytes32 userRevelation,
-        bytes32 providerRevelation
-    ) external returns (bytes32 randomNumber);
+/**
+ * @title ScaledEntropyProvider
+ * @notice Provides scaled random number generation using Pyth Network entropy with callback functionality
+ * @dev Integrates with Pyth Network's entropy service to generate cryptographically secure random numbers:
+ *      - Handles entropy requests with custom scaling and range parameters
+ *      - Supports both sampling with and without replacement using Fisher-Yates algorithm
+ *      - Provides callback mechanism for asynchronous random number delivery
+ *      - Implements unbiased rejection sampling to prevent modulo bias
+ *      - Manages fee payments to entropy providers
+ *      - Stores pending requests and validates callback execution
+ */
+contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsumer {
+    // =============================================================
+    //                           STRUCTS
+    // =============================================================
+    struct PendingRequest {
+        address callback;
+        bytes4 selector;
+        bytes context;
+        bytes32 userRandomNumber;
+        SetRequest[] setRequests;
+    }
 
-    // Fulfill a request for a random number. This method validates the provided userRandomness
-    // and provider's revelation against the corresponding commitment in the in-flight request. If both values are validated
-    // and the requestor address is a contract address, this function calls the requester's entropyCallback method with the
-    // sequence number, provider address and the random number as arguments. Else if the requestor is an EOA, it won't call it.
-    //
-    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
-    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
-    // If you need to use the returned random number more than once, you are responsible for storing it.
-    //
-    // Anyone can call this method to fulfill a request, but the callback will only be made to the original requester.
-    function revealWithCallback(
-        address provider,
-        uint64 sequenceNumber,
-        bytes32 userRandomNumber,
-        bytes32 providerRevelation
-    ) external;
+    // =============================================================
+    //                           EVENTS
+    // =============================================================
 
-    function getProviderInfo(
-        address provider
-    ) external view returns (EntropyStructs.ProviderInfo memory info);
+    event ScaledRandomnessDelivered(uint64 indexed sequence, address indexed callback, uint256 samples);
+    event EntropyFulfilled(uint64 indexed sequence, bytes32 randomNumber);
 
-    function getRequest(
-        address provider,
-        uint64 sequenceNumber
-    ) external view returns (EntropyStructs.Request memory req);
+    // =============================================================
+    //                           ERRORS
+    // =============================================================
+    error InvalidCallback();
+    error CallbackFailed(bytes4 selector);
+    error ZeroAddress();
+    error InvalidSelector();
+    error InvalidRequests();
+    error InvalidRange();
+    error InvalidSamples();
+    error InsufficientFee();
+    error UnknownSequence();
 
-    // Get the fee charged by provider for a request with the default gasLimit (`request` or `requestWithCallback`).
-    // If you are calling any of the `requestV2` methods, please use `getFeeV2`.
-    function getFee(address provider) external view returns (uint128 feeAmount);
+    // =============================================================
+    //                       STATE VARIABLES
+    // =============================================================
 
-    function getAccruedPythFees()
+    IEntropyV2 private entropy;
+    address private entropyProvider;
+    mapping(uint64 => PendingRequest) private pending;
+
+    // =============================================================
+    //                         CONSTRUCTOR
+    // =============================================================
+    
+    /**
+     * @notice Initializes the ScaledEntropyProvider with Pyth Network entropy configuration
+     * @dev Sets up connections to Pyth Network entropy contract and provider.
+     *      Both addresses are validated and stored as immutable references.
+     * @param _entropy Address of the Pyth Network entropy contract
+     * @param _entropyProvider Address of the specific entropy provider to use
+     * @custom:requirements
+     * - Entropy contract address must not be zero
+     * - Entropy provider address must not be zero
+     * @custom:effects
+     * - Sets immutable entropy contract reference
+     * - Configures entropy provider for fee calculations
+     * - Sets deployer as contract owner
+     * @custom:security
+     * - Address validation prevents zero address configuration
+     * - Immutable references prevent unauthorized changes
+     * - Owner-based access control for administrative functions
+     */
+    constructor(address _entropy, address _entropyProvider) Ownable(msg.sender) {
+        if (_entropy == address(0)) revert ZeroAddress();
+        if (_entropyProvider == address(0)) revert ZeroAddress();
+        entropy = IEntropyV2(_entropy);
+        entropyProvider = _entropyProvider;
+    }
+
+    // =============================================================
+    //                      EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Requests scaled random numbers from Pyth Network with callback delivery
+     * @dev Submits entropy request to Pyth Network and stores callback details for async delivery.
+     *      The callback will receive scaled random numbers according to the specified requests. Developer
+     *      needs to ensure that the range is not too large to be able to build an array of the appropriate
+     *      size in memory in order to avoid out of gas errors during Fisher-Yates sampling.
+     *      IMPORTANT: The callback address is automatically set to msg.sender (the calling contract).
+     * @param _gasLimit Gas limit for the entropy callback execution
+     * @param _requests Array of SetRequest structs defining random number requirements
+     * @param _selector Function selector for the callback method on the calling contract
+     * @param _context Additional data to pass to the callback
+     * @return sequence Unique identifier for tracking this entropy request
+     * @custom:requirements
+     * - Calling contract (msg.sender) must implement the callback function
+     * - Provided fee (msg.value) must meet minimum requirements
+     * - Function selector must not be zero
+     * - All set requests must be valid (proper ranges and sample counts)
+     * @custom:emits None (events emitted in callback)
+     * @custom:effects
+     * - Submits entropy request to Pyth Network
+     * - Stores pending request details with msg.sender as callback address
+     * - Transfers fee to entropy provider
+     * @custom:security
+     * - Callback address is restricted to msg.sender preventing unauthorized callbacks
+     * - Fee validation ensures sufficient payment
+     * - Request validation prevents invalid random number generation
+     */
+    function requestAndCallbackScaledRandomness(
+        uint32 _gasLimit,
+        SetRequest[] memory _requests,
+        bytes4 _selector,
+        bytes memory _context
+    )
         external
-        view
-        returns (uint128 accruedPythFeesInWei);
+        payable
+        returns (uint64 sequence)
+    {
+        // We assume that the caller has already checked that the fee is sufficient
+        if (msg.value < getFee(_gasLimit)) revert InsufficientFee();
+        if (_selector == bytes4(0)) revert InvalidSelector();
+        _validateRequests(_requests);
 
-    function setProviderFee(uint128 newFeeInWei) external;
+        sequence = entropy.requestV2{value: msg.value}(entropyProvider, _gasLimit);
+        _storePendingRequest(sequence, _selector, _context, _requests);
+    }
 
-    function setProviderFeeAsFeeManager(
-        address provider,
-        uint128 newFeeInWei
-    ) external;
+    /**
+     * @notice Returns the fee required for an entropy request with specified gas limit
+     * @dev Queries the Pyth Network entropy contract for current fee requirements.
+     *      Fee covers entropy generation and callback execution costs.
+     * @param _gasLimit Gas limit for the callback execution
+     * @return Fee amount in wei required for the entropy request
+     */
+    function getFee(uint32 _gasLimit) public view returns (uint256) {
+        return entropy.getFeeV2(entropyProvider, _gasLimit);
+    }
 
-    function setProviderUri(bytes calldata newUri) external;
+    /**
+     * @notice Returns the address of the Pyth Network entropy contract
+     * @dev Provides access to the entropy contract address for integration purposes.
+     * @return Address of the entropy contract
+     */
+    function getEntropyContract() external view returns (address) {
+        return address(entropy);
+    }
 
-    // Set manager as the fee manager for the provider msg.sender.
-    // After calling this function, manager will be able to set the provider's fees and withdraw them.
-    // Only one address can be the fee manager for a provider at a time -- calling this function again with a new value
-    // will override the previous value. Call this function with the all-zero address to disable the fee manager role.
-    function setFeeManager(address manager) external;
+    /**
+     * @notice Returns the address of the currently configured entropy provider
+     * @dev Shows which entropy provider is being used for fee calculations and requests.
+     * @return Address of the entropy provider
+     */
+    function getEntropyProvider() external view returns (address) {
+        return entropyProvider;
+    }
 
-    // Set the maximum number of hashes to record in a request. This should be set according to the maximum gas limit
-    // the provider supports for callbacks.
-    function setMaxNumHashes(uint32 maxNumHashes) external;
+    /**
+     * @notice Returns the details of a pending entropy request
+     * @dev Retrieves stored request information for a specific sequence number.
+     *      Useful for debugging and monitoring pending requests.
+     * @param sequence Unique identifier of the entropy request
+     * @return PendingRequest struct containing callback details and request parameters
+     */
+    function getPendingRequest(uint64 sequence) external view returns (PendingRequest memory) {
+        return pending[sequence];
+    }
 
-    // Set the default gas limit for a request. If 0, no
-    function setDefaultGasLimit(uint32 gasLimit) external;
+    // =============================================================
+    //                      ADMIN FUNCTIONS
+    // =============================================================
 
-    // Advance the provider commitment and increase the sequence number.
-    // This is used to reduce the `numHashes` required for future requests which leads to reduced gas usage.
-    function advanceProviderCommitment(
-        address provider,
-        uint64 advancedSequenceNumber,
-        bytes32 providerRevelation
-    ) external;
+    /**
+     * @notice Updates the entropy provider address
+     * @dev Changes which entropy provider is used for fee calculations and requests.
+     *      Only affects future requests, not pending ones.
+     * @param _entropyProvider New entropy provider address
+     * @custom:requirements
+     * - Only owner can call
+     * - Provider address must not be zero
+     * @custom:emits None
+     * @custom:effects
+     * - Updates entropy provider for future requests
+     * - Changes fee calculations for new requests
+     * @custom:security
+     * - Owner-only access restriction
+     * - Zero address validation
+     */
+    function setEntropyProvider(address _entropyProvider) external onlyOwner {
+        if (_entropyProvider == address(0)) revert ZeroAddress();
+        entropyProvider = _entropyProvider;
+    }
 
-    function constructUserCommitment(
-        bytes32 userRandomness
-    ) external pure returns (bytes32 userCommitment);
+    // =============================================================
+    //                      INTERNAL FUNCTIONS
+    // =============================================================
 
-    function combineRandomValues(
-        bytes32 userRandomness,
-        bytes32 providerRandomness,
-        bytes32 blockHash
-    ) external pure returns (bytes32 combinedRandomness);
+    /**
+     * @notice Processes entropy callback from Pyth Network and delivers scaled random numbers
+     * @dev Called by Pyth Network when entropy is available. Processes the raw entropy into scaled
+     *      random numbers according to stored request parameters and delivers via callback.
+     *      This is the core function that bridges Pyth entropy with application-specific randomness.
+     * @param sequence Unique identifier for the entropy request
+     * @param randomNumber Raw entropy value from Pyth Network (provider parameter ignored)
+     * @custom:requirements
+     * - Sequence must correspond to a valid pending request
+     * - Callback execution must succeed
+     * - Only called by Pyth Network entropy contract
+     * @custom:emits EntropyFulfilled with sequence and raw random number
+     * @custom:emits ScaledRandomnessDelivered with sequence, callback address, and sample count
+     * @custom:effects
+     * - Retrieves and deletes pending request data
+     * - Generates scaled random numbers using Fisher-Yates or replacement sampling
+     * - Executes callback with scaled results and original context
+     * - Cleans up pending request storage
+     * @custom:security
+     * - Validates sequence corresponds to pending request
+     * - Ensures callback execution succeeds before cleanup
+     * - Uses unbiased sampling methods to prevent statistical attacks
+     * - Immediate cleanup prevents replay attacks
+     */
+    function entropyCallback(uint64 sequence, address /*provider*/, bytes32 randomNumber) internal override {
+        PendingRequest memory req = pending[sequence];
+        if (req.callback == address(0)) revert UnknownSequence();
+        
+        delete pending[sequence];
+
+        uint256[][] memory scaledRandomNumbers = _getScaledRandomness(randomNumber, req.setRequests);
+        (bool success, ) = req.callback.call(abi.encodeWithSelector(req.selector, sequence, scaledRandomNumbers, req.context));
+        if (!success) revert CallbackFailed(req.selector);
+
+        emit EntropyFulfilled(sequence, randomNumber);
+        emit ScaledRandomnessDelivered(sequence, req.callback, scaledRandomNumbers.length);
+    }
+
+    function _getScaledRandomness(
+        bytes32 _randomNumber,
+        SetRequest[] memory _setRequests
+    )
+        internal
+        pure
+        returns (uint256[][] memory requestsOutputs)
+    {
+        requestsOutputs = new uint256[][](_setRequests.length);
+        
+        for (uint256 i = 0; i < _setRequests.length; i++) {
+            if (!_setRequests[i].withReplacement) {
+                requestsOutputs[i] = FisherYatesRejection.draw(
+                    _setRequests[i].minRange,
+                    _setRequests[i].maxRange,
+                    _setRequests[i].samples,
+                    uint256(_randomNumber)
+                );
+            } else {
+                requestsOutputs[i] = _drawWithReplacement(
+                    _setRequests[i].minRange,
+                    _setRequests[i].maxRange,
+                    _setRequests[i].samples,
+                    uint256(_randomNumber)
+                );
+            }
+        }
+    }
+
+    function getEntropy() internal view override returns (address) {
+        return address(entropy);
+    }
+
+    function _validateRequests(SetRequest[] memory _requests) internal pure {
+        if (_requests.length == 0) revert InvalidRequests();
+        for (uint256 i = 0; i < _requests.length; i++) {
+            if (_requests[i].minRange > _requests[i].maxRange) revert InvalidRange();
+            if (_requests[i].samples == 0) revert InvalidSamples();
+        }
+    }
+
+    function _storePendingRequest(
+        uint64 sequence,
+        bytes4 _selector,
+        bytes memory _context,
+        SetRequest[] memory _setRequests
+    ) internal {
+        pending[sequence].callback = msg.sender;
+        pending[sequence].selector = _selector;
+        pending[sequence].context = _context;
+        for (uint256 i = 0; i < _setRequests.length; i++) {
+            pending[sequence].setRequests.push(_setRequests[i]);
+        }
+    }
+
+    function _drawWithReplacement(
+        uint256 _minRange,
+        uint256 _maxRange,
+        uint8 _samples,
+        uint256 _randomNumber
+    ) internal pure returns (uint256[] memory) {
+        uint256[] memory result = new uint256[](_samples);
+        uint256 range = _maxRange - _minRange + 1;
+        uint256 nonce = 0;
+
+        for (uint256 i = 0; i < _samples; i++) {
+            uint256 rand;
+            while (true) {
+                rand = uint256(keccak256(abi.encode(_randomNumber, nonce)));
+                uint256 limit = (type(uint256).max / range) * range;
+
+                if (rand < limit) {
+                    result[i] = uint256((rand % range) + _minRange); // [1..range]
+                    break;
+                }
+                nonce++;
+            }
+            nonce++;
+        }
+
+        return result;
+    }
 }
-
 //SPDX-License-Identifier: UNLICENSED
 
 /*
