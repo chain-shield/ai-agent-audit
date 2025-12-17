@@ -293,10 +293,10 @@ where
     let r_analysis: T = agent.extract_with_retry(&instruction_prompt).await?;
 
     // show analysis results
-    r_analysis
-        .findings()
-        .iter()
-        .for_each(|r| r.print_analysis_results());
+    // r_analysis
+    //     .findings()
+    //     .iter()
+    //     .for_each(|r| r.print_analysis_results());
 
     let r_map: HashMap<String, &T::Spec> =
         r_analysis.findings().iter().map(|r| (r.id(), r)).collect();
@@ -411,10 +411,10 @@ pub async fn run_round_validation(
         .await?;
 
     // show analysis results
-    validation_analysis
-        .findings
-        .iter()
-        .for_each(|r| r.print_analysis_results());
+    // validation_analysis
+    //     .findings
+    //     .iter()
+    //     .for_each(|r| r.print_analysis_results());
 
     let validation_map: HashMap<String, ValidateLegitAnalysis> = validation_analysis
         .findings

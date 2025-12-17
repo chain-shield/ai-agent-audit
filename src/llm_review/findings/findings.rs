@@ -5,7 +5,7 @@ use crate::llm_review::{
     prompt_support::dedup::DEDUP_PROMPT,
 };
 use crate::{
-    cost::cost_data::{TokenType, add_to_inference_cost_by_type},
+    cost::cost_data::{add_to_inference_cost_by_type, TokenType},
     llm_review::phases::{add_poc_findings::PocStatus, create_report::CompetitionReport},
     utils::semantic_compare,
 };
@@ -358,11 +358,8 @@ where
                 log::debug!("✅ Raw JSON parsed successfully without cleaning");
                 return Ok(parsed);
             }
-            Err(raw_error) => {
-                log::debug!(
-                    "Raw JSON failed to parse: {} - attempting to clean",
-                    raw_error
-                );
+            Err(_) => {
+                log::debug!("Raw JSON failed to parse - attempting to clean",);
             }
         }
 
@@ -370,15 +367,14 @@ where
         let cleaned = Self::clean_json_string(json_str);
 
         // Debug: Log cleaned JSON if RUST_LOG=debug
-        log::debug!(
-            "Cleaned JSON (first 500 chars): {}",
-            &cleaned[..cleaned.len().min(500)]
-        );
+        // log::debug!(
+        //     "Cleaned JSON (first 500 chars): {}",
+        //     &cleaned[..cleaned.len().min(500)]
+        // );
 
         let result = serde_json::from_str(&cleaned);
-        if let Err(ref e) = result {
-            log::error!("JSON parse error after cleaning: {}", e);
-            log::error!("Cleaned JSON that failed to parse:\n{}", cleaned);
+        if let Err(ref _e) = result {
+            log::error!("JSON parse error after cleaning!");
         }
         result
     }
