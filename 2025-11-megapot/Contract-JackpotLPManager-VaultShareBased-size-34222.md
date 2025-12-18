@@ -574,42 +574,6 @@ interface IJackpot {
     function currentDrawingId() external view returns (uint256);
     function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
 }
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpotLPManager {
-
-    struct LPDrawingState {
-        uint256 lpPoolTotal;
-        uint256 pendingDeposits;
-        uint256 pendingWithdrawals;
-    }
-
-    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
-
-    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
-
-    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
-
-    function processDrawingSettlement(
-        uint256 _drawingId,
-        uint256 _lpEarnings,
-        uint256 _userWinnings,
-        uint256 _protocolFeeAmount
-    ) external returns (uint256 newLPValue, uint256 newAccumulator);
-
-    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
-
-    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
-
-    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
-
-    function initializeLP() external;
-
-    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
-    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
-}
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
 
@@ -713,6 +677,42 @@ abstract contract Ownable is Context {
 
 //SPDX-License-Identifier: UNLICENSED
 
+pragma solidity ^0.8.28;
+
+interface IJackpotLPManager {
+
+    struct LPDrawingState {
+        uint256 lpPoolTotal;
+        uint256 pendingDeposits;
+        uint256 pendingWithdrawals;
+    }
+
+    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
+
+    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
+
+    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
+
+    function processDrawingSettlement(
+        uint256 _drawingId,
+        uint256 _lpEarnings,
+        uint256 _userWinnings,
+        uint256 _protocolFeeAmount
+    ) external returns (uint256 newLPValue, uint256 newAccumulator);
+
+    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
+
+    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
+
+    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
+
+    function initializeLP() external;
+
+    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
+    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
+}
+//SPDX-License-Identifier: UNLICENSED
+
 /*
 Copyright (C) 2025 Coordination Inc.
 All rights reserved.
@@ -786,1011 +786,6 @@ library JackpotErrors {
 }
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
-import { IEntropyV2 } from "@pythnetwork/entropy-sdk-solidity/IEntropyV2.sol";
-
-import { FisherYatesRejection } from "./lib/FisherYatesWithRejection.sol";
-import { IScaledEntropyProvider } from "./interfaces/IScaledEntropyProvider.sol";
-
-/**
- * @title ScaledEntropyProvider
- * @notice Provides scaled random number generation using Pyth Network entropy with callback functionality
- * @dev Integrates with Pyth Network's entropy service to generate cryptographically secure random numbers:
- *      - Handles entropy requests with custom scaling and range parameters
- *      - Supports both sampling with and without replacement using Fisher-Yates algorithm
- *      - Provides callback mechanism for asynchronous random number delivery
- *      - Implements unbiased rejection sampling to prevent modulo bias
- *      - Manages fee payments to entropy providers
- *      - Stores pending requests and validates callback execution
- */
-contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsumer {
-    // =============================================================
-    //                           STRUCTS
-    // =============================================================
-    struct PendingRequest {
-        address callback;
-        bytes4 selector;
-        bytes context;
-        bytes32 userRandomNumber;
-        SetRequest[] setRequests;
-    }
-
-    // =============================================================
-    //                           EVENTS
-    // =============================================================
-
-    event ScaledRandomnessDelivered(uint64 indexed sequence, address indexed callback, uint256 samples);
-    event EntropyFulfilled(uint64 indexed sequence, bytes32 randomNumber);
-
-    // =============================================================
-    //                           ERRORS
-    // =============================================================
-    error InvalidCallback();
-    error CallbackFailed(bytes4 selector);
-    error ZeroAddress();
-    error InvalidSelector();
-    error InvalidRequests();
-    error InvalidRange();
-    error InvalidSamples();
-    error InsufficientFee();
-    error UnknownSequence();
-
-    // =============================================================
-    //                       STATE VARIABLES
-    // =============================================================
-
-    IEntropyV2 private entropy;
-    address private entropyProvider;
-    mapping(uint64 => PendingRequest) private pending;
-
-    // =============================================================
-    //                         CONSTRUCTOR
-    // =============================================================
-    
-    /**
-     * @notice Initializes the ScaledEntropyProvider with Pyth Network entropy configuration
-     * @dev Sets up connections to Pyth Network entropy contract and provider.
-     *      Both addresses are validated and stored as immutable references.
-     * @param _entropy Address of the Pyth Network entropy contract
-     * @param _entropyProvider Address of the specific entropy provider to use
-     * @custom:requirements
-     * - Entropy contract address must not be zero
-     * - Entropy provider address must not be zero
-     * @custom:effects
-     * - Sets immutable entropy contract reference
-     * - Configures entropy provider for fee calculations
-     * - Sets deployer as contract owner
-     * @custom:security
-     * - Address validation prevents zero address configuration
-     * - Immutable references prevent unauthorized changes
-     * - Owner-based access control for administrative functions
-     */
-    constructor(address _entropy, address _entropyProvider) Ownable(msg.sender) {
-        if (_entropy == address(0)) revert ZeroAddress();
-        if (_entropyProvider == address(0)) revert ZeroAddress();
-        entropy = IEntropyV2(_entropy);
-        entropyProvider = _entropyProvider;
-    }
-
-    // =============================================================
-    //                      EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Requests scaled random numbers from Pyth Network with callback delivery
-     * @dev Submits entropy request to Pyth Network and stores callback details for async delivery.
-     *      The callback will receive scaled random numbers according to the specified requests. Developer
-     *      needs to ensure that the range is not too large to be able to build an array of the appropriate
-     *      size in memory in order to avoid out of gas errors during Fisher-Yates sampling.
-     *      IMPORTANT: The callback address is automatically set to msg.sender (the calling contract).
-     * @param _gasLimit Gas limit for the entropy callback execution
-     * @param _requests Array of SetRequest structs defining random number requirements
-     * @param _selector Function selector for the callback method on the calling contract
-     * @param _context Additional data to pass to the callback
-     * @return sequence Unique identifier for tracking this entropy request
-     * @custom:requirements
-     * - Calling contract (msg.sender) must implement the callback function
-     * - Provided fee (msg.value) must meet minimum requirements
-     * - Function selector must not be zero
-     * - All set requests must be valid (proper ranges and sample counts)
-     * @custom:emits None (events emitted in callback)
-     * @custom:effects
-     * - Submits entropy request to Pyth Network
-     * - Stores pending request details with msg.sender as callback address
-     * - Transfers fee to entropy provider
-     * @custom:security
-     * - Callback address is restricted to msg.sender preventing unauthorized callbacks
-     * - Fee validation ensures sufficient payment
-     * - Request validation prevents invalid random number generation
-     */
-    function requestAndCallbackScaledRandomness(
-        uint32 _gasLimit,
-        SetRequest[] memory _requests,
-        bytes4 _selector,
-        bytes memory _context
-    )
-        external
-        payable
-        returns (uint64 sequence)
-    {
-        // We assume that the caller has already checked that the fee is sufficient
-        if (msg.value < getFee(_gasLimit)) revert InsufficientFee();
-        if (_selector == bytes4(0)) revert InvalidSelector();
-        _validateRequests(_requests);
-
-        sequence = entropy.requestV2{value: msg.value}(entropyProvider, _gasLimit);
-        _storePendingRequest(sequence, _selector, _context, _requests);
-    }
-
-    /**
-     * @notice Returns the fee required for an entropy request with specified gas limit
-     * @dev Queries the Pyth Network entropy contract for current fee requirements.
-     *      Fee covers entropy generation and callback execution costs.
-     * @param _gasLimit Gas limit for the callback execution
-     * @return Fee amount in wei required for the entropy request
-     */
-    function getFee(uint32 _gasLimit) public view returns (uint256) {
-        return entropy.getFeeV2(entropyProvider, _gasLimit);
-    }
-
-    /**
-     * @notice Returns the address of the Pyth Network entropy contract
-     * @dev Provides access to the entropy contract address for integration purposes.
-     * @return Address of the entropy contract
-     */
-    function getEntropyContract() external view returns (address) {
-        return address(entropy);
-    }
-
-    /**
-     * @notice Returns the address of the currently configured entropy provider
-     * @dev Shows which entropy provider is being used for fee calculations and requests.
-     * @return Address of the entropy provider
-     */
-    function getEntropyProvider() external view returns (address) {
-        return entropyProvider;
-    }
-
-    /**
-     * @notice Returns the details of a pending entropy request
-     * @dev Retrieves stored request information for a specific sequence number.
-     *      Useful for debugging and monitoring pending requests.
-     * @param sequence Unique identifier of the entropy request
-     * @return PendingRequest struct containing callback details and request parameters
-     */
-    function getPendingRequest(uint64 sequence) external view returns (PendingRequest memory) {
-        return pending[sequence];
-    }
-
-    // =============================================================
-    //                      ADMIN FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Updates the entropy provider address
-     * @dev Changes which entropy provider is used for fee calculations and requests.
-     *      Only affects future requests, not pending ones.
-     * @param _entropyProvider New entropy provider address
-     * @custom:requirements
-     * - Only owner can call
-     * - Provider address must not be zero
-     * @custom:emits None
-     * @custom:effects
-     * - Updates entropy provider for future requests
-     * - Changes fee calculations for new requests
-     * @custom:security
-     * - Owner-only access restriction
-     * - Zero address validation
-     */
-    function setEntropyProvider(address _entropyProvider) external onlyOwner {
-        if (_entropyProvider == address(0)) revert ZeroAddress();
-        entropyProvider = _entropyProvider;
-    }
-
-    // =============================================================
-    //                      INTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Processes entropy callback from Pyth Network and delivers scaled random numbers
-     * @dev Called by Pyth Network when entropy is available. Processes the raw entropy into scaled
-     *      random numbers according to stored request parameters and delivers via callback.
-     *      This is the core function that bridges Pyth entropy with application-specific randomness.
-     * @param sequence Unique identifier for the entropy request
-     * @param randomNumber Raw entropy value from Pyth Network (provider parameter ignored)
-     * @custom:requirements
-     * - Sequence must correspond to a valid pending request
-     * - Callback execution must succeed
-     * - Only called by Pyth Network entropy contract
-     * @custom:emits EntropyFulfilled with sequence and raw random number
-     * @custom:emits ScaledRandomnessDelivered with sequence, callback address, and sample count
-     * @custom:effects
-     * - Retrieves and deletes pending request data
-     * - Generates scaled random numbers using Fisher-Yates or replacement sampling
-     * - Executes callback with scaled results and original context
-     * - Cleans up pending request storage
-     * @custom:security
-     * - Validates sequence corresponds to pending request
-     * - Ensures callback execution succeeds before cleanup
-     * - Uses unbiased sampling methods to prevent statistical attacks
-     * - Immediate cleanup prevents replay attacks
-     */
-    function entropyCallback(uint64 sequence, address /*provider*/, bytes32 randomNumber) internal override {
-        PendingRequest memory req = pending[sequence];
-        if (req.callback == address(0)) revert UnknownSequence();
-        
-        delete pending[sequence];
-
-        uint256[][] memory scaledRandomNumbers = _getScaledRandomness(randomNumber, req.setRequests);
-        (bool success, ) = req.callback.call(abi.encodeWithSelector(req.selector, sequence, scaledRandomNumbers, req.context));
-        if (!success) revert CallbackFailed(req.selector);
-
-        emit EntropyFulfilled(sequence, randomNumber);
-        emit ScaledRandomnessDelivered(sequence, req.callback, scaledRandomNumbers.length);
-    }
-
-    function _getScaledRandomness(
-        bytes32 _randomNumber,
-        SetRequest[] memory _setRequests
-    )
-        internal
-        pure
-        returns (uint256[][] memory requestsOutputs)
-    {
-        requestsOutputs = new uint256[][](_setRequests.length);
-        
-        for (uint256 i = 0; i < _setRequests.length; i++) {
-            if (!_setRequests[i].withReplacement) {
-                requestsOutputs[i] = FisherYatesRejection.draw(
-                    _setRequests[i].minRange,
-                    _setRequests[i].maxRange,
-                    _setRequests[i].samples,
-                    uint256(_randomNumber)
-                );
-            } else {
-                requestsOutputs[i] = _drawWithReplacement(
-                    _setRequests[i].minRange,
-                    _setRequests[i].maxRange,
-                    _setRequests[i].samples,
-                    uint256(_randomNumber)
-                );
-            }
-        }
-    }
-
-    function getEntropy() internal view override returns (address) {
-        return address(entropy);
-    }
-
-    function _validateRequests(SetRequest[] memory _requests) internal pure {
-        if (_requests.length == 0) revert InvalidRequests();
-        for (uint256 i = 0; i < _requests.length; i++) {
-            if (_requests[i].minRange > _requests[i].maxRange) revert InvalidRange();
-            if (_requests[i].samples == 0) revert InvalidSamples();
-        }
-    }
-
-    function _storePendingRequest(
-        uint64 sequence,
-        bytes4 _selector,
-        bytes memory _context,
-        SetRequest[] memory _setRequests
-    ) internal {
-        pending[sequence].callback = msg.sender;
-        pending[sequence].selector = _selector;
-        pending[sequence].context = _context;
-        for (uint256 i = 0; i < _setRequests.length; i++) {
-            pending[sequence].setRequests.push(_setRequests[i]);
-        }
-    }
-
-    function _drawWithReplacement(
-        uint256 _minRange,
-        uint256 _maxRange,
-        uint8 _samples,
-        uint256 _randomNumber
-    ) internal pure returns (uint256[] memory) {
-        uint256[] memory result = new uint256[](_samples);
-        uint256 range = _maxRange - _minRange + 1;
-        uint256 nonce = 0;
-
-        for (uint256 i = 0; i < _samples; i++) {
-            uint256 rand;
-            while (true) {
-                rand = uint256(keccak256(abi.encode(_randomNumber, nonce)));
-                uint256 limit = (type(uint256).max / range) * range;
-
-                if (rand < limit) {
-                    result[i] = uint256((rand % range) + _minRange); // [1..range]
-                    break;
-                }
-                nonce++;
-            }
-            nonce++;
-        }
-
-        return result;
-    }
-}
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-import { ERC721 } from "solady/src/tokens/ERC721.sol";
-
-import { IJackpot } from "./interfaces/IJackpot.sol";
-import { IJackpotTicketNFT } from "./interfaces/IJackpotTicketNFT.sol";
-
-
-/**
- * @title JackpotTicketNFT
- * @notice ERC-721 implementation for jackpot tickets with tracking and transfer functionality
- * @dev Implements jackpot tickets as transferable NFTs with:
- *      - Packed ticket number storage for efficient gas usage
- *      - User ticket tracking per drawing for easy querying
- *      - Referral scheme association for winnings distribution
- *      - Automatic ticket list management on transfers
- *      - Integration with Jackpot contract for minting and burning
- */
-contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
-
-    // =============================================================
-    //                           STRUCTS
-    // =============================================================
-    struct UserTickets {
-        uint256 totalTicketsBought;
-        mapping(uint256 => uint256) ticketIds;
-        mapping(uint256 => uint256) indexOfTicketId;
-    }
-
-    // =============================================================
-    //                       ERRORS
-    // =============================================================
-
-    error UnauthorizedCaller();
-
-    // =============================================================
-    //                       STATE VARIABLES
-    // =============================================================
-
-    // User and ticket mappings
-    mapping(address => mapping(uint256 => UserTickets)) internal userTickets; // user address => drawing => UserTickets
-    mapping(uint256 => TrackedTicket) public tickets; // ticketId → ticket info
-
-    IJackpot public immutable jackpot;
-
-    // =============================================================
-    //                       MODIFIERS
-    // =============================================================
-
-    modifier onlyJackpot() {
-        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
-        _;
-    }
-
-    // =============================================================
-    //                       CONSTRUCTOR
-    // =============================================================
-
-    /**
-     * @notice Initializes the JackpotTicketNFT with the Jackpot contract reference
-     * @dev Sets up the connection to the main Jackpot contract that will mint and burn tickets
-     * @param _jackpot Address of the main Jackpot contract
-     * @custom:effects
-     * - Sets jackpot contract reference as immutable
-     * - Inherits ERC721 functionality for NFT operations
-     * @custom:security
-     * - Immutable jackpot reference prevents unauthorized contract changes
-     */
-    constructor(IJackpot _jackpot) {
-        jackpot = _jackpot;
-    }
-
-    // =============================================================
-    //                       EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Mints a new ticket NFT with jackpot information
-     * @dev Creates an ERC-721 token representing a jackpot ticket with embedded metadata.
-     *      Automatically adds ticket to user's ticket list for the drawing.
-     * @param _recipient Address to receive the minted ticket
-     * @param _ticketId Unique identifier for the ticket (used as token ID)
-     * @param _drawingId Drawing the ticket is for
-     * @param _packedTicket Packed ticket numbers (normal numbers + bonusball)
-     * @param _referralScheme Hash of referral scheme used for this ticket
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - Ticket ID must be unique (ERC721 enforces this)
-     * - Recipient address must not be zero (ERC721 enforces this)
-     * @custom:emits Transfer (ERC-721 standard)
-     * @custom:effects
-     * - Mints ERC-721 token to specified address
-     * - Stores ticket metadata in contract storage
-     * - Adds ticket to user's ticket list via _afterTokenTransfer
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Unique ticket ID enforcement via ERC721
-     * - Automatic user ticket tracking
-     */
-    function mintTicket(
-        address _recipient,
-        uint256 _ticketId,
-        uint256 _drawingId,
-        uint256 _packedTicket,
-        bytes32 _referralScheme
-    ) external onlyJackpot {
-        tickets[_ticketId] = TrackedTicket({
-            drawingId: _drawingId,
-            packedTicket: _packedTicket,
-            referralScheme: _referralScheme
-        });
-
-        _mint(_recipient, _ticketId);
-    }
-
-    function burnTicket(uint256 _ticketId) external onlyJackpot {
-        _burn(_ticketId);
-    }
-
-    // =============================================================
-    //                       VIEW FUNCTIONS
-    // =============================================================
-
-    function getUserTickets(address _userAddress, uint256 _drawingId) external view returns (ExtendedTrackedTicket[] memory) {
-        UserTickets storage userDrawingTickets = userTickets[_userAddress][_drawingId];
-        ExtendedTrackedTicket[] memory userTicketsList = new ExtendedTrackedTicket[](userDrawingTickets.totalTicketsBought);
-        for (uint256 i = 0; i < userDrawingTickets.totalTicketsBought; i++) {
-            uint256 ticketId = userDrawingTickets.ticketIds[i];
-            userTicketsList[i] = _getExtendedTicketInfo(ticketId);
-        }
-        return userTicketsList;
-    }
-
-    function getTicketInfo(uint256 _ticketId) external view returns (TrackedTicket memory) {
-        return tickets[_ticketId];
-    }
-
-    function getExtendedTicketInfo(uint256 _ticketId) external view returns (ExtendedTrackedTicket memory) {
-        return _getExtendedTicketInfo(_ticketId);
-    }
-    
-    function name() public pure override returns (string memory) {
-        return "Jackpot";
-    }
-
-    function symbol() public pure override returns (string memory) {
-        return "JACKPOT";
-    }
-
-    function tokenURI(uint256 /* tokenId */) public pure override returns (string memory) {
-        return "";
-    }
-
-    // =============================================================
-    //                       INTERNAL FUNCTIONS
-    // =============================================================
-
-    function _beforeTokenTransfer(address _from, address /* _to */, uint256 _tokenId) internal override {
-        if (_from != address(0)) {
-            TrackedTicket memory ticketInfo = tickets[_tokenId];
-            UserTickets storage fromTickets = userTickets[_from][ticketInfo.drawingId];
-            uint256 idx = fromTickets.indexOfTicketId[_tokenId];
-            uint256 lastIdx = fromTickets.totalTicketsBought - 1;
-            if (idx != lastIdx) {
-                uint256 swapId = fromTickets.ticketIds[lastIdx];
-                fromTickets.ticketIds[idx] = swapId;
-                fromTickets.indexOfTicketId[swapId] = idx;
-            }
-            delete fromTickets.ticketIds[lastIdx];
-            delete fromTickets.indexOfTicketId[_tokenId];
-            fromTickets.totalTicketsBought -= 1;
-        }
-    }
-
-    function _afterTokenTransfer(address /* _from */, address _to, uint256 _tokenId) internal override {
-        if (_to != address(0)) {
-            TrackedTicket memory ticketInfo = tickets[_tokenId];
-            UserTickets storage toTickets = userTickets[_to][ticketInfo.drawingId];
-            uint256 newIdx = toTickets.totalTicketsBought;
-            toTickets.ticketIds[newIdx] = _tokenId;
-            toTickets.indexOfTicketId[_tokenId] = newIdx;
-            toTickets.totalTicketsBought += 1;
-        }
-    }
-
-    function _getExtendedTicketInfo(uint256 _ticketId) internal view returns (ExtendedTrackedTicket memory) {
-        (uint8[] memory normals, uint8 bonusball) = jackpot.getUnpackedTicket(tickets[_ticketId].drawingId, tickets[_ticketId].packedTicket);
-        return ExtendedTrackedTicket({
-            ticketId: _ticketId,
-            ticket: tickets[_ticketId],
-            normals: normals,
-            bonusball: bonusball
-        });
-    }
-}
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-
-import { Combinations } from "./lib/Combinations.sol";
-import { IJackpot } from "./interfaces/IJackpot.sol";
-import { IPayoutCalculator } from "./interfaces/IPayoutCalculator.sol";
-
-/**
- * @title GuaranteedMinimumPayoutCalculator
- * @notice Calculates prize payouts using a two-tier system with guaranteed minimums and premium allocation
- * @dev Implements a 12-tier payout system based on jackpot match combinations:
- *      - Tiers 0-11: matches(0-5) × bonusball(no/yes) = matches*2 + (bonusballMatch ? 1 : 0)
- *      - Each tier has configurable minimum payouts and premium pool allocation weights
- *      - Premium pool is allocated proportionally after minimum payouts are satisfied
- *      - Includes both user-owned and LP-owned winning tickets in allocation calculations
- *      - Supports owner-configurable payout parameters that can be updated between drawings
- */
-contract GuaranteedMinimumPayoutCalculator is IPayoutCalculator, Ownable {
-
-    // =============================================================
-    //                          STRUCTS
-    // =============================================================
-
-    struct DrawingTierInfo {
-        uint256 minPayout;
-        uint256 premiumTierMinAllocation;
-        bool[12] minPayoutTiers;
-        uint256[12] premiumTierWeights;
-    }
-
-    // =============================================================
-    //                          ERRORS
-    // =============================================================
-
-    error UnauthorizedCaller();
-    error ZeroAddress();
-    error InvalidTierWeights();
-    error InvalidPremiumTierMinimumAllocation();
-
-    // =============================================================
-    //                          CONSTANTS
-    // =============================================================
-
-    uint256 public constant PRECISE_UNIT = 1e18;
-    uint8 constant NORMAL_BALL_COUNT = 5;
-    uint8 constant TOTAL_TIER_COUNT = 12; // matches(0,1,2,3,4,5) * bonusball(0,1) = 6 * 2 = 12
-
-    // =============================================================
-    //                          STATE VARIABLES
-    // =============================================================
-    
-    // Note:drawingId --> tierId (matches*2 + {1 if bonusball match}) → tier payout
-    mapping(uint256=>DrawingTierInfo) public drawingTierInfo;
-    mapping(uint256=>mapping(uint256 => uint256)) tierPayouts;
-
-    // Must be 12 elements long (matches(0,1,2,3,4,5) * bonusball(0,1))
-    // Allocation of remaining prize pool after minimum payout is accounted for
-    uint256[TOTAL_TIER_COUNT] public premiumTierWeights;
-    // All tiers eligible for the minimum payout, true if eligible, false if not
-    bool[TOTAL_TIER_COUNT] public minPayoutTiers;
-    uint256 public minimumPayout;
-    uint256 public premiumTierMinAllocation;
-
-    IJackpot public immutable jackpot;
-
-    // =============================================================
-    //                          MODIFIERS
-    // =============================================================
-    
-    modifier onlyJackpot() {
-        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
-        _;
-    }
-
-    // =============================================================
-    //                          CONSTRUCTOR
-    // =============================================================
-    
-    /**
-     * @notice Initializes the GuaranteedMinimumPayoutCalculator with payout configuration
-     * @dev Sets up the connection to the Jackpot contract and initial payout parameters.
-     *      Premium tier weights must sum to PRECISE_UNIT for proper allocation.
-     * @param _jackpot Address of the main Jackpot contract (immutable reference)
-     * @param _minimumPayout Base minimum payout amount for eligible tiers
-     * @param _premiumTierMinAllocation Minimum allocation of prize pool for premium tier (in PRECISE_UNIT scale)
-     * @param _minPayoutTiers Boolean array indicating which tiers receive minimum payouts (12 elements)
-     * @param _premiumTierWeights Weight allocation for premium pool distribution (12 elements, must sum to PRECISE_UNIT)
-     * @custom:requirements
-     * - Jackpot address must not be zero
-     * - Premium tier weights must sum exactly to PRECISE_UNIT
-     * - Arrays must be exactly 12 elements (TOTAL_TIER_COUNT)
-     * @custom:effects
-     * - Sets immutable jackpot contract reference
-     * - Initializes minimum payout configuration
-     * - Sets up premium tier allocation weights
-     * - Sets deployer as contract owner
-     * @custom:security
-     * - Immutable jackpot reference prevents unauthorized contract changes
-     * - Weight sum validation ensures proper allocation
-     */
-    constructor(
-        IJackpot _jackpot,
-        uint256 _minimumPayout,
-        uint256 _premiumTierMinAllocation,
-        bool[TOTAL_TIER_COUNT] memory _minPayoutTiers,
-        uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights
-    ) Ownable(msg.sender) {
-        if (_jackpot == IJackpot(address(0))) revert ZeroAddress();
-        if (_premiumTierMinAllocation > PRECISE_UNIT) revert InvalidPremiumTierMinimumAllocation();
-        jackpot = _jackpot;
-        minimumPayout = _minimumPayout;
-        premiumTierMinAllocation = _premiumTierMinAllocation;
-        minPayoutTiers = _minPayoutTiers;
-        _setPremiumTierWeights(_premiumTierWeights);
-    }
-
-    // =============================================================
-    //                       EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Calculates and stores payout amounts for a completed drawing
-     * @dev Two-phase payout calculation with premium-protection threshold:
-     *      1) Compute total winning tickets per tier, including duplicate user tickets, to avoid under-collateralization.
-     *      2) Compute the minimum payout allocation across eligible tiers. Apply minimum payouts only if:
-     *         (prizePool * premiumTierMinAllocation / 1e18) + minimumPayoutAllocation < prizePool.
-     *         - If the inequality is false (i.e., equality or greater), minimum payouts are disabled for this drawing and the
-     *           entire prize pool is allocated by premium weights. This ensures the premium tier receives at least its
-     *           configured minimum allocation and avoids arithmetic underflow.
-     *      Integer division is used for the premium minimum allocation term; any truncation favors premium protection.
-     * @param _drawingId Drawing to calculate payouts for
-     * @param _prizePool Total prize pool available for distribution
-     * @param _normalMax Maximum normal ball number for combination calculations (assumed valid per Jackpot constraints)
-     * @param _bonusballMax Maximum bonusball number for combination calculations (assumed valid per Jackpot constraints)
-     * @param _uniqueResult Array of unique winner counts per tier (12 elements, user-owned tickets)
-     * @param _dupResult Array of duplicate winner counts per tier (12 elements, user-owned tickets)
-     * @return totalPayout Total amount allocated to all user-owned winning tickets
-     * @custom:requirements
-     * - Caller must be the Jackpot contract
-     * - Tier parameters must be snapshotted via setDrawingTierInfo(_drawingId)
-     * - `_uniqueResult.length == 12` and `_dupResult.length == 12`
-     * - `_normalMax` and `_bonusballMax` provided by Jackpot must be valid for combination math
-     * @custom:effects
-     * - Calculates total winning ticket counts per tier (LP + users; duplicates included)
-     * - Applies minimum payouts only if the premium-protection threshold is satisfied
-     * - Distributes the remaining or full prize pool by premium tier weights
-     * - Stores per-tier payout amounts in `tierPayouts`
-     * - Returns the sum owed to user-owned winning tickets only (unique + duplicate)
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Duplicate winners included in denominator to prevent under-collateralization
-     * - Guards against underflow by disabling minimum payouts when insufficient pool remains
-     */
-    function calculateAndStoreDrawingUserWinnings(
-        uint256 _drawingId,
-        uint256 _prizePool,
-        uint8 _normalMax,
-        uint8 _bonusballMax,
-        uint256[] memory _uniqueResult,
-        uint256[] memory _dupResult
-    )
-        external
-        onlyJackpot
-        returns (uint256 totalPayout)
-    {   
-        DrawingTierInfo storage tierInfo = drawingTierInfo[_drawingId];
-
-        // First calculate the total number of winners for each tier including duplicates and use that to determine guaranteed
-        // minimum payouts
-        uint256[TOTAL_TIER_COUNT] memory tierWinners;
-        uint256 minimumPayoutAllocation = 0;
-        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
-            // If tier is not eligible for minimum payout AND gets no part of premium allocation then no winners
-            if (!tierInfo.minPayoutTiers[i] && tierInfo.premiumTierWeights[i] == 0) {
-                tierWinners[i] = 0;
-                continue;
-            }
-            // Derived from index formula which is matches*2 + {1 if bonusball match} (i/2 is always floored)
-            uint256 matches = i / 2;
-
-            // Including _dupResult[i] here takes money from the premium tier pool, if we don't include it we take money from the
-            // LP pool reducing edge for LPs. Including here eliminates chances of under-collateralization. The amount of winners within
-            // a tier is the total amount of winning tickets available for that tier plus any duplicate winners from that tier. The logic
-            // here is that some of the non-duplicate winners are held by LPs and some are held by users. All of the duplicate winners
-            // are held by users.
-            uint256 tierWinningTickets = _calculateTierTotalWinningCombos(matches, _normalMax, _bonusballMax, i % 2 == 1) + _dupResult[i];
-            tierWinners[i] = tierWinningTickets;
-            if (tierInfo.minPayoutTiers[i]) {
-                minimumPayoutAllocation += tierWinningTickets * tierInfo.minPayout;
-            }
-        }
-        
-        // Only use minimum payouts if the premium tier minimum allocation + minimum payout allocation is less than the prize pool
-        bool useMinimumPayouts = ((_prizePool * tierInfo.premiumTierMinAllocation / PRECISE_UNIT) + minimumPayoutAllocation) < _prizePool;
-
-        totalPayout = _calculateAndStoreTierPayouts(
-            _drawingId,
-            useMinimumPayouts ? _prizePool - minimumPayoutAllocation : _prizePool,
-            useMinimumPayouts ? tierInfo.minPayout : 0,
-            tierWinners,
-            _uniqueResult,
-            _dupResult
-        );
-    }
-
-    /**
-     * @notice Snapshots current payout configuration for a specific drawing
-     * @dev Freezes current minimumPayout, minPayoutTiers, and premiumTierWeights into drawingTierInfo,
-     *      allowing future configuration changes without affecting this drawing's payout calculations.
-     * @param _drawingId Drawing to set up tier information for
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - Should be called before drawing execution
-     * @custom:emits None
-     * @custom:effects
-     * - Creates immutable snapshot of current payout configuration
-     * - Enables payout calculations for the specific drawing
-     * - Allows future parameter updates without affecting this drawing
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Ensures drawing payout consistency regardless of future changes
-     */
-    function setDrawingTierInfo(uint256 _drawingId) external onlyJackpot {
-        drawingTierInfo[_drawingId] = DrawingTierInfo({
-            minPayout: minimumPayout,
-            premiumTierMinAllocation: premiumTierMinAllocation,
-            minPayoutTiers: minPayoutTiers,
-            premiumTierWeights: premiumTierWeights
-        });
-    }
-
-    // =============================================================
-    //                        ADMIN FUNCTIONS
-    // =============================================================
-    
-    /**
-     * @notice Updates the base minimum payout amount
-     * @dev Changes the guaranteed minimum payout for all eligible tiers in future drawings.
-     *      Does not affect drawings that have already had tier info set.
-     * @param _minimumPayout New minimum payout amount (in USDC wei)
-     * @custom:requirements
-     * - Only owner can call
-     * @custom:emits None
-     * @custom:effects
-     * - Updates global minimum payout configuration
-     * - Affects future drawings only (after setDrawingTierInfo is called)
-     * @custom:security
-     * - Owner-only access restriction
-     */
-    function setMinimumPayout(uint256 _minimumPayout) external onlyOwner {
-        minimumPayout = _minimumPayout;
-    }
-    
-    /**
-     * @notice Updates which tiers are eligible for minimum guaranteed payouts
-     * @dev Configures which of the 12 tiers receive minimum payout guarantees in future drawings.
-     *      Tiers with false values rely solely on premium pool allocation.
-     * @param _minPayoutTiers Boolean array indicating minimum payout eligibility (12 elements)
-     * @custom:requirements
-     * - Only owner can call
-     * - Array must be exactly 12 elements (TOTAL_TIER_COUNT)
-     * @custom:emits None
-     * @custom:effects
-     * - Updates minimum payout tier configuration
-     * - Affects future drawings only (after setDrawingTierInfo is called)
-     * - Tiers set to false will only receive premium pool allocation
-     * @custom:security
-     * - Owner-only access restriction
-     * - Array length validation
-     */
-    function setMinPayoutTiers(bool[TOTAL_TIER_COUNT] memory _minPayoutTiers) external onlyOwner {
-        minPayoutTiers = _minPayoutTiers;
-    }
-
-    /**
-     * @notice Updates the minimum allocation of the prize pool reserved for premium tier distribution
-     * @dev Sets the minimum percentage of the total prize pool that must be allocated to premium tiers.
-     *      This ensures premium tiers receive adequate funding even when minimum payouts consume most of the pool.
-     *      The allocation is enforced during payout calculations by making sure the minimum payout allocation + 
-     *      minimum premium allocation is less than the prize pool. If this equality fails then minimum payouts
-     *      are disabled and the entire prize pool is distributed to the premium tiers.
-     * @param _premiumTierMinAllocation Minimum allocation percentage in PRECISE_UNIT scale (e.g., 0.1e18 = 10%)
-     * @custom:requirements
-     * - Only owner can call
-     * - Allocation percentage must not exceed 100% (PRECISE_UNIT)
-     * @custom:emits None
-     * @custom:effects
-     * - Updates global premium tier minimum allocation configuration
-     * - Affects future drawings only (after setDrawingTierInfo is called)
-     * - Changes how prize pool is split between minimum payouts and premium allocation
-     * @custom:security
-     * - Owner-only access restriction
-     * - Upper bound validation prevents invalid allocation percentages
-     * - Ensures balanced distribution between guaranteed minimums and premium rewards
-     */
-    function setPremiumTierMinAllocation(uint256 _premiumTierMinAllocation) external onlyOwner {
-        if (_premiumTierMinAllocation > PRECISE_UNIT) revert InvalidPremiumTierMinimumAllocation();
-        premiumTierMinAllocation = _premiumTierMinAllocation;
-    }
-
-    /**
-     * @notice Updates premium tier weight allocation
-     * @dev Changes how the premium prize pool (after minimum payouts) is distributed across tiers.
-     *      Weights must sum to PRECISE_UNIT to ensure complete allocation.
-     * @param _premiumTierWeights Array of allocation weights (12 elements, must sum to PRECISE_UNIT)
-     * @custom:requirements
-     * - Only owner can call
-     * - Array must be exactly 12 elements (TOTAL_TIER_COUNT)
-     * - Weights must sum exactly to PRECISE_UNIT (1e18)
-     * @custom:emits None
-     * @custom:effects
-     * - Updates premium pool allocation weights
-     * - Affects future drawings only (after setDrawingTierInfo is called)
-     * - Changes how remaining prize pool is distributed after minimum payouts
-     * @custom:security
-     * - Owner-only access restriction
-     * - Weight sum validation ensures complete allocation
-     * - Array length validation
-     */
-    function setPremiumTierWeights(uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights) external onlyOwner {
-        _setPremiumTierWeights(_premiumTierWeights);
-    }
-
-    // =============================================================
-    //                        VIEW FUNCTIONS
-    // =============================================================
-    
-    /**
-     * @notice Returns the calculated payout amount for a specific tier in a drawing
-     * @dev Retrieves the final payout amount per winning ticket for the specified tier.
-     *      Returns 0 if no payout has been calculated or tier had no winners.
-     * @param _drawingId Drawing to query
-     * @param _tierId Tier to query (0-11, calculated as matches*2 + bonusballMatch)
-     * @return Payout amount per winning ticket for the tier (in USDC wei)
-     */
-    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256) {
-        return tierPayouts[_drawingId][_tierId];
-    }
-
-    /**
-     * @notice Returns all tier payouts for a specific drawing
-     * @dev Retrieves the complete array of payout amounts for all 12 tiers in a drawing.
-     *      Useful for displaying complete payout structure or performing batch calculations.
-     * @param _drawingId Drawing to query
-     * @return Array of payout amounts for all tiers (12 elements, in USDC wei)
-     */
-    function getDrawingTierPayouts(uint256 _drawingId) external view returns (uint256[TOTAL_TIER_COUNT] memory) {
-        uint256[TOTAL_TIER_COUNT] memory drawingTierPayouts;
-        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
-            drawingTierPayouts[i] = tierPayouts[_drawingId][i];
-        }
-        return drawingTierPayouts;
-    }
-
-    /**
-     * @notice Returns current minimum payout tier configuration
-     * @dev Shows which tiers are currently eligible for minimum guaranteed payouts.
-     *      This reflects the current configuration, not necessarily what was used for past drawings.
-     * @return Boolean array indicating minimum payout eligibility for each tier (12 elements)
-     */
-    function getMinPayoutTiers() external view returns (bool[TOTAL_TIER_COUNT] memory) {
-        return minPayoutTiers;
-    }
-
-    /**
-     * @notice Returns current premium tier weight configuration
-     * @dev Shows current premium pool allocation weights across all tiers.
-     *      This reflects the current configuration, not necessarily what was used for past drawings.
-     * @return Array of premium pool allocation weights (12 elements, sum to PRECISE_UNIT)
-     */
-    function getPremiumTierWeights() external view returns (uint256[TOTAL_TIER_COUNT] memory) {
-        return premiumTierWeights;
-    }
-
-    /**
-     * @notice Returns the complete tier configuration used for a specific drawing
-     * @dev Retrieves the snapshot of payout configuration that was frozen for the drawing.
-     *      This shows the exact parameters used for payout calculations.
-     * @param _drawingId Drawing to query
-     * @return DrawingTierInfo struct containing minimum payout, tier eligibility, and premium weights
-     */
-    function getDrawingTierInfo(uint256 _drawingId) external view returns (DrawingTierInfo memory) {
-        return drawingTierInfo[_drawingId];
-    }
-
-    // =============================================================
-    //                        INTERNAL FUNCTIONS
-    // =============================================================
-    function _setPremiumTierWeights(uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights) internal {
-        uint256 tierWeightSum = 0;
-        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
-            tierWeightSum += _premiumTierWeights[i];
-        }
-        if (tierWeightSum != PRECISE_UNIT) revert InvalidTierWeights();
-
-        premiumTierWeights = _premiumTierWeights;
-    }
-
-    function _calculateAndStoreTierPayouts(
-        uint256 _drawingId,
-        uint256 _remainingPrizePool,
-        uint256 _minPayout,
-        uint256[TOTAL_TIER_COUNT] memory _tierWinners,
-        uint256[] memory _uniqueResult,
-        uint256[] memory _dupResult
-    )
-        internal
-        returns(uint256 totalPayout)
-    {
-        DrawingTierInfo storage tierInfo = drawingTierInfo[_drawingId];
-        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
-            // If no winners then no payout
-            if (_tierWinners[i] != 0) {
-                // Calculate the payout for each tier from the (remaining prize pool * weight) / total winning tickets
-                //(including LP-owned winning tickets)
-                uint256 premiumTierPayoutAmount = _remainingPrizePool * tierInfo.premiumTierWeights[i] / (PRECISE_UNIT * _tierWinners[i]);
-                // Add the premium tier payout to the minimum payout if the tier is eligible for the minimum payout
-                uint256 tierPayout = tierInfo.minPayoutTiers[i] ? _minPayout + premiumTierPayoutAmount : premiumTierPayoutAmount;
-                // Store the payout for the tier in the mapping so it can be queried later and add the total tier payout to the total payout
-                tierPayouts[_drawingId][i] = tierPayout;
-                // the total amount of user-owned winning tickets for a given tier is the sum of result and dupResult
-                totalPayout += tierPayout * (_uniqueResult[i] + _dupResult[i]);
-            }
-        }
-    }
-
-    function _calculateTierTotalWinningCombos(
-        uint256 _matches,
-        uint8 _normalMax, 
-        uint8 _bonusballMax,
-        bool _bonusballMatch
-    )
-        internal
-        pure
-        returns(uint256)
-    {
-        if (_bonusballMatch) {
-            return Combinations.choose(NORMAL_BALL_COUNT, _matches) * Combinations.choose(_normalMax - NORMAL_BALL_COUNT, NORMAL_BALL_COUNT - _matches);
-        } else {
-            return Combinations.choose(NORMAL_BALL_COUNT, _matches) * Combinations.choose(_normalMax - NORMAL_BALL_COUNT, NORMAL_BALL_COUNT - _matches) * (_bonusballMax - 1);
-        }
-    }
-}
-
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -3520,6 +2515,1011 @@ contract Jackpot is IJackpot, Ownable2Step, ReentrancyGuardTransient {
     }
 }
 
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+
+import { Combinations } from "./lib/Combinations.sol";
+import { IJackpot } from "./interfaces/IJackpot.sol";
+import { IPayoutCalculator } from "./interfaces/IPayoutCalculator.sol";
+
+/**
+ * @title GuaranteedMinimumPayoutCalculator
+ * @notice Calculates prize payouts using a two-tier system with guaranteed minimums and premium allocation
+ * @dev Implements a 12-tier payout system based on jackpot match combinations:
+ *      - Tiers 0-11: matches(0-5) × bonusball(no/yes) = matches*2 + (bonusballMatch ? 1 : 0)
+ *      - Each tier has configurable minimum payouts and premium pool allocation weights
+ *      - Premium pool is allocated proportionally after minimum payouts are satisfied
+ *      - Includes both user-owned and LP-owned winning tickets in allocation calculations
+ *      - Supports owner-configurable payout parameters that can be updated between drawings
+ */
+contract GuaranteedMinimumPayoutCalculator is IPayoutCalculator, Ownable {
+
+    // =============================================================
+    //                          STRUCTS
+    // =============================================================
+
+    struct DrawingTierInfo {
+        uint256 minPayout;
+        uint256 premiumTierMinAllocation;
+        bool[12] minPayoutTiers;
+        uint256[12] premiumTierWeights;
+    }
+
+    // =============================================================
+    //                          ERRORS
+    // =============================================================
+
+    error UnauthorizedCaller();
+    error ZeroAddress();
+    error InvalidTierWeights();
+    error InvalidPremiumTierMinimumAllocation();
+
+    // =============================================================
+    //                          CONSTANTS
+    // =============================================================
+
+    uint256 public constant PRECISE_UNIT = 1e18;
+    uint8 constant NORMAL_BALL_COUNT = 5;
+    uint8 constant TOTAL_TIER_COUNT = 12; // matches(0,1,2,3,4,5) * bonusball(0,1) = 6 * 2 = 12
+
+    // =============================================================
+    //                          STATE VARIABLES
+    // =============================================================
+    
+    // Note:drawingId --> tierId (matches*2 + {1 if bonusball match}) → tier payout
+    mapping(uint256=>DrawingTierInfo) public drawingTierInfo;
+    mapping(uint256=>mapping(uint256 => uint256)) tierPayouts;
+
+    // Must be 12 elements long (matches(0,1,2,3,4,5) * bonusball(0,1))
+    // Allocation of remaining prize pool after minimum payout is accounted for
+    uint256[TOTAL_TIER_COUNT] public premiumTierWeights;
+    // All tiers eligible for the minimum payout, true if eligible, false if not
+    bool[TOTAL_TIER_COUNT] public minPayoutTiers;
+    uint256 public minimumPayout;
+    uint256 public premiumTierMinAllocation;
+
+    IJackpot public immutable jackpot;
+
+    // =============================================================
+    //                          MODIFIERS
+    // =============================================================
+    
+    modifier onlyJackpot() {
+        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
+        _;
+    }
+
+    // =============================================================
+    //                          CONSTRUCTOR
+    // =============================================================
+    
+    /**
+     * @notice Initializes the GuaranteedMinimumPayoutCalculator with payout configuration
+     * @dev Sets up the connection to the Jackpot contract and initial payout parameters.
+     *      Premium tier weights must sum to PRECISE_UNIT for proper allocation.
+     * @param _jackpot Address of the main Jackpot contract (immutable reference)
+     * @param _minimumPayout Base minimum payout amount for eligible tiers
+     * @param _premiumTierMinAllocation Minimum allocation of prize pool for premium tier (in PRECISE_UNIT scale)
+     * @param _minPayoutTiers Boolean array indicating which tiers receive minimum payouts (12 elements)
+     * @param _premiumTierWeights Weight allocation for premium pool distribution (12 elements, must sum to PRECISE_UNIT)
+     * @custom:requirements
+     * - Jackpot address must not be zero
+     * - Premium tier weights must sum exactly to PRECISE_UNIT
+     * - Arrays must be exactly 12 elements (TOTAL_TIER_COUNT)
+     * @custom:effects
+     * - Sets immutable jackpot contract reference
+     * - Initializes minimum payout configuration
+     * - Sets up premium tier allocation weights
+     * - Sets deployer as contract owner
+     * @custom:security
+     * - Immutable jackpot reference prevents unauthorized contract changes
+     * - Weight sum validation ensures proper allocation
+     */
+    constructor(
+        IJackpot _jackpot,
+        uint256 _minimumPayout,
+        uint256 _premiumTierMinAllocation,
+        bool[TOTAL_TIER_COUNT] memory _minPayoutTiers,
+        uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights
+    ) Ownable(msg.sender) {
+        if (_jackpot == IJackpot(address(0))) revert ZeroAddress();
+        if (_premiumTierMinAllocation > PRECISE_UNIT) revert InvalidPremiumTierMinimumAllocation();
+        jackpot = _jackpot;
+        minimumPayout = _minimumPayout;
+        premiumTierMinAllocation = _premiumTierMinAllocation;
+        minPayoutTiers = _minPayoutTiers;
+        _setPremiumTierWeights(_premiumTierWeights);
+    }
+
+    // =============================================================
+    //                       EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Calculates and stores payout amounts for a completed drawing
+     * @dev Two-phase payout calculation with premium-protection threshold:
+     *      1) Compute total winning tickets per tier, including duplicate user tickets, to avoid under-collateralization.
+     *      2) Compute the minimum payout allocation across eligible tiers. Apply minimum payouts only if:
+     *         (prizePool * premiumTierMinAllocation / 1e18) + minimumPayoutAllocation < prizePool.
+     *         - If the inequality is false (i.e., equality or greater), minimum payouts are disabled for this drawing and the
+     *           entire prize pool is allocated by premium weights. This ensures the premium tier receives at least its
+     *           configured minimum allocation and avoids arithmetic underflow.
+     *      Integer division is used for the premium minimum allocation term; any truncation favors premium protection.
+     * @param _drawingId Drawing to calculate payouts for
+     * @param _prizePool Total prize pool available for distribution
+     * @param _normalMax Maximum normal ball number for combination calculations (assumed valid per Jackpot constraints)
+     * @param _bonusballMax Maximum bonusball number for combination calculations (assumed valid per Jackpot constraints)
+     * @param _uniqueResult Array of unique winner counts per tier (12 elements, user-owned tickets)
+     * @param _dupResult Array of duplicate winner counts per tier (12 elements, user-owned tickets)
+     * @return totalPayout Total amount allocated to all user-owned winning tickets
+     * @custom:requirements
+     * - Caller must be the Jackpot contract
+     * - Tier parameters must be snapshotted via setDrawingTierInfo(_drawingId)
+     * - `_uniqueResult.length == 12` and `_dupResult.length == 12`
+     * - `_normalMax` and `_bonusballMax` provided by Jackpot must be valid for combination math
+     * @custom:effects
+     * - Calculates total winning ticket counts per tier (LP + users; duplicates included)
+     * - Applies minimum payouts only if the premium-protection threshold is satisfied
+     * - Distributes the remaining or full prize pool by premium tier weights
+     * - Stores per-tier payout amounts in `tierPayouts`
+     * - Returns the sum owed to user-owned winning tickets only (unique + duplicate)
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Duplicate winners included in denominator to prevent under-collateralization
+     * - Guards against underflow by disabling minimum payouts when insufficient pool remains
+     */
+    function calculateAndStoreDrawingUserWinnings(
+        uint256 _drawingId,
+        uint256 _prizePool,
+        uint8 _normalMax,
+        uint8 _bonusballMax,
+        uint256[] memory _uniqueResult,
+        uint256[] memory _dupResult
+    )
+        external
+        onlyJackpot
+        returns (uint256 totalPayout)
+    {   
+        DrawingTierInfo storage tierInfo = drawingTierInfo[_drawingId];
+
+        // First calculate the total number of winners for each tier including duplicates and use that to determine guaranteed
+        // minimum payouts
+        uint256[TOTAL_TIER_COUNT] memory tierWinners;
+        uint256 minimumPayoutAllocation = 0;
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            // If tier is not eligible for minimum payout AND gets no part of premium allocation then no winners
+            if (!tierInfo.minPayoutTiers[i] && tierInfo.premiumTierWeights[i] == 0) {
+                tierWinners[i] = 0;
+                continue;
+            }
+            // Derived from index formula which is matches*2 + {1 if bonusball match} (i/2 is always floored)
+            uint256 matches = i / 2;
+
+            // Including _dupResult[i] here takes money from the premium tier pool, if we don't include it we take money from the
+            // LP pool reducing edge for LPs. Including here eliminates chances of under-collateralization. The amount of winners within
+            // a tier is the total amount of winning tickets available for that tier plus any duplicate winners from that tier. The logic
+            // here is that some of the non-duplicate winners are held by LPs and some are held by users. All of the duplicate winners
+            // are held by users.
+            uint256 tierWinningTickets = _calculateTierTotalWinningCombos(matches, _normalMax, _bonusballMax, i % 2 == 1) + _dupResult[i];
+            tierWinners[i] = tierWinningTickets;
+            if (tierInfo.minPayoutTiers[i]) {
+                minimumPayoutAllocation += tierWinningTickets * tierInfo.minPayout;
+            }
+        }
+        
+        // Only use minimum payouts if the premium tier minimum allocation + minimum payout allocation is less than the prize pool
+        bool useMinimumPayouts = ((_prizePool * tierInfo.premiumTierMinAllocation / PRECISE_UNIT) + minimumPayoutAllocation) < _prizePool;
+
+        totalPayout = _calculateAndStoreTierPayouts(
+            _drawingId,
+            useMinimumPayouts ? _prizePool - minimumPayoutAllocation : _prizePool,
+            useMinimumPayouts ? tierInfo.minPayout : 0,
+            tierWinners,
+            _uniqueResult,
+            _dupResult
+        );
+    }
+
+    /**
+     * @notice Snapshots current payout configuration for a specific drawing
+     * @dev Freezes current minimumPayout, minPayoutTiers, and premiumTierWeights into drawingTierInfo,
+     *      allowing future configuration changes without affecting this drawing's payout calculations.
+     * @param _drawingId Drawing to set up tier information for
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - Should be called before drawing execution
+     * @custom:emits None
+     * @custom:effects
+     * - Creates immutable snapshot of current payout configuration
+     * - Enables payout calculations for the specific drawing
+     * - Allows future parameter updates without affecting this drawing
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Ensures drawing payout consistency regardless of future changes
+     */
+    function setDrawingTierInfo(uint256 _drawingId) external onlyJackpot {
+        drawingTierInfo[_drawingId] = DrawingTierInfo({
+            minPayout: minimumPayout,
+            premiumTierMinAllocation: premiumTierMinAllocation,
+            minPayoutTiers: minPayoutTiers,
+            premiumTierWeights: premiumTierWeights
+        });
+    }
+
+    // =============================================================
+    //                        ADMIN FUNCTIONS
+    // =============================================================
+    
+    /**
+     * @notice Updates the base minimum payout amount
+     * @dev Changes the guaranteed minimum payout for all eligible tiers in future drawings.
+     *      Does not affect drawings that have already had tier info set.
+     * @param _minimumPayout New minimum payout amount (in USDC wei)
+     * @custom:requirements
+     * - Only owner can call
+     * @custom:emits None
+     * @custom:effects
+     * - Updates global minimum payout configuration
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * @custom:security
+     * - Owner-only access restriction
+     */
+    function setMinimumPayout(uint256 _minimumPayout) external onlyOwner {
+        minimumPayout = _minimumPayout;
+    }
+    
+    /**
+     * @notice Updates which tiers are eligible for minimum guaranteed payouts
+     * @dev Configures which of the 12 tiers receive minimum payout guarantees in future drawings.
+     *      Tiers with false values rely solely on premium pool allocation.
+     * @param _minPayoutTiers Boolean array indicating minimum payout eligibility (12 elements)
+     * @custom:requirements
+     * - Only owner can call
+     * - Array must be exactly 12 elements (TOTAL_TIER_COUNT)
+     * @custom:emits None
+     * @custom:effects
+     * - Updates minimum payout tier configuration
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * - Tiers set to false will only receive premium pool allocation
+     * @custom:security
+     * - Owner-only access restriction
+     * - Array length validation
+     */
+    function setMinPayoutTiers(bool[TOTAL_TIER_COUNT] memory _minPayoutTiers) external onlyOwner {
+        minPayoutTiers = _minPayoutTiers;
+    }
+
+    /**
+     * @notice Updates the minimum allocation of the prize pool reserved for premium tier distribution
+     * @dev Sets the minimum percentage of the total prize pool that must be allocated to premium tiers.
+     *      This ensures premium tiers receive adequate funding even when minimum payouts consume most of the pool.
+     *      The allocation is enforced during payout calculations by making sure the minimum payout allocation + 
+     *      minimum premium allocation is less than the prize pool. If this equality fails then minimum payouts
+     *      are disabled and the entire prize pool is distributed to the premium tiers.
+     * @param _premiumTierMinAllocation Minimum allocation percentage in PRECISE_UNIT scale (e.g., 0.1e18 = 10%)
+     * @custom:requirements
+     * - Only owner can call
+     * - Allocation percentage must not exceed 100% (PRECISE_UNIT)
+     * @custom:emits None
+     * @custom:effects
+     * - Updates global premium tier minimum allocation configuration
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * - Changes how prize pool is split between minimum payouts and premium allocation
+     * @custom:security
+     * - Owner-only access restriction
+     * - Upper bound validation prevents invalid allocation percentages
+     * - Ensures balanced distribution between guaranteed minimums and premium rewards
+     */
+    function setPremiumTierMinAllocation(uint256 _premiumTierMinAllocation) external onlyOwner {
+        if (_premiumTierMinAllocation > PRECISE_UNIT) revert InvalidPremiumTierMinimumAllocation();
+        premiumTierMinAllocation = _premiumTierMinAllocation;
+    }
+
+    /**
+     * @notice Updates premium tier weight allocation
+     * @dev Changes how the premium prize pool (after minimum payouts) is distributed across tiers.
+     *      Weights must sum to PRECISE_UNIT to ensure complete allocation.
+     * @param _premiumTierWeights Array of allocation weights (12 elements, must sum to PRECISE_UNIT)
+     * @custom:requirements
+     * - Only owner can call
+     * - Array must be exactly 12 elements (TOTAL_TIER_COUNT)
+     * - Weights must sum exactly to PRECISE_UNIT (1e18)
+     * @custom:emits None
+     * @custom:effects
+     * - Updates premium pool allocation weights
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * - Changes how remaining prize pool is distributed after minimum payouts
+     * @custom:security
+     * - Owner-only access restriction
+     * - Weight sum validation ensures complete allocation
+     * - Array length validation
+     */
+    function setPremiumTierWeights(uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights) external onlyOwner {
+        _setPremiumTierWeights(_premiumTierWeights);
+    }
+
+    // =============================================================
+    //                        VIEW FUNCTIONS
+    // =============================================================
+    
+    /**
+     * @notice Returns the calculated payout amount for a specific tier in a drawing
+     * @dev Retrieves the final payout amount per winning ticket for the specified tier.
+     *      Returns 0 if no payout has been calculated or tier had no winners.
+     * @param _drawingId Drawing to query
+     * @param _tierId Tier to query (0-11, calculated as matches*2 + bonusballMatch)
+     * @return Payout amount per winning ticket for the tier (in USDC wei)
+     */
+    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256) {
+        return tierPayouts[_drawingId][_tierId];
+    }
+
+    /**
+     * @notice Returns all tier payouts for a specific drawing
+     * @dev Retrieves the complete array of payout amounts for all 12 tiers in a drawing.
+     *      Useful for displaying complete payout structure or performing batch calculations.
+     * @param _drawingId Drawing to query
+     * @return Array of payout amounts for all tiers (12 elements, in USDC wei)
+     */
+    function getDrawingTierPayouts(uint256 _drawingId) external view returns (uint256[TOTAL_TIER_COUNT] memory) {
+        uint256[TOTAL_TIER_COUNT] memory drawingTierPayouts;
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            drawingTierPayouts[i] = tierPayouts[_drawingId][i];
+        }
+        return drawingTierPayouts;
+    }
+
+    /**
+     * @notice Returns current minimum payout tier configuration
+     * @dev Shows which tiers are currently eligible for minimum guaranteed payouts.
+     *      This reflects the current configuration, not necessarily what was used for past drawings.
+     * @return Boolean array indicating minimum payout eligibility for each tier (12 elements)
+     */
+    function getMinPayoutTiers() external view returns (bool[TOTAL_TIER_COUNT] memory) {
+        return minPayoutTiers;
+    }
+
+    /**
+     * @notice Returns current premium tier weight configuration
+     * @dev Shows current premium pool allocation weights across all tiers.
+     *      This reflects the current configuration, not necessarily what was used for past drawings.
+     * @return Array of premium pool allocation weights (12 elements, sum to PRECISE_UNIT)
+     */
+    function getPremiumTierWeights() external view returns (uint256[TOTAL_TIER_COUNT] memory) {
+        return premiumTierWeights;
+    }
+
+    /**
+     * @notice Returns the complete tier configuration used for a specific drawing
+     * @dev Retrieves the snapshot of payout configuration that was frozen for the drawing.
+     *      This shows the exact parameters used for payout calculations.
+     * @param _drawingId Drawing to query
+     * @return DrawingTierInfo struct containing minimum payout, tier eligibility, and premium weights
+     */
+    function getDrawingTierInfo(uint256 _drawingId) external view returns (DrawingTierInfo memory) {
+        return drawingTierInfo[_drawingId];
+    }
+
+    // =============================================================
+    //                        INTERNAL FUNCTIONS
+    // =============================================================
+    function _setPremiumTierWeights(uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights) internal {
+        uint256 tierWeightSum = 0;
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            tierWeightSum += _premiumTierWeights[i];
+        }
+        if (tierWeightSum != PRECISE_UNIT) revert InvalidTierWeights();
+
+        premiumTierWeights = _premiumTierWeights;
+    }
+
+    function _calculateAndStoreTierPayouts(
+        uint256 _drawingId,
+        uint256 _remainingPrizePool,
+        uint256 _minPayout,
+        uint256[TOTAL_TIER_COUNT] memory _tierWinners,
+        uint256[] memory _uniqueResult,
+        uint256[] memory _dupResult
+    )
+        internal
+        returns(uint256 totalPayout)
+    {
+        DrawingTierInfo storage tierInfo = drawingTierInfo[_drawingId];
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            // If no winners then no payout
+            if (_tierWinners[i] != 0) {
+                // Calculate the payout for each tier from the (remaining prize pool * weight) / total winning tickets
+                //(including LP-owned winning tickets)
+                uint256 premiumTierPayoutAmount = _remainingPrizePool * tierInfo.premiumTierWeights[i] / (PRECISE_UNIT * _tierWinners[i]);
+                // Add the premium tier payout to the minimum payout if the tier is eligible for the minimum payout
+                uint256 tierPayout = tierInfo.minPayoutTiers[i] ? _minPayout + premiumTierPayoutAmount : premiumTierPayoutAmount;
+                // Store the payout for the tier in the mapping so it can be queried later and add the total tier payout to the total payout
+                tierPayouts[_drawingId][i] = tierPayout;
+                // the total amount of user-owned winning tickets for a given tier is the sum of result and dupResult
+                totalPayout += tierPayout * (_uniqueResult[i] + _dupResult[i]);
+            }
+        }
+    }
+
+    function _calculateTierTotalWinningCombos(
+        uint256 _matches,
+        uint8 _normalMax, 
+        uint8 _bonusballMax,
+        bool _bonusballMatch
+    )
+        internal
+        pure
+        returns(uint256)
+    {
+        if (_bonusballMatch) {
+            return Combinations.choose(NORMAL_BALL_COUNT, _matches) * Combinations.choose(_normalMax - NORMAL_BALL_COUNT, NORMAL_BALL_COUNT - _matches);
+        } else {
+            return Combinations.choose(NORMAL_BALL_COUNT, _matches) * Combinations.choose(_normalMax - NORMAL_BALL_COUNT, NORMAL_BALL_COUNT - _matches) * (_bonusballMax - 1);
+        }
+    }
+}
+
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+import { ERC721 } from "solady/src/tokens/ERC721.sol";
+
+import { IJackpot } from "./interfaces/IJackpot.sol";
+import { IJackpotTicketNFT } from "./interfaces/IJackpotTicketNFT.sol";
+
+
+/**
+ * @title JackpotTicketNFT
+ * @notice ERC-721 implementation for jackpot tickets with tracking and transfer functionality
+ * @dev Implements jackpot tickets as transferable NFTs with:
+ *      - Packed ticket number storage for efficient gas usage
+ *      - User ticket tracking per drawing for easy querying
+ *      - Referral scheme association for winnings distribution
+ *      - Automatic ticket list management on transfers
+ *      - Integration with Jackpot contract for minting and burning
+ */
+contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
+
+    // =============================================================
+    //                           STRUCTS
+    // =============================================================
+    struct UserTickets {
+        uint256 totalTicketsBought;
+        mapping(uint256 => uint256) ticketIds;
+        mapping(uint256 => uint256) indexOfTicketId;
+    }
+
+    // =============================================================
+    //                       ERRORS
+    // =============================================================
+
+    error UnauthorizedCaller();
+
+    // =============================================================
+    //                       STATE VARIABLES
+    // =============================================================
+
+    // User and ticket mappings
+    mapping(address => mapping(uint256 => UserTickets)) internal userTickets; // user address => drawing => UserTickets
+    mapping(uint256 => TrackedTicket) public tickets; // ticketId → ticket info
+
+    IJackpot public immutable jackpot;
+
+    // =============================================================
+    //                       MODIFIERS
+    // =============================================================
+
+    modifier onlyJackpot() {
+        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
+        _;
+    }
+
+    // =============================================================
+    //                       CONSTRUCTOR
+    // =============================================================
+
+    /**
+     * @notice Initializes the JackpotTicketNFT with the Jackpot contract reference
+     * @dev Sets up the connection to the main Jackpot contract that will mint and burn tickets
+     * @param _jackpot Address of the main Jackpot contract
+     * @custom:effects
+     * - Sets jackpot contract reference as immutable
+     * - Inherits ERC721 functionality for NFT operations
+     * @custom:security
+     * - Immutable jackpot reference prevents unauthorized contract changes
+     */
+    constructor(IJackpot _jackpot) {
+        jackpot = _jackpot;
+    }
+
+    // =============================================================
+    //                       EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Mints a new ticket NFT with jackpot information
+     * @dev Creates an ERC-721 token representing a jackpot ticket with embedded metadata.
+     *      Automatically adds ticket to user's ticket list for the drawing.
+     * @param _recipient Address to receive the minted ticket
+     * @param _ticketId Unique identifier for the ticket (used as token ID)
+     * @param _drawingId Drawing the ticket is for
+     * @param _packedTicket Packed ticket numbers (normal numbers + bonusball)
+     * @param _referralScheme Hash of referral scheme used for this ticket
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - Ticket ID must be unique (ERC721 enforces this)
+     * - Recipient address must not be zero (ERC721 enforces this)
+     * @custom:emits Transfer (ERC-721 standard)
+     * @custom:effects
+     * - Mints ERC-721 token to specified address
+     * - Stores ticket metadata in contract storage
+     * - Adds ticket to user's ticket list via _afterTokenTransfer
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Unique ticket ID enforcement via ERC721
+     * - Automatic user ticket tracking
+     */
+    function mintTicket(
+        address _recipient,
+        uint256 _ticketId,
+        uint256 _drawingId,
+        uint256 _packedTicket,
+        bytes32 _referralScheme
+    ) external onlyJackpot {
+        tickets[_ticketId] = TrackedTicket({
+            drawingId: _drawingId,
+            packedTicket: _packedTicket,
+            referralScheme: _referralScheme
+        });
+
+        _mint(_recipient, _ticketId);
+    }
+
+    function burnTicket(uint256 _ticketId) external onlyJackpot {
+        _burn(_ticketId);
+    }
+
+    // =============================================================
+    //                       VIEW FUNCTIONS
+    // =============================================================
+
+    function getUserTickets(address _userAddress, uint256 _drawingId) external view returns (ExtendedTrackedTicket[] memory) {
+        UserTickets storage userDrawingTickets = userTickets[_userAddress][_drawingId];
+        ExtendedTrackedTicket[] memory userTicketsList = new ExtendedTrackedTicket[](userDrawingTickets.totalTicketsBought);
+        for (uint256 i = 0; i < userDrawingTickets.totalTicketsBought; i++) {
+            uint256 ticketId = userDrawingTickets.ticketIds[i];
+            userTicketsList[i] = _getExtendedTicketInfo(ticketId);
+        }
+        return userTicketsList;
+    }
+
+    function getTicketInfo(uint256 _ticketId) external view returns (TrackedTicket memory) {
+        return tickets[_ticketId];
+    }
+
+    function getExtendedTicketInfo(uint256 _ticketId) external view returns (ExtendedTrackedTicket memory) {
+        return _getExtendedTicketInfo(_ticketId);
+    }
+    
+    function name() public pure override returns (string memory) {
+        return "Jackpot";
+    }
+
+    function symbol() public pure override returns (string memory) {
+        return "JACKPOT";
+    }
+
+    function tokenURI(uint256 /* tokenId */) public pure override returns (string memory) {
+        return "";
+    }
+
+    // =============================================================
+    //                       INTERNAL FUNCTIONS
+    // =============================================================
+
+    function _beforeTokenTransfer(address _from, address /* _to */, uint256 _tokenId) internal override {
+        if (_from != address(0)) {
+            TrackedTicket memory ticketInfo = tickets[_tokenId];
+            UserTickets storage fromTickets = userTickets[_from][ticketInfo.drawingId];
+            uint256 idx = fromTickets.indexOfTicketId[_tokenId];
+            uint256 lastIdx = fromTickets.totalTicketsBought - 1;
+            if (idx != lastIdx) {
+                uint256 swapId = fromTickets.ticketIds[lastIdx];
+                fromTickets.ticketIds[idx] = swapId;
+                fromTickets.indexOfTicketId[swapId] = idx;
+            }
+            delete fromTickets.ticketIds[lastIdx];
+            delete fromTickets.indexOfTicketId[_tokenId];
+            fromTickets.totalTicketsBought -= 1;
+        }
+    }
+
+    function _afterTokenTransfer(address /* _from */, address _to, uint256 _tokenId) internal override {
+        if (_to != address(0)) {
+            TrackedTicket memory ticketInfo = tickets[_tokenId];
+            UserTickets storage toTickets = userTickets[_to][ticketInfo.drawingId];
+            uint256 newIdx = toTickets.totalTicketsBought;
+            toTickets.ticketIds[newIdx] = _tokenId;
+            toTickets.indexOfTicketId[_tokenId] = newIdx;
+            toTickets.totalTicketsBought += 1;
+        }
+    }
+
+    function _getExtendedTicketInfo(uint256 _ticketId) internal view returns (ExtendedTrackedTicket memory) {
+        (uint8[] memory normals, uint8 bonusball) = jackpot.getUnpackedTicket(tickets[_ticketId].drawingId, tickets[_ticketId].packedTicket);
+        return ExtendedTrackedTicket({
+            ticketId: _ticketId,
+            ticket: tickets[_ticketId],
+            normals: normals,
+            bonusball: bonusball
+        });
+    }
+}
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IEntropyConsumer } from "@pythnetwork/entropy-sdk-solidity/IEntropyConsumer.sol";
+import { IEntropyV2 } from "@pythnetwork/entropy-sdk-solidity/IEntropyV2.sol";
+
+import { FisherYatesRejection } from "./lib/FisherYatesWithRejection.sol";
+import { IScaledEntropyProvider } from "./interfaces/IScaledEntropyProvider.sol";
+
+/**
+ * @title ScaledEntropyProvider
+ * @notice Provides scaled random number generation using Pyth Network entropy with callback functionality
+ * @dev Integrates with Pyth Network's entropy service to generate cryptographically secure random numbers:
+ *      - Handles entropy requests with custom scaling and range parameters
+ *      - Supports both sampling with and without replacement using Fisher-Yates algorithm
+ *      - Provides callback mechanism for asynchronous random number delivery
+ *      - Implements unbiased rejection sampling to prevent modulo bias
+ *      - Manages fee payments to entropy providers
+ *      - Stores pending requests and validates callback execution
+ */
+contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsumer {
+    // =============================================================
+    //                           STRUCTS
+    // =============================================================
+    struct PendingRequest {
+        address callback;
+        bytes4 selector;
+        bytes context;
+        bytes32 userRandomNumber;
+        SetRequest[] setRequests;
+    }
+
+    // =============================================================
+    //                           EVENTS
+    // =============================================================
+
+    event ScaledRandomnessDelivered(uint64 indexed sequence, address indexed callback, uint256 samples);
+    event EntropyFulfilled(uint64 indexed sequence, bytes32 randomNumber);
+
+    // =============================================================
+    //                           ERRORS
+    // =============================================================
+    error InvalidCallback();
+    error CallbackFailed(bytes4 selector);
+    error ZeroAddress();
+    error InvalidSelector();
+    error InvalidRequests();
+    error InvalidRange();
+    error InvalidSamples();
+    error InsufficientFee();
+    error UnknownSequence();
+
+    // =============================================================
+    //                       STATE VARIABLES
+    // =============================================================
+
+    IEntropyV2 private entropy;
+    address private entropyProvider;
+    mapping(uint64 => PendingRequest) private pending;
+
+    // =============================================================
+    //                         CONSTRUCTOR
+    // =============================================================
+    
+    /**
+     * @notice Initializes the ScaledEntropyProvider with Pyth Network entropy configuration
+     * @dev Sets up connections to Pyth Network entropy contract and provider.
+     *      Both addresses are validated and stored as immutable references.
+     * @param _entropy Address of the Pyth Network entropy contract
+     * @param _entropyProvider Address of the specific entropy provider to use
+     * @custom:requirements
+     * - Entropy contract address must not be zero
+     * - Entropy provider address must not be zero
+     * @custom:effects
+     * - Sets immutable entropy contract reference
+     * - Configures entropy provider for fee calculations
+     * - Sets deployer as contract owner
+     * @custom:security
+     * - Address validation prevents zero address configuration
+     * - Immutable references prevent unauthorized changes
+     * - Owner-based access control for administrative functions
+     */
+    constructor(address _entropy, address _entropyProvider) Ownable(msg.sender) {
+        if (_entropy == address(0)) revert ZeroAddress();
+        if (_entropyProvider == address(0)) revert ZeroAddress();
+        entropy = IEntropyV2(_entropy);
+        entropyProvider = _entropyProvider;
+    }
+
+    // =============================================================
+    //                      EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Requests scaled random numbers from Pyth Network with callback delivery
+     * @dev Submits entropy request to Pyth Network and stores callback details for async delivery.
+     *      The callback will receive scaled random numbers according to the specified requests. Developer
+     *      needs to ensure that the range is not too large to be able to build an array of the appropriate
+     *      size in memory in order to avoid out of gas errors during Fisher-Yates sampling.
+     *      IMPORTANT: The callback address is automatically set to msg.sender (the calling contract).
+     * @param _gasLimit Gas limit for the entropy callback execution
+     * @param _requests Array of SetRequest structs defining random number requirements
+     * @param _selector Function selector for the callback method on the calling contract
+     * @param _context Additional data to pass to the callback
+     * @return sequence Unique identifier for tracking this entropy request
+     * @custom:requirements
+     * - Calling contract (msg.sender) must implement the callback function
+     * - Provided fee (msg.value) must meet minimum requirements
+     * - Function selector must not be zero
+     * - All set requests must be valid (proper ranges and sample counts)
+     * @custom:emits None (events emitted in callback)
+     * @custom:effects
+     * - Submits entropy request to Pyth Network
+     * - Stores pending request details with msg.sender as callback address
+     * - Transfers fee to entropy provider
+     * @custom:security
+     * - Callback address is restricted to msg.sender preventing unauthorized callbacks
+     * - Fee validation ensures sufficient payment
+     * - Request validation prevents invalid random number generation
+     */
+    function requestAndCallbackScaledRandomness(
+        uint32 _gasLimit,
+        SetRequest[] memory _requests,
+        bytes4 _selector,
+        bytes memory _context
+    )
+        external
+        payable
+        returns (uint64 sequence)
+    {
+        // We assume that the caller has already checked that the fee is sufficient
+        if (msg.value < getFee(_gasLimit)) revert InsufficientFee();
+        if (_selector == bytes4(0)) revert InvalidSelector();
+        _validateRequests(_requests);
+
+        sequence = entropy.requestV2{value: msg.value}(entropyProvider, _gasLimit);
+        _storePendingRequest(sequence, _selector, _context, _requests);
+    }
+
+    /**
+     * @notice Returns the fee required for an entropy request with specified gas limit
+     * @dev Queries the Pyth Network entropy contract for current fee requirements.
+     *      Fee covers entropy generation and callback execution costs.
+     * @param _gasLimit Gas limit for the callback execution
+     * @return Fee amount in wei required for the entropy request
+     */
+    function getFee(uint32 _gasLimit) public view returns (uint256) {
+        return entropy.getFeeV2(entropyProvider, _gasLimit);
+    }
+
+    /**
+     * @notice Returns the address of the Pyth Network entropy contract
+     * @dev Provides access to the entropy contract address for integration purposes.
+     * @return Address of the entropy contract
+     */
+    function getEntropyContract() external view returns (address) {
+        return address(entropy);
+    }
+
+    /**
+     * @notice Returns the address of the currently configured entropy provider
+     * @dev Shows which entropy provider is being used for fee calculations and requests.
+     * @return Address of the entropy provider
+     */
+    function getEntropyProvider() external view returns (address) {
+        return entropyProvider;
+    }
+
+    /**
+     * @notice Returns the details of a pending entropy request
+     * @dev Retrieves stored request information for a specific sequence number.
+     *      Useful for debugging and monitoring pending requests.
+     * @param sequence Unique identifier of the entropy request
+     * @return PendingRequest struct containing callback details and request parameters
+     */
+    function getPendingRequest(uint64 sequence) external view returns (PendingRequest memory) {
+        return pending[sequence];
+    }
+
+    // =============================================================
+    //                      ADMIN FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Updates the entropy provider address
+     * @dev Changes which entropy provider is used for fee calculations and requests.
+     *      Only affects future requests, not pending ones.
+     * @param _entropyProvider New entropy provider address
+     * @custom:requirements
+     * - Only owner can call
+     * - Provider address must not be zero
+     * @custom:emits None
+     * @custom:effects
+     * - Updates entropy provider for future requests
+     * - Changes fee calculations for new requests
+     * @custom:security
+     * - Owner-only access restriction
+     * - Zero address validation
+     */
+    function setEntropyProvider(address _entropyProvider) external onlyOwner {
+        if (_entropyProvider == address(0)) revert ZeroAddress();
+        entropyProvider = _entropyProvider;
+    }
+
+    // =============================================================
+    //                      INTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Processes entropy callback from Pyth Network and delivers scaled random numbers
+     * @dev Called by Pyth Network when entropy is available. Processes the raw entropy into scaled
+     *      random numbers according to stored request parameters and delivers via callback.
+     *      This is the core function that bridges Pyth entropy with application-specific randomness.
+     * @param sequence Unique identifier for the entropy request
+     * @param randomNumber Raw entropy value from Pyth Network (provider parameter ignored)
+     * @custom:requirements
+     * - Sequence must correspond to a valid pending request
+     * - Callback execution must succeed
+     * - Only called by Pyth Network entropy contract
+     * @custom:emits EntropyFulfilled with sequence and raw random number
+     * @custom:emits ScaledRandomnessDelivered with sequence, callback address, and sample count
+     * @custom:effects
+     * - Retrieves and deletes pending request data
+     * - Generates scaled random numbers using Fisher-Yates or replacement sampling
+     * - Executes callback with scaled results and original context
+     * - Cleans up pending request storage
+     * @custom:security
+     * - Validates sequence corresponds to pending request
+     * - Ensures callback execution succeeds before cleanup
+     * - Uses unbiased sampling methods to prevent statistical attacks
+     * - Immediate cleanup prevents replay attacks
+     */
+    function entropyCallback(uint64 sequence, address /*provider*/, bytes32 randomNumber) internal override {
+        PendingRequest memory req = pending[sequence];
+        if (req.callback == address(0)) revert UnknownSequence();
+        
+        delete pending[sequence];
+
+        uint256[][] memory scaledRandomNumbers = _getScaledRandomness(randomNumber, req.setRequests);
+        (bool success, ) = req.callback.call(abi.encodeWithSelector(req.selector, sequence, scaledRandomNumbers, req.context));
+        if (!success) revert CallbackFailed(req.selector);
+
+        emit EntropyFulfilled(sequence, randomNumber);
+        emit ScaledRandomnessDelivered(sequence, req.callback, scaledRandomNumbers.length);
+    }
+
+    function _getScaledRandomness(
+        bytes32 _randomNumber,
+        SetRequest[] memory _setRequests
+    )
+        internal
+        pure
+        returns (uint256[][] memory requestsOutputs)
+    {
+        requestsOutputs = new uint256[][](_setRequests.length);
+        
+        for (uint256 i = 0; i < _setRequests.length; i++) {
+            if (!_setRequests[i].withReplacement) {
+                requestsOutputs[i] = FisherYatesRejection.draw(
+                    _setRequests[i].minRange,
+                    _setRequests[i].maxRange,
+                    _setRequests[i].samples,
+                    uint256(_randomNumber)
+                );
+            } else {
+                requestsOutputs[i] = _drawWithReplacement(
+                    _setRequests[i].minRange,
+                    _setRequests[i].maxRange,
+                    _setRequests[i].samples,
+                    uint256(_randomNumber)
+                );
+            }
+        }
+    }
+
+    function getEntropy() internal view override returns (address) {
+        return address(entropy);
+    }
+
+    function _validateRequests(SetRequest[] memory _requests) internal pure {
+        if (_requests.length == 0) revert InvalidRequests();
+        for (uint256 i = 0; i < _requests.length; i++) {
+            if (_requests[i].minRange > _requests[i].maxRange) revert InvalidRange();
+            if (_requests[i].samples == 0) revert InvalidSamples();
+        }
+    }
+
+    function _storePendingRequest(
+        uint64 sequence,
+        bytes4 _selector,
+        bytes memory _context,
+        SetRequest[] memory _setRequests
+    ) internal {
+        pending[sequence].callback = msg.sender;
+        pending[sequence].selector = _selector;
+        pending[sequence].context = _context;
+        for (uint256 i = 0; i < _setRequests.length; i++) {
+            pending[sequence].setRequests.push(_setRequests[i]);
+        }
+    }
+
+    function _drawWithReplacement(
+        uint256 _minRange,
+        uint256 _maxRange,
+        uint8 _samples,
+        uint256 _randomNumber
+    ) internal pure returns (uint256[] memory) {
+        uint256[] memory result = new uint256[](_samples);
+        uint256 range = _maxRange - _minRange + 1;
+        uint256 nonce = 0;
+
+        for (uint256 i = 0; i < _samples; i++) {
+            uint256 rand;
+            while (true) {
+                rand = uint256(keccak256(abi.encode(_randomNumber, nonce)));
+                uint256 limit = (type(uint256).max / range) * range;
+
+                if (rand < limit) {
+                    result[i] = uint256((rand % range) + _minRange); // [1..range]
+                    break;
+                }
+                nonce++;
+            }
+            nonce++;
+        }
+
+        return result;
+    }
+}
 
 ## SUPPORTING CONTEXT: EXTERNAL LIBRARIES
 
