@@ -1733,665 +1733,377 @@ contract Jackpot is IJackpot, Ownable2Step, ReentrancyGuardTransient {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-/**
- * @title UintCasts
- * @notice Minimal helpers for safely downcasting uint256 values to uint8.
- * @dev Reverts with Uint8OutOfBounds() if a value exceeds uint8's max (255).
- */
-library UintCasts {
-    /// @notice Raised when a value cannot be represented as uint8 (value > 255)
-    error Uint8OutOfBounds();
-
-    /**
-     * @notice Safely cast a uint256 to uint8.
-     * @param _value The value to cast.
-     * @return out The value as uint8 (reverts if out of range).
-     */
-    function toUint8(uint256 _value) internal pure returns (uint8) {
-        if (_value > type(uint8).max) revert Uint8OutOfBounds();
-        return uint8(_value);
-    }
-
-    /**
-     * @notice Safely cast an array of uint256 to uint8[] element-wise.
-     * @param _values The array of values to cast.
-     * @return out The cast array (reverts if any element is out of range).
-     */
-    function toUint8Array(uint256[] memory _values) internal pure returns (uint8[] memory) {
-        uint256 len = _values.length;
-        uint8[] memory out = new uint8[](len);
-        for (uint256 i = 0; i < len; ) {
-            out[i] = toUint8(_values[i]);
-            unchecked { ++i; }
-        }
-        return out;
-    }
-}
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8;
-
+import { Combinations } from "./Combinations.sol";
 import { LibBit } from "solady/src/utils/LibBit.sol";
 
-library Combinations {
-    uint256 constant UINT256_BIT_WIDTH = 256;
-    /// @notice Compute number of combinations of size k from a set of n
-    /// @param n Size of set to choose from
-    /// @param k Size of subsets to choose
-    function choose(
-        uint256 n,
-        uint256 k
-    ) internal pure returns (uint256 result) {
-        assert(n >= k);
-        assert(n <= 128); // Artificial limit to avoid overflow
-        // "How to calculate binomial coefficients"
-        // From: https://blog.plover.com/math/choose.html
-        // This algorithm computes multiplication and division in alternation
-        // to avoid overflow as much as possible.
-        unchecked {
-            uint256 out = 1;
-            for (uint256 d = 1; d <= k; ++d) {
-                out *= n--;
-                out /= d;
+/**
+ * @title TicketComboTracker
+ * @notice Library for tracking jackpot ticket combinations and calculating win distributions efficiently
+ * @dev Implements scalable settlement calculations using bit vectors and inclusion-exclusion principle:
+ *      - Stores ticket combinations as bit vectors for efficient subset operations
+ *      - Tracks both unique and duplicate ticket counts per combination subset
+ *      - Uses inclusion-exclusion principle to avoid double-counting when calculating payouts
+ *      - Enables O(1) duplicate detection and efficient tier-based payout calculations
+ *      - Supports configurable normal ball ranges and bonusball values
+ *      - Optimized for gas efficiency in high-volume jackpot scenarios
+ */
+library TicketComboTracker {
+    struct ComboCount {
+        uint128 count;
+        uint128 dupCount;
+    }
+
+    struct Tracker {
+        uint8 normalMax;
+        uint8 bonusballMax;
+        uint8 normalTiers;
+        mapping(uint8 => mapping(uint256 => ComboCount)) comboCounts;
+        mapping(uint8 => ComboCount) bonusballTicketCounts;
+    }
+
+    /**
+     * @notice Initializes a combo tracker with jackpot configuration parameters
+     * @dev Sets up the tracker with ball ranges and tier configuration for efficient combo tracking.
+     *      Must be called before using any other tracker functions.
+     * @param tracker Storage reference to the tracker being initialized
+     * @param _normalMax Maximum value for normal balls (1 to this value)
+     * @param _bonusballMax Maximum value for bonusball (1 to this value)
+     * @param _normalTiers Number of normal balls per ticket (typically 5)
+     * @custom:effects
+     * - Configures tracker parameters for combo calculations
+     * - Prepares tracker for ticket insertion and counting operations
+     * @custom:security
+     * - No validation as this is internal initialization
+     * - Caller responsible for providing valid parameters
+     */
+    function init(
+        Tracker storage tracker,
+        uint8 _normalMax,
+        uint8 _bonusballMax,
+        uint8 _normalTiers
+    ) internal {
+        tracker.normalMax = _normalMax;
+        tracker.bonusballMax = _bonusballMax;
+        tracker.normalTiers = _normalTiers;
+    }
+
+    /**
+     * @notice Converts an array of normal ball numbers to a bit vector representation
+     * @dev Creates a bit vector where each bit position represents a ball number.
+     *      Validates no duplicates and all numbers are within valid range.
+     * @param _set Array of ball numbers to convert
+     * @param _maxNormalBall Maximum valid ball number
+     * @return Bit vector representation where bit N is set if ball N is selected
+     * @custom:requirements
+     * - Set must not be empty
+     * - All numbers must be > 0 and <= _maxNormalBall
+     * - No duplicate numbers allowed
+     * @custom:security
+     * - Validates range and uniqueness to prevent invalid combinations
+     * - Uses bit operations for efficient duplicate detection
+     */
+    function toNormalsBitVector(
+        uint8[] memory _set,
+        uint256 _maxNormalBall
+    )
+        internal
+        pure
+        returns (uint256)
+    {
+        require(_set.length != 0, "Invalid set length");
+        uint256 bitVector = 0;
+        for (uint256 i; i < _set.length; ++i) {
+            require(_set[i] <= _maxNormalBall && _set[i] > 0, "Invalid set selection");
+            require((bitVector & (1 << _set[i])) == 0, "Duplicate number in set");
+            bitVector |= 1 << _set[i];
+        }
+        return bitVector;
+    }
+
+    /**
+     * @notice Inserts a ticket combination into the tracker and updates subset counts
+     * @dev Converts ticket to bit vector, generates all subsets, and updates counts.
+     *      Distinguishes between first purchase of a ticket (unique) and duplicates for
+     *      payout calculations. 
+     * @param _tracker Storage reference to the tracker
+     * @param _normalBalls Array of normal ball numbers
+     * @param _bonusball Bonusball number
+     * @return ticketNumbers Bit vector representation of the complete ticket
+     * @return isDup True if this exact combination was already inserted
+     * @custom:requirements
+     * - Normal balls array length must match tracker.normalTiers
+     * - All ball numbers must be valid per tracker configuration
+     * @custom:effects
+     * - Updates counts for all subset combinations of the ticket
+     * - Increments either unique or duplicate counts based on prior existence
+     * - Tracks bonusball-specific subset counts for tier calculations
+     * @custom:security
+     * - Validates ticket format matches tracker configuration
+     * - Prevents invalid combinations through bit vector validation
+     */
+    function insert(
+        Tracker storage _tracker,
+        uint8[] memory _normalBalls,
+        uint8 _bonusball
+    )
+        internal
+        returns (uint256 ticketNumbers, bool isDup)
+    {
+        require(_normalBalls.length == _tracker.normalTiers, "Invalid pick length");
+        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
+        // Iterate over all tier combos and store the combo counts
+        isDup = _tracker.comboCounts[_bonusball][set].count > 0;
+        for (uint8 i = 1; i <= _tracker.normalTiers; i++) {
+            uint256[] memory subsets = Combinations.generateSubsets(set, i);
+            for (uint256 j = 0; j < subsets.length; j++) {
+                if (isDup) {
+                    _tracker.comboCounts[_bonusball][subsets[j]].dupCount++;
+                } else {
+                    _tracker.comboCounts[_bonusball][subsets[j]].count++;
+                }
             }
-            return out;
+        }
+
+        if (isDup) {
+            _tracker.bonusballTicketCounts[_bonusball].dupCount++;
+        } else {
+            _tracker.bonusballTicketCounts[_bonusball].count++;
+        }
+
+        // Add the bonusball to the bit vector
+        ticketNumbers = set |= 1 << (_bonusball + _tracker.normalMax);
+    }
+
+    function _countSubsetMatches(
+        Tracker storage _tracker,
+        uint256 _normalBallsBitVector,
+        uint8 _bonusball
+    )
+        private
+        view
+        returns (uint256[] memory matches, uint256[] memory dupMatches)
+    {
+        matches = new uint256[]((_tracker.normalTiers+1)*2);
+        dupMatches = new uint256[]((_tracker.normalTiers+1)*2);
+        
+        for (uint8 i = 1; i <= _tracker.bonusballMax; i++) {
+            for (uint8 k = 1; k <= _tracker.normalTiers; k++) {
+                uint256[] memory subsets = Combinations.generateSubsets(_normalBallsBitVector, k);
+                for (uint256 l = 0; l < subsets.length; l++) {
+                    if (i == _bonusball) {
+                        matches[(k*2)+1] += _tracker.comboCounts[i][subsets[l]].count;
+                        dupMatches[k*2+1] += _tracker.comboCounts[i][subsets[l]].dupCount;
+                    } else {
+                        matches[(k*2)] += _tracker.comboCounts[i][subsets[l]].count;
+                        dupMatches[k*2] += _tracker.comboCounts[i][subsets[l]].dupCount;
+                    }
+                }
+            }
         }
     }
 
-    /// @notice Generate all possible subsets of size k from a bit vector.
-    /// @param set Bit vector to generate subsets from
-    /// @param k Size of subsets to generate
-    function generateSubsets(
-        uint256 set,
-        uint256 k
-    ) internal pure returns (uint256[] memory subsets) {
-        unchecked {
-            uint256 n = LibBit.popCount(set);
-            assert(k <= n);
-            subsets = new uint256[](choose(n, k));
-
-            uint256 bound = 1 << n;
-            uint256 comb = (1 << k) - 1;
-            uint256 count;
-            while (comb < bound) {
-                uint256 mapped;
-                uint256 _set = set;
-                uint256 _comb = comb;
-                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
-                    if (_set & 1 == 1) {
-                        if (_comb & 1 == 1) {
-                            mapped |= (1 << i);
-                        }
-                        _comb >>= 1;
-                    }
-                    _set >>= 1;
-                }
-
-                subsets[count++] = mapped;
-
-                // "Gosper's hack"
-                uint256 c = comb & uint256(-int256(comb));
-                uint256 r = comb + c;
-                comb = (((r ^ comb) >> 2) / c) | r;
+    function _applyInclusionExclusionPrinciple(
+        Tracker storage _tracker,
+        uint256[] memory _matches,
+        uint256[] memory _dupMatches
+    )
+        private
+        view
+        returns (uint256[] memory result, uint256[] memory dupResult)
+    {
+        result = new uint256[](_matches.length);
+        dupResult = new uint256[](_dupMatches.length);
+        
+        // Solve top-down (starting from "all matched")
+        for (uint256 k = _tracker.normalTiers; k >= 1; --k) {
+            uint256 s = _matches[2*k];
+            uint256 sp = _matches[2*k+1];
+            uint256 sd = _dupMatches[2*k];
+            uint256 sdp = _dupMatches[2*k+1];
+            
+            // Repeatedly subtract higher-tier counts that spill over into this tier
+            for (uint256 m = k + 1; m <= _tracker.normalTiers; ++m) {
+                // Each higher-tier ticket contributes C(m,k) subsets to this tier
+                uint256 c = Combinations.choose(m, k);
+                s -= c * result[2*m];
+                sp -= c * result[2*m+1];
+                sd -= c * dupResult[2*m];
+                sdp -= c * dupResult[2*m+1];
             }
-            assert(count == choose(n, k));
+            
+            result[2*k] = s;
+            result[2*k+1] = sp;
+            dupResult[2*k] = sd;
+            dupResult[2*k+1] = sdp;
         }
+    }
+
+    function _calculateBonusballOnlyMatches(
+        Tracker storage _tracker,
+        uint8 _bonusball,
+        uint256[] memory _uniqueResult,
+        uint256[] memory _dupResult
+    )
+        private
+        view
+    {
+        // Start with all bonusball-only tickets
+        _uniqueResult[1] = _tracker.bonusballTicketCounts[_bonusball].count;
+        _dupResult[1] = _tracker.bonusballTicketCounts[_bonusball].dupCount;
+        
+        // Subtract tickets that also match normal balls (they're counted in higher tiers)
+        for (uint256 i = 1; i <= _tracker.normalTiers; i++) {
+            _uniqueResult[1] -= _uniqueResult[2*i + 1];
+            _dupResult[1] -= _dupResult[2*i + 1];
+        }
+    }
+
+    /**
+     * @notice Calculates winning ticket counts across all tiers for given winning numbers
+     * @dev Implements three-phase calculation to determine exact winner counts per tier:
+     *      1. Count all subset matches across bonusball values
+     *      2. Apply inclusion-exclusion principle to remove double-counting
+     *      3. Calculate bonusball-only matches (0 normal matches + bonusball)
+     * @param _tracker Storage reference to the tracker
+     * @param _normalBalls Array of winning normal ball numbers
+     * @param _bonusball Winning bonusball number
+     * @return winningTicket Bit vector representation of the winning combination
+     * @return uniqueResult Array of unique winner counts per tier (indexed by tier ID)
+     * @return dupResult Array of duplicate winner counts per tier (indexed by tier ID)
+     * @custom:effects
+     * - Generates comprehensive winner statistics for payout calculations
+     * - Separates unique and duplicate winners for accurate settlement
+     * - Covers all 12 tiers: matches(0-5) + bonusball(0/1)
+     * @custom:security
+     * - Read-only operation with no state changes
+     * - Uses mathematical inclusion-exclusion for accurate counting
+     * - Prevents over-counting tickets in multiple tiers
+     */
+    function countTierMatchesWithBonusball(
+        Tracker storage _tracker,
+        uint8[] memory _normalBalls,
+        uint8 _bonusball
+    )
+        internal
+        view
+        returns (uint256 winningTicket, uint256[] memory uniqueResult, uint256[] memory dupResult)
+    {
+        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
+        winningTicket = set | (1 << (_bonusball + _tracker.normalMax));
+
+        // Step 1: Count all subset matches across all bonusballs
+        (uint256[] memory matches, uint256[] memory dupMatches) = _countSubsetMatches(_tracker, set, _bonusball);
+        
+        // Step 2: Apply inclusion-exclusion principle to remove double counting
+        (uniqueResult, dupResult) = _applyInclusionExclusionPrinciple(_tracker, matches, dupMatches);
+        
+        // Step 3: Calculate bonusball-only matches (no normal balls matched)
+        _calculateBonusballOnlyMatches(_tracker, _bonusball, uniqueResult, dupResult);
+    }
+
+    /**
+     * @notice Checks if a ticket combination has already been inserted into the tracker
+     * @dev Efficiently determines duplicate status by checking if the exact combination
+     *      has a non-zero count in the tracker's storage.
+     * @param _tracker Storage reference to the tracker
+     * @param _normalBalls Array of normal ball numbers to check
+     * @param _bonusball Bonusball number to check
+     * @return True if this exact combination exists in the tracker
+     * @custom:requirements
+     * - Normal balls array length must match tracker configuration
+     * - All ball numbers must be valid per tracker setup
+     * @custom:security
+     * - Read-only operation with no state changes
+     * - Validates input format before processing
+     * - Uses efficient bit vector lookup for O(1) duplicate detection
+     */
+    function isDuplicate(
+        Tracker storage _tracker,
+        uint8[] memory _normalBalls,
+        uint8 _bonusball
+    )
+        internal
+        view
+        returns (bool)
+    {
+        require(_normalBalls.length == _tracker.normalTiers, "Invalid set length");
+        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
+        return _tracker.comboCounts[_bonusball][set].count > 0;
+    }
+
+    /**
+     * @notice Unpacks a bit vector representation back into separate normal balls and bonusball number
+     * @dev Extracts individual ball numbers from a packed ticket by scanning bit positions.
+     *      Normal balls are stored at bit positions 1 to _normalMax, bonusball at position (_normalMax + bonusball_value).
+     *      Uses LibBit operations for efficient bit scanning and counting to reconstruct original ticket.
+     * @param _packedTicket Bit vector representation of the complete ticket
+     * @param _normalMax Maximum value for normal balls (defines boundary between normal and bonusball bits)
+     * @return normalBalls Array of normal ball numbers extracted from bit positions 1 to _normalMax
+     * @return bonusball Bonusball number calculated from highest set bit position minus _normalMax
+     * @custom:requirements
+     * - Packed ticket must contain valid bit pattern with at least one bonusball bit set
+     * - Normal ball bits must be within positions 1 to _normalMax if present
+     * - Bonusball bit must be at position > _normalMax
+     * @custom:effects
+     * - Scans bit vector to extract individual ball numbers in ascending order
+     * - Reconstructs original ticket structure from packed representation
+     * - No state changes as this is a pure function
+     * @custom:security
+     * - Read-only operation with no side effects or external calls
+     * - Uses efficient LibBit operations to prevent gas issues with large bit vectors
+     * - Handles edge cases like single-ball tickets and sparse patterns gracefully
+     */
+    function unpackTicket(
+        uint256 _packedTicket,
+        uint8 _normalMax
+    )
+        internal
+        pure
+        returns (uint8[] memory normalBalls, uint8 bonusball)
+    {
+        uint256 ballCount = LibBit.popCount(_packedTicket);
+        normalBalls = new uint8[](ballCount - 1);
+        uint256 p;
+        for (uint256 i = 1; i <= _normalMax; i++) {
+            if (_packedTicket & (1 << i) != 0) {
+                normalBalls[p++] = uint8(i);
+            }
+        }
+
+        // Find the bonusball bit position and subtract _normalMax to get the bonusball value
+        bonusball = uint8(LibBit.fls(_packedTicket) - _normalMax);
     }
 }
 //SPDX-License-Identifier: UNLICENSED
 
 /*
 Copyright (C) 2025 Coordination Inc.
-All rights reserved.
+Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
 
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
+Change Date: 2029-12-01
 
-For licensing inquiries: legal@coordinationlabs.com
+On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
 */
 
 pragma solidity ^0.8.28;
 
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-
-import { IJackpot } from "./interfaces/IJackpot.sol";
-import { IJackpotLPManager } from "./interfaces/IJackpotLPManager.sol";
-import { JackpotErrors } from "./lib/JackpotErrors.sol";
-
-/**
- * @title JackpotLPManager
- * @notice Manages liquidity provider deposits, withdrawals, and share calculations using an accumulator-based pricing system
- * @dev Implements an LP management system with:
- *      - Accumulator-based share pricing for fair LP value distribution
- *      - Pending deposit/withdrawal system to handle drawing transitions
- *      - Consolidation mechanics for multi-drawing LP positions
- *      - Emergency withdrawal capabilities for system recovery
- */
-contract JackpotLPManager is IJackpotLPManager, Ownable {
-
-    // =============================================================
-    //                          STRUCTS
-    // =============================================================
-
-    struct DepositInfo {
-        uint256 amount;
-        uint256 drawingId;
-    }
-
-    struct WithdrawalInfo {
-        uint256 amountInShares;
-        uint256 drawingId;
-    }
-
-    struct LP {
-        uint256 consolidatedShares; // Note: this is the amount in shares, not usdc
-        DepositInfo lastDeposit; // Note: this is the amount in usdc, not shares
-        WithdrawalInfo pendingWithdrawal; // Note: this is the amount in shares, not usdc
-        uint256 claimableWithdrawals; // Note: this is the amount in usdc, not shares
-    }
-
-    struct LPValueBreakdown {
-        uint256 activeDeposits;
-        uint256 pendingDeposits;
-        uint256 pendingWithdrawals;
-        uint256 claimableWithdrawals;
-    }
-
-    // =============================================================
-    //                          EVENTS
-    // =============================================================
-    event LpDeposited(
-        address indexed lpAddress,
-        uint256 indexed currentDrawingId,
-        uint256 amount,
-        uint256 totalPendingDeposits
-    );
-
-    event LpWithdrawInitiated(
-        address indexed lpAddress,
-        uint256 indexed currentDrawingId,
-        uint256 amount,
-        uint256 totalPendingWithdrawals
-    );
-
-    event LpWithdrawFinalized(
-        address indexed lpAddress,
-        uint256 indexed currentDrawingId,
-        uint256 amount
-    );
-
-    // =============================================================
-    //                          ERRORS
-    // =============================================================
-
-    error UnauthorizedCaller();
-    error ZeroAddress();
-    error InvalidLPPoolCap();
-
-    // =============================================================
-    //                          CONSTANTS
-    // =============================================================
-
-    uint256 constant PRECISE_UNIT = 1e18;
-
-    // =============================================================
-    //                          STATE VARIABLES
-    // =============================================================
-
-    mapping(uint256 => LPDrawingState) internal lpDrawingState;
-    mapping(address => LP) public lpInfo;
-    mapping(uint256 => uint256) public drawingAccumulator;
-    uint256 public lpPoolCap;
-
-    IJackpot public jackpot;
-
-    // =============================================================
-    //                          MODIFIERS
-    // =============================================================
-    
-    modifier onlyJackpot() {
-        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
-        _;
-    }
-
-    // =============================================================
-    //                          CONSTRUCTOR
-    // =============================================================
-
-    /**
-     * @notice Initializes the JackpotLPManager with the Jackpot contract reference
-     * @dev Sets up the connection to the main Jackpot contract that will call LP management functions
-     * @param _jackpot Address of the main Jackpot contract
-     * @custom:requirements
-     * - Jackpot address must not be zero address
-     * @custom:effects
-     * - Sets jackpot contract reference
-     * - Sets deployer as owner
-     * @custom:security
-     * - Zero address validation for jackpot contract
-     */
-    constructor(IJackpot _jackpot) Ownable(msg.sender) {
-        if (_jackpot == IJackpot(address(0))) revert ZeroAddress();
-        jackpot = _jackpot;
-    }
-
-    // =============================================================
-    //                          EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Initializes the LP system with the first accumulator value
-     * @dev Sets up the initial accumulator value for share calculations. Called during Jackpot initialization.
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - Must not already be initialized
-     * @custom:effects
-     * - Sets drawingAccumulator[0] to PRECISE_UNIT
-     * - Enables LP deposit functionality
-     * @custom:security
-     * - Single initialization enforcement
-     * - Access restricted to Jackpot contract
-     */
-    function initializeLP() external onlyJackpot() {
-        drawingAccumulator[0] = PRECISE_UNIT;
-    }
-
-    /**
-     * @notice Processes a new LP deposit for the current drawing
-     * @dev Consolidates any previous deposits from earlier drawings. If deposit already made for current drawing then amount is added to current pending amount.
-     *      Deposits are held as pending until the drawing settles, then converted to shares.
-     * @param _drawingId Current drawing ID
-     * @param _lpAddress Address making the deposit
-     * @param _amount Amount of USDC being deposited
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - Deposit would not exceed LP pool cap
-     * - Drawing accumulator must be initialized
-     * @custom:emits LpDeposited
-     * @custom:effects
-     * - Consolidates previous deposits if any
-     * - Creates new deposit record or adds to existing pending amount
-     * - Updates total pending deposits for drawing
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Pool cap validation prevents over-deposits
-     */
-    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external onlyJackpot() {
-        // Note: this check also prevents users from depositing before initializeLPDeposits() is called since the pool cap will be 0
-        // We will exclude pending withdrawals since the amount withdrawn is dependent on the post-drawing LP value. This makes this
-        // check more conservative.
-        uint256 totalPoolValue = lpDrawingState[_drawingId].lpPoolTotal + lpDrawingState[_drawingId].pendingDeposits;
-        if (_amount + totalPoolValue > lpPoolCap) revert JackpotErrors.ExceedsPoolCap();
-
-        LP storage lp = lpInfo[_lpAddress];
-
-        _consolidateDeposits(lp, _drawingId);
-
-        lp.lastDeposit.amount += _amount;
-        lp.lastDeposit.drawingId = _drawingId;
-
-        lpDrawingState[_drawingId].pendingDeposits += _amount;
-
-        emit LpDeposited(_lpAddress, _drawingId, _amount, lpDrawingState[_drawingId].pendingDeposits);
-    }
-
-    /**
-     * @notice Initiates withdrawal by converting consolidated shares to pending
-     * @dev Moves shares from active to pending status, preventing further use until finalization.
-     *      Automatically consolidates previous deposits before processing withdrawal.
-     * @param _drawingId Current drawing ID
-     * @param _lpAddress Address initiating withdrawal
-     * @param _amountToWithdrawInShares Amount of shares to withdraw
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - LP must have sufficient consolidated shares
-     * @custom:emits LpWithdrawInitiated
-     * @custom:effects
-     * - Consolidates previous deposits if any
-     * - Moves shares to pending withdrawal status
-     * - Updates drawing pending withdrawal total
-     * - Reduces consolidated shares balance
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Share balance validation
-     */
-    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external onlyJackpot() {
-        LP storage lp = lpInfo[_lpAddress];
-
-        _consolidateDeposits(lp, _drawingId);
-
-        if (lp.consolidatedShares < _amountToWithdrawInShares) revert JackpotErrors.InsufficientShares();
-
-        _consolidateWithdrawals(lp, _drawingId);
-
-        lp.pendingWithdrawal.amountInShares += _amountToWithdrawInShares;
-        lp.pendingWithdrawal.drawingId = _drawingId;
-
-        lp.consolidatedShares -= _amountToWithdrawInShares;
-        lpDrawingState[_drawingId].pendingWithdrawals += _amountToWithdrawInShares;
-
-        emit LpWithdrawInitiated(_lpAddress, _drawingId, _amountToWithdrawInShares, lpDrawingState[_drawingId].pendingWithdrawals);
-    }
-
-    /**
-     * @notice Finalizes pending withdrawals and returns USDC amount
-     * @dev Converts pending shares to USDC using historical accumulator values.
-     *      Combines pending and claimable withdrawals for total withdrawal amount.
-     * @param _drawingId Current drawing ID
-     * @param _lpAddress Address finalizing withdrawal
-     * @return withdrawableAmount Total USDC amount to transfer to LP
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - LP must have withdrawable amounts (claimable > 0)
-     * @custom:emits LpWithdrawFinalized
-     * @custom:effects
-     * - Converts pending shares to USDC using historical accumulators
-     * - Resets claimable withdrawal balance to zero
-     * - Updates total LP pool value
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Accurate share-to-USDC conversion using verified accumulator values
-     */
-    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external onlyJackpot() returns (uint256 withdrawableAmount) {
-        LP storage lp = lpInfo[_lpAddress];
-
-        // Accrue pending withdrawals to claimable withdrawals
-        _consolidateWithdrawals(lp, _drawingId);
-
-        if (lp.claimableWithdrawals == 0) revert JackpotErrors.NothingToWithdraw();
-
-        withdrawableAmount = lp.claimableWithdrawals;
-
-        lp.claimableWithdrawals = 0;
-        emit LpWithdrawFinalized(_lpAddress, _drawingId, withdrawableAmount);
-    }
-
-    /**
-     * @notice Emergency withdrawal for all LP positions when system is stuck
-     * @dev Used when emergency mode is enabled to allow complete LP recovery.
-     *      Bypasses normal withdrawal restrictions and converts all LP positions to USDC.
-     * @param _drawingId Current drawing ID
-     * @param _user Address making emergency withdrawal
-     * @return withdrawableAmount Total USDC amount to transfer
-     * @custom:requirements
-     * - Only Jackpot contract can call (which enforces emergency mode)
-     * - LP must have positions to withdraw
-     * @custom:emits LpWithdrawFinalized
-     * @custom:effects
-     * - Converts all deposit types (pending, consolidated, withdrawals) to USDC
-     * - Removes all LP tracking for the user
-     * - Updates global LP state consistently
-     * - Handles special case for drawing 0
-     * @custom:security
-     * - Only available through Jackpot emergency mode
-     * - Complete position removal prevents partial recovery
-     * - Maintains global state consistency
-     */
-    function emergencyWithdrawLP(uint256 _drawingId, address _user) external onlyJackpot() returns (uint256 withdrawableAmount) {
-        LP storage lp = lpInfo[_user];
-
-        if (_drawingId == 0) {
-            // Note we do not need to subtract from lpPoolTotal since same round pending deposits have not been added yet
-            withdrawableAmount += lp.lastDeposit.amount;
-            lpDrawingState[_drawingId].pendingDeposits -= lp.lastDeposit.amount;
-            delete lp.lastDeposit;
-            emit LpWithdrawFinalized(_user, _drawingId, withdrawableAmount);
-            return withdrawableAmount;
-        }
-
-        // lastDeposit from previous rounds to consolidated shares
-        _consolidateDeposits(lp, _drawingId);
-        // Add any deposits from this round (since they are denominated in usdc we can add directly to the withdrawable amount)
-        if (lp.lastDeposit.amount > 0) {
-            // Note we do not need to subtract from lpPoolTotal since same round pending deposits have not been added yet
-            withdrawableAmount += lp.lastDeposit.amount;
-            lpDrawingState[_drawingId].pendingDeposits -= lp.lastDeposit.amount;
-            delete lp.lastDeposit;
-        }
-
-        // consolidated shares to usdc
-        uint256 sharesToUsdc = lp.consolidatedShares * drawingAccumulator[_drawingId - 1] / PRECISE_UNIT;
-        withdrawableAmount += sharesToUsdc;
-        // Keep global state consistent
-        lpDrawingState[_drawingId].lpPoolTotal -= sharesToUsdc;
-        lp.consolidatedShares = 0;
-
-        // pending withdrawals from previous rounds to usdc
-        _consolidateWithdrawals(lp, _drawingId);
-        // Add convert pending withdrawals from this round to usdc
-        if (lp.pendingWithdrawal.amountInShares > 0) {
-            uint256 withdrawalToUsdc = lp.pendingWithdrawal.amountInShares * drawingAccumulator[lp.pendingWithdrawal.drawingId - 1] / PRECISE_UNIT;
-            withdrawableAmount += withdrawalToUsdc;
-            // Keep global state consistent
-            lpDrawingState[_drawingId].pendingWithdrawals -= lp.pendingWithdrawal.amountInShares;
-            lpDrawingState[_drawingId].lpPoolTotal -= withdrawalToUsdc;
-            delete lp.pendingWithdrawal;
-        }
-        
-        // Do not need to update any global state since claimableWithdrawals have already been counted as out of the lpPool
-        withdrawableAmount += lp.claimableWithdrawals;
-        lp.claimableWithdrawals = 0;
-
-        emit LpWithdrawFinalized(_user, _drawingId, withdrawableAmount);
-    }
-
-    /**
-     * @notice Processes drawing settlement and updates accumulator values
-     * @dev Runs after a drawing is settled to roll LP value forward and set the next accumulator:
-     *      - Compute post-draw LP value: lpPoolTotal + lpEarnings - userWinnings - protocolFeeAmount.
-     *        This must not underflow; caller must ensure payouts and fees do not exceed available value plus earnings.
-     *      - Compute `newAccumulator` for the settled drawing when `_drawingId > 0`:
-     *          • If `currentLP.lpPoolTotal == 0`, set to `PRECISE_UNIT` to avoid division by zero.
-     *          • Else `newAccumulator = drawingAccumulator[_drawingId - 1] * postDrawLpValue / currentLP.lpPoolTotal` (rounds down).
-     *        For `_drawingId == 0`, the accumulator is expected to already be initialized to `PRECISE_UNIT` via `initializeLP()`.
-     *      - Convert pending withdrawals to USDC using `newAccumulator` and finalize `newLPValue` as:
-     *          `newLPValue = postDrawLpValue + pendingDeposits - (pendingWithdrawals * newAccumulator / 1e18)`.
-     *      Division truncation favors safety (conservative values). Deposits are denominated in USDC; withdrawals are in shares.
-     * @param _drawingId Drawing that was completed
-     * @param _lpEarnings Total LP earnings from ticket sales for the drawing
-     * @param _userWinnings Total winnings paid to users for the drawing
-     * @param _protocolFeeAmount Protocol fees collected for the drawing
-     * @return newLPValue New total LP pool value to seed the next drawing
-     * @return newAccumulator Accumulator for the settled drawing (unchanged for drawing 0)
-     * @custom:requirements
-     * - Caller must be the Jackpot contract
-     * - `lpDrawingState[_drawingId]` must be initialized
-     * - For `_drawingId == 0`, `drawingAccumulator[0]` must already be initialized (via `initializeLP()`)
-     * - Inputs must reflect finalized drawing economics; must not cause underflow in post-draw value calculation
-     * @custom:effects
-     * - Updates `drawingAccumulator[_drawingId]` when `_drawingId > 0`
-     * - Returns computed `newLPValue` for initializing the next drawing’s LP state
-     * - Does not mutate pending deposit/withdrawal tallies here (only reads them for valuation)
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Division-by-zero avoided by `PRECISE_UNIT` fallback when `lpPoolTotal == 0`
-     * - Integer division truncation is conservative in favor of LP solvency
-     */
-    function processDrawingSettlement(
+interface IPayoutCalculator {
+    function calculateAndStoreDrawingUserWinnings(
         uint256 _drawingId,
-        uint256 _lpEarnings,
-        uint256 _userWinnings,
-        uint256 _protocolFeeAmount
-    ) external onlyJackpot() returns (uint256 newLPValue, uint256 newAccumulator) {
-        LPDrawingState storage currentLP = lpDrawingState[_drawingId];
-        uint256 postDrawLpValue = currentLP.lpPoolTotal + _lpEarnings - _userWinnings - _protocolFeeAmount;
+        uint256 _prizePool,
+        uint8 _ballMax,
+        uint8 _bonusballMax,
+        uint256[] memory _result,
+        uint256[] memory _dupResult
+    ) external returns (uint256);
 
-        // Note: we don't need to update the accumulator for the first drawing (0) since it's already set to PRECISE_UNIT
-        if (_drawingId > 0) {
-            // When setting for drawingId we need to use the accumulator from the previous drawing. If LP was 0 in previous
-            // drawing then we need to set the accumulator to PRECISE_UNIT to avoid division by zero.
-            newAccumulator = currentLP.lpPoolTotal == 0 ? PRECISE_UNIT :
-                (drawingAccumulator[_drawingId - 1] * postDrawLpValue) / currentLP.lpPoolTotal;
-            drawingAccumulator[_drawingId] = newAccumulator;
-        }
-        
-        // Convert pending withdrawals to usdc to calculate the new lp value
-        uint256 withdrawalsInUSDC = currentLP.pendingWithdrawals * newAccumulator / PRECISE_UNIT;
-        newLPValue = postDrawLpValue + currentLP.pendingDeposits - withdrawalsInUSDC;
-    }
+    function setDrawingTierInfo(uint256 _drawingId) external;
 
-    /**
-     * @notice Initializes LP state for a new drawing
-     * @dev Sets up initial LP pool total and resets pending amounts for new drawing. Called when transitioning to new drawing.
-     * @param _drawingId New drawing ID
-     * @param _initialLPValue Total LP value for the drawing
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - Drawing must not already be initialized
-     * @custom:effects
-     * - Creates new LPDrawingState with initial LP pool value
-     * - Sets LP pool total and zeros pending deposits/withdrawals
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     */
-    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external onlyJackpot() {
-        lpDrawingState[_drawingId] = LPDrawingState({
-            lpPoolTotal: _initialLPValue,
-            pendingDeposits: 0,
-            pendingWithdrawals: 0
-        });
-    }
-
-    /**
-     * @notice Sets the LP pool capacity limit for current drawing
-     * @dev Updates maximum allowed LP pool size. Called when parameters affecting pool size change.
-     * @param _drawingId Drawing to update cap for
-     * @param _lpPoolCap New maximum pool size
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - New cap must not be less than current LP pool total
-     * @custom:effects
-     * - Updates lpPoolCap for deposit validation
-     * - Affects future deposit limits
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Validates cap against current pool size to prevent system inconsistency
-     */
-    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external onlyJackpot() {
-        LPDrawingState storage currentLP = lpDrawingState[_drawingId];
-        if (_lpPoolCap < currentLP.lpPoolTotal + currentLP.pendingDeposits) revert InvalidLPPoolCap();
-        lpPoolCap = _lpPoolCap;
-    }
-
-    // =============================================================
-    //                          VIEW FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Returns the drawing accumulator value for share pricing
-     * @dev Accumulator is used to convert between shares and USDC based on drawing performance
-     * @param _drawingId Drawing to query
-     * @return Accumulator value in PRECISE_UNIT scale
-     */
-    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256) {
-        return drawingAccumulator[_drawingId];
-    }
-
-    /**
-     * @notice Returns complete LP state for an address
-     * @dev Includes consolidated shares, last deposit, pending withdrawal and claimable amounts
-     * @param _lpAddress Address to query
-     * @return LP struct containing all LP position information
-     */
-    function getLpInfo(address _lpAddress) external view returns (LP memory) {
-        return lpInfo[_lpAddress];
-    }
-
-    /**
-     * @notice Returns a USDC-denominated breakdown of an LP’s position by state for the current drawing
-     * @dev Computes non-mutating, best-effort valuations of the LP’s funds across states:
-     *      - activeDeposits: Consolidated shares (including preview consolidation of a prior-round lastDeposit)
-     *        valued at the last settled accumulator, i.e., drawingAccumulator[currentDrawingId - 1].
-     *      - pendingDeposits: Same-round lastDeposit.amount (USDC) if lastDeposit.drawingId == currentDrawingId; otherwise 0.
-     *      - pendingWithdrawals: Same-round pendingWithdrawal.amountInShares valued at drawingAccumulator[currentDrawingId - 1].
-     *        This is an estimate; final conversion occurs at settlement using the current drawing’s accumulator.
-     *      - claimableWithdrawals: Prior-round pendingWithdrawal valued at
-     *        drawingAccumulator[pendingWithdrawal.drawingId], plus existing claimableWithdrawals.
-     *      All amounts are denominated in USDC wei (6 decimals). Integer division truncates (conservative rounding).
-     * @param _lpAddress Address of the LP to query
-     * @return breakdown LPValueBreakdown struct containing:
-     *         - activeDeposits
-     *         - pendingDeposits
-     *         - pendingWithdrawals (estimate until settlement)
-     *         - claimableWithdrawals
-     * @custom:requirements
-     * - LP system should be initialized (drawingAccumulator[0] set by initializeLP()).
-     * - Assumes a settled accumulator exists for currentDrawingId - 1 (i.e., currentDrawingId > 0).
-     * @custom:effects
-     * - Read-only view; does not mutate state.
-     * @custom:security
-     * - Valuations reference historical accumulators; pending withdrawals are estimates and may differ from final settled amounts.
-     */
-    function getLPValueBreakdown(address _lpAddress) external view returns (LPValueBreakdown memory breakdown) {
-        LP storage lp = lpInfo[_lpAddress];
-        uint256 currentDrawingId = jackpot.currentDrawingId();
-        uint256 consolidatedShares = lp.consolidatedShares;
-        if (lp.lastDeposit.drawingId < currentDrawingId && lp.lastDeposit.amount > 0) {
-            consolidatedShares += (lp.lastDeposit.amount * PRECISE_UNIT) / drawingAccumulator[lp.lastDeposit.drawingId];
-        }
-
-        uint256 claimableWithdrawals = lp.claimableWithdrawals;
-        if (lp.pendingWithdrawal.drawingId < currentDrawingId && lp.pendingWithdrawal.amountInShares > 0) {
-            claimableWithdrawals += (lp.pendingWithdrawal.amountInShares * drawingAccumulator[lp.pendingWithdrawal.drawingId]) / PRECISE_UNIT;
-        }
-
-        return LPValueBreakdown({
-            activeDeposits: consolidatedShares * drawingAccumulator[currentDrawingId - 1] / PRECISE_UNIT,
-            pendingDeposits: lp.lastDeposit.drawingId == currentDrawingId ? lp.lastDeposit.amount : 0,
-            pendingWithdrawals: lp.pendingWithdrawal.drawingId == currentDrawingId ? 
-                lp.pendingWithdrawal.amountInShares * drawingAccumulator[currentDrawingId - 1] / PRECISE_UNIT : 0,
-            claimableWithdrawals: claimableWithdrawals
-        });
-    }
-
-    /**
-     * @notice Returns LP drawing state for a specific drawing
-     * @dev Includes lpPoolTotal, pendingDeposits, pendingWithdrawals for the drawing
-     * @param _drawingId Drawing to query
-     * @return LPDrawingState struct containing drawing-specific LP data
-     */
-    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory) {
-        return lpDrawingState[_drawingId];
-    }
-
-    // =============================================================
-    //                          INTERNAL FUNCTIONS
-    // =============================================================
-
-    function _consolidateDeposits(LP storage _lp, uint256 _drawingId) internal {
-        if (_lp.lastDeposit.amount > 0 && _lp.lastDeposit.drawingId < _drawingId) {
-            // Accumulators can never be zero after first initialization because even if entire prizePool is won the LP
-            // will still receive ticket revenue
-            _lp.consolidatedShares += (_lp.lastDeposit.amount * PRECISE_UNIT) / drawingAccumulator[_lp.lastDeposit.drawingId];
-            delete _lp.lastDeposit;
-        }
-    }
-
-    function _consolidateWithdrawals(LP storage _lp, uint256 _drawingId) internal {
-        if (_lp.pendingWithdrawal.amountInShares > 0 && _lp.pendingWithdrawal.drawingId < _drawingId) {
-            // Accumulators can never be zero after first initialization because even if entire prizePool is won the LP
-            // will still receive ticket revenue
-            _lp.claimableWithdrawals += (_lp.pendingWithdrawal.amountInShares * drawingAccumulator[_lp.pendingWithdrawal.drawingId]) / PRECISE_UNIT;
-            delete _lp.pendingWithdrawal;
-        }
-    }
+    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
 }
-
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -3102,376 +2814,124 @@ interface IEntropyV2 is EntropyEventsV2 {
     ) external view returns (uint128 feeAmount);
 }
 
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
-
-import { Combinations } from "./Combinations.sol";
-import { LibBit } from "solady/src/utils/LibBit.sol";
-
-/**
- * @title TicketComboTracker
- * @notice Library for tracking jackpot ticket combinations and calculating win distributions efficiently
- * @dev Implements scalable settlement calculations using bit vectors and inclusion-exclusion principle:
- *      - Stores ticket combinations as bit vectors for efficient subset operations
- *      - Tracks both unique and duplicate ticket counts per combination subset
- *      - Uses inclusion-exclusion principle to avoid double-counting when calculating payouts
- *      - Enables O(1) duplicate detection and efficient tier-based payout calculations
- *      - Supports configurable normal ball ranges and bonusball values
- *      - Optimized for gas efficiency in high-volume jackpot scenarios
- */
-library TicketComboTracker {
-    struct ComboCount {
-        uint128 count;
-        uint128 dupCount;
-    }
-
-    struct Tracker {
-        uint8 normalMax;
-        uint8 bonusballMax;
-        uint8 normalTiers;
-        mapping(uint8 => mapping(uint256 => ComboCount)) comboCounts;
-        mapping(uint8 => ComboCount) bonusballTicketCounts;
-    }
-
-    /**
-     * @notice Initializes a combo tracker with jackpot configuration parameters
-     * @dev Sets up the tracker with ball ranges and tier configuration for efficient combo tracking.
-     *      Must be called before using any other tracker functions.
-     * @param tracker Storage reference to the tracker being initialized
-     * @param _normalMax Maximum value for normal balls (1 to this value)
-     * @param _bonusballMax Maximum value for bonusball (1 to this value)
-     * @param _normalTiers Number of normal balls per ticket (typically 5)
-     * @custom:effects
-     * - Configures tracker parameters for combo calculations
-     * - Prepares tracker for ticket insertion and counting operations
-     * @custom:security
-     * - No validation as this is internal initialization
-     * - Caller responsible for providing valid parameters
-     */
-    function init(
-        Tracker storage tracker,
-        uint8 _normalMax,
-        uint8 _bonusballMax,
-        uint8 _normalTiers
-    ) internal {
-        tracker.normalMax = _normalMax;
-        tracker.bonusballMax = _bonusballMax;
-        tracker.normalTiers = _normalTiers;
-    }
-
-    /**
-     * @notice Converts an array of normal ball numbers to a bit vector representation
-     * @dev Creates a bit vector where each bit position represents a ball number.
-     *      Validates no duplicates and all numbers are within valid range.
-     * @param _set Array of ball numbers to convert
-     * @param _maxNormalBall Maximum valid ball number
-     * @return Bit vector representation where bit N is set if ball N is selected
-     * @custom:requirements
-     * - Set must not be empty
-     * - All numbers must be > 0 and <= _maxNormalBall
-     * - No duplicate numbers allowed
-     * @custom:security
-     * - Validates range and uniqueness to prevent invalid combinations
-     * - Uses bit operations for efficient duplicate detection
-     */
-    function toNormalsBitVector(
-        uint8[] memory _set,
-        uint256 _maxNormalBall
-    )
-        internal
-        pure
-        returns (uint256)
-    {
-        require(_set.length != 0, "Invalid set length");
-        uint256 bitVector = 0;
-        for (uint256 i; i < _set.length; ++i) {
-            require(_set[i] <= _maxNormalBall && _set[i] > 0, "Invalid set selection");
-            require((bitVector & (1 << _set[i])) == 0, "Duplicate number in set");
-            bitVector |= 1 << _set[i];
-        }
-        return bitVector;
-    }
-
-    /**
-     * @notice Inserts a ticket combination into the tracker and updates subset counts
-     * @dev Converts ticket to bit vector, generates all subsets, and updates counts.
-     *      Distinguishes between first purchase of a ticket (unique) and duplicates for
-     *      payout calculations. 
-     * @param _tracker Storage reference to the tracker
-     * @param _normalBalls Array of normal ball numbers
-     * @param _bonusball Bonusball number
-     * @return ticketNumbers Bit vector representation of the complete ticket
-     * @return isDup True if this exact combination was already inserted
-     * @custom:requirements
-     * - Normal balls array length must match tracker.normalTiers
-     * - All ball numbers must be valid per tracker configuration
-     * @custom:effects
-     * - Updates counts for all subset combinations of the ticket
-     * - Increments either unique or duplicate counts based on prior existence
-     * - Tracks bonusball-specific subset counts for tier calculations
-     * @custom:security
-     * - Validates ticket format matches tracker configuration
-     * - Prevents invalid combinations through bit vector validation
-     */
-    function insert(
-        Tracker storage _tracker,
-        uint8[] memory _normalBalls,
-        uint8 _bonusball
-    )
-        internal
-        returns (uint256 ticketNumbers, bool isDup)
-    {
-        require(_normalBalls.length == _tracker.normalTiers, "Invalid pick length");
-        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
-        // Iterate over all tier combos and store the combo counts
-        isDup = _tracker.comboCounts[_bonusball][set].count > 0;
-        for (uint8 i = 1; i <= _tracker.normalTiers; i++) {
-            uint256[] memory subsets = Combinations.generateSubsets(set, i);
-            for (uint256 j = 0; j < subsets.length; j++) {
-                if (isDup) {
-                    _tracker.comboCounts[_bonusball][subsets[j]].dupCount++;
-                } else {
-                    _tracker.comboCounts[_bonusball][subsets[j]].count++;
-                }
-            }
-        }
-
-        if (isDup) {
-            _tracker.bonusballTicketCounts[_bonusball].dupCount++;
-        } else {
-            _tracker.bonusballTicketCounts[_bonusball].count++;
-        }
-
-        // Add the bonusball to the bit vector
-        ticketNumbers = set |= 1 << (_bonusball + _tracker.normalMax);
-    }
-
-    function _countSubsetMatches(
-        Tracker storage _tracker,
-        uint256 _normalBallsBitVector,
-        uint8 _bonusball
-    )
-        private
-        view
-        returns (uint256[] memory matches, uint256[] memory dupMatches)
-    {
-        matches = new uint256[]((_tracker.normalTiers+1)*2);
-        dupMatches = new uint256[]((_tracker.normalTiers+1)*2);
-        
-        for (uint8 i = 1; i <= _tracker.bonusballMax; i++) {
-            for (uint8 k = 1; k <= _tracker.normalTiers; k++) {
-                uint256[] memory subsets = Combinations.generateSubsets(_normalBallsBitVector, k);
-                for (uint256 l = 0; l < subsets.length; l++) {
-                    if (i == _bonusball) {
-                        matches[(k*2)+1] += _tracker.comboCounts[i][subsets[l]].count;
-                        dupMatches[k*2+1] += _tracker.comboCounts[i][subsets[l]].dupCount;
-                    } else {
-                        matches[(k*2)] += _tracker.comboCounts[i][subsets[l]].count;
-                        dupMatches[k*2] += _tracker.comboCounts[i][subsets[l]].dupCount;
-                    }
-                }
-            }
-        }
-    }
-
-    function _applyInclusionExclusionPrinciple(
-        Tracker storage _tracker,
-        uint256[] memory _matches,
-        uint256[] memory _dupMatches
-    )
-        private
-        view
-        returns (uint256[] memory result, uint256[] memory dupResult)
-    {
-        result = new uint256[](_matches.length);
-        dupResult = new uint256[](_dupMatches.length);
-        
-        // Solve top-down (starting from "all matched")
-        for (uint256 k = _tracker.normalTiers; k >= 1; --k) {
-            uint256 s = _matches[2*k];
-            uint256 sp = _matches[2*k+1];
-            uint256 sd = _dupMatches[2*k];
-            uint256 sdp = _dupMatches[2*k+1];
-            
-            // Repeatedly subtract higher-tier counts that spill over into this tier
-            for (uint256 m = k + 1; m <= _tracker.normalTiers; ++m) {
-                // Each higher-tier ticket contributes C(m,k) subsets to this tier
-                uint256 c = Combinations.choose(m, k);
-                s -= c * result[2*m];
-                sp -= c * result[2*m+1];
-                sd -= c * dupResult[2*m];
-                sdp -= c * dupResult[2*m+1];
-            }
-            
-            result[2*k] = s;
-            result[2*k+1] = sp;
-            dupResult[2*k] = sd;
-            dupResult[2*k+1] = sdp;
-        }
-    }
-
-    function _calculateBonusballOnlyMatches(
-        Tracker storage _tracker,
-        uint8 _bonusball,
-        uint256[] memory _uniqueResult,
-        uint256[] memory _dupResult
-    )
-        private
-        view
-    {
-        // Start with all bonusball-only tickets
-        _uniqueResult[1] = _tracker.bonusballTicketCounts[_bonusball].count;
-        _dupResult[1] = _tracker.bonusballTicketCounts[_bonusball].dupCount;
-        
-        // Subtract tickets that also match normal balls (they're counted in higher tiers)
-        for (uint256 i = 1; i <= _tracker.normalTiers; i++) {
-            _uniqueResult[1] -= _uniqueResult[2*i + 1];
-            _dupResult[1] -= _dupResult[2*i + 1];
-        }
-    }
-
-    /**
-     * @notice Calculates winning ticket counts across all tiers for given winning numbers
-     * @dev Implements three-phase calculation to determine exact winner counts per tier:
-     *      1. Count all subset matches across bonusball values
-     *      2. Apply inclusion-exclusion principle to remove double-counting
-     *      3. Calculate bonusball-only matches (0 normal matches + bonusball)
-     * @param _tracker Storage reference to the tracker
-     * @param _normalBalls Array of winning normal ball numbers
-     * @param _bonusball Winning bonusball number
-     * @return winningTicket Bit vector representation of the winning combination
-     * @return uniqueResult Array of unique winner counts per tier (indexed by tier ID)
-     * @return dupResult Array of duplicate winner counts per tier (indexed by tier ID)
-     * @custom:effects
-     * - Generates comprehensive winner statistics for payout calculations
-     * - Separates unique and duplicate winners for accurate settlement
-     * - Covers all 12 tiers: matches(0-5) + bonusball(0/1)
-     * @custom:security
-     * - Read-only operation with no state changes
-     * - Uses mathematical inclusion-exclusion for accurate counting
-     * - Prevents over-counting tickets in multiple tiers
-     */
-    function countTierMatchesWithBonusball(
-        Tracker storage _tracker,
-        uint8[] memory _normalBalls,
-        uint8 _bonusball
-    )
-        internal
-        view
-        returns (uint256 winningTicket, uint256[] memory uniqueResult, uint256[] memory dupResult)
-    {
-        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
-        winningTicket = set | (1 << (_bonusball + _tracker.normalMax));
-
-        // Step 1: Count all subset matches across all bonusballs
-        (uint256[] memory matches, uint256[] memory dupMatches) = _countSubsetMatches(_tracker, set, _bonusball);
-        
-        // Step 2: Apply inclusion-exclusion principle to remove double counting
-        (uniqueResult, dupResult) = _applyInclusionExclusionPrinciple(_tracker, matches, dupMatches);
-        
-        // Step 3: Calculate bonusball-only matches (no normal balls matched)
-        _calculateBonusballOnlyMatches(_tracker, _bonusball, uniqueResult, dupResult);
-    }
-
-    /**
-     * @notice Checks if a ticket combination has already been inserted into the tracker
-     * @dev Efficiently determines duplicate status by checking if the exact combination
-     *      has a non-zero count in the tracker's storage.
-     * @param _tracker Storage reference to the tracker
-     * @param _normalBalls Array of normal ball numbers to check
-     * @param _bonusball Bonusball number to check
-     * @return True if this exact combination exists in the tracker
-     * @custom:requirements
-     * - Normal balls array length must match tracker configuration
-     * - All ball numbers must be valid per tracker setup
-     * @custom:security
-     * - Read-only operation with no state changes
-     * - Validates input format before processing
-     * - Uses efficient bit vector lookup for O(1) duplicate detection
-     */
-    function isDuplicate(
-        Tracker storage _tracker,
-        uint8[] memory _normalBalls,
-        uint8 _bonusball
-    )
-        internal
-        view
-        returns (bool)
-    {
-        require(_normalBalls.length == _tracker.normalTiers, "Invalid set length");
-        uint256 set = toNormalsBitVector(_normalBalls, _tracker.normalMax);
-        return _tracker.comboCounts[_bonusball][set].count > 0;
-    }
-
-    /**
-     * @notice Unpacks a bit vector representation back into separate normal balls and bonusball number
-     * @dev Extracts individual ball numbers from a packed ticket by scanning bit positions.
-     *      Normal balls are stored at bit positions 1 to _normalMax, bonusball at position (_normalMax + bonusball_value).
-     *      Uses LibBit operations for efficient bit scanning and counting to reconstruct original ticket.
-     * @param _packedTicket Bit vector representation of the complete ticket
-     * @param _normalMax Maximum value for normal balls (defines boundary between normal and bonusball bits)
-     * @return normalBalls Array of normal ball numbers extracted from bit positions 1 to _normalMax
-     * @return bonusball Bonusball number calculated from highest set bit position minus _normalMax
-     * @custom:requirements
-     * - Packed ticket must contain valid bit pattern with at least one bonusball bit set
-     * - Normal ball bits must be within positions 1 to _normalMax if present
-     * - Bonusball bit must be at position > _normalMax
-     * @custom:effects
-     * - Scans bit vector to extract individual ball numbers in ascending order
-     * - Reconstructs original ticket structure from packed representation
-     * - No state changes as this is a pure function
-     * @custom:security
-     * - Read-only operation with no side effects or external calls
-     * - Uses efficient LibBit operations to prevent gas issues with large bit vectors
-     * - Handles edge cases like single-ball tickets and sparse patterns gracefully
-     */
-    function unpackTicket(
-        uint256 _packedTicket,
-        uint8 _normalMax
-    )
-        internal
-        pure
-        returns (uint8[] memory normalBalls, uint8 bonusball)
-    {
-        uint256 ballCount = LibBit.popCount(_packedTicket);
-        normalBalls = new uint8[](ballCount - 1);
-        uint256 p;
-        for (uint256 i = 1; i <= _normalMax; i++) {
-            if (_packedTicket & (1 << i) != 0) {
-                normalBalls[p++] = uint8(i);
-            }
-        }
-
-        // Find the bonusball bit position and subtract _normalMax to get the bonusball value
-        bonusball = uint8(LibBit.fls(_packedTicket) - _normalMax);
-    }
-}
 //SPDX-License-Identifier: UNLICENSED
 
 /*
 Copyright (C) 2025 Coordination Inc.
-Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
+All rights reserved.
 
-Change Date: 2029-12-01
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
 
-On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
+For licensing inquiries: legal@coordinationlabs.com
 */
 
 pragma solidity ^0.8.28;
 
-interface IPayoutCalculator {
-    function calculateAndStoreDrawingUserWinnings(
-        uint256 _drawingId,
-        uint256 _prizePool,
-        uint8 _ballMax,
-        uint8 _bonusballMax,
-        uint256[] memory _result,
-        uint256[] memory _dupResult
-    ) external returns (uint256);
+/**
+ * @title UintCasts
+ * @notice Minimal helpers for safely downcasting uint256 values to uint8.
+ * @dev Reverts with Uint8OutOfBounds() if a value exceeds uint8's max (255).
+ */
+library UintCasts {
+    /// @notice Raised when a value cannot be represented as uint8 (value > 255)
+    error Uint8OutOfBounds();
 
-    function setDrawingTierInfo(uint256 _drawingId) external;
+    /**
+     * @notice Safely cast a uint256 to uint8.
+     * @param _value The value to cast.
+     * @return out The value as uint8 (reverts if out of range).
+     */
+    function toUint8(uint256 _value) internal pure returns (uint8) {
+        if (_value > type(uint8).max) revert Uint8OutOfBounds();
+        return uint8(_value);
+    }
 
-    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
+    /**
+     * @notice Safely cast an array of uint256 to uint8[] element-wise.
+     * @param _values The array of values to cast.
+     * @return out The cast array (reverts if any element is out of range).
+     */
+    function toUint8Array(uint256[] memory _values) internal pure returns (uint8[] memory) {
+        uint256 len = _values.length;
+        uint8[] memory out = new uint8[](len);
+        for (uint256 i = 0; i < len; ) {
+            out[i] = toUint8(_values[i]);
+            unchecked { ++i; }
+        }
+        return out;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8;
+
+import { LibBit } from "solady/src/utils/LibBit.sol";
+
+library Combinations {
+    uint256 constant UINT256_BIT_WIDTH = 256;
+    /// @notice Compute number of combinations of size k from a set of n
+    /// @param n Size of set to choose from
+    /// @param k Size of subsets to choose
+    function choose(
+        uint256 n,
+        uint256 k
+    ) internal pure returns (uint256 result) {
+        assert(n >= k);
+        assert(n <= 128); // Artificial limit to avoid overflow
+        // "How to calculate binomial coefficients"
+        // From: https://blog.plover.com/math/choose.html
+        // This algorithm computes multiplication and division in alternation
+        // to avoid overflow as much as possible.
+        unchecked {
+            uint256 out = 1;
+            for (uint256 d = 1; d <= k; ++d) {
+                out *= n--;
+                out /= d;
+            }
+            return out;
+        }
+    }
+
+    /// @notice Generate all possible subsets of size k from a bit vector.
+    /// @param set Bit vector to generate subsets from
+    /// @param k Size of subsets to generate
+    function generateSubsets(
+        uint256 set,
+        uint256 k
+    ) internal pure returns (uint256[] memory subsets) {
+        unchecked {
+            uint256 n = LibBit.popCount(set);
+            assert(k <= n);
+            subsets = new uint256[](choose(n, k));
+
+            uint256 bound = 1 << n;
+            uint256 comb = (1 << k) - 1;
+            uint256 count;
+            while (comb < bound) {
+                uint256 mapped;
+                uint256 _set = set;
+                uint256 _comb = comb;
+                for (uint256 i; i < UINT256_BIT_WIDTH && _set != 0; ++i) {
+                    if (_set & 1 == 1) {
+                        if (_comb & 1 == 1) {
+                            mapped |= (1 << i);
+                        }
+                        _comb >>= 1;
+                    }
+                    _set >>= 1;
+                }
+
+                subsets[count++] = mapped;
+
+                // "Gosper's hack"
+                uint256 c = comb & uint256(-int256(comb));
+                uint256 r = comb + c;
+                comb = (((r ^ comb) >> 2) / c) | r;
+            }
+            assert(count == choose(n, k));
+        }
+    }
 }
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
@@ -3759,6 +3219,761 @@ library LibBit {
     }
 }
 
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+
+import { IJackpot } from "./interfaces/IJackpot.sol";
+import { IJackpotLPManager } from "./interfaces/IJackpotLPManager.sol";
+import { JackpotErrors } from "./lib/JackpotErrors.sol";
+
+/**
+ * @title JackpotLPManager
+ * @notice Manages liquidity provider deposits, withdrawals, and share calculations using an accumulator-based pricing system
+ * @dev Implements an LP management system with:
+ *      - Accumulator-based share pricing for fair LP value distribution
+ *      - Pending deposit/withdrawal system to handle drawing transitions
+ *      - Consolidation mechanics for multi-drawing LP positions
+ *      - Emergency withdrawal capabilities for system recovery
+ */
+contract JackpotLPManager is IJackpotLPManager, Ownable {
+
+    // =============================================================
+    //                          STRUCTS
+    // =============================================================
+
+    struct DepositInfo {
+        uint256 amount;
+        uint256 drawingId;
+    }
+
+    struct WithdrawalInfo {
+        uint256 amountInShares;
+        uint256 drawingId;
+    }
+
+    struct LP {
+        uint256 consolidatedShares; // Note: this is the amount in shares, not usdc
+        DepositInfo lastDeposit; // Note: this is the amount in usdc, not shares
+        WithdrawalInfo pendingWithdrawal; // Note: this is the amount in shares, not usdc
+        uint256 claimableWithdrawals; // Note: this is the amount in usdc, not shares
+    }
+
+    struct LPValueBreakdown {
+        uint256 activeDeposits;
+        uint256 pendingDeposits;
+        uint256 pendingWithdrawals;
+        uint256 claimableWithdrawals;
+    }
+
+    // =============================================================
+    //                          EVENTS
+    // =============================================================
+    event LpDeposited(
+        address indexed lpAddress,
+        uint256 indexed currentDrawingId,
+        uint256 amount,
+        uint256 totalPendingDeposits
+    );
+
+    event LpWithdrawInitiated(
+        address indexed lpAddress,
+        uint256 indexed currentDrawingId,
+        uint256 amount,
+        uint256 totalPendingWithdrawals
+    );
+
+    event LpWithdrawFinalized(
+        address indexed lpAddress,
+        uint256 indexed currentDrawingId,
+        uint256 amount
+    );
+
+    // =============================================================
+    //                          ERRORS
+    // =============================================================
+
+    error UnauthorizedCaller();
+    error ZeroAddress();
+    error InvalidLPPoolCap();
+
+    // =============================================================
+    //                          CONSTANTS
+    // =============================================================
+
+    uint256 constant PRECISE_UNIT = 1e18;
+
+    // =============================================================
+    //                          STATE VARIABLES
+    // =============================================================
+
+    mapping(uint256 => LPDrawingState) internal lpDrawingState;
+    mapping(address => LP) public lpInfo;
+    mapping(uint256 => uint256) public drawingAccumulator;
+    uint256 public lpPoolCap;
+
+    IJackpot public jackpot;
+
+    // =============================================================
+    //                          MODIFIERS
+    // =============================================================
+    
+    modifier onlyJackpot() {
+        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
+        _;
+    }
+
+    // =============================================================
+    //                          CONSTRUCTOR
+    // =============================================================
+
+    /**
+     * @notice Initializes the JackpotLPManager with the Jackpot contract reference
+     * @dev Sets up the connection to the main Jackpot contract that will call LP management functions
+     * @param _jackpot Address of the main Jackpot contract
+     * @custom:requirements
+     * - Jackpot address must not be zero address
+     * @custom:effects
+     * - Sets jackpot contract reference
+     * - Sets deployer as owner
+     * @custom:security
+     * - Zero address validation for jackpot contract
+     */
+    constructor(IJackpot _jackpot) Ownable(msg.sender) {
+        if (_jackpot == IJackpot(address(0))) revert ZeroAddress();
+        jackpot = _jackpot;
+    }
+
+    // =============================================================
+    //                          EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Initializes the LP system with the first accumulator value
+     * @dev Sets up the initial accumulator value for share calculations. Called during Jackpot initialization.
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - Must not already be initialized
+     * @custom:effects
+     * - Sets drawingAccumulator[0] to PRECISE_UNIT
+     * - Enables LP deposit functionality
+     * @custom:security
+     * - Single initialization enforcement
+     * - Access restricted to Jackpot contract
+     */
+    function initializeLP() external onlyJackpot() {
+        drawingAccumulator[0] = PRECISE_UNIT;
+    }
+
+    /**
+     * @notice Processes a new LP deposit for the current drawing
+     * @dev Consolidates any previous deposits from earlier drawings. If deposit already made for current drawing then amount is added to current pending amount.
+     *      Deposits are held as pending until the drawing settles, then converted to shares.
+     * @param _drawingId Current drawing ID
+     * @param _lpAddress Address making the deposit
+     * @param _amount Amount of USDC being deposited
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - Deposit would not exceed LP pool cap
+     * - Drawing accumulator must be initialized
+     * @custom:emits LpDeposited
+     * @custom:effects
+     * - Consolidates previous deposits if any
+     * - Creates new deposit record or adds to existing pending amount
+     * - Updates total pending deposits for drawing
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Pool cap validation prevents over-deposits
+     */
+    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external onlyJackpot() {
+        // Note: this check also prevents users from depositing before initializeLPDeposits() is called since the pool cap will be 0
+        // We will exclude pending withdrawals since the amount withdrawn is dependent on the post-drawing LP value. This makes this
+        // check more conservative.
+        uint256 totalPoolValue = lpDrawingState[_drawingId].lpPoolTotal + lpDrawingState[_drawingId].pendingDeposits;
+        if (_amount + totalPoolValue > lpPoolCap) revert JackpotErrors.ExceedsPoolCap();
+
+        LP storage lp = lpInfo[_lpAddress];
+
+        _consolidateDeposits(lp, _drawingId);
+
+        lp.lastDeposit.amount += _amount;
+        lp.lastDeposit.drawingId = _drawingId;
+
+        lpDrawingState[_drawingId].pendingDeposits += _amount;
+
+        emit LpDeposited(_lpAddress, _drawingId, _amount, lpDrawingState[_drawingId].pendingDeposits);
+    }
+
+    /**
+     * @notice Initiates withdrawal by converting consolidated shares to pending
+     * @dev Moves shares from active to pending status, preventing further use until finalization.
+     *      Automatically consolidates previous deposits before processing withdrawal.
+     * @param _drawingId Current drawing ID
+     * @param _lpAddress Address initiating withdrawal
+     * @param _amountToWithdrawInShares Amount of shares to withdraw
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - LP must have sufficient consolidated shares
+     * @custom:emits LpWithdrawInitiated
+     * @custom:effects
+     * - Consolidates previous deposits if any
+     * - Moves shares to pending withdrawal status
+     * - Updates drawing pending withdrawal total
+     * - Reduces consolidated shares balance
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Share balance validation
+     */
+    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external onlyJackpot() {
+        LP storage lp = lpInfo[_lpAddress];
+
+        _consolidateDeposits(lp, _drawingId);
+
+        if (lp.consolidatedShares < _amountToWithdrawInShares) revert JackpotErrors.InsufficientShares();
+
+        _consolidateWithdrawals(lp, _drawingId);
+
+        lp.pendingWithdrawal.amountInShares += _amountToWithdrawInShares;
+        lp.pendingWithdrawal.drawingId = _drawingId;
+
+        lp.consolidatedShares -= _amountToWithdrawInShares;
+        lpDrawingState[_drawingId].pendingWithdrawals += _amountToWithdrawInShares;
+
+        emit LpWithdrawInitiated(_lpAddress, _drawingId, _amountToWithdrawInShares, lpDrawingState[_drawingId].pendingWithdrawals);
+    }
+
+    /**
+     * @notice Finalizes pending withdrawals and returns USDC amount
+     * @dev Converts pending shares to USDC using historical accumulator values.
+     *      Combines pending and claimable withdrawals for total withdrawal amount.
+     * @param _drawingId Current drawing ID
+     * @param _lpAddress Address finalizing withdrawal
+     * @return withdrawableAmount Total USDC amount to transfer to LP
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - LP must have withdrawable amounts (claimable > 0)
+     * @custom:emits LpWithdrawFinalized
+     * @custom:effects
+     * - Converts pending shares to USDC using historical accumulators
+     * - Resets claimable withdrawal balance to zero
+     * - Updates total LP pool value
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Accurate share-to-USDC conversion using verified accumulator values
+     */
+    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external onlyJackpot() returns (uint256 withdrawableAmount) {
+        LP storage lp = lpInfo[_lpAddress];
+
+        // Accrue pending withdrawals to claimable withdrawals
+        _consolidateWithdrawals(lp, _drawingId);
+
+        if (lp.claimableWithdrawals == 0) revert JackpotErrors.NothingToWithdraw();
+
+        withdrawableAmount = lp.claimableWithdrawals;
+
+        lp.claimableWithdrawals = 0;
+        emit LpWithdrawFinalized(_lpAddress, _drawingId, withdrawableAmount);
+    }
+
+    /**
+     * @notice Emergency withdrawal for all LP positions when system is stuck
+     * @dev Used when emergency mode is enabled to allow complete LP recovery.
+     *      Bypasses normal withdrawal restrictions and converts all LP positions to USDC.
+     * @param _drawingId Current drawing ID
+     * @param _user Address making emergency withdrawal
+     * @return withdrawableAmount Total USDC amount to transfer
+     * @custom:requirements
+     * - Only Jackpot contract can call (which enforces emergency mode)
+     * - LP must have positions to withdraw
+     * @custom:emits LpWithdrawFinalized
+     * @custom:effects
+     * - Converts all deposit types (pending, consolidated, withdrawals) to USDC
+     * - Removes all LP tracking for the user
+     * - Updates global LP state consistently
+     * - Handles special case for drawing 0
+     * @custom:security
+     * - Only available through Jackpot emergency mode
+     * - Complete position removal prevents partial recovery
+     * - Maintains global state consistency
+     */
+    function emergencyWithdrawLP(uint256 _drawingId, address _user) external onlyJackpot() returns (uint256 withdrawableAmount) {
+        LP storage lp = lpInfo[_user];
+
+        if (_drawingId == 0) {
+            // Note we do not need to subtract from lpPoolTotal since same round pending deposits have not been added yet
+            withdrawableAmount += lp.lastDeposit.amount;
+            lpDrawingState[_drawingId].pendingDeposits -= lp.lastDeposit.amount;
+            delete lp.lastDeposit;
+            emit LpWithdrawFinalized(_user, _drawingId, withdrawableAmount);
+            return withdrawableAmount;
+        }
+
+        // lastDeposit from previous rounds to consolidated shares
+        _consolidateDeposits(lp, _drawingId);
+        // Add any deposits from this round (since they are denominated in usdc we can add directly to the withdrawable amount)
+        if (lp.lastDeposit.amount > 0) {
+            // Note we do not need to subtract from lpPoolTotal since same round pending deposits have not been added yet
+            withdrawableAmount += lp.lastDeposit.amount;
+            lpDrawingState[_drawingId].pendingDeposits -= lp.lastDeposit.amount;
+            delete lp.lastDeposit;
+        }
+
+        // consolidated shares to usdc
+        uint256 sharesToUsdc = lp.consolidatedShares * drawingAccumulator[_drawingId - 1] / PRECISE_UNIT;
+        withdrawableAmount += sharesToUsdc;
+        // Keep global state consistent
+        lpDrawingState[_drawingId].lpPoolTotal -= sharesToUsdc;
+        lp.consolidatedShares = 0;
+
+        // pending withdrawals from previous rounds to usdc
+        _consolidateWithdrawals(lp, _drawingId);
+        // Add convert pending withdrawals from this round to usdc
+        if (lp.pendingWithdrawal.amountInShares > 0) {
+            uint256 withdrawalToUsdc = lp.pendingWithdrawal.amountInShares * drawingAccumulator[lp.pendingWithdrawal.drawingId - 1] / PRECISE_UNIT;
+            withdrawableAmount += withdrawalToUsdc;
+            // Keep global state consistent
+            lpDrawingState[_drawingId].pendingWithdrawals -= lp.pendingWithdrawal.amountInShares;
+            lpDrawingState[_drawingId].lpPoolTotal -= withdrawalToUsdc;
+            delete lp.pendingWithdrawal;
+        }
+        
+        // Do not need to update any global state since claimableWithdrawals have already been counted as out of the lpPool
+        withdrawableAmount += lp.claimableWithdrawals;
+        lp.claimableWithdrawals = 0;
+
+        emit LpWithdrawFinalized(_user, _drawingId, withdrawableAmount);
+    }
+
+    /**
+     * @notice Processes drawing settlement and updates accumulator values
+     * @dev Runs after a drawing is settled to roll LP value forward and set the next accumulator:
+     *      - Compute post-draw LP value: lpPoolTotal + lpEarnings - userWinnings - protocolFeeAmount.
+     *        This must not underflow; caller must ensure payouts and fees do not exceed available value plus earnings.
+     *      - Compute `newAccumulator` for the settled drawing when `_drawingId > 0`:
+     *          • If `currentLP.lpPoolTotal == 0`, set to `PRECISE_UNIT` to avoid division by zero.
+     *          • Else `newAccumulator = drawingAccumulator[_drawingId - 1] * postDrawLpValue / currentLP.lpPoolTotal` (rounds down).
+     *        For `_drawingId == 0`, the accumulator is expected to already be initialized to `PRECISE_UNIT` via `initializeLP()`.
+     *      - Convert pending withdrawals to USDC using `newAccumulator` and finalize `newLPValue` as:
+     *          `newLPValue = postDrawLpValue + pendingDeposits - (pendingWithdrawals * newAccumulator / 1e18)`.
+     *      Division truncation favors safety (conservative values). Deposits are denominated in USDC; withdrawals are in shares.
+     * @param _drawingId Drawing that was completed
+     * @param _lpEarnings Total LP earnings from ticket sales for the drawing
+     * @param _userWinnings Total winnings paid to users for the drawing
+     * @param _protocolFeeAmount Protocol fees collected for the drawing
+     * @return newLPValue New total LP pool value to seed the next drawing
+     * @return newAccumulator Accumulator for the settled drawing (unchanged for drawing 0)
+     * @custom:requirements
+     * - Caller must be the Jackpot contract
+     * - `lpDrawingState[_drawingId]` must be initialized
+     * - For `_drawingId == 0`, `drawingAccumulator[0]` must already be initialized (via `initializeLP()`)
+     * - Inputs must reflect finalized drawing economics; must not cause underflow in post-draw value calculation
+     * @custom:effects
+     * - Updates `drawingAccumulator[_drawingId]` when `_drawingId > 0`
+     * - Returns computed `newLPValue` for initializing the next drawing’s LP state
+     * - Does not mutate pending deposit/withdrawal tallies here (only reads them for valuation)
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Division-by-zero avoided by `PRECISE_UNIT` fallback when `lpPoolTotal == 0`
+     * - Integer division truncation is conservative in favor of LP solvency
+     */
+    function processDrawingSettlement(
+        uint256 _drawingId,
+        uint256 _lpEarnings,
+        uint256 _userWinnings,
+        uint256 _protocolFeeAmount
+    ) external onlyJackpot() returns (uint256 newLPValue, uint256 newAccumulator) {
+        LPDrawingState storage currentLP = lpDrawingState[_drawingId];
+        uint256 postDrawLpValue = currentLP.lpPoolTotal + _lpEarnings - _userWinnings - _protocolFeeAmount;
+
+        // Note: we don't need to update the accumulator for the first drawing (0) since it's already set to PRECISE_UNIT
+        if (_drawingId > 0) {
+            // When setting for drawingId we need to use the accumulator from the previous drawing. If LP was 0 in previous
+            // drawing then we need to set the accumulator to PRECISE_UNIT to avoid division by zero.
+            newAccumulator = currentLP.lpPoolTotal == 0 ? PRECISE_UNIT :
+                (drawingAccumulator[_drawingId - 1] * postDrawLpValue) / currentLP.lpPoolTotal;
+            drawingAccumulator[_drawingId] = newAccumulator;
+        }
+        
+        // Convert pending withdrawals to usdc to calculate the new lp value
+        uint256 withdrawalsInUSDC = currentLP.pendingWithdrawals * newAccumulator / PRECISE_UNIT;
+        newLPValue = postDrawLpValue + currentLP.pendingDeposits - withdrawalsInUSDC;
+    }
+
+    /**
+     * @notice Initializes LP state for a new drawing
+     * @dev Sets up initial LP pool total and resets pending amounts for new drawing. Called when transitioning to new drawing.
+     * @param _drawingId New drawing ID
+     * @param _initialLPValue Total LP value for the drawing
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - Drawing must not already be initialized
+     * @custom:effects
+     * - Creates new LPDrawingState with initial LP pool value
+     * - Sets LP pool total and zeros pending deposits/withdrawals
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     */
+    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external onlyJackpot() {
+        lpDrawingState[_drawingId] = LPDrawingState({
+            lpPoolTotal: _initialLPValue,
+            pendingDeposits: 0,
+            pendingWithdrawals: 0
+        });
+    }
+
+    /**
+     * @notice Sets the LP pool capacity limit for current drawing
+     * @dev Updates maximum allowed LP pool size. Called when parameters affecting pool size change.
+     * @param _drawingId Drawing to update cap for
+     * @param _lpPoolCap New maximum pool size
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - New cap must not be less than current LP pool total
+     * @custom:effects
+     * - Updates lpPoolCap for deposit validation
+     * - Affects future deposit limits
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Validates cap against current pool size to prevent system inconsistency
+     */
+    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external onlyJackpot() {
+        LPDrawingState storage currentLP = lpDrawingState[_drawingId];
+        if (_lpPoolCap < currentLP.lpPoolTotal + currentLP.pendingDeposits) revert InvalidLPPoolCap();
+        lpPoolCap = _lpPoolCap;
+    }
+
+    // =============================================================
+    //                          VIEW FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Returns the drawing accumulator value for share pricing
+     * @dev Accumulator is used to convert between shares and USDC based on drawing performance
+     * @param _drawingId Drawing to query
+     * @return Accumulator value in PRECISE_UNIT scale
+     */
+    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256) {
+        return drawingAccumulator[_drawingId];
+    }
+
+    /**
+     * @notice Returns complete LP state for an address
+     * @dev Includes consolidated shares, last deposit, pending withdrawal and claimable amounts
+     * @param _lpAddress Address to query
+     * @return LP struct containing all LP position information
+     */
+    function getLpInfo(address _lpAddress) external view returns (LP memory) {
+        return lpInfo[_lpAddress];
+    }
+
+    /**
+     * @notice Returns a USDC-denominated breakdown of an LP’s position by state for the current drawing
+     * @dev Computes non-mutating, best-effort valuations of the LP’s funds across states:
+     *      - activeDeposits: Consolidated shares (including preview consolidation of a prior-round lastDeposit)
+     *        valued at the last settled accumulator, i.e., drawingAccumulator[currentDrawingId - 1].
+     *      - pendingDeposits: Same-round lastDeposit.amount (USDC) if lastDeposit.drawingId == currentDrawingId; otherwise 0.
+     *      - pendingWithdrawals: Same-round pendingWithdrawal.amountInShares valued at drawingAccumulator[currentDrawingId - 1].
+     *        This is an estimate; final conversion occurs at settlement using the current drawing’s accumulator.
+     *      - claimableWithdrawals: Prior-round pendingWithdrawal valued at
+     *        drawingAccumulator[pendingWithdrawal.drawingId], plus existing claimableWithdrawals.
+     *      All amounts are denominated in USDC wei (6 decimals). Integer division truncates (conservative rounding).
+     * @param _lpAddress Address of the LP to query
+     * @return breakdown LPValueBreakdown struct containing:
+     *         - activeDeposits
+     *         - pendingDeposits
+     *         - pendingWithdrawals (estimate until settlement)
+     *         - claimableWithdrawals
+     * @custom:requirements
+     * - LP system should be initialized (drawingAccumulator[0] set by initializeLP()).
+     * - Assumes a settled accumulator exists for currentDrawingId - 1 (i.e., currentDrawingId > 0).
+     * @custom:effects
+     * - Read-only view; does not mutate state.
+     * @custom:security
+     * - Valuations reference historical accumulators; pending withdrawals are estimates and may differ from final settled amounts.
+     */
+    function getLPValueBreakdown(address _lpAddress) external view returns (LPValueBreakdown memory breakdown) {
+        LP storage lp = lpInfo[_lpAddress];
+        uint256 currentDrawingId = jackpot.currentDrawingId();
+        uint256 consolidatedShares = lp.consolidatedShares;
+        if (lp.lastDeposit.drawingId < currentDrawingId && lp.lastDeposit.amount > 0) {
+            consolidatedShares += (lp.lastDeposit.amount * PRECISE_UNIT) / drawingAccumulator[lp.lastDeposit.drawingId];
+        }
+
+        uint256 claimableWithdrawals = lp.claimableWithdrawals;
+        if (lp.pendingWithdrawal.drawingId < currentDrawingId && lp.pendingWithdrawal.amountInShares > 0) {
+            claimableWithdrawals += (lp.pendingWithdrawal.amountInShares * drawingAccumulator[lp.pendingWithdrawal.drawingId]) / PRECISE_UNIT;
+        }
+
+        return LPValueBreakdown({
+            activeDeposits: consolidatedShares * drawingAccumulator[currentDrawingId - 1] / PRECISE_UNIT,
+            pendingDeposits: lp.lastDeposit.drawingId == currentDrawingId ? lp.lastDeposit.amount : 0,
+            pendingWithdrawals: lp.pendingWithdrawal.drawingId == currentDrawingId ? 
+                lp.pendingWithdrawal.amountInShares * drawingAccumulator[currentDrawingId - 1] / PRECISE_UNIT : 0,
+            claimableWithdrawals: claimableWithdrawals
+        });
+    }
+
+    /**
+     * @notice Returns LP drawing state for a specific drawing
+     * @dev Includes lpPoolTotal, pendingDeposits, pendingWithdrawals for the drawing
+     * @param _drawingId Drawing to query
+     * @return LPDrawingState struct containing drawing-specific LP data
+     */
+    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory) {
+        return lpDrawingState[_drawingId];
+    }
+
+    // =============================================================
+    //                          INTERNAL FUNCTIONS
+    // =============================================================
+
+    function _consolidateDeposits(LP storage _lp, uint256 _drawingId) internal {
+        if (_lp.lastDeposit.amount > 0 && _lp.lastDeposit.drawingId < _drawingId) {
+            // Accumulators can never be zero after first initialization because even if entire prizePool is won the LP
+            // will still receive ticket revenue
+            _lp.consolidatedShares += (_lp.lastDeposit.amount * PRECISE_UNIT) / drawingAccumulator[_lp.lastDeposit.drawingId];
+            delete _lp.lastDeposit;
+        }
+    }
+
+    function _consolidateWithdrawals(LP storage _lp, uint256 _drawingId) internal {
+        if (_lp.pendingWithdrawal.amountInShares > 0 && _lp.pendingWithdrawal.drawingId < _drawingId) {
+            // Accumulators can never be zero after first initialization because even if entire prizePool is won the LP
+            // will still receive ticket revenue
+            _lp.claimableWithdrawals += (_lp.pendingWithdrawal.amountInShares * drawingAccumulator[_lp.pendingWithdrawal.drawingId]) / PRECISE_UNIT;
+            delete _lp.pendingWithdrawal;
+        }
+    }
+}
+
+// SPDX-License-Identifier: Apache 2
+pragma solidity ^0.8.0;
+
+abstract contract IEntropyConsumer {
+    // This method is called by Entropy to provide the random number to the consumer.
+    // It asserts that the msg.sender is the Entropy contract. It is not meant to be
+    // override by the consumer.
+    function _entropyCallback(
+        uint64 sequence,
+        address provider,
+        bytes32 randomNumber
+    ) external {
+        address entropy = getEntropy();
+        require(entropy != address(0), "Entropy address not set");
+        require(msg.sender == entropy, "Only Entropy can call this function");
+
+        entropyCallback(sequence, provider, randomNumber);
+    }
+
+    // getEntropy returns Entropy contract address. The method is being used to check that the
+    // callback is indeed from Entropy contract. The consumer is expected to implement this method.
+    // Entropy address can be found here - https://docs.pyth.network/entropy/contract-addresses
+    function getEntropy() internal view virtual returns (address);
+
+    // This method is expected to be implemented by the consumer to handle the random number.
+    // It will be called by _entropyCallback after _entropyCallback ensures that the call is
+    // indeed from Entropy contract.
+    function entropyCallback(
+        uint64 sequence,
+        address provider,
+        bytes32 randomNumber
+    ) internal virtual;
+}
+
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
+
+pragma solidity ^0.8.24;
+
+import {TransientSlot} from "./TransientSlot.sol";
+
+/**
+ * @dev Variant of {ReentrancyGuard} that uses transient storage.
+ *
+ * NOTE: This variant only works on networks where EIP-1153 is available.
+ *
+ * _Available since v5.1._
+ */
+abstract contract ReentrancyGuardTransient {
+    using TransientSlot for *;
+
+    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.ReentrancyGuard")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant REENTRANCY_GUARD_STORAGE =
+        0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
+
+    /**
+     * @dev Unauthorized reentrant call.
+     */
+    error ReentrancyGuardReentrantCall();
+
+    /**
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and making it call a
+     * `private` function that does the actual work.
+     */
+    modifier nonReentrant() {
+        _nonReentrantBefore();
+        _;
+        _nonReentrantAfter();
+    }
+
+    function _nonReentrantBefore() private {
+        // On the first call to nonReentrant, REENTRANCY_GUARD_STORAGE.asBoolean().tload() will be false
+        if (_reentrancyGuardEntered()) {
+            revert ReentrancyGuardReentrantCall();
+        }
+
+        // Any calls to nonReentrant after this point will fail
+        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(true);
+    }
+
+    function _nonReentrantAfter() private {
+        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(false);
+    }
+
+    /**
+     * @dev Returns true if the reentrancy guard is currently set to "entered", which indicates there is a
+     * `nonReentrant` function in the call stack.
+     */
+    function _reentrancyGuardEntered() internal view returns (bool) {
+        return REENTRANCY_GUARD_STORAGE.asBoolean().tload();
+    }
+}
+
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IJackpotTicketNFT {
+
+    struct TrackedTicket {
+        uint256 drawingId;
+        uint256 packedTicket;
+        bytes32 referralScheme;
+    }
+
+    struct ExtendedTrackedTicket {
+        uint256 ticketId;
+        TrackedTicket ticket;
+        uint8[] normals;
+        uint8 bonusball;
+    }
+
+    function mintTicket(
+        address recipient, 
+        uint256 ticketId, 
+        uint256 drawingId,
+        uint256 packedTicket, 
+        bytes32 referralScheme
+    ) external;
+    
+    function burnTicket(uint256 ticketId) external;
+    function getTicketInfo(uint256 ticketId) external view returns (TrackedTicket memory);
+    function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
+}
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IScaledEntropyProvider {
+    struct SetRequest {
+        uint8 samples;
+        uint256 minRange;
+        uint256 maxRange;
+        bool withReplacement;
+    }
+    function requestAndCallbackScaledRandomness(
+        uint32 _gasLimit,
+        SetRequest[] memory _requests,
+        bytes4 _selector,
+        bytes memory _context
+    )
+        external
+        payable
+        returns (uint64 requestId);
+    function getFee(uint32 _gasLimit) external view returns (uint256);
+}
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IJackpotLPManager {
+
+    struct LPDrawingState {
+        uint256 lpPoolTotal;
+        uint256 pendingDeposits;
+        uint256 pendingWithdrawals;
+    }
+
+    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
+
+    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
+
+    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
+
+    function processDrawingSettlement(
+        uint256 _drawingId,
+        uint256 _lpEarnings,
+        uint256 _userWinnings,
+        uint256 _protocolFeeAmount
+    ) external returns (uint256 newLPValue, uint256 newAccumulator);
+
+    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
+
+    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
+
+    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
+
+    function initializeLP() external;
+
+    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
+    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
+}
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IJackpot {
+
+    struct Ticket {
+        uint8[] normals;
+        uint8 bonusball;
+    }
+
+    function buyTickets(
+        Ticket[] memory _tickets,
+        address _recipient,
+        address[] memory _referrers,
+        uint256[] memory _referralSplitBps,
+        bytes32 _source
+    )
+        external
+        returns (uint256[] memory ticketIds);
+
+    function claimWinnings(
+        uint256[] memory _userTicketIds
+    )
+        external;
+
+    function ticketPrice() external view returns (uint256);
+    function currentDrawingId() external view returns (uint256);
+    function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
+}
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
 
@@ -3928,221 +4143,78 @@ abstract contract Ownable is Context {
     }
 }
 
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpotTicketNFT {
-
-    struct TrackedTicket {
-        uint256 drawingId;
-        uint256 packedTicket;
-        bytes32 referralScheme;
-    }
-
-    struct ExtendedTrackedTicket {
-        uint256 ticketId;
-        TrackedTicket ticket;
-        uint8[] normals;
-        uint8 bonusball;
-    }
-
-    function mintTicket(
-        address recipient, 
-        uint256 ticketId, 
-        uint256 drawingId,
-        uint256 packedTicket, 
-        bytes32 referralScheme
-    ) external;
-    
-    function burnTicket(uint256 ticketId) external;
-    function getTicketInfo(uint256 ticketId) external view returns (TrackedTicket memory);
-    function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
-}
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
-
-pragma solidity ^0.8.24;
-
-import {TransientSlot} from "./TransientSlot.sol";
-
-/**
- * @dev Variant of {ReentrancyGuard} that uses transient storage.
- *
- * NOTE: This variant only works on networks where EIP-1153 is available.
- *
- * _Available since v5.1._
- */
-abstract contract ReentrancyGuardTransient {
-    using TransientSlot for *;
-
-    // keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.ReentrancyGuard")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant REENTRANCY_GUARD_STORAGE =
-        0x9b779b17422d0df92223018b32b4d1fa46e071723d6817e2486d003becc55f00;
-
-    /**
-     * @dev Unauthorized reentrant call.
-     */
-    error ReentrancyGuardReentrantCall();
-
-    /**
-     * @dev Prevents a contract from calling itself, directly or indirectly.
-     * Calling a `nonReentrant` function from another `nonReentrant`
-     * function is not supported. It is possible to prevent this from happening
-     * by making the `nonReentrant` function external, and making it call a
-     * `private` function that does the actual work.
-     */
-    modifier nonReentrant() {
-        _nonReentrantBefore();
-        _;
-        _nonReentrantAfter();
-    }
-
-    function _nonReentrantBefore() private {
-        // On the first call to nonReentrant, REENTRANCY_GUARD_STORAGE.asBoolean().tload() will be false
-        if (_reentrancyGuardEntered()) {
-            revert ReentrancyGuardReentrantCall();
-        }
-
-        // Any calls to nonReentrant after this point will fail
-        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(true);
-    }
-
-    function _nonReentrantAfter() private {
-        REENTRANCY_GUARD_STORAGE.asBoolean().tstore(false);
-    }
-
-    /**
-     * @dev Returns true if the reentrancy guard is currently set to "entered", which indicates there is a
-     * `nonReentrant` function in the call stack.
-     */
-    function _reentrancyGuardEntered() internal view returns (bool) {
-        return REENTRANCY_GUARD_STORAGE.asBoolean().tload();
-    }
-}
-
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IScaledEntropyProvider {
-    struct SetRequest {
-        uint8 samples;
-        uint256 minRange;
-        uint256 maxRange;
-        bool withReplacement;
-    }
-    function requestAndCallbackScaledRandomness(
-        uint32 _gasLimit,
-        SetRequest[] memory _requests,
-        bytes4 _selector,
-        bytes memory _context
-    )
-        external
-        payable
-        returns (uint64 requestId);
-    function getFee(uint32 _gasLimit) external view returns (uint256);
-}
 // SPDX-License-Identifier: Apache 2
+
 pragma solidity ^0.8.0;
 
-abstract contract IEntropyConsumer {
-    // This method is called by Entropy to provide the random number to the consumer.
-    // It asserts that the msg.sender is the Entropy contract. It is not meant to be
-    // override by the consumer.
-    function _entropyCallback(
-        uint64 sequence,
-        address provider,
-        bytes32 randomNumber
-    ) external {
-        address entropy = getEntropy();
-        require(entropy != address(0), "Entropy address not set");
-        require(msg.sender == entropy, "Only Entropy can call this function");
-
-        entropyCallback(sequence, provider, randomNumber);
+contract EntropyStructsV2 {
+    struct ProviderInfo {
+        uint128 feeInWei;
+        uint128 accruedFeesInWei;
+        // The commitment that the provider posted to the blockchain, and the sequence number
+        // where they committed to this. This value is not advanced after the provider commits,
+        // and instead is stored to help providers track where they are in the hash chain.
+        bytes32 originalCommitment;
+        uint64 originalCommitmentSequenceNumber;
+        // Metadata for the current commitment. Providers may optionally use this field to help
+        // manage rotations (i.e., to pick the sequence number from the correct hash chain).
+        bytes commitmentMetadata;
+        // Optional URI where clients can retrieve revelations for the provider.
+        // Client SDKs can use this field to automatically determine how to retrieve random values for each provider.
+        // TODO: specify the API that must be implemented at this URI
+        bytes uri;
+        // The first sequence number that is *not* included in the current commitment (i.e., an exclusive end index).
+        // The contract maintains the invariant that sequenceNumber <= endSequenceNumber.
+        // If sequenceNumber == endSequenceNumber, the provider must rotate their commitment to add additional random values.
+        uint64 endSequenceNumber;
+        // The sequence number that will be assigned to the next inbound user request.
+        uint64 sequenceNumber;
+        // The current commitment represents an index/value in the provider's hash chain.
+        // These values are used to verify requests for future sequence numbers. Note that
+        // currentCommitmentSequenceNumber < sequenceNumber.
+        //
+        // The currentCommitment advances forward through the provider's hash chain as values
+        // are revealed on-chain.
+        bytes32 currentCommitment;
+        uint64 currentCommitmentSequenceNumber;
+        // An address that is authorized to set / withdraw fees on behalf of this provider.
+        address feeManager;
+        // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
+        // the provider supports for callbacks.
+        uint32 maxNumHashes;
+        // Default gas limit to use for callbacks.
+        uint32 defaultGasLimit;
     }
 
-    // getEntropy returns Entropy contract address. The method is being used to check that the
-    // callback is indeed from Entropy contract. The consumer is expected to implement this method.
-    // Entropy address can be found here - https://docs.pyth.network/entropy/contract-addresses
-    function getEntropy() internal view virtual returns (address);
-
-    // This method is expected to be implemented by the consumer to handle the random number.
-    // It will be called by _entropyCallback after _entropyCallback ensures that the call is
-    // indeed from Entropy contract.
-    function entropyCallback(
-        uint64 sequence,
-        address provider,
-        bytes32 randomNumber
-    ) internal virtual;
-}
-
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
-interface IJackpotLPManager {
-
-    struct LPDrawingState {
-        uint256 lpPoolTotal;
-        uint256 pendingDeposits;
-        uint256 pendingWithdrawals;
+    struct Request {
+        // Storage slot 1 //
+        address provider;
+        uint64 sequenceNumber;
+        // The number of hashes required to verify the provider revelation.
+        uint32 numHashes;
+        // Storage slot 2 //
+        // The commitment is keccak256(userCommitment, providerCommitment). Storing the hash instead of both saves 20k gas by
+        // eliminating 1 store.
+        bytes32 commitment;
+        // Storage slot 3 //
+        // The number of the block where this request was created.
+        // Note that we're using a uint64 such that we have an additional space for an address and other fields in
+        // this storage slot. Although block.number returns a uint256, 64 bits should be plenty to index all of the
+        // blocks ever generated.
+        uint64 blockNumber;
+        // The address that requested this random number.
+        address requester;
+        // If true, incorporate the blockhash of blockNumber into the generated random value.
+        bool useBlockhash;
+        // Status flag for requests with callbacks. See EntropyConstants for the possible values of this flag.
+        uint8 callbackStatus;
+        // The gasLimit in units of 10k gas. (i.e., 2 = 20k gas). We're using units of 10k in order to fit this
+        // field into the remaining 2 bytes of this storage slot. The dynamic range here is 10k - 655M, which should
+        // cover all real-world use cases.
+        uint16 gasLimit10k;
     }
-
-    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
-
-    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
-
-    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
-
-    function processDrawingSettlement(
-        uint256 _drawingId,
-        uint256 _lpEarnings,
-        uint256 _userWinnings,
-        uint256 _protocolFeeAmount
-    ) external returns (uint256 newLPValue, uint256 newAccumulator);
-
-    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
-
-    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
-
-    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
-
-    function initializeLP() external;
-
-    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
-    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
 }
-//SPDX-License-Identifier: UNLICENSED
 
-pragma solidity ^0.8.28;
-
-interface IJackpot {
-
-    struct Ticket {
-        uint8[] normals;
-        uint8 bonusball;
-    }
-
-    function buyTickets(
-        Ticket[] memory _tickets,
-        address _recipient,
-        address[] memory _referrers,
-        uint256[] memory _referralSplitBps,
-        bytes32 _source
-    )
-        external
-        returns (uint256[] memory ticketIds);
-
-    function claimWinnings(
-        uint256[] memory _userTicketIds
-    )
-        external;
-
-    function ticketPrice() external view returns (uint256);
-    function currentDrawingId() external view returns (uint256);
-    function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
-}
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.0;
 
@@ -4365,84 +4437,16 @@ interface EntropyEventsV2 {
     );
 }
 
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-library JackpotErrors {
-    // =============================================================
-    //                            ERRORS
-    // =============================================================
-
-    error JackpotLocked();
-    error DrawingNotDue();
-    error InvalidRecipient();
-    error InvalidTicketCount();
-    error ReferralSplitLengthMismatch();
-    error TooManyReferrers();
-    error ReferralSplitSumInvalid();
-    error InvalidBonusball();
-    error TicketAlreadyMinted();
-    error NoTicketsToClaim();
-    error NotTicketOwner();
-    error TicketFromFutureDrawing();
-    error DepositAmountZero();
-    error ExceedsPoolCap();
-    error WithdrawAmountZero();
-    error InsufficientShares();
-    error NothingToWithdraw();
-    error UnauthorizedEntropyCaller();
-    error EntropyAlreadyCalled();
-    error JackpotNotLocked();
-    error ContractAlreadyInitialized();
-    error ZeroAddress();
-    error ContractNotInitialized();
-    error LPDepositsAlreadyInitialized();
-    error LPDepositsNotInitialized();
-    error JackpotAlreadyInitialized();
-    error TicketPurchasesDisabled();
-    error InvalidTierWeights();
-    error InvalidReferralSplitBps();
-    error InvalidNormalsCount();
-    error InsufficientEntropyFee();
-    error NoReferralFeesToClaim();
-    error NoPrizePool();
-    error TicketPurchasesAlreadyEnabled();
-    error TicketPurchasesAlreadyDisabled();
-    error InvalidNormalBallMax();
-    error InvalidDrawingDuration();
-    error InvalidBonusballMin();
-    error InvalidLpEdgeTarget();
-    error InvalidReserveRatio();
-    error InvalidReferralFee();
-    error InvalidReferralWinShare();
-    error InvalidTicketPrice();
-    error InvalidMaxReferrers();
-    error EmergencyEnabled();
-    error EmergencyModeNotEngaged();
-    error EmergencyModeAlreadyEnabled();
-    error EmergencyModeAlreadyDisabled();
-    error NoLPDeposits();
-    error InvalidProtocolFee();
-    error InvalidGovernancePoolCap();
-    error TicketNotEligibleForRefund();
-    error NoTicketsProvided();
-}
 // SPDX-License-Identifier: Apache 2
 
 pragma solidity ^0.8.0;
 
-contract EntropyStructsV2 {
+// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
+// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
+// the Entropy contract.
+//
+// See EntropyStructsV2 for the struct definitions currently in use.
+contract EntropyStructs {
     struct ProviderInfo {
         uint128 feeInWei;
         uint128 accruedFeesInWei;
@@ -4477,8 +4481,6 @@ contract EntropyStructsV2 {
         // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
         // the provider supports for callbacks.
         uint32 maxNumHashes;
-        // Default gas limit to use for callbacks.
-        uint32 defaultGasLimit;
     }
 
     struct Request {
@@ -4501,12 +4503,8 @@ contract EntropyStructsV2 {
         address requester;
         // If true, incorporate the blockhash of blockNumber into the generated random value.
         bool useBlockhash;
-        // Status flag for requests with callbacks. See EntropyConstants for the possible values of this flag.
-        uint8 callbackStatus;
-        // The gasLimit in units of 10k gas. (i.e., 2 = 20k gas). We're using units of 10k in order to fit this
-        // field into the remaining 2 bytes of this storage slot. The dynamic range here is 10k - 655M, which should
-        // cover all real-world use cases.
-        uint16 gasLimit10k;
+        // True if this is a request that expects a callback.
+        bool isRequestWithCallback;
     }
 }
 
@@ -4600,77 +4598,79 @@ library FisherYatesRejection {
     }
 }
 
-// SPDX-License-Identifier: Apache 2
+//SPDX-License-Identifier: UNLICENSED
 
-pragma solidity ^0.8.0;
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
 
-// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
-// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
-// the Entropy contract.
-//
-// See EntropyStructsV2 for the struct definitions currently in use.
-contract EntropyStructs {
-    struct ProviderInfo {
-        uint128 feeInWei;
-        uint128 accruedFeesInWei;
-        // The commitment that the provider posted to the blockchain, and the sequence number
-        // where they committed to this. This value is not advanced after the provider commits,
-        // and instead is stored to help providers track where they are in the hash chain.
-        bytes32 originalCommitment;
-        uint64 originalCommitmentSequenceNumber;
-        // Metadata for the current commitment. Providers may optionally use this field to help
-        // manage rotations (i.e., to pick the sequence number from the correct hash chain).
-        bytes commitmentMetadata;
-        // Optional URI where clients can retrieve revelations for the provider.
-        // Client SDKs can use this field to automatically determine how to retrieve random values for each provider.
-        // TODO: specify the API that must be implemented at this URI
-        bytes uri;
-        // The first sequence number that is *not* included in the current commitment (i.e., an exclusive end index).
-        // The contract maintains the invariant that sequenceNumber <= endSequenceNumber.
-        // If sequenceNumber == endSequenceNumber, the provider must rotate their commitment to add additional random values.
-        uint64 endSequenceNumber;
-        // The sequence number that will be assigned to the next inbound user request.
-        uint64 sequenceNumber;
-        // The current commitment represents an index/value in the provider's hash chain.
-        // These values are used to verify requests for future sequence numbers. Note that
-        // currentCommitmentSequenceNumber < sequenceNumber.
-        //
-        // The currentCommitment advances forward through the provider's hash chain as values
-        // are revealed on-chain.
-        bytes32 currentCommitment;
-        uint64 currentCommitmentSequenceNumber;
-        // An address that is authorized to set / withdraw fees on behalf of this provider.
-        address feeManager;
-        // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
-        // the provider supports for callbacks.
-        uint32 maxNumHashes;
-    }
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
 
-    struct Request {
-        // Storage slot 1 //
-        address provider;
-        uint64 sequenceNumber;
-        // The number of hashes required to verify the provider revelation.
-        uint32 numHashes;
-        // Storage slot 2 //
-        // The commitment is keccak256(userCommitment, providerCommitment). Storing the hash instead of both saves 20k gas by
-        // eliminating 1 store.
-        bytes32 commitment;
-        // Storage slot 3 //
-        // The number of the block where this request was created.
-        // Note that we're using a uint64 such that we have an additional space for an address and other fields in
-        // this storage slot. Although block.number returns a uint256, 64 bits should be plenty to index all of the
-        // blocks ever generated.
-        uint64 blockNumber;
-        // The address that requested this random number.
-        address requester;
-        // If true, incorporate the blockhash of blockNumber into the generated random value.
-        bool useBlockhash;
-        // True if this is a request that expects a callback.
-        bool isRequestWithCallback;
-    }
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+library JackpotErrors {
+    // =============================================================
+    //                            ERRORS
+    // =============================================================
+
+    error JackpotLocked();
+    error DrawingNotDue();
+    error InvalidRecipient();
+    error InvalidTicketCount();
+    error ReferralSplitLengthMismatch();
+    error TooManyReferrers();
+    error ReferralSplitSumInvalid();
+    error InvalidBonusball();
+    error TicketAlreadyMinted();
+    error NoTicketsToClaim();
+    error NotTicketOwner();
+    error TicketFromFutureDrawing();
+    error DepositAmountZero();
+    error ExceedsPoolCap();
+    error WithdrawAmountZero();
+    error InsufficientShares();
+    error NothingToWithdraw();
+    error UnauthorizedEntropyCaller();
+    error EntropyAlreadyCalled();
+    error JackpotNotLocked();
+    error ContractAlreadyInitialized();
+    error ZeroAddress();
+    error ContractNotInitialized();
+    error LPDepositsAlreadyInitialized();
+    error LPDepositsNotInitialized();
+    error JackpotAlreadyInitialized();
+    error TicketPurchasesDisabled();
+    error InvalidTierWeights();
+    error InvalidReferralSplitBps();
+    error InvalidNormalsCount();
+    error InsufficientEntropyFee();
+    error NoReferralFeesToClaim();
+    error NoPrizePool();
+    error TicketPurchasesAlreadyEnabled();
+    error TicketPurchasesAlreadyDisabled();
+    error InvalidNormalBallMax();
+    error InvalidDrawingDuration();
+    error InvalidBonusballMin();
+    error InvalidLpEdgeTarget();
+    error InvalidReserveRatio();
+    error InvalidReferralFee();
+    error InvalidReferralWinShare();
+    error InvalidTicketPrice();
+    error InvalidMaxReferrers();
+    error EmergencyEnabled();
+    error EmergencyModeNotEngaged();
+    error EmergencyModeAlreadyEnabled();
+    error EmergencyModeAlreadyDisabled();
+    error NoLPDeposits();
+    error InvalidProtocolFee();
+    error InvalidGovernancePoolCap();
+    error TicketNotEligibleForRefund();
+    error NoTicketsProvided();
 }
-
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
 // SPDX-License-Identifier: Apache 2

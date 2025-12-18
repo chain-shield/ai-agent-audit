@@ -347,7 +347,7 @@ pub async fn generate_ai_agents(
     // )?);
 
     // Enhanced preamble for discovery agents
-    let solidity_auditor_preamble = r#"You are a world-class expert at smart contract auditing, renowned for finding the most complex and tricky vulnerabilities in EVM Solidity codebases. You consistently land valid solo High and Medium findings in competitive audit contests. Prioritize semantic, multi-step, cross-contract, and incentive-based attack paths over syntactic pattern matching."#;
+    let solidity_auditor_preamble = r#"You are a world-class expert at smart contract auditing, renowned for finding the most complex and tricky vulnerabilities in EVM Solidity codebases. You consistently land valid solo High and Medium findings in competitive audit contests. You are an expert at unearthing high value semantic, multi-step, cross-contract, and incentive-based attack paths."#;
     // let _discovery_config_claude = AgentConfig::new(Some(repo.clone()))
     //     .with_temperature(1.0)
     //     .with_model(CLAUDE_4_5_SONNET)
@@ -362,7 +362,7 @@ pub async fn generate_ai_agents(
         .with_preamble(solidity_auditor_preamble);
 
     let _pattern_discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.1")
+        .with_model("gpt-5.2")
         .with_preamble(solidity_auditor_preamble)
         .with_file_retrieval(false)
         .with_openai_reasoning_effort("high")
