@@ -211,6 +211,292 @@ contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
+/// @notice Library for bit twiddling and boolean operations.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/LibBit.sol)
+/// @author Inspired by (https://graphics.stanford.edu/~seander/bithacks.html)
+library LibBit {
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                  BIT TWIDDLING OPERATIONS                  */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Find last set.
+    /// Returns the index of the most significant bit of `x`,
+    /// counting from the least significant bit position.
+    /// If `x` is zero, returns 256.
+    function fls(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            r := or(shl(8, iszero(x)), shl(7, lt(0xffffffffffffffffffffffffffffffff, x)))
+            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
+            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
+            r := or(r, shl(4, lt(0xffff, shr(r, x))))
+            r := or(r, shl(3, lt(0xff, shr(r, x))))
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0x0706060506020504060203020504030106050205030304010505030400000000))
+        }
+    }
+
+    /// @dev Count leading zeros.
+    /// Returns the number of zeros preceding the most significant one bit.
+    /// If `x` is zero, returns 256.
+    function clz(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            r := shl(7, lt(0xffffffffffffffffffffffffffffffff, x))
+            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
+            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
+            r := or(r, shl(4, lt(0xffff, shr(r, x))))
+            r := or(r, shl(3, lt(0xff, shr(r, x))))
+            // forgefmt: disable-next-item
+            r := add(xor(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0xf8f9f9faf9fdfafbf9fdfcfdfafbfcfef9fafdfafcfcfbfefafafcfbffffffff)), iszero(x))
+        }
+    }
+
+    /// @dev Find first set.
+    /// Returns the index of the least significant bit of `x`,
+    /// counting from the least significant bit position.
+    /// If `x` is zero, returns 256.
+    /// Equivalent to `ctz` (count trailing zeros), which gives
+    /// the number of zeros following the least significant one bit.
+    function ffs(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Isolate the least significant bit.
+            x := and(x, add(not(x), 1))
+            // For the upper 3 bits of the result, use a De Bruijn-like lookup.
+            // Credit to adhusson: https://blog.adhusson.com/cheap-find-first-set-evm/
+            // forgefmt: disable-next-item
+            r := shl(5, shr(252, shl(shl(2, shr(250, mul(x,
+                0xb6db6db6ddddddddd34d34d349249249210842108c6318c639ce739cffffffff))),
+                0x8040405543005266443200005020610674053026020000107506200176117077)))
+            // For the lower 5 bits of the result, use a De Bruijn lookup.
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(div(0xd76453e0, shr(r, x)), 0x1f),
+                0x001f0d1e100c1d070f090b19131c1706010e11080a1a141802121b1503160405))
+        }
+    }
+
+    /// @dev Returns the number of set bits in `x`.
+    function popCount(uint256 x) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            let max := not(0)
+            let isMax := eq(x, max)
+            x := sub(x, and(shr(1, x), div(max, 3)))
+            x := add(and(x, div(max, 5)), and(shr(2, x), div(max, 5)))
+            x := and(add(x, shr(4, x)), div(max, 17))
+            c := or(shl(8, isMax), shr(248, mul(x, div(max, 255))))
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `x`.
+    /// To get the number of non-zero bytes, simply do `32 - countZeroBytes(x)`.
+    function countZeroBytes(uint256 x) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            let m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+            c := byte(0, mul(shr(7, not(m)), shr(7, not(or(or(add(and(x, m), m), x), m)))))
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `s`.
+    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
+    function countZeroBytes(bytes memory s) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            function czb(x_) -> _c {
+                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
+                _c := byte(0, mul(shr(7, not(_m)), _c))
+            }
+            let n := mload(s)
+            let l := shl(5, shr(5, n))
+            s := add(s, 0x20)
+            for { let i } xor(i, l) { i := add(i, 0x20) } { c := add(czb(mload(add(s, i))), c) }
+            if lt(l, n) { c := add(czb(or(shr(shl(3, sub(n, l)), not(0)), mload(add(s, l)))), c) }
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `s`.
+    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
+    function countZeroBytesCalldata(bytes calldata s) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            function czb(x_) -> _c {
+                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
+                _c := byte(0, mul(shr(7, not(_m)), _c))
+            }
+            let l := shl(5, shr(5, s.length))
+            for { let i } xor(i, l) { i := add(i, 0x20) } {
+                c := add(czb(calldataload(add(s.offset, i))), c)
+            }
+            if lt(l, s.length) {
+                let m := shr(shl(3, sub(s.length, l)), not(0))
+                c := add(czb(or(m, calldataload(add(s.offset, l)))), c)
+            }
+        }
+    }
+
+    /// @dev Returns whether `x` is a power of 2.
+    function isPo2(uint256 x) internal pure returns (bool result) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Equivalent to `x && !(x & (x - 1))`.
+            result := iszero(add(and(x, sub(x, 1)), iszero(x)))
+        }
+    }
+
+    /// @dev Returns `x` reversed at the bit level.
+    function reverseBits(uint256 x) internal pure returns (uint256 r) {
+        uint256 m0 = 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f;
+        uint256 m1 = m0 ^ (m0 << 2);
+        uint256 m2 = m1 ^ (m1 << 1);
+        r = reverseBytes(x);
+        r = (m2 & (r >> 1)) | ((m2 & r) << 1);
+        r = (m1 & (r >> 2)) | ((m1 & r) << 2);
+        r = (m0 & (r >> 4)) | ((m0 & r) << 4);
+    }
+
+    /// @dev Returns `x` reversed at the byte level.
+    function reverseBytes(uint256 x) internal pure returns (uint256 r) {
+        unchecked {
+            // Computing masks on-the-fly reduces bytecode size by about 200 bytes.
+            uint256 m0 = 0x100000000000000000000000000000001 * (~toUint(x == uint256(0)) >> 192);
+            uint256 m1 = m0 ^ (m0 << 32);
+            uint256 m2 = m1 ^ (m1 << 16);
+            uint256 m3 = m2 ^ (m2 << 8);
+            r = (m3 & (x >> 8)) | ((m3 & x) << 8);
+            r = (m2 & (r >> 16)) | ((m2 & r) << 16);
+            r = (m1 & (r >> 32)) | ((m1 & r) << 32);
+            r = (m0 & (r >> 64)) | ((m0 & r) << 64);
+            r = (r >> 128) | (r << 128);
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the bit level.
+    function commonBitPrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = 256 - clz(x ^ y);
+            return (x >> s) << s;
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the nibble level.
+    function commonNibblePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = (64 - (clz(x ^ y) >> 2)) << 2;
+            return (x >> s) << s;
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the byte level.
+    function commonBytePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = (32 - (clz(x ^ y) >> 3)) << 3;
+            return (x >> s) << s;
+        }
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                     BOOLEAN OPERATIONS                     */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    // A Solidity bool on the stack or memory is represented as a 256-bit word.
+    // Non-zero values are true, zero is false.
+    // A clean bool is either 0 (false) or 1 (true) under the hood.
+    // Usually, if not always, the bool result of a regular Solidity expression,
+    // or the argument of a public/external function will be a clean bool.
+    // You can usually use the raw variants for more performance.
+    // If uncertain, test (best with exact compiler settings).
+    // Or use the non-raw variants (compiler can sometimes optimize out the double `iszero`s).
+
+    /// @dev Returns `x & y`. Inputs must be clean.
+    function rawAnd(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := and(x, y)
+        }
+    }
+
+    /// @dev Returns `x & y`.
+    function and(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := and(iszero(iszero(x)), iszero(iszero(y)))
+        }
+    }
+
+    /// @dev Returns `w & x & y`.
+    function and(bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(or(iszero(w), or(iszero(x), iszero(y))))
+        }
+    }
+
+    /// @dev Returns `v & w & x & y`.
+    function and(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(or(or(iszero(v), iszero(w)), or(iszero(x), iszero(y))))
+        }
+    }
+
+    /// @dev Returns `x | y`. Inputs must be clean.
+    function rawOr(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := or(x, y)
+        }
+    }
+
+    /// @dev Returns `x | y`.
+    function or(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(x, y)))
+        }
+    }
+
+    /// @dev Returns `w | x | y`.
+    function or(bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(w, or(x, y))))
+        }
+    }
+
+    /// @dev Returns `v | w | x | y`.
+    function or(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(v, or(w, or(x, y)))))
+        }
+    }
+
+    /// @dev Returns 1 if `b` is true, else 0. Input must be clean.
+    function rawToUint(bool b) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := b
+        }
+    }
+
+    /// @dev Returns 1 if `b` is true, else 0.
+    function toUint(bool b) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(b))
+        }
+    }
+}
+
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -1941,292 +2227,6 @@ contract Jackpot is IJackpot, Ownable2Step, ReentrancyGuardTransient {
 }
 
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
-
-/// @notice Library for bit twiddling and boolean operations.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/LibBit.sol)
-/// @author Inspired by (https://graphics.stanford.edu/~seander/bithacks.html)
-library LibBit {
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                  BIT TWIDDLING OPERATIONS                  */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Find last set.
-    /// Returns the index of the most significant bit of `x`,
-    /// counting from the least significant bit position.
-    /// If `x` is zero, returns 256.
-    function fls(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            r := or(shl(8, iszero(x)), shl(7, lt(0xffffffffffffffffffffffffffffffff, x)))
-            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
-            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
-            r := or(r, shl(4, lt(0xffff, shr(r, x))))
-            r := or(r, shl(3, lt(0xff, shr(r, x))))
-            // forgefmt: disable-next-item
-            r := or(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
-                0x0706060506020504060203020504030106050205030304010505030400000000))
-        }
-    }
-
-    /// @dev Count leading zeros.
-    /// Returns the number of zeros preceding the most significant one bit.
-    /// If `x` is zero, returns 256.
-    function clz(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            r := shl(7, lt(0xffffffffffffffffffffffffffffffff, x))
-            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
-            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
-            r := or(r, shl(4, lt(0xffff, shr(r, x))))
-            r := or(r, shl(3, lt(0xff, shr(r, x))))
-            // forgefmt: disable-next-item
-            r := add(xor(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
-                0xf8f9f9faf9fdfafbf9fdfcfdfafbfcfef9fafdfafcfcfbfefafafcfbffffffff)), iszero(x))
-        }
-    }
-
-    /// @dev Find first set.
-    /// Returns the index of the least significant bit of `x`,
-    /// counting from the least significant bit position.
-    /// If `x` is zero, returns 256.
-    /// Equivalent to `ctz` (count trailing zeros), which gives
-    /// the number of zeros following the least significant one bit.
-    function ffs(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            // Isolate the least significant bit.
-            x := and(x, add(not(x), 1))
-            // For the upper 3 bits of the result, use a De Bruijn-like lookup.
-            // Credit to adhusson: https://blog.adhusson.com/cheap-find-first-set-evm/
-            // forgefmt: disable-next-item
-            r := shl(5, shr(252, shl(shl(2, shr(250, mul(x,
-                0xb6db6db6ddddddddd34d34d349249249210842108c6318c639ce739cffffffff))),
-                0x8040405543005266443200005020610674053026020000107506200176117077)))
-            // For the lower 5 bits of the result, use a De Bruijn lookup.
-            // forgefmt: disable-next-item
-            r := or(r, byte(and(div(0xd76453e0, shr(r, x)), 0x1f),
-                0x001f0d1e100c1d070f090b19131c1706010e11080a1a141802121b1503160405))
-        }
-    }
-
-    /// @dev Returns the number of set bits in `x`.
-    function popCount(uint256 x) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            let max := not(0)
-            let isMax := eq(x, max)
-            x := sub(x, and(shr(1, x), div(max, 3)))
-            x := add(and(x, div(max, 5)), and(shr(2, x), div(max, 5)))
-            x := and(add(x, shr(4, x)), div(max, 17))
-            c := or(shl(8, isMax), shr(248, mul(x, div(max, 255))))
-        }
-    }
-
-    /// @dev Returns the number of zero bytes in `x`.
-    /// To get the number of non-zero bytes, simply do `32 - countZeroBytes(x)`.
-    function countZeroBytes(uint256 x) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            let m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-            c := byte(0, mul(shr(7, not(m)), shr(7, not(or(or(add(and(x, m), m), x), m)))))
-        }
-    }
-
-    /// @dev Returns the number of zero bytes in `s`.
-    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
-    function countZeroBytes(bytes memory s) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            function czb(x_) -> _c {
-                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
-                _c := byte(0, mul(shr(7, not(_m)), _c))
-            }
-            let n := mload(s)
-            let l := shl(5, shr(5, n))
-            s := add(s, 0x20)
-            for { let i } xor(i, l) { i := add(i, 0x20) } { c := add(czb(mload(add(s, i))), c) }
-            if lt(l, n) { c := add(czb(or(shr(shl(3, sub(n, l)), not(0)), mload(add(s, l)))), c) }
-        }
-    }
-
-    /// @dev Returns the number of zero bytes in `s`.
-    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
-    function countZeroBytesCalldata(bytes calldata s) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            function czb(x_) -> _c {
-                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
-                _c := byte(0, mul(shr(7, not(_m)), _c))
-            }
-            let l := shl(5, shr(5, s.length))
-            for { let i } xor(i, l) { i := add(i, 0x20) } {
-                c := add(czb(calldataload(add(s.offset, i))), c)
-            }
-            if lt(l, s.length) {
-                let m := shr(shl(3, sub(s.length, l)), not(0))
-                c := add(czb(or(m, calldataload(add(s.offset, l)))), c)
-            }
-        }
-    }
-
-    /// @dev Returns whether `x` is a power of 2.
-    function isPo2(uint256 x) internal pure returns (bool result) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            // Equivalent to `x && !(x & (x - 1))`.
-            result := iszero(add(and(x, sub(x, 1)), iszero(x)))
-        }
-    }
-
-    /// @dev Returns `x` reversed at the bit level.
-    function reverseBits(uint256 x) internal pure returns (uint256 r) {
-        uint256 m0 = 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f;
-        uint256 m1 = m0 ^ (m0 << 2);
-        uint256 m2 = m1 ^ (m1 << 1);
-        r = reverseBytes(x);
-        r = (m2 & (r >> 1)) | ((m2 & r) << 1);
-        r = (m1 & (r >> 2)) | ((m1 & r) << 2);
-        r = (m0 & (r >> 4)) | ((m0 & r) << 4);
-    }
-
-    /// @dev Returns `x` reversed at the byte level.
-    function reverseBytes(uint256 x) internal pure returns (uint256 r) {
-        unchecked {
-            // Computing masks on-the-fly reduces bytecode size by about 200 bytes.
-            uint256 m0 = 0x100000000000000000000000000000001 * (~toUint(x == uint256(0)) >> 192);
-            uint256 m1 = m0 ^ (m0 << 32);
-            uint256 m2 = m1 ^ (m1 << 16);
-            uint256 m3 = m2 ^ (m2 << 8);
-            r = (m3 & (x >> 8)) | ((m3 & x) << 8);
-            r = (m2 & (r >> 16)) | ((m2 & r) << 16);
-            r = (m1 & (r >> 32)) | ((m1 & r) << 32);
-            r = (m0 & (r >> 64)) | ((m0 & r) << 64);
-            r = (r >> 128) | (r << 128);
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the bit level.
-    function commonBitPrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = 256 - clz(x ^ y);
-            return (x >> s) << s;
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the nibble level.
-    function commonNibblePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = (64 - (clz(x ^ y) >> 2)) << 2;
-            return (x >> s) << s;
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the byte level.
-    function commonBytePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = (32 - (clz(x ^ y) >> 3)) << 3;
-            return (x >> s) << s;
-        }
-    }
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                     BOOLEAN OPERATIONS                     */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    // A Solidity bool on the stack or memory is represented as a 256-bit word.
-    // Non-zero values are true, zero is false.
-    // A clean bool is either 0 (false) or 1 (true) under the hood.
-    // Usually, if not always, the bool result of a regular Solidity expression,
-    // or the argument of a public/external function will be a clean bool.
-    // You can usually use the raw variants for more performance.
-    // If uncertain, test (best with exact compiler settings).
-    // Or use the non-raw variants (compiler can sometimes optimize out the double `iszero`s).
-
-    /// @dev Returns `x & y`. Inputs must be clean.
-    function rawAnd(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := and(x, y)
-        }
-    }
-
-    /// @dev Returns `x & y`.
-    function and(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := and(iszero(iszero(x)), iszero(iszero(y)))
-        }
-    }
-
-    /// @dev Returns `w & x & y`.
-    function and(bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(or(iszero(w), or(iszero(x), iszero(y))))
-        }
-    }
-
-    /// @dev Returns `v & w & x & y`.
-    function and(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(or(or(iszero(v), iszero(w)), or(iszero(x), iszero(y))))
-        }
-    }
-
-    /// @dev Returns `x | y`. Inputs must be clean.
-    function rawOr(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := or(x, y)
-        }
-    }
-
-    /// @dev Returns `x | y`.
-    function or(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(x, y)))
-        }
-    }
-
-    /// @dev Returns `w | x | y`.
-    function or(bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(w, or(x, y))))
-        }
-    }
-
-    /// @dev Returns `v | w | x | y`.
-    function or(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(v, or(w, or(x, y)))))
-        }
-    }
-
-    /// @dev Returns 1 if `b` is true, else 0. Input must be clean.
-    function rawToUint(bool b) internal pure returns (uint256 z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := b
-        }
-    }
-
-    /// @dev Returns 1 if `b` is true, else 0.
-    function toUint(bool b) internal pure returns (uint256 z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(b))
-        }
-    }
-}
-
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import { Combinations } from "./Combinations.sol";
@@ -2602,6 +2602,74 @@ interface IJackpotTicketNFT {
     function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
 }
 // SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
+
+pragma solidity ^0.8.20;
+
+import {Ownable} from "./Ownable.sol";
+
+/**
+ * @dev Contract module which provides access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * This extension of the {Ownable} contract includes a two-step mechanism to transfer
+ * ownership, where the new owner must call {acceptOwnership} in order to replace the
+ * old one. This can help prevent common mistakes, such as transfers of ownership to
+ * incorrect accounts, or to contracts that are unable to interact with the
+ * permission system.
+ *
+ * The initial owner is specified at deployment time in the constructor for `Ownable`. This
+ * can later be changed with {transferOwnership} and {acceptOwnership}.
+ *
+ * This module is used through inheritance. It will make available all functions
+ * from parent (Ownable).
+ */
+abstract contract Ownable2Step is Ownable {
+    address private _pendingOwner;
+
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Returns the address of the pending owner.
+     */
+    function pendingOwner() public view virtual returns (address) {
+        return _pendingOwner;
+    }
+
+    /**
+     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
+     * Can only be called by the current owner.
+     *
+     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
+     */
+    function transferOwnership(address newOwner) public virtual override onlyOwner {
+        _pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner(), newOwner);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual override {
+        delete _pendingOwner;
+        super._transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev The new owner accepts the ownership transfer.
+     */
+    function acceptOwnership() public virtual {
+        address sender = _msgSender();
+        if (pendingOwner() != sender) {
+            revert OwnableUnauthorizedAccount(sender);
+        }
+        _transferOwnership(sender);
+    }
+}
+
+// SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
 
 pragma solidity ^0.8.24;
@@ -2693,74 +2761,33 @@ interface IJackpot {
     function currentDrawingId() external view returns (uint256);
     function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
 }
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
+//SPDX-License-Identifier: UNLICENSED
 
-pragma solidity ^0.8.20;
+/*
+Copyright (C) 2025 Coordination Inc.
+Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
 
-import {Ownable} from "./Ownable.sol";
+Change Date: 2029-12-01
 
-/**
- * @dev Contract module which provides access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * This extension of the {Ownable} contract includes a two-step mechanism to transfer
- * ownership, where the new owner must call {acceptOwnership} in order to replace the
- * old one. This can help prevent common mistakes, such as transfers of ownership to
- * incorrect accounts, or to contracts that are unable to interact with the
- * permission system.
- *
- * The initial owner is specified at deployment time in the constructor for `Ownable`. This
- * can later be changed with {transferOwnership} and {acceptOwnership}.
- *
- * This module is used through inheritance. It will make available all functions
- * from parent (Ownable).
- */
-abstract contract Ownable2Step is Ownable {
-    address private _pendingOwner;
+On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
+*/
 
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+pragma solidity ^0.8.28;
 
-    /**
-     * @dev Returns the address of the pending owner.
-     */
-    function pendingOwner() public view virtual returns (address) {
-        return _pendingOwner;
-    }
+interface IPayoutCalculator {
+    function calculateAndStoreDrawingUserWinnings(
+        uint256 _drawingId,
+        uint256 _prizePool,
+        uint8 _ballMax,
+        uint8 _bonusballMax,
+        uint256[] memory _result,
+        uint256[] memory _dupResult
+    ) external returns (uint256);
 
-    /**
-     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
-     * Can only be called by the current owner.
-     *
-     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
-     */
-    function transferOwnership(address newOwner) public virtual override onlyOwner {
-        _pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner(), newOwner);
-    }
+    function setDrawingTierInfo(uint256 _drawingId) external;
 
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual override {
-        delete _pendingOwner;
-        super._transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev The new owner accepts the ownership transfer.
-     */
-    function acceptOwnership() public virtual {
-        address sender = _msgSender();
-        if (pendingOwner() != sender) {
-            revert OwnableUnauthorizedAccount(sender);
-        }
-        _transferOwnership(sender);
-    }
+    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
 }
-
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -2838,42 +2865,6 @@ library JackpotErrors {
 
 pragma solidity ^0.8.28;
 
-interface IJackpotLPManager {
-
-    struct LPDrawingState {
-        uint256 lpPoolTotal;
-        uint256 pendingDeposits;
-        uint256 pendingWithdrawals;
-    }
-
-    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
-
-    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
-
-    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
-
-    function processDrawingSettlement(
-        uint256 _drawingId,
-        uint256 _lpEarnings,
-        uint256 _userWinnings,
-        uint256 _protocolFeeAmount
-    ) external returns (uint256 newLPValue, uint256 newAccumulator);
-
-    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
-
-    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
-
-    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
-
-    function initializeLP() external;
-
-    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
-    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
-}
-//SPDX-License-Identifier: UNLICENSED
-
-pragma solidity ^0.8.28;
-
 interface IScaledEntropyProvider {
     struct SetRequest {
         uint8 samples;
@@ -2891,82 +2882,6 @@ interface IScaledEntropyProvider {
         payable
         returns (uint64 requestId);
     function getFee(uint32 _gasLimit) external view returns (uint256);
-}
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-/**
- * @title UintCasts
- * @notice Minimal helpers for safely downcasting uint256 values to uint8.
- * @dev Reverts with Uint8OutOfBounds() if a value exceeds uint8's max (255).
- */
-library UintCasts {
-    /// @notice Raised when a value cannot be represented as uint8 (value > 255)
-    error Uint8OutOfBounds();
-
-    /**
-     * @notice Safely cast a uint256 to uint8.
-     * @param _value The value to cast.
-     * @return out The value as uint8 (reverts if out of range).
-     */
-    function toUint8(uint256 _value) internal pure returns (uint8) {
-        if (_value > type(uint8).max) revert Uint8OutOfBounds();
-        return uint8(_value);
-    }
-
-    /**
-     * @notice Safely cast an array of uint256 to uint8[] element-wise.
-     * @param _values The array of values to cast.
-     * @return out The cast array (reverts if any element is out of range).
-     */
-    function toUint8Array(uint256[] memory _values) internal pure returns (uint8[] memory) {
-        uint256 len = _values.length;
-        uint8[] memory out = new uint8[](len);
-        for (uint256 i = 0; i < len; ) {
-            out[i] = toUint8(_values[i]);
-            unchecked { ++i; }
-        }
-        return out;
-    }
-}
-
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
-
-Change Date: 2029-12-01
-
-On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
-*/
-
-pragma solidity ^0.8.28;
-
-interface IPayoutCalculator {
-    function calculateAndStoreDrawingUserWinnings(
-        uint256 _drawingId,
-        uint256 _prizePool,
-        uint8 _ballMax,
-        uint8 _bonusballMax,
-        uint256[] memory _result,
-        uint256[] memory _dupResult
-    ) external returns (uint256);
-
-    function setDrawingTierInfo(uint256 _drawingId) external;
-
-    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
 }
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8;
@@ -3038,8 +2953,246 @@ library Combinations {
         }
     }
 }
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IJackpotLPManager {
+
+    struct LPDrawingState {
+        uint256 lpPoolTotal;
+        uint256 pendingDeposits;
+        uint256 pendingWithdrawals;
+    }
+
+    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
+
+    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
+
+    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
+
+    function processDrawingSettlement(
+        uint256 _drawingId,
+        uint256 _lpEarnings,
+        uint256 _userWinnings,
+        uint256 _protocolFeeAmount
+    ) external returns (uint256 newLPValue, uint256 newAccumulator);
+
+    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
+
+    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
+
+    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
+
+    function initializeLP() external;
+
+    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
+    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
+}
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+/**
+ * @title UintCasts
+ * @notice Minimal helpers for safely downcasting uint256 values to uint8.
+ * @dev Reverts with Uint8OutOfBounds() if a value exceeds uint8's max (255).
+ */
+library UintCasts {
+    /// @notice Raised when a value cannot be represented as uint8 (value > 255)
+    error Uint8OutOfBounds();
+
+    /**
+     * @notice Safely cast a uint256 to uint8.
+     * @param _value The value to cast.
+     * @return out The value as uint8 (reverts if out of range).
+     */
+    function toUint8(uint256 _value) internal pure returns (uint8) {
+        if (_value > type(uint8).max) revert Uint8OutOfBounds();
+        return uint8(_value);
+    }
+
+    /**
+     * @notice Safely cast an array of uint256 to uint8[] element-wise.
+     * @param _values The array of values to cast.
+     * @return out The cast array (reverts if any element is out of range).
+     */
+    function toUint8Array(uint256[] memory _values) internal pure returns (uint8[] memory) {
+        uint256 len = _values.length;
+        uint8[] memory out = new uint8[](len);
+        for (uint256 i = 0; i < len; ) {
+            out[i] = toUint8(_values[i]);
+            unchecked { ++i; }
+        }
+        return out;
+    }
+}
+
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
+// SPDX-License-Identifier: Apache 2
+pragma solidity ^0.8.0;
+
+import "./EntropyEvents.sol";
+import "./EntropyEventsV2.sol";
+import "./EntropyStructsV2.sol";
+import "./IEntropyV2.sol";
+
+interface IEntropy is EntropyEvents, EntropyEventsV2, IEntropyV2 {
+    // Register msg.sender as a randomness provider. The arguments are the provider's configuration parameters
+    // and initial commitment. Re-registering the same provider rotates the provider's commitment (and updates
+    // the feeInWei).
+    //
+    // chainLength is the number of values in the hash chain *including* the commitment, that is, chainLength >= 1.
+    function register(
+        uint128 feeInWei,
+        bytes32 commitment,
+        bytes calldata commitmentMetadata,
+        uint64 chainLength,
+        bytes calldata uri
+    ) external;
+
+    // Withdraw a portion of the accumulated fees for the provider msg.sender.
+    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
+    // balance of fees in the contract).
+    function withdraw(uint128 amount) external;
+
+    // Withdraw a portion of the accumulated fees for provider. The msg.sender must be the fee manager for this provider.
+    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
+    // balance of fees in the contract).
+    function withdrawAsFeeManager(address provider, uint128 amount) external;
+
+    // As a user, request a random number from `provider`. Prior to calling this method, the user should
+    // generate a random number x and keep it secret. The user should then compute hash(x) and pass that
+    // as the userCommitment argument. (You may call the constructUserCommitment method to compute the hash.)
+    //
+    // This method returns a sequence number. The user should pass this sequence number to
+    // their chosen provider (the exact method for doing so will depend on the provider) to retrieve the provider's
+    // number. The user should then call fulfillRequest to construct the final random number.
+    //
+    // This method will revert unless the caller provides a sufficient fee (at least getFee(provider)) as msg.value.
+    // Note that excess value is *not* refunded to the caller.
+    function request(
+        address provider,
+        bytes32 userCommitment,
+        bool useBlockHash
+    ) external payable returns (uint64 assignedSequenceNumber);
+
+    // Request a random number. The method expects the provider address and a secret random number
+    // in the arguments. It returns a sequence number.
+    //
+    // The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
+    // The `entropyCallback` method on that interface will receive a callback with the generated random number.
+    // `entropyCallback` will be run with the provider's default gas limit (see `getProviderInfo(provider).defaultGasLimit`).
+    // If your callback needs additional gas, please use `requestWithCallbackAndGasLimit`.
+    //
+    // This method will revert unless the caller provides a sufficient fee (at least `getFee(provider)`) as msg.value.
+    // Note that excess value is *not* refunded to the caller.
+    function requestWithCallback(
+        address provider,
+        bytes32 userRandomNumber
+    ) external payable returns (uint64 assignedSequenceNumber);
+
+    // Fulfill a request for a random number. This method validates the provided userRandomness and provider's proof
+    // against the corresponding commitments in the in-flight request. If both values are validated, this function returns
+    // the corresponding random number.
+    //
+    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
+    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
+    // If you need to use the returned random number more than once, you are responsible for storing it.
+    function reveal(
+        address provider,
+        uint64 sequenceNumber,
+        bytes32 userRevelation,
+        bytes32 providerRevelation
+    ) external returns (bytes32 randomNumber);
+
+    // Fulfill a request for a random number. This method validates the provided userRandomness
+    // and provider's revelation against the corresponding commitment in the in-flight request. If both values are validated
+    // and the requestor address is a contract address, this function calls the requester's entropyCallback method with the
+    // sequence number, provider address and the random number as arguments. Else if the requestor is an EOA, it won't call it.
+    //
+    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
+    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
+    // If you need to use the returned random number more than once, you are responsible for storing it.
+    //
+    // Anyone can call this method to fulfill a request, but the callback will only be made to the original requester.
+    function revealWithCallback(
+        address provider,
+        uint64 sequenceNumber,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation
+    ) external;
+
+    function getProviderInfo(
+        address provider
+    ) external view returns (EntropyStructs.ProviderInfo memory info);
+
+    function getRequest(
+        address provider,
+        uint64 sequenceNumber
+    ) external view returns (EntropyStructs.Request memory req);
+
+    // Get the fee charged by provider for a request with the default gasLimit (`request` or `requestWithCallback`).
+    // If you are calling any of the `requestV2` methods, please use `getFeeV2`.
+    function getFee(address provider) external view returns (uint128 feeAmount);
+
+    function getAccruedPythFees()
+        external
+        view
+        returns (uint128 accruedPythFeesInWei);
+
+    function setProviderFee(uint128 newFeeInWei) external;
+
+    function setProviderFeeAsFeeManager(
+        address provider,
+        uint128 newFeeInWei
+    ) external;
+
+    function setProviderUri(bytes calldata newUri) external;
+
+    // Set manager as the fee manager for the provider msg.sender.
+    // After calling this function, manager will be able to set the provider's fees and withdraw them.
+    // Only one address can be the fee manager for a provider at a time -- calling this function again with a new value
+    // will override the previous value. Call this function with the all-zero address to disable the fee manager role.
+    function setFeeManager(address manager) external;
+
+    // Set the maximum number of hashes to record in a request. This should be set according to the maximum gas limit
+    // the provider supports for callbacks.
+    function setMaxNumHashes(uint32 maxNumHashes) external;
+
+    // Set the default gas limit for a request. If 0, no
+    function setDefaultGasLimit(uint32 gasLimit) external;
+
+    // Advance the provider commitment and increase the sequence number.
+    // This is used to reduce the `numHashes` required for future requests which leads to reduced gas usage.
+    function advanceProviderCommitment(
+        address provider,
+        uint64 advancedSequenceNumber,
+        bytes32 providerRevelation
+    ) external;
+
+    function constructUserCommitment(
+        bytes32 userRandomness
+    ) external pure returns (bytes32 userCommitment);
+
+    function combineRandomValues(
+        bytes32 userRandomness,
+        bytes32 providerRandomness,
+        bytes32 blockHash
+    ) external pure returns (bytes32 combinedRandomness);
+}
+
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -3578,159 +3731,6 @@ contract JackpotLPManager is IJackpotLPManager, Ownable {
             delete _lp.pendingWithdrawal;
         }
     }
-}
-
-// SPDX-License-Identifier: Apache 2
-pragma solidity ^0.8.0;
-
-import "./EntropyEvents.sol";
-import "./EntropyEventsV2.sol";
-import "./EntropyStructsV2.sol";
-import "./IEntropyV2.sol";
-
-interface IEntropy is EntropyEvents, EntropyEventsV2, IEntropyV2 {
-    // Register msg.sender as a randomness provider. The arguments are the provider's configuration parameters
-    // and initial commitment. Re-registering the same provider rotates the provider's commitment (and updates
-    // the feeInWei).
-    //
-    // chainLength is the number of values in the hash chain *including* the commitment, that is, chainLength >= 1.
-    function register(
-        uint128 feeInWei,
-        bytes32 commitment,
-        bytes calldata commitmentMetadata,
-        uint64 chainLength,
-        bytes calldata uri
-    ) external;
-
-    // Withdraw a portion of the accumulated fees for the provider msg.sender.
-    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
-    // balance of fees in the contract).
-    function withdraw(uint128 amount) external;
-
-    // Withdraw a portion of the accumulated fees for provider. The msg.sender must be the fee manager for this provider.
-    // Calling this function will transfer `amount` wei to the caller (provided that they have accrued a sufficient
-    // balance of fees in the contract).
-    function withdrawAsFeeManager(address provider, uint128 amount) external;
-
-    // As a user, request a random number from `provider`. Prior to calling this method, the user should
-    // generate a random number x and keep it secret. The user should then compute hash(x) and pass that
-    // as the userCommitment argument. (You may call the constructUserCommitment method to compute the hash.)
-    //
-    // This method returns a sequence number. The user should pass this sequence number to
-    // their chosen provider (the exact method for doing so will depend on the provider) to retrieve the provider's
-    // number. The user should then call fulfillRequest to construct the final random number.
-    //
-    // This method will revert unless the caller provides a sufficient fee (at least getFee(provider)) as msg.value.
-    // Note that excess value is *not* refunded to the caller.
-    function request(
-        address provider,
-        bytes32 userCommitment,
-        bool useBlockHash
-    ) external payable returns (uint64 assignedSequenceNumber);
-
-    // Request a random number. The method expects the provider address and a secret random number
-    // in the arguments. It returns a sequence number.
-    //
-    // The address calling this function should be a contract that inherits from the IEntropyConsumer interface.
-    // The `entropyCallback` method on that interface will receive a callback with the generated random number.
-    // `entropyCallback` will be run with the provider's default gas limit (see `getProviderInfo(provider).defaultGasLimit`).
-    // If your callback needs additional gas, please use `requestWithCallbackAndGasLimit`.
-    //
-    // This method will revert unless the caller provides a sufficient fee (at least `getFee(provider)`) as msg.value.
-    // Note that excess value is *not* refunded to the caller.
-    function requestWithCallback(
-        address provider,
-        bytes32 userRandomNumber
-    ) external payable returns (uint64 assignedSequenceNumber);
-
-    // Fulfill a request for a random number. This method validates the provided userRandomness and provider's proof
-    // against the corresponding commitments in the in-flight request. If both values are validated, this function returns
-    // the corresponding random number.
-    //
-    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
-    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
-    // If you need to use the returned random number more than once, you are responsible for storing it.
-    function reveal(
-        address provider,
-        uint64 sequenceNumber,
-        bytes32 userRevelation,
-        bytes32 providerRevelation
-    ) external returns (bytes32 randomNumber);
-
-    // Fulfill a request for a random number. This method validates the provided userRandomness
-    // and provider's revelation against the corresponding commitment in the in-flight request. If both values are validated
-    // and the requestor address is a contract address, this function calls the requester's entropyCallback method with the
-    // sequence number, provider address and the random number as arguments. Else if the requestor is an EOA, it won't call it.
-    //
-    // Note that this function can only be called once per in-flight request. Calling this function deletes the stored
-    // request information (so that the contract doesn't use a linear amount of storage in the number of requests).
-    // If you need to use the returned random number more than once, you are responsible for storing it.
-    //
-    // Anyone can call this method to fulfill a request, but the callback will only be made to the original requester.
-    function revealWithCallback(
-        address provider,
-        uint64 sequenceNumber,
-        bytes32 userRandomNumber,
-        bytes32 providerRevelation
-    ) external;
-
-    function getProviderInfo(
-        address provider
-    ) external view returns (EntropyStructs.ProviderInfo memory info);
-
-    function getRequest(
-        address provider,
-        uint64 sequenceNumber
-    ) external view returns (EntropyStructs.Request memory req);
-
-    // Get the fee charged by provider for a request with the default gasLimit (`request` or `requestWithCallback`).
-    // If you are calling any of the `requestV2` methods, please use `getFeeV2`.
-    function getFee(address provider) external view returns (uint128 feeAmount);
-
-    function getAccruedPythFees()
-        external
-        view
-        returns (uint128 accruedPythFeesInWei);
-
-    function setProviderFee(uint128 newFeeInWei) external;
-
-    function setProviderFeeAsFeeManager(
-        address provider,
-        uint128 newFeeInWei
-    ) external;
-
-    function setProviderUri(bytes calldata newUri) external;
-
-    // Set manager as the fee manager for the provider msg.sender.
-    // After calling this function, manager will be able to set the provider's fees and withdraw them.
-    // Only one address can be the fee manager for a provider at a time -- calling this function again with a new value
-    // will override the previous value. Call this function with the all-zero address to disable the fee manager role.
-    function setFeeManager(address manager) external;
-
-    // Set the maximum number of hashes to record in a request. This should be set according to the maximum gas limit
-    // the provider supports for callbacks.
-    function setMaxNumHashes(uint32 maxNumHashes) external;
-
-    // Set the default gas limit for a request. If 0, no
-    function setDefaultGasLimit(uint32 gasLimit) external;
-
-    // Advance the provider commitment and increase the sequence number.
-    // This is used to reduce the `numHashes` required for future requests which leads to reduced gas usage.
-    function advanceProviderCommitment(
-        address provider,
-        uint64 advancedSequenceNumber,
-        bytes32 providerRevelation
-    ) external;
-
-    function constructUserCommitment(
-        bytes32 userRandomness
-    ) external pure returns (bytes32 userCommitment);
-
-    function combineRandomValues(
-        bytes32 userRandomness,
-        bytes32 providerRandomness,
-        bytes32 blockHash
-    ) external pure returns (bytes32 combinedRandomness);
 }
 
 //SPDX-License-Identifier: UNLICENSED
