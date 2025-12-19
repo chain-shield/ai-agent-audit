@@ -106,12 +106,26 @@ pub enum RoleType {
 pub static ACTOR_CENTRIC_VULN_PATTERNS: &[VulnerabilityPattern] = &[
     VulnerabilityPattern::AccessControlOrAuthByPass, // actor gains roles/privilege or bypasses policies
     VulnerabilityPattern::PermitOrSignatureReplay,   // stale/partial signature reuse (EOA-focused)
-    VulnerabilityPattern::DoubleExecutionOrReplay,   // transaction/nonce replay across contexts
+    VulnerabilityPattern::ArbitraryExternalCall,
+    VulnerabilityPattern::DoubleExecutionOrReplay, // transaction/nonce replay across contexts
     VulnerabilityPattern::FlashLoanEconomicManipulation, // capital-free multi-tx economic attacks (includes MEV/frontrun)
     VulnerabilityPattern::OracleUsingDEXorTWAP,          // abusing external pricing assumptions
     VulnerabilityPattern::SlippageMissingOrInsufficient, // exploit lack of price protection
-    VulnerabilityPattern::AccountingInvariantViolation,  // degrade solvency for profit
-    VulnerabilityPattern::UntrustedDelegateCall, // actor routes calls into malicious modules
+    // Game theory & incentive misalignment micro-patterns
+    VulnerabilityPattern::UnincentivizedMaintenanceOrKeeperlessProgress, // actor skips calling unprofitable maintenance
+    VulnerabilityPattern::FirstOrLastMoverAdvantage, // actor races to be first/last in sequential processing
+    VulnerabilityPattern::CheapGriefingOrDosProfit, // actor cheaply blocks operations for profit/optionality
+    VulnerabilityPattern::QueueOrderDependentMevExtraction, // actor reorders queue entries for MEV
+    VulnerabilityPattern::FixedPotRewardRaceOrGasAuction, // actor spams calls to drain reward pot
+    VulnerabilityPattern::RewardCheckpointFreeRiderOrLateJoiner, // actor joins late to capture historical rewards
+    VulnerabilityPattern::GovernanceCaptureOrTreasuryExtraction, // actor uses voting power to extract treasury
+    VulnerabilityPattern::CrossRoleCollusionWithoutSlashing, // actors collude across roles without penalty
+    VulnerabilityPattern::IncentiveMisalignmentOrGameTheory, // catch-all for other game-theory attacks
+    VulnerabilityPattern::GlobalParamMidFlowManipulation,
+    VulnerabilityPattern::ExternalProtocolKeyCollision,
+    VulnerabilityPattern::EmergencyModeStateStuck,
+    VulnerabilityPattern::AccountingInvariantViolation, // degrade solvency for profit
+    VulnerabilityPattern::UntrustedDelegateCall,        // actor routes calls into malicious modules
     VulnerabilityPattern::GovernanceDelegationFlaw, // generic state-hijack via delegatecall (includes DelegatecallLowLevelOps)
     VulnerabilityPattern::MulticallCrossPathReentrancy, // cross-path execution ordering attacks
     VulnerabilityPattern::ForcedAssetVsStrictEquality, // force-send or mismatch in accounting

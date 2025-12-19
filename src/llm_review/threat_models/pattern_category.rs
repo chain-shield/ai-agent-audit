@@ -851,7 +851,7 @@ pub const R1_PATTERNS: &[VulnerabilityPattern; 49] = &[
     VulnerabilityPattern::ForcedAssetVsStrictEquality,
 ];
 
-pub const R2_PATTERNS: &[VulnerabilityPattern; 14] = &[
+pub const R2_PATTERNS: &[VulnerabilityPattern; 24] = &[
     // ============================================
     // SEMANTIC PATTERNS (Hard for LLMs)
     // ============================================
@@ -864,12 +864,22 @@ pub const R2_PATTERNS: &[VulnerabilityPattern; 14] = &[
     VulnerabilityPattern::ConfigFootgun, // Requires understanding admin trust assumptions
     // Economic & Game Theory (requires economic/incentive analysis)
     VulnerabilityPattern::FlashLoanEconomicManipulation, // Multi-step attack
-    VulnerabilityPattern::IncentiveMisalignmentOrGameTheory, // Requires game theory
+    VulnerabilityPattern::UnincentivizedMaintenanceOrKeeperlessProgress, // Requires incentive analysis
+    VulnerabilityPattern::FirstOrLastMoverAdvantage, // Requires bank-run / timing race reasoning
+    VulnerabilityPattern::CheapGriefingOrDosProfit,  // Requires griefing cost vs profit analysis
+    VulnerabilityPattern::QueueOrderDependentMevExtraction, // Requires order-dependent MEV analysis
+    VulnerabilityPattern::FixedPotRewardRaceOrGasAuction, // Requires gas-auction incentive analysis
+    VulnerabilityPattern::RewardCheckpointFreeRiderOrLateJoiner, // Requires reward fairness over time analysis
+    VulnerabilityPattern::GovernanceCaptureOrTreasuryExtraction, // Requires gov power distribution analysis
+    VulnerabilityPattern::CrossRoleCollusionWithoutSlashing, // Requires cross-role collusion reasoning
+    VulnerabilityPattern::IncentiveMisalignmentOrGameTheory, // Catch-all game theory bucket
     // Callbacks & Hooks (requires understanding callback flow)
     VulnerabilityPattern::GriefableCallbacks, // Requires understanding griefing incentives
     VulnerabilityPattern::ERC777HookReentrancy, // Requires understanding ERC777 hooks
     // Randomness (requires probabilistic/cryptographic analysis)
-    VulnerabilityPattern::BlockhashOrPRNGWeakness, // Requires understanding RNG properties
+    VulnerabilityPattern::BlockVarsAsPrimaryRandomnessSource, // Direct blockvars RNG; miner/validator grinding
+    VulnerabilityPattern::InsecureOnChainPrngWithoutCommitReveal, // Custom PRNG without commit-reveal/unbiasing
+    VulnerabilityPattern::BlockhashOrPRNGWeakness,                // Catch-all RNG bucket
     // Permit (requires understanding frontrunning)
     VulnerabilityPattern::PermitFrontRun, // Requires multi-step attack sequencing
     // Multicall (requires cross-path analysis)
