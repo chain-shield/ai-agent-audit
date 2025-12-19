@@ -66,10 +66,7 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    let custom_scoped_contracts = Some(vec![
-        "Jackpot".to_string(),
-        "JackpotBridgeManager".to_string(),
-    ]);
+    let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
     // let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts

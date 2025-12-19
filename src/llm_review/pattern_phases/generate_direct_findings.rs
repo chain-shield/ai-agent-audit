@@ -13,6 +13,7 @@ use crate::{
             invariants::{generate_invariant_prompt, get_invariant_json},
         },
         threat_models::{
+            actors::ACTOR_CENTRIC_VULN_PATTERNS,
             issues::{IssuePrompt, IssueStructTrait},
             pattern_category::get_category_library_spec,
         },
@@ -118,10 +119,15 @@ where
         }
         IssuePrompt::Actor(actors) => {
             // construct prompt
-            // TODO: update prompt, add ones that produces findings directly
-            let instruction_prompt = dynamic_prompts::actors::generate_actor_abuses_prompt(&actors);
-            // TODO: update prompt, add ones that requires findings as output
-            let json_requirement_prompt = dynamic_prompts::actors::get_actor_abuse_json();
+            let instruction_prompt =
+                dynamic_prompts::findings::generate_bad_actor_to_findings_prompt(&actors, repo);
+            let json_requirement_prompt =
+                dynamic_prompts::findings_template::get_post_json_requirement_for_multipattern(
+                    &ACTOR_CENTRIC_VULN_PATTERNS,
+                    "bad actor",
+                    repo,
+                );
+
             let prompt = Arc::new(format!(
                 "{instruction_prompt}{code_plus_context}{json_requirement_prompt}"
             ));

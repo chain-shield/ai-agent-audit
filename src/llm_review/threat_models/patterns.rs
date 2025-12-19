@@ -90,6 +90,8 @@ pub enum VulnerabilityPattern {
 
     // Randomness, Time, & Chain Assumptions - all Medium or Low
     TimestampOrBlockManipulation,
+    BlockVarsAsPrimaryRandomnessSource,
+    InsecureOnChainPrngWithoutCommitReveal,
     BlockhashOrPRNGWeakness,
     ChainIdorDomainDrift,
 
@@ -132,6 +134,18 @@ pub enum VulnerabilityPattern {
     GovernanceFrontrunDoS, // users can frontrun governance to block param changes
     ExternalProtocolKeyCollision, // external protocol ID/key collision when config changes
     EmergencyModeStateStuck, // emergency mode blocks settlement while allowing state changes
+
+    // Game theory & incentive misalignment (micro-patterns with concrete anchors)
+    UnincentivizedMaintenanceOrKeeperlessProgress,
+    FirstOrLastMoverAdvantage,
+    CheapGriefingOrDosProfit,
+    QueueOrderDependentMevExtraction,
+    FixedPotRewardRaceOrGasAuction,
+    RewardCheckpointFreeRiderOrLateJoiner,
+    GovernanceCaptureOrTreasuryExtraction,
+    CrossRoleCollusionWithoutSlashing,
+
+    // Fallback catch-all when none of the above micro-patterns apply
     IncentiveMisalignmentOrGameTheory, // rational actors profit by harming others or blocking protocol
 }
 
@@ -281,6 +295,12 @@ impl EnumData for VulnerabilityPattern {
                 VulnerabilityType::TimestampManipulation,
                 VulnerabilityType::TimestampDependentLogic,
             ],
+            VulnerabilityPattern::BlockVarsAsPrimaryRandomnessSource => {
+                &[VulnerabilityType::Randomness]
+            }
+            VulnerabilityPattern::InsecureOnChainPrngWithoutCommitReveal => {
+                &[VulnerabilityType::Randomness]
+            }
             VulnerabilityPattern::BlockhashOrPRNGWeakness => &[VulnerabilityType::Randomness],
             VulnerabilityPattern::ChainIdorDomainDrift => &[
                 VulnerabilityType::SignatureReplay,
@@ -458,6 +478,45 @@ impl EnumData for VulnerabilityPattern {
                 VulnerabilityType::EmergencyModeStateStuck,
                 VulnerabilityType::PausableEmergencyStop,
                 VulnerabilityType::Dos,
+            ],
+            VulnerabilityPattern::UnincentivizedMaintenanceOrKeeperlessProgress => &[
+                VulnerabilityType::IncentiveMisalignmentOrGameTheory,
+                VulnerabilityType::Dos,
+                VulnerabilityType::GasGriefBlockLimit,
+            ],
+            VulnerabilityPattern::FirstOrLastMoverAdvantage => &[
+                VulnerabilityType::IncentiveMisalignmentOrGameTheory,
+                VulnerabilityType::FrontrunMev,
+                VulnerabilityType::AccountingInvariantViolation,
+            ],
+            VulnerabilityPattern::CheapGriefingOrDosProfit => &[
+                VulnerabilityType::IncentiveMisalignmentOrGameTheory,
+                VulnerabilityType::Dos,
+                VulnerabilityType::GasGriefBlockLimit,
+            ],
+            VulnerabilityPattern::QueueOrderDependentMevExtraction => &[
+                VulnerabilityType::IncentiveMisalignmentOrGameTheory,
+                VulnerabilityType::FrontrunMev,
+                VulnerabilityType::CallOrderingOrCEI,
+            ],
+            VulnerabilityPattern::FixedPotRewardRaceOrGasAuction => &[
+                VulnerabilityType::IncentiveMisalignmentOrGameTheory,
+                VulnerabilityType::Dos,
+                VulnerabilityType::GasGriefBlockLimit,
+            ],
+            VulnerabilityPattern::RewardCheckpointFreeRiderOrLateJoiner => &[
+                VulnerabilityType::IncentiveMisalignmentOrGameTheory,
+                VulnerabilityType::AccountingInvariantViolation,
+            ],
+            VulnerabilityPattern::GovernanceCaptureOrTreasuryExtraction => &[
+                VulnerabilityType::IncentiveMisalignmentOrGameTheory,
+                VulnerabilityType::AuthorityOrGovernance,
+                VulnerabilityType::AccessControl,
+            ],
+            VulnerabilityPattern::CrossRoleCollusionWithoutSlashing => &[
+                VulnerabilityType::IncentiveMisalignmentOrGameTheory,
+                VulnerabilityType::AuthorityOrGovernance,
+                VulnerabilityType::Oracle,
             ],
             VulnerabilityPattern::IncentiveMisalignmentOrGameTheory => &[
                 VulnerabilityType::IncentiveMisalignmentOrGameTheory,
@@ -1052,25 +1111,53 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
         impact_hint: ImpactHint::MediumLow,
     },
     VulnerabilityPatternSpec {
-        key: VulnerabilityPattern::BlockhashOrPRNGWeakness,
-        definition: "Predictable, stale, or correlated randomness via blockhash/poor PRNG, including seed reuse across multiple draws or identical input ranges producing correlated outputs.",
+        key: VulnerabilityPattern::BlockVarsAsPrimaryRandomnessSource,
+        definition: "Uses EVM block fields (timestamp, number, prevrandao, blockhash) directly or almost directly as randomness for lotteries, leader selection, or allocation, allowing miners/validators/MEV to bias or grind outcomes.",
         static_signals: &[
-            "blockhash used beyond 256 blocks",
-            "no commit-reveal",
-            "same seed used for multiple random draws",
-            "identical input ranges produce correlated outputs",
-            "no nonce/salt separation between randomness requests",
-            "Fisher-Yates/shuffle with shared seed across calls",
-            "random number derived from known/predictable values",
-            "randomness source visible before user commits",
-            "seed reused across epochs/rounds/drawings",
+            "block.timestamp / block.number / blockhash / block.prevrandao used inside random/winner/select/lottery functions",
+            "uint256(keccak256(abi.encodePacked(block.timestamp, msg.sender, ...))) % N used to pick winners or assign rewards",
+            "winner index computed from blockhash or timestamp with minimal additional entropy",
+            "no commit-reveal phase or external VRF/oracle for randomness",
+            "random outcome determined in same block as user action using block variables",
         ],
         examples: &[
-            "game picks winner via blockhash",
-            "lottery uses same VRF seed for both winner and prize selection",
-            "random selection from identical ranges always correlated",
-            "user sees randomness then submits bet in same block",
-            "shuffle seed shared across multiple prize selections",
+            "lottery picks winner as uint256(blockhash(block.number - 1)) % players.length",
+            "game uses uint256(keccak256(abi.encodePacked(block.timestamp, msg.sender))) % N to pick a random prize",
+            "leader election selects validator using block.prevrandao % validatorSetLength",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::InsecureOnChainPrngWithoutCommitReveal,
+        definition: "Implements a custom on-chain PRNG mixing predictable on-chain state and user-controlled inputs to decide winners or allocations without a commit-reveal phase or unbiasing, letting strategic users or miners grind or influence outputs.",
+        static_signals: &[
+            "dedicated random/rng/rand function that hashes block data and user-controlled inputs to produce randomness",
+            "PRNG seed or state stored in contract and updated as keccak(seed, msg.sender, block data)",
+            "random outputs directly used for winner selection, assignment, or allocation without commit-reveal",
+            "no separation between commit and reveal transactions for randomness consumers",
+            "no mechanism to prevent users from observing randomness before choosing whether to participate",
+        ],
+        examples: &[
+            "custom rng() returns uint256(keccak256(abi.encodePacked(seed, msg.sender, block.timestamp))) and is used to pick a winner",
+            "PRNG state seed updated each draw but constructed only from predictable on-chain values and caller address",
+            "lottery lets users see rng() output in view calls before deciding to buy a ticket in the same block",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::BlockhashOrPRNGWeakness,
+        definition: "Catch-all randomness/PRNG weakness bucket used when none of the more specific randomness micro-patterns apply. Randomness design allows predictable, stale, or correlated outputs across draws, enabling biased selection or grinding.",
+        static_signals: &[
+            "randomness reuses seeds or entropy across multiple draws or epochs",
+            "no nonce/salt separation between independent randomness requests",
+            "Fisher-Yates/shuffle implementation shares a single seed across multiple selections",
+            "correlated outputs when drawing from identical or overlapping ranges",
+            "randomness source or VRF result visible before or during user commitment phase",
+        ],
+        examples: &[
+            "random selection from identical ranges always correlated due to shared seed",
+            "same VRF seed reused for multiple prize or winner selections",
+            "user can observe revealed randomness before deciding which side of a bet to take",
         ],
         impact_hint: ImpactHint::Medium,
     },
@@ -1546,30 +1633,152 @@ pub static VULNERABILITY_PATTERN_LIBRARY: &[VulnerabilityPatternSpec] = &[
         impact_hint: ImpactHint::HighMedium,
     },
     VulnerabilityPatternSpec {
-        key: VulnerabilityPattern::IncentiveMisalignmentOrGameTheory,
-        definition: "Protocol mechanism design creates perverse incentives where rational actors profit by harming others, blocking protocol operations, extracting value from other participants, or exploiting first/last-mover advantages in ways not intended by designers.",
+        key: VulnerabilityPattern::UnincentivizedMaintenanceOrKeeperlessProgress,
+        definition: "Gas-heavy maintenance / progress functions (finalize, rollover, rebalance, distribute, sync indexes) that are required for protocol liveness have no explicit reward or keeper incentive, so rational actors skip calling them and leave state stale or stuck.",
         static_signals: &[
-            "user profits by blocking/reverting governance or protocol actions",
-            "first-mover/last-mover advantage in multi-user flows",
-            "cost to grief < profit from griefing",
-            "large stakeholders can extract value from smaller ones",
-            "no penalty for blocking shared resources or common goods",
-            "free rider benefits without proportional contribution",
-            "collusion between roles creates extraction opportunity",
-            "winner-take-all dynamics encourage manipulation",
-            "MEV profit exceeds protocol penalties",
-            "rational actor can force others into worse exit conditions",
-            "sequential processing order creates extractable value",
+            "finalize/execute/rollover/rebalance/distribute functions callable by anyone with no reward to msg.sender",
+            "maintenance function loops over many positions but does not pay a keeper or relayer fee",
+            "progress or upkeep relies on an external keeper role but there is no explicit incentive or payment",
+            "global index or epoch advance must be called before users can act, yet caller receives no compensation",
+            "upkeep path costs significantly more gas than a normal user action and offers no direct benefit",
         ],
         examples: &[
-            "LPs frontrun governance to block fee changes they dislike",
+            "finalizeEpoch() loops over all positions and can be called by anyone without paying a keeper reward",
+            "rebalance() updates shared pool state but the caller receives no fee, so everyone waits for someone else to do it",
+            "updateGlobalIndex() must be called before users can claim rewards but there is no incentive, so rewards remain locked until a good samaritan pays the gas",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::FirstOrLastMoverAdvantage,
+        definition: "User payout or price depends on being first or last in a multi-user flow (withdrawals, redemptions, auctions, batch settlements), creating a bank-run or timing race where rational actors rush to exit or delay participation.",
+        static_signals: &[
+            "withdraw/redeem loop consumes a shared pool balance sequentially for each user",
+            "payout uses totalAssets/totalSupply after burning the caller's shares, making share price order-dependent",
+            "batch settle or auction distributes a fixed pot in the order of processing instead of pro-rata at a snapshot",
+            "no snapshot of balances before processing; first withdrawer sees a higher effective share price than later ones",
+            "sequential processing of exits or claims without normalization for remaining supply",
+        ],
+        examples: &[
             "first withdrawer gets full value; later withdrawers get less (bank run)",
-            "validator colludes with MEV searcher to extract from users",
-            "staker can force others into worse unstaking conditions",
-            "large holder manipulates voting to extract treasury funds",
-            "last participant in batch gets worse price than first",
-            "user delays claim to increase share of fixed reward pool",
-            "attacker deposits minimally to block pool parameter changes",
+            "last participant in a batch redemption receives a worse price than early redeemers",
+            "user delays claim to increase their share of a fixed reward pool that shrinks as others claim",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::CheapGriefingOrDosProfit,
+        definition: "Any user can cheaply trigger an expensive or reverting path that blocks protocol operations or forces others to pay gas, where the cost to grief is lower than the value or optionality being denied.",
+        static_signals: &[
+            "permissionless function iterates over many user positions and reverts if a single entry fails",
+            "batch processing with no pagination where a single failing external call bricks the whole batch",
+            "anyone can enqueue junk requests that cause settlement or claim loops to revert repeatedly",
+            "no bond, deposit, or slashing requirement for participants whose inputs can halt shared processing",
+            "griefing path consumes significant gas for keepers or honest users while the attacker bears little or no cost",
+        ],
+        examples: &[
+            "attacker submits junk requests that make processQueue() revert and block all withdrawals",
+            "anyone can call settleAll() over a huge array; a griefer repeatedly reverts via callback, burning more gas for others than for themselves",
+            "liquidateAll() loops user positions and reverts if one underflows; attacker ensures the underflow condition so liquidations are DoS'd",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::QueueOrderDependentMevExtraction,
+        definition: "Sequential processing of queued user actions (deposits, withdrawals, swaps, bridge messages) uses market-sensitive state at processing time without fairness constraints, letting MEV searchers or block producers reorder entries to extract value.",
+        static_signals: &[
+            "array of pending requests processed in a for loop from index 0..N in a single transaction",
+            "processNext() or processQueue() functions that pop from the front of an array or queue",
+            "execution price or payout for each entry is computed at processing time from current reserves or oracle price",
+            "no randomization, priority rules, or fairness constraints; ordering is purely by array index or insertion order",
+            "bridge or withdrawal queue uses FIFO semantics while the underlying price or index moves between entries",
+        ],
+        examples: &[
+            "MEV reorders deposit and withdraw requests to front-run victims inside processQueue()",
+            "bridge processes queued withdrawals sequentially at spot price, so earlier entries get a better rate than later ones",
+            "validator chooses which queued liquidations to process first based on profit, leaving others under-collateralized",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::FixedPotRewardRaceOrGasAuction,
+        definition: "Fixed reward pots or caller incentives are paid out in a way that encourages users or keepers to race on gas or timing (be first / spam calls) to capture a disproportionate share of the pot, leading to gas auctions and waste rather than reliable, aligned maintenance.",
+        static_signals: &[
+            "harvest/claimReward/getReward/performUpkeep/executeUpkeep style functions that pay msg.sender from a global reward pot",
+            "global rewardPool or incentivePool variable that monotonically decreases on each call without per-user caps",
+            "fixed or near-fixed caller incentive per call, independent of work done or gas used",
+            "first-come, first-served reward logic: if (rewardPool > 0) { pay caller; } with no smoothing or throttling",
+            "caller can repeatedly trigger low-value upkeep solely to extract caller incentives until the pot is drained",
+        ],
+        examples: &[
+            "performUpkeep() pays a fixed CALLER_INCENTIVE from keeperRewardPool on every call, incentivizing spam until the pool is empty",
+            "vault harvest() rewards the first caller after a long idle period with a large share of accumulated performance fees, causing gas wars around harvest times",
+            "claimKeeperReward() drains an incentivePool with no per-task accounting, letting a motivated actor farm rewards by triggering minimal work actions",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::RewardCheckpointFreeRiderOrLateJoiner,
+        definition: "Reward distribution is based on a user's balance at claim or at a single snapshot, rather than time-weighted contribution, allowing late joiners or short-term participants to capture rewards funded by long-term contributors (free-rider or late-joiner exploitation).",
+        static_signals: &[
+            "reward calculation uses balanceOf(msg.sender) at claim time with no per-user index or reward-debt tracking",
+            "single global rewardPerToken or rewardIndex is stored, but user state only tracks amount staked",
+            "no userRewardPerTokenPaid / rewardDebt / userIndex style fields in user structs",
+            "deposits allowed immediately before reward funding or notifyRewardAmount without minimum holding period or lockup",
+            "rewards sourced from a fixed pot or emission schedule where joining later with a large balance can capture historical rewards",
+        ],
+        examples: &[
+            "staking pool where claim() pays balanceOf(msg.sender) * rewardPerTokenStored, so a user can deposit just before notifyRewardAmount() and withdraw right after claiming",
+            "vault distributeRewards() sets a global rewardPerToken, but users who were not staked during accrual can deposit after distribution and still claim a slice of the historical pot",
+            "farming contract without userRewardPerTokenPaid or rewardDebt lets late joiners free-ride on rewards accrued before they staked",
+        ],
+        impact_hint: ImpactHint::Medium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::GovernanceCaptureOrTreasuryExtraction,
+        definition: "Governance design allows a concentrated or temporary voting power holder to unilaterally pass proposals that transfer treasury funds or critical authority, due to missing snapshots, quorums, timelocks, or stake caps.",
+        static_signals: &[
+            "voting power derived from current balanceOf or total stake without snapshotting at proposal creation",
+            "governance thresholds or quorum requirements are extremely low or effectively zero",
+            "execute() or queue() functions can call treasury or upgrade logic immediately after a vote",
+            "no meaningful timelock or delay between proposal, voting, and execution",
+            "borrowed or temporary voting power (e.g., via flash loans) can meet quorum and control treasury transfers",
+        ],
+        examples: &[
+            "large holder manipulates voting to extract treasury funds via a governance proposal",
+            "flash-loaned tokens vote to transfer all treasury assets to an attacker-controlled address",
+            "governance parameter change first reduces quorum, then in the same block a second proposal drains the treasury",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::CrossRoleCollusionWithoutSlashing,
+        definition: "Multiple protocol roles (validators, sequencers, oracles, keepers, admins) can collude to misreport data, skip duties, or reorder transactions for profit without slashing, penalties, or credible threat of removal.",
+        static_signals: &[
+            "onlyOperator / onlyKeeper / onlyOracle style modifiers gate critical price, settlement, or sequencing functions",
+            "no slashing, penalty, or stake forfeiture when reports are late, missing, or obviously biased",
+            "the same entity or tightly controlled set of addresses controls both data sources and execution paths",
+            "no bonded stake or on-chain mechanism to punish coordinated misbehavior across roles",
+            "reward system pays per-action regardless of correctness, with no clawback when bad data is used",
+        ],
+        examples: &[
+            "validator colludes with a MEV searcher to reorder withdrawals for profit without any risk of slashing",
+            "oracle and keeper share profit by reporting biased prices that favor their own positions, with no penalty mechanism",
+            "admin-controlled sequencer can skip or delay particular user transactions indefinitely with no accountability",
+        ],
+        impact_hint: ImpactHint::HighMedium,
+    },
+    VulnerabilityPatternSpec {
+        key: VulnerabilityPattern::IncentiveMisalignmentOrGameTheory,
+        definition: "Catch-all incentive/game-theory bucket used when none of the more specific incentive misalignment micro-patterns apply. Protocol mechanism design creates perverse incentives where rational actors profit by harming others, blocking protocol operations, or extracting value in ways not intended by designers.",
+        static_signals: &[
+            "rational actor profits by harming other users or blocking protocol operations",
+            "economic behavior exploits assumptions that are not enforced in code (e.g., honest keepers, non-strategic users)",
+            "perverse incentives span multiple roles or modules and do not cleanly fit a more specific pattern",
+        ],
+        examples: &[
+            "complex multi-party economic attack that mixes several incentives and does not map cleanly to any micro-pattern",
+            "designer-intended equilibrium relies on trust or altruism rather than enforced incentives in code",
         ],
         impact_hint: ImpactHint::Medium,
     },
