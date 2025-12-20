@@ -211,292 +211,6 @@ contract JackpotTicketNFT is ERC721, IJackpotTicketNFT {
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
-
-/// @notice Library for bit twiddling and boolean operations.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/LibBit.sol)
-/// @author Inspired by (https://graphics.stanford.edu/~seander/bithacks.html)
-library LibBit {
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                  BIT TWIDDLING OPERATIONS                  */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @dev Find last set.
-    /// Returns the index of the most significant bit of `x`,
-    /// counting from the least significant bit position.
-    /// If `x` is zero, returns 256.
-    function fls(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            r := or(shl(8, iszero(x)), shl(7, lt(0xffffffffffffffffffffffffffffffff, x)))
-            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
-            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
-            r := or(r, shl(4, lt(0xffff, shr(r, x))))
-            r := or(r, shl(3, lt(0xff, shr(r, x))))
-            // forgefmt: disable-next-item
-            r := or(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
-                0x0706060506020504060203020504030106050205030304010505030400000000))
-        }
-    }
-
-    /// @dev Count leading zeros.
-    /// Returns the number of zeros preceding the most significant one bit.
-    /// If `x` is zero, returns 256.
-    function clz(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            r := shl(7, lt(0xffffffffffffffffffffffffffffffff, x))
-            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
-            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
-            r := or(r, shl(4, lt(0xffff, shr(r, x))))
-            r := or(r, shl(3, lt(0xff, shr(r, x))))
-            // forgefmt: disable-next-item
-            r := add(xor(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
-                0xf8f9f9faf9fdfafbf9fdfcfdfafbfcfef9fafdfafcfcfbfefafafcfbffffffff)), iszero(x))
-        }
-    }
-
-    /// @dev Find first set.
-    /// Returns the index of the least significant bit of `x`,
-    /// counting from the least significant bit position.
-    /// If `x` is zero, returns 256.
-    /// Equivalent to `ctz` (count trailing zeros), which gives
-    /// the number of zeros following the least significant one bit.
-    function ffs(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            // Isolate the least significant bit.
-            x := and(x, add(not(x), 1))
-            // For the upper 3 bits of the result, use a De Bruijn-like lookup.
-            // Credit to adhusson: https://blog.adhusson.com/cheap-find-first-set-evm/
-            // forgefmt: disable-next-item
-            r := shl(5, shr(252, shl(shl(2, shr(250, mul(x,
-                0xb6db6db6ddddddddd34d34d349249249210842108c6318c639ce739cffffffff))),
-                0x8040405543005266443200005020610674053026020000107506200176117077)))
-            // For the lower 5 bits of the result, use a De Bruijn lookup.
-            // forgefmt: disable-next-item
-            r := or(r, byte(and(div(0xd76453e0, shr(r, x)), 0x1f),
-                0x001f0d1e100c1d070f090b19131c1706010e11080a1a141802121b1503160405))
-        }
-    }
-
-    /// @dev Returns the number of set bits in `x`.
-    function popCount(uint256 x) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            let max := not(0)
-            let isMax := eq(x, max)
-            x := sub(x, and(shr(1, x), div(max, 3)))
-            x := add(and(x, div(max, 5)), and(shr(2, x), div(max, 5)))
-            x := and(add(x, shr(4, x)), div(max, 17))
-            c := or(shl(8, isMax), shr(248, mul(x, div(max, 255))))
-        }
-    }
-
-    /// @dev Returns the number of zero bytes in `x`.
-    /// To get the number of non-zero bytes, simply do `32 - countZeroBytes(x)`.
-    function countZeroBytes(uint256 x) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            let m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-            c := byte(0, mul(shr(7, not(m)), shr(7, not(or(or(add(and(x, m), m), x), m)))))
-        }
-    }
-
-    /// @dev Returns the number of zero bytes in `s`.
-    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
-    function countZeroBytes(bytes memory s) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            function czb(x_) -> _c {
-                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
-                _c := byte(0, mul(shr(7, not(_m)), _c))
-            }
-            let n := mload(s)
-            let l := shl(5, shr(5, n))
-            s := add(s, 0x20)
-            for { let i } xor(i, l) { i := add(i, 0x20) } { c := add(czb(mload(add(s, i))), c) }
-            if lt(l, n) { c := add(czb(or(shr(shl(3, sub(n, l)), not(0)), mload(add(s, l)))), c) }
-        }
-    }
-
-    /// @dev Returns the number of zero bytes in `s`.
-    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
-    function countZeroBytesCalldata(bytes calldata s) internal pure returns (uint256 c) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            function czb(x_) -> _c {
-                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
-                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
-                _c := byte(0, mul(shr(7, not(_m)), _c))
-            }
-            let l := shl(5, shr(5, s.length))
-            for { let i } xor(i, l) { i := add(i, 0x20) } {
-                c := add(czb(calldataload(add(s.offset, i))), c)
-            }
-            if lt(l, s.length) {
-                let m := shr(shl(3, sub(s.length, l)), not(0))
-                c := add(czb(or(m, calldataload(add(s.offset, l)))), c)
-            }
-        }
-    }
-
-    /// @dev Returns whether `x` is a power of 2.
-    function isPo2(uint256 x) internal pure returns (bool result) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            // Equivalent to `x && !(x & (x - 1))`.
-            result := iszero(add(and(x, sub(x, 1)), iszero(x)))
-        }
-    }
-
-    /// @dev Returns `x` reversed at the bit level.
-    function reverseBits(uint256 x) internal pure returns (uint256 r) {
-        uint256 m0 = 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f;
-        uint256 m1 = m0 ^ (m0 << 2);
-        uint256 m2 = m1 ^ (m1 << 1);
-        r = reverseBytes(x);
-        r = (m2 & (r >> 1)) | ((m2 & r) << 1);
-        r = (m1 & (r >> 2)) | ((m1 & r) << 2);
-        r = (m0 & (r >> 4)) | ((m0 & r) << 4);
-    }
-
-    /// @dev Returns `x` reversed at the byte level.
-    function reverseBytes(uint256 x) internal pure returns (uint256 r) {
-        unchecked {
-            // Computing masks on-the-fly reduces bytecode size by about 200 bytes.
-            uint256 m0 = 0x100000000000000000000000000000001 * (~toUint(x == uint256(0)) >> 192);
-            uint256 m1 = m0 ^ (m0 << 32);
-            uint256 m2 = m1 ^ (m1 << 16);
-            uint256 m3 = m2 ^ (m2 << 8);
-            r = (m3 & (x >> 8)) | ((m3 & x) << 8);
-            r = (m2 & (r >> 16)) | ((m2 & r) << 16);
-            r = (m1 & (r >> 32)) | ((m1 & r) << 32);
-            r = (m0 & (r >> 64)) | ((m0 & r) << 64);
-            r = (r >> 128) | (r << 128);
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the bit level.
-    function commonBitPrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = 256 - clz(x ^ y);
-            return (x >> s) << s;
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the nibble level.
-    function commonNibblePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = (64 - (clz(x ^ y) >> 2)) << 2;
-            return (x >> s) << s;
-        }
-    }
-
-    /// @dev Returns the common prefix of `x` and `y` at the byte level.
-    function commonBytePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
-        unchecked {
-            uint256 s = (32 - (clz(x ^ y) >> 3)) << 3;
-            return (x >> s) << s;
-        }
-    }
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                     BOOLEAN OPERATIONS                     */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    // A Solidity bool on the stack or memory is represented as a 256-bit word.
-    // Non-zero values are true, zero is false.
-    // A clean bool is either 0 (false) or 1 (true) under the hood.
-    // Usually, if not always, the bool result of a regular Solidity expression,
-    // or the argument of a public/external function will be a clean bool.
-    // You can usually use the raw variants for more performance.
-    // If uncertain, test (best with exact compiler settings).
-    // Or use the non-raw variants (compiler can sometimes optimize out the double `iszero`s).
-
-    /// @dev Returns `x & y`. Inputs must be clean.
-    function rawAnd(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := and(x, y)
-        }
-    }
-
-    /// @dev Returns `x & y`.
-    function and(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := and(iszero(iszero(x)), iszero(iszero(y)))
-        }
-    }
-
-    /// @dev Returns `w & x & y`.
-    function and(bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(or(iszero(w), or(iszero(x), iszero(y))))
-        }
-    }
-
-    /// @dev Returns `v & w & x & y`.
-    function and(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(or(or(iszero(v), iszero(w)), or(iszero(x), iszero(y))))
-        }
-    }
-
-    /// @dev Returns `x | y`. Inputs must be clean.
-    function rawOr(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := or(x, y)
-        }
-    }
-
-    /// @dev Returns `x | y`.
-    function or(bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(x, y)))
-        }
-    }
-
-    /// @dev Returns `w | x | y`.
-    function or(bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(w, or(x, y))))
-        }
-    }
-
-    /// @dev Returns `v | w | x | y`.
-    function or(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(or(v, or(w, or(x, y)))))
-        }
-    }
-
-    /// @dev Returns 1 if `b` is true, else 0. Input must be clean.
-    function rawToUint(bool b) internal pure returns (uint256 z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := b
-        }
-    }
-
-    /// @dev Returns 1 if `b` is true, else 0.
-    function toUint(bool b) internal pure returns (uint256 z) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            z := iszero(iszero(b))
-        }
-    }
-}
-
 //SPDX-License-Identifier: UNLICENSED
 
 /*
@@ -2227,6 +1941,292 @@ contract Jackpot is IJackpot, Ownable2Step, ReentrancyGuardTransient {
 }
 
 // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
+/// @notice Library for bit twiddling and boolean operations.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/LibBit.sol)
+/// @author Inspired by (https://graphics.stanford.edu/~seander/bithacks.html)
+library LibBit {
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                  BIT TWIDDLING OPERATIONS                  */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Find last set.
+    /// Returns the index of the most significant bit of `x`,
+    /// counting from the least significant bit position.
+    /// If `x` is zero, returns 256.
+    function fls(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            r := or(shl(8, iszero(x)), shl(7, lt(0xffffffffffffffffffffffffffffffff, x)))
+            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
+            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
+            r := or(r, shl(4, lt(0xffff, shr(r, x))))
+            r := or(r, shl(3, lt(0xff, shr(r, x))))
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0x0706060506020504060203020504030106050205030304010505030400000000))
+        }
+    }
+
+    /// @dev Count leading zeros.
+    /// Returns the number of zeros preceding the most significant one bit.
+    /// If `x` is zero, returns 256.
+    function clz(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            r := shl(7, lt(0xffffffffffffffffffffffffffffffff, x))
+            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
+            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
+            r := or(r, shl(4, lt(0xffff, shr(r, x))))
+            r := or(r, shl(3, lt(0xff, shr(r, x))))
+            // forgefmt: disable-next-item
+            r := add(xor(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0xf8f9f9faf9fdfafbf9fdfcfdfafbfcfef9fafdfafcfcfbfefafafcfbffffffff)), iszero(x))
+        }
+    }
+
+    /// @dev Find first set.
+    /// Returns the index of the least significant bit of `x`,
+    /// counting from the least significant bit position.
+    /// If `x` is zero, returns 256.
+    /// Equivalent to `ctz` (count trailing zeros), which gives
+    /// the number of zeros following the least significant one bit.
+    function ffs(uint256 x) internal pure returns (uint256 r) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Isolate the least significant bit.
+            x := and(x, add(not(x), 1))
+            // For the upper 3 bits of the result, use a De Bruijn-like lookup.
+            // Credit to adhusson: https://blog.adhusson.com/cheap-find-first-set-evm/
+            // forgefmt: disable-next-item
+            r := shl(5, shr(252, shl(shl(2, shr(250, mul(x,
+                0xb6db6db6ddddddddd34d34d349249249210842108c6318c639ce739cffffffff))),
+                0x8040405543005266443200005020610674053026020000107506200176117077)))
+            // For the lower 5 bits of the result, use a De Bruijn lookup.
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(div(0xd76453e0, shr(r, x)), 0x1f),
+                0x001f0d1e100c1d070f090b19131c1706010e11080a1a141802121b1503160405))
+        }
+    }
+
+    /// @dev Returns the number of set bits in `x`.
+    function popCount(uint256 x) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            let max := not(0)
+            let isMax := eq(x, max)
+            x := sub(x, and(shr(1, x), div(max, 3)))
+            x := add(and(x, div(max, 5)), and(shr(2, x), div(max, 5)))
+            x := and(add(x, shr(4, x)), div(max, 17))
+            c := or(shl(8, isMax), shr(248, mul(x, div(max, 255))))
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `x`.
+    /// To get the number of non-zero bytes, simply do `32 - countZeroBytes(x)`.
+    function countZeroBytes(uint256 x) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            let m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+            c := byte(0, mul(shr(7, not(m)), shr(7, not(or(or(add(and(x, m), m), x), m)))))
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `s`.
+    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
+    function countZeroBytes(bytes memory s) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            function czb(x_) -> _c {
+                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
+                _c := byte(0, mul(shr(7, not(_m)), _c))
+            }
+            let n := mload(s)
+            let l := shl(5, shr(5, n))
+            s := add(s, 0x20)
+            for { let i } xor(i, l) { i := add(i, 0x20) } { c := add(czb(mload(add(s, i))), c) }
+            if lt(l, n) { c := add(czb(or(shr(shl(3, sub(n, l)), not(0)), mload(add(s, l)))), c) }
+        }
+    }
+
+    /// @dev Returns the number of zero bytes in `s`.
+    /// To get the number of non-zero bytes, simply do `s.length - countZeroBytes(s)`.
+    function countZeroBytesCalldata(bytes calldata s) internal pure returns (uint256 c) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            function czb(x_) -> _c {
+                let _m := 0x7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f
+                _c := shr(7, not(or(or(add(and(x_, _m), _m), x_), _m)))
+                _c := byte(0, mul(shr(7, not(_m)), _c))
+            }
+            let l := shl(5, shr(5, s.length))
+            for { let i } xor(i, l) { i := add(i, 0x20) } {
+                c := add(czb(calldataload(add(s.offset, i))), c)
+            }
+            if lt(l, s.length) {
+                let m := shr(shl(3, sub(s.length, l)), not(0))
+                c := add(czb(or(m, calldataload(add(s.offset, l)))), c)
+            }
+        }
+    }
+
+    /// @dev Returns whether `x` is a power of 2.
+    function isPo2(uint256 x) internal pure returns (bool result) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Equivalent to `x && !(x & (x - 1))`.
+            result := iszero(add(and(x, sub(x, 1)), iszero(x)))
+        }
+    }
+
+    /// @dev Returns `x` reversed at the bit level.
+    function reverseBits(uint256 x) internal pure returns (uint256 r) {
+        uint256 m0 = 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f;
+        uint256 m1 = m0 ^ (m0 << 2);
+        uint256 m2 = m1 ^ (m1 << 1);
+        r = reverseBytes(x);
+        r = (m2 & (r >> 1)) | ((m2 & r) << 1);
+        r = (m1 & (r >> 2)) | ((m1 & r) << 2);
+        r = (m0 & (r >> 4)) | ((m0 & r) << 4);
+    }
+
+    /// @dev Returns `x` reversed at the byte level.
+    function reverseBytes(uint256 x) internal pure returns (uint256 r) {
+        unchecked {
+            // Computing masks on-the-fly reduces bytecode size by about 200 bytes.
+            uint256 m0 = 0x100000000000000000000000000000001 * (~toUint(x == uint256(0)) >> 192);
+            uint256 m1 = m0 ^ (m0 << 32);
+            uint256 m2 = m1 ^ (m1 << 16);
+            uint256 m3 = m2 ^ (m2 << 8);
+            r = (m3 & (x >> 8)) | ((m3 & x) << 8);
+            r = (m2 & (r >> 16)) | ((m2 & r) << 16);
+            r = (m1 & (r >> 32)) | ((m1 & r) << 32);
+            r = (m0 & (r >> 64)) | ((m0 & r) << 64);
+            r = (r >> 128) | (r << 128);
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the bit level.
+    function commonBitPrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = 256 - clz(x ^ y);
+            return (x >> s) << s;
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the nibble level.
+    function commonNibblePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = (64 - (clz(x ^ y) >> 2)) << 2;
+            return (x >> s) << s;
+        }
+    }
+
+    /// @dev Returns the common prefix of `x` and `y` at the byte level.
+    function commonBytePrefix(uint256 x, uint256 y) internal pure returns (uint256) {
+        unchecked {
+            uint256 s = (32 - (clz(x ^ y) >> 3)) << 3;
+            return (x >> s) << s;
+        }
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                     BOOLEAN OPERATIONS                     */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    // A Solidity bool on the stack or memory is represented as a 256-bit word.
+    // Non-zero values are true, zero is false.
+    // A clean bool is either 0 (false) or 1 (true) under the hood.
+    // Usually, if not always, the bool result of a regular Solidity expression,
+    // or the argument of a public/external function will be a clean bool.
+    // You can usually use the raw variants for more performance.
+    // If uncertain, test (best with exact compiler settings).
+    // Or use the non-raw variants (compiler can sometimes optimize out the double `iszero`s).
+
+    /// @dev Returns `x & y`. Inputs must be clean.
+    function rawAnd(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := and(x, y)
+        }
+    }
+
+    /// @dev Returns `x & y`.
+    function and(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := and(iszero(iszero(x)), iszero(iszero(y)))
+        }
+    }
+
+    /// @dev Returns `w & x & y`.
+    function and(bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(or(iszero(w), or(iszero(x), iszero(y))))
+        }
+    }
+
+    /// @dev Returns `v & w & x & y`.
+    function and(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(or(or(iszero(v), iszero(w)), or(iszero(x), iszero(y))))
+        }
+    }
+
+    /// @dev Returns `x | y`. Inputs must be clean.
+    function rawOr(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := or(x, y)
+        }
+    }
+
+    /// @dev Returns `x | y`.
+    function or(bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(x, y)))
+        }
+    }
+
+    /// @dev Returns `w | x | y`.
+    function or(bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(w, or(x, y))))
+        }
+    }
+
+    /// @dev Returns `v | w | x | y`.
+    function or(bool v, bool w, bool x, bool y) internal pure returns (bool z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(or(v, or(w, or(x, y)))))
+        }
+    }
+
+    /// @dev Returns 1 if `b` is true, else 0. Input must be clean.
+    function rawToUint(bool b) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := b
+        }
+    }
+
+    /// @dev Returns 1 if `b` is true, else 0.
+    function toUint(bool b) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := iszero(iszero(b))
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import { Combinations } from "./Combinations.sol";
@@ -2602,74 +2602,6 @@ interface IJackpotTicketNFT {
     function getUserTickets(address user, uint256 drawingId) external view returns (ExtendedTrackedTicket[] memory);
 }
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
-
-pragma solidity ^0.8.20;
-
-import {Ownable} from "./Ownable.sol";
-
-/**
- * @dev Contract module which provides access control mechanism, where
- * there is an account (an owner) that can be granted exclusive access to
- * specific functions.
- *
- * This extension of the {Ownable} contract includes a two-step mechanism to transfer
- * ownership, where the new owner must call {acceptOwnership} in order to replace the
- * old one. This can help prevent common mistakes, such as transfers of ownership to
- * incorrect accounts, or to contracts that are unable to interact with the
- * permission system.
- *
- * The initial owner is specified at deployment time in the constructor for `Ownable`. This
- * can later be changed with {transferOwnership} and {acceptOwnership}.
- *
- * This module is used through inheritance. It will make available all functions
- * from parent (Ownable).
- */
-abstract contract Ownable2Step is Ownable {
-    address private _pendingOwner;
-
-    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
-
-    /**
-     * @dev Returns the address of the pending owner.
-     */
-    function pendingOwner() public view virtual returns (address) {
-        return _pendingOwner;
-    }
-
-    /**
-     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
-     * Can only be called by the current owner.
-     *
-     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
-     */
-    function transferOwnership(address newOwner) public virtual override onlyOwner {
-        _pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner(), newOwner);
-    }
-
-    /**
-     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
-     * Internal function without access restriction.
-     */
-    function _transferOwnership(address newOwner) internal virtual override {
-        delete _pendingOwner;
-        super._transferOwnership(newOwner);
-    }
-
-    /**
-     * @dev The new owner accepts the ownership transfer.
-     */
-    function acceptOwnership() public virtual {
-        address sender = _msgSender();
-        if (pendingOwner() != sender) {
-            revert OwnableUnauthorizedAccount(sender);
-        }
-        _transferOwnership(sender);
-    }
-}
-
-// SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.3.0) (utils/ReentrancyGuardTransient.sol)
 
 pragma solidity ^0.8.24;
@@ -2761,106 +2693,74 @@ interface IJackpot {
     function currentDrawingId() external view returns (uint256);
     function getUnpackedTicket(uint256 _drawingId, uint256 _packedTicket) external view returns (uint8[] memory, uint8);
 }
-//SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Contracts (last updated v5.1.0) (access/Ownable2Step.sol)
 
-/*
-Copyright (C) 2025 Coordination Inc.
-Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
+pragma solidity ^0.8.20;
 
-Change Date: 2029-12-01
+import {Ownable} from "./Ownable.sol";
 
-On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
-*/
+/**
+ * @dev Contract module which provides access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * This extension of the {Ownable} contract includes a two-step mechanism to transfer
+ * ownership, where the new owner must call {acceptOwnership} in order to replace the
+ * old one. This can help prevent common mistakes, such as transfers of ownership to
+ * incorrect accounts, or to contracts that are unable to interact with the
+ * permission system.
+ *
+ * The initial owner is specified at deployment time in the constructor for `Ownable`. This
+ * can later be changed with {transferOwnership} and {acceptOwnership}.
+ *
+ * This module is used through inheritance. It will make available all functions
+ * from parent (Ownable).
+ */
+abstract contract Ownable2Step is Ownable {
+    address private _pendingOwner;
 
-pragma solidity ^0.8.28;
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
 
-interface IPayoutCalculator {
-    function calculateAndStoreDrawingUserWinnings(
-        uint256 _drawingId,
-        uint256 _prizePool,
-        uint8 _ballMax,
-        uint8 _bonusballMax,
-        uint256[] memory _result,
-        uint256[] memory _dupResult
-    ) external returns (uint256);
+    /**
+     * @dev Returns the address of the pending owner.
+     */
+    function pendingOwner() public view virtual returns (address) {
+        return _pendingOwner;
+    }
 
-    function setDrawingTierInfo(uint256 _drawingId) external;
+    /**
+     * @dev Starts the ownership transfer of the contract to a new account. Replaces the pending transfer if there is one.
+     * Can only be called by the current owner.
+     *
+     * Setting `newOwner` to the zero address is allowed; this can be used to cancel an initiated ownership transfer.
+     */
+    function transferOwnership(address newOwner) public virtual override onlyOwner {
+        _pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner(), newOwner);
+    }
 
-    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`) and deletes any pending owner.
+     * Internal function without access restriction.
+     */
+    function _transferOwnership(address newOwner) internal virtual override {
+        delete _pendingOwner;
+        super._transferOwnership(newOwner);
+    }
+
+    /**
+     * @dev The new owner accepts the ownership transfer.
+     */
+    function acceptOwnership() public virtual {
+        address sender = _msgSender();
+        if (pendingOwner() != sender) {
+            revert OwnableUnauthorizedAccount(sender);
+        }
+        _transferOwnership(sender);
+    }
 }
-//SPDX-License-Identifier: UNLICENSED
 
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-library JackpotErrors {
-    // =============================================================
-    //                            ERRORS
-    // =============================================================
-
-    error JackpotLocked();
-    error DrawingNotDue();
-    error InvalidRecipient();
-    error InvalidTicketCount();
-    error ReferralSplitLengthMismatch();
-    error TooManyReferrers();
-    error ReferralSplitSumInvalid();
-    error InvalidBonusball();
-    error TicketAlreadyMinted();
-    error NoTicketsToClaim();
-    error NotTicketOwner();
-    error TicketFromFutureDrawing();
-    error DepositAmountZero();
-    error ExceedsPoolCap();
-    error WithdrawAmountZero();
-    error InsufficientShares();
-    error NothingToWithdraw();
-    error UnauthorizedEntropyCaller();
-    error EntropyAlreadyCalled();
-    error JackpotNotLocked();
-    error ContractAlreadyInitialized();
-    error ZeroAddress();
-    error ContractNotInitialized();
-    error LPDepositsAlreadyInitialized();
-    error LPDepositsNotInitialized();
-    error JackpotAlreadyInitialized();
-    error TicketPurchasesDisabled();
-    error InvalidTierWeights();
-    error InvalidReferralSplitBps();
-    error InvalidNormalsCount();
-    error InsufficientEntropyFee();
-    error NoReferralFeesToClaim();
-    error NoPrizePool();
-    error TicketPurchasesAlreadyEnabled();
-    error TicketPurchasesAlreadyDisabled();
-    error InvalidNormalBallMax();
-    error InvalidDrawingDuration();
-    error InvalidBonusballMin();
-    error InvalidLpEdgeTarget();
-    error InvalidReserveRatio();
-    error InvalidReferralFee();
-    error InvalidReferralWinShare();
-    error InvalidTicketPrice();
-    error InvalidMaxReferrers();
-    error EmergencyEnabled();
-    error EmergencyModeNotEngaged();
-    error EmergencyModeAlreadyEnabled();
-    error EmergencyModeAlreadyDisabled();
-    error NoLPDeposits();
-    error InvalidProtocolFee();
-    error InvalidGovernancePoolCap();
-    error TicketNotEligibleForRefund();
-    error NoTicketsProvided();
-}
 //SPDX-License-Identifier: UNLICENSED
 
 pragma solidity ^0.8.28;
@@ -2955,39 +2855,76 @@ library Combinations {
 }
 //SPDX-License-Identifier: UNLICENSED
 
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
 pragma solidity ^0.8.28;
 
-interface IJackpotLPManager {
+library JackpotErrors {
+    // =============================================================
+    //                            ERRORS
+    // =============================================================
 
-    struct LPDrawingState {
-        uint256 lpPoolTotal;
-        uint256 pendingDeposits;
-        uint256 pendingWithdrawals;
-    }
-
-    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
-
-    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
-
-    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
-
-    function processDrawingSettlement(
-        uint256 _drawingId,
-        uint256 _lpEarnings,
-        uint256 _userWinnings,
-        uint256 _protocolFeeAmount
-    ) external returns (uint256 newLPValue, uint256 newAccumulator);
-
-    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
-
-    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
-
-    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
-
-    function initializeLP() external;
-
-    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
-    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
+    error JackpotLocked();
+    error DrawingNotDue();
+    error InvalidRecipient();
+    error InvalidTicketCount();
+    error ReferralSplitLengthMismatch();
+    error TooManyReferrers();
+    error ReferralSplitSumInvalid();
+    error InvalidBonusball();
+    error TicketAlreadyMinted();
+    error NoTicketsToClaim();
+    error NotTicketOwner();
+    error TicketFromFutureDrawing();
+    error DepositAmountZero();
+    error ExceedsPoolCap();
+    error WithdrawAmountZero();
+    error InsufficientShares();
+    error NothingToWithdraw();
+    error UnauthorizedEntropyCaller();
+    error EntropyAlreadyCalled();
+    error JackpotNotLocked();
+    error ContractAlreadyInitialized();
+    error ZeroAddress();
+    error ContractNotInitialized();
+    error LPDepositsAlreadyInitialized();
+    error LPDepositsNotInitialized();
+    error JackpotAlreadyInitialized();
+    error TicketPurchasesDisabled();
+    error InvalidTierWeights();
+    error InvalidReferralSplitBps();
+    error InvalidNormalsCount();
+    error InsufficientEntropyFee();
+    error NoReferralFeesToClaim();
+    error NoPrizePool();
+    error TicketPurchasesAlreadyEnabled();
+    error TicketPurchasesAlreadyDisabled();
+    error InvalidNormalBallMax();
+    error InvalidDrawingDuration();
+    error InvalidBonusballMin();
+    error InvalidLpEdgeTarget();
+    error InvalidReserveRatio();
+    error InvalidReferralFee();
+    error InvalidReferralWinShare();
+    error InvalidTicketPrice();
+    error InvalidMaxReferrers();
+    error EmergencyEnabled();
+    error EmergencyModeNotEngaged();
+    error EmergencyModeAlreadyEnabled();
+    error EmergencyModeAlreadyDisabled();
+    error NoLPDeposits();
+    error InvalidProtocolFee();
+    error InvalidGovernancePoolCap();
+    error TicketNotEligibleForRefund();
+    error NoTicketsProvided();
 }
 //SPDX-License-Identifier: UNLICENSED
 
@@ -3038,8 +2975,528 @@ library UintCasts {
     }
 }
 
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+Use of this software is govered by the Business Source License included in the LICENSE.TXT file and at www.mariadb.com/bsl11.
+
+Change Date: 2029-12-01
+
+On the date above, in accordance with the Business Source License, use of this software will be governed by the open source license specified in the LICENSE.TXT file.
+*/
+
+pragma solidity ^0.8.28;
+
+interface IPayoutCalculator {
+    function calculateAndStoreDrawingUserWinnings(
+        uint256 _drawingId,
+        uint256 _prizePool,
+        uint8 _ballMax,
+        uint8 _bonusballMax,
+        uint256[] memory _result,
+        uint256[] memory _dupResult
+    ) external returns (uint256);
+
+    function setDrawingTierInfo(uint256 _drawingId) external;
+
+    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256);
+}
+//SPDX-License-Identifier: UNLICENSED
+
+pragma solidity ^0.8.28;
+
+interface IJackpotLPManager {
+
+    struct LPDrawingState {
+        uint256 lpPoolTotal;
+        uint256 pendingDeposits;
+        uint256 pendingWithdrawals;
+    }
+
+    function processDeposit(uint256 _drawingId, address _lpAddress, uint256 _amount) external;
+
+    function processInitiateWithdraw(uint256 _drawingId, address _lpAddress, uint256 _amountToWithdrawInShares) external;
+
+    function processFinalizeWithdraw(uint256 _drawingId, address _lpAddress) external returns (uint256 withdrawableAmount);
+
+    function processDrawingSettlement(
+        uint256 _drawingId,
+        uint256 _lpEarnings,
+        uint256 _userWinnings,
+        uint256 _protocolFeeAmount
+    ) external returns (uint256 newLPValue, uint256 newAccumulator);
+
+    function emergencyWithdrawLP(uint256 _drawingId, address _user) external returns (uint256 withdrawableAmount);
+
+    function initializeDrawingLP(uint256 _drawingId, uint256 _initialLPValue) external;
+
+    function setLPPoolCap(uint256 _drawingId, uint256 _lpPoolCap) external;
+
+    function initializeLP() external;
+
+    function getDrawingAccumulator(uint256 _drawingId) external view returns (uint256);
+    function getLPDrawingState(uint256 _drawingId) external view returns (LPDrawingState memory);
+}
 
 ## SUPPORTING CONTEXT: INTERFACES AND ROOT IMPLEMENTATIONS
+//SPDX-License-Identifier: UNLICENSED
+
+/*
+Copyright (C) 2025 Coordination Inc.
+All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying,
+distribution, or use is strictly prohibited and may result in legal action.
+
+For licensing inquiries: legal@coordinationlabs.com
+*/
+
+pragma solidity ^0.8.28;
+
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+
+import { Combinations } from "./lib/Combinations.sol";
+import { IJackpot } from "./interfaces/IJackpot.sol";
+import { IPayoutCalculator } from "./interfaces/IPayoutCalculator.sol";
+
+/**
+ * @title GuaranteedMinimumPayoutCalculator
+ * @notice Calculates prize payouts using a two-tier system with guaranteed minimums and premium allocation
+ * @dev Implements a 12-tier payout system based on jackpot match combinations:
+ *      - Tiers 0-11: matches(0-5) × bonusball(no/yes) = matches*2 + (bonusballMatch ? 1 : 0)
+ *      - Each tier has configurable minimum payouts and premium pool allocation weights
+ *      - Premium pool is allocated proportionally after minimum payouts are satisfied
+ *      - Includes both user-owned and LP-owned winning tickets in allocation calculations
+ *      - Supports owner-configurable payout parameters that can be updated between drawings
+ */
+contract GuaranteedMinimumPayoutCalculator is IPayoutCalculator, Ownable {
+
+    // =============================================================
+    //                          STRUCTS
+    // =============================================================
+
+    struct DrawingTierInfo {
+        uint256 minPayout;
+        uint256 premiumTierMinAllocation;
+        bool[12] minPayoutTiers;
+        uint256[12] premiumTierWeights;
+    }
+
+    // =============================================================
+    //                          ERRORS
+    // =============================================================
+
+    error UnauthorizedCaller();
+    error ZeroAddress();
+    error InvalidTierWeights();
+    error InvalidPremiumTierMinimumAllocation();
+
+    // =============================================================
+    //                          CONSTANTS
+    // =============================================================
+
+    uint256 public constant PRECISE_UNIT = 1e18;
+    uint8 constant NORMAL_BALL_COUNT = 5;
+    uint8 constant TOTAL_TIER_COUNT = 12; // matches(0,1,2,3,4,5) * bonusball(0,1) = 6 * 2 = 12
+
+    // =============================================================
+    //                          STATE VARIABLES
+    // =============================================================
+    
+    // Note:drawingId --> tierId (matches*2 + {1 if bonusball match}) → tier payout
+    mapping(uint256=>DrawingTierInfo) public drawingTierInfo;
+    mapping(uint256=>mapping(uint256 => uint256)) tierPayouts;
+
+    // Must be 12 elements long (matches(0,1,2,3,4,5) * bonusball(0,1))
+    // Allocation of remaining prize pool after minimum payout is accounted for
+    uint256[TOTAL_TIER_COUNT] public premiumTierWeights;
+    // All tiers eligible for the minimum payout, true if eligible, false if not
+    bool[TOTAL_TIER_COUNT] public minPayoutTiers;
+    uint256 public minimumPayout;
+    uint256 public premiumTierMinAllocation;
+
+    IJackpot public immutable jackpot;
+
+    // =============================================================
+    //                          MODIFIERS
+    // =============================================================
+    
+    modifier onlyJackpot() {
+        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
+        _;
+    }
+
+    // =============================================================
+    //                          CONSTRUCTOR
+    // =============================================================
+    
+    /**
+     * @notice Initializes the GuaranteedMinimumPayoutCalculator with payout configuration
+     * @dev Sets up the connection to the Jackpot contract and initial payout parameters.
+     *      Premium tier weights must sum to PRECISE_UNIT for proper allocation.
+     * @param _jackpot Address of the main Jackpot contract (immutable reference)
+     * @param _minimumPayout Base minimum payout amount for eligible tiers
+     * @param _premiumTierMinAllocation Minimum allocation of prize pool for premium tier (in PRECISE_UNIT scale)
+     * @param _minPayoutTiers Boolean array indicating which tiers receive minimum payouts (12 elements)
+     * @param _premiumTierWeights Weight allocation for premium pool distribution (12 elements, must sum to PRECISE_UNIT)
+     * @custom:requirements
+     * - Jackpot address must not be zero
+     * - Premium tier weights must sum exactly to PRECISE_UNIT
+     * - Arrays must be exactly 12 elements (TOTAL_TIER_COUNT)
+     * @custom:effects
+     * - Sets immutable jackpot contract reference
+     * - Initializes minimum payout configuration
+     * - Sets up premium tier allocation weights
+     * - Sets deployer as contract owner
+     * @custom:security
+     * - Immutable jackpot reference prevents unauthorized contract changes
+     * - Weight sum validation ensures proper allocation
+     */
+    constructor(
+        IJackpot _jackpot,
+        uint256 _minimumPayout,
+        uint256 _premiumTierMinAllocation,
+        bool[TOTAL_TIER_COUNT] memory _minPayoutTiers,
+        uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights
+    ) Ownable(msg.sender) {
+        if (_jackpot == IJackpot(address(0))) revert ZeroAddress();
+        if (_premiumTierMinAllocation > PRECISE_UNIT) revert InvalidPremiumTierMinimumAllocation();
+        jackpot = _jackpot;
+        minimumPayout = _minimumPayout;
+        premiumTierMinAllocation = _premiumTierMinAllocation;
+        minPayoutTiers = _minPayoutTiers;
+        _setPremiumTierWeights(_premiumTierWeights);
+    }
+
+    // =============================================================
+    //                       EXTERNAL FUNCTIONS
+    // =============================================================
+
+    /**
+     * @notice Calculates and stores payout amounts for a completed drawing
+     * @dev Two-phase payout calculation with premium-protection threshold:
+     *      1) Compute total winning tickets per tier, including duplicate user tickets, to avoid under-collateralization.
+     *      2) Compute the minimum payout allocation across eligible tiers. Apply minimum payouts only if:
+     *         (prizePool * premiumTierMinAllocation / 1e18) + minimumPayoutAllocation < prizePool.
+     *         - If the inequality is false (i.e., equality or greater), minimum payouts are disabled for this drawing and the
+     *           entire prize pool is allocated by premium weights. This ensures the premium tier receives at least its
+     *           configured minimum allocation and avoids arithmetic underflow.
+     *      Integer division is used for the premium minimum allocation term; any truncation favors premium protection.
+     * @param _drawingId Drawing to calculate payouts for
+     * @param _prizePool Total prize pool available for distribution
+     * @param _normalMax Maximum normal ball number for combination calculations (assumed valid per Jackpot constraints)
+     * @param _bonusballMax Maximum bonusball number for combination calculations (assumed valid per Jackpot constraints)
+     * @param _uniqueResult Array of unique winner counts per tier (12 elements, user-owned tickets)
+     * @param _dupResult Array of duplicate winner counts per tier (12 elements, user-owned tickets)
+     * @return totalPayout Total amount allocated to all user-owned winning tickets
+     * @custom:requirements
+     * - Caller must be the Jackpot contract
+     * - Tier parameters must be snapshotted via setDrawingTierInfo(_drawingId)
+     * - `_uniqueResult.length == 12` and `_dupResult.length == 12`
+     * - `_normalMax` and `_bonusballMax` provided by Jackpot must be valid for combination math
+     * @custom:effects
+     * - Calculates total winning ticket counts per tier (LP + users; duplicates included)
+     * - Applies minimum payouts only if the premium-protection threshold is satisfied
+     * - Distributes the remaining or full prize pool by premium tier weights
+     * - Stores per-tier payout amounts in `tierPayouts`
+     * - Returns the sum owed to user-owned winning tickets only (unique + duplicate)
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Duplicate winners included in denominator to prevent under-collateralization
+     * - Guards against underflow by disabling minimum payouts when insufficient pool remains
+     */
+    function calculateAndStoreDrawingUserWinnings(
+        uint256 _drawingId,
+        uint256 _prizePool,
+        uint8 _normalMax,
+        uint8 _bonusballMax,
+        uint256[] memory _uniqueResult,
+        uint256[] memory _dupResult
+    )
+        external
+        onlyJackpot
+        returns (uint256 totalPayout)
+    {   
+        DrawingTierInfo storage tierInfo = drawingTierInfo[_drawingId];
+
+        // First calculate the total number of winners for each tier including duplicates and use that to determine guaranteed
+        // minimum payouts
+        uint256[TOTAL_TIER_COUNT] memory tierWinners;
+        uint256 minimumPayoutAllocation = 0;
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            // If tier is not eligible for minimum payout AND gets no part of premium allocation then no winners
+            if (!tierInfo.minPayoutTiers[i] && tierInfo.premiumTierWeights[i] == 0) {
+                tierWinners[i] = 0;
+                continue;
+            }
+            // Derived from index formula which is matches*2 + {1 if bonusball match} (i/2 is always floored)
+            uint256 matches = i / 2;
+
+            // Including _dupResult[i] here takes money from the premium tier pool, if we don't include it we take money from the
+            // LP pool reducing edge for LPs. Including here eliminates chances of under-collateralization. The amount of winners within
+            // a tier is the total amount of winning tickets available for that tier plus any duplicate winners from that tier. The logic
+            // here is that some of the non-duplicate winners are held by LPs and some are held by users. All of the duplicate winners
+            // are held by users.
+            uint256 tierWinningTickets = _calculateTierTotalWinningCombos(matches, _normalMax, _bonusballMax, i % 2 == 1) + _dupResult[i];
+            tierWinners[i] = tierWinningTickets;
+            if (tierInfo.minPayoutTiers[i]) {
+                minimumPayoutAllocation += tierWinningTickets * tierInfo.minPayout;
+            }
+        }
+        
+        // Only use minimum payouts if the premium tier minimum allocation + minimum payout allocation is less than the prize pool
+        bool useMinimumPayouts = ((_prizePool * tierInfo.premiumTierMinAllocation / PRECISE_UNIT) + minimumPayoutAllocation) < _prizePool;
+
+        totalPayout = _calculateAndStoreTierPayouts(
+            _drawingId,
+            useMinimumPayouts ? _prizePool - minimumPayoutAllocation : _prizePool,
+            useMinimumPayouts ? tierInfo.minPayout : 0,
+            tierWinners,
+            _uniqueResult,
+            _dupResult
+        );
+    }
+
+    /**
+     * @notice Snapshots current payout configuration for a specific drawing
+     * @dev Freezes current minimumPayout, minPayoutTiers, and premiumTierWeights into drawingTierInfo,
+     *      allowing future configuration changes without affecting this drawing's payout calculations.
+     * @param _drawingId Drawing to set up tier information for
+     * @custom:requirements
+     * - Only Jackpot contract can call
+     * - Should be called before drawing execution
+     * @custom:emits None
+     * @custom:effects
+     * - Creates immutable snapshot of current payout configuration
+     * - Enables payout calculations for the specific drawing
+     * - Allows future parameter updates without affecting this drawing
+     * @custom:security
+     * - Access restricted to Jackpot contract
+     * - Ensures drawing payout consistency regardless of future changes
+     */
+    function setDrawingTierInfo(uint256 _drawingId) external onlyJackpot {
+        drawingTierInfo[_drawingId] = DrawingTierInfo({
+            minPayout: minimumPayout,
+            premiumTierMinAllocation: premiumTierMinAllocation,
+            minPayoutTiers: minPayoutTiers,
+            premiumTierWeights: premiumTierWeights
+        });
+    }
+
+    // =============================================================
+    //                        ADMIN FUNCTIONS
+    // =============================================================
+    
+    /**
+     * @notice Updates the base minimum payout amount
+     * @dev Changes the guaranteed minimum payout for all eligible tiers in future drawings.
+     *      Does not affect drawings that have already had tier info set.
+     * @param _minimumPayout New minimum payout amount (in USDC wei)
+     * @custom:requirements
+     * - Only owner can call
+     * @custom:emits None
+     * @custom:effects
+     * - Updates global minimum payout configuration
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * @custom:security
+     * - Owner-only access restriction
+     */
+    function setMinimumPayout(uint256 _minimumPayout) external onlyOwner {
+        minimumPayout = _minimumPayout;
+    }
+    
+    /**
+     * @notice Updates which tiers are eligible for minimum guaranteed payouts
+     * @dev Configures which of the 12 tiers receive minimum payout guarantees in future drawings.
+     *      Tiers with false values rely solely on premium pool allocation.
+     * @param _minPayoutTiers Boolean array indicating minimum payout eligibility (12 elements)
+     * @custom:requirements
+     * - Only owner can call
+     * - Array must be exactly 12 elements (TOTAL_TIER_COUNT)
+     * @custom:emits None
+     * @custom:effects
+     * - Updates minimum payout tier configuration
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * - Tiers set to false will only receive premium pool allocation
+     * @custom:security
+     * - Owner-only access restriction
+     * - Array length validation
+     */
+    function setMinPayoutTiers(bool[TOTAL_TIER_COUNT] memory _minPayoutTiers) external onlyOwner {
+        minPayoutTiers = _minPayoutTiers;
+    }
+
+    /**
+     * @notice Updates the minimum allocation of the prize pool reserved for premium tier distribution
+     * @dev Sets the minimum percentage of the total prize pool that must be allocated to premium tiers.
+     *      This ensures premium tiers receive adequate funding even when minimum payouts consume most of the pool.
+     *      The allocation is enforced during payout calculations by making sure the minimum payout allocation + 
+     *      minimum premium allocation is less than the prize pool. If this equality fails then minimum payouts
+     *      are disabled and the entire prize pool is distributed to the premium tiers.
+     * @param _premiumTierMinAllocation Minimum allocation percentage in PRECISE_UNIT scale (e.g., 0.1e18 = 10%)
+     * @custom:requirements
+     * - Only owner can call
+     * - Allocation percentage must not exceed 100% (PRECISE_UNIT)
+     * @custom:emits None
+     * @custom:effects
+     * - Updates global premium tier minimum allocation configuration
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * - Changes how prize pool is split between minimum payouts and premium allocation
+     * @custom:security
+     * - Owner-only access restriction
+     * - Upper bound validation prevents invalid allocation percentages
+     * - Ensures balanced distribution between guaranteed minimums and premium rewards
+     */
+    function setPremiumTierMinAllocation(uint256 _premiumTierMinAllocation) external onlyOwner {
+        if (_premiumTierMinAllocation > PRECISE_UNIT) revert InvalidPremiumTierMinimumAllocation();
+        premiumTierMinAllocation = _premiumTierMinAllocation;
+    }
+
+    /**
+     * @notice Updates premium tier weight allocation
+     * @dev Changes how the premium prize pool (after minimum payouts) is distributed across tiers.
+     *      Weights must sum to PRECISE_UNIT to ensure complete allocation.
+     * @param _premiumTierWeights Array of allocation weights (12 elements, must sum to PRECISE_UNIT)
+     * @custom:requirements
+     * - Only owner can call
+     * - Array must be exactly 12 elements (TOTAL_TIER_COUNT)
+     * - Weights must sum exactly to PRECISE_UNIT (1e18)
+     * @custom:emits None
+     * @custom:effects
+     * - Updates premium pool allocation weights
+     * - Affects future drawings only (after setDrawingTierInfo is called)
+     * - Changes how remaining prize pool is distributed after minimum payouts
+     * @custom:security
+     * - Owner-only access restriction
+     * - Weight sum validation ensures complete allocation
+     * - Array length validation
+     */
+    function setPremiumTierWeights(uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights) external onlyOwner {
+        _setPremiumTierWeights(_premiumTierWeights);
+    }
+
+    // =============================================================
+    //                        VIEW FUNCTIONS
+    // =============================================================
+    
+    /**
+     * @notice Returns the calculated payout amount for a specific tier in a drawing
+     * @dev Retrieves the final payout amount per winning ticket for the specified tier.
+     *      Returns 0 if no payout has been calculated or tier had no winners.
+     * @param _drawingId Drawing to query
+     * @param _tierId Tier to query (0-11, calculated as matches*2 + bonusballMatch)
+     * @return Payout amount per winning ticket for the tier (in USDC wei)
+     */
+    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256) {
+        return tierPayouts[_drawingId][_tierId];
+    }
+
+    /**
+     * @notice Returns all tier payouts for a specific drawing
+     * @dev Retrieves the complete array of payout amounts for all 12 tiers in a drawing.
+     *      Useful for displaying complete payout structure or performing batch calculations.
+     * @param _drawingId Drawing to query
+     * @return Array of payout amounts for all tiers (12 elements, in USDC wei)
+     */
+    function getDrawingTierPayouts(uint256 _drawingId) external view returns (uint256[TOTAL_TIER_COUNT] memory) {
+        uint256[TOTAL_TIER_COUNT] memory drawingTierPayouts;
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            drawingTierPayouts[i] = tierPayouts[_drawingId][i];
+        }
+        return drawingTierPayouts;
+    }
+
+    /**
+     * @notice Returns current minimum payout tier configuration
+     * @dev Shows which tiers are currently eligible for minimum guaranteed payouts.
+     *      This reflects the current configuration, not necessarily what was used for past drawings.
+     * @return Boolean array indicating minimum payout eligibility for each tier (12 elements)
+     */
+    function getMinPayoutTiers() external view returns (bool[TOTAL_TIER_COUNT] memory) {
+        return minPayoutTiers;
+    }
+
+    /**
+     * @notice Returns current premium tier weight configuration
+     * @dev Shows current premium pool allocation weights across all tiers.
+     *      This reflects the current configuration, not necessarily what was used for past drawings.
+     * @return Array of premium pool allocation weights (12 elements, sum to PRECISE_UNIT)
+     */
+    function getPremiumTierWeights() external view returns (uint256[TOTAL_TIER_COUNT] memory) {
+        return premiumTierWeights;
+    }
+
+    /**
+     * @notice Returns the complete tier configuration used for a specific drawing
+     * @dev Retrieves the snapshot of payout configuration that was frozen for the drawing.
+     *      This shows the exact parameters used for payout calculations.
+     * @param _drawingId Drawing to query
+     * @return DrawingTierInfo struct containing minimum payout, tier eligibility, and premium weights
+     */
+    function getDrawingTierInfo(uint256 _drawingId) external view returns (DrawingTierInfo memory) {
+        return drawingTierInfo[_drawingId];
+    }
+
+    // =============================================================
+    //                        INTERNAL FUNCTIONS
+    // =============================================================
+    function _setPremiumTierWeights(uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights) internal {
+        uint256 tierWeightSum = 0;
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            tierWeightSum += _premiumTierWeights[i];
+        }
+        if (tierWeightSum != PRECISE_UNIT) revert InvalidTierWeights();
+
+        premiumTierWeights = _premiumTierWeights;
+    }
+
+    function _calculateAndStoreTierPayouts(
+        uint256 _drawingId,
+        uint256 _remainingPrizePool,
+        uint256 _minPayout,
+        uint256[TOTAL_TIER_COUNT] memory _tierWinners,
+        uint256[] memory _uniqueResult,
+        uint256[] memory _dupResult
+    )
+        internal
+        returns(uint256 totalPayout)
+    {
+        DrawingTierInfo storage tierInfo = drawingTierInfo[_drawingId];
+        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
+            // If no winners then no payout
+            if (_tierWinners[i] != 0) {
+                // Calculate the payout for each tier from the (remaining prize pool * weight) / total winning tickets
+                //(including LP-owned winning tickets)
+                uint256 premiumTierPayoutAmount = _remainingPrizePool * tierInfo.premiumTierWeights[i] / (PRECISE_UNIT * _tierWinners[i]);
+                // Add the premium tier payout to the minimum payout if the tier is eligible for the minimum payout
+                uint256 tierPayout = tierInfo.minPayoutTiers[i] ? _minPayout + premiumTierPayoutAmount : premiumTierPayoutAmount;
+                // Store the payout for the tier in the mapping so it can be queried later and add the total tier payout to the total payout
+                tierPayouts[_drawingId][i] = tierPayout;
+                // the total amount of user-owned winning tickets for a given tier is the sum of result and dupResult
+                totalPayout += tierPayout * (_uniqueResult[i] + _dupResult[i]);
+            }
+        }
+    }
+
+    function _calculateTierTotalWinningCombos(
+        uint256 _matches,
+        uint8 _normalMax, 
+        uint8 _bonusballMax,
+        bool _bonusballMatch
+    )
+        internal
+        pure
+        returns(uint256)
+    {
+        if (_bonusballMatch) {
+            return Combinations.choose(NORMAL_BALL_COUNT, _matches) * Combinations.choose(_normalMax - NORMAL_BALL_COUNT, NORMAL_BALL_COUNT - _matches);
+        } else {
+            return Combinations.choose(NORMAL_BALL_COUNT, _matches) * Combinations.choose(_normalMax - NORMAL_BALL_COUNT, NORMAL_BALL_COUNT - _matches) * (_bonusballMax - 1);
+        }
+    }
+}
+
 // SPDX-License-Identifier: Apache 2
 pragma solidity ^0.8.0;
 
@@ -3729,463 +4186,6 @@ contract JackpotLPManager is IJackpotLPManager, Ownable {
             // will still receive ticket revenue
             _lp.claimableWithdrawals += (_lp.pendingWithdrawal.amountInShares * drawingAccumulator[_lp.pendingWithdrawal.drawingId]) / PRECISE_UNIT;
             delete _lp.pendingWithdrawal;
-        }
-    }
-}
-
-//SPDX-License-Identifier: UNLICENSED
-
-/*
-Copyright (C) 2025 Coordination Inc.
-All rights reserved.
-
-This software is proprietary and confidential. Unauthorized copying,
-distribution, or use is strictly prohibited and may result in legal action.
-
-For licensing inquiries: legal@coordinationlabs.com
-*/
-
-pragma solidity ^0.8.28;
-
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-
-import { Combinations } from "./lib/Combinations.sol";
-import { IJackpot } from "./interfaces/IJackpot.sol";
-import { IPayoutCalculator } from "./interfaces/IPayoutCalculator.sol";
-
-/**
- * @title GuaranteedMinimumPayoutCalculator
- * @notice Calculates prize payouts using a two-tier system with guaranteed minimums and premium allocation
- * @dev Implements a 12-tier payout system based on jackpot match combinations:
- *      - Tiers 0-11: matches(0-5) × bonusball(no/yes) = matches*2 + (bonusballMatch ? 1 : 0)
- *      - Each tier has configurable minimum payouts and premium pool allocation weights
- *      - Premium pool is allocated proportionally after minimum payouts are satisfied
- *      - Includes both user-owned and LP-owned winning tickets in allocation calculations
- *      - Supports owner-configurable payout parameters that can be updated between drawings
- */
-contract GuaranteedMinimumPayoutCalculator is IPayoutCalculator, Ownable {
-
-    // =============================================================
-    //                          STRUCTS
-    // =============================================================
-
-    struct DrawingTierInfo {
-        uint256 minPayout;
-        uint256 premiumTierMinAllocation;
-        bool[12] minPayoutTiers;
-        uint256[12] premiumTierWeights;
-    }
-
-    // =============================================================
-    //                          ERRORS
-    // =============================================================
-
-    error UnauthorizedCaller();
-    error ZeroAddress();
-    error InvalidTierWeights();
-    error InvalidPremiumTierMinimumAllocation();
-
-    // =============================================================
-    //                          CONSTANTS
-    // =============================================================
-
-    uint256 public constant PRECISE_UNIT = 1e18;
-    uint8 constant NORMAL_BALL_COUNT = 5;
-    uint8 constant TOTAL_TIER_COUNT = 12; // matches(0,1,2,3,4,5) * bonusball(0,1) = 6 * 2 = 12
-
-    // =============================================================
-    //                          STATE VARIABLES
-    // =============================================================
-    
-    // Note:drawingId --> tierId (matches*2 + {1 if bonusball match}) → tier payout
-    mapping(uint256=>DrawingTierInfo) public drawingTierInfo;
-    mapping(uint256=>mapping(uint256 => uint256)) tierPayouts;
-
-    // Must be 12 elements long (matches(0,1,2,3,4,5) * bonusball(0,1))
-    // Allocation of remaining prize pool after minimum payout is accounted for
-    uint256[TOTAL_TIER_COUNT] public premiumTierWeights;
-    // All tiers eligible for the minimum payout, true if eligible, false if not
-    bool[TOTAL_TIER_COUNT] public minPayoutTiers;
-    uint256 public minimumPayout;
-    uint256 public premiumTierMinAllocation;
-
-    IJackpot public immutable jackpot;
-
-    // =============================================================
-    //                          MODIFIERS
-    // =============================================================
-    
-    modifier onlyJackpot() {
-        if (msg.sender != address(jackpot)) revert UnauthorizedCaller();
-        _;
-    }
-
-    // =============================================================
-    //                          CONSTRUCTOR
-    // =============================================================
-    
-    /**
-     * @notice Initializes the GuaranteedMinimumPayoutCalculator with payout configuration
-     * @dev Sets up the connection to the Jackpot contract and initial payout parameters.
-     *      Premium tier weights must sum to PRECISE_UNIT for proper allocation.
-     * @param _jackpot Address of the main Jackpot contract (immutable reference)
-     * @param _minimumPayout Base minimum payout amount for eligible tiers
-     * @param _premiumTierMinAllocation Minimum allocation of prize pool for premium tier (in PRECISE_UNIT scale)
-     * @param _minPayoutTiers Boolean array indicating which tiers receive minimum payouts (12 elements)
-     * @param _premiumTierWeights Weight allocation for premium pool distribution (12 elements, must sum to PRECISE_UNIT)
-     * @custom:requirements
-     * - Jackpot address must not be zero
-     * - Premium tier weights must sum exactly to PRECISE_UNIT
-     * - Arrays must be exactly 12 elements (TOTAL_TIER_COUNT)
-     * @custom:effects
-     * - Sets immutable jackpot contract reference
-     * - Initializes minimum payout configuration
-     * - Sets up premium tier allocation weights
-     * - Sets deployer as contract owner
-     * @custom:security
-     * - Immutable jackpot reference prevents unauthorized contract changes
-     * - Weight sum validation ensures proper allocation
-     */
-    constructor(
-        IJackpot _jackpot,
-        uint256 _minimumPayout,
-        uint256 _premiumTierMinAllocation,
-        bool[TOTAL_TIER_COUNT] memory _minPayoutTiers,
-        uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights
-    ) Ownable(msg.sender) {
-        if (_jackpot == IJackpot(address(0))) revert ZeroAddress();
-        if (_premiumTierMinAllocation > PRECISE_UNIT) revert InvalidPremiumTierMinimumAllocation();
-        jackpot = _jackpot;
-        minimumPayout = _minimumPayout;
-        premiumTierMinAllocation = _premiumTierMinAllocation;
-        minPayoutTiers = _minPayoutTiers;
-        _setPremiumTierWeights(_premiumTierWeights);
-    }
-
-    // =============================================================
-    //                       EXTERNAL FUNCTIONS
-    // =============================================================
-
-    /**
-     * @notice Calculates and stores payout amounts for a completed drawing
-     * @dev Two-phase payout calculation with premium-protection threshold:
-     *      1) Compute total winning tickets per tier, including duplicate user tickets, to avoid under-collateralization.
-     *      2) Compute the minimum payout allocation across eligible tiers. Apply minimum payouts only if:
-     *         (prizePool * premiumTierMinAllocation / 1e18) + minimumPayoutAllocation < prizePool.
-     *         - If the inequality is false (i.e., equality or greater), minimum payouts are disabled for this drawing and the
-     *           entire prize pool is allocated by premium weights. This ensures the premium tier receives at least its
-     *           configured minimum allocation and avoids arithmetic underflow.
-     *      Integer division is used for the premium minimum allocation term; any truncation favors premium protection.
-     * @param _drawingId Drawing to calculate payouts for
-     * @param _prizePool Total prize pool available for distribution
-     * @param _normalMax Maximum normal ball number for combination calculations (assumed valid per Jackpot constraints)
-     * @param _bonusballMax Maximum bonusball number for combination calculations (assumed valid per Jackpot constraints)
-     * @param _uniqueResult Array of unique winner counts per tier (12 elements, user-owned tickets)
-     * @param _dupResult Array of duplicate winner counts per tier (12 elements, user-owned tickets)
-     * @return totalPayout Total amount allocated to all user-owned winning tickets
-     * @custom:requirements
-     * - Caller must be the Jackpot contract
-     * - Tier parameters must be snapshotted via setDrawingTierInfo(_drawingId)
-     * - `_uniqueResult.length == 12` and `_dupResult.length == 12`
-     * - `_normalMax` and `_bonusballMax` provided by Jackpot must be valid for combination math
-     * @custom:effects
-     * - Calculates total winning ticket counts per tier (LP + users; duplicates included)
-     * - Applies minimum payouts only if the premium-protection threshold is satisfied
-     * - Distributes the remaining or full prize pool by premium tier weights
-     * - Stores per-tier payout amounts in `tierPayouts`
-     * - Returns the sum owed to user-owned winning tickets only (unique + duplicate)
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Duplicate winners included in denominator to prevent under-collateralization
-     * - Guards against underflow by disabling minimum payouts when insufficient pool remains
-     */
-    function calculateAndStoreDrawingUserWinnings(
-        uint256 _drawingId,
-        uint256 _prizePool,
-        uint8 _normalMax,
-        uint8 _bonusballMax,
-        uint256[] memory _uniqueResult,
-        uint256[] memory _dupResult
-    )
-        external
-        onlyJackpot
-        returns (uint256 totalPayout)
-    {   
-        DrawingTierInfo storage tierInfo = drawingTierInfo[_drawingId];
-
-        // First calculate the total number of winners for each tier including duplicates and use that to determine guaranteed
-        // minimum payouts
-        uint256[TOTAL_TIER_COUNT] memory tierWinners;
-        uint256 minimumPayoutAllocation = 0;
-        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
-            // If tier is not eligible for minimum payout AND gets no part of premium allocation then no winners
-            if (!tierInfo.minPayoutTiers[i] && tierInfo.premiumTierWeights[i] == 0) {
-                tierWinners[i] = 0;
-                continue;
-            }
-            // Derived from index formula which is matches*2 + {1 if bonusball match} (i/2 is always floored)
-            uint256 matches = i / 2;
-
-            // Including _dupResult[i] here takes money from the premium tier pool, if we don't include it we take money from the
-            // LP pool reducing edge for LPs. Including here eliminates chances of under-collateralization. The amount of winners within
-            // a tier is the total amount of winning tickets available for that tier plus any duplicate winners from that tier. The logic
-            // here is that some of the non-duplicate winners are held by LPs and some are held by users. All of the duplicate winners
-            // are held by users.
-            uint256 tierWinningTickets = _calculateTierTotalWinningCombos(matches, _normalMax, _bonusballMax, i % 2 == 1) + _dupResult[i];
-            tierWinners[i] = tierWinningTickets;
-            if (tierInfo.minPayoutTiers[i]) {
-                minimumPayoutAllocation += tierWinningTickets * tierInfo.minPayout;
-            }
-        }
-        
-        // Only use minimum payouts if the premium tier minimum allocation + minimum payout allocation is less than the prize pool
-        bool useMinimumPayouts = ((_prizePool * tierInfo.premiumTierMinAllocation / PRECISE_UNIT) + minimumPayoutAllocation) < _prizePool;
-
-        totalPayout = _calculateAndStoreTierPayouts(
-            _drawingId,
-            useMinimumPayouts ? _prizePool - minimumPayoutAllocation : _prizePool,
-            useMinimumPayouts ? tierInfo.minPayout : 0,
-            tierWinners,
-            _uniqueResult,
-            _dupResult
-        );
-    }
-
-    /**
-     * @notice Snapshots current payout configuration for a specific drawing
-     * @dev Freezes current minimumPayout, minPayoutTiers, and premiumTierWeights into drawingTierInfo,
-     *      allowing future configuration changes without affecting this drawing's payout calculations.
-     * @param _drawingId Drawing to set up tier information for
-     * @custom:requirements
-     * - Only Jackpot contract can call
-     * - Should be called before drawing execution
-     * @custom:emits None
-     * @custom:effects
-     * - Creates immutable snapshot of current payout configuration
-     * - Enables payout calculations for the specific drawing
-     * - Allows future parameter updates without affecting this drawing
-     * @custom:security
-     * - Access restricted to Jackpot contract
-     * - Ensures drawing payout consistency regardless of future changes
-     */
-    function setDrawingTierInfo(uint256 _drawingId) external onlyJackpot {
-        drawingTierInfo[_drawingId] = DrawingTierInfo({
-            minPayout: minimumPayout,
-            premiumTierMinAllocation: premiumTierMinAllocation,
-            minPayoutTiers: minPayoutTiers,
-            premiumTierWeights: premiumTierWeights
-        });
-    }
-
-    // =============================================================
-    //                        ADMIN FUNCTIONS
-    // =============================================================
-    
-    /**
-     * @notice Updates the base minimum payout amount
-     * @dev Changes the guaranteed minimum payout for all eligible tiers in future drawings.
-     *      Does not affect drawings that have already had tier info set.
-     * @param _minimumPayout New minimum payout amount (in USDC wei)
-     * @custom:requirements
-     * - Only owner can call
-     * @custom:emits None
-     * @custom:effects
-     * - Updates global minimum payout configuration
-     * - Affects future drawings only (after setDrawingTierInfo is called)
-     * @custom:security
-     * - Owner-only access restriction
-     */
-    function setMinimumPayout(uint256 _minimumPayout) external onlyOwner {
-        minimumPayout = _minimumPayout;
-    }
-    
-    /**
-     * @notice Updates which tiers are eligible for minimum guaranteed payouts
-     * @dev Configures which of the 12 tiers receive minimum payout guarantees in future drawings.
-     *      Tiers with false values rely solely on premium pool allocation.
-     * @param _minPayoutTiers Boolean array indicating minimum payout eligibility (12 elements)
-     * @custom:requirements
-     * - Only owner can call
-     * - Array must be exactly 12 elements (TOTAL_TIER_COUNT)
-     * @custom:emits None
-     * @custom:effects
-     * - Updates minimum payout tier configuration
-     * - Affects future drawings only (after setDrawingTierInfo is called)
-     * - Tiers set to false will only receive premium pool allocation
-     * @custom:security
-     * - Owner-only access restriction
-     * - Array length validation
-     */
-    function setMinPayoutTiers(bool[TOTAL_TIER_COUNT] memory _minPayoutTiers) external onlyOwner {
-        minPayoutTiers = _minPayoutTiers;
-    }
-
-    /**
-     * @notice Updates the minimum allocation of the prize pool reserved for premium tier distribution
-     * @dev Sets the minimum percentage of the total prize pool that must be allocated to premium tiers.
-     *      This ensures premium tiers receive adequate funding even when minimum payouts consume most of the pool.
-     *      The allocation is enforced during payout calculations by making sure the minimum payout allocation + 
-     *      minimum premium allocation is less than the prize pool. If this equality fails then minimum payouts
-     *      are disabled and the entire prize pool is distributed to the premium tiers.
-     * @param _premiumTierMinAllocation Minimum allocation percentage in PRECISE_UNIT scale (e.g., 0.1e18 = 10%)
-     * @custom:requirements
-     * - Only owner can call
-     * - Allocation percentage must not exceed 100% (PRECISE_UNIT)
-     * @custom:emits None
-     * @custom:effects
-     * - Updates global premium tier minimum allocation configuration
-     * - Affects future drawings only (after setDrawingTierInfo is called)
-     * - Changes how prize pool is split between minimum payouts and premium allocation
-     * @custom:security
-     * - Owner-only access restriction
-     * - Upper bound validation prevents invalid allocation percentages
-     * - Ensures balanced distribution between guaranteed minimums and premium rewards
-     */
-    function setPremiumTierMinAllocation(uint256 _premiumTierMinAllocation) external onlyOwner {
-        if (_premiumTierMinAllocation > PRECISE_UNIT) revert InvalidPremiumTierMinimumAllocation();
-        premiumTierMinAllocation = _premiumTierMinAllocation;
-    }
-
-    /**
-     * @notice Updates premium tier weight allocation
-     * @dev Changes how the premium prize pool (after minimum payouts) is distributed across tiers.
-     *      Weights must sum to PRECISE_UNIT to ensure complete allocation.
-     * @param _premiumTierWeights Array of allocation weights (12 elements, must sum to PRECISE_UNIT)
-     * @custom:requirements
-     * - Only owner can call
-     * - Array must be exactly 12 elements (TOTAL_TIER_COUNT)
-     * - Weights must sum exactly to PRECISE_UNIT (1e18)
-     * @custom:emits None
-     * @custom:effects
-     * - Updates premium pool allocation weights
-     * - Affects future drawings only (after setDrawingTierInfo is called)
-     * - Changes how remaining prize pool is distributed after minimum payouts
-     * @custom:security
-     * - Owner-only access restriction
-     * - Weight sum validation ensures complete allocation
-     * - Array length validation
-     */
-    function setPremiumTierWeights(uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights) external onlyOwner {
-        _setPremiumTierWeights(_premiumTierWeights);
-    }
-
-    // =============================================================
-    //                        VIEW FUNCTIONS
-    // =============================================================
-    
-    /**
-     * @notice Returns the calculated payout amount for a specific tier in a drawing
-     * @dev Retrieves the final payout amount per winning ticket for the specified tier.
-     *      Returns 0 if no payout has been calculated or tier had no winners.
-     * @param _drawingId Drawing to query
-     * @param _tierId Tier to query (0-11, calculated as matches*2 + bonusballMatch)
-     * @return Payout amount per winning ticket for the tier (in USDC wei)
-     */
-    function getTierPayout(uint256 _drawingId, uint256 _tierId) external view returns (uint256) {
-        return tierPayouts[_drawingId][_tierId];
-    }
-
-    /**
-     * @notice Returns all tier payouts for a specific drawing
-     * @dev Retrieves the complete array of payout amounts for all 12 tiers in a drawing.
-     *      Useful for displaying complete payout structure or performing batch calculations.
-     * @param _drawingId Drawing to query
-     * @return Array of payout amounts for all tiers (12 elements, in USDC wei)
-     */
-    function getDrawingTierPayouts(uint256 _drawingId) external view returns (uint256[TOTAL_TIER_COUNT] memory) {
-        uint256[TOTAL_TIER_COUNT] memory drawingTierPayouts;
-        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
-            drawingTierPayouts[i] = tierPayouts[_drawingId][i];
-        }
-        return drawingTierPayouts;
-    }
-
-    /**
-     * @notice Returns current minimum payout tier configuration
-     * @dev Shows which tiers are currently eligible for minimum guaranteed payouts.
-     *      This reflects the current configuration, not necessarily what was used for past drawings.
-     * @return Boolean array indicating minimum payout eligibility for each tier (12 elements)
-     */
-    function getMinPayoutTiers() external view returns (bool[TOTAL_TIER_COUNT] memory) {
-        return minPayoutTiers;
-    }
-
-    /**
-     * @notice Returns current premium tier weight configuration
-     * @dev Shows current premium pool allocation weights across all tiers.
-     *      This reflects the current configuration, not necessarily what was used for past drawings.
-     * @return Array of premium pool allocation weights (12 elements, sum to PRECISE_UNIT)
-     */
-    function getPremiumTierWeights() external view returns (uint256[TOTAL_TIER_COUNT] memory) {
-        return premiumTierWeights;
-    }
-
-    /**
-     * @notice Returns the complete tier configuration used for a specific drawing
-     * @dev Retrieves the snapshot of payout configuration that was frozen for the drawing.
-     *      This shows the exact parameters used for payout calculations.
-     * @param _drawingId Drawing to query
-     * @return DrawingTierInfo struct containing minimum payout, tier eligibility, and premium weights
-     */
-    function getDrawingTierInfo(uint256 _drawingId) external view returns (DrawingTierInfo memory) {
-        return drawingTierInfo[_drawingId];
-    }
-
-    // =============================================================
-    //                        INTERNAL FUNCTIONS
-    // =============================================================
-    function _setPremiumTierWeights(uint256[TOTAL_TIER_COUNT] memory _premiumTierWeights) internal {
-        uint256 tierWeightSum = 0;
-        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
-            tierWeightSum += _premiumTierWeights[i];
-        }
-        if (tierWeightSum != PRECISE_UNIT) revert InvalidTierWeights();
-
-        premiumTierWeights = _premiumTierWeights;
-    }
-
-    function _calculateAndStoreTierPayouts(
-        uint256 _drawingId,
-        uint256 _remainingPrizePool,
-        uint256 _minPayout,
-        uint256[TOTAL_TIER_COUNT] memory _tierWinners,
-        uint256[] memory _uniqueResult,
-        uint256[] memory _dupResult
-    )
-        internal
-        returns(uint256 totalPayout)
-    {
-        DrawingTierInfo storage tierInfo = drawingTierInfo[_drawingId];
-        for (uint256 i = 0; i < TOTAL_TIER_COUNT; i++) {
-            // If no winners then no payout
-            if (_tierWinners[i] != 0) {
-                // Calculate the payout for each tier from the (remaining prize pool * weight) / total winning tickets
-                //(including LP-owned winning tickets)
-                uint256 premiumTierPayoutAmount = _remainingPrizePool * tierInfo.premiumTierWeights[i] / (PRECISE_UNIT * _tierWinners[i]);
-                // Add the premium tier payout to the minimum payout if the tier is eligible for the minimum payout
-                uint256 tierPayout = tierInfo.minPayoutTiers[i] ? _minPayout + premiumTierPayoutAmount : premiumTierPayoutAmount;
-                // Store the payout for the tier in the mapping so it can be queried later and add the total tier payout to the total payout
-                tierPayouts[_drawingId][i] = tierPayout;
-                // the total amount of user-owned winning tickets for a given tier is the sum of result and dupResult
-                totalPayout += tierPayout * (_uniqueResult[i] + _dupResult[i]);
-            }
-        }
-    }
-
-    function _calculateTierTotalWinningCombos(
-        uint256 _matches,
-        uint8 _normalMax, 
-        uint8 _bonusballMax,
-        bool _bonusballMatch
-    )
-        internal
-        pure
-        returns(uint256)
-    {
-        if (_bonusballMatch) {
-            return Combinations.choose(NORMAL_BALL_COUNT, _matches) * Combinations.choose(_normalMax - NORMAL_BALL_COUNT, NORMAL_BALL_COUNT - _matches);
-        } else {
-            return Combinations.choose(NORMAL_BALL_COUNT, _matches) * Combinations.choose(_normalMax - NORMAL_BALL_COUNT, NORMAL_BALL_COUNT - _matches) * (_bonusballMax - 1);
         }
     }
 }
