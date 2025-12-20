@@ -345,96 +345,6 @@ contract ScaledEntropyProvider is Ownable, IScaledEntropyProvider, IEntropyConsu
 END OF MAIN TARGET CONTRACT
 
 ## SUPPORTING CONTEXT: CONTRACTS, LIBRARIES & INTERFACES
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
-
-/**
- * @title FisherYatesRejection
- * @notice Library implementing Fisher-Yates shuffle with rejection sampling for unbiased random selection
- * @dev Provides cryptographically secure random number selection without modulo bias:
- *      - Uses Fisher-Yates shuffle algorithm for uniform distribution
- *      - Implements rejection sampling to eliminate modulo bias
- *      - Supports configurable range and sample count
- *      - Ensures each selected number has equal probability
- *      - Optimized for jackpot drawing and other applications requiring provable fairness
- *      - Returns selections without replacement (no duplicates)
- */
-library FisherYatesRejection {
-    uint256 constant MAX_UINT = type(uint256).max;
-
-    /**
-     * @notice Generates random numbers using Fisher-Yates shuffle with rejection sampling
-     * @dev Implements unbiased random selection by:
-     *      1. Building a pool of all numbers in the specified range
-     *      2. Using Fisher-Yates shuffle with rejection sampling to avoid modulo bias
-     *      3. Selecting the first 'count' numbers from the shuffled pool
-     *      The rejection sampling ensures uniform distribution by rejecting random values
-     *      that would create bias when reduced to the required range. Developer needs to ensure
-     *      that the range is not too large to be able to build an array of the appropriate size
-     *      in memory.
-     * @param minRange Minimum value in the selection range (inclusive)
-     * @param maxRange Maximum value in the selection range (inclusive)
-     * @param count Number of unique values to select
-     * @param seed Cryptographic seed for random number generation
-     * @return result Array of selected numbers in the order they were shuffled
-     * @custom:requirements
-     * - count must be <= (maxRange - minRange + 1) to ensure sufficient pool size
-     * - minRange must be <= maxRange for valid range
-     * - seed should be cryptographically secure for unbiased results
-     * @custom:effects
-     * - Returns 'count' unique numbers from the specified range
-     * - Each number in range has equal probability of selection
-     * - No duplicates in the result array
-     * @custom:security
-     * - Rejection sampling eliminates modulo bias
-     * - Fisher-Yates algorithm ensures uniform distribution
-     * - Deterministic output for given seed enables verification
-     * - Gas usage scales with rejection rate (worst case for biased ranges)
-     */
-    function draw(
-        uint256 minRange,
-        uint256 maxRange,
-        uint256 count,
-        uint256 seed
-    ) external pure returns (uint256[] memory result) {
-        require(count <= maxRange - minRange + 1, "Too many draws");
-
-        // Build pool [1, 2, ..., range]
-        uint256 rangeSize = maxRange - minRange + 1;
-        uint256[] memory pool = new uint256[](rangeSize);
-        for (uint256 i = 0; i < rangeSize; i++) {
-            pool[i] = i + minRange;
-        }
-
-        uint256 nonce = 0;
-
-        // Fisher-Yates shuffle with rejection sampling
-        for (uint256 i = rangeSize - 1; i > 0; i--) {
-            uint256 rand;
-            while (true) {
-                rand = uint256(keccak256(abi.encode(seed, nonce)));
-                uint256 limit = (MAX_UINT / (i + 1)) * (i + 1);
-
-                if (rand < limit) {
-                    rand = rand % (i + 1);
-                    break;
-                }
-                nonce++;
-            }
-
-            // Swap pool[i] and pool[rand]
-            (pool[i], pool[rand]) = (pool[rand], pool[i]);
-            nonce++;
-        }
-
-        // Take first `count` numbers
-        result = new uint256[](count);
-        for (uint256 j = 0; j < count; j++) {
-            result[j] = pool[j];
-        }
-    }
-}
-
 // SPDX-License-Identifier: Apache 2
 pragma solidity ^0.8.0;
 
@@ -598,6 +508,96 @@ interface IEntropyV2 is EntropyEventsV2 {
 }
 
 // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+/**
+ * @title FisherYatesRejection
+ * @notice Library implementing Fisher-Yates shuffle with rejection sampling for unbiased random selection
+ * @dev Provides cryptographically secure random number selection without modulo bias:
+ *      - Uses Fisher-Yates shuffle algorithm for uniform distribution
+ *      - Implements rejection sampling to eliminate modulo bias
+ *      - Supports configurable range and sample count
+ *      - Ensures each selected number has equal probability
+ *      - Optimized for jackpot drawing and other applications requiring provable fairness
+ *      - Returns selections without replacement (no duplicates)
+ */
+library FisherYatesRejection {
+    uint256 constant MAX_UINT = type(uint256).max;
+
+    /**
+     * @notice Generates random numbers using Fisher-Yates shuffle with rejection sampling
+     * @dev Implements unbiased random selection by:
+     *      1. Building a pool of all numbers in the specified range
+     *      2. Using Fisher-Yates shuffle with rejection sampling to avoid modulo bias
+     *      3. Selecting the first 'count' numbers from the shuffled pool
+     *      The rejection sampling ensures uniform distribution by rejecting random values
+     *      that would create bias when reduced to the required range. Developer needs to ensure
+     *      that the range is not too large to be able to build an array of the appropriate size
+     *      in memory.
+     * @param minRange Minimum value in the selection range (inclusive)
+     * @param maxRange Maximum value in the selection range (inclusive)
+     * @param count Number of unique values to select
+     * @param seed Cryptographic seed for random number generation
+     * @return result Array of selected numbers in the order they were shuffled
+     * @custom:requirements
+     * - count must be <= (maxRange - minRange + 1) to ensure sufficient pool size
+     * - minRange must be <= maxRange for valid range
+     * - seed should be cryptographically secure for unbiased results
+     * @custom:effects
+     * - Returns 'count' unique numbers from the specified range
+     * - Each number in range has equal probability of selection
+     * - No duplicates in the result array
+     * @custom:security
+     * - Rejection sampling eliminates modulo bias
+     * - Fisher-Yates algorithm ensures uniform distribution
+     * - Deterministic output for given seed enables verification
+     * - Gas usage scales with rejection rate (worst case for biased ranges)
+     */
+    function draw(
+        uint256 minRange,
+        uint256 maxRange,
+        uint256 count,
+        uint256 seed
+    ) external pure returns (uint256[] memory result) {
+        require(count <= maxRange - minRange + 1, "Too many draws");
+
+        // Build pool [1, 2, ..., range]
+        uint256 rangeSize = maxRange - minRange + 1;
+        uint256[] memory pool = new uint256[](rangeSize);
+        for (uint256 i = 0; i < rangeSize; i++) {
+            pool[i] = i + minRange;
+        }
+
+        uint256 nonce = 0;
+
+        // Fisher-Yates shuffle with rejection sampling
+        for (uint256 i = rangeSize - 1; i > 0; i--) {
+            uint256 rand;
+            while (true) {
+                rand = uint256(keccak256(abi.encode(seed, nonce)));
+                uint256 limit = (MAX_UINT / (i + 1)) * (i + 1);
+
+                if (rand < limit) {
+                    rand = rand % (i + 1);
+                    break;
+                }
+                nonce++;
+            }
+
+            // Swap pool[i] and pool[rand]
+            (pool[i], pool[rand]) = (pool[rand], pool[i]);
+            nonce++;
+        }
+
+        // Take first `count` numbers
+        result = new uint256[](count);
+        for (uint256 j = 0; j < count; j++) {
+            result[j] = pool[j];
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v5.0.0) (access/Ownable.sol)
 
 pragma solidity ^0.8.20;
@@ -754,16 +754,82 @@ abstract contract IEntropyConsumer {
     ) internal virtual;
 }
 
+// SPDX-License-Identifier: Apache-2.0
+pragma solidity ^0.8.0;
+
+import "./EntropyStructs.sol";
+
+// Deprecated -- these events are still emitted, but the lack of indexing
+// makes them hard to use.
+interface EntropyEvents {
+    event Registered(EntropyStructs.ProviderInfo provider);
+
+    event Requested(EntropyStructs.Request request);
+    event RequestedWithCallback(
+        address indexed provider,
+        address indexed requestor,
+        uint64 indexed sequenceNumber,
+        bytes32 userRandomNumber,
+        EntropyStructs.Request request
+    );
+
+    event Revealed(
+        EntropyStructs.Request request,
+        bytes32 userRevelation,
+        bytes32 providerRevelation,
+        bytes32 blockHash,
+        bytes32 randomNumber
+    );
+    event RevealedWithCallback(
+        EntropyStructs.Request request,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation,
+        bytes32 randomNumber
+    );
+
+    event CallbackFailed(
+        address indexed provider,
+        address indexed requestor,
+        uint64 indexed sequenceNumber,
+        bytes32 userRandomNumber,
+        bytes32 providerRevelation,
+        bytes32 randomNumber,
+        bytes errorCode
+    );
+
+    event ProviderFeeUpdated(address provider, uint128 oldFee, uint128 newFee);
+
+    event ProviderDefaultGasLimitUpdated(
+        address indexed provider,
+        uint32 oldDefaultGasLimit,
+        uint32 newDefaultGasLimit
+    );
+
+    event ProviderUriUpdated(address provider, bytes oldUri, bytes newUri);
+
+    event ProviderFeeManagerUpdated(
+        address provider,
+        address oldFeeManager,
+        address newFeeManager
+    );
+    event ProviderMaxNumHashesAdvanced(
+        address provider,
+        uint32 oldMaxNumHashes,
+        uint32 newMaxNumHashes
+    );
+
+    event Withdrawal(
+        address provider,
+        address recipient,
+        uint128 withdrawnAmount
+    );
+}
+
 // SPDX-License-Identifier: Apache 2
 
 pragma solidity ^0.8.0;
 
-// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
-// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
-// the Entropy contract.
-//
-// See EntropyStructsV2 for the struct definitions currently in use.
-contract EntropyStructs {
+contract EntropyStructsV2 {
     struct ProviderInfo {
         uint128 feeInWei;
         uint128 accruedFeesInWei;
@@ -798,6 +864,8 @@ contract EntropyStructs {
         // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
         // the provider supports for callbacks.
         uint32 maxNumHashes;
+        // Default gas limit to use for callbacks.
+        uint32 defaultGasLimit;
     }
 
     struct Request {
@@ -820,8 +888,12 @@ contract EntropyStructs {
         address requester;
         // If true, incorporate the blockhash of blockNumber into the generated random value.
         bool useBlockhash;
-        // True if this is a request that expects a callback.
-        bool isRequestWithCallback;
+        // Status flag for requests with callbacks. See EntropyConstants for the possible values of this flag.
+        uint8 callbackStatus;
+        // The gasLimit in units of 10k gas. (i.e., 2 = 20k gas). We're using units of 10k in order to fit this
+        // field into the remaining 2 bytes of this storage slot. The dynamic range here is 10k - 655M, which should
+        // cover all real-world use cases.
+        uint16 gasLimit10k;
     }
 }
 
@@ -980,7 +1052,12 @@ interface EntropyEventsV2 {
 
 pragma solidity ^0.8.0;
 
-contract EntropyStructsV2 {
+// This contract holds old versions of the Entropy structs that are no longer used for contract storage.
+// However, they are still used in EntropyEvents to maintain the public interface of prior versions of
+// the Entropy contract.
+//
+// See EntropyStructsV2 for the struct definitions currently in use.
+contract EntropyStructs {
     struct ProviderInfo {
         uint128 feeInWei;
         uint128 accruedFeesInWei;
@@ -1015,8 +1092,6 @@ contract EntropyStructsV2 {
         // Maximum number of hashes to record in a request. This should be set according to the maximum gas limit
         // the provider supports for callbacks.
         uint32 maxNumHashes;
-        // Default gas limit to use for callbacks.
-        uint32 defaultGasLimit;
     }
 
     struct Request {
@@ -1039,84 +1114,9 @@ contract EntropyStructsV2 {
         address requester;
         // If true, incorporate the blockhash of blockNumber into the generated random value.
         bool useBlockhash;
-        // Status flag for requests with callbacks. See EntropyConstants for the possible values of this flag.
-        uint8 callbackStatus;
-        // The gasLimit in units of 10k gas. (i.e., 2 = 20k gas). We're using units of 10k in order to fit this
-        // field into the remaining 2 bytes of this storage slot. The dynamic range here is 10k - 655M, which should
-        // cover all real-world use cases.
-        uint16 gasLimit10k;
+        // True if this is a request that expects a callback.
+        bool isRequestWithCallback;
     }
-}
-
-// SPDX-License-Identifier: Apache-2.0
-pragma solidity ^0.8.0;
-
-import "./EntropyStructs.sol";
-
-// Deprecated -- these events are still emitted, but the lack of indexing
-// makes them hard to use.
-interface EntropyEvents {
-    event Registered(EntropyStructs.ProviderInfo provider);
-
-    event Requested(EntropyStructs.Request request);
-    event RequestedWithCallback(
-        address indexed provider,
-        address indexed requestor,
-        uint64 indexed sequenceNumber,
-        bytes32 userRandomNumber,
-        EntropyStructs.Request request
-    );
-
-    event Revealed(
-        EntropyStructs.Request request,
-        bytes32 userRevelation,
-        bytes32 providerRevelation,
-        bytes32 blockHash,
-        bytes32 randomNumber
-    );
-    event RevealedWithCallback(
-        EntropyStructs.Request request,
-        bytes32 userRandomNumber,
-        bytes32 providerRevelation,
-        bytes32 randomNumber
-    );
-
-    event CallbackFailed(
-        address indexed provider,
-        address indexed requestor,
-        uint64 indexed sequenceNumber,
-        bytes32 userRandomNumber,
-        bytes32 providerRevelation,
-        bytes32 randomNumber,
-        bytes errorCode
-    );
-
-    event ProviderFeeUpdated(address provider, uint128 oldFee, uint128 newFee);
-
-    event ProviderDefaultGasLimitUpdated(
-        address indexed provider,
-        uint32 oldDefaultGasLimit,
-        uint32 newDefaultGasLimit
-    );
-
-    event ProviderUriUpdated(address provider, bytes oldUri, bytes newUri);
-
-    event ProviderFeeManagerUpdated(
-        address provider,
-        address oldFeeManager,
-        address newFeeManager
-    );
-    event ProviderMaxNumHashesAdvanced(
-        address provider,
-        uint32 oldMaxNumHashes,
-        uint32 newMaxNumHashes
-    );
-
-    event Withdrawal(
-        address provider,
-        address recipient,
-        uint128 withdrawnAmount
-    );
 }
 
 
