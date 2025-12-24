@@ -9,9 +9,7 @@ use crate::llm_review::contract::contract_category::{
     get_contract_spec_from_category, ContractCategory,
 };
 use crate::llm_review::contract::contract_file_map::ContractType;
-use crate::llm_review::dynamic_prompts::actors::{
-    generate_formated_list_from_actor_data, generate_formatted_actor_abuse_list,
-};
+use crate::llm_review::dynamic_prompts::actors::generate_formatted_actor_abuse_list;
 use crate::llm_review::findings::findings::{Finding, CLAUDE_4_5_SONNET};
 use crate::llm_review::utils::contract_in_scope::contract_scope_and_type;
 use crate::llm_review::{agent::agent_enums::AIAgent, phases};
@@ -66,8 +64,8 @@ pub async fn review_codebase_for_security_issues_v2(
     // let audit_scope = Arc::new(generate_audit_scope(repo).await?);
 
     // ONLY audit these
-    let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
-    // let custom_scoped_contracts: Option<Vec<_>> = None;
+    // let custom_scoped_contracts = Some(vec!["Jackpot".to_string()]);
+    let custom_scoped_contracts: Option<Vec<_>> = None;
 
     // skip these contracts
     // let custom_out_of_scoped_contracts: Option<Vec<String>> = Some(vec![
@@ -601,8 +599,8 @@ async fn process_actors(
 
     let actor_count = actors.actors.len();
     info!("total of {} Actors found!", actor_count);
-    let actor_list = generate_formated_list_from_actor_data(&actors.actors);
-    info!("{}", actor_list);
+    // let actor_list = generate_formated_list_from_actor_data(&actors.actors);
+    // info!("{}", actor_list);
 
     let actor_prompt = IssuePrompt::Actor(actors.actors);
 

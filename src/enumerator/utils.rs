@@ -1,5 +1,5 @@
-use anyhow::anyhow;
 use anyhow::Result;
+use anyhow::anyhow;
 use log::info;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -15,26 +15,22 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::enumerator::libraries::ParsedLibrary;
 use crate::enumerator::libraries::generate_library_to_code_mapping;
 use crate::enumerator::libraries::get_library_code_for_library_calls;
-use crate::enumerator::libraries::ParsedLibrary;
+use crate::llm_review::contract::contract_file_map::ContractType;
 use crate::llm_review::contract::contract_file_map::insert_contract_to_file_mapping;
 use crate::llm_review::contract::contract_file_map::insert_lib_contract_to_file_mapping;
-use crate::llm_review::contract::contract_file_map::ContractType;
 
 use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::check_folder_name::is_library_file;
 use crate::utils::fn_labels::get_modifiers_label;
 use crate::utils::fn_labels::get_visibility_label;
 use crate::utils::get_fn_name::get_function_name_from_interface;
-use crate::utils::parse_library_file::parse_library_text;
 use crate::utils::parse_library_file::LibCall;
+use crate::utils::parse_library_file::parse_library_text;
 use crate::{
-    build_brain::{
-        self,
-        graph_db::SmartContractFunction,
-        slither_ffi::{SlithIRFn, StorageVar},
-    },
+    build_brain::{self, graph_db::SmartContractFunction, slither_ffi::SlithIRFn},
     utils::bpe::get_bpe,
 };
 
@@ -47,11 +43,6 @@ static CODE_IR_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<(String, String), S
 /// Key: project_id, Value: Vec of contract names
 /// This ensures the inheritance map is only built once per repository.
 static CONTRACTS_CACHE: Lazy<Mutex<HashMap<String, Vec<String>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// Global cache for get_storage_map results.
-/// Key: project_id, Value: Storage map for that project
-static STORAGE_MAP_CACHE: Lazy<Mutex<HashMap<String, HashMap<String, Vec<StorageVar>>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Generates a markdown code block for a specific function with IR representation.
@@ -87,34 +78,6 @@ pub async fn generate_codeblock_for_function(
 
     // info!("function slice => {:#?}", function_slice);
     Ok(function_slice)
-}
-
-/// Generates a markdown codeblock for a contract's storage layout.
-///
-/// Retrieves the storage variables for a contract and formats them as a markdown codeblock.
-///
-/// # Arguments
-/// * `contract` - The name of the contract
-/// * `repo` - Path to the repository root
-///
-/// # Returns
-/// * `anyhow::Result<String>` - The generated markdown codeblock
-pub async fn generate_code_slice_for_storage(
-    contract: &str,
-    repo: &RepoPaths,
-) -> anyhow::Result<String> {
-    let storage_map = get_storage_map(repo).await?;
-    let mut storage_slice = String::new();
-    if let Some(vars) = storage_map.get(contract) {
-        storage_slice.push_str(&format!("### Storage layout ({}) \n\n", contract));
-        storage_slice.push_str("```text\n");
-        for v in vars {
-            storage_slice.push_str(&format!("{} {}\n", v.name, v.r#type));
-        }
-        storage_slice.push_str("\n```");
-    }
-
-    Ok(storage_slice)
 }
 
 pub async fn generate_library_funcs_markdown(library_calls: &[LibCall]) -> String {
@@ -292,45 +255,6 @@ pub async fn get_code_ir_map(
         ir_map.len()
     );
     Ok(ir_map)
-}
-
-async fn get_storage_map(repo: &RepoPaths) -> anyhow::Result<HashMap<String, Vec<StorageVar>>> {
-    // Check cache first
-    {
-        let cache = STORAGE_MAP_CACHE.lock().unwrap();
-        if let Some(cached_map) = cache.get(&repo.project_id) {
-            return Ok(cached_map.clone());
-        }
-    }
-
-    // Cache miss - compute the result
-    // info!(
-    //     "Cache miss for get_storage_map - running Slither for project {}",
-    //     repo.project_id
-    // );
-
-    let (_, storage_vec, _) = build_brain::slither_ffi::get_slither_ir_and_storage(repo).await?;
-
-    let storage_map: HashMap<String, Vec<StorageVar>> = {
-        let mut m = HashMap::<String, Vec<StorageVar>>::new();
-        for v in storage_vec {
-            m.entry(v.contract.clone()).or_default().push(v);
-        }
-        m
-    };
-
-    // Store in cache
-    {
-        let mut cache = STORAGE_MAP_CACHE.lock().unwrap();
-        cache.insert(repo.project_id.clone(), storage_map.clone());
-    }
-
-    info!(
-        "Cached storage map for project {} with {} contracts",
-        repo.project_id,
-        storage_map.len()
-    );
-    Ok(storage_map)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1103,11 +1027,12 @@ mod tests {
         } from "./Contracts.sol";"#;
         let caps = SOLIDITY_REGEXES.import_named.captures(source).unwrap();
         assert!(caps.get(1).unwrap().as_str().contains("ContractA"));
-        assert!(caps
-            .get(1)
-            .unwrap()
-            .as_str()
-            .contains("ContractB as AliasB"));
+        assert!(
+            caps.get(1)
+                .unwrap()
+                .as_str()
+                .contains("ContractB as AliasB")
+        );
         assert!(caps.get(1).unwrap().as_str().contains("ContractC"));
     }
 

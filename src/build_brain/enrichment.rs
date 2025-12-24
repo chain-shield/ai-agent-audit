@@ -12,21 +12,11 @@ use super::graph_db::GraphDb;
 ///
 /// This module builds semantic databases containing call graphs, inheritance hierarchies,
 /// and function metadata extracted from Solidity contracts using Slither analysis.
-use super::slither_ffi::{SlithIRFn, StorageVar};
 use log::info;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-/// Contains the enriched data extracted from Solidity contracts.
-/// This includes the intermediate representation (IR) of functions and storage variable information.
-pub struct Enriched {
-    /// Vector of SlithIR function representations
-    pub ir: Vec<SlithIRFn>,
-    /// Vector of storage variable information
-    pub storage: Vec<StorageVar>,
-}
 
 /// Builds a semantic database containing call graphs and inheritance data.
 ///

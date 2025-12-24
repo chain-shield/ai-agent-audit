@@ -7,7 +7,10 @@ use crate::{
     error::Result,
     llm_review::{
         agent::agent_enums::AIAgent,
-        analysis::context_state::{generate_audit_scope, get_metadata_context},
+        analysis::{
+            context_state::{generate_audit_scope, get_metadata_context},
+            semaphore::GENERAL_SEM,
+        },
         dynamic_prompts::{
             self,
             invariants::{generate_invariant_prompt, get_invariant_json},
@@ -72,9 +75,11 @@ where
     // Simple local closure to DRY out spawn logic without extra generics
     let mut spawn_run = |prompt: Arc<String>, run_index: usize| {
         let agent = Arc::clone(arc_agent);
+        let sem = Arc::clone(&GENERAL_SEM);
         let shared_patterns = Arc::clone(&all_patterns);
 
         handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire_owned().await.expect("semaphore closed");
             if let Err(e) = run_security_prompt(
                 agent,
                 "security exploits",
@@ -137,9 +142,7 @@ where
             }
         }
         IssuePrompt::Invariant(invariants) => {
-            // TODO: update prompt, add ones that produces findings directly
             let inv_prompt = Arc::new(generate_invariant_prompt(&invariants));
-            // TODO: update prompt, add ones that requires findings as output
             let json_requirement_prompt = Arc::new(get_invariant_json(&invariants));
             let prompt = Arc::new(format!(
                 "{inv_prompt}{code_plus_context}{json_requirement_prompt}"

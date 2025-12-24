@@ -163,7 +163,7 @@ impl FindingAnalysis for AllRoundLegitAnalysis {
 
         ## SCOPE CHECK: Is Security Finding in Scope?
 
-        **Check if finding is in scope in accordance with scope provided below.**
+        **The SCOPE FOR SECURITY AUDIT section below has a number of publicly known issues and findings that are OUT OF SCOPE. Please carefully review.**
 
         ## "BY DESIGN" CHECK
 
