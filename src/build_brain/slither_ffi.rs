@@ -21,7 +21,7 @@ use crate::prepare_code::git_clone::RepoPaths;
 use crate::utils::check_folder_name::contains_build_config;
 
 use super::callgraph;
-use super::parsers::{parse_slither, parse_slithir_ir_code, parse_storage};
+use super::parsers::{parse_slither, parse_slithir_ir_code};
 
 /// Global cache for Slither printer outputs to avoid redundant analysis.
 /// Key format: "{repo_root}:{printer_name}"
@@ -688,14 +688,14 @@ pub async fn run_printer_json(
 
     Ok(text)
 }
-/// Runs both Slither printers and returns the parsed IR and storage information.
+/// Runs Slither printers and returns the parsed IR information.
 ///
-/// This function is the main public interface for extracting SlithIR and storage
-/// information from Solidity contracts. It runs both the slithir-ssa and variable-order
-/// printers and parses their output.
+/// This function is the main public interface for extracting SlithIR
+/// information from Solidity contracts. It runs the slithir-ssa printer
+/// and parses its output.
 ///
 /// @param repo_root - Path to the repository root containing Solidity contracts
-/// @return Result containing a tuple of SlithIRFn and StorageVar vectors
+/// @return Result containing a tuple of SlithIRFn vectors and Slither detector results
 pub async fn get_slither_ir_and_storage(
     repo: &RepoPaths,
 ) -> Result<(Vec<SlithIRFn>, Vec<StorageVar>, Vec<String>)> {
@@ -705,18 +705,12 @@ pub async fn get_slither_ir_and_storage(
         None => run_printer(repo, "slithir-ssa", None).await?,
     };
 
-    // Run the variable-order printer to get storage information
-    let storage_raw = match repo.monorepo_folders {
-        Some(_) => run_printer_monorepo(repo, "variable-order").await?,
-        None => run_printer(repo, "variable-order", None).await?,
-    };
-
     let slither_scan_results = run_slither_detector(repo).await?;
 
-    // Parse both outputs and return the results
+    // Parse IR output and return empty storage vars (no longer used)
     Ok((
         parse_slithir_ir_code(&ir_raw),
-        parse_storage(&storage_raw),
+        Vec::new(), // Storage vars no longer extracted - dead code path
         parse_slither(&slither_scan_results),
     ))
 }

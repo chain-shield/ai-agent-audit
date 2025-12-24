@@ -273,7 +273,7 @@ where
         verify_prompt.to_string()
     } else {
         format!(
-            "{}\n\n ## SCOPE FOR SECURITY AUDIT - ONLY FINDINGS WITHIN BELOW SCOPE ARE LEGIT\n\n{}",
+            "{}\n\n ## SCOPE FOR SECURITY AUDIT\n\n{}",
             &verify_prompt, &audit_scope
         )
     };
