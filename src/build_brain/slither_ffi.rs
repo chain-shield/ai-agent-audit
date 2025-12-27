@@ -245,7 +245,7 @@ pub fn build_slither_args(
     // 3. For static analysis, exact compiler version match is less critical than for builds
 
     args.extend([
-        "ghcr.io/trailofbits/eth-security-toolbox:nightly".to_string(),
+        "trailofbits/eth-security-toolbox:nightly".to_string(),
         "slither".to_string(),
     ]);
 
