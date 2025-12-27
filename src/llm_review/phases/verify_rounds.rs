@@ -118,6 +118,7 @@ impl AnalysisRound for VerifyAllRound {
 pub async fn execute_rounds(
     findings: Findings,
     code: &str,
+    actors_capabilities: Option<Arc<String>>,
     agent: &Arc<AIAgent>,
     repo: &RepoPaths,
 ) -> Result<Findings> {
@@ -141,8 +142,14 @@ pub async fn execute_rounds(
     // ALL ROUND VERIFICATON
     //************************
 
-    let all_round_findings =
-        run_all_round(deduped_findings, &code_and_context, &audit_scope, agent).await?;
+    let all_round_findings = run_all_round(
+        deduped_findings,
+        &code_and_context,
+        actors_capabilities.clone(),
+        &audit_scope,
+        agent,
+    )
+    .await?;
     info!(
         "{} finding tagged as low or invalid",
         tagged_findings(&all_round_findings)
@@ -168,8 +175,14 @@ pub async fn execute_rounds(
         findings: all_round_findings_labeled,
     };
 
-    let verified_findings =
-        run_round_validation(labeled_findings, &code_and_context, &audit_scope, repo).await?;
+    let verified_findings = run_round_validation(
+        labeled_findings,
+        &code_and_context,
+        actors_capabilities,
+        &audit_scope,
+        repo,
+    )
+    .await?;
 
     let verify_findings_vec: Vec<Finding> = verified_findings
         .findings
@@ -208,45 +221,27 @@ pub fn tagged_findings(findings: &Findings) -> usize {
         .count()
 }
 
-pub async fn run_round_1(
-    findings: Findings,
-    code_and_context: &str,
-    audit_scope: &str,
-    agent: &AIAgent,
-) -> Result<Findings> {
-    run_round::<VerifyRoundOne>(findings, code_and_context, audit_scope, agent).await
-}
-
-pub async fn run_round_2(
-    findings: Findings,
-    code_and_context: &str,
-    audit_scope: &str,
-    agent: &AIAgent,
-) -> Result<Findings> {
-    run_round::<VerifyRoundTwo>(findings, code_and_context, audit_scope, agent).await
-}
-
-pub async fn run_round_3(
-    findings: Findings,
-    code_and_context: &str,
-    audit_scope: &str,
-    agent: &AIAgent,
-) -> Result<Findings> {
-    run_round::<VerifyRoundThree>(findings, code_and_context, audit_scope, agent).await
-}
-
 pub async fn run_all_round(
     findings: Findings,
     code_and_context: &str,
+    actors_capabilities: Option<Arc<String>>,
     audit_scope: &str,
     agent: &AIAgent,
 ) -> Result<Findings> {
-    run_round::<VerifyAllRound>(findings, code_and_context, audit_scope, agent).await
+    run_round::<VerifyAllRound>(
+        findings,
+        code_and_context,
+        actors_capabilities,
+        audit_scope,
+        agent,
+    )
+    .await
 }
 
 pub async fn run_round<T>(
     findings: Findings,
     code_and_context: &str,
+    actors_capabilities: Option<Arc<String>>,
     audit_scope: &str,
     agent: &AIAgent,
 ) -> Result<Findings>
@@ -285,6 +280,7 @@ where
         &code_and_context,
         &clean_findings,
         &r_prompt,
+        actors_capabilities,
         &post_verify_json,
         FindingReportType::NoPoC,
     );
@@ -351,6 +347,7 @@ where
 pub async fn run_round_validation(
     findings: Findings,
     code_and_context: &str,
+    actors_capabilities: Option<Arc<String>>,
     audit_scope: &str,
     repo: &RepoPaths,
 ) -> Result<Findings> {
@@ -397,6 +394,14 @@ pub async fn run_round_validation(
     let verify_json = generate_dynamic_validation_json(&clean_findings);
 
     let mut instruction_prompt = format!("{}\n\n", main_instructions);
+
+    if let Some(actors) = actors_capabilities {
+        instruction_prompt.push_str("\n\n");
+        instruction_prompt.push_str(&format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
+                 **NOTE**: The actors below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis\n\n
+                {}",actors));
+        instruction_prompt.push_str("\n\n");
+    }
 
     instruction_prompt.push_str("## CODEBASE WHERE FINDINGS WERE FOUND");
     instruction_prompt.push_str("\n\n");

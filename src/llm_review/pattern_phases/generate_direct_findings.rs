@@ -12,7 +12,7 @@ use crate::{
             semaphore::GENERAL_SEM,
         },
         dynamic_prompts::{
-            self, actors,
+            self,
             invariants::{generate_invariant_prompt, get_invariant_json},
         },
         threat_models::{
@@ -22,6 +22,7 @@ use crate::{
         },
     },
     prepare_code::git_clone::RepoPaths,
+    utils::logging::print_first_n_lines,
 };
 use log::info;
 use serde::de::DeserializeOwned;
@@ -122,11 +123,11 @@ where
                 }
             }
         }
-        IssuePrompt::Combined((pattern_category, actors)) => {
-            let actors_capabilities = actors::generate_formated_list_from_actor_data(&actors);
+        IssuePrompt::Combined((pattern_category, actors_capabilities)) => {
             let actor_context = format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN SEARCHING FOR SECURITY VULNERABILITY\n
                  **NOTE**: The actors below are pertinent to the target contract, please incorporate them in your analysis\n\n
                 {}",actors_capabilities);
+
             for (i, category) in pattern_category.into_iter().enumerate() {
                 let category_spec =
                     get_category_library_spec(&category).expect("could not extract category spec");
@@ -142,10 +143,7 @@ where
                         "security vulnerability pattern",
                         repo,
                     );
-                info!(
-                    "instruction prompt: {}{}",
-                    instruction_prompt, actor_context
-                );
+                print_first_n_lines(10, &actor_context);
                 let prompt = Arc::new(format!(
                     "{instruction_prompt}{actor_context}{code_plus_context}{json_requirement_prompt}"
                 ));

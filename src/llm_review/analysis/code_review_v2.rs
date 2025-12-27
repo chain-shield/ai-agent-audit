@@ -4,6 +4,9 @@ use crate::config::{
 };
 use crate::enumerator::codeblock_db::CodeBlocksDb;
 use crate::error::{AuditError, Result};
+use crate::llm_review::analysis::context_state::{
+    generate_multi_modal_context, get_multi_modal_context,
+};
 use crate::llm_review::analysis::semaphore::CONTRACT_REVEW_SEM;
 use crate::llm_review::contract::contract_category::{
     get_contract_spec_from_category, ContractCategory,
@@ -122,6 +125,10 @@ pub async fn review_codebase_for_security_issues_v2(
 
         info!("{} {} is in scope", contract_type.to_string(), contract);
 
+        // generate list of potential bad actors for this contract
+        let actor_capabilities =
+            Arc::new(generate_multi_modal_context(&codeblock, &contract, repo).await?);
+
         // Clone shared state for the spawned task
         let verify_agent = Arc::clone(&ai_verify_agent);
         let finding_verify_agent = Arc::clone(&finding_ai_verify_agent);
@@ -130,6 +137,7 @@ pub async fn review_codebase_for_security_issues_v2(
         let results_db = Arc::clone(&findings_db);
         let all_issues = Arc::clone(&all_security_issues);
         let repo_clone = repo.clone();
+        let actors = Arc::clone(&actor_capabilities);
 
         // semaphore
         let sem = Arc::clone(&CONTRACT_REVEW_SEM);
@@ -152,6 +160,7 @@ pub async fn review_codebase_for_security_issues_v2(
                         ),
                         process_combined_patterns(
                             &codeblock,
+                            &contract,
                             pattern_categories,
                             &pattern_discovery_agent,
                             &repo_clone
@@ -205,6 +214,7 @@ pub async fn review_codebase_for_security_issues_v2(
                     let mut verify_findings = phases::verify_rounds::execute_rounds(
                         findings_with_id,
                         &codeblock,
+                        Some(actors),
                         &finding_verify_agent,
                         &repo_clone,
                     )
@@ -495,6 +505,7 @@ async fn process_patterns(
 
 async fn process_combined_patterns(
     codeblock: &str,
+    contract: &str,
     pattern_categories: Vec<PatternCategory>,
     pattern_discovery_agent: &Arc<AIAgent>,
     repo: &RepoPaths,
@@ -504,25 +515,9 @@ async fn process_combined_patterns(
         return Ok(Findings::default());
     }
 
-    // custom agent for digging up list of actors
-    let actor_discovery_config = AgentConfig::new(Some(repo.clone()))
-        .with_model("gpt-5.2")
-        .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
-        .with_file_retrieval(false)
-        .with_openai_reasoning_effort("high");
-
-    let actor_discovery_agent =
-        Arc::new(AgentFactory::create_openai_agent(&actor_discovery_config)?);
-
-    // Phase 1: Generate actors and their capabilities
-    info!("PHASE 0: GENERATE ACTORS");
-    let actors: Actors =
-        pattern_phases::generate_actors::execute(codeblock, &actor_discovery_agent, repo).await?;
-
-    let actor_count = actors.actors.len();
-    info!("total of {} Actors found!", actor_count);
-
-    let pattern_prompt = IssuePrompt::Combined((pattern_categories, actors.actors));
+    let actors = get_multi_modal_context(&contract, repo).await;
+    let actors_capabilities = actors.expect("could not unwrap actor capabilities, generate_multi_modal_context(...) must be called first");
+    let pattern_prompt = IssuePrompt::Combined((pattern_categories, actors_capabilities));
 
     info!("PHASE 1-3: GENERATE FINDINGS DIRECT FROM PATTERN");
     let findings = pattern_phases::generate_direct_findings::execute(

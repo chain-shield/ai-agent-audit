@@ -11,15 +11,24 @@ use tokio::sync::Mutex;
 use crate::{
     build_brain::{
         slither_ffi::{cache_key, get_all_files_src},
-        summarize::{FileSummaryType, summarize_protocol, summarize_src_files},
+        summarize::{summarize_protocol, summarize_src_files, FileSummaryType},
     },
     cost::cost_data::get_token_count,
+    llm_review::{
+        agent::agent_factory::{AgentConfig, AgentFactory},
+        dynamic_prompts::actors,
+        pattern_phases,
+        threat_models::actors::Actors,
+    },
     prepare_code::git_clone::RepoPaths,
 };
 
 /// Global metadata context shared across all AI agents
 
 pub static PROMPT_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+pub static MULTI_MODAL_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
 pub static METADATA_CONTEXT: Lazy<Arc<Mutex<HashMap<String, String>>>> =
@@ -234,4 +243,66 @@ pub async fn generate_slither_metadata_prompt_context(
     let mut context_cache = cache.lock().await;
     context_cache.insert(key, prompt_context.clone());
     Ok(prompt_context)
+}
+
+/// Generate cache key for multi-modal context (actors, invariants, etc.)
+fn generate_multimodal_key(contract: &str, repo: &RepoPaths) -> String {
+    format!("{}-{}", repo.root.to_string_lossy(), contract)
+}
+
+// generated orthogonal thread models: bad actors, invariants etc to add as supporting context for
+// finding (and verifying) security vulnerability
+pub async fn generate_multi_modal_context(
+    codeblock: &str,
+    contract: &str,
+    repo: &RepoPaths,
+) -> Result<String> {
+    let key = generate_multimodal_key(contract, repo);
+    let multimodal_context = Arc::clone(&MULTI_MODAL_CONTEXT);
+    let multimodal_cache = multimodal_context.lock().await;
+
+    if let Some(actors) = multimodal_cache.get(&key) {
+        return Ok(actors.to_string());
+    }
+
+    // Release lock before expensive operation
+    drop(multimodal_cache);
+
+    // custom agent for digging up list of actors
+    let actor_discovery_config = AgentConfig::new(Some(repo.clone()))
+        .with_model("gpt-5.2")
+        .with_preamble("You are a world-class expert at Solidity EVM smart contract auditing.")
+        .with_file_retrieval(false)
+        .with_openai_reasoning_effort("high");
+
+    let actor_discovery_agent =
+        Arc::new(AgentFactory::create_openai_agent(&actor_discovery_config)?);
+
+    // Phase 1: Generate actors and their capabilities
+    log::info!("PRE-PHASE: GENERATE ACTORS");
+    let actors: Actors =
+        pattern_phases::generate_actors::execute(codeblock, &actor_discovery_agent, repo).await?;
+
+    let actor_count = actors.actors.len();
+    log::info!("total of {} Actors found!", actor_count);
+
+    let actors_capabilities = actors::generate_formated_list_from_actor_data(&actors.actors);
+
+    // CACHE RESULT
+    let multimodal_context = Arc::clone(&MULTI_MODAL_CONTEXT);
+    let mut multimodal_cache = multimodal_context.lock().await;
+    multimodal_cache.insert(key, actors_capabilities.clone());
+    Ok(actors_capabilities)
+}
+
+pub async fn get_multi_modal_context(contract: &str, repo: &RepoPaths) -> Option<String> {
+    let key = generate_multimodal_key(contract, repo);
+    let multimodal_context = Arc::clone(&MULTI_MODAL_CONTEXT);
+    let multimodal_cache = multimodal_context.lock().await;
+
+    if let Some(actors) = multimodal_cache.get(&key) {
+        Some(actors.to_string())
+    } else {
+        None
+    }
 }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     config::CREATE_TESTS,
     llm_review::{
@@ -36,13 +38,22 @@ pub fn generate_prompt_for_multi_finding_issue_check(
     code: &str,
     finding: &Findings,
     instructions: &str,
+    actors_capabilities: Option<Arc<String>>,
     post_instructions: &str,
     report_type: FindingReportType,
 ) -> String {
     let mut prompt = instructions.to_string();
 
+    if let Some(actors) = actors_capabilities {
+        prompt.push_str("\n\n");
+        prompt.push_str(&format!("## POTENTIAL BAD ACTORS TO CONSIDER WHEN VERIFYING SECURITY VULNERABILITIES\n
+                 **NOTE**: The actors below are pertinent to the codebase where vulnerability were found, please incorporate them in your verification analysis\n\n
+                {}",actors));
+        prompt.push_str("\n\n");
+    }
+
     prompt.push_str("\n\n");
-    prompt.push_str("## SECURITY FINDINGS TO EVALUATE");
+    prompt.push_str("## **SECURITY FINDINGS TO EVALUATE**");
     prompt.push_str("\n\n");
 
     for finding in &finding.findings {
